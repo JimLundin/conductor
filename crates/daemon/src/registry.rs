@@ -6,9 +6,10 @@
 //! keeps the store, the sessions' tasks, the instances' refreshes and
 //! starts and the sign-ins' runs, and performs what the cores decide.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::ops::ControlFlow::{Break, Continue};
+use std::sync::{Arc, Weak};
 
 use anyhow::Context;
 use host::registry::{
@@ -20,13 +21,13 @@ use host::restore::{Created, Recovery, Step, events_of};
 use host::serve::{Configure, SignInOrder};
 use host::sign_in::{Effect as SignInEffect, Key, SignIns};
 use proto::{
-    Catalog, ClientName, CommandResult, Effort, Event, EventKind, InstanceId,
-    Instances, ModelId, Models, Provider, Rejection, Roster, SessionId, SignIn,
-    StartAt,
+    Catalog, ClientName, CommandId, CommandResult, Effort, Event, EventKind,
+    InstanceId, Instances, ModelId, Models, Provider, Rejection, Roster,
+    SessionId, SignIn, StartAt,
 };
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
-use tokio::task::JoinSet;
+use tokio::task::{Id, JoinSet};
 
 use crate::Stopped;
 use crate::credentials::{RecoveredAdoption, SigningLease, Store, Stored};
@@ -47,9 +48,13 @@ pub struct Watch {
 
 pub type Launcher = host::registry::Launcher<Instance>;
 
-type Reply = oneshot::Sender<CommandResult>;
+struct Reply {
+    removal: Option<CommandId>,
+    channel: oneshot::Sender<CommandResult>,
+}
 type Core = host::registry::Registry<Instance, Session, Reply>;
 type Effect = host::registry::Effect<Instance, Reply>;
+pub type Relaunch = (Session, Instance, Models, Arc<()>);
 type StartReply = oneshot::Sender<StartOutcome>;
 
 struct BranchReady {
@@ -75,7 +80,7 @@ enum RegistryMsg {
     BranchReady(Box<BranchReady>),
     Continue {
         session: SessionId,
-        reply: oneshot::Sender<Result<(Session, Instance, Models), Rejection>>,
+        reply: oneshot::Sender<Result<Relaunch, Rejection>>,
     },
     Find {
         session: SessionId,
@@ -86,11 +91,12 @@ enum RegistryMsg {
     },
     Configure {
         configure: Configure,
-        reply: Reply,
+        id: CommandId,
+        reply: oneshot::Sender<CommandResult>,
     },
     SignIn {
         order: SignInOrder,
-        reply: Reply,
+        reply: oneshot::Sender<CommandResult>,
     },
     Watch {
         reply: oneshot::Sender<Watch>,
@@ -106,6 +112,9 @@ struct RegistryActor {
     home: HomeClone,
     refreshes: JoinSet<Refreshed>,
     starts: JoinSet<Started<Instance>>,
+    refresh_jobs: BTreeMap<Id, (u64, InstanceId)>,
+    start_jobs: BTreeMap<Id, (u64, InstanceId)>,
+    relaunching: BTreeMap<SessionId, Weak<()>>,
     branches: JoinSet<BranchReady>,
     sign_ins: SignIns,
     leases: BTreeMap<InstanceId, SigningLease>,
@@ -180,7 +189,7 @@ impl Registry {
     pub async fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<Result<(Session, Instance, Models), Rejection>, Stopped> {
+    ) -> Result<Result<Relaunch, Rejection>, Stopped> {
         self.ask(|reply| RegistryMsg::Continue { session, reply })
             .await
     }
@@ -216,9 +225,14 @@ impl Registry {
     pub async fn configure(
         &self,
         configure: Configure,
+        id: CommandId,
     ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| RegistryMsg::Configure { configure, reply })
-            .await
+        self.ask(|reply| RegistryMsg::Configure {
+            configure,
+            id,
+            reply,
+        })
+        .await
     }
 
     /// Starts, answers or cancels an instance's sign-in.
@@ -246,12 +260,7 @@ impl Registry {
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> RegistryMsg,
     ) -> Result<T, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(build(reply))
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
+        crate::ask(&self.inbox, build).await
     }
 }
 
@@ -273,6 +282,9 @@ impl RegistryActor {
             home,
             refreshes: JoinSet::new(),
             starts: JoinSet::new(),
+            refresh_jobs: BTreeMap::new(),
+            start_jobs: BTreeMap::new(),
+            relaunching: BTreeMap::new(),
             branches: JoinSet::new(),
             sign_ins: SignIns::default(),
             leases: BTreeMap::new(),
@@ -296,8 +308,22 @@ impl RegistryActor {
         loop {
             let msg = tokio::select! {
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
-                Some(Ok(result)) = self.refreshes.join_next() => RegistryMsg::Refreshed(result),
-                Some(result) = self.starts.join_next() => RegistryMsg::Started(result.map_err(|_| Stopped {})?),
+                Some(result) = self.refreshes.join_next_with_id() => {
+                    match complete_job(&mut self.refresh_jobs, result, |id, instance, reason| Refreshed {
+                        id, instance, configured: Err(reason),
+                    }) {
+                        Some(refreshed) => RegistryMsg::Refreshed(refreshed),
+                        None => continue,
+                    }
+                },
+                Some(result) = self.starts.join_next_with_id() => {
+                    match complete_job(&mut self.start_jobs, result, |id, instance, reason| Started {
+                        id, instance, launcher: Launcher::Unavailable(reason),
+                    }) {
+                        Some(started) => RegistryMsg::Started(started),
+                        None => continue,
+                    }
+                },
                 Some(Ok(result)) = self.branches.join_next() => RegistryMsg::BranchReady(Box::new(result)),
                 Some((key, report)) = self.runs.next() => RegistryMsg::Run(key, report),
             };
@@ -330,7 +356,18 @@ impl RegistryActor {
                 self.run_start(decision, reply).await?;
             }
             RegistryMsg::Continue { session, reply } => {
-                let _ = reply.send(self.core.relaunch(session));
+                let _ = reply.send(self.core.relaunch(session).map(
+                    |(handle, adapter, models)| {
+                        let reservation = self
+                            .relaunching
+                            .get(&session)
+                            .and_then(Weak::upgrade)
+                            .unwrap_or_default();
+                        self.relaunching
+                            .insert(session, Arc::downgrade(&reservation));
+                        (handle, adapter, models, reservation)
+                    },
+                ));
             }
             RegistryMsg::Find { session, reply } => {
                 let _ = reply.send(self.core.find(session));
@@ -339,13 +376,17 @@ impl RegistryActor {
                 let _ = reply
                     .send((self.core.instances(), self.core.catalog().clone()));
             }
-            RegistryMsg::Configure { configure, reply } => {
-                let effects = self.configure(configure, reply).await?;
+            RegistryMsg::Configure {
+                configure,
+                id,
+                reply,
+            } => {
+                let effects = self.configure(configure, id, reply).await?;
                 self.perform(effects);
             }
             RegistryMsg::SignIn { order, reply } => {
-                let (result, effects) = self.order(order);
-                self.signs_in(effects).await;
+                let (result, effects) = self.order(order).await?;
+                self.signs_in(effects).await?;
                 let _ = reply.send(result);
             }
             RegistryMsg::Watch { reply } => {
@@ -357,30 +398,34 @@ impl RegistryActor {
             }
             RegistryMsg::Run(key, report) => {
                 let effects = self.reported(&key, report);
-                self.signs_in(effects).await;
+                self.signs_in(effects).await?;
             }
         }
         Ok(())
     }
 
-    fn order(
+    async fn order(
         &mut self,
         order: SignInOrder,
-    ) -> (CommandResult, Vec<SignInEffect>) {
-        match order {
-            SignInOrder::Start(instance) => self.start_sign_in(instance),
+    ) -> Result<(CommandResult, Vec<SignInEffect>), Stopped> {
+        Ok(match order {
+            SignInOrder::Start(instance) => {
+                let running = self.running_sessions().await?;
+                self.start_sign_in(instance, &running)
+            }
             SignInOrder::Submit(instance, code) => {
                 self.sign_ins.submit(instance, code)
             }
             SignInOrder::Cancel(instance) => self.sign_ins.cancel(instance),
-        }
+        })
     }
 
     fn start_sign_in(
         &mut self,
         instance: InstanceId,
+        running: &BTreeSet<SessionId>,
     ) -> (CommandResult, Vec<SignInEffect>) {
-        match self.prepare_sign_in(&instance) {
+        match self.prepare_sign_in(&instance, running) {
             Ok(Some(settings)) => self.sign_ins.start(instance, Some(settings)),
             Ok(None) => (CommandResult::Accepted, Vec::new()),
             Err(rejection) => (CommandResult::Rejected(rejection), Vec::new()),
@@ -390,15 +435,21 @@ impl RegistryActor {
     fn prepare_sign_in(
         &mut self,
         instance: &InstanceId,
+        running: &BTreeSet<SessionId>,
     ) -> Result<Option<proto::Instance>, Rejection> {
         if self.sign_ins.is_running(instance) {
             return Err(Rejection::SignInRunning);
         }
-        let recovered = self.store.resume_adoption().map_err(|err| {
-            Rejection::CredentialNotSaved {
+        let recovered = self
+            .store
+            .resume_adoption(|account| {
+                self.core
+                    .instance_in_use(&[&account.from, &account.to], running)
+                    .is_none()
+            })
+            .map_err(|err| Rejection::CredentialNotSaved {
                 reason: format!("{err:#}"),
-            }
-        })?;
+            })?;
         if recovered.map_or(Ok(false), |adoption| {
             self.resume_sign_in(instance, adoption)
         })? {
@@ -424,7 +475,11 @@ impl RegistryActor {
     ) -> Result<bool, Rejection> {
         let RecoveredAdoption { account, roster } = adoption;
         let run = self.sign_ins.resume(requested, &account)?;
-        let (reply, answer) = oneshot::channel();
+        let (channel, answer) = oneshot::channel();
+        let reply = Reply {
+            removal: None,
+            channel,
+        };
         let effects =
             self.core
                 .saved(roster, Change::SignedIn(account), reply, Ok(()));
@@ -444,22 +499,36 @@ impl RegistryActor {
                 self.sign_ins.spawned(key, flow)
             }
             Report::Printed(line) => self.sign_ins.printed(key, &line),
-            Report::Exited(code, status) => {
-                self.sign_ins.exited(key, code, &status)
-            }
+            Report::Exited(code, status) => self
+                .runs
+                .exited(key, code, status)
+                .map_or_else(Vec::new, |(exit_code, exit_status)| {
+                    self.sign_ins.exited(key, exit_code, &exit_status)
+                }),
             Report::Expired => self.sign_ins.expired(key),
             Report::Checked(result) => self.sign_ins.checked(key, result),
+            Report::Written(result) => match self.runs.written(key, result) {
+                Ok(Some((code, status))) => {
+                    self.sign_ins.exited(key, code, &status)
+                }
+                Ok(None) => Vec::new(),
+                Err(reason) => self.sign_ins.write_failed(key, reason),
+            },
             Report::Listed(result) => self.sign_ins.listed(key, result),
         }
     }
 
-    async fn signs_in(&mut self, effects: Vec<SignInEffect>) {
+    async fn signs_in(
+        &mut self,
+        effects: Vec<SignInEffect>,
+    ) -> Result<(), Stopped> {
         for effect in effects {
-            self.sign_in(effect).await;
+            self.sign_in(effect).await?;
         }
+        Ok(())
     }
 
-    async fn sign_in(&mut self, effect: SignInEffect) {
+    async fn sign_in(&mut self, effect: SignInEffect) -> Result<(), Stopped> {
         match effect {
             SignInEffect::Spawn { key, settings } => {
                 let lease = self.leases.get(&key.instance).cloned();
@@ -467,7 +536,7 @@ impl RegistryActor {
                     .spawn(key, self.providers.clone(), settings, lease);
             }
             SignInEffect::Write(key, code) => {
-                self.runs.write(&key, &code).await;
+                self.runs.write(key, code);
             }
             SignInEffect::Kill(key) => self.runs.kill(&key),
             SignInEffect::Check(key, login) => {
@@ -475,14 +544,24 @@ impl RegistryActor {
                 self.runs.check(key, login, lease);
             }
             SignInEffect::Refresh(key, account) => {
-                let (reply, answer) = oneshot::channel();
-                let effects =
-                    self.core.signed_in(key.instance.clone(), account, reply);
+                let (channel, answer) = oneshot::channel();
+                let reply = Reply {
+                    removal: None,
+                    channel,
+                };
+                let running = self.running_sessions().await?;
+                let effects = self.core.signed_in(
+                    key.instance.clone(),
+                    account,
+                    &running,
+                    reply,
+                );
                 self.perform(effects);
                 self.runs.listen(key, answer);
             }
             SignInEffect::Publish(step) => self.publish_sign_in(step),
         }
+        Ok(())
     }
 
     fn publish_sign_in(&mut self, step: SignIn) {
@@ -493,19 +572,38 @@ impl RegistryActor {
         let _ = self.live.send(step);
     }
 
+    async fn running_sessions(
+        &mut self,
+    ) -> Result<BTreeSet<SessionId>, Stopped> {
+        self.relaunching
+            .retain(|_, reservation| reservation.strong_count() > 0);
+        let mut running: BTreeSet<_> =
+            self.relaunching.keys().copied().collect();
+        running.extend(self.log.running_sessions().await?);
+        Ok(running)
+    }
+
     async fn configure(
         &mut self,
         configure: Configure,
-        reply: Reply,
+        id: CommandId,
+        channel: oneshot::Sender<CommandResult>,
     ) -> Result<Vec<Effect>, Stopped> {
+        let removal = matches!(configure, Configure::Remove(_)).then_some(id);
+        let reply = Reply { removal, channel };
         Ok(match configure {
             Configure::SetCredential {
                 provider,
                 credential,
             } => self.core.set_credential(provider, credential, reply),
             Configure::Remove(instance) => {
-                let history = self.log.history().await?;
-                let running = host::registry::running(&history);
+                if let Some(instances) = self.store.removal(id) {
+                    return Ok(vec![Effect::Reply(
+                        reply,
+                        CommandResult::Instances(instances),
+                    )]);
+                }
+                let running = self.running_sessions().await?;
                 self.core.remove_instance(instance, &running, reply)
             }
         })
@@ -537,7 +635,7 @@ impl RegistryActor {
     fn effect(&mut self, effect: Effect) -> Vec<Effect> {
         match effect {
             Effect::Reply(reply, result) => {
-                let _ = reply.send(result);
+                let _ = reply.channel.send(result);
                 Vec::new()
             }
             Effect::MoveAside { instance, reply } => {
@@ -556,13 +654,18 @@ impl RegistryActor {
                 reply,
             } => self.save(roster, change, reply),
             Effect::Refresh(job) => {
-                self.refreshes.spawn(refresh(job));
+                let generation = (job.id, job.instance_id.clone());
+                let task = self.refreshes.spawn(refresh(job));
+                self.refresh_jobs.insert(task.id(), generation);
                 Vec::new()
             }
             Effect::Start(starting) => {
                 let providers = self.providers.clone();
-                self.starts
+                let generation = (starting.id, starting.instance.clone());
+                let task = self
+                    .starts
                     .spawn(async move { start(&providers, starting).await });
+                self.start_jobs.insert(task.id(), generation);
                 Vec::new()
             }
             Effect::Log(note) => {
@@ -585,7 +688,13 @@ impl RegistryActor {
                 .context("the sign-in no longer has its private home")
                 .and_then(|lease| self.store.adopt(lease, adoption.clone())),
             Change::Credential(_) | Change::Added(_) | Change::Removed(_) => {
-                self.store.save_change(&roster, &change)
+                self.store.save_change(
+                    &roster,
+                    &change,
+                    reply.removal.map(|id| {
+                        (id, |current: &Roster| self.core.instances_of(current))
+                    }),
+                )
             }
         };
         match saved {
@@ -619,9 +728,13 @@ impl RegistryActor {
             directory,
             choice,
         } = created;
-        let recovery = Recovery::of(choice, &events_of(id, history));
+        let events = events_of(id, history);
+        let recovery = Recovery::of(choice, &events);
         let conversation = self.conversation(id, recovery.talked).await?;
         recover(&self.log, id, recovery.steps()).await?;
+        if host::restore::finish_interrupted(&events) {
+            self.log.append(id, EventKind::FinishInterrupted).await?;
+        }
         let recovered = events_of(id, &self.log.history().await?);
         let told = self.told(provider);
         let session = Session::restore(
@@ -791,6 +904,27 @@ impl RegistryActor {
     }
 }
 
+fn complete_job<T>(
+    jobs: &mut BTreeMap<Id, (u64, InstanceId)>,
+    result: Result<(Id, T), tokio::task::JoinError>,
+    failed: impl FnOnce(u64, InstanceId, String) -> T,
+) -> Option<T> {
+    match result {
+        Ok((task, completed)) => {
+            jobs.remove(&task);
+            Some(completed)
+        }
+        Err(err) => jobs.remove(&err.id()).map(|(id, instance)| {
+            let reason = if err.is_cancelled() {
+                "the instance job was cancelled"
+            } else {
+                "the instance job failed"
+            };
+            failed(id, instance, String::from(reason))
+        }),
+    }
+}
+
 async fn refresh(job: Job<Instance>) -> Refreshed {
     Refreshed {
         id: job.id,
@@ -858,3 +992,6 @@ async fn recover(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

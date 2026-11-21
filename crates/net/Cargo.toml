@@ -31,5 +31,9 @@ clap = { version = "4.6.7", features = ["derive"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 tracing-subscriber.workspace = true
 
+[[example]]
+name = "headless"
+test = true
+
 [lints]
 workspace = true

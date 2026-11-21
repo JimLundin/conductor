@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    ChecklistItem, Checkout, Cloning, CommandId, Home, HomeSync, HostPath,
-    Issue, IssueChange, IssueFields, IssueId, IssueStatus, Origin, Priority,
-    ProjectId, Rejection,
+    ChecklistAction, ChecklistItem, Checkout, Cloning, CommandId, Home,
+    HomeSync, HostPath, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
+    Origin, Priority, ProjectId, Rejection,
 };
 
 use super::{
@@ -760,14 +760,91 @@ fn a_section_conductor_doesnt_know_is_left_out() {
 }
 
 #[test]
-fn a_comment_is_a_hash_outside_a_string() {
+fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
+-> Result<(), String> {
+    let original = bare("\n```` example\n## Checklist\n```\n## Notes\n````\n\n## Checklist\n- [ ] Real\n\n~~~\n## Notes\n- [ ] Example\n~~~\n\n## Notes\n- Real note\n")
+        .replace(
+            "title = \"Sign in\"",
+            "'title' = \"Sign in\" # Keep title comment\n# Keep labels comment\n\"labels\" = [\n    \"one,two\", # Keep inline note\n    # Keep standalone note\n    \"three\",\n] # Keep array comment",
+        );
+    let labelled = file_of(apply(
+        Some(&original),
+        &changing_to(IssueChange::Labels(vec![text("new")])),
+        Mode::Record,
+    ))?;
     assert_eq!(
-        super::comment(r#"title = "a \" # b"   # note"#),
-        "   # note"
+        labelled,
+        original.replace(
+            "[\n    \"one,two\", # Keep inline note\n    # Keep standalone note\n    \"three\",\n]",
+            "[\n    # Keep inline note\n    # Keep standalone note\n    \"new\"\n]",
+        ),
     );
-    assert_eq!(super::comment("title = 'x#y' # n"), " # n");
-    assert_eq!(super::comment(r#"title = "it's # not" # n"#), " # n");
-    assert_eq!(super::comment(r#"title = "a#b""#), "");
+    let titled = file_of(apply(
+        Some(&labelled),
+        &changing_to(IssueChange::Title(text("New title"))),
+        Mode::Record,
+    ))?;
+    let read = parse(&name(ID), &titled)?;
+    assert_eq!(read.title, "New title");
+    assert_eq!(read.labels, vec![text("new")]);
+    assert_eq!(read.notes, vec![text("Real note")]);
+    assert_eq!(read.checklist.len(), 1);
+    assert!(read.body.contains("## Checklist"));
+    assert!(read.body.contains("## Notes"));
+    assert!(titled.contains("'title' = \"New title\" # Keep title comment"));
+    Ok(())
+}
+
+#[test]
+fn a_newer_label_list_with_a_comma_is_a_distinct_snapshot() {
+    let original = written()
+        .replace("[\"app\", \"credentials\"]", "[\"app, credentials\"]");
+    let change = Change::Issue(IssueChange::Labels(vec![text("queued")]));
+    let original_snapshot = was(Some(&original), ID, &change);
+    assert_ne!(original_snapshot, was(Some(&written()), ID, &change));
+    let queued = Edit::from(EditData {
+        was: original_snapshot,
+        change,
+        ..changing_to(IssueChange::Title(text("unused"))).data
+    });
+    assert_eq!(
+        apply(
+            Some(&written()),
+            &queued,
+            Mode::Replay {
+                changed: OPENED + 1
+            }
+        ),
+        Applied::Unchanged,
+    );
+}
+
+#[test]
+fn checking_and_removing_the_second_identical_row_keeps_the_first()
+-> Result<(), String> {
+    let original = bare("\n## Checklist\n- [ ] repeat\n- [ ] repeat\n");
+    let snapshot = parse(&name(ID), &original)?.checklist;
+    let change = |snapshot, action| {
+        changing_to(IssueChange::Checklist {
+            snapshot,
+            index: 1,
+            action,
+        })
+    };
+    let toggle = change(snapshot, ChecklistAction::SetDone(true));
+    let checked = file_of(apply(Some(&original), &toggle, Mode::Record))?;
+    assert!(checked.ends_with("- [ ] repeat\n- [x] repeat\n"));
+    let remove = change(
+        parse(&name(ID), &checked)?.checklist,
+        ChecklistAction::Remove,
+    );
+    let removed = file_of(apply(Some(&checked), &remove, Mode::Record))?;
+    assert!(removed.ends_with("## Checklist\n- [ ] repeat\n"));
+    assert!(matches!(
+        apply(Some(&removed), &toggle, Mode::Record),
+        Applied::Unreadable(_),
+    ));
+    Ok(())
 }
 
 #[test]
@@ -860,11 +937,14 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         Write::Unchanged
     );
     assert_eq!(
-        super::Listing::opened_by(
-            context.command,
-            vec![(name(ID), Ok(commit.text.clone()))],
-        ),
+        super::Listing::created_from_path(&commit.target.path),
         Some(ID)
+    );
+    assert!(
+        commit.text.contains(
+            super::Listing::creation_pattern(context.command)
+                .trim_matches(['^', '$'])
+        )
     );
     let existing = context.open(&[project()], project(), ID, &wanted())?;
     assert_eq!(
@@ -1039,7 +1119,10 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
     let mut start = SessionUpdate::Started;
     assert_eq!(
         start.next(&open, ID),
-        Some(IssueChange::Status(IssueStatus::InProgress))
+        Some(IssueChange::Transition {
+            from: IssueStatus::Open,
+            to: IssueStatus::InProgress
+        })
     );
     assert_eq!(start.next(&open, ID), None);
 
@@ -1061,9 +1144,35 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
     };
     assert_eq!(
         finish.next(&open, ID),
-        Some(IssueChange::Status(IssueStatus::Review))
+        Some(IssueChange::Transition {
+            from: IssueStatus::Open,
+            to: IssueStatus::Review
+        })
     );
     assert_eq!(finish.next(&open, ID), None);
+}
+
+#[test]
+fn a_competing_done_commit_supersedes_a_session_finishing_its_issue() {
+    use super::SessionUpdate;
+
+    let known = issue();
+    let listing = BTreeMap::from([(project(), vec![known])]);
+    let mut finish = SessionUpdate::Finished {
+        summary: None,
+        landed: 1,
+    };
+    let transition = finish.next(&listing, ID).map(changing_to);
+    let done =
+        written().replace("status = \"in-progress\"", "status = \"done\"");
+    assert_eq!(
+        transition.as_ref().map(|edit| apply(
+            Some(&done),
+            edit,
+            Mode::Replay { changed: OPENED }
+        )),
+        Some(Applied::Unchanged),
+    );
 }
 
 #[test]
@@ -1078,19 +1187,34 @@ fn the_issue_branch_checks_origin_and_distinguishes_absence_from_failure() {
     assert_eq!(
         fetch,
         Fetch {
+            branch: text("refs/heads/issue/task"),
             refspec: format!("+refs/heads/issue/task:{tracking}"),
             tracking: tracking.clone()
         }
     );
-    assert_eq!(fetch.clone().after(Err(text("fetch failed"))), Reachability);
-    assert_eq!(Reachability.after(Ok(text("origin reachable"))), absent);
+    let query = fetch.clone().after(Err(text("fetch failed")));
     assert_eq!(
-        Reachability.after(Err(text("offline"))),
+        query,
+        Reachability {
+            branch: text("refs/heads/issue/task"),
+            failure: text("fetch failed")
+        }
+    );
+    assert_eq!(query.clone().after(Ok(String::new())), absent);
+    assert_eq!(
+        query.clone().after(Ok(text("abc\trefs/heads/issue/task"))),
+        Observed(Remote::PresentUnfetched(text("fetch failed")))
+    );
+    assert_eq!(
+        query.after(Err(text("offline"))),
         Observed(Remote::Unreachable(text("offline")))
     );
     let read = fetch.after(Ok(String::new()));
     assert_eq!(read, Tracking(tracking));
-    assert_eq!(read.clone().after(Err(text("unknown ref"))), absent);
+    assert_eq!(
+        read.clone().after(Err(text("unknown ref"))),
+        Observed(Remote::PresentUnfetched(text("unknown ref")))
+    );
     assert_eq!(
         read.after(Ok(text("abc"))),
         Observed(Remote::At(text("abc")))

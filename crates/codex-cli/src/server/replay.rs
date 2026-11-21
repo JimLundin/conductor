@@ -83,7 +83,7 @@ struct Recorder {
     deltas: HashMap<ThreadId, Vec<String>>,
     unknown: BTreeMap<String, usize>,
     /// Every approval id answered so far.
-    answered: Vec<ApprovalId>,
+    answered: Vec<(ThreadId, ApprovalId)>,
 }
 
 impl Recorder {
@@ -158,9 +158,13 @@ impl Recorder {
                     }
                     (ThreadEvent::ApprovalRequested { id, .. }, _) => {
                         self.server
-                            .respond(id.clone(), decision.clone())
+                            .respond(
+                                thread.clone(),
+                                id.clone(),
+                                decision.clone(),
+                            )
                             .await?;
-                        self.answered.push(id);
+                        self.answered.push((thread, id));
                         Progress::Playing
                     }
                     (ThreadEvent::TurnCompleted { turn: done, .. }, _)
@@ -259,9 +263,7 @@ fn summary(event: &ThreadEvent) -> String {
                 format!("finished tool {outcome:?}")
             }
         },
-        ThreadEvent::ApprovalRequested {
-            id, kind, options, ..
-        } => {
+        ThreadEvent::ApprovalRequested { id, kind, .. } => {
             let label = match kind {
                 ApprovalKind::Command { .. } => "command",
                 ApprovalKind::FileChange { .. } => "fileChange",
@@ -270,7 +272,7 @@ fn summary(event: &ThreadEvent) -> String {
                     &format!("userInput {questions:?}")
                 }
             };
-            format!("approval {} {label} ({} options)", id.0, options.len())
+            format!("approval {} {label}", id.0)
         }
         ThreadEvent::ApprovalCancelled { id } => {
             format!("approval {} cancelled", id.0)
@@ -345,8 +347,12 @@ async fn turn(
     rec.until(goal, interrupt).await
 }
 
-async fn answer_again(server: &CodexServer, id: ApprovalId) -> String {
-    match server.respond(id, Decision::Accept).await {
+async fn answer_again(
+    server: &CodexServer,
+    thread: ThreadId,
+    id: ApprovalId,
+) -> String {
+    match server.respond(thread, id, Decision::Accept).await {
         Ok(()) => String::from("ok"),
         Err(e) => e.to_string(),
     }
@@ -390,7 +396,7 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     rec.until(Goal::Turns, Interrupt::Never).await?;
 
     let again = n0_future::stream::iter(rec.answered.clone())
-        .then(|id| answer_again(&server, id))
+        .then(|(thread, id)| answer_again(&server, thread, id))
         .collect::<Vec<String>>()
         .await;
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
@@ -410,7 +416,10 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     );
     assert_eq!(
         again,
-        ["no open approval with id 0", "no open approval with id 1",]
+        [
+            "no open approval with id integer:0",
+            "no open approval with id integer:1",
+        ]
     );
     // Item kinds we do not map (userMessage), reasoning and agentMessage
     // starts stay Unknown, alongside the frames §7.2 does not ask for.
@@ -430,7 +439,7 @@ const SERVER1_SEEN: &[&str] = &[
     "A finished tool Failed",
     "A reasons \"\"",
     "A started command",
-    "A approval 0 command (3 options)",
+    "A approval integer:0 command",
     "A finished tool Succeeded",
     "A streams [\"Created\", \" `\", \"a\", \".txt\", \"`\", \" containing\", \" exactly\", \" `\", \"hello\", \" from\", \" s\", \"2\", \"`.\"]",
     "A says \"Created `a.txt` containing exactly `hello from s2`.\"",
@@ -441,7 +450,7 @@ const SERVER1_SEEN: &[&str] = &[
     "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
     "A says \"I’ll request permission to write `b.txt`; if it’s declined, I’ll stop.\"",
     "A started command",
-    "A approval 1 command (3 options)",
+    "A approval integer:1 command",
     "A finished tool Declined",
     "A streams [\"The\", \" request\", \" to\", \" create\", \" `\", \"b\", \".txt\", \"`\", \" was\", \" declined\", \".\"]",
     "A says \"The request to create `b.txt` was declined.\"",
@@ -501,7 +510,7 @@ async fn resume_in_a_new_process() -> TestResult<()> {
     )
     .await?;
     let bogus = server
-        .respond(ApprovalId(String::from("never-sent")), Decision::Accept)
+        .respond(a, ApprovalId(String::from("never-sent")), Decision::Accept)
         .await
         .map_err(|e| e.to_string());
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
@@ -674,7 +683,7 @@ async fn questions_and_accept_for_session() -> TestResult<()> {
         [
             "A started",
             "A turn started",
-            "A approval 0 userInput [Question { header: \"Color\", text: \"Which color do you prefer?\", options: [QuestionOption { label: \"Red\", description: \"Choose Red.\" }, QuestionOption { label: \"Blue\", description: \"Choose Blue.\" }], selection: One }] (0 options)",
+            "A approval integer:0 userInput [Question { header: \"Color\", text: \"Which color do you prefer?\", options: [QuestionOption { label: \"Red\", description: \"Choose Red.\" }, QuestionOption { label: \"Blue\", description: \"Choose Blue.\" }], selection: One }]",
             "A streams [\"Blue\"]",
             "A says \"Blue\"",
             "A turn completed",
@@ -682,7 +691,7 @@ async fn questions_and_accept_for_session() -> TestResult<()> {
             "A streams [\"I\", \"’ll\", \" run\", \" the\", \" command\", \" exactly\", \" as\", \" given\", \".\"]",
             "A says \"I’ll run the command exactly as given.\"",
             "A started command",
-            "A approval 1 command (3 options)",
+            "A approval integer:1 command",
             "A finished tool Succeeded",
             "A reasons \"\"",
             "A says \"\"",
@@ -693,7 +702,7 @@ async fn questions_and_accept_for_session() -> TestResult<()> {
             "A says \"\"",
             "A turn completed",
             "A turn started",
-            "A approval 2 userInput [Question { header: \"Fruit\", text: \"Which fruit do you prefer?\", options: [QuestionOption { label: \"Apple\", description: \"Choose Apple.\" }, QuestionOption { label: \"Pear\", description: \"Choose Pear.\" }], selection: One }] (0 options)",
+            "A approval integer:2 userInput [Question { header: \"Fruit\", text: \"Which fruit do you prefer?\", options: [QuestionOption { label: \"Apple\", description: \"Choose Apple.\" }, QuestionOption { label: \"Pear\", description: \"Choose Pear.\" }], selection: One }]",
             "A turn interrupted",
             "exited exit status: 0",
         ]

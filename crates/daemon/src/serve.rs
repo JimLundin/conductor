@@ -2,6 +2,9 @@
 //! protocol's rules are [`host::serve`]; this reads and writes the frames
 //! and calls the log and the registry.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use host::log::Completion;
 use host::serve::{self, Admission, Ledger, Order, Relaunch, Route, Stream};
 use iroh::endpoint::{
@@ -11,16 +14,20 @@ use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::{
-    AuthToken, ClientName, Command, CommandResult, Event, Feed as Frame,
-    HelloReply, Home, Instances, Open, Rejection, SessionId, SignIn, Subscribe,
-    Welcome,
+    AuthToken, ClientName, Command, CommandBody, CommandResult, Event,
+    Feed as Frame, HelloReply, Home, Instances, Open, Rejection, SessionId,
+    SignIn, Subscribe, Welcome,
 };
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{Semaphore, broadcast, watch};
 
 use crate::Stopped;
 use crate::home::HomeClone;
 use crate::log::{BeginCommand, Log};
 use crate::registry::{Registry, Watch};
+
+const HANDSHAKE_LIMIT: usize = 32;
+const HELLO_BODY_LIMIT: usize = 4096;
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct Conductor {
@@ -30,6 +37,7 @@ pub struct Conductor {
     /// A placeholder for architecture §4's device certificates: every client
     /// must present the token from the ticket.
     token: AuthToken,
+    handshakes: Arc<Semaphore>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -73,19 +81,83 @@ struct Feed {
 impl ProtocolHandler for Conductor {
     async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         let peer = conn.remote_id();
-        if let Some(client) = self
-            .authenticate(&conn)
-            .await
-            .map_err(AcceptError::from_err)?
-        {
+        let Ok(slot) = self.handshakes.try_acquire() else {
+            conn.close(1u32.into(), b"handshake budget exhausted");
+            return Ok(());
+        };
+        let admitted =
+            tokio::time::timeout(HANDSHAKE_TIMEOUT, self.authenticate(&conn))
+                .await;
+        drop(slot);
+        let client = match admitted {
+            Ok(Ok(client)) => client,
+            Ok(Err(err)) => {
+                conn.close(1u32.into(), b"handshake failed");
+                return Err(AcceptError::from_err(err));
+            }
+            Err(_) => {
+                conn.close(1u32.into(), b"handshake timed out");
+                tracing::debug!(%peer, "handshake timed out");
+                return Ok(());
+            }
+        };
+        self.serve_client(&conn, client).await;
+        Ok(())
+    }
+}
+
+impl Conductor {
+    async fn serve_client(
+        &self,
+        conn: &Connection,
+        admitted: Option<ClientName>,
+    ) {
+        let peer = conn.remote_id();
+        if let Some(client) = admitted {
             tracing::info!(%peer, client = client.0, "client connected");
-            let err = self.streams(&conn, &client).await;
+            let err = self.streams(conn, &client).await;
             tracing::info!(%peer, client = client.0, %err, "client disconnected");
         } else {
             tracing::info!(%peer, "refused a client");
             conn.close(1u32.into(), b"refused");
         }
-        Ok(())
+    }
+}
+
+fn trace_command(command: &Command) {
+    let operation = match &command.body {
+        CommandBody::StartSession { .. } => "start_session",
+        CommandBody::SendMessage { .. } => "send_message",
+        CommandBody::Interrupt { .. } => "interrupt",
+        CommandBody::Continue { .. } => "continue",
+        CommandBody::Resolve { .. } => "resolve",
+        CommandBody::Answer { .. } => "answer",
+        CommandBody::SetCredential { .. } => "set_credential",
+        CommandBody::GetDiff { .. } => "get_diff",
+        CommandBody::UndoTurn { .. } => "undo_turn",
+        CommandBody::SetEffort { .. } => "set_effort",
+        CommandBody::RemoveInstance { .. } => "remove_instance",
+        CommandBody::StartSignIn { .. } => "start_sign_in",
+        CommandBody::SubmitSignInCode { .. } => "submit_sign_in_code",
+        CommandBody::CancelSignIn { .. } => "cancel_sign_in",
+        CommandBody::SyncHome => "sync_home",
+        CommandBody::CloneProject { .. } => "clone_project",
+        CommandBody::RemoveSession { .. } => "remove_session",
+        CommandBody::CreateIssue { .. } => "create_issue",
+        CommandBody::ChangeIssue { .. } => "change_issue",
+        CommandBody::FinishSession { .. } => "finish_session",
+    };
+    tracing::info!(command = command.id.0, operation, "command received");
+}
+
+const fn command_outcome(result: &CommandResult) -> &'static str {
+    match result {
+        CommandResult::Accepted => "accepted",
+        CommandResult::Started { .. } => "started",
+        CommandResult::Instances(_) => "instances",
+        CommandResult::Rejected(_) => "rejected",
+        CommandResult::Diff(_) => "diff",
+        CommandResult::IssueCreated { .. } => "issue_created",
     }
 }
 
@@ -105,6 +177,7 @@ impl Conductor {
             registry,
             home,
             token,
+            handshakes: Arc::new(Semaphore::new(HANDSHAKE_LIMIT)),
         }
     }
 
@@ -119,7 +192,8 @@ impl Conductor {
         let connection = conn.stable_id();
         tracing::debug!(%peer, connection, "waiting for hello");
         let (mut send, mut recv) = conn.accept_bi().await?;
-        let first = wire::read::<Open>(&mut recv).await?;
+        let first =
+            wire::read_bounded::<Open>(&mut recv, HELLO_BODY_LIMIT).await?;
         match serve::admit(first, &self.token) {
             Admission::Admitted(client) => {
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello received");
@@ -190,8 +264,14 @@ impl Conductor {
     ) -> Result<(), StreamError> {
         match serve::stream(wire::read::<Open>(&mut recv).await?) {
             Stream::Command(command) => {
-                tracing::info!(client = client.0, ?command, "command");
+                trace_command(&command);
+                let id = command.id;
                 let result = self.run(command, client).await?;
+                tracing::info!(
+                    command = id.0,
+                    outcome = command_outcome(&result),
+                    "command finished"
+                );
                 wire::write(&mut send, &result).await?;
                 send.finish()?;
             }
@@ -248,7 +328,7 @@ impl Conductor {
                 by,
             } => self.registry.start(instance, at, choice, by).await,
             Route::Configure(configure) => {
-                self.registry.configure(configure).await
+                self.registry.configure(configure, id).await
             }
             Route::SignIn(order) => self.registry.sign_in(order).await,
             Route::Home(order) => return self.home.order(order, id).await,
@@ -285,8 +365,8 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         match self.registry.relaunch(session).await? {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok((handle, adapter, offered)) => handle
-                .relaunch(relaunch.order(offered), adapter)
+            Ok((handle, adapter, offered, reservation)) => handle
+                .relaunch(relaunch.order(offered), adapter, reservation)
                 .await
                 .or_else(|stopped| relaunch.closed().ok_or(stopped)),
         }
@@ -376,4 +456,64 @@ impl Feed {
 /// sender stopped.
 fn upcoming(next: Result<Frame, broadcast::error::RecvError>) -> Upcoming {
     next.map_or(Upcoming::Resubscribe, Upcoming::Frame)
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use proto::{
+        Answer, Command, CommandBody, CommandId, Kept, RequestId, SessionId,
+    };
+
+    #[test]
+    fn command_and_workspace_diagnostics_omit_payloads() -> anyhow::Result<()> {
+        let directory =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&directory)?;
+        let path = directory
+            .join(format!("daemon-diagnostics-{}.log", std::process::id()));
+        let output = std::fs::File::create(&path)?;
+        tracing::subscriber::with_default(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_writer(Arc::new(output))
+                .finish(),
+            || {
+                super::trace_command(&Command {
+                    id: CommandId(1),
+                    body: CommandBody::SendMessage {
+                        session: SessionId(1),
+                        text: String::from("synthetic-message-marker"),
+                    },
+                });
+                super::trace_command(&Command {
+                    id: CommandId(2),
+                    body: CommandBody::Answer {
+                        session: SessionId(1),
+                        request: RequestId(1),
+                        answers: vec![Answer(vec![String::from(
+                            "synthetic-answer-marker",
+                        )])],
+                    },
+                });
+                crate::workspace::trace_removed(
+                    "conductor/1",
+                    &Kept::Pushed {
+                        remote: String::from(
+                            "https://synthetic-credential-marker@example.invalid/repo",
+                        ),
+                    },
+                );
+            },
+        );
+        let logged = std::fs::read_to_string(&path)?;
+        std::fs::remove_file(path)?;
+        assert!(logged.contains(r#"command=1 operation="send_message""#));
+        assert!(logged.contains(r#"command=2 operation="answer""#));
+        assert!(logged.contains("pushed"));
+        assert!(!logged.contains("synthetic-"));
+        Ok(())
+    }
 }

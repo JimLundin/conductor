@@ -24,6 +24,7 @@ const FINISHED: &str = "the session was finished";
 /// A session that can finish, as its log has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Finishing {
+    retry: bool,
     assignment: Assignment,
     workspace: Workspace,
     /// Its agent runs, so it is asked for a summary first.
@@ -48,19 +49,17 @@ fn finishing(
     let mut turning = false;
     let mut finish = FinishState::Ready;
     for event in history.iter().filter(|event| event.session == session) {
+        if let Some(active) = crate::restore::agent_activity(&event.kind) {
+            running = active;
+        }
         match &event.kind {
-            EventKind::SessionCreated { .. } | EventKind::SessionReady => {
-                running = true;
-            }
             EventKind::WorkspaceCreated { workspace: made } => {
                 workspace = Some(made.clone());
             }
             EventKind::SessionRemoved { .. } => removed = true,
             EventKind::UserMessage { .. } => turning = true,
-            EventKind::TurnCompleted { .. } => turning = false,
-            EventKind::SessionClosed { .. } => {
-                (running, turning) = (false, false);
-            }
+            EventKind::TurnCompleted { .. }
+            | EventKind::SessionClosed { .. } => turning = false,
             _ => {}
         }
         finish = finish.after(&event.kind);
@@ -70,12 +69,16 @@ fn finishing(
     let refused = [
         (removed, Rejection::SessionRemoved),
         (turning, Rejection::TurnInProgress),
-        (finish != FinishState::Ready, Rejection::AlreadyFinished),
+        (
+            matches!(finish, FinishState::Finishing | FinishState::Done),
+            Rejection::AlreadyFinished,
+        ),
     ];
     if let Some((_, rejection)) = refused.into_iter().find(|(is, _)| *is) {
         return Err(rejection);
     }
     Ok(Finishing {
+        retry: finish == FinishState::Retrying,
         assignment: Assignment {
             issue: assigned.issue.ok_or(Rejection::NotOnIssue)?,
             instance,
@@ -343,6 +346,7 @@ impl Finish {
 
     fn check(&mut self, history: &[Event], by: ClientName) -> Vec<Effect> {
         let Finishing {
+            retry,
             assignment,
             workspace,
             running,
@@ -354,10 +358,11 @@ impl Finish {
                 ))]);
             }
         };
-        let mut effects = Vec::from([
-            Effect::Emit(EventKind::FinishStarted),
-            Effect::Reply(CommandResult::Accepted),
-        ]);
+        let mut effects = Vec::new();
+        if !retry {
+            effects.push(Effect::Emit(EventKind::FinishStarted));
+        }
+        effects.push(Effect::Reply(CommandResult::Accepted));
         if running {
             let after = history.last().map_or(HostSeq(0), |event| event.seq);
             self.stage = Stage::Asking(assignment, workspace, after);

@@ -2,12 +2,13 @@
 //! the edits `codex::config_edits` decides, keeping what Codex wrote there.
 
 use install::Home;
-use std::io::ErrorKind;
+use std::fs::File;
+use std::io::{self, ErrorKind, Read, Seek, Write};
 use std::path::Path;
 
 use codex::CodexCredential;
 use codex::Edit;
-use toml_edit::{DocumentMut, Item, Table, value};
+use toml_edit::{DocumentMut, Item, Table, TableLike, value};
 
 use super::server::Error;
 
@@ -26,7 +27,34 @@ pub fn write(
     let config = with_provider(&text, credential).map_err(|reason| {
         Error::Command(format!("{}: {reason}", path.display()))
     })?;
-    std::fs::write(&path, config).map_err(failed)
+    replace(&path, |file| file.write_all(config.as_bytes())).map_err(failed)
+}
+
+fn replace(
+    path: &Path,
+    write: impl FnOnce(&mut File) -> io::Result<()>,
+) -> io::Result<()> {
+    let dir = path
+        .parent()
+        .ok_or_else(|| io::Error::other("missing config directory"))?;
+    let mut next = tempfile::NamedTempFile::new_in(dir)?;
+    write(next.as_file_mut())?;
+    next.rewind()?;
+    let mut staged = String::new();
+    next.read_to_string(&mut staged)?;
+    staged.parse::<DocumentMut>().map_err(|_| {
+        io::Error::new(ErrorKind::InvalidData, "invalid replacement TOML")
+    })?;
+    match path.metadata() {
+        Ok(metadata) => {
+            next.as_file().set_permissions(metadata.permissions())?;
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    next.as_file().sync_all()?;
+    next.persist(path).map_err(|error| error.error)?;
+    Ok(())
 }
 
 /// The file's text; a home with none yet has an empty one.
@@ -53,22 +81,28 @@ fn with_provider(
 fn apply(root: &mut Table, edit: Edit) -> Result<(), String> {
     match edit {
         Edit::Remove(path) => {
-            let _ = at(root, &path, |table, key| {
+            let _ = at(root, &path, false, |table, key| {
                 table.remove(key);
             });
             Ok(())
         }
-        Edit::Set { path, value: text } => at(root, &path, |table, key| {
-            table.insert(key, value(text));
-        }),
-        Edit::Table { path, entries } => at(root, &path, |table, key| {
+        Edit::Set { path, value: text } => {
+            at(root, &path, true, |table, key| {
+                table.insert(key, value(text));
+            })
+        }
+        Edit::Table { path, entries } => at(root, &path, true, |table, key| {
             table.insert(key, Item::Table(entries.into_iter().collect()));
         }),
         Edit::RemoveIfEmpty(path) => {
-            let _ = at(root, &path, |table, key| {
-                table.retain(|name, item| {
-                    name != key || !item.as_table().is_some_and(Table::is_empty)
-                });
+            let _ = at(root, &path, false, |table, key| {
+                if table
+                    .get(key)
+                    .and_then(Item::as_table_like)
+                    .is_some_and(TableLike::is_empty)
+                {
+                    table.remove(key);
+                }
             });
             Ok(())
         }
@@ -78,33 +112,35 @@ fn apply(root: &mut Table, edit: Edit) -> Result<(), String> {
 /// Runs `change` on the table that holds the last key of `path`, if every
 /// table on the way is one.
 fn at(
-    root: &mut Table,
+    root: &mut dyn TableLike,
     path: &[String],
-    change: impl FnOnce(&mut Table, &str),
+    create: bool,
+    change: impl FnOnce(&mut dyn TableLike, &str),
 ) -> Result<(), String> {
     let (key, tables) = path.split_last().ok_or("empty config key")?;
     let table = tables.iter().try_fold(root, |table, name| {
-        section(table, name).ok_or_else(|| format!("{name} must be a table"))
+        if create && !table.contains_key(name) {
+            let mut implicit = Table::new();
+            implicit.set_implicit(true);
+            table.insert(name, Item::Table(implicit));
+        }
+        table
+            .get_mut(name)
+            .and_then(Item::as_table_like_mut)
+            .ok_or_else(|| format!("{name} must be a table"))
     })?;
     change(table, key);
     Ok(())
 }
 
-/// The table at `key`, created with no header of its own.
-fn section<'a>(table: &'a mut Table, key: &str) -> Option<&'a mut Table> {
-    let mut implicit = Table::new();
-    implicit.set_implicit(true);
-    table
-        .entry(key)
-        .or_insert(Item::Table(implicit))
-        .as_table_mut()
-}
-
 #[cfg(test)]
 mod tests {
-    use codex::CodexCredential;
+    use std::io::{self, Write};
 
-    use super::with_provider;
+    use codex::CodexCredential;
+    use toml_edit::DocumentMut;
+
+    use super::{replace, with_provider};
 
     const CODEX_WROTE: &str = "check_for_update_on_startup = false\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n";
 
@@ -123,6 +159,80 @@ mod tests {
             "check_for_update_on_startup = false\nmodel_provider = \"conductor\"\nmodel = \"gpt-6\"\n\n[projects.\"/work\"]\ntrust_level = \"trusted\"\n\n[model_providers.conductor]\nname = \"Gateway\"\nbase_url = \"https://gateway.example/v1\"\nenv_key = \"CONDUCTOR_CODEX_KEY\"\nwire_api = \"responses\"\n\n[shell_environment_policy.filters]\nCONDUCTOR_CODEX_KEY = \"exclude\"\n"
         );
         assert_eq!(with_provider(&set, None)?, CODEX_WROTE);
+        Ok(())
+    }
+
+    #[test]
+    fn inline_and_ordinary_sections_preserve_other_settings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let inline = "model_providers = { other = { name = 'Other' } }\nshell_environment_policy = { inherit = 'all', filters = { OTHER = 'include' } }\n";
+        let ordinary = "[model_providers.other]\nname = 'Other'\n[shell_environment_policy]\ninherit = 'all'\n[shell_environment_policy.filters]\nOTHER = 'include'\n";
+        let credential = CodexCredential::Provider {
+            name: String::from("Gateway"),
+            base_url: String::from("https://gateway.example/v1"),
+            key: String::from("sk-never-written"),
+            model: String::from("gpt-6"),
+        };
+        for source in [inline, ordinary] {
+            let configured = with_provider(source, Some(&credential))?;
+            let doc = configured.parse::<DocumentMut>()?;
+            assert_eq!(
+                doc["model_providers"]["conductor"]["name"].as_str(),
+                Some("Gateway")
+            );
+            assert_eq!(
+                doc["model_providers"]["other"]["name"].as_str(),
+                Some("Other")
+            );
+            let policy = &doc["shell_environment_policy"];
+            assert_eq!(policy["inherit"].as_str(), Some("all"));
+            assert_eq!(
+                policy["filters"]["CONDUCTOR_CODEX_KEY"].as_str(),
+                Some("exclude")
+            );
+            assert_eq!(policy["filters"]["OTHER"].as_str(), Some("include"));
+
+            let cleaned =
+                with_provider(&configured, None)?.parse::<DocumentMut>()?;
+            assert!(
+                cleaned["model_providers"]
+                    .as_table_like()
+                    .and_then(|providers| providers.get("conductor"))
+                    .is_none()
+            );
+            assert_eq!(
+                cleaned["model_providers"]["other"]["name"].as_str(),
+                Some("Other")
+            );
+            assert_eq!(
+                cleaned["shell_environment_policy"]["filters"]["OTHER"]
+                    .as_str(),
+                Some("include")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_failed_or_invalid_replacement_preserves_the_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, CODEX_WROTE)?;
+        let failed = replace(&path, |file| {
+            file.write_all(b"partial")?;
+            Err(io::Error::other("test write failure"))
+        });
+        assert!(failed.is_err());
+        assert_eq!(std::fs::read_to_string(&path)?, CODEX_WROTE);
+
+        let invalid = replace(&path, |file| file.write_all(b"invalid"));
+        assert_eq!(
+            invalid.err().map(|err| err.kind()),
+            Some(io::ErrorKind::InvalidData)
+        );
+        assert_eq!(std::fs::read_to_string(&path)?, CODEX_WROTE);
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
         Ok(())
     }
 

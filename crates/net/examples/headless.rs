@@ -24,6 +24,10 @@ use proto::{
 };
 use tokio::sync::mpsc;
 
+#[cfg(test)]
+#[path = "headless/fixture.rs"]
+mod fixture;
+
 #[derive(Parser)]
 struct Args {
     #[arg(value_parser = net::parse)]
@@ -33,6 +37,12 @@ struct Args {
     /// The session's directory on the host.
     #[arg(long)]
     directory: String,
+    /// The instance account to use when keeping the host's credential.
+    #[arg(long)]
+    account: Option<String>,
+    /// Request a model listed by the chosen instance.
+    #[arg(long)]
+    model: Option<String>,
     #[arg(long, default_value = "what is the answer?")]
     prompt: String,
     #[arg(long, value_enum, default_value_t = Choice::Approve)]
@@ -108,19 +118,29 @@ async fn main() -> anyhow::Result<()> {
         .with_writer(std::io::stderr)
         .init();
     let args = Args::parse();
+    let target = Target::of_ticket(&args.ticket)?;
+    let options = LinkOptions::new(ClientName(String::from("headless")));
+    run_to_deadline(args, target, options).await
+}
+
+async fn run_to_deadline(
+    args: Args,
+    target: Target,
+    options: LinkOptions,
+) -> anyhow::Result<()> {
     let deadline = Duration::from_secs(args.timeout_secs);
-    tokio::time::timeout(deadline, run(args))
+    tokio::time::timeout(deadline, run(args, target, options))
         .await
         .context("timed out before the turn finished")?
 }
 
-async fn run(args: Args) -> anyhow::Result<()> {
+async fn run(
+    args: Args,
+    target: Target,
+    options: LinkOptions,
+) -> anyhow::Result<()> {
     let start = Instant::now();
-    let (link, updates) = HostLink::spawn(
-        Target::of_ticket(&args.ticket)?,
-        LinkOptions::new(ClientName(String::from("headless"))),
-    )
-    .await?;
+    let (link, updates) = HostLink::spawn(target, options).await?;
     let mut session = Session {
         args,
         start,
@@ -131,13 +151,15 @@ async fn run(args: Args) -> anyhow::Result<()> {
         link,
         updates,
         ours: None,
+        instance: None,
         deltas: 0,
         times_live: 0,
         live: false,
     };
     let result = session.drive().await;
-    session.link.stop().await?;
-    result
+    let stopped = session.link.stop().await;
+    result?;
+    stopped.map_err(anyhow::Error::from)
 }
 
 enum Flow {
@@ -155,6 +177,7 @@ struct Session {
     link: HostLink,
     updates: mpsc::Receiver<Update>,
     ours: Option<SessionId>,
+    instance: Option<InstanceId>,
     deltas: usize,
     times_live: u32,
     live: bool,
@@ -210,22 +233,25 @@ impl Session {
         Ok(())
     }
 
-    async fn start_session(&self) -> anyhow::Result<SessionId> {
+    async fn start_session(&mut self) -> anyhow::Result<SessionId> {
         let provider = match self.args.provider {
             ProviderChoice::Claude => Provider::Claude,
             ProviderChoice::Codex => Provider::Codex,
         };
         let instance = match self.args.register {
-            Register::Keep => InstanceId::own(provider),
+            Register::Keep => self.args.account.as_ref().map_or_else(
+                || InstanceId::own(provider),
+                |account| InstanceId::named(provider, account.trim()),
+            ),
             Register::Env => self.register(provider).await?,
         };
         let directory = &self.args.directory;
         let result = self
             .link
             .send(CommandBody::StartSession {
-                instance,
+                instance: instance.clone(),
                 at: StartAt::Directory(HostPath(directory.clone())),
-                model: None,
+                model: self.args.model.clone().map(proto::ModelId),
                 effort: None,
             })
             .await?;
@@ -233,6 +259,7 @@ impl Session {
         let CommandResult::Started { session } = result else {
             anyhow::bail!("the host did not start a session: {result:?}");
         };
+        self.instance = Some(instance);
         Ok(session)
     }
 
@@ -294,8 +321,24 @@ impl Session {
 
     async fn on_event(&mut self, event: Event) -> anyhow::Result<Flow> {
         let ours = self.ours == Some(event.session);
-        let marker = if ours { "" } else { "(history) " };
-        self.log(&format!("event #{} {marker}{:?}", event.seq.0, event.kind))?;
+        if let EventKind::SessionCreated { instance, .. } = &event.kind {
+            if ours {
+                anyhow::ensure!(
+                    self.instance.as_ref() == Some(instance),
+                    "the host started this session on an unexpected instance"
+                );
+                let selected = if self.args.account.is_some()
+                    || matches!(self.args.register, Register::Env)
+                {
+                    "gateway"
+                } else {
+                    "own"
+                };
+                self.log(&format!("confirmed session instance {selected}"))?;
+            }
+        } else if let Some(line) = transcript_line(self.ours, &event) {
+            self.log(&line)?;
+        }
         let delta = matches!(event.kind, EventKind::AssistantDelta { .. });
         let session = event.session;
         let seq = event.seq;
@@ -405,7 +448,7 @@ impl Session {
                 Item::Tool {
                     approval: Approval::Asked { request, state, .. },
                     ..
-                } if state.is_open() && self.answered.insert(*request) => {
+                } if state.is_open() && !self.answered.contains(request) => {
                     let result = self
                         .link
                         .send(CommandBody::Resolve {
@@ -417,12 +460,13 @@ impl Session {
                     self.log(&format!(
                         "resolve {request:?} {decision:?} -> {result:?}"
                     ))?;
+                    record_answer(&mut self.answered, *request, &result)?;
                 }
                 Item::Question {
                     request,
                     questions,
                     state,
-                } if state.is_open() && self.answered.insert(*request) => {
+                } if state.is_open() && !self.answered.contains(request) => {
                     let answers = questions
                         .iter()
                         .map(|question| {
@@ -441,6 +485,7 @@ impl Session {
                         })
                         .await?;
                     self.log(&format!("answer {request:?} -> {result:?}"))?;
+                    record_answer(&mut self.answered, *request, &result)?;
                 }
                 _ => {}
             }
@@ -458,6 +503,9 @@ impl Session {
         let Some(turn) = view.completed_turn_since(self.turn_start) else {
             return Ok(Flow::Next);
         };
+        if let TurnOutcome::Failed { message } = turn.outcome {
+            anyhow::bail!("the turn failed: {message}");
+        }
         if let (Stage::FirstTurn, Some(workspace)) =
             (self.stage, &view.workspace)
         {
@@ -578,7 +626,7 @@ impl Session {
     async fn interrupt(&self, session: SessionId) -> anyhow::Result<()> {
         let result = self.link.send(CommandBody::Interrupt { session }).await?;
         self.log(&format!("interrupt -> {result:?}"))?;
-        Ok(())
+        accepted(&result)
     }
 
     fn log(&self, line: &str) -> std::io::Result<()> {
@@ -591,6 +639,21 @@ impl Session {
 /// variable only.
 fn var(name: &str) -> anyhow::Result<String> {
     std::env::var(name).with_context(|| format!("{name} is not set"))
+}
+
+fn transcript_line(ours: Option<SessionId>, event: &Event) -> Option<String> {
+    (ours == Some(event.session))
+        .then(|| format!("event #{} {:?}", event.seq.0, event.kind))
+}
+
+fn record_answer(
+    answered: &mut BTreeSet<RequestId>,
+    request: RequestId,
+    result: &CommandResult,
+) -> anyhow::Result<()> {
+    accepted(result)?;
+    answered.insert(request);
+    Ok(())
 }
 
 fn accepted(result: &CommandResult) -> anyhow::Result<()> {
@@ -611,5 +674,58 @@ fn credential<const N: usize>(
             .into_iter()
             .map(|(id, value)| (String::from(id), value))
             .collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use proto::{
+        CommandResult, Event, EventKind, HostSeq, Rejection, RequestId,
+        SessionId,
+    };
+
+    use super::{record_answer, transcript_line};
+
+    #[test]
+    fn transcript_only_emits_events_from_the_selected_session() {
+        let ours = SessionId(1);
+        let theirs = SessionId(2);
+        let events = [
+            Event {
+                seq: HostSeq(2),
+                session: theirs,
+                kind: EventKind::AssistantDelta {
+                    text: String::from("unrelated"),
+                },
+            },
+            Event {
+                seq: HostSeq(2),
+                session: ours,
+                kind: EventKind::AssistantDelta {
+                    text: String::from("selected"),
+                },
+            },
+        ];
+        let transcript = events
+            .iter()
+            .filter_map(|event| transcript_line(Some(ours), event))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            transcript,
+            vec![String::from(
+                "event #2 AssistantDelta { text: \"selected\" }"
+            )]
+        );
+    }
+
+    #[test]
+    fn rejected_answers_fail_and_are_left_unhandled() {
+        let mut answered = BTreeSet::new();
+        let request = RequestId(4);
+        let rejected = CommandResult::Rejected(Rejection::UnknownRequest);
+        assert!(record_answer(&mut answered, request, &rejected).is_err());
+        assert!(!answered.contains(&request));
     }
 }

@@ -3,7 +3,7 @@ use crate::prelude::*;
 use alloc::collections::BTreeMap;
 use proto::{
     Checkpoint, CheckpointId, Event, EventKind, HistoryAnchor, HostSeq,
-    Rejection, UndoAvailability, Workspace,
+    Rejection, TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17,6 +17,7 @@ pub struct Undo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Recovery {
     Native(Undo),
+    Verify(Undo),
     Files(Undo),
 }
 
@@ -78,6 +79,7 @@ pub struct Book {
     resume: Option<HistoryAnchor>,
     snapshot: Option<PendingTurn>,
     accepted_since_undo_restore: bool,
+    before_pending_message: Option<bool>,
 }
 
 impl Book {
@@ -117,6 +119,7 @@ impl Book {
     }
 
     pub fn accept_message(&mut self, seq: HostSeq) {
+        self.before_pending_message = Some(self.accepted_since_undo_restore);
         self.accepted_since_undo_restore = true;
         self.snapshot = Some(PendingTurn {
             history: HistoryAnchor::Unknown,
@@ -129,10 +132,19 @@ impl Book {
             EventKind::WorkspaceCreated { workspace } => {
                 self.workspace = Some(workspace.clone());
             }
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Failed { .. },
+            } => {
+                if let Some(previous) = self.before_pending_message.take() {
+                    self.snapshot = None;
+                    self.accepted_since_undo_restore = previous;
+                }
+            }
             EventKind::NativeTurnStarted {
                 history,
                 turn_start,
             } => {
+                self.before_pending_message = None;
                 self.snapshot = Some(PendingTurn {
                     history: history.clone(),
                     turn_start: *turn_start,
@@ -155,6 +167,7 @@ impl Book {
                 self.active.push(checkpoint.id);
                 self.checkpoints.insert(checkpoint.id, checkpoint.clone());
                 self.snapshot = None;
+                self.before_pending_message = None;
             }
             EventKind::UndoStarted {
                 checkpoint,
@@ -167,13 +180,28 @@ impl Book {
                     history: history.clone(),
                 }));
             }
+            EventKind::UndoRevertDispatched { checkpoint } if matches!(&self.recovery, Some(Recovery::Native(undo)) if undo.selected == *checkpoint) =>
+            {
+                self.recovery = self.recovery.take().map(|phase| match phase {
+                    Recovery::Native(undo) => Recovery::Verify(undo),
+                    other => other,
+                });
+            }
+            EventKind::UndoFailed { checkpoint, .. } if matches!(&self.recovery, Some(Recovery::Verify(undo)) if undo.selected == *checkpoint) =>
+            {
+                self.recovery = self.recovery.take().map(|phase| match phase {
+                    Recovery::Verify(undo) => Recovery::Native(undo),
+                    other => other,
+                });
+            }
             EventKind::UndoHistoryRestored { history, .. } => {
+                self.before_pending_message = None;
                 self.accepted_since_undo_restore = false;
                 self.resume = Some(history.clone());
                 self.recovery = self.recovery.take().map(|phase| match phase {
-                    Recovery::Native(undo) | Recovery::Files(undo) => {
-                        Recovery::Files(undo)
-                    }
+                    Recovery::Native(undo)
+                    | Recovery::Verify(undo)
+                    | Recovery::Files(undo) => Recovery::Files(undo),
                 });
             }
             EventKind::TurnsUndone { restored, .. } => {
@@ -226,6 +254,11 @@ impl Book {
         self.recovery.is_some()
     }
 
+    #[must_use]
+    pub const fn awaiting_revert(&self) -> bool {
+        matches!(&self.recovery, Some(Recovery::Verify(_)))
+    }
+
     pub fn plan_undo(
         &self,
         selected: CheckpointId,
@@ -233,9 +266,11 @@ impl Book {
         turn_running: bool,
     ) -> Result<UndoPlan, Rejection> {
         match &self.recovery {
-            Some(phase @ (Recovery::Native(undo) | Recovery::Files(undo)))
-                if undo.selected == selected =>
-            {
+            Some(
+                phase @ (Recovery::Native(undo)
+                | Recovery::Verify(undo)
+                | Recovery::Files(undo)),
+            ) if undo.selected == selected => {
                 Ok(UndoPlan::Resume(phase.clone()))
             }
             Some(_) => Err(Rejection::UndoInProgress),
@@ -506,6 +541,25 @@ mod tests {
             }
         );
         Ok(())
+    }
+
+    #[test]
+    fn replay_discards_a_failed_message_without_a_native_turn() {
+        let events = [
+            workspace(),
+            checkpoint(0),
+            event(EventKind::UserMessage {
+                text: String::from("not delivered"),
+                by: proto::ClientName(String::from("phone")),
+            }),
+            event(EventKind::TurnCompleted {
+                outcome: proto::TurnOutcome::Failed {
+                    message: String::from("send rejected"),
+                },
+            }),
+        ];
+        assert!(Book::replay(&events[..3]).plan_snapshot().is_some());
+        assert!(Book::replay(&events).plan_snapshot().is_none());
     }
 
     #[test]

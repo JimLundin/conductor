@@ -18,8 +18,8 @@ use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
 pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    CheckpointId, ClientName, CommandResult, HostPath, HostSeq, Models,
-    SessionId, TaskId, Workspace,
+    CheckpointId, ClientName, CommandId, CommandResult, EventKind, HostPath,
+    HostSeq, Models, SessionId, TaskId, Workspace,
 };
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -55,14 +55,15 @@ struct SessionMsg {
 #[derive(Debug)]
 enum Request {
     Order(Order),
-    Relaunch(Order, Instance),
+    Relaunch(Order, Instance, std::sync::Arc<()>),
     Finish(ClientName),
 }
 
 #[derive(Default)]
-struct SummaryWatch {
+struct FinishRun {
     subscription: Option<Subscription>,
     until: Option<Instant>,
+    landing: Option<(HostSeq, Option<u64>)>,
 }
 
 /// What the actor takes next.
@@ -155,8 +156,10 @@ impl Session {
         &self,
         order: Order,
         adapter: Instance,
+        reservation: std::sync::Arc<()>,
     ) -> Result<CommandResult, Stopped> {
-        self.request(Request::Relaunch(order, adapter)).await
+        self.request(Request::Relaunch(order, adapter, reservation))
+            .await
     }
 
     pub(crate) async fn finish(
@@ -216,9 +219,15 @@ impl Actor {
             Happening::Request(SessionMsg { request, reply }) => {
                 let order = match request {
                     Request::Order(order) => order,
-                    Request::Relaunch(order, adapter) => {
+                    Request::Relaunch(order, adapter, reservation) => {
                         self.runtime.get_or_insert_with(|| adapter.start());
-                        order
+                        self.reply = Some(reply);
+                        let input = Input::Order(
+                            order.session(uuid::Uuid::new_v4().to_string()),
+                        );
+                        let result = self.react(core, input).await;
+                        drop(reservation);
+                        return result;
                     }
                     Request::Finish(_) => return Err(Stopped {}),
                 };
@@ -252,7 +261,7 @@ impl Actor {
         let (mut finish, first) = Finish::new(self.id, by);
         let mut effects = VecDeque::from([first]);
         let mut now = core;
-        let mut watch = SummaryWatch::default();
+        let mut watch = FinishRun::default();
         while let Some(effect) = effects.pop_front() {
             let (stepped, input) =
                 self.finish_effect(now, effect, &mut watch).await?;
@@ -268,7 +277,7 @@ impl Actor {
         &mut self,
         core: Core,
         effect: FinishEffect,
-        watch: &mut SummaryWatch,
+        watch: &mut FinishRun,
     ) -> Result<(Core, Option<FinishInput>), Stopped> {
         match effect {
             FinishEffect::Order(order) => {
@@ -291,7 +300,7 @@ impl Actor {
     async fn perform_finish(
         &mut self,
         effect: FinishEffect,
-        watch: &mut SummaryWatch,
+        watch: &mut FinishRun,
     ) -> Result<Option<FinishInput>, Stopped> {
         let input = match effect {
             FinishEffect::History => {
@@ -315,14 +324,15 @@ impl Actor {
             }
             FinishEffect::ReadHome => FinishInput::Home(self.told.home.shown()),
             FinishEffect::Ready { workspace, branch } => FinishInput::Ready(
-                crate::home::ready_issue_branch(
-                    Path::new(&workspace.repository.0),
-                    &branch,
-                )
-                .await,
+                self.ready_landing(&workspace, &branch, watch).await?,
             ),
             FinishEffect::Land { workspace, branch } => {
-                FinishInput::Landed(workspace::land(&workspace, &branch).await)
+                let (attempt, completed) = watch.landing.ok_or(Stopped {})?;
+                let landed = match completed {
+                    Some(commits) => Ok(commits),
+                    None => workspace::land(&workspace, &branch, attempt).await,
+                };
+                FinishInput::Landed(landed)
             }
             FinishEffect::Push { workspace, branch } => FinishInput::Pushed(
                 workspace::push_branch(&workspace, &branch).await,
@@ -333,7 +343,18 @@ impl Actor {
                 by,
                 commits,
             } => {
-                self.told.home.finished(issue, summary, by, commits).await?;
+                let note_id = watch.landing.map(|(attempt, _)| {
+                    let namespace = uuid::Uuid::from_u128(self.id.0);
+                    let name = format!("conductor finish note {}", attempt.0);
+                    CommandId(
+                        uuid::Uuid::new_v5(&namespace, name.as_bytes())
+                            .as_u128(),
+                    )
+                });
+                self.told
+                    .home
+                    .finished(issue, summary, by, commits, note_id)
+                    .await?;
                 FinishInput::Noted
             }
             FinishEffect::Order(_) | FinishEffect::NextEvent => {
@@ -343,12 +364,42 @@ impl Actor {
         Ok(Some(input))
     }
 
+    async fn ready_landing(
+        &self,
+        workspace: &Workspace,
+        branch: &str,
+        run: &mut FinishRun,
+    ) -> Result<Result<(), String>, Stopped> {
+        self.log.barrier().await?;
+        let history = self.log.finish_history(self.id).await?;
+        let attempt = history
+            .iter()
+            .rev()
+            .find(|event| matches!(event.kind, EventKind::FinishStarted))
+            .map(|event| event.seq)
+            .ok_or(Stopped {})?;
+        match workspace::landing_receipt(workspace, branch, attempt).await {
+            Ok(completed) => {
+                run.landing = Some((attempt, completed));
+                if completed.is_some() {
+                    return Ok(Ok(()));
+                }
+            }
+            Err(reason) => return Ok(Err(reason)),
+        }
+        Ok(crate::home::ready_issue_branch(
+            Path::new(&workspace.repository.0),
+            branch,
+        )
+        .await)
+    }
+
     // A concurrent command can stage summary events in its transaction.
     // Keep taking orders so its receipt can publish those events.
     async fn summary_event(
         &mut self,
         mut core: Core,
-        watch: &mut SummaryWatch,
+        watch: &mut FinishRun,
     ) -> Result<(Core, FinishInput), Stopped> {
         loop {
             let subscription = watch.subscription.as_mut().ok_or(Stopped {})?;
@@ -508,7 +559,7 @@ async fn next_event(runtime: &mut Option<Runtime>) -> Option<Event> {
     }
 }
 
-impl SummaryWatch {
+impl FinishRun {
     async fn subscribe(
         &mut self,
         log: &Log,

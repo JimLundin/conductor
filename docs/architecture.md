@@ -700,7 +700,8 @@ standards and issues, cloned on every host. Built so far are home steps
   `IssueCreated { issue }`, with an id the host mints, an `open` status
   and the branch `issue/<id>`. `ChangeIssue { issue, change }` makes one
   small change (`IssueChange`): the title, the body, the labels, the
-  priority or the status; an item checked, added or removed, by its text;
+  priority or the status; an item added, or checked or removed against
+  the checklist snapshot shown to the person;
   or a note, which the host dates and signs `<host> · <client>`. A change
   rewrites only its own lines of the file, so comments, keys, tables and
   sections a person added stay as written (Windows line ends become
@@ -708,8 +709,10 @@ standards and issues, cloned on every host. Built so far are home steps
   the saved response. A local storage failure returns `IssueNotSaved`
   without keeping a receipt, so the same command identity can retry when
   storage recovers. When the host dies after safely recording a new
-  issue and before committing its receipt, a retry returns the original ID. Before acknowledging a change, the host saves its stable
-  command identity and the previous field value in
+  issue and before committing its receipt, a retry recovers its original
+  ID from the queue or the commit that added the issue file, even if the
+  current document is missing or malformed. Before acknowledging a
+  change, the host saves its stable command identity and the previous field value in
   `<data>/home-edits.state`. The host writes and commits the issue file
   locally, then attempts to push. If the queue cannot be saved, the
   command returns `IssueNotSaved`; if a later commit or push fails,
@@ -719,10 +722,10 @@ standards and issues, cloned on every host. Built so far are home steps
   clone to upstream, replays the pending edits in order, then pushes.
   If the fetch fails, the host replays against its local commits so
   subsequent edits can appear immediately while offline. Original
-  queues carry no note identities. Their migration uses local committed
-  note counts to retain each queued occurrence and saves these counts
-  before replay can reset the clone. When local history lacks that
-  evidence, existing matching notes can count as already delivered.
+  queues carry no note identities. Their migration uses the upstream
+  baseline to distinguish older matching notes from queued occurrences,
+  and saves the occurrence numbers and markers before replay. Replaying
+  a migrated note records its marker for later recovery.
   Replay uses the fetched upstream file's last commit time to resolve
   conflicting fields. The issue file records which logical edits have
   been resolved, including edits whose value was already present and
@@ -1008,6 +1011,9 @@ each) when it starts and again after a sign-in from the app, so a sign-in
 from the app shows at once, while one made on the terminal while the host
 runs, or one that expires, shows only after a restart.
 
+WSL1 does not support Claude?s command sandbox. The host reports that commands
+can read the gateway token when the sandbox is unavailable.
+
 Optional host setup on Linux and WSL2: `sudo apt install bubblewrap
 socat`. With them Claude runs its commands in its own sandbox and the
 host turns on its environment scrub, so Claude's commands can't read a
@@ -1075,9 +1081,9 @@ first one built. The others in the table become more forms.
   the scrub on macOS always, on Linux and WSL2 when `bwrap` and `socat`
   are on `PATH`, and never on native Windows, where Claude runs commands
   unsandboxed ([sandboxing], verified). Without it, a stored gateway makes
-  the host log "Claude's commands can read the gateway token; install
-  bubblewrap and socat to sandbox them" at start and when the gateway is
-  set. The base URL reaches commands either way; it is an address, not a
+  the host log "the CLI's commands can read the gateway token; install
+  bubblewrap and socat to sandbox them" with `provider=Claude`
+  at start and when the gateway is set. The base URL reaches commands either way; it is an address, not a
   secret. The live canary in `tools/live-host.sh` has the agent count the
   token in a command's environment: 0 with the sandbox, and 1 without it,
   reported as `leak=unprotected` (observed both). A change applies to the
@@ -1238,10 +1244,10 @@ beside its events. They are not events: the log neither stores nor replays
 them, and a new subscription starts with the sign-ins running then, taken
 in the same registry turn as the feed of later steps. The sign-in commands
 keep no receipt (`Ledger::Unrecorded`), and their answers are `Accepted`
-or a rejection, so nothing in the ledger holds a code. `SignInCode`'s
-`Debug` prints `SignInCode(..)`, so the command log line shows no code; the
-host logs each step's name and a failure's reason, never the link, the
-output or a code. The end-to-end test signs in with a wrong and a right
+or a rejection, so nothing in the ledger holds a code. The command log
+records the operation and command ID on receipt, and the ID and result
+category on completion. The host logs each step's name and a failure's
+reason, never the link, the output or a code. The end-to-end test signs in with a wrong and a right
 code on the stand-in (`fixtures/fake-login.py`) and finds neither in the
 captured log, the stored events and receipts, or any file of the data dir;
 the browser run checks the host log, the data dir and the page's storage
@@ -1789,8 +1795,13 @@ client catches up from its cursors.
   approvals, interrupts, reconnects, epochs and two Codex sessions on one
   server. It checks rendered session state through the client's `HostView`.
 - **Browser e2e** (`tools/e2e-browser.sh`): the web app in Chromium and
-  WebKit against the real daemon and the fake CLIs, with screenshots in
-  `docs/p1/screens/`.
+  WebKit against the real daemon and the fake CLIs, with the run record and
+  screenshots under `target/e2e-browser/` and failure screenshots under
+  `target/e2e-failures/`. Set `E2E_RECORD` to choose another run record
+  directory. Historical examples in `docs/p1/` use the earlier trace format. The
+  commit gate checks
+  generated recordings against their builders and checks retained run
+  records for public IP addresses.
 - **Manual smoke** (`docs/p1/smoke.md`): real CLIs, the desktop browser and
   the iPhone on mobile data.
 

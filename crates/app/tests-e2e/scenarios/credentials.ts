@@ -53,7 +53,62 @@ const forms = async (run: Run): Promise<void> => {
 	);
 };
 
+const checkIndexedDb = async (run: Run): Promise<void> => {
+	const origin = "http://indexed-db.test/";
+	const page = await run.browser.newPage();
+	try {
+		await page.route(origin, (route) =>
+			route.fulfill({ body: "<html></html>", contentType: "text/html" }),
+		);
+		await page.goto(origin);
+		const testKey = "synthetic-record-key";
+		const testValue = "synthetic-record-value";
+		await page.evaluate(
+			({ key, value }) =>
+				new Promise<void>((resolve, reject) => {
+					const open = indexedDB.open("example");
+					open.addEventListener(
+						"upgradeneeded",
+						() => {
+							open.result
+								.createObjectStore("records")
+								.add({ marker: value }, key);
+						},
+						{ once: true },
+					);
+					open.addEventListener(
+						"success",
+						() => {
+							open.result.close();
+							resolve();
+						},
+						{ once: true },
+					);
+					open.addEventListener(
+						"error",
+						() =>
+							reject(
+								new Error("test database could not be populated", {
+									cause: open.error,
+								}),
+							),
+						{ once: true },
+					);
+				}),
+			{ key: testKey, value: testValue },
+		);
+		const kept = await pageKeeps(page);
+		tools(run).check(
+			kept.includes(testKey) && kept.includes(testValue),
+			"the storage check sees IndexedDB record keys and values",
+		);
+	} finally {
+		await page.close();
+	}
+};
+
 export const credentials = async (run: Run): Promise<void> => {
+	await checkIndexedDb(run);
 	const { page, out, patience, log } = run;
 	const { check, back } = tools(run);
 	await page.getByRole("button", { name: "Credentials" }).click();
@@ -106,7 +161,7 @@ export const credentials = async (run: Run): Promise<void> => {
 	);
 	check(
 		(await gatewayRegion.getByText("conductord login").innerText()) ===
-			`To sign it in again on conductor's terminal: conductord login claude --account ${GATEWAY}`,
+			`To sign it in again on conductor's terminal: conductord login claude --account='${GATEWAY}'`,
 		"the instance names its account for a sign-in on the host",
 	);
 	check(

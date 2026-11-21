@@ -46,13 +46,11 @@ fn adoption(from: &InstanceId, to: &InstanceId) -> AccountAdoption {
     }
 }
 
-#[test]
-fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
-    let data = Data::new()?;
-    let catalog = Catalog::default();
-    let from = InstanceId::own(Provider::Codex);
-    let to = InstanceId::named(Provider::Codex, "signed-in");
-    let unrelated = InstanceId::named(Provider::Codex, "unrelated");
+fn adoption_roster(
+    from: &InstanceId,
+    to: &InstanceId,
+    unrelated: &InstanceId,
+) -> (Roster, Instance) {
     let mut roster = Roster::default();
     roster.0.insert(
         from.clone(),
@@ -73,6 +71,17 @@ fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
         ..Instance::default()
     };
     roster.0.insert(unrelated.clone(), settings.clone());
+    (roster, settings)
+}
+
+#[test]
+fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
+    let data = Data::new()?;
+    let catalog = Catalog::default();
+    let from = InstanceId::own(Provider::Codex);
+    let to = InstanceId::named(Provider::Codex, "signed-in");
+    let unrelated = InstanceId::named(Provider::Codex, "unrelated");
+    let (roster, settings) = adoption_roster(&from, &to, &unrelated);
     let (store, _) = Store::open(&data.0, catalog.clone())?;
     store.save(&roster)?;
 
@@ -92,6 +101,43 @@ fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
                 }
             )
             .is_err()
+    );
+    assert!(!data.0.join("adoption").try_exists()?);
+    for (id, value) in [(&from, "signed-in home"), (&to, "old home")] {
+        assert_eq!(
+            fs::read_to_string(data.private("home", id).join("marker"))?,
+            value
+        );
+    }
+    assert_eq!(fs::read_to_string(&blocked)?, "blocked");
+
+    fs::remove_file(&blocked)?;
+    let staged = data.0.join("work/.adoption-source");
+    fs::write(&staged, "interrupted")?;
+    assert!(
+        store
+            .adopt(&store.signing(&from)?, adoption(&from, &to))
+            .is_err()
+    );
+    fs::remove_file(staged)?;
+    fs::write(&blocked, "new conflict")?;
+    let recovery =
+        Store::open(&data.0, catalog.clone()).err().ok_or_else(|| {
+            anyhow::anyhow!("recovery should expose the conflict")
+        })?;
+    assert!(
+        recovery
+            .to_string()
+            .contains("resolve the destination conflict")
+    );
+    assert_eq!(fs::read_to_string(&blocked)?, "new conflict");
+    assert_eq!(
+        fs::read_to_string(data.0.join("home/.adoption-backup/marker"))?,
+        "old home"
+    );
+    assert_eq!(
+        fs::read_to_string(data.private("work", &from).join("marker"))?,
+        "signed-in work"
     );
     assert!(!data.private("home", &from).try_exists()?);
     assert_eq!(
@@ -137,7 +183,9 @@ fn retry_installs_the_staged_directory_after_the_destination_is_recreated()
     data.put("work", &from, "signed-in files")?;
 
     let destination = data.private("work", &to);
-    fs::write(&destination, "blocked")?;
+    data.put("work", &to, "previous destination")?;
+    let backup = data.0.join("work/.adoption-backup");
+    fs::write(&backup, "blocked")?;
     assert!(
         store
             .adopt(
@@ -149,15 +197,13 @@ fn retry_installs_the_staged_directory_after_the_destination_is_recreated()
             )
             .is_err()
     );
-    fs::remove_file(&destination)?;
-    data.put("work", &to, "previous destination")?;
-    let backup = data.0.join("work/.adoption-backup");
+    fs::remove_file(&backup)?;
     fs::rename(&destination, &backup)?;
     data.put("work", &to, "recreated destination")?;
 
     let blocked = data.0.join("credentials.new");
     fs::create_dir(&blocked)?;
-    assert!(store.resume_adoption().is_err());
+    assert!(store.resume_adoption(|_| true).is_err());
     assert_eq!(
         fs::read_to_string(backup.join("marker"))?,
         "previous destination"
@@ -167,7 +213,7 @@ fn retry_installs_the_staged_directory_after_the_destination_is_recreated()
         "signed-in files"
     );
     fs::remove_dir(blocked)?;
-    assert!(store.resume_adoption()?.is_some());
+    assert!(store.resume_adoption(|_| true)?.is_some());
     assert!(!backup.try_exists()?);
     Ok(())
 }
@@ -273,17 +319,17 @@ fn committed_adoption_returns_its_roster_while_cleanup_can_retry()
     let backup = data.0.join("home/.adoption-backup");
     fs::write(&backup, "cleanup blocked")?;
     let committed = store
-        .resume_adoption()?
+        .resume_adoption(|_| true)?
         .ok_or_else(|| anyhow::anyhow!("pending adoption"))?;
     assert!(committed.roster.of(&from).is_none());
     assert!(committed.roster.of(&to).is_some());
 
     fs::remove_file(backup)?;
     let retried = store
-        .resume_adoption()?
+        .resume_adoption(|_| true)?
         .ok_or_else(|| anyhow::anyhow!("cleanup pending"))?;
     assert_eq!(retried.roster, committed.roster);
-    assert!(store.resume_adoption()?.is_none());
+    assert!(store.resume_adoption(|_| true)?.is_none());
     let (_, stored) = Store::open(&data.0, catalog)?;
     assert_eq!(stored, Stored::Opened(committed.roster));
     assert_eq!(
@@ -364,7 +410,11 @@ fn competing_adoptions_and_a_stale_credential_update_keep_each_account()
         ..Instance::default()
     };
     roster.0.insert(credential_id.clone(), added.clone());
-    store.save_change(&roster, &Change::Added(credential_id.clone()))?;
+    store.save_change(
+        &roster,
+        &Change::Added(credential_id.clone()),
+        None::<(_, fn(&Roster) -> proto::Instances)>,
+    )?;
 
     let (_, stored) = Store::open(&data.0, catalog)?;
     let Stored::Opened(roster) = stored else {
@@ -424,5 +474,63 @@ fn adoption_keeps_the_source_of_another_sign_in() -> anyhow::Result<()> {
             contents
         );
     }
+    Ok(())
+}
+
+#[test]
+fn signing_distinguishes_empty_and_unreadable_rosters() -> anyhow::Result<()> {
+    let data = Data::new()?;
+    let (store, _) = Store::open(&data.0, Catalog::default())?;
+    store.save(&Roster::default())?;
+    let id = InstanceId::own(Provider::Codex);
+    let empty = store
+        .signing(&id)
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("empty roster"))?;
+    assert!(empty.to_string().contains("this host has no instance"));
+
+    data.put("home", &id, "keep this home")?;
+    let credentials = data.0.join("credentials");
+    fs::write(&credentials, "synthetic damaged roster")?;
+    let unreadable = store
+        .signing(&id)
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("unreadable roster"))?;
+    assert!(
+        unreadable
+            .to_string()
+            .contains("does not open with the store key")
+    );
+    assert_eq!(fs::read_to_string(credentials)?, "synthetic damaged roster");
+    assert_eq!(
+        fs::read_to_string(data.private("home", &id).join("marker"))?,
+        "keep this home"
+    );
+    Ok(())
+}
+
+#[test]
+fn removal_result_survives_reopening_before_the_command_receipt()
+-> anyhow::Result<()> {
+    let data = Data::new()?;
+    let catalog = Catalog::default();
+    let id = proto::CommandId(17);
+    let instance = InstanceId::named(Provider::Codex, "removed");
+    let (store, _) = Store::open(&data.0, catalog.clone())?;
+    let mut roster = Roster::default();
+    roster.0.insert(instance.clone(), Instance::default());
+    store.save(&roster)?;
+    let expected = proto::Instances::default();
+    store.save_change(
+        &Roster::default(),
+        &Change::Removed(instance.clone()),
+        Some((id, |_: &Roster| expected.clone())),
+    )?;
+    drop(store);
+
+    let (store, stored) = Store::open(&data.0, catalog)?;
+    assert!(stored.roster(&Catalog::default()).of(&instance).is_none());
+    assert_eq!(store.removal(id), Some(expected));
+    assert_eq!(store.removal(proto::CommandId(18)), None);
     Ok(())
 }

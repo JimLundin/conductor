@@ -50,12 +50,8 @@ pub fn log(note: &Note) {
         Note::Unreadable { provider, error } => {
             tracing::error!(target: "agent", ?provider, %error, "reading stdout failed");
         }
-        Note::NotJson {
-            provider,
-            error,
-            line,
-        } => {
-            tracing::warn!(target: "agent", ?provider, %error, %line, "printed a line that is not JSON");
+        Note::NotJson { provider, error } => {
+            tracing::warn!(target: "agent", ?provider, %error, "printed a line that is not JSON");
         }
         Note::Unmapped { provider, frame } => {
             tracing::trace!(target: "agent", ?provider, %frame, "unmapped frame");

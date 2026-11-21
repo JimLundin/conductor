@@ -27,11 +27,12 @@ use proto::{
     Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
     CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
     EventKind, Feed, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
-    Instances, IssueChange, IssueFields, IssueStatus, Kept, ModelChoice,
-    ModelId, Models, Priority, ProjectId, Provider, Question, QuestionOption,
-    Rejection, RequestId, Resolution, Roster, Selection, SessionId, StartAt,
-    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Task, TaskId,
-    TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Instances, IssueChange, IssueFields, IssueId, IssueStatus, Kept,
+    ModelChoice, ModelId, Models, Priority, ProjectId, Provider, Question,
+    QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
+    SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
+    SubagentOutcome, Task, TaskId, TaskStatus, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
@@ -75,6 +76,11 @@ impl Fixture {
 
     async fn shutdown(self) -> Fallible {
         Ok(self.host.shutdown().await?)
+    }
+
+    async fn shutdown_with_client(self, link: HostLink) -> Fallible {
+        link.stop().await?;
+        self.shutdown().await
     }
 
     async fn epoch(&self) -> Fallible<Epoch> {
@@ -459,6 +465,42 @@ fn models() -> Models {
 }
 
 #[tokio::test]
+async fn incomplete_hello_expires_while_established_clients_keep_working()
+-> Fallible {
+    let fx = host().await?;
+    let (established, _updates) = fx.connect().await?;
+    let endpoint = endpoint().await?;
+    let incomplete = endpoint
+        .connect(fx.target.addr.clone(), proto::ALPN)
+        .await?;
+    let (mut hello, _reply) = incomplete.open_bi().await?;
+    hello.write_all(&[0, 0]).await?;
+
+    let command = || {
+        start(
+            Provider::Claude,
+            Path::new("/no-such-conductor-test-directory"),
+        )
+    };
+    assert_eq!(
+        established.send(command()).await?,
+        CommandResult::Rejected(Rejection::NoSuchDirectory)
+    );
+    let reason = tokio::time::timeout(STEP, incomplete.closed()).await?;
+    assert!(matches!(
+        reason,
+        iroh::endpoint::ConnectionError::ApplicationClosed(_)
+    ));
+    assert_eq!(
+        established.send(command()).await?,
+        CommandResult::Rejected(Rejection::NoSuchDirectory)
+    );
+    established.stop().await?;
+    endpoint.close().await;
+    fx.shutdown().await
+}
+
+#[tokio::test]
 async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
 -> Fallible {
     let fx = host().await?;
@@ -531,8 +573,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
             .map(|case| case.result)
             .collect::<Vec<CommandResult>>()
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 async fn feed_session(
@@ -589,8 +630,7 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
         (1..=observed.len() as u64).map(HostSeq).collect::<Vec<_>>()
     );
     reader.stop().await?;
-    writer.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(writer).await
 }
 
 #[tokio::test]
@@ -623,8 +663,7 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() -> Fallible {
             .collect::<Vec<_>>()
     );
     reader.stop().await?;
-    writer.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(writer).await
 }
 
 #[tokio::test]
@@ -669,8 +708,7 @@ async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message()
         fold(seen.iter().chain(&live).cloned().collect()),
         fold(seen.into_iter().chain(rest).collect())
     );
-    resumed.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(resumed).await
 }
 
 #[tokio::test]
@@ -1147,8 +1185,7 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
         ]
         .concat()
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -1187,8 +1224,7 @@ async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
         send(&link, CommandBody::Continue { session }).await?,
         CommandResult::Rejected(Rejection::SessionRemoved)
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -1247,8 +1283,7 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() -> Fallible
     );
 
     assert_ping_turn(&link, &mut updates, session).await?;
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// The recording starts the turn only once `release` exists, and the fake
@@ -1275,8 +1310,7 @@ async fn held_interrupt(
         ]
         .concat()
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -1326,8 +1360,7 @@ async fn an_interrupt_withdraws_the_open_request() -> Fallible {
         send(&link, resolve(session, 1, Decision::Approve)).await?,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 fn answer(session: SessionId, request: u64, words: &[&str]) -> CommandBody {
@@ -1488,8 +1521,7 @@ async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
         1
     );
     link.stop().await?;
-    desk.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(desk).await
 }
 
 /// Codex asks with `requestUserInput`, answered as an RPC result keyed by
@@ -1525,8 +1557,7 @@ async fn a_codex_question_is_answered_by_its_question_id() -> Fallible {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// Approving for the session adds the CLI's suggested rule for the session
@@ -1599,8 +1630,7 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
             .count(),
         1
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// Codex takes `acceptForSession` for a command, which the stand-in waits
@@ -1667,8 +1697,7 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
             ]),
         )
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// An interrupt withdraws an open question, as it does an approval: Claude
@@ -1731,8 +1760,7 @@ async fn an_interrupt_withdraws_an_open_question() -> Fallible {
         })
         .collect::<Vec<RequestState>>();
     assert_eq!(questions, [RequestState::Resolved(Resolution::Withdrawn)]);
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -1770,8 +1798,7 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end()
     );
     std::fs::write(dir.join("release"), "")?;
     assert_eq!(sent_to_agent(&dir)?.matches("\"answers\"").count(), 0);
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// The stand-in stops reading after `initialize`, so the message can't
@@ -1814,8 +1841,7 @@ async fn a_message_the_agent_never_gets_fails_its_turn() -> Fallible {
         send(&link, message(session, "hi")).await?,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -1852,8 +1878,7 @@ async fn a_missing_claude_binary_closes_the_session() -> Fallible {
         send(&link, message(session, "hi")).await?,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// Two sessions' turns run at once on one app-server: each session's events
@@ -1930,8 +1955,7 @@ async fn two_codex_sessions_share_one_server() -> Fallible {
             Item::TurnCompleted(TurnOutcome::Completed),
         ]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -1962,8 +1986,7 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs()
         [delta("\n"), turn_end(TurnOutcome::Interrupted)]
     );
     assert_ping_turn(&link, &mut updates, session).await?;
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// Codex withdraws the open request only after the interrupted turn ends,
@@ -2029,8 +2052,7 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
             .count(),
         0
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// Both thread starts must have answered before the app-server exits.
@@ -2076,8 +2098,7 @@ async fn the_app_server_exiting_closes_every_codex_session() -> Fallible {
         kinds_until(&mut updates, Until::Ready).await?,
         opening(Provider::Codex, &dir)
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// The states before the link reported an error, and the error.
@@ -2111,8 +2132,7 @@ async fn a_wrong_token_is_refused_and_never_goes_live() -> Fallible {
             String::from("the host refused us: wrong token")
         )
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// What iroh logs when an endpoint is dropped before anyone closed it.
@@ -2301,6 +2321,7 @@ fn install_fake(data: &Path, cli: agents::pin::Cli, fake: &Path) -> Fallible {
         std::env::consts::OS,
         std::env::consts::ARCH,
         std::env::consts::EXE_SUFFIX,
+        cfg!(target_env = "musl"),
     )
     .ok_or("no CLI pin on this platform")?;
     let path = data
@@ -2680,8 +2701,7 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() -> Fallible
         (welcomed, data.join("credentials").exists()),
         (Some(with_claude(no_credential())), false)
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -2736,8 +2756,7 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
             gateway(probed())
         ))
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 #[tokio::test]
@@ -2766,8 +2785,7 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
             false
         )
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 fn probe(data: &Path, id: &InstanceId, response: &str) -> Fallible {
@@ -2920,8 +2938,7 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
             true,
         )
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 fn start_with(
@@ -3046,8 +3063,7 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers()
             .collect::<Vec<(Option<String>, Option<String>)>>(),
         [(Some(String::from("small")), Some(String::from("low")))]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 const THOUGHT: &str = "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n";
@@ -3133,8 +3149,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
         }]
     );
     late.stop().await?;
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 /// `probe-subagent-todo.jsonl`: the main agent's `Agent` call runs a
@@ -3221,8 +3236,7 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
             }])
         ))
     );
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 /// Through the owner's gateway, with betas off, the CLI streams an empty
@@ -3261,8 +3275,7 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure()
             }])
         )
     );
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 /// A Claude CLI killed mid-turn closes the session; `Continue` starts it
@@ -3357,8 +3370,7 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
             status: String::from("signal: 9 (SIGKILL)"),
         })]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// A `Continue` whose transcript is gone leaves the session closed, with
@@ -3389,8 +3401,7 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason()
             },
         }]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 const COUNTING: &str = "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward—I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won’t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!";
@@ -3465,8 +3476,7 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() -> Fallible {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// A new credential that doesn't offer a Codex session's model: `Continue`
@@ -3525,8 +3535,7 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
             Some(serde_json::json!("low"))
         )]
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// The thread, model and effort a `thread/start` or `thread/resume` names.
@@ -3641,8 +3650,7 @@ async fn a_killed_codex_server_continues_the_thread() -> Fallible {
             )]),
         )
     );
-    link.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(link).await
 }
 
 /// The original ticket and live link survive a real transport restart. The
@@ -4288,8 +4296,7 @@ async fn unsupported_stored_credentials_are_refused_by_both_instances_and_can_be
         codex_offer(send(&phone, codex_provider("replacement-key")).await?),
         Some(codex_gateway())
     );
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 #[tokio::test]
@@ -4317,8 +4324,7 @@ async fn a_new_account_with_failed_discovery_stays_unavailable_until_a_successfu
         send(&phone, claude_gateway()).await?,
         CommandResult::Instances(with_api_claude(gateway(probed())))
     );
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 #[tokio::test]
@@ -4563,6 +4569,57 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     assert_eq!(history.iter().find(|event| event.session != session), None);
     restarted_phone.close().await;
     second.shutdown().await
+}
+
+#[tokio::test]
+async fn removal_rebuilds_its_missing_command_receipt_after_restart() -> Fallible
+{
+    let data = data_dir("removal-receipt")?;
+    let instance = InstanceId::named(Provider::Claude, "removed account");
+    let mut roster = proto::Roster::default();
+    roster
+        .0
+        .insert(instance.clone(), proto::Instance::default());
+    disk::seed_roster(&data, &roster)?;
+
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
+    let address = first.address()?;
+    let target = first.target.clone();
+    let endpoint = endpoint().await?;
+    let conn = authenticated(&endpoint, &target).await?;
+    let removal = proto::Command {
+        id: proto::CommandId(72),
+        body: CommandBody::RemoveInstance {
+            instance: instance.clone(),
+        },
+    };
+    let receipt = retry_command(&conn, &removal).await?;
+    assert!(
+        matches!(&receipt, CommandResult::Instances(instances) if !instances.0.contains_key(&instance))
+    );
+    first.shutdown().await?;
+
+    // The roster is durable. Dropping the separate receipt restores the
+    // on-disk state of an interruption between those two commits.
+    assert!(disk::roster(&data)?.of(&instance).is_none());
+    assert_eq!(disk::remove_receipt(&data, removal.id)?, receipt);
+
+    let second = durable_host(&data, address).await?;
+    let restarted = authenticated(&endpoint, &target).await?;
+    assert_eq!(retry_command(&restarted, &removal).await?, receipt);
+    let later = proto::Command {
+        id: proto::CommandId(73),
+        body: removal.body.clone(),
+    };
+    assert_eq!(
+        retry_command(&restarted, &later).await?,
+        CommandResult::Rejected(Rejection::UnknownInstance)
+    );
+    second.shutdown().await?;
+    assert_eq!(disk::remove_receipt(&data, removal.id)?, receipt);
+    endpoint.close().await;
+    Ok(())
 }
 
 /// Restarts the durable host `first` on `address` and waits for `phone`
@@ -5138,14 +5195,22 @@ async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_r
     )
     .await?;
     events_until(&mut updates, Until::Undone).await?;
-    let after = fold(second.history().await?);
+    let history = second.history().await?;
+    assert!(host::registry::running(&history).contains(&session));
+    let after = fold(history);
     assert_eq!(user_items(&after, session), 1);
     assert_eq!(
         after.sessions.get(&session).map(|found| found.undo.clone()),
         Some(client::host_view::UndoState::Undone)
     );
+    let third = restart(second, &data, address, &phone, &mut updates).await?;
+    let recovered = third.history().await?;
+    assert!(matches!(
+        of(session, &recovered).last(),
+        Some(EventKind::SessionClosed { reason }) if *reason == host::restore::restarted()
+    ));
     phone.stop().await?;
-    second.shutdown().await
+    third.shutdown().await
 }
 
 fn undo_failure(result: CommandResult) -> Fallible<String> {
@@ -5708,8 +5773,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             .map(|found| (found.effort, found.tasks.clone())),
         Some((Some(Effort::Low), lists.last().cloned().unwrap_or_default()))
     );
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 /// A Codex turn's plan updates become the session's tasks as Claude's
@@ -5761,8 +5825,7 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
             Vec::from([None, Some(serde_json::Value::from("high"))]),
         )
     );
-    phone.stop().await?;
-    fx.shutdown().await
+    fx.shutdown_with_client(phone).await
 }
 
 /// A host restart keeps the session's tasks and its effort: `Continue`
@@ -6269,15 +6332,14 @@ fn assert_no_code_kept(log_path: &Path, data: &Path) -> Fallible {
     assert_eq!(
         (
             logged.contains(SIGN_IN_CODE) || logged.contains(WRONG_CODE),
-            logged.matches("SignInCode(..)").count(),
+            logged.matches(r#"operation="submit_sign_in_code""#).count(),
             logged
                 .matches("sign-in instance=claude step=signed in")
                 .count(),
             holding(data, SIGN_IN_CODE)?,
             holding(data, WRONG_CODE)?,
         ),
-        (false, 2, 1, Vec::new(), Vec::new()),
-        "{logged}"
+        (false, 2, 1, Vec::new(), Vec::new())
     );
     for live_only in ["Opening browser to sign in", "code_challenge=CHALLENGE"]
     {
@@ -7186,6 +7248,88 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     Ok(())
 }
 
+#[tokio::test]
+async fn progress_catches_up_retries_and_deduplicates_after_restart() -> Fallible
+{
+    let land = homeland("progress-recovery")?;
+    let (first, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = first.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    link.stop().await?;
+    first.shutdown().await?;
+    record_pending_progress(&data, &land, issue)?;
+
+    let blocked = data.join("home-edits.new");
+    std::fs::create_dir(&blocked)?;
+    let (log, guard) = capture_log("progress-recovery")?;
+    let second = serve(endpoint().await?, claude_plugins(), &data).await?;
+    wait_for_diagnostic(&log, "progress note will retry").await?;
+    assert!(!pushed_issue(&land, issue)?.contains("Done: synthetic progress."));
+    std::fs::remove_dir(&blocked)?;
+    wait_for_diagnostic(&log, "noted a turn's progress").await?;
+    second.shutdown().await?;
+    drop(guard);
+    let _ = captured(&log)?;
+
+    disk::rewind_progress_cursor(&data)?;
+    let (log, guard) = capture_log("progress-replay")?;
+    let third = serve(endpoint().await?, claude_plugins(), &data).await?;
+    wait_for_diagnostic(&log, "noted a turn's progress").await?;
+    assert_eq!(
+        pushed_issue(&land, issue)?
+            .matches("Done: synthetic progress.")
+            .count(),
+        1,
+    );
+    third.shutdown().await?;
+    drop(guard);
+    let _ = captured(&log)?;
+    Ok(())
+}
+
+fn record_pending_progress(
+    data: &Path,
+    land: &Homeland,
+    issue: proto::IssueId,
+) -> Fallible {
+    disk::append(
+        data,
+        SessionId(101),
+        [
+            EventKind::SessionCreated {
+                instance: instance(Provider::Claude),
+                provider: Provider::Claude,
+                directory: HostPath(land.roots.display().to_string()),
+                by: ClientName(String::from("phone")),
+                model: None,
+                effort: None,
+            },
+            EventKind::OnIssue { issue },
+            EventKind::TasksChanged {
+                tasks: vec![Task {
+                    id: TaskId(101),
+                    holder: SessionId(101),
+                    text: String::from("synthetic progress"),
+                    status: TaskStatus::Completed,
+                }],
+            },
+            turn_end(TurnOutcome::Completed),
+        ],
+    )
+}
+
+async fn wait_for_diagnostic(path: &Path, expected: &str) -> Fallible {
+    tokio::time::timeout(STEP, async {
+        while !std::fs::read_to_string(path)?.contains(expected) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        Ok::<(), std::io::Error>(())
+    })
+    .await??;
+    Ok(())
+}
+
 fn assert_issue_notes(home: &proto::Home, issue: proto::IssueId, count: usize) {
     assert_eq!(
         alpha_issues(home)
@@ -7247,6 +7391,63 @@ async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
 }
 
 #[tokio::test]
+async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
+-> Fallible {
+    let land = homeland("issue-create-receipt-gap")?;
+    let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
+    let (link, mut updates) = fx.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let phone = endpoint().await?;
+    let connection = authenticated(&phone, &fx.target).await?;
+    let command = proto::Command {
+        id: proto::CommandId(172),
+        body: create_issue("Published before the receipt"),
+    };
+    let created = retry_command(&connection, &command).await?;
+    let CommandResult::IssueCreated { issue } = created else {
+        return Err(format!("expected an issue, got {created:?}").into());
+    };
+    let _ = home_until(&mut updates, |home| {
+        home.unpushed == 0 && !alpha_issues(home).is_empty()
+    })
+    .await?;
+    phone.close().await;
+    link.stop().await?;
+    fx.shutdown().await?;
+
+    {
+        let database = redb::Database::open(data.join("conductor.redb"))?;
+        let write = database.begin_write()?;
+        let receipts =
+            redb::TableDefinition::<u128, Vec<u8>>::new("command_receipts");
+        let _ = write.open_table(receipts)?.remove(command.id.0)?;
+        write.commit()?;
+    }
+    let writer = home_writer(&land)?;
+    let relative = format!("projects/alpha/issues/{}.md", issue_name(issue));
+    std::fs::write(writer.join(relative), "Unparseable issue document")?;
+    push_home_edit(&writer)?;
+
+    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
+    let (link, mut updates) = reopened.connect().await?;
+    accepted(&link, CommandBody::SyncHome).await?;
+    let _ = home_until(&mut updates, |home| {
+        home.projects.len() == 2 && alpha_issues(home).is_empty()
+    })
+    .await?;
+    let before = git(&land.home_bare, &["rev-parse", "HEAD"])?;
+    let phone = endpoint().await?;
+    let connection = authenticated(&phone, &reopened.target).await?;
+    assert_eq!(retry_command(&connection, &command).await?, created);
+    assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, before);
+    phone.close().await;
+    link.stop().await?;
+    reopened.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
     let land = homeland("legacy-issue-queue")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
@@ -7280,16 +7481,27 @@ async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
 async fn an_original_queue_keeps_two_notes_identical_to_an_older_note()
 -> Fallible {
     let original = b"\x02\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
-    legacy_identical_notes("original-identical-notes", original).await
+    legacy_identical_notes("original-identical-notes", original, 2).await
 }
 
 #[tokio::test]
 async fn a_versioned_queue_recovers_markerless_identical_notes() -> Fallible {
     let versioned = b"\x80\x00\x01\x02\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
-    legacy_identical_notes("versioned-identical-notes", versioned).await
+    legacy_identical_notes("versioned-identical-notes", versioned, 2).await
 }
 
-async fn legacy_identical_notes(name: &str, queue: &[u8]) -> Fallible {
+#[tokio::test]
+async fn a_legacy_note_saved_before_its_commit_keeps_its_own_occurrence()
+-> Fallible {
+    let queue = b"\x02\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
+    legacy_identical_notes("uncommitted-legacy-note", queue, 1).await
+}
+
+async fn legacy_identical_notes(
+    name: &str,
+    queue: &[u8],
+    local_commits: usize,
+) -> Fallible {
     let land = homeland(name)?;
     let issue = proto::IssueId(42);
     let stem = issue_name(issue);
@@ -7312,7 +7524,7 @@ async fn legacy_identical_notes(name: &str, queue: &[u8]) -> Fallible {
     fx.shutdown().await?;
 
     let checkout = data.join("home-repo");
-    for count in [1, 2] {
+    for count in 1..=local_commits {
         let local = note.repeat(count);
         std::fs::write(checkout.join(&relative), format!("{upstream}{local}"))?;
         git(
@@ -7592,7 +7804,7 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
         recording_file("claude-worktrees.jsonl"),
         alpha.join("stdout.jsonl"),
     )?;
-    let (fx, _) =
+    let (fx, data) =
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
     let (link, mut updates) = fx.connect().await?;
@@ -7672,6 +7884,63 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
     );
     link.stop().await?;
     fx.shutdown().await?;
+    assert_finish_recovery(&land, &data, issue, session).await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
+}
+
+async fn assert_finish_recovery(
+    land: &Homeland,
+    data: &Path,
+    issue: IssueId,
+    session: SessionId,
+) -> Fallible {
+    let project = land.roots.join("apps/alpha");
+    let branch = format!("refs/heads/issue/{}", issue_name(issue));
+    let old_tip = git(&project, &["rev-parse", &branch])?;
+    let receipt = git(
+        &project,
+        &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            "refs/conductor-landed/",
+        ],
+    )?;
+    assert_eq!(
+        receipt, old_tip,
+        "the original landing durably recorded its result"
+    );
+    let old_home = git(&land.home_bare, &["rev-parse", "HEAD"])?;
+    let old_issue = pushed_issue(land, issue)?;
+    disk::lose_terminal_finish(data, session)?;
+    let reopened = serve(endpoint().await?, claude_plugins(), data).await?;
+    let history = reopened.history().await?;
+    let recovered = of(session, &history);
+    assert!(recovered.contains(&EventKind::FinishInterrupted));
+    assert!(
+        !recovered
+            .iter()
+            .any(|event| matches!(event, EventKind::SessionFinished { .. }))
+    );
+
+    let (link, mut updates) = reopened.connect().await?;
+    let _ =
+        home_until(&mut updates, |home| !alpha_issues(home).is_empty()).await?;
+    accepted(&link, CommandBody::FinishSession { session }).await?;
+    let events = events_until(&mut updates, Until::Finished).await?;
+    assert!(of(session, &events).iter().any(|event| matches!(
+        event,
+        EventKind::SessionFinished {
+            finished: proto::Finished::Landed { commits: 2, .. }
+        }
+    )));
+    assert_eq!(git(&project, &["rev-parse", &branch])?, old_tip);
+    assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, old_home);
+    assert_eq!(pushed_issue(land, issue)?, old_issue);
+    assert_eq!(
+        send(&link, CommandBody::FinishSession { session }).await?,
+        CommandResult::Rejected(Rejection::AlreadyFinished)
+    );
+    link.stop().await?;
+    reopened.shutdown().await
 }

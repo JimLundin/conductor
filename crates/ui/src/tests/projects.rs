@@ -2,10 +2,10 @@
 
 use client::link::{LinkState, Update};
 use proto::{
-    AuthToken, ChecklistItem, Checkout, Cloning, CommandBody, CommandResult,
-    EventKind, Feed, Home, HomeSync, HostPath, Issue, IssueChange, IssueFields,
-    IssueId, IssueStatus, Origin, Priority, Project, ProjectId, Rejection,
-    StartAt, Ticket, Workspace,
+    AuthToken, ChecklistAction, ChecklistItem, Checkout, Cloning, CommandBody,
+    CommandResult, EventKind, Feed, Home, HomeSync, HostPath, Issue,
+    IssueChange, IssueFields, IssueId, IssueStatus, Origin, Priority, Project,
+    ProjectId, Rejection, StartAt, Ticket, Workspace,
 };
 
 use super::{
@@ -920,7 +920,8 @@ fn issue_screen(state: &crate::State) -> Option<IssueScreen> {
 }
 
 #[test]
-fn an_issue_shows_its_fields_and_sends_each_change() {
+fn an_issue_shows_its_fields_and_sends_each_change() -> Result<(), &'static str>
+{
     let shown = issue_screen(&on_issue());
     assert_eq!(
         shown.as_ref().map(|issue| (
@@ -946,12 +947,15 @@ fn an_issue_shows_its_fields_and_sends_each_change() {
             Some("open"),
         ))
     );
-    let (_, effects) = run(
+    let row = shown
+        .and_then(|issue| issue.checklist.get(1).cloned())
+        .ok_or("the issue should have a second row")?;
+    let (draft, effects) = run(
         on_issue(),
         Vec::from([
             Intent::Issue(IssueIntent::SetStatus(text("in-progress"))),
             Intent::Issue(IssueIntent::SetStatus(text("open"))),
-            Intent::Issue(IssueIntent::Toggle(1)),
+            Intent::Issue(row.toggle),
             Intent::Issue(IssueIntent::TypeItem(text("docs"))),
             Intent::Issue(IssueIntent::AddItem),
             Intent::Issue(IssueIntent::TypeNote(text("  "))),
@@ -968,14 +972,30 @@ fn an_issue_shows_its_fields_and_sends_each_change() {
         sent(&effects),
         [
             change(IssueChange::Status(IssueStatus::InProgress)),
-            change(IssueChange::Check {
-                item: text("browser"),
-                done: true,
+            change(IssueChange::Checklist {
+                snapshot: issue(OPENED, "Sign in", IssueStatus::Open).checklist,
+                index: 1,
+                action: ChecklistAction::SetDone(true),
             }),
             change(IssueChange::AddItem(text("docs"))),
             change(IssueChange::Note(text("halfway"))),
         ]
     );
+    let replies = effects
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Send { reply, .. } => {
+                Some(Intent::Replied(reply, Ok(CommandResult::Accepted)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let (settled, _) = run(draft, replies);
+    assert_eq!(
+        issue_screen(&settled).map(|view| (view.item, view.note)),
+        Some((String::new(), String::new()))
+    );
+    Ok(())
 }
 
 #[test]
@@ -1004,7 +1024,222 @@ fn editing_an_issue_sends_its_fields_once_saved() {
         ],
         "the body didn't change, so it isn't sent"
     );
-    assert_eq!(issue_screen(&edited).map(|issue| issue.editing), Some(None));
+    assert!(
+        issue_screen(&edited)
+            .and_then(|issue| issue.editing)
+            .is_some()
+    );
+    let replies = effects
+        .into_iter()
+        .filter_map(|effect| match effect {
+            Effect::Send { reply, .. } => {
+                Some(Intent::Replied(reply, Ok(CommandResult::Accepted)))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let (settled, _) = run(edited, replies);
+    assert_eq!(
+        issue_screen(&settled).map(|issue| issue.editing),
+        Some(None)
+    );
+}
+
+fn refresh_issue(update: impl FnOnce(&mut Issue)) -> Intent {
+    let mut alpha = issue_project(Vec::from([at(ALPHA, Origin::Found)]));
+    if let Some(open) = alpha.issues.first_mut() {
+        update(open);
+    }
+    Intent::Link(
+        HOST,
+        Update::Feed(Feed::Home(home(HomeSync::Synced, Vec::from([alpha])))),
+    )
+}
+
+#[test]
+fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
+-> Result<(), &'static str> {
+    let (draft, _) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::Edit),
+            Intent::Issue(IssueIntent::TypeTitle(text("New title"))),
+            refresh_issue(|issue| issue.body = text("Remote body edit")),
+            Intent::Issue(IssueIntent::TypeLabels(text("new labels"))),
+        ]),
+    );
+    let (saving, effects) =
+        run(draft, Vec::from([Intent::Issue(IssueIntent::Save)]));
+    assert_eq!(
+        sent(&effects),
+        [
+            CommandBody::ChangeIssue {
+                issue: OPENED,
+                change: IssueChange::Title(text("New title"))
+            },
+            CommandBody::ChangeIssue {
+                issue: OPENED,
+                change: IssueChange::Labels(vec![text("new labels")])
+            },
+        ]
+    );
+    let mut replies = effects.into_iter().filter_map(|effect| match effect {
+        Effect::Send { reply, .. } => Some(reply),
+        _ => None,
+    });
+    let title = replies.next().ok_or("no title reply")?;
+    let labels = replies.next().ok_or("no labels reply")?;
+    let (settled, _) = run(
+        saving,
+        Vec::from([
+            Intent::Replied(title, Err(text("Issue title was refused"))),
+            Intent::Replied(labels, Ok(CommandResult::Accepted)),
+        ]),
+    );
+    let screen = issue_screen(&settled).ok_or("no issue screen")?;
+    assert_eq!(
+        screen.submission_errors,
+        vec![text("Title: Issue title was refused")]
+    );
+    assert_eq!(screen.body, "Remote body edit");
+    assert_eq!(
+        screen.editing.map(|draft| draft.title),
+        Some(text("New title"))
+    );
+    let (_, retry) =
+        run(settled, Vec::from([Intent::Issue(IssueIntent::Save)]));
+    assert_eq!(
+        sent(&retry),
+        [CommandBody::ChangeIssue {
+            issue: OPENED,
+            change: IssueChange::Title(text("New title")),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn transport_failures_keep_submitted_drafts_and_later_input()
+-> Result<(), &'static str> {
+    let (saving, effects) = run(
+        on_issue(),
+        Vec::from([
+            Intent::Issue(IssueIntent::TypeItem(text("Checklist draft"))),
+            Intent::Issue(IssueIntent::AddItem),
+            Intent::Issue(IssueIntent::TypeNote(text("Note draft"))),
+            Intent::Issue(IssueIntent::AddNote),
+            Intent::Issue(IssueIntent::Edit),
+            Intent::Issue(IssueIntent::TypeTitle(text("Issue draft"))),
+            Intent::Issue(IssueIntent::Save),
+        ]),
+    );
+    let mut intents = Vec::from([
+        connection(HOST, LinkState::Disconnected, None),
+        Intent::Issue(IssueIntent::TypeNote(text("More recent note draft"))),
+    ]);
+    intents.extend(effects.into_iter().filter_map(|effect| match effect {
+        Effect::Send { reply, .. } => {
+            Some(Intent::Replied(reply, Err(text("The host disconnected"))))
+        }
+        _ => None,
+    }));
+    let (settled, _) = run(saving, intents);
+    let screen = issue_screen(&settled).ok_or("no issue screen")?;
+    assert_eq!(screen.item, "Checklist draft");
+    assert_eq!(screen.note, "More recent note draft");
+    assert_eq!(
+        screen.editing.map(|draft| draft.title),
+        Some(text("Issue draft"))
+    );
+    assert_eq!(screen.submission_errors.len(), 3);
+
+    let (_, retries) = run(
+        settled,
+        Vec::from([
+            connection(HOST, LinkState::Live, None),
+            Intent::Issue(IssueIntent::AddItem),
+            Intent::Issue(IssueIntent::AddNote),
+        ]),
+    );
+    let submitted_changes = sent(&retries)
+        .into_iter()
+        .filter_map(|body| match body {
+            CommandBody::ChangeIssue { change, .. } => Some(change),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        submitted_changes,
+        [
+            IssueChange::AddItem(text("Checklist draft")),
+            IssueChange::Note(text("More recent note draft")),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_rendered_checklist_row_uses_its_snapshot_after_a_refresh()
+-> Result<(), &'static str> {
+    let (initial, _) = run(
+        on_issue(),
+        Vec::from([refresh_issue(|issue| {
+            issue.checklist = vec![
+                ChecklistItem {
+                    done: false,
+                    text: text("repeat")
+                };
+                2
+            ];
+        })]),
+    );
+    let row = issue_screen(&initial)
+        .and_then(|issue| issue.checklist.get(1).cloned())
+        .ok_or("missing duplicate row")?;
+    let (_, effects) = run(
+        initial,
+        Vec::from([
+            refresh_issue(|issue| {
+                let _ = issue.checklist.remove(0);
+            }),
+            Intent::Issue(row.toggle),
+            Intent::Issue(row.remove),
+        ]),
+    );
+    assert_eq!(
+        sent(&effects),
+        [
+            CommandBody::ChangeIssue {
+                issue: OPENED,
+                change: IssueChange::Checklist {
+                    snapshot: vec![
+                        ChecklistItem {
+                            done: false,
+                            text: text("repeat")
+                        };
+                        2
+                    ],
+                    index: 1,
+                    action: ChecklistAction::SetDone(true),
+                }
+            },
+            CommandBody::ChangeIssue {
+                issue: OPENED,
+                change: IssueChange::Checklist {
+                    snapshot: vec![
+                        ChecklistItem {
+                            done: false,
+                            text: text("repeat")
+                        };
+                        2
+                    ],
+                    index: 1,
+                    action: ChecklistAction::Remove,
+                }
+            },
+        ]
+    );
+    Ok(())
 }
 
 #[test]
@@ -1290,20 +1525,57 @@ fn an_issue_marks_its_priority_and_sends_only_a_new_one() {
 }
 
 #[test]
-fn an_added_item_or_note_empties_its_field() {
-    let (added, _) = run(
+fn an_accepted_item_or_note_empties_its_field() -> Result<(), &'static str> {
+    let item = Intent::Issue(IssueIntent::AddItem);
+    let note = Intent::Issue(IssueIntent::AddNote);
+    let (pending, effects) = run(
         on_issue(),
         Vec::from([
             Intent::Issue(IssueIntent::TypeItem(text("docs"))),
-            Intent::Issue(IssueIntent::AddItem),
+            item.clone(),
             Intent::Issue(IssueIntent::TypeNote(text("halfway"))),
-            Intent::Issue(IssueIntent::AddNote),
+            note.clone(),
         ]),
     );
-    assert_eq!(
-        issue_screen(&added).map(|issue| (issue.item, issue.note)),
-        Some((String::new(), String::new()))
+    let fields = |state: &crate::State| {
+        issue_screen(state).map(|issue| (issue.item, issue.note))
+    };
+    assert_eq!(fields(&pending), Some((text("docs"), text("halfway"))));
+    let (blocked, duplicates) = run(pending, Vec::from([item, note]));
+    assert_eq!(sent(&duplicates), []);
+
+    let accept = |change| {
+        effects.iter().find_map(|effect| match effect {
+            Effect::Send {
+                body:
+                    CommandBody::ChangeIssue {
+                        change: submitted, ..
+                    },
+                reply,
+                ..
+            } if submitted == &change => Some(Intent::Replied(
+                reply.clone(),
+                Ok(CommandResult::Accepted),
+            )),
+            _ => None,
+        })
+    };
+    let (item_accepted, _) = run(
+        blocked,
+        Vec::from([accept(IssueChange::AddItem(text("docs")))
+            .ok_or("item was not submitted")?]),
     );
+    assert_eq!(
+        fields(&item_accepted),
+        Some((String::new(), text("halfway")))
+    );
+    let (both_accepted, _) = run(
+        item_accepted,
+        Vec::from([accept(IssueChange::Note(text("halfway")))
+            .ok_or("note was not submitted")?]),
+    );
+    assert_eq!(fields(&both_accepted), Some((String::new(), String::new())));
+    Ok(())
 }
 
 #[test]

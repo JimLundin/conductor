@@ -1,4 +1,5 @@
 use alloc::{boxed::Box, collections::BTreeMap};
+use sha2::{Digest, Sha256};
 
 use proto::{
     CommandId, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
@@ -6,9 +7,9 @@ use proto::{
 };
 
 use super::{
-    Applied, Change, Edit, EditData, EditIdentity, Lines, Mode, apply,
-    changing, date, edit_marker, file, finished, folder, listed, message, name,
-    opening, parse, signer, started, was,
+    Applied, Change, Edit, EditData, EditIdentity, Mode, apply, changing, date,
+    edit_marker, file, finished, folder, listed, message, name, opening, parse,
+    signer, started, was,
 };
 use crate::prelude::*;
 
@@ -394,35 +395,38 @@ impl Edit {
             .map(|text| (self.data.issue, self.data.rendered_note(text)))
     }
 
-    /// Original queues have no identities. A committed local file normally
-    /// contains every queued note, so excess matches are older occurrences.
+    /// A legacy queue starts after the notes already in its upstream
+    /// baseline. Local commits may contain only a prefix of the queue.
     pub fn migrate_legacy_notes(
         edits: &mut [Self],
-        local: &BTreeMap<IssueId, String>,
+        upstream: &BTreeMap<IssueId, String>,
     ) {
-        let mut occurrences = BTreeMap::<_, (usize, usize)>::new();
-        for key in edits.iter().filter_map(Self::legacy_note_key) {
-            occurrences.entry(key).or_default().0 += 1;
-        }
-        for (&id, text) in local {
+        let mut occurrences = BTreeMap::new();
+        for (&id, text) in upstream {
             if let Ok(issue) = parse(&name(id), text) {
                 for note in issue.notes {
-                    if let Some((_, committed)) =
-                        occurrences.get_mut(&(id, note))
-                    {
-                        *committed += 1;
-                    }
+                    *occurrences.entry((id, note)).or_insert(0) += 1;
                 }
             }
         }
-        for (queued, committed) in occurrences.values_mut() {
-            *committed = committed.saturating_sub(*queued);
-        }
+        let mut queued = BTreeMap::new();
         for edit in edits {
             if let Some(key) = edit.legacy_note_key() {
-                let (_, next) = occurrences.entry(key).or_default();
-                *next += 1;
-                edit.identity = EditIdentity::NoteOccurrence(*next);
+                let ordinal = occurrences.entry(key.clone()).or_insert(0);
+                *ordinal += 1;
+                let (issue, note) = key;
+                let digest = Sha256::digest(note.as_bytes());
+                let hash = data_encoding::HEXLOWER.encode(&digest);
+                let nth =
+                    queued.entry((issue, note, edit.data.at)).or_insert(0);
+                *nth += 1;
+                edit.identity = EditIdentity::MigratedNote {
+                    ordinal: *ordinal,
+                    marker: format!(
+                        "# conductor-legacy-note: {hash} {} {nth}",
+                        edit.data.at
+                    ),
+                };
             }
         }
     }
@@ -483,6 +487,18 @@ pub enum SessionUpdate {
 }
 
 impl SessionUpdate {
+    /// A resumed finish uses the original command identity for its note.
+    #[must_use]
+    pub const fn command_for(
+        change: &IssueChange,
+        note_id: Option<CommandId>,
+    ) -> Option<CommandId> {
+        match change {
+            IssueChange::Note(_) => note_id,
+            _ => None,
+        }
+    }
+
     /// Issues the next change against the current listing. A finish
     /// consults the listing again after the note has been delivered.
     #[must_use]
@@ -492,7 +508,7 @@ impl SessionUpdate {
         id: IssueId,
     ) -> Option<IssueChange> {
         let update = core::mem::replace(self, Self::Done);
-        let movement = match update {
+        match update {
             Self::Finished {
                 summary: Some(text),
                 landed,
@@ -501,19 +517,19 @@ impl SessionUpdate {
                     summary: None,
                     landed,
                 };
-                return Some(IssueChange::Note(text));
+                Some(IssueChange::Note(text))
             }
-            Self::Started => started,
-            Self::Done => return None,
-            Self::Finished { landed, .. } => {
-                return status(issues, id)
-                    .and_then(|known| finished(known, landed))
-                    .map(IssueChange::Status);
+            Self::Done => None,
+            Self::Started | Self::Finished { summary: None, .. } => {
+                let from = status(issues, id)?;
+                let to = match update {
+                    Self::Started => started(from),
+                    Self::Finished { landed, .. } => finished(from, landed),
+                    Self::Done => None,
+                }?;
+                Some(IssueChange::Transition { from, to })
             }
-        };
-        status(issues, id)
-            .and_then(movement)
-            .map(IssueChange::Status)
+        }
     }
 }
 
@@ -531,10 +547,19 @@ fn status(
 /// A Git observation needed to decide how to ready an issue branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteProbe {
-    Origin { branch: String },
-    Fetch { refspec: String, tracking: String },
+    Origin {
+        branch: String,
+    },
+    Fetch {
+        branch: String,
+        refspec: String,
+        tracking: String,
+    },
     Tracking(String),
-    Reachability,
+    Reachability {
+        branch: String,
+        failure: String,
+    },
     Observed(super::Remote),
 }
 
@@ -558,22 +583,36 @@ impl RemoteProbe {
                     branch.replacen("refs/heads/", "refs/remotes/origin/", 1);
                 Self::Fetch {
                     refspec: format!("+{branch}:{tracking}"),
+                    branch,
                     tracking,
                 }
             }
             (Self::Fetch { tracking, .. }, Ok(_)) => Self::Tracking(tracking),
-            (Self::Fetch { .. }, Err(_)) => Self::Reachability,
+            (Self::Fetch { branch, .. }, Err(failure)) => {
+                Self::Reachability { branch, failure }
+            }
             (Self::Tracking(_), Ok(commit)) => {
                 Self::Observed(Remote::At(commit))
             }
-            (Self::Reachability, Err(reason)) => {
+            (Self::Reachability { .. }, Err(reason)) => {
                 Self::Observed(Remote::Unreachable(reason))
             }
+            (Self::Reachability { branch, failure }, Ok(refs)) => {
+                let exists = refs.lines().any(|line| {
+                    line.split_once('\t')
+                        .is_some_and(|(_, name)| name == branch)
+                });
+                Self::Observed(if exists {
+                    Remote::PresentUnfetched(failure)
+                } else {
+                    Remote::Absent
+                })
+            }
+            (Self::Tracking(_), Err(reason)) => {
+                Self::Observed(Remote::PresentUnfetched(reason))
+            }
             (Self::Observed(remote), _) => Self::Observed(remote),
-            (
-                Self::Origin { .. } | Self::Reachability | Self::Tracking(_),
-                _,
-            ) => Self::Observed(Remote::Absent),
+            (Self::Origin { .. }, Err(_)) => Self::Observed(Remote::Absent),
         }
     }
 }
@@ -594,17 +633,14 @@ impl<'a> Listing<'a> {
     }
 
     #[must_use]
-    pub fn opened_by(
-        id: CommandId,
-        files: Vec<(String, Result<String, String>)>,
-    ) -> Option<IssueId> {
-        let marker = edit_marker(id);
-        files.into_iter().find_map(|(stem, current)| {
-            let text = current.ok()?;
-            let lines = Lines::of(&text).ok()?;
-            lines.has_marker(&marker).then_some(())?;
-            parse(&stem, &text).ok().map(|issue| issue.id)
-        })
+    pub fn creation_pattern(id: CommandId) -> String {
+        format!("^{}$", edit_marker(id))
+    }
+
+    #[must_use]
+    pub fn created_from_path(path: &str) -> Option<IssueId> {
+        let stem = path.rsplit('/').next()?.strip_suffix(".md")?;
+        ulid::Ulid::from_string(stem).ok().map(|id| IssueId(id.0))
     }
 
     #[must_use]

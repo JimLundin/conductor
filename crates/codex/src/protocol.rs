@@ -3,6 +3,8 @@
 //! we write is built here. Methods and fields we do not model are ignored or
 //! passed on as `Unknown`.
 
+use alloc::collections::BTreeSet;
+
 use agents::{Exit, PlanStep};
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
@@ -34,8 +36,8 @@ impl ApprovalId {
     #[must_use]
     pub fn of(id: &RequestId) -> Self {
         Self(match id {
-            RequestId::Integer(n) => n.to_string(),
-            RequestId::String(s) => s.clone(),
+            RequestId::Integer(n) => format!("integer:{n}"),
+            RequestId::String(s) => format!("string:{s}"),
         })
     }
 }
@@ -59,7 +61,6 @@ impl RequestId {
 pub enum ApprovalPolicy {
     Untrusted,
     OnRequest,
-    Never,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -67,7 +68,6 @@ pub enum ApprovalPolicy {
 pub enum Sandbox {
     ReadOnly,
     WorkspaceWrite,
-    DangerFullAccess,
 }
 
 /// Settings for `thread/start` and `thread/resume`.
@@ -124,14 +124,15 @@ pub enum ApprovalKind {
     },
     FileChange {
         reason: Option<String>,
-        grant_root: Option<String>,
     },
     Permissions {
         reason: Option<String>,
         asks: Vec<PermissionAsk>,
     },
     /// `item/tool/requestUserInput`; answer it with [`Decision::Answer`].
-    UserInput { questions: Vec<Question> },
+    UserInput {
+        questions: Vec<Question>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,11 +177,6 @@ pub enum ThreadEvent {
         /// The item the request is about, as in its `ToolCall` event.
         item: String,
         kind: ApprovalKind,
-        /// Codex's own decision values, verbatim. For a command this is
-        /// `availableDecisions`; without it, and for a file change, it is the
-        /// four plain decisions the schema allows. Empty for permissions and
-        /// user input, whose answers are not a decision.
-        options: Vec<Value>,
     },
     /// Codex asked for an answer to keep secret (`isSecret`). The host can't
     /// keep one: answers are logged and replayed to every client. So the
@@ -215,16 +211,50 @@ pub enum CodexEvent {
     Unknown(Value),
 }
 
+impl CodexEvent {
+    /// Allowlisted information for logs when the hub cannot route an event.
+    #[must_use]
+    pub const fn diagnostic(&self) -> (&'static str, Option<&ThreadId>) {
+        match self {
+            Self::Thread { thread, event } => (
+                match event {
+                    ThreadEvent::Started => "thread_started",
+                    ThreadEvent::TurnStarted { .. } => "turn_started",
+                    ThreadEvent::TurnCompleted { .. } => "turn_completed",
+                    ThreadEvent::AgentDelta { .. } => "agent_delta",
+                    ThreadEvent::AgentMessage { .. } => "agent_message",
+                    ThreadEvent::ReasoningDelta { .. } => "reasoning_delta",
+                    ThreadEvent::Reasoning { .. } => "reasoning",
+                    ThreadEvent::ToolCall { .. } => "tool_call",
+                    ThreadEvent::ApprovalRequested { .. } => {
+                        "approval_requested"
+                    }
+                    ThreadEvent::SecretQuestionDeclined { .. } => {
+                        "secret_question_declined"
+                    }
+                    ThreadEvent::ApprovalCancelled { .. } => {
+                        "approval_cancelled"
+                    }
+                    ThreadEvent::PlanUpdated { .. } => "plan_updated",
+                    ThreadEvent::SettingsChanged(_) => {
+                        "thread_settings_changed"
+                    }
+                    ThreadEvent::Unknown(_) => "unknown",
+                },
+                Some(thread),
+            ),
+            Self::Exited { .. } => ("exited", None),
+            Self::Unknown(_) => ("unknown", None),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Accept,
     AcceptForSession,
     /// The agent continues the turn without the action.
     Decline,
-    /// Declines and also ends the turn.
-    Cancel,
-    /// Sent verbatim as the JSON-RPC `result`, for a native option.
-    Raw(Value),
     /// The answer to a user-input request, one per question.
     Answer(Vec<Answer>),
 }
@@ -247,7 +277,7 @@ pub enum Inbound {
     /// Answer to a request we sent.
     Response {
         id: RequestId,
-        outcome: Result<Value, String>,
+        outcome: Result<Value, ResponseError>,
     },
     Approval {
         rpc_id: RequestId,
@@ -275,17 +305,6 @@ pub enum Inbound {
     },
 }
 
-/// A JSON-RPC message: a request has an `id` and a `method`, a response an
-/// `id` and a `result` or an `error`, and a notification only a `method`.
-#[derive(Deserialize)]
-struct Envelope {
-    id: Option<Value>,
-    method: Option<String>,
-    params: Option<Value>,
-    result: Option<Value>,
-    error: Option<RpcError>,
-}
-
 /// The server requests we serve, by `method`, with what each asks.
 #[derive(Deserialize)]
 #[serde(tag = "method", content = "params")]
@@ -295,19 +314,13 @@ enum ServerRequest {
         command: Option<String>,
         cwd: Option<String>,
         reason: Option<String>,
-        #[serde(rename = "availableDecisions")]
-        available_decisions: Option<Vec<Value>>,
     },
     #[serde(rename = "item/fileChange/requestApproval")]
-    FileChange {
-        reason: Option<String>,
-        #[serde(rename = "grantRoot")]
-        grant_root: Option<String>,
-    },
+    FileChange { reason: Option<String> },
     #[serde(rename = "item/permissions/requestApproval")]
     Permissions {
         reason: Option<String>,
-        permissions: Value,
+        permissions: PermissionProfile,
     },
     #[serde(rename = "item/tool/requestUserInput")]
     UserInput { questions: Vec<WireQuestion> },
@@ -480,32 +493,38 @@ enum ThreadItem {
 }
 
 /// What a permissions request asks for, as far as we show it.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct PermissionProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
     network: Option<Network>,
     #[serde(rename = "fileSystem")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     file_system: Option<FileSystem>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Network {
+    #[serde(skip_serializing_if = "Option::is_none")]
     enabled: Option<bool>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct FileSystem {
+    #[serde(skip_serializing_if = "Option::is_none")]
     read: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     write: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     entries: Option<Vec<FileSystemEntry>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct FileSystemEntry {
     access: Access,
     path: Place,
 }
 
-#[derive(Deserialize, PartialEq)]
+#[derive(Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 enum Access {
     Read,
@@ -513,7 +532,7 @@ enum Access {
     Deny,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Place {
     Path {
@@ -528,66 +547,63 @@ enum Place {
     },
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 enum SpecialPlace {
     Root,
     Minimal,
     ProjectRoots {
+        #[serde(skip_serializing_if = "Option::is_none")]
         subpath: Option<String>,
     },
     Tmpdir,
     SlashTmp,
     Unknown {
         path: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         subpath: Option<String>,
     },
+}
+
+/// Whether Codex refused the operation or sent an inconclusive reply.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResponseError {
+    Rejected(String),
+    Malformed(&'static str),
 }
 
 /// # Errors
 /// Fails when the line is not JSON.
 pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
-    Ok(match serde_json::from_value::<Envelope>(raw.clone()) {
-        Ok(envelope) => inbound(envelope, raw),
-        Err(_) => Inbound::Event(thread_unknown(raw)),
+    let rpc_id = raw.get("id").and_then(RequestId::read);
+    let rpc_method = raw.get("method").and_then(Value::as_str);
+    Ok(match (rpc_id, rpc_method) {
+        (Some(id), Some(method))
+            if raw.get("result").is_none() && raw.get("error").is_none() =>
+        {
+            request(id, method.to_owned(), raw.get("params").cloned(), raw)
+        }
+        (Some(id), _) => Inbound::Response {
+            id,
+            outcome: response(&raw),
+        },
+        (None, Some(_)) => notification(raw),
+        (None, None) => Inbound::Event(thread_unknown(raw)),
     })
 }
 
-fn inbound(envelope: Envelope, raw: Value) -> Inbound {
-    match (
-        envelope.id.as_ref().and_then(RequestId::read),
-        envelope.method,
-        envelope.result,
-        envelope.error,
-    ) {
-        (Some(id), Some(method), _, _) => {
-            request(id, method, envelope.params, raw)
+fn response(raw: &Value) -> Result<Value, ResponseError> {
+    match (raw.get("method"), raw.get("result"), raw.get("error")) {
+        (None, Some(result), None) => Ok(result.clone()),
+        (None, None, Some(error)) => {
+            Err(serde_json::from_value::<RpcError>(error.clone()).map_or(
+                ResponseError::Malformed("malformed JSON-RPC error response"),
+                |decoded| ResponseError::Rejected(decoded.message),
+            ))
         }
-        (Some(id), None, Some(result), _) => Inbound::Response {
-            id,
-            outcome: Ok(result),
-        },
-        (Some(id), None, None, Some(error)) => Inbound::Response {
-            id,
-            outcome: Err(error.message),
-        },
-        // `"result": null` reads as no result.
-        (Some(id), None, None, None) => Inbound::Response {
-            id,
-            outcome: Ok(Value::Null),
-        },
-        (None, Some(_), _, _) => notification(raw),
-        (None, None, _, _) => Inbound::Event(thread_unknown(raw)),
+        _ => Err(ResponseError::Malformed("malformed JSON-RPC response")),
     }
-}
-
-/// The plain decisions the schema allows, offered when Codex lists none.
-const PLAIN_DECISIONS: &[&str] =
-    &["accept", "acceptForSession", "decline", "cancel"];
-
-fn plain_decisions() -> Vec<Value> {
-    PLAIN_DECISIONS.iter().copied().map(Value::from).collect()
 }
 
 /// What we do with a server request we read.
@@ -601,29 +617,31 @@ enum Served {
 struct Asked {
     shape: AnswerShape,
     kind: ApprovalKind,
-    options: Vec<Value>,
 }
 
-fn permission_asks(profile: PermissionProfile) -> Vec<PermissionAsk> {
+fn permission_asks(profile: &PermissionProfile) -> Vec<PermissionAsk> {
     let network = profile
         .network
+        .as_ref()
         .and_then(|network| network.enabled)
         .and_then(|enabled| enabled.then_some(PermissionAsk::Network));
-    let (read, write) = match profile.file_system {
-        Some(file_system) => (
-            listed(
-                file_system.read.as_deref(),
-                file_system.entries.as_deref(),
-                &Access::Read,
-            ),
-            listed(
-                file_system.write.as_deref(),
-                file_system.entries.as_deref(),
-                &Access::Write,
-            ),
-        ),
-        None => (Vec::new(), Vec::new()),
-    };
+    let (read, write) = profile.file_system.as_ref().map_or_else(
+        || (Vec::new(), Vec::new()),
+        |file_system| {
+            (
+                listed(
+                    file_system.read.as_deref(),
+                    file_system.entries.as_deref(),
+                    &Access::Read,
+                ),
+                listed(
+                    file_system.write.as_deref(),
+                    file_system.entries.as_deref(),
+                    &Access::Write,
+                ),
+            )
+        },
+    );
     network
         .into_iter()
         .chain(
@@ -688,15 +706,22 @@ fn place(target: &Place) -> String {
 
 fn served(request: ServerRequest) -> serde_json::Result<Served> {
     match request {
-        ServerRequest::UserInput { questions } => match questions
-            .iter()
-            .position(|question| question.is_secret == Some(true))
-        {
-            Some(_) => Ok(Served::Secret),
-            None => {
-                asked(ServerRequest::UserInput { questions }).map(Served::Asked)
+        ServerRequest::UserInput { questions } => {
+            if questions
+                .iter()
+                .any(|question| question.is_secret == Some(true))
+            {
+                return Ok(Served::Secret);
             }
-        },
+            let keys = questions
+                .iter()
+                .map(|one| &one.id)
+                .collect::<BTreeSet<&String>>();
+            if keys.len() != questions.len() {
+                return Err(serde::de::Error::custom("duplicate question ID"));
+            }
+            asked(ServerRequest::UserInput { questions }).map(Served::Asked)
+        }
         other => asked(other).map(Served::Asked),
     }
 }
@@ -707,7 +732,6 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
             command,
             cwd,
             reason,
-            available_decisions,
         } => Asked {
             shape: AnswerShape::Command,
             kind: ApprovalKind::Command {
@@ -715,12 +739,10 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
                 cwd,
                 reason,
             },
-            options: available_decisions.unwrap_or_else(plain_decisions),
         },
-        ServerRequest::FileChange { reason, grant_root } => Asked {
+        ServerRequest::FileChange { reason } => Asked {
             shape: AnswerShape::FileChange,
-            kind: ApprovalKind::FileChange { reason, grant_root },
-            options: plain_decisions(),
+            kind: ApprovalKind::FileChange { reason },
         },
         ServerRequest::Permissions {
             reason,
@@ -728,12 +750,9 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
         } => Asked {
             kind: ApprovalKind::Permissions {
                 reason,
-                asks: permission_asks(serde_json::from_value(
-                    permissions.clone(),
-                )?),
+                asks: permission_asks(&permissions),
             },
-            shape: AnswerShape::Permissions(permissions),
-            options: Vec::new(),
+            shape: AnswerShape::Permissions(serde_json::to_value(permissions)?),
         },
         ServerRequest::UserInput { questions } => Asked {
             shape: AnswerShape::UserInput(
@@ -753,7 +772,6 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
                     })
                     .collect(),
             },
-            options: Vec::new(),
         },
     })
 }
@@ -790,7 +808,6 @@ fn request(
                 turn: TurnId(target.turn),
                 item: target.item,
                 kind: asked.kind,
-                options: asked.options,
             },
             rpc_id,
         },
@@ -1190,7 +1207,7 @@ struct TurnInterruptParams {
 
 impl Call {
     #[must_use]
-    pub const fn method(&self) -> &str {
+    pub const fn method(&self) -> &'static str {
         match self {
             Self::Initialize => INITIALIZE,
             Self::ModelList => "model/list",
@@ -1448,7 +1465,6 @@ enum PlainDecision {
     Accept,
     AcceptForSession,
     Decline,
-    Cancel,
 }
 
 /// The JSON-RPC `result` that answers an open request with `decision`.
@@ -1461,8 +1477,9 @@ pub fn answer(
     decision: Decision,
 ) -> Result<Value, AnswerError> {
     match (shape, decision) {
-        (_, Decision::Raw(result)) => Ok(result),
-        (AnswerShape::UserInput(ids), Decision::Answer(answers)) => {
+        (AnswerShape::UserInput(ids), Decision::Answer(answers))
+            if ids.len() == answers.len() =>
+        {
             encoded(UserInputAnswer {
                 answers: ids
                     .iter()
@@ -1475,15 +1492,12 @@ pub fn answer(
             })
         }
         (AnswerShape::UserInput(_), _)
-        | (
-            AnswerShape::Command
-            | AnswerShape::FileChange
-            | AnswerShape::Permissions(_),
-            Decision::Answer(_),
-        ) => Err(AnswerError::NotApplicable),
+        | (AnswerShape::Permissions(_), Decision::Answer(_)) => {
+            Err(AnswerError::NotApplicable)
+        }
         (AnswerShape::Command | AnswerShape::FileChange, chosen) => {
             encoded(PlainAnswer {
-                decision: plain(&chosen),
+                decision: plain(&chosen)?,
             })
         }
         (AnswerShape::Permissions(requested), Decision::Accept) => {
@@ -1498,7 +1512,7 @@ pub fn answer(
                 scope: GrantScope::Session,
             })
         }
-        (AnswerShape::Permissions(_), Decision::Decline | Decision::Cancel) => {
+        (AnswerShape::Permissions(_), Decision::Decline) => {
             encoded(NoPermissions {
                 permissions: Value::Object(serde_json::Map::new()),
             })
@@ -1506,14 +1520,12 @@ pub fn answer(
     }
 }
 
-const fn plain(decision: &Decision) -> PlainDecision {
+const fn plain(decision: &Decision) -> Result<PlainDecision, AnswerError> {
     match decision {
-        Decision::Accept => PlainDecision::Accept,
-        Decision::AcceptForSession => PlainDecision::AcceptForSession,
-        Decision::Decline => PlainDecision::Decline,
-        Decision::Cancel | Decision::Raw(_) | Decision::Answer(_) => {
-            PlainDecision::Cancel
-        }
+        Decision::Accept => Ok(PlainDecision::Accept),
+        Decision::AcceptForSession => Ok(PlainDecision::AcceptForSession),
+        Decision::Decline => Ok(PlainDecision::Decline),
+        Decision::Answer(_) => Err(AnswerError::NotApplicable),
     }
 }
 
@@ -1860,7 +1872,6 @@ mod tests {
             Decision::Accept,
             Decision::AcceptForSession,
             Decision::Decline,
-            Decision::Cancel,
         ]
         .into_iter()
         .map(|decision| answered(shape, decision))
@@ -1869,7 +1880,7 @@ mod tests {
 
     #[test]
     fn command_and_file_change_decisions() -> TestResult<()> {
-        let expected = ["accept", "acceptForSession", "decline", "cancel"]
+        let expected = ["accept", "acceptForSession", "decline"]
             .into_iter()
             .map(|wire| {
                 json(&format!(
@@ -1879,24 +1890,6 @@ mod tests {
             .collect::<serde_json::Result<Vec<Value>>>()?;
         assert_eq!(plain_answers(&AnswerShape::Command)?, expected);
         assert_eq!(plain_answers(&AnswerShape::FileChange)?, expected);
-        Ok(())
-    }
-
-    #[test]
-    fn a_native_option_is_sent_verbatim() -> TestResult<()> {
-        let option = json(
-            r#"{"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls"]}}"#,
-        )?;
-        assert_eq!(
-            answered(
-                &AnswerShape::Command,
-                Decision::Raw(json(&format!(r#"{{"decision": {option}}}"#))?)
-            )?,
-            json(
-                r#"{"id": 0, "result": {"decision":
-                {"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["ls"]}}}}"#
-            )?
-        );
         Ok(())
     }
 
@@ -1926,6 +1919,63 @@ mod tests {
 
     /// Recorded from codex-cli 0.166.0 (probe, 2026-11-12).
     const USER_INPUT: &str = r#"{"method": "item/tool/requestUserInput", "id": 0, "params": {"threadId": "th_1", "turnId": "tu_1", "itemId": "call_1", "questions": [{"id": "preferred_color", "header": "Color", "question": "Which color do you prefer?", "isOther": true, "isSecret": false, "options": [{"label": "Red", "description": "Choose Red."}, {"label": "Blue", "description": "Choose Blue."}]}], "isBlocking": false, "autoResolutionMs": null}}"#;
+
+    #[test]
+    fn question_keys_are_distinct_even_when_display_text_repeats()
+    -> TestResult<()> {
+        let mut request = json(USER_INPUT)?;
+        let questions = request
+            .pointer_mut("/params/questions")
+            .and_then(Value::as_array_mut)
+            .ok_or("missing questions")?;
+        let first = questions.first().ok_or("missing first question")?.clone();
+        questions.push(first.clone());
+        assert!(matches!(
+            parse_line(&request.to_string())?,
+            Inbound::Unsupported {
+                rpc_id: RequestId::Integer(0),
+                ..
+            }
+        ));
+
+        let questions = request
+            .pointer_mut("/params/questions")
+            .and_then(Value::as_array_mut)
+            .ok_or("missing questions")?;
+        let _ = questions.pop();
+        let mut second = first;
+        *second.get_mut("id").ok_or("missing question ID")? =
+            Value::String(String::from("alternate_color"));
+        questions.push(second);
+        let Inbound::Approval { shape, .. } = parse_line(&request.to_string())?
+        else {
+            return Err("expected two answerable questions".into());
+        };
+        let red = Answer(Vec::from([String::from("Red")]));
+        let blue = Answer(Vec::from([String::from("Blue")]));
+        assert!(matches!(
+            answer(&shape, Decision::Answer(Vec::from([red.clone()]))),
+            Err(AnswerError::NotApplicable)
+        ));
+        assert!(matches!(
+            answer(
+                &shape,
+                Decision::Answer(Vec::from([
+                    red.clone(),
+                    blue.clone(),
+                    red.clone()
+                ]))
+            ),
+            Err(AnswerError::NotApplicable)
+        ));
+        assert_eq!(
+            answered(&shape, Decision::Answer(Vec::from([red, blue])))?,
+            json(
+                r#"{"id":0,"result":{"answers":{"preferred_color":{"answers":["Red"]},"alternate_color":{"answers":["Blue"]}}}}"#
+            )?
+        );
+        Ok(())
+    }
 
     #[test]
     fn a_secret_question_is_declined_without_its_content()
@@ -1962,7 +2012,7 @@ mod tests {
         assert_eq!(
             event,
             ThreadEvent::ApprovalRequested {
-                id: ApprovalId(String::from("0")),
+                id: ApprovalId(String::from("integer:0")),
                 turn: TurnId(String::from("tu_1")),
                 item: String::from("call_1"),
                 kind: ApprovalKind::UserInput {
@@ -1982,7 +2032,6 @@ mod tests {
                         selection: Selection::One,
                     }]),
                 },
-                options: Vec::new(),
             }
         );
         assert_eq!(
@@ -2042,7 +2091,7 @@ mod tests {
     }
 
     #[test]
-    fn command_approval_keeps_codex_options_in_order()
+    fn command_approval_accepts_extra_wire_fields()
     -> Result<(), Box<dyn std::error::Error>> {
         let line = r#"{"method":"item/commandExecution/requestApproval","id":0,"params":{"kind":"command","threadId":"th_1","turnId":"tu_1","itemId":"exec-1","startedAtMs":1,"reason":"May I?","command":"printf hi > a.txt","cwd":"/tmp/s","availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["printf"]}},"cancel"]}}"#;
         assert_eq!(
@@ -2052,7 +2101,7 @@ mod tests {
                 thread: ThreadId(String::from("th_1")),
                 shape: AnswerShape::Command,
                 event: ThreadEvent::ApprovalRequested {
-                    id: ApprovalId(String::from("0")),
+                    id: ApprovalId(String::from("integer:0")),
                     turn: TurnId(String::from("tu_1")),
                     item: String::from("exec-1"),
                     kind: ApprovalKind::Command {
@@ -2060,13 +2109,6 @@ mod tests {
                         cwd: Some(String::from("/tmp/s")),
                         reason: Some(String::from("May I?")),
                     },
-                    options: Vec::from([
-                        json(r#""accept""#)?,
-                        json(
-                            r#"{"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["printf"]}}"#
-                        )?,
-                        json(r#""cancel""#)?,
-                    ]),
                 },
             }
         );
@@ -2074,11 +2116,20 @@ mod tests {
     }
 
     #[test]
-    fn a_permissions_request_lists_what_it_asks_for()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let line = r#"{"method":"item/permissions/requestApproval","id":3,"params":{"threadId":"th_1","turnId":"tu_1","itemId":"exec-2","startedAtMs":1,"cwd":"/w","reason":"to fetch","permissions":{"network":{"enabled":true},"fileSystem":{"write":["/home/u/.cargo"],"entries":[{"access":"write","path":{"type":"special","value":{"kind":"slashTmp"}}},{"access":"read","path":{"type":"path","path":"/etc/hosts"}}]}}}}"#;
+    fn a_permissions_request_lists_what_it_asks_for() -> TestResult<()> {
+        let line = r#"{"method":"item/permissions/requestApproval","id":3,"params":{"threadId":"th_1","turnId":"tu_1","itemId":"exec-2","startedAtMs":1,"cwd":"/w","reason":"to fetch","permissions":{"unsupported":true,"network":{"enabled":true,"future":true},"fileSystem":{"write":["/home/u/.cargo"],"entries":[{"access":"write","path":{"type":"special","value":{"kind":"slashTmp"}}},{"access":"read","path":{"type":"path","path":"/etc/hosts"}}]}}}}"#;
+        let inbound = parse_line(line)?;
+        if let Inbound::Approval { shape, .. } = &inbound {
+            let grant = answer(shape, Decision::Accept).ok();
+            assert_eq!(
+                grant,
+                Some(json(
+                    r#"{"permissions":{"network":{"enabled":true},"fileSystem":{"write":["/home/u/.cargo"],"entries":[{"access":"write","path":{"type":"special","value":{"kind":"slashTmp"}}},{"access":"read","path":{"type":"path","path":"/etc/hosts"}}]}},"scope":"turn"}"#
+                )?)
+            );
+        }
         assert_eq!(
-            match parse_line(line)? {
+            match inbound {
                 Inbound::Approval {
                     event:
                         ThreadEvent::ApprovalRequested {

@@ -51,6 +51,15 @@ pub enum Error {
     Refused(String),
     #[error("codex rejected {method}: {message}")]
     Rpc { method: String, message: String },
+    #[error("codex {method}: {detail}")]
+    MalformedResponse {
+        method: String,
+        detail: &'static str,
+    },
+    #[error("could not queue codex {0} within {REQUEST_TIMEOUT:?}")]
+    DispatchTimeout(String),
+    #[error("could not determine the outcome of codex {0} after queuing it")]
+    MutationUnknown(String),
     #[error("codex did not answer {0} within {REQUEST_TIMEOUT:?}")]
     Timeout(String),
     #[error(
@@ -67,6 +76,10 @@ pub enum Error {
     Start(Arc<Self>),
     #[error("the codex hub has stopped")]
     HubStopped,
+    #[error("{}", agents::runtime::NOT_RUNNING)]
+    NotRunning,
+    #[error("the Codex event backlog was exceeded while opening the thread")]
+    EventBacklog,
 }
 
 impl From<Failure<std::io::Error>> for Error {
@@ -79,6 +92,10 @@ impl From<Failure<std::io::Error>> for Error {
             Failure::Protocol(Problem::Rpc { method, message }) => {
                 Self::Rpc { method, message }
             }
+            Failure::Protocol(Problem::MalformedResponse {
+                method,
+                detail,
+            }) => Self::MalformedResponse { method, detail },
             Failure::Protocol(Problem::UnknownApproval(id)) => {
                 Self::UnknownApproval(id)
             }
@@ -179,12 +196,14 @@ impl CodexServer {
     /// `decision` does not fit it.
     async fn respond(
         &self,
+        thread: ThreadId,
         id: ApprovalId,
         decision: Decision,
     ) -> Result<(), Error> {
         let _ = self
             .commands
             .ask(|reply| CommandMsg::Respond {
+                thread,
                 id,
                 decision,
                 reply,
@@ -227,15 +246,23 @@ impl CodexThread {
     /// history. The thread id stays the same. The caller restores files separately.
     ///
     /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
+    /// Fails when the request cannot be queued, Codex exits, or the reply
+    /// reports a protocol failure.
     pub async fn revert(&self, before: TurnId) -> Result<(), Error> {
         let call = Call::ThreadRevert {
             thread: self.id.clone(),
             before,
         };
-        let _ = request(&self.server.commands, call).await?;
-        Ok(())
+        let method = call.method();
+        mutation(
+            method,
+            REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+            self.server
+                .commands
+                .enqueue(|reply| CommandMsg::Request { call, reply }),
+        )
+        .await
     }
 
     /// All native turn ids in chronological order. Fails rather than return
@@ -289,7 +316,7 @@ impl CodexThread {
         id: ApprovalId,
         decision: Decision,
     ) -> Result<(), Error> {
-        self.server.respond(id, decision).await
+        self.server.respond(self.id.clone(), id, decision).await
     }
 }
 
@@ -306,6 +333,25 @@ async fn request(
     .await
     .map_err(|_| Error::Timeout(method))?
     .map_err(|_| Error::Exited)?
+}
+
+async fn mutation(
+    method: &str,
+    dispatch_timeout: Duration,
+    response_timeout: Duration,
+    enqueue: impl Future<
+        Output = Option<tokio::sync::oneshot::Receiver<Result<Value, Error>>>,
+    >,
+) -> Result<(), Error> {
+    let answer = tokio::time::timeout(dispatch_timeout, enqueue)
+        .await
+        .map_err(|_| Error::DispatchTimeout(String::from(method)))?
+        .ok_or(Error::Exited)?;
+    match tokio::time::timeout(response_timeout, answer).await {
+        Ok(Ok(Ok(_))) => Ok(()),
+        Ok(Ok(Err(refusal @ Error::Rpc { .. }))) => Err(refusal),
+        _ => Err(Error::MutationUnknown(String::from(method))),
+    }
 }
 
 fn command(opts: &ServerOptions) -> Command {
@@ -340,7 +386,107 @@ fn start(
 mod tests {
     use std::path::Path;
 
-    use super::{Home, ServerOptions, command};
+    use std::future::{Future, pending, ready};
+    use std::task::{Context, Poll, Waker};
+    use std::time::Duration;
+
+    use serde_json::Value;
+    use tokio::sync::oneshot;
+
+    use super::{Error, Home, ServerOptions, command, mutation};
+
+    #[tokio::test]
+    async fn a_queued_rollback_waits_for_its_reply_after_the_dispatch_deadline()
+    -> Result<(), Error> {
+        let method = "thread/revert";
+        let stalled =
+            mutation(method, Duration::ZERO, Duration::from_secs(1), pending())
+                .await;
+        assert!(
+            matches!(stalled, Err(Error::DispatchTimeout(name)) if name == method)
+        );
+
+        let (reply, answer) = oneshot::channel();
+        let mut queued = std::pin::pin!(mutation(
+            method,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            ready(Some(answer))
+        ));
+        let mut context = Context::from_waker(Waker::noop());
+        assert!(matches!(queued.as_mut().poll(&mut context), Poll::Pending));
+        assert!(reply.send(Ok(Value::Null)).is_ok());
+        queued.await
+    }
+
+    #[tokio::test]
+    async fn a_disconnected_rollback_is_unknown_only_after_queueing() {
+        let method = "thread/revert";
+        let before = mutation(
+            method,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            ready(None),
+        )
+        .await;
+        assert!(matches!(before, Err(Error::Exited)));
+
+        let (reply, answer) = oneshot::channel();
+        drop(reply);
+        let after = mutation(
+            method,
+            Duration::ZERO,
+            Duration::from_secs(1),
+            ready(Some(answer)),
+        )
+        .await;
+        assert!(
+            matches!(after, Err(Error::MutationUnknown(name)) if name == method)
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_and_malformed_mutation_replies_have_unknown_outcomes() {
+        let method = "thread/revert";
+        let (_silent_sender, silent_answer) = oneshot::channel();
+        let missing = mutation(
+            method,
+            Duration::ZERO,
+            Duration::ZERO,
+            ready(Some(silent_answer)),
+        )
+        .await;
+        let (malformed_sender, malformed_answer) = oneshot::channel();
+        let _ = malformed_sender.send(Err(Error::MalformedResponse {
+            method: String::from(method),
+            detail: "malformed JSON-RPC response",
+        }));
+        let malformed = mutation(
+            method,
+            Duration::ZERO,
+            Duration::ZERO,
+            ready(Some(malformed_answer)),
+        )
+        .await;
+        for outcome in [missing, malformed] {
+            assert!(
+                matches!(outcome, Err(Error::MutationUnknown(name)) if name == method)
+            );
+        }
+        let (refusal_sender, refusal_answer) = oneshot::channel();
+        let _ = refusal_sender.send(Err(Error::Rpc {
+            method: String::from(method),
+            message: String::from("refused"),
+        }));
+        let refused = mutation(
+            method,
+            Duration::ZERO,
+            Duration::ZERO,
+            ready(Some(refusal_answer)),
+        )
+        .await;
+        assert!(matches!(refused, Err(Error::Rpc { .. })));
+    }
 
     #[test]
     fn app_server_argv() -> Result<(), Box<dyn std::error::Error>> {

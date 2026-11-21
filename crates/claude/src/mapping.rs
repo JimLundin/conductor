@@ -10,9 +10,7 @@ use proto::{
 };
 
 use crate::prelude::*;
-use crate::{
-    ASK_USER_QUESTION, AfterDeny, Block, ClaudeEvent, PermissionDecision, Role,
-};
+use crate::{ASK_USER_QUESTION, Block, ClaudeEvent, PermissionDecision, Role};
 
 #[must_use]
 pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
@@ -195,7 +193,6 @@ pub fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
         }
         Reply::Decide(Decision::Deny) => PermissionDecision::Deny {
             message: format!("Denied by {}", by.0),
-            then: AfterDeny::Continue,
         },
         Reply::Answer(answers) => PermissionDecision::Answer(answers),
     }
@@ -213,8 +210,8 @@ mod tests {
 
     use super::{claude_answer, claude_steps};
     use crate::{
-        AfterDeny, Block, ClaudeEvent, Inbound, PermissionDecision,
-        PermissionRequestId, Role, parse_line,
+        Block, ClaudeEvent, Inbound, PermissionDecision, PermissionRequestId,
+        Role, parse_line,
     };
 
     /// `probe-subagent-todo.jsonl`: the main agent ran one sub-agent, which
@@ -381,7 +378,6 @@ mod tests {
                 PermissionDecision::AllowForSession,
                 PermissionDecision::Deny {
                     message: String::from("Denied by phone"),
-                    then: AfterDeny::Continue,
                 },
                 PermissionDecision::Answer(answers),
             ])

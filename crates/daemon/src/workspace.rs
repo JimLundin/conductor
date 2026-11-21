@@ -7,10 +7,10 @@ use std::time::Duration;
 
 use host::workspace::{Answer, Output, Plan, Step};
 use proto::{
-    Checkpoint, CheckpointDiff, CheckpointId, HostPath, Kept, SessionId,
-    Workspace,
+    Checkpoint, CheckpointDiff, CheckpointId, HostPath, HostSeq, Kept,
+    SessionId, Workspace,
 };
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
 
 pub use host::workspace::GitError;
@@ -44,7 +44,12 @@ fn git(path: &Path, args: &[&str]) -> tokio::process::Command {
     command
 }
 
-async fn capture(mut child: Child) -> Result<Output, GitError> {
+const BLOB_LIMIT: usize = 1024 * 1024;
+
+async fn capture(
+    mut child: Child,
+    capture_limit: usize,
+) -> Result<Output, GitError> {
     let stdout = child
         .stdout
         .take()
@@ -63,11 +68,11 @@ async fn capture(mut child: Child) -> Result<Output, GitError> {
     });
     let mut bytes = Vec::new();
     stdout
-        .take(Output::CAPTURE as u64)
+        .take(capture_limit as u64)
         .read_to_end(&mut bytes)
         .await
         .map_err(|error| failure("reading git stdout", &error.to_string()))?;
-    if bytes.len() == Output::CAPTURE {
+    if bytes.len() == capture_limit {
         child.kill().await.map_err(|error| {
             failure("stopping oversized git output", &error.to_string())
         })?;
@@ -89,13 +94,17 @@ async fn capture(mut child: Child) -> Result<Output, GitError> {
 
 async fn execute(
     command: &mut tokio::process::Command,
+    capture_limit: usize,
 ) -> Result<Output, GitError> {
     let child = command
         .spawn()
         .map_err(|error| failure("starting git", &error.to_string()))?;
-    tokio::time::timeout(Duration::from_secs(120), capture(child))
-        .await
-        .map_err(|error| failure("git timeout", &error.to_string()))?
+    tokio::time::timeout(
+        Duration::from_secs(120),
+        capture(child, capture_limit),
+    )
+    .await
+    .map_err(|error| failure("git timeout", &error.to_string()))?
 }
 
 pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
@@ -104,18 +113,16 @@ pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
 
 pub async fn blob(path: &Path, object: &str) -> Result<Vec<u8>, GitError> {
     let mut command = git(path, &["cat-file", "blob", object]);
-    let output =
-        tokio::time::timeout(Duration::from_secs(120), command.output())
-            .await
-            .map_err(|error| failure("git timeout", &error.to_string()))?
-            .map_err(|error| failure("reading git blob", &error.to_string()))?;
-    if output.status.success() {
-        Ok(output.stdout)
-    } else {
+    let output = execute(&mut command, BLOB_LIMIT + 1).await?;
+    if output.bytes.len() > BLOB_LIMIT {
         Err(failure(
             "reading git blob",
-            &String::from_utf8_lossy(&output.stderr),
+            "committed metadata exceeds 1 MiB",
         ))
+    } else if output.success {
+        Ok(output.bytes)
+    } else {
+        Err(failure("reading git blob", &output.error))
     }
 }
 
@@ -190,12 +197,35 @@ pub async fn diff(
 
 pub async fn remove(workspace: &Workspace) -> Result<Kept, GitError> {
     let kept = run(Plan::remove(workspace), None).await?;
-    tracing::info!(branch = workspace.branch, ?kept, "removed a workspace");
+    trace_removed(&workspace.branch, &kept);
     Ok(kept)
 }
 
-pub async fn land(workspace: &Workspace, issue: &str) -> Result<u64, String> {
-    run(Plan::land(workspace, issue), None)
+pub fn trace_removed(branch: &str, kept: &Kept) {
+    let outcome = match kept {
+        Kept::Local => "local",
+        Kept::Pushed { .. } => "pushed",
+        Kept::PushFailed { .. } => "push_failed",
+    };
+    tracing::info!(branch, outcome, "removed a workspace");
+}
+
+pub async fn landing_receipt(
+    workspace: &Workspace,
+    issue: &str,
+    attempt: HostSeq,
+) -> Result<Option<u64>, String> {
+    run(Plan::landing_receipt(workspace, issue, attempt), None)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+pub async fn land(
+    workspace: &Workspace,
+    issue: &str,
+    attempt: HostSeq,
+) -> Result<u64, String> {
+    run(Plan::land(workspace, issue, attempt), None)
         .await
         .map_err(|error| error.to_string())
 }
@@ -252,8 +282,53 @@ impl Runner<'_> {
                 self.scratch = None;
                 Ok(Answer::Done)
             }
+            Step::LandRefs {
+                repository,
+                issue,
+                commit,
+                old,
+                receipt,
+            } => {
+                Self::land_refs(&repository, &issue, &commit, &old, &receipt)
+                    .await
+            }
             filesystem => self.filesystem(filesystem),
         }
+    }
+
+    async fn land_refs(
+        repository: &str,
+        issue: &str,
+        commit: &str,
+        old: &str,
+        receipt: &str,
+    ) -> Result<Answer, GitError> {
+        let updates = format!(
+            "update {issue}\0{commit}\0{old}\0create {receipt}\0{commit}\0"
+        );
+        let mut child =
+            git(Path::new(repository), &["update-ref", "--stdin", "-z"])
+                .stdin(Stdio::piped())
+                .spawn()
+                .map_err(|error| {
+                    failure("starting git update-ref", &error.to_string())
+                })?;
+        let output = tokio::time::timeout(Duration::from_secs(120), async {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| failure("update-ref", "missing stdin"))?;
+            stdin.write_all(updates.as_bytes()).await.map_err(|error| {
+                failure("writing git update-ref", &error.to_string())
+            })?;
+            drop(stdin);
+            capture(child, Output::CAPTURE).await
+        })
+        .await
+        .map_err(|error| {
+            failure("git update-ref timeout", &error.to_string())
+        })??;
+        Ok(Answer::Git(output))
     }
 
     async fn git(
@@ -280,7 +355,9 @@ impl Runner<'_> {
                 .env("GIT_COMMITTER_NAME", "Conductor")
                 .env("GIT_COMMITTER_EMAIL", "conductor@localhost");
         }
-        execute(&mut command).await.map(Answer::Git)
+        execute(&mut command, Output::CAPTURE)
+            .await
+            .map(Answer::Git)
     }
 
     fn command_path<'a>(&'a self, path: &'a str) -> Result<&'a Path, GitError> {
@@ -328,7 +405,7 @@ impl Runner<'_> {
             }
             Step::Exists(path) => exists(Path::new(&path)).map(Answer::Found),
             Step::IsDirectory(path) => {
-                Ok(Answer::Found(Path::new(&path).is_dir()))
+                directory_present(Path::new(&path)).map(Answer::Found)
             }
             Step::ReadOwner(directory) => std::fs::read_to_string(
                 Path::new(&directory).join("conductor-workspace"),
@@ -341,7 +418,10 @@ impl Runner<'_> {
                 write_owner(Path::new(&directory), &marker)
                     .map(|()| Answer::Done)
             }
-            Step::Git { .. } | Step::OpenIndex(_) | Step::CloseIndex => {
+            Step::Git { .. }
+            | Step::LandRefs { .. }
+            | Step::OpenIndex(_)
+            | Step::CloseIndex => {
                 Err(failure("workspace", "unexpected filesystem step"))
             }
         }
@@ -352,10 +432,22 @@ fn path_answer(path: &Path) -> Answer {
     Answer::Path(path.to_str().map(str::to_owned))
 }
 
+fn directory_present(path: &Path) -> Result<bool, GitError> {
+    match path_metadata(path)? {
+        Some(metadata) if metadata.is_dir() => Ok(true),
+        Some(_) => Err(failure("worktree path", "expected a directory")),
+        None => Ok(false),
+    }
+}
+
 fn exists(path: &Path) -> Result<bool, GitError> {
+    path_metadata(path).map(|metadata| metadata.is_some())
+}
+
+fn path_metadata(path: &Path) -> Result<Option<std::fs::Metadata>, GitError> {
     match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Ok(metadata) => Ok(Some(metadata)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(failure("worktree path", &error.to_string())),
     }
 }
@@ -405,11 +497,12 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use super::{
-        GitError, create, diff, host, remove, restore, snapshot, text,
+        GitError, create, diff, host, landing_receipt, remove, restore,
+        snapshot, text,
     };
     use proto::{
-        Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor, Kept,
-        SessionId, UndoAvailability, Workspace,
+        Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor,
+        HostSeq, Kept, SessionId, UndoAvailability, Workspace,
     };
     use std::path::{Path, PathBuf};
 
@@ -442,6 +535,37 @@ mod tests {
         let _ = text(&source, &["add", "-A"]).await?;
         let _ = text(&source, &["commit", "-qm", "Initial source"]).await?;
         Ok(Repository { root, source, data })
+    }
+
+    #[tokio::test]
+    async fn committed_metadata_reports_the_blob_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        assert_eq!(
+            super::blob(&repo.source, "HEAD:deleted.txt").await?,
+            b"keep\n"
+        );
+        for (file, size) in [
+            ("exact.txt", super::BLOB_LIMIT),
+            ("large.txt", super::BLOB_LIMIT + 1),
+        ] {
+            std::fs::write(repo.source.join(file), "x".repeat(size))?;
+        }
+        let _ = text(&repo.source, &["add", "exact.txt", "large.txt"]).await?;
+        let _ =
+            text(&repo.source, &["commit", "-qm", "Large metadata"]).await?;
+        assert_eq!(
+            super::blob(&repo.source, "HEAD:exact.txt").await?.len(),
+            super::BLOB_LIMIT
+        );
+        assert!(
+            super::blob(&repo.source, "HEAD:large.txt")
+                .await
+                .is_err_and(|reason| reason
+                    .to_string()
+                    .contains("metadata exceeds"))
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -494,6 +618,120 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn checkpoint_retry_syncs_an_index_that_was_locked_after_ref_update()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        let original = super::host(&repo.source)?;
+        let workspace = create(&repo.data, &original, id, None).await?;
+        let path = Path::new(&workspace.worktree.0);
+        std::fs::write(path.join("new.txt"), "checkpointed\n")?;
+        let lock = text(
+            path,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "index.lock",
+            ],
+        )
+        .await?;
+        std::fs::write(&lock, "")?;
+        let checkpoint = CheckpointId(4);
+        assert!(
+            snapshot(&workspace, id, checkpoint, None)
+                .await
+                .is_err_and(|error| error.to_string().contains("index.lock"))
+        );
+        let committed = text(path, &["rev-parse", "HEAD"]).await?;
+        assert_eq!(
+            text(path, &["show", "HEAD:new.txt"]).await?,
+            "checkpointed"
+        );
+        std::fs::remove_file(lock)?;
+        assert_eq!(
+            snapshot(&workspace, id, checkpoint, None).await?,
+            committed
+        );
+        let _ = text(path, &["diff", "--cached", "--quiet"]).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn removal_preserves_staged_only_changes_and_refs_after_inspection_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let id = SessionId(u128::from(ulid::Ulid::new()));
+        let original = super::host(&repo.source)?;
+        let workspace = create(&repo.data, &original, id, None).await?;
+        let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let root = Path::new(&workspace.worktree.0);
+        let file = root.join("deleted.txt");
+        std::fs::write(&file, "staged only\n")?;
+        let _ = text(root, &["add", "deleted.txt"]).await?;
+        std::fs::write(&file, "keep\n")?;
+        let refs = host::workspace::checkpoints(&workspace)?;
+        let list_refs =
+            ["for-each-ref", "--format=%(objectname) %(refname)", &refs];
+        let before = text(&repo.source, &list_refs).await?;
+        assert_eq!(before, format!("{initial} {refs}0"));
+        assert!(remove(&workspace).await.is_err_and(|reason| {
+            reason.to_string().contains("index contains changes")
+        }));
+        assert_eq!(text(root, &["show", ":deleted.txt"]).await?, "staged only");
+        let mut inaccessible = workspace;
+        inaccessible.worktree = super::host(&file.join("unreachable"))?;
+        assert!(
+            remove(&inaccessible).await.is_err_and(|reason| reason
+                .to_string()
+                .contains("worktree path"))
+        );
+        assert_eq!(text(&repo.source, &list_refs).await?, before);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn synchronization_refuses_to_move_a_checked_out_issue_branch()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let (workspace, issue) = diverged(&repo, "remote-only.txt").await?;
+        let remote = repo.root.join("remote.git");
+        let _ =
+            text(&repo.root, &["init", "-q", "--bare", "remote.git"]).await?;
+        let remote_url = remote.display().to_string();
+        let _ = text(&repo.source, &["remote", "add", "origin", &remote_url])
+            .await?;
+        let _ =
+            text(&repo.source, &["push", "--quiet", "origin", &issue]).await?;
+        let before =
+            text(&repo.source, &["rev-parse", &workspace.branch]).await?;
+        let _ = text(&repo.source, &["update-ref", &issue, &before]).await?;
+        let linked = repo.root.join("issue checkout");
+        let linked_name = linked.display().to_string();
+        let _ = text(
+            &repo.source,
+            &["worktree", "add", "-q", &linked_name, "issue/x"],
+        )
+        .await?;
+        std::fs::write(linked.join("deleted.txt"), "dirty\n")?;
+        assert!(
+            crate::home::ready_issue_branch(&repo.source, &issue)
+                .await
+                .is_err_and(|reason| reason.contains(&linked_name))
+        );
+        assert_eq!(text(&repo.source, &["rev-parse", &issue]).await?, before);
+        assert_eq!(
+            std::fs::read_to_string(linked.join("deleted.txt"))?,
+            "dirty\n"
+        );
+        assert_eq!(
+            text(&linked, &["status", "--porcelain"]).await?,
+            " M deleted.txt"
+        );
+        Ok(())
+    }
+
     /// A session's workspace on `issue`, a branch at the source's HEAD,
     /// and a commit on the issue's branch that touches `file`.
     async fn diverged(
@@ -541,7 +779,13 @@ mod tests {
         let (workspace, issue) = diverged(&repo, "issue-only.txt").await?;
         let root = PathBuf::from(&workspace.worktree.0);
         std::fs::write(root.join("session-only.txt"), "in the session\n")?;
-        assert_eq!(super::land(&workspace, &issue).await, Ok(1));
+        let attempt = HostSeq(10);
+        assert_eq!(landing_receipt(&workspace, &issue, attempt).await?, None);
+        assert_eq!(super::land(&workspace, &issue, attempt).await, Ok(1));
+        assert_eq!(
+            landing_receipt(&workspace, &issue, attempt).await?,
+            Some(1)
+        );
         let merged =
             text(&repo.source, &["rev-parse", &format!("{issue}^2")]).await?;
         assert_eq!(
@@ -563,16 +807,18 @@ mod tests {
         let conflicted = repository().await?;
         let (clashing, base) = diverged(&conflicted, "deleted.txt").await?;
         let at = text(&conflicted.source, &["rev-parse", &base]).await?;
+        let attempt = HostSeq(11);
         std::fs::write(
             PathBuf::from(&clashing.worktree.0).join("deleted.txt"),
             "in the session\n",
         )?;
         assert!(
-            super::land(&clashing, &base)
+            super::land(&clashing, &base, attempt)
                 .await
                 .is_err_and(|reason| reason.contains("conflicts")),
             "a conflict lands nothing"
         );
+        assert_eq!(landing_receipt(&clashing, &base, attempt).await?, None);
         assert_eq!(
             text(&conflicted.source, &["rev-parse", &base]).await?,
             at,

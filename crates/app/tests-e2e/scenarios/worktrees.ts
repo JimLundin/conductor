@@ -3,8 +3,26 @@ import { isWithinWidth, LIVE, type Run, tools } from "../harness.ts";
 const PENDING_RESPONSE_MS = 250;
 const TURNS = 3;
 
-/** The middle turn's changes opened and closed from the keyboard, with focus
- * returned to the button that opened them. */
+/** Dismiss a host-rejected preview and restore focus to its trigger. */
+const dismissFailedChanges = async (run: Run): Promise<void> => {
+	const { page, patience } = run;
+	const { pane } = tools(run);
+	const turn = pane.locator(".turn-changes").nth(1);
+	const changes = turn.getByRole("button", { name: "Changes", exact: true });
+	await changes.press("Enter");
+	const alert = turn.getByRole("alert");
+	await alert.waitFor({ timeout: patience });
+	await turn
+		.getByRole("button", { name: "Close changes", exact: true })
+		.press("Enter");
+	await alert.waitFor({ state: "detached", timeout: patience });
+	await page.waitForFunction(
+		(id) => document.activeElement?.id === id,
+		await changes.getAttribute("id"),
+	);
+};
+
+/** Retry the middle turn's preview from the restored focus, then close it. */
 const changesByKeyboard = async (run: Run): Promise<void> => {
 	const { page, patience } = run;
 	const { check, pane } = tools(run);
@@ -12,7 +30,6 @@ const changesByKeyboard = async (run: Run): Promise<void> => {
 	const changesButton = turns
 		.nth(1)
 		.getByRole("button", { name: "Changes", exact: true });
-	await changesButton.focus();
 	await page.keyboard.press("Enter");
 	const closeButton = turns
 		.nth(1)
@@ -124,6 +141,7 @@ export const worktrees = async (run: Run): Promise<void> => {
 		"full working directory remains selectable",
 	);
 	await directory.locator("summary").tap();
+	await dismissFailedChanges(run);
 	await changesByKeyboard(run);
 	await undoMiddleTurn(run);
 	check(

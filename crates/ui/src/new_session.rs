@@ -44,6 +44,7 @@ pub struct NewSessionForm {
     pub instances: Vec<InstanceChoice>,
     /// What the form says under the instances.
     pub instance_hint: Option<Hint>,
+    pub instance_error: Option<Hint>,
     pub models: Vec<Choice>,
     pub efforts: Vec<Choice>,
     /// A directory first, followed by the host's projects and a retained
@@ -110,6 +111,7 @@ pub struct Form {
     issue: Option<IssueId>,
     directory: String,
     attempt: Attempt,
+    starts: u64,
 }
 
 impl Default for Form {
@@ -130,6 +132,7 @@ impl Form {
             issue: None,
             directory: String::new(),
             attempt: Attempt::Editing,
+            starts: 0,
         }
     }
 
@@ -167,6 +170,7 @@ impl Form {
                         instance: None,
                         model: None,
                         effort: None,
+                        attempt: self.attempt.cancel_pending(),
                         ..self
                     },
                     Vec::new(),
@@ -177,6 +181,7 @@ impl Form {
                     instance: Some(instance),
                     model: None,
                     effort: None,
+                    attempt: self.attempt.cancel_pending(),
                     ..self
                 },
                 Vec::new(),
@@ -230,12 +235,18 @@ impl Form {
                     model: self.model.clone(),
                     effort: self.effort,
                 };
+                let starts = self.starts.wrapping_add(1);
                 (
                     Self {
+                        host: Some(host),
+                        instance: Some(submitted.instance.clone()),
+                        starts,
                         attempt: Attempt::Starting(submitted),
                         ..self
                     },
-                    Vec::from([At { host, visit }.send(body, ReplyTo::Start)]),
+                    Vec::from([
+                        At { host, visit }.send(body, ReplyTo::Start(starts))
+                    ]),
                 )
             }
         }
@@ -286,12 +297,22 @@ impl Form {
 
     pub fn answered(
         &mut self,
-        host: &Host,
+        host: HostId,
+        starts: u64,
+        known: &Host,
         answer: Result<CommandResult, String>,
-    ) {
-        if let Attempt::Starting(start) = &self.attempt {
-            self.attempt = start.answered(host, answer);
+    ) -> Option<proto::SessionId> {
+        let Attempt::Starting(start) = &self.attempt else {
+            return None;
+        };
+        if start.host != host || self.starts != starts {
+            return None;
         }
+        if let Ok(CommandResult::Started { session }) = answer {
+            return Some(session);
+        }
+        self.attempt = start.answered(known, answer);
+        None
     }
 
     /// The default is the first live host, or the first paired.
@@ -410,11 +431,10 @@ impl Form {
             "Start session"
         };
         let reason = blocked.and_then(StartBlocked::reason);
-        let (instance_hint, directory_error, refusal) = self.start_hints(
+        let (instance_error, directory_error, refusal) = self.start_hints(
             chosen.map(|(id, _)| (id, name.as_str())),
             picked,
-            current_instance,
-            reason,
+            current_instance.as_ref(),
         );
         NewSessionForm {
             subtitle: String::from(if issue.is_some() {
@@ -435,7 +455,8 @@ impl Form {
                     })
                     .collect()
             }),
-            instance_hint,
+            instance_hint: current_instance,
+            instance_error,
             efforts: self.effort_choices(&offered.efforts(self.model.as_ref())),
             models: self.model_choices(&offered),
             projects: (issue.is_none()
@@ -458,8 +479,7 @@ impl Form {
         &self,
         selected_host: Option<(HostId, &str)>,
         instance: Option<&InstanceId>,
-        current: Option<Hint>,
-        blocked: Option<&str>,
+        current: Option<&Hint>,
     ) -> (Option<Hint>, Option<Hint>, Option<Hint>) {
         let Attempt::Refused {
             host,
@@ -467,7 +487,7 @@ impl Form {
             message,
         } = &self.attempt
         else {
-            return (current, None, None);
+            return (None, None, None);
         };
         if let Some((id, name)) = selected_host
             && *host == id
@@ -481,24 +501,22 @@ impl Form {
                     let hint = alert(format!(
                         "There is no directory at that path on {name}."
                     ));
-                    return (current, Some(hint), None);
+                    return (None, Some(hint), None);
                 }
-                RefusalTarget::Instance(id)
-                    if instance == Some(id)
-                        && current
-                            .as_ref()
-                            .is_none_or(|hint| hint.role.is_none()) =>
-                {
-                    return (Some(alert(message.clone())), None, None);
+                RefusalTarget::Instance(id) if instance == Some(id) => {
+                    let duplicate = current.is_some_and(|hint| {
+                        hint.role.is_some() && hint.text == *message
+                    });
+                    return (
+                        (!duplicate).then(|| alert(message.clone())),
+                        None,
+                        None,
+                    );
                 }
                 _ => {}
             }
         }
-        let duplicate = blocked == Some(message.as_str())
-            || current.as_ref().is_some_and(|hint| {
-                hint.role.is_some() && hint.text == *message
-            });
-        (current, None, (!duplicate).then(|| alert(message.clone())))
+        (None, None, Some(alert(message.clone())))
     }
 
     /// The default first, which sends no model, then each model the host
@@ -759,6 +777,15 @@ enum Attempt {
     },
 }
 
+impl Attempt {
+    fn cancel_pending(self) -> Self {
+        match self {
+            Self::Starting(_) => Self::Editing,
+            other => other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Submission {
     host: HostId,
@@ -779,21 +806,29 @@ impl Submission {
         host: &Host,
         answer: Result<CommandResult, String>,
     ) -> Attempt {
+        let form_refusal = |reason: String| {
+            let instance = crate::credentials::instance_name(
+                &self.instance,
+                &host.fold.catalog,
+            );
+            (
+                RefusalTarget::Form,
+                format!("{instance} on {}: {reason}", host.name()),
+            )
+        };
         let (target, message) = match answer {
             Ok(CommandResult::Rejected(Rejection::NoSuchDirectory)) => {
-                let Some(path) = &self.directory else {
-                    return Attempt::Refused {
-                        host: self.host,
-                        target: RefusalTarget::Form,
-                        message: Rejection::NoSuchDirectory.label(),
-                    };
-                };
-                (
-                    RefusalTarget::Directory(path.clone()),
-                    format!(
-                        "There is no directory at {path} on {}.",
-                        host.name()
-                    ),
+                self.directory.as_ref().map_or_else(
+                    || form_refusal(Rejection::NoSuchDirectory.label()),
+                    |path| {
+                        (
+                            RefusalTarget::Directory(path.clone()),
+                            format!(
+                                "There is no directory at {path} on {}.",
+                                host.name()
+                            ),
+                        )
+                    },
                 )
             }
             Ok(CommandResult::Rejected(Rejection::InstanceUnavailable {
@@ -809,9 +844,9 @@ impl Submission {
                 )
             }
             Ok(CommandResult::Rejected(rejection)) => {
-                (RefusalTarget::Form, rejection.label())
+                form_refusal(rejection.label())
             }
-            Err(error) => (RefusalTarget::Form, error),
+            Err(error) => form_refusal(error),
             Ok(_) => return Attempt::Editing,
         };
         Attempt::Refused {

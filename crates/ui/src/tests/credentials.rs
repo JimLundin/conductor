@@ -103,7 +103,7 @@ fn a_removal_says_so_once_the_instance_has_left_the_list() {
 }
 
 #[test]
-fn starting_or_cancelling_a_sign_in_forgets_the_code_typed_and_copied() {
+fn starting_or_cancelling_a_sign_in_forgets_the_code_typed() {
     let open = signing(Some(SignInStep::Open {
         url: text("https://sign.example/device"),
         code: Some(text("ABCD-12345")),
@@ -111,22 +111,16 @@ fn starting_or_cancelling_a_sign_in_forgets_the_code_typed_and_copied() {
     }));
     let (typed, _) = run(
         open,
-        Vec::from([
-            sign_in(CredentialIntent::TypeSignInCode(
-                id("claude"),
-                text("abc"),
-            )),
-            sign_in(CredentialIntent::CopySignInCode(
-                id("claude"),
-                text("ABCD-12345"),
-            )),
-        ]),
+        Vec::from([sign_in(CredentialIntent::TypeSignInCode(
+            id("claude"),
+            text("abc"),
+        ))]),
     );
     let after = |intent| run(typed.clone(), Vec::from([sign_in(intent)])).0;
     let kept = |state: &State| {
         sign_in_of(state)
-            .and_then(|view| view.paste.zip(view.code))
-            .map(|(paste, code)| (paste.value, code.copy))
+            .and_then(|view| view.paste)
+            .map(|paste| paste.value)
     };
     assert_eq!(
         [
@@ -134,11 +128,7 @@ fn starting_or_cancelling_a_sign_in_forgets_the_code_typed_and_copied() {
             kept(&after(CredentialIntent::StartSignIn(id("claude")))),
             kept(&after(CredentialIntent::CancelSignIn(id("claude")))),
         ],
-        [
-            Some((text("abc"), text("Copied"))),
-            Some((String::new(), text("Copy"))),
-            Some((String::new(), text("Copy"))),
-        ]
+        [Some(text("abc")), Some(String::new()), Some(String::new()),]
     );
 }
 

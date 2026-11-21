@@ -36,6 +36,7 @@ pub struct SessionView {
     pub checkpoints: Vec<TurnCheckpoint>,
     pub undo: UndoState,
     turn_starts: BTreeMap<HostSeq, usize>,
+    subagents_at: BTreeMap<CheckpointId, Vec<Subagent>>,
     pub items: Vec<Item>,
     /// The agents the session's agent started, in the order they started.
     pub subagents: Vec<Subagent>,
@@ -348,6 +349,7 @@ impl HostView {
                 checkpoints: Vec::new(),
                 undo: UndoState::Ready,
                 turn_starts: BTreeMap::new(),
+                subagents_at: BTreeMap::new(),
                 items: Vec::new(),
                 subagents: Vec::new(),
                 activity: event.seq,
@@ -424,7 +426,10 @@ impl SessionView {
                     SessionStatus::Idle | SessionStatus::Closed(_)
                 )
                 && matches!(self.undo, UndoState::Ready | UndoState::Undone)
-                && matches!(self.finish, FinishState::Ready),
+                && matches!(
+                    self.finish,
+                    FinishState::Ready | FinishState::Retrying
+                ),
         }
     }
 
@@ -659,6 +664,7 @@ impl SessionView {
             EventKind::TasksChanged { tasks } => Self { tasks, ..self },
             issue_event @ (EventKind::OnIssue { .. }
             | EventKind::FinishStarted
+            | EventKind::FinishInterrupted
             | EventKind::SessionFinished { .. }) => {
                 self.issue_event(issue_event)
             }
@@ -672,6 +678,7 @@ impl SessionView {
             EventKind::SessionCreated { .. }
             | EventKind::SessionRemoved { .. }
             | EventKind::UndoHistoryRestored { .. }
+            | EventKind::UndoRevertDispatched { .. }
             | EventKind::CheckpointReserved { .. }
             | EventKind::HistoryMaterialized { .. }
             | EventKind::NativeTurnStarted { .. } => self,
@@ -710,9 +717,10 @@ impl SessionView {
                 undo: UndoState::Failed { checkpoint, reason },
                 ..self
             },
-            EventKind::TurnsUndone { checkpoint, .. } => {
-                self.turns_undone(checkpoint)
-            }
+            EventKind::TurnsUndone {
+                checkpoint,
+                restored,
+            } => self.turns_undone(checkpoint, restored),
             _ => self,
         }
     }
@@ -729,6 +737,10 @@ impl SessionView {
                 ..self
             }
             .push(Item::Finishing),
+            EventKind::FinishInterrupted => Self {
+                finish: self.finish.after(&kind),
+                ..self
+            },
             EventKind::SessionFinished { finished } => Self {
                 finish: FinishState::Done,
                 ..self
@@ -863,7 +875,9 @@ impl SessionView {
 
     /// A checkpoint covers the items since its turn started, or since the
     /// last checkpoint when the host names no turn start.
-    fn checkpoint_created(self, checkpoint: proto::Checkpoint) -> Self {
+    fn checkpoint_created(mut self, checkpoint: proto::Checkpoint) -> Self {
+        self.subagents_at
+            .insert(checkpoint.id, self.subagents.clone());
         let start = checkpoint
             .turn_start
             .and_then(|seq| self.turn_starts.get(&seq).copied())
@@ -890,40 +904,42 @@ impl SessionView {
         }
     }
 
-    fn turns_undone(self, checkpoint: CheckpointId) -> Self {
+    fn turns_undone(
+        mut self,
+        checkpoint: CheckpointId,
+        restored: CheckpointId,
+    ) -> Self {
         match self
             .checkpoints
             .iter()
             .find(|turn| turn.checkpoint == checkpoint)
             .map(|turn| turn.start)
         {
-            Some(start) => Self {
-                subagents: self
-                    .subagents
-                    .into_iter()
-                    .filter(|subagent| {
-                        self.items
-                            .iter()
-                            .take(start)
-                            .filter_map(Item::call)
-                            .any(|call| call == &subagent.call)
-                    })
-                    .collect(),
-                items: self.items.into_iter().take(start).collect(),
-                checkpoints: self
-                    .checkpoints
-                    .into_iter()
-                    .filter(|turn| turn.start < start)
-                    .collect(),
-                turn_starts: self
-                    .turn_starts
-                    .into_iter()
-                    .filter(|(_, index)| index < &start)
-                    .collect(),
-                undo: UndoState::Undone,
-                status: SessionStatus::Idle,
-                ..self
-            },
+            Some(start) => {
+                let subagents = self
+                    .subagents_at
+                    .get(&restored)
+                    .cloned()
+                    .unwrap_or_default();
+                self.subagents_at.retain(|id, _| *id <= restored);
+                Self {
+                    subagents,
+                    items: self.items.into_iter().take(start).collect(),
+                    checkpoints: self
+                        .checkpoints
+                        .into_iter()
+                        .filter(|turn| turn.start < start)
+                        .collect(),
+                    turn_starts: self
+                        .turn_starts
+                        .into_iter()
+                        .filter(|(_, index)| index < &start)
+                        .collect(),
+                    undo: UndoState::Undone,
+                    status: SessionStatus::Idle,
+                    ..self
+                }
+            }
             None => Self {
                 undo: UndoState::Undone,
                 ..self
@@ -947,7 +963,9 @@ impl SessionView {
         };
         let joined = match state {
             ReplyState::Streaming => {
-                format!("{}{text}", open.unwrap_or_default())
+                let mut joined = open.unwrap_or_default();
+                joined.push_str(&text);
+                joined
             }
             ReplyState::Done => text,
         };
@@ -973,7 +991,9 @@ impl SessionView {
         };
         let joined = match state {
             ReplyState::Streaming => {
-                format!("{}{text}", open.unwrap_or_default())
+                let mut joined = open.unwrap_or_default();
+                joined.push_str(&text);
+                joined
             }
             ReplyState::Done => text,
         };
@@ -1459,6 +1479,7 @@ mod tests {
                     checkpoints: Vec::new(),
                     undo: UndoState::Ready,
                     turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
+                    subagents_at: BTreeMap::new(),
                     activity: HostSeq(13),
                 },
             ),
@@ -1482,6 +1503,7 @@ mod tests {
                     checkpoints: Vec::new(),
                     undo: UndoState::Ready,
                     turn_starts: BTreeMap::new(),
+                    subagents_at: BTreeMap::new(),
                     activity: HostSeq(15),
                 },
             ),
@@ -1711,6 +1733,34 @@ mod tests {
                 SessionStatus::Idle,
                 Resume::Hidden,
             ))
+        );
+    }
+
+    #[test]
+    fn reply_and_reasoning_append_every_delta() {
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, reasoned("One")),
+            (1, reasoned(" two")),
+            (1, reasoned(" three")),
+            (1, delta("Four")),
+            (1, delta(" five")),
+            (1, delta(" six")),
+        ]));
+        assert_eq!(
+            view.sessions
+                .get(&SessionId(1))
+                .map(|session| &session.items),
+            Some(&Vec::from([
+                Item::Reasoning {
+                    text: text("One two three"),
+                    state: ReplyState::Done,
+                },
+                Item::Reply {
+                    text: text("Four five six"),
+                    state: ReplyState::Streaming,
+                },
+            ]))
         );
     }
 
@@ -2921,6 +2971,62 @@ mod tests {
         );
         assert_eq!(session.status_label(), StatusLabel::Idle);
         assert!(session.controls().finish);
+        Ok(())
+    }
+
+    #[test]
+    fn undo_restores_a_resumed_subagent_to_the_retained_checkpoint()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let said = |words: &str| EventKind::UserMessage {
+            text: text(words),
+            by: ClientName(text("phone")),
+        };
+        let completed = || EventKind::TurnCompleted {
+            outcome: TurnOutcome::Completed,
+        };
+        let events = numbered(Vec::from([
+            created("/a"),
+            EventKind::SessionReady,
+            said("first"),
+            started("call1"),
+            subagent_started("a", "call1"),
+            subagent_ended(
+                "a",
+                SubagentOutcome::Finished,
+                Some("first report"),
+            ),
+            completed(),
+            checkpoint(1, 3, 0),
+            said("second"),
+            subagent_started("a", "call1"),
+            subagent_ended("a", SubagentOutcome::Failed, Some("second report")),
+            completed(),
+            checkpoint(2, 9, 1),
+            EventKind::TurnsUndone {
+                checkpoint: proto::CheckpointId(2),
+                restored: proto::CheckpointId(1),
+            },
+        ]));
+        let fold = |events: &[Event]| {
+            events
+                .iter()
+                .cloned()
+                .fold(HostView::empty(), HostView::apply)
+        };
+        let retained = fold(&events[..8]);
+        let before = fold(&events[..13]);
+        let last = events.last().cloned().ok_or("expected an undo")?;
+        let live = before.clone().apply(last);
+        let replay = fold(&events);
+        let subagents = |view: &HostView| {
+            view.sessions
+                .get(&SessionId(1))
+                .map(|session| session.subagents.clone())
+        };
+        let expected = subagents(&retained);
+        assert_ne!(subagents(&before), expected);
+        assert_eq!(subagents(&live), expected);
+        assert_eq!(subagents(&replay), expected);
         Ok(())
     }
 

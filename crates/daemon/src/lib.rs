@@ -24,11 +24,21 @@ use host::Note;
 use host::secret::Secret;
 use iroh::SecretKey;
 use proto::{AuthToken, Epoch};
+use tokio::sync::{mpsc, oneshot};
 
 /// The actor stopped: nobody can reach it any more.
 #[derive(Debug, thiserror::Error)]
 #[error("the actor has stopped")]
 pub(crate) struct Stopped {}
+
+async fn ask<Msg, T>(
+    inbox: &mpsc::Sender<Msg>,
+    build: impl FnOnce(oneshot::Sender<T>) -> Msg,
+) -> Result<T, Stopped> {
+    let (reply, answer) = oneshot::channel();
+    inbox.send(build(reply)).await.map_err(|_| Stopped {})?;
+    answer.await.map_err(|_| Stopped {})
+}
 
 /// Loads the host's iroh key from `<data_dir>/host.key`, creating it on first
 /// run. The key's public half is the host's address, so it must persist.
@@ -85,11 +95,10 @@ fn create_secret(
 ) -> anyhow::Result<[u8; 32]> {
     let key = random_key()?;
     std::fs::create_dir_all(data_dir)?;
-    let next = data_dir.join(format!("{name}.{}.new", std::process::id()));
-    write_private(&next, data_encoding::HEXLOWER.encode(&key).as_bytes())
-        .with_context(|| format!("writing {}", next.display()))?;
-    let linked = link_new(&next, path);
-    let _ = std::fs::remove_file(&next);
+    let contents = data_encoding::HEXLOWER.encode(&key);
+    let linked = with_private_file(data_dir, contents.as_bytes(), |next| {
+        link_new(next, path)
+    });
     if linked.with_context(|| format!("creating {}", path.display()))? {
         sync_dir(data_dir)
             .with_context(|| format!("syncing {}", data_dir.display()))?;
@@ -117,14 +126,25 @@ fn link_new(original: &Path, link: &Path) -> std::io::Result<bool> {
     }
 }
 
-/// Writes a new file and syncs it to disk. A stale file at `path` is
-/// removed first, so the new one is always created, and on Unix created
-/// with mode 0600. On Windows it inherits the data dir's ACL.
 fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let _ = std::fs::remove_file(path);
-    let mut file = private_options().open(path)?;
-    file.write_all(contents)?;
-    file.sync_all()
+    let dir = path.parent().ok_or(ErrorKind::InvalidInput)?;
+    with_private_file(dir, contents, |next| std::fs::rename(next, path))?;
+    sync_dir(dir)
+}
+
+fn with_private_file<T>(
+    dir: &Path,
+    contents: &[u8],
+    publish: impl FnOnce(&Path) -> std::io::Result<T>,
+) -> std::io::Result<T> {
+    let nonce = getrandom::u64().map_err(std::io::Error::other)?;
+    let next = dir.join(format!(".credential-{nonce:016x}.new"));
+    let mut file = private_options().open(&next)?;
+    let written = file.write_all(contents).and_then(|()| file.sync_all());
+    drop(file);
+    let result = written.and_then(|()| publish(&next));
+    let _ = std::fs::remove_file(next);
+    result
 }
 
 #[cfg(unix)]
@@ -204,6 +224,67 @@ fn log_note(note: &Note) {
 #[cfg(test)]
 mod tests {
     use super::{load_or_create_key, load_or_create_token};
+
+    fn scratch(label: &str) -> anyhow::Result<std::path::PathBuf> {
+        let binary = std::env::current_exe()?;
+        let root = binary.ancestors().nth(3).ok_or_else(|| {
+            anyhow::anyhow!("the test binary is not in target/debug/deps")
+        })?;
+        let nonce = getrandom::u64()?;
+        let dir = root
+            .join("tmp")
+            .join(format!("conductor-{label}-{nonce:016x}"));
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    #[test]
+    fn concurrent_initializers_return_the_installed_token() -> anyhow::Result<()>
+    {
+        let dir = scratch("token-race")?;
+        let barrier = std::sync::Barrier::new(2);
+        let (joined, second) = std::thread::scope(|scope| {
+            let other = scope.spawn(|| {
+                barrier.wait();
+                load_or_create_token(&dir)
+            });
+            barrier.wait();
+            let ours = load_or_create_token(&dir);
+            (other.join(), ours)
+        });
+        let disk = load_or_create_token(&dir);
+        std::fs::remove_dir_all(dir)?;
+        let first =
+            joined.map_err(|_| anyhow::anyhow!("initializer panicked"))??;
+        let installed = disk?;
+        assert!(first == installed && second? == installed);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pairing_image_is_private_on_creation_and_replacement()
+    -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = scratch("qr-mode")?;
+        let path = dir.join("join-qr.svg");
+        super::write_private(&path, b"first")?;
+        let created = std::fs::metadata(&path)?.permissions().mode() & 0o777;
+        std::fs::set_permissions(
+            &path,
+            std::fs::Permissions::from_mode(0o644),
+        )?;
+        super::write_private(&path, b"second")?;
+        let replaced = std::fs::metadata(&path)?.permissions().mode() & 0o777;
+        let contents = std::fs::read(path)?;
+        std::fs::remove_dir_all(dir)?;
+        assert_eq!(
+            (created, replaced, contents.as_slice()),
+            (0o600, 0o600, b"second".as_slice())
+        );
+        Ok(())
+    }
 
     #[test]
     fn ticket_token_is_created_once_then_reloaded()

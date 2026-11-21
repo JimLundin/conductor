@@ -5,7 +5,7 @@ use proto::{
     Kept, SessionId, UndoAvailability, Workspace,
 };
 
-use super::{Answer, GitError, Output, Plan, Step, checkpoints, head};
+use super::{Answer, GitError, Output, Plan, Step, checkpoints, head, kept};
 
 const SESSION: SessionId = SessionId(1);
 const WORKTREE: &str = "/data/worktrees/00000000000000000000000001";
@@ -244,6 +244,8 @@ enum Snapshot {
     New,
     NoChanges,
     Retried,
+    IndexLocked,
+    AlreadyUpdated,
     DifferentTree,
     Moved,
 }
@@ -269,6 +271,9 @@ fn snapshot_step(
         matches!(words.first(), Some(&("read-tree" | "add" | "write-tree")))
     );
     match words.as_slice() {
+        ["rev-parse", HEAD] if matches!(scenario, Snapshot::AlreadyUpdated) => {
+            output("new\n")
+        }
         ["rev-parse", HEAD] => output("tip\n"),
         [
             "for-each-ref",
@@ -279,7 +284,9 @@ fn snapshot_step(
         ] => output("previous\n"),
         ["write-tree"] => output("tree\n"),
         ["rev-parse", "--verify", CHECKPOINT] => match scenario {
-            Snapshot::New | Snapshot::NoChanges => failed("missing"),
+            Snapshot::New | Snapshot::NoChanges | Snapshot::IndexLocked => {
+                failed("missing")
+            }
             _ => output("new\n"),
         },
         ["rev-parse", "tip^{tree}"] => match scenario {
@@ -306,7 +313,11 @@ fn snapshot_step(
             _ => output("tip\n"),
         },
         ["rev-parse", "--verify", "--quiet", "tip^"] => failed("root commit"),
-        ["read-tree", "tip"]
+        ["reset", "--quiet"] if matches!(scenario, Snapshot::IndexLocked) => {
+            mutations.push(args.clone());
+            failed("index.lock is held")
+        }
+        ["read-tree", "tip" | "new"]
         | ["add", "-A", "--", "."]
         | ["update-ref", CHECKPOINT, "new" | "tip", ""]
         | ["update-ref", HEAD, "new", "tip"]
@@ -343,12 +354,29 @@ fn snapshot_branches_on_git_results_without_dropping_commits_or_rewriting_checkp
         (
             Snapshot::NoChanges,
             Ok("tip"),
-            &["read-tree", "add", "update-ref"][..],
+            &["read-tree", "add", "update-ref", "reset"][..],
         ),
         (
             Snapshot::Retried,
             Ok("new"),
             &["read-tree", "add", "update-ref", "reset"][..],
+        ),
+        (
+            Snapshot::IndexLocked,
+            Err("reset: index.lock is held"),
+            &[
+                "read-tree",
+                "add",
+                "commit-tree",
+                "update-ref",
+                "update-ref",
+                "reset",
+            ][..],
+        ),
+        (
+            Snapshot::AlreadyUpdated,
+            Ok("new"),
+            &["read-tree", "add", "reset"][..],
         ),
         (
             Snapshot::DifferentTree,
@@ -470,12 +498,16 @@ fn removal_prunes_a_missing_worktree_even_when_the_push_fails() {
                     "rev-parse",
                     "refs/heads/conductor/00000000000000000000000001^{tree}",
                 ] => output("tree\n"),
-                ["remote", "get-url", "origin"] => output("remote\n"),
+                ["remote", "get-url", "--push", "origin"] => output(
+                    "https://user:secret@push.example/repo?token=secret\n",
+                ),
                 ["push", "--quiet", "origin", refspec]
                     if *refspec == format!("{HEAD}:{HEAD}") =>
                 {
                     writes.push("push");
-                    failed("rejected")
+                    failed(
+                        "rejected https://user:secret@push.example/repo?token=secret",
+                    )
                 }
                 ["worktree", "prune"] => {
                     writes.push("prune");
@@ -497,6 +529,12 @@ fn removal_prunes_a_missing_worktree_even_when_the_push_fails() {
                     "--format=%(refname)",
                     PREFIX,
                 ] => output(""),
+                [
+                    "for-each-ref",
+                    "--count=500",
+                    "--format=%(refname)",
+                    prefix,
+                ] if prefix.starts_with("refs/conductor-landed/") => output(""),
                 _ => valid(step),
             };
         }
@@ -511,7 +549,41 @@ fn removal_prunes_a_missing_worktree_even_when_the_push_fails() {
     assert_eq!(
         result,
         Ok(Kept::PushFailed {
-            reason: String::from("push: rejected")
+            reason: String::from(
+                "Git could not push to origin; the branch remains local"
+            )
+        })
+    );
+}
+
+#[test]
+fn a_successful_push_reports_only_the_sanitized_push_destination() {
+    let workspace = workspace();
+    let pushed = run(Plan::push(&workspace, HEAD), |step| {
+        let Step::Git { ref args, .. } = step else {
+            return valid(step);
+        };
+        match args
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice()
+        {
+            ["remote", "get-url", "--push", "origin"] => output(
+                "https://user:password@push.example/repo?token=secret#fragment",
+            ),
+            ["push", "--quiet", "origin", refspec]
+                if *refspec == format!("{HEAD}:{HEAD}") =>
+            {
+                output("")
+            }
+            _ => valid(step),
+        }
+    });
+    assert_eq!(
+        pushed.map(kept),
+        Ok(Kept::Pushed {
+            remote: String::from("https://push.example/repo")
         })
     );
 }
@@ -599,6 +671,8 @@ enum Landing {
     AlreadyLanded,
     FastForward,
     Merge,
+    AdvancedFastForward,
+    AdvancedMerge,
     CheckedOut,
     Conflict,
     GitError,
@@ -607,6 +681,40 @@ enum Landing {
 const ISSUE: &str = "refs/heads/issue/x";
 
 fn landing_step(
+    step: Step,
+    scenario: Landing,
+    writes: &mut Vec<String>,
+) -> Answer {
+    match step {
+        Step::LandRefs {
+            repository,
+            issue,
+            commit,
+            old,
+            receipt,
+        } => {
+            assert_eq!(repository, "/repo");
+            assert_eq!(issue, ISSUE);
+            assert_eq!(old, "old");
+            assert_eq!(
+                receipt,
+                format!(
+                    "refs/conductor-landed/00000000000000000000000001/42/{ISSUE}/2"
+                )
+            );
+            writes.push(commit);
+            match scenario {
+                Landing::AdvancedFastForward | Landing::AdvancedMerge => {
+                    failed("the issue ref is at advanced but expected old")
+                }
+                _ => output(""),
+            }
+        }
+        other => landing_git(other, scenario, writes),
+    }
+}
+
+fn landing_git(
     step: Step,
     scenario: Landing,
     writes: &mut Vec<String>,
@@ -633,25 +741,23 @@ fn landing_step(
         {
             output("tree\n")
         }
-        ["remote", "get-url", "origin"] => failed("no origin"),
-        ["rev-list", "--count", range]
-            if *range == format!("{ISSUE}..{HEAD}") =>
-        {
+        ["rev-list", "--count", "old..new"] => {
             output(if matches!(scenario, Landing::AlreadyLanded) {
                 "0\n"
             } else {
                 "2\n"
             })
         }
-        ["merge-base", "--is-ancestor", ISSUE, HEAD] => match scenario {
-            Landing::Merge | Landing::Conflict | Landing::GitError => {
-                failed("not an ancestor")
-            }
+        ["merge-base", "--is-ancestor", "old", "new"] => match scenario {
+            Landing::Merge
+            | Landing::AdvancedMerge
+            | Landing::Conflict
+            | Landing::GitError => failed("not an ancestor"),
             _ => output(""),
         },
-        ["worktree", "list", "--porcelain"] => match scenario {
+        ["worktree", "list", "--porcelain", "-z"] => match scenario {
             Landing::CheckedOut => output(format!(
-                "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo-issue\nHEAD def\nbranch {ISSUE}\n"
+                "worktree /repo\0HEAD abc\0branch refs/heads/main\0\0worktree /repo-issue\0HEAD def\0branch {ISSUE}\0"
             )),
             _ => output(""),
         },
@@ -660,8 +766,8 @@ fn landing_step(
             "--write-tree",
             "--name-only",
             "--no-messages",
-            ISSUE,
-            HEAD,
+            "old",
+            "new",
         ] => match scenario {
             Landing::Conflict => Answer::Git(Output {
                 bytes: b"tree\na.txt\nb.txt\n".to_vec(),
@@ -688,10 +794,6 @@ fn landing_step(
             writes.push(String::from("commit-tree"));
             output("merge\n")
         }
-        ["update-ref", ISSUE, commit @ ("new" | "merge"), "old"] => {
-            writes.push(String::from(*commit));
-            output("")
-        }
         _ => valid(step),
     }
 }
@@ -703,6 +805,16 @@ fn landing_fast_forwards_or_merges_and_refuses_to_move_a_checked_out_branch() {
         (Landing::AlreadyLanded, Ok(0), &[][..]),
         (Landing::FastForward, Ok(2), &["new"][..]),
         (Landing::Merge, Ok(2), &["commit-tree", "merge"][..]),
+        (
+            Landing::AdvancedFastForward,
+            Err("update-ref: the issue ref is at advanced but expected old"),
+            &["new"][..],
+        ),
+        (
+            Landing::AdvancedMerge,
+            Err("update-ref: the issue ref is at advanced but expected old"),
+            &["commit-tree", "merge"][..],
+        ),
         (
             Landing::CheckedOut,
             Err(
@@ -726,9 +838,10 @@ fn landing_fast_forwards_or_merges_and_refuses_to_move_a_checked_out_branch() {
         ),
     ] {
         let mut writes = Vec::new();
-        let result = run(Plan::land(&workspace, ISSUE), |step| {
-            landing_step(step, scenario, &mut writes)
-        });
+        let result =
+            run(Plan::land(&workspace, ISSUE, proto::HostSeq(42)), |step| {
+                landing_step(step, scenario, &mut writes)
+            });
         assert_eq!(
             result,
             expected.map_err(|reason| GitError::Failed(String::from(reason)))

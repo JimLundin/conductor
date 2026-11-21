@@ -11,6 +11,7 @@ use proto::Provider;
 use serde_json::Value;
 
 use crate::prelude::*;
+use crate::protocol::ResponseError;
 use crate::{
     AnswerError, AnswerShape, ApprovalId, Call, CodexEvent, Decision,
     INITIALIZE, Inbound, Outbound, RequestId, ThreadEvent, ThreadId, answer,
@@ -26,6 +27,7 @@ pub enum CallRequest<R> {
     },
     /// Answers an open approval or user-input request exactly once.
     Respond {
+        thread: ThreadId,
         id: ApprovalId,
         decision: Decision,
         reply: R,
@@ -52,7 +54,14 @@ pub type Failure<E> = driver::Failure<E, Problem>;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Problem {
-    Rpc { method: String, message: String },
+    Rpc {
+        method: String,
+        message: String,
+    },
+    MalformedResponse {
+        method: String,
+        detail: &'static str,
+    },
     UnknownApproval(ApprovalId),
     DecisionNotApplicable(ApprovalId),
 }
@@ -62,6 +71,9 @@ impl fmt::Display for Problem {
         match self {
             Self::Rpc { method, message } => {
                 write!(f, "codex rejected {method}: {message}")
+            }
+            Self::MalformedResponse { method, detail } => {
+                write!(f, "codex {method}: {detail}")
             }
             Self::UnknownApproval(id) => {
                 write!(f, "no open approval with id {}", id.0)
@@ -98,7 +110,7 @@ pub struct Server<R> {
     refusal: Option<String>,
     /// Our requests by JSON-RPC id, with their method and who waits.
     pending: BTreeMap<i64, (String, R)>,
-    open: BTreeMap<ApprovalId, Open>,
+    open: BTreeMap<(ThreadId, ApprovalId), Open>,
     next_id: i64,
 }
 
@@ -144,16 +156,10 @@ impl<R> Server<R> {
     fn line<S, E: fmt::Display>(&mut self, line: &str) -> Vec<Effect<R, S, E>> {
         match parse_line(line) {
             Ok(inbound) => self.inbound(inbound),
-            Err(error) => logged(
-                Note::NotJson {
-                    provider: Provider::Codex,
-                    error: error.to_string(),
-                    line: line.to_owned(),
-                },
-                Vec::from([Effect::Emit(CodexEvent::Unknown(Value::String(
-                    line.to_owned(),
-                )))]),
-            ),
+            Err(error) => Vec::from([Effect::Log(Note::NotJson {
+                provider: Provider::Codex,
+                error: error.to_string(),
+            })]),
         }
     }
 
@@ -171,7 +177,7 @@ impl<R> Server<R> {
                 event,
             } => {
                 self.open.insert(
-                    ApprovalId::of(&rpc_id),
+                    (thread.clone(), ApprovalId::of(&rpc_id)),
                     Open {
                         rpc_id,
                         thread: thread.clone(),
@@ -224,7 +230,7 @@ impl<R> Server<R> {
         rpc_id: &RequestId,
     ) -> Vec<Effect<R, S, E>> {
         let id = ApprovalId::of(rpc_id);
-        match self.open.remove(&id) {
+        match self.open.remove(&(thread.clone(), id.clone())) {
             Some(_) => Vec::from([Effect::Emit(CodexEvent::Thread {
                 thread,
                 event: ThreadEvent::ApprovalCancelled { id },
@@ -251,7 +257,7 @@ impl<R> Server<R> {
     fn response<S, E: fmt::Display>(
         &mut self,
         id: &RequestId,
-        outcome: Result<Value, String>,
+        outcome: Result<Value, ResponseError>,
     ) -> Vec<Effect<R, S, E>> {
         let waiting = match id {
             RequestId::Integer(n) => self.pending.remove(n),
@@ -272,8 +278,15 @@ impl<R> Server<R> {
         };
         let replied = Effect::Reply(
             reply,
-            outcome.map_err(|message| {
-                Failure::Protocol(Problem::Rpc { method, message })
+            outcome.map_err(|error| {
+                Failure::Protocol(match error {
+                    ResponseError::Rejected(message) => {
+                        Problem::Rpc { method, message }
+                    }
+                    ResponseError::Malformed(detail) => {
+                        Problem::MalformedResponse { method, detail }
+                    }
+                })
             }),
         );
         initialized.into_iter().chain([replied]).collect()
@@ -294,10 +307,11 @@ impl<R> Server<R> {
                 )
             }
             CallRequest::Respond {
+                thread,
                 id,
                 decision,
                 reply,
-            } => match self.open.remove(&id) {
+            } => match self.open.remove(&(thread, id.clone())) {
                 None => Vec::from([Effect::Reply(
                     reply,
                     Err(Failure::Protocol(Problem::UnknownApproval(id))),
@@ -335,7 +349,7 @@ impl<R> Server<R> {
                 ),
             ),
             Err(AnswerError::NotApplicable) => {
-                self.open.insert(id.clone(), open);
+                self.open.insert((open.thread.clone(), id.clone()), open);
                 Vec::from([Effect::Reply(
                     reply,
                     Err(Failure::Protocol(Problem::DecisionNotApplicable(id))),
@@ -462,7 +476,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use agents::{Exit, Note};
-    use proto::Provider;
+    use proto::{Answer, Provider};
     use serde_json::{Value, json};
 
     use super::{
@@ -483,6 +497,49 @@ mod tests {
 
     fn line(value: &Value) -> Seen {
         Input::Read(Ok(Some(value.to_string())))
+    }
+
+    #[test]
+    fn malformed_output_logs_the_parse_error() {
+        let mut server = Server::<u8>::default();
+        let seen: Vec<Step> = server
+            .step(Input::Read(Ok(Some(String::from("private-test-marker")))));
+        assert_eq!(
+            seen,
+            [Effect::Log(Note::NotJson {
+                provider: Provider::Codex,
+                error: String::from("expected value at line 1 column 1"),
+            })]
+        );
+    }
+
+    #[test]
+    fn declining_a_secret_question_keeps_its_payload_out_of_diagnostics() {
+        let mut server = Server::<u8>::default();
+        let seen: Vec<Step> = server.step(line(&json!({
+            "method": "item/tool/requestUserInput",
+            "id": 42,
+            "params": {
+                "threadId": "thread_1",
+                "turnId": "turn_1",
+                "itemId": "item_1",
+                "questions": [{
+                    "id": "test",
+                    "header": "Secret",
+                    "question": "private-test-marker",
+                    "isSecret": true,
+                }],
+            },
+        })));
+        assert!(matches!(
+            seen.as_slice(),
+            [
+                Effect::Log(Note::SecretDeclined { provider: Provider::Codex }),
+                Effect::Write { .. },
+                Effect::Emit(event),
+            ] if event.diagnostic() == ("secret_question_declined", Some(&ThreadId(String::from("thread_1"))))
+        ));
+        assert!(!format!("{seen:?}").contains("private-test-marker"));
     }
 
     fn written(msg: Outbound, then: Then<u8>) -> Step {
@@ -581,11 +638,54 @@ mod tests {
     }
 
     #[test]
+    fn matching_responses_require_an_explicit_result_or_valid_error() {
+        let mut server = Server::default();
+        let seen = walk(
+            &mut server,
+            Vec::from([
+                wrote(sent(1, "initialize", 1)),
+                wrote(sent(2, "model/list", 2)),
+                wrote(sent(3, "model/list", 3)),
+                wrote(sent(4, "thread/revert", 4)),
+                line(&json!({"id": 1})),
+                line(
+                    &json!({"id": 2, "error": {"code": "wrong", "message": "bad"}}),
+                ),
+                line(&json!({"id": 3, "result": null})),
+                line(&json!({"id": 4, "method": "unexpected", "result": null})),
+            ]),
+        );
+        for (effects, reply, method, detail) in [
+            (&seen[4], 1, "initialize", "malformed JSON-RPC response"),
+            (
+                &seen[5],
+                2,
+                "model/list",
+                "malformed JSON-RPC error response",
+            ),
+            (&seen[7], 4, "thread/revert", "malformed JSON-RPC response"),
+        ] {
+            assert_eq!(
+                effects.as_slice(),
+                [Effect::Reply(
+                    reply,
+                    Err(Failure::Protocol(Problem::MalformedResponse {
+                        method: String::from(method),
+                        detail,
+                    }))
+                )]
+            );
+        }
+        assert_eq!(seen[6], Vec::from([Effect::Reply(3, Ok(Value::Null))]));
+    }
+
+    #[test]
     fn an_approval_is_answered_once_and_a_withdrawn_one_is_cancelled() {
         let mut server = Server::default();
         let respond = |id: &str, decision, reply| {
             Input::Command(Command::Call(CallRequest::Respond {
-                id: ApprovalId(String::from(id)),
+                thread: ThreadId(String::from("th_1")),
+                id: ApprovalId(format!("integer:{id}")),
                 decision,
                 reply,
             }))
@@ -616,13 +716,13 @@ mod tests {
                 Vec::from([Effect::Reply(
                     1,
                     Err(Failure::Protocol(Problem::DecisionNotApplicable(
-                        ApprovalId(String::from("7"))
+                        ApprovalId(String::from("integer:7"))
                     )))
                 )]),
                 Vec::from([
                     Effect::Log(Note::Answering {
                         provider: Provider::Codex,
-                        approval: String::from("7"),
+                        approval: String::from("integer:7"),
                         thread: String::from("th_1"),
                     }),
                     written(
@@ -636,23 +736,141 @@ mod tests {
                 Vec::from([Effect::Reply(
                     3,
                     Err(Failure::Protocol(Problem::UnknownApproval(
-                        ApprovalId(String::from("7"))
+                        ApprovalId(String::from("integer:7"))
                     )))
                 )]),
                 Vec::new(),
                 Vec::from([Effect::Emit(CodexEvent::Thread {
                     thread,
                     event: ThreadEvent::ApprovalCancelled {
-                        id: ApprovalId(String::from("8")),
+                        id: ApprovalId(String::from("integer:8")),
                     },
                 })]),
                 Vec::from([Effect::Reply(
                     4,
                     Err(Failure::Protocol(Problem::UnknownApproval(
-                        ApprovalId(String::from("8"))
+                        ApprovalId(String::from("integer:8"))
                     )))
                 )]),
             ]
+        );
+    }
+
+    #[test]
+    fn answers_and_withdrawals_are_scoped_to_thread_and_wire_id() {
+        let mut server = Server::default();
+        let mut other = approval(7);
+        other["id"] = json!("7");
+        other["params"]["threadId"] = json!("th_2");
+        let respond = |thread: &str, wire_id: &RequestId, reply| {
+            Input::Command(Command::Call(CallRequest::Respond {
+                thread: ThreadId(String::from(thread)),
+                id: ApprovalId::of(wire_id),
+                decision: Decision::Accept,
+                reply,
+            }))
+        };
+        let number = RequestId::Integer(7);
+        let string = RequestId::String(String::from("7"));
+        let seen = walk(
+            &mut server,
+            Vec::from([
+                line(&approval(7)),
+                line(&other),
+                respond("th_2", &number, 1),
+                line(&json!({
+                    "method": "serverRequest/resolved",
+                    "params": { "threadId": "th_1", "requestId": "7" },
+                })),
+                respond("th_2", &string, 2),
+                respond("th_1", &number, 3),
+            ]),
+        );
+        assert_eq!(
+            seen[2],
+            Vec::from([Effect::Reply(
+                1,
+                Err(Failure::Protocol(Problem::UnknownApproval(
+                    ApprovalId::of(&number)
+                ))),
+            )])
+        );
+        assert_eq!(seen[3].as_slice(), &[]);
+        for (effects, id, reply) in
+            [(&seen[4], string, 2), (&seen[5], number, 3)]
+        {
+            assert_eq!(
+                effects.get(1),
+                Some(&written(
+                    Outbound::Answer {
+                        rpc_id: id,
+                        result: json!({"decision": "accept"})
+                    },
+                    Then::Answer(reply),
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_can_be_answered_after_a_wrong_answer_count() {
+        let mut server = Server::default();
+        let request = json!({
+            "method": "item/tool/requestUserInput",
+            "id": 42,
+            "params": {
+                "threadId": "th_1",
+                "turnId": "tu_1",
+                "itemId": "item_1",
+                "questions": [{
+                    "id": "color",
+                    "header": "Color",
+                    "question": "Which color?",
+                    "options": [{"label": "Blue", "description": "Cool"}],
+                }],
+            },
+        });
+        let rpc_id = RequestId::Integer(42);
+        let id = ApprovalId::of(&rpc_id);
+        let respond = |answers, reply| {
+            Input::Command(Command::Call(CallRequest::Respond {
+                thread: ThreadId(String::from("th_1")),
+                id: id.clone(),
+                decision: Decision::Answer(answers),
+                reply,
+            }))
+        };
+        let seen = walk(
+            &mut server,
+            Vec::from([
+                line(&request),
+                respond(Vec::new(), 1),
+                respond(
+                    Vec::from([Answer(Vec::from([String::from("Blue")]))]),
+                    2,
+                ),
+            ]),
+        );
+        assert_eq!(
+            seen[1],
+            [Effect::Reply(
+                1,
+                Err(Failure::Protocol(Problem::DecisionNotApplicable(id)))
+            )],
+        );
+        assert!(matches!(
+            seen[2].as_slice(),
+            [Effect::Log(_), Effect::Write { .. }]
+        ));
+        assert_eq!(
+            seen[2].get(1),
+            Some(&written(
+                Outbound::Answer {
+                    rpc_id,
+                    result: json!({"answers": {"color": {"answers": ["Blue"]}}}),
+                },
+                Then::Answer(2),
+            )),
         );
     }
 
@@ -670,6 +888,7 @@ mod tests {
         let first: Vec<Step> = server.settle(id.clone(), open, Err(failure), 1);
         let again: Vec<Step> =
             server.step(Input::Command(Command::Call(CallRequest::Respond {
+                thread: ThreadId(String::from("th_1")),
                 id,
                 decision: Decision::Accept,
                 reply: 2,

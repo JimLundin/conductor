@@ -333,7 +333,7 @@ impl Link {
             }
             (Phase::Subscribing(feed), Input::Subscribed) => {
                 self.phase = Phase::Connected(feed);
-                Vec::new()
+                self.catch_up(self.cursor_seq(), feed.live_at)
             }
             (Phase::Connected(feed), Input::Frame(Frame::Event(event))) => {
                 self.apply(feed, event)
@@ -468,13 +468,11 @@ impl Link {
         let reset = self.adopt(feed.epoch);
         let shown = self.set_state(LinkState::CatchingUp);
         let after_seq = self.cursor_seq();
-        let live = self.catch_up(after_seq, feed.live_at);
         self.phase = Phase::Subscribing(feed);
         join([
             reset,
             Vec::from([Effect::Forward(Update::Welcome(welcome))]),
             shown,
-            live,
             Vec::from([Effect::Start(Operation::Subscribe(Subscribe {
                 epoch: feed.epoch,
                 after_seq,
@@ -878,7 +876,6 @@ mod tests {
                     Effect::Forward(Update::Reset(Epoch(2))),
                     Effect::Forward(Update::Welcome(welcome(2, 0))),
                     Effect::Show(status(LinkState::CatchingUp, None)),
-                    Effect::Show(status(LinkState::Live, None)),
                     subscribe(2, 0),
                 ])),
                 Some(Cursor {
@@ -1246,6 +1243,31 @@ mod tests {
     }
 
     #[test]
+    fn failed_subscriptions_preserve_backoff_with_an_up_to_date_cursor() {
+        let (start, _) = Link::start(hello(), None);
+        let (mut link, _) = start.step(connected(0));
+        for attempt in 1..=2 {
+            let (catching_up, _) = link.step(Input::Welcomed(welcome(1, 0)));
+            assert_eq!(catching_up.status().state, LinkState::CatchingUp);
+            let (failed, _) = catching_up
+                .step(Input::Lost(Lost::HostClosed(Stream::Subscription)));
+            let (waiting, effects) = failed.step(Input::Drawn(0));
+            assert_eq!(
+                effects,
+                Vec::from([Effect::Start(Operation::Sleep(backoff(
+                    attempt - 1,
+                    0
+                )))]),
+            );
+            let (dialing, _) = waiting.step(Input::Elapsed);
+            (link, _) = dialing.step(connected(u64::from(attempt)));
+        }
+        let (subscribing, _) = link.step(Input::Welcomed(welcome(1, 0)));
+        let (live, _) = subscribing.step(Input::Subscribed);
+        assert_eq!(live.status(), &status(LinkState::Live, None));
+    }
+
+    #[test]
     fn going_live_clears_the_last_error() {
         let (link, _) = Link::start(hello(), None);
         let (live, _) = walk(
@@ -1256,6 +1278,7 @@ mod tests {
                 Input::Elapsed,
                 connected(1),
                 Input::Welcomed(welcome(1, 0)),
+                Input::Subscribed,
             ]),
         );
         assert_eq!(live.status(), &status(LinkState::Live, None));

@@ -143,6 +143,17 @@ impl ProviderInfo {
         let form = self.form(&credential.kind).ok_or_else(|| {
             format!("{} takes no {:?} credential", self.label, credential.kind)
         })?;
+        let mut fields =
+            form.fields.iter().filter(|field| field.id == form.account);
+        let field = fields
+            .next()
+            .filter(|field| field.kind != FieldKind::Secret);
+        if field.is_none() || fields.next().is_some() {
+            return Err(format!(
+                "{} has no unambiguous public account field",
+                form.label
+            ));
+        }
         let value = credential.value(&form.account).trim();
         if value.is_empty() {
             return Err(format!("{} names no account", form.label));
@@ -188,8 +199,17 @@ impl CredentialForm {
         self.fields
             .iter()
             .filter(|field| field.kind == FieldKind::Url)
-            .map(|field| credential.value(&field.id))
-            .find(|value| !value.is_empty())
+            .find_map(|field| {
+                let value = credential.value(&field.id);
+                let unique = self
+                    .fields
+                    .iter()
+                    .filter(|other| other.id == field.id)
+                    .count()
+                    == 1;
+                (unique && !value.is_empty() && field.check(value).is_ok())
+                    .then_some(value)
+            })
             .map(String::from)
     }
 }
@@ -371,5 +391,48 @@ mod tests {
             alloc::format!("{stored:?}"),
             r#"Credential { kind: "gateway", .. }"#
         );
+    }
+    #[test]
+    fn account_metadata_cannot_name_a_secret_or_ambiguous_field() {
+        let mut provider = info();
+        let stored = credential(
+            "gateway",
+            &[("url", "https://g.example"), ("token", "synthetic token")],
+        );
+        provider.credentials[0].account = String::from("token");
+        assert!(provider.account(&stored).is_err());
+        provider.credentials[0].account = String::from("url");
+        provider.credentials[0].fields.push(field(
+            "url",
+            FieldKind::Secret,
+            false,
+        ));
+        assert!(provider.account(&stored).is_err());
+        assert!(matches!(
+            provider.auth(&stored),
+            Auth::Stored { url: None, .. }
+        ));
+    }
+
+    #[test]
+    fn a_form_upgrade_revalidates_a_stored_value_before_displaying_it() {
+        let mut provider = info();
+        provider.credentials[0].fields[0].kind = FieldKind::Secret;
+        let old = credential(
+            "gateway",
+            &[
+                (
+                    "url",
+                    "https://synthetic:token@g.example/v1?q=hidden#hidden",
+                ),
+                ("token", "required"),
+            ],
+        );
+        assert!(provider.check(&old).is_ok());
+        provider.credentials[0].fields[0].kind = FieldKind::Url;
+        assert!(matches!(
+            provider.auth(&old),
+            Auth::Stored { url: None, .. }
+        ));
     }
 }

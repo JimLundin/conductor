@@ -3,15 +3,20 @@
 //! follows the log and writes each note through the home.
 
 use std::convert::Infallible;
+use std::time::Duration;
+
+use host::log::Completion;
 
 use host::progress::Progress;
 use host::serve::HomeOrder;
-use proto::{Event, HostSeq, IssueChange};
+use proto::{CommandResult, Epoch, Event, HostSeq, IssueChange};
 use tokio::sync::broadcast;
 
 use crate::Stopped;
 use crate::home::HomeClone;
 use crate::log::Log;
+
+const RETRY_DELAY: Duration = Duration::from_secs(2);
 
 pub fn spawn(log: Log, home: HomeClone) {
     tokio::spawn(async move {
@@ -21,13 +26,13 @@ pub fn spawn(log: Log, home: HomeClone) {
 }
 
 async fn watch(log: &Log, home: &HomeClone) -> Result<Infallible, Stopped> {
-    let mut seen = host::progress::latest(&log.history().await?);
+    let (epoch, mut seen) = log.progress_cursor().await?;
     loop {
         let watched = log.subscribe(seen).await?;
         for event in watched.replay {
-            seen = note(log, home, &event).await?;
+            seen = note(log, home, epoch, &event).await?;
         }
-        seen = follow(log, home, watched.live, seen).await?;
+        seen = follow(log, home, epoch, watched.live, seen).await?;
     }
 }
 
@@ -36,12 +41,13 @@ async fn watch(log: &Log, home: &HomeClone) -> Result<Infallible, Stopped> {
 async fn follow(
     log: &Log,
     home: &HomeClone,
+    epoch: Epoch,
     mut live: broadcast::Receiver<Event>,
     mut seen: HostSeq,
 ) -> Result<HostSeq, Stopped> {
     loop {
         match live.recv().await {
-            Ok(event) => seen = note(log, home, &event).await?,
+            Ok(event) => seen = note(log, home, epoch, &event).await?,
             Err(broadcast::error::RecvError::Lagged(_)) => return Ok(seen),
             Err(broadcast::error::RecvError::Closed) => return Err(Stopped {}),
         }
@@ -52,27 +58,48 @@ async fn follow(
 async fn note(
     log: &Log,
     home: &HomeClone,
+    epoch: Epoch,
     event: &Event,
 ) -> Result<HostSeq, Stopped> {
     if host::progress::ends_turn(event) {
         let history = log.history().await?;
         if let Some(progress) = host::progress::progress(&history, event) {
-            write(home, progress).await?;
+            write(log, home, progress, epoch, event.seq).await?;
         }
     }
     Ok(event.seq)
 }
 
-async fn write(home: &HomeClone, progress: Progress) -> Result<(), Stopped> {
+async fn write(
+    log: &Log,
+    home: &HomeClone,
+    progress: Progress,
+    epoch: Epoch,
+    seq: HostSeq,
+) -> Result<(), Stopped> {
     let Progress { assignment, text } = progress;
     let signer = assignment.signer();
     let issue = assignment.issue;
-    let answer = home
-        .order(
-            HomeOrder::Change(issue, IssueChange::Note(text), signer),
-            proto::CommandId(ulid::Ulid::new().0),
-        )
-        .await?;
-    tracing::info!(target: "home", ?issue, ?answer, "noted a turn's progress");
-    Ok(())
+    let id = host::progress::edit_id(epoch, seq);
+    let order = HomeOrder::Change(issue, IssueChange::Note(text), signer);
+    loop {
+        match home.order(order.clone(), id).await? {
+            Completion::Final(CommandResult::Accepted) => {
+                log.progress_delivered(seq).await?;
+                tracing::info!(target: "home", ?issue, progress_seq = seq.0, "noted a turn's progress");
+                return Ok(());
+            }
+            Completion::Final(_) => {
+                tracing::warn!(target: "home", ?issue, progress_seq = seq.0, "progress note rejected");
+                return Ok(());
+            }
+            Completion::Retryable(_) => {
+                tracing::warn!(target: "home", ?issue, progress_seq = seq.0, "progress note will retry");
+                tokio::select! {
+                    () = log.stopped() => return Err(Stopped {}),
+                    () = tokio::time::sleep(RETRY_DELAY) => {}
+                }
+            }
+        }
+    }
 }

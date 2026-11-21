@@ -47,8 +47,14 @@ pub struct Pin {
 /// The pinned download of `cli` for the platform the Rust names `os` and
 /// `arch` describe, whose executables end in `exe`.
 #[must_use]
-pub fn pin(cli: Cli, os: &str, arch: &str, exe: &str) -> Option<Pin> {
-    let Platform { claude, codex } = platform(os, arch)?;
+pub fn pin(
+    cli: Cli,
+    os: &str,
+    arch: &str,
+    exe: &str,
+    musl: bool,
+) -> Option<Pin> {
+    let Platform { claude, codex } = platform(os, arch, musl)?;
     Some(match cli {
         Cli::Claude => Pin {
             version: String::from(pins::CLAUDE_VERSION),
@@ -84,7 +90,7 @@ pub fn kept(name: &str, keep: &str) -> bool {
 /// What each vendor calls a platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Platform {
-    /// The platform in Claude's `manifest.json`. Linux means glibc.
+    /// The platform in Claude's `manifest.json`.
     pub claude: &'static str,
     /// Codex's target triple.
     pub codex: &'static str,
@@ -93,14 +99,24 @@ pub struct Platform {
 /// The platforms both CLIs publish builds for, by the `os` and `arch` Rust
 /// names.
 #[must_use]
-pub fn platform(os: &str, arch: &str) -> Option<Platform> {
-    let (claude, codex) = match (os, arch) {
-        ("linux", "x86_64") => ("linux-x64", "x86_64-unknown-linux-musl"),
-        ("linux", "aarch64") => ("linux-arm64", "aarch64-unknown-linux-musl"),
-        ("macos", "x86_64") => ("darwin-x64", "x86_64-apple-darwin"),
-        ("macos", "aarch64") => ("darwin-arm64", "aarch64-apple-darwin"),
-        ("windows", "x86_64") => ("win32-x64", "x86_64-pc-windows-msvc"),
-        ("windows", "aarch64") => ("win32-arm64", "aarch64-pc-windows-msvc"),
+pub fn platform(os: &str, arch: &str, musl: bool) -> Option<Platform> {
+    let (claude, codex) = match (os, arch, musl) {
+        ("linux", "x86_64", true) => {
+            ("linux-x64-musl", "x86_64-unknown-linux-musl")
+        }
+        ("linux", "aarch64", true) => {
+            ("linux-arm64-musl", "aarch64-unknown-linux-musl")
+        }
+        ("linux", "x86_64", false) => {
+            ("linux-x64", "x86_64-unknown-linux-musl")
+        }
+        ("linux", "aarch64", false) => {
+            ("linux-arm64", "aarch64-unknown-linux-musl")
+        }
+        ("macos", "x86_64", _) => ("darwin-x64", "x86_64-apple-darwin"),
+        ("macos", "aarch64", _) => ("darwin-arm64", "aarch64-apple-darwin"),
+        ("windows", "x86_64", _) => ("win32-x64", "x86_64-pc-windows-msvc"),
+        ("windows", "aarch64", _) => ("win32-arm64", "aarch64-pc-windows-msvc"),
         _ => return None,
     };
     Some(Platform { claude, codex })
@@ -146,7 +162,7 @@ mod tests {
     #[test]
     fn each_supported_platform_has_both_vendors_names() {
         assert_eq!(
-            SUPPORTED.map(|(os, arch)| platform(os, arch)
+            SUPPORTED.map(|(os, arch)| platform(os, arch, false)
                 .map(|named| (named.claude, named.codex))),
             [
                 Some(("linux-x64", "x86_64-unknown-linux-musl")),
@@ -158,7 +174,10 @@ mod tests {
             ]
         );
         assert_eq!(
-            [platform("linux", "riscv64"), platform("freebsd", "x86_64")],
+            [
+                platform("linux", "riscv64", false),
+                platform("freebsd", "x86_64", false)
+            ],
             [None, None]
         );
     }
@@ -174,12 +193,17 @@ mod tests {
 
     #[test]
     fn every_build_the_pins_list_has_its_own_digest() {
-        let platforms = SUPPORTED.map(|(os, arch)| platform(os, arch));
+        let platforms = SUPPORTED.map(|(os, arch)| platform(os, arch, false));
         let claude = platforms
             .iter()
             .flatten()
             .map(|named| named.claude)
-            .chain(["linux-arm64-musl", "linux-x64-musl"])
+            .chain(
+                ["aarch64", "x86_64"]
+                    .into_iter()
+                    .filter_map(|arch| platform("linux", arch, true))
+                    .map(|named| named.claude),
+            )
             .map(pins::claude_sha256);
         let codex = platforms
             .iter()
@@ -206,10 +230,14 @@ mod tests {
 
     #[test]
     fn each_cli_downloads_its_pinned_build_for_the_platform() {
-        let claude = pin(Cli::Claude, "windows", "x86_64", ".exe");
-        let codex = pin(Cli::Codex, "linux", "aarch64", "");
+        let claude = pin(Cli::Claude, "windows", "x86_64", ".exe", false);
+        let codex = pin(Cli::Codex, "linux", "aarch64", "", false);
         assert_eq!(
-            [claude, codex, pin(Cli::Codex, "freebsd", "x86_64", "")],
+            [
+                claude,
+                codex,
+                pin(Cli::Codex, "freebsd", "x86_64", "", false)
+            ],
             [
                 Some(Pin {
                     version: String::from(pins::CLAUDE_VERSION),

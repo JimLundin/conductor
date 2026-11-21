@@ -36,6 +36,9 @@ impl Adoption {
                 Staging::inspect(&data.join("work").join(&source))?,
             ],
         };
+        for directory in adoption.directories(data) {
+            is_directory(&directory.destination)?;
+        }
         adoption.save(data)?;
         Ok(adoption)
     }
@@ -66,20 +69,34 @@ impl Adoption {
     ) -> anyhow::Result<()> {
         // A journal rename may have succeeded before its sync failed.
         crate::sync_dir(data)?;
-        for (index, directory) in self.directories(data).into_iter().enumerate()
-        {
-            match self.staging[index] {
-                Staging::Absent => continue,
-                Staging::Source => {
-                    directory.stage()?;
-                    self.staging[index] = Staging::Staged;
-                    self.save(data)?;
-                }
-                Staging::Staged => {}
-            }
-            directory.install()?;
+        let directories = self.directories(data);
+        for directory in &directories {
+            is_directory(&directory.destination).context(
+                "account adoption is pending; resolve the destination conflict and retry",
+            )?;
+        }
+        for (index, directory) in directories.into_iter().enumerate() {
+            self.move_directory(data, index, &directory)?;
         }
         Ok(())
+    }
+
+    fn move_directory(
+        &mut self,
+        data: &Path,
+        index: usize,
+        directory: &Directory,
+    ) -> anyhow::Result<()> {
+        match self.staging[index] {
+            Staging::Absent => return Ok(()),
+            Staging::Source => {
+                directory.stage()?;
+                self.staging[index] = Staging::Staged;
+                self.save(data)?;
+            }
+            Staging::Staged => {}
+        }
+        directory.install()
     }
 
     pub(super) fn finish(&self, data: &Path) -> anyhow::Result<()> {

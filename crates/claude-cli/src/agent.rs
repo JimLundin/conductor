@@ -22,14 +22,12 @@ use crate::session::{ClaudeOptions, ClaudeSession, Error, sandbox};
 #[derive(Debug)]
 struct ClaudeInstance {
     launch: Launch,
-    sandbox: claude::Sandbox,
     credential: watch::Sender<Option<ClaudeCredential>>,
 }
 
 pub fn instance(launch: Launch) -> Instance {
     Arc::new(ClaudeInstance {
         launch,
-        sandbox: sandbox(),
         credential: watch::channel(None).0,
     })
 }
@@ -39,9 +37,10 @@ impl ProviderInstance for ClaudeInstance {
         Box::pin(async move {
             let credential =
                 given.as_ref().map(claude::credential).transpose()?;
-            if let Some(note) =
-                claude::unprotected(credential.as_ref(), self.sandbox)
-            {
+            if let Some(note) = claude::unprotected(
+                credential.as_ref(),
+                sandbox(&self.launch.work),
+            ) {
                 runtime::log(&note);
             }
             self.credential.send_replace(credential.clone());

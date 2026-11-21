@@ -1,4 +1,4 @@
-use alloc::{boxed::Box, format, string::ToString};
+use alloc::{boxed::Box, format};
 use core::{
     future::{Future, poll_fn},
     ops::ControlFlow,
@@ -7,8 +7,8 @@ use core::{
 };
 
 use proto::{
-    Checkpoint, CheckpointDiff, CheckpointId, HostPath, Kept, SessionId,
-    Workspace,
+    Checkpoint, CheckpointDiff, CheckpointId, HostPath, HostSeq, Kept,
+    SessionId, Workspace,
 };
 
 use crate::prelude::*;
@@ -28,6 +28,13 @@ pub enum Step {
         args: Vec<String>,
         index: bool,
         identity: bool,
+    },
+    LandRefs {
+        repository: String,
+        issue: String,
+        commit: String,
+        old: String,
+        receipt: String,
     },
     Canonicalize(String),
     WorktreeParent,
@@ -542,8 +549,9 @@ impl Steps {
             .await
             .ok();
         if settle(&tip, &commit, parent.as_deref())? {
-            self.move_branch(workspace, &commit, &tip).await?;
+            self.update_branch(workspace, &commit, &tip).await?;
         }
+        self.sync_index(workspace).await?;
         Ok(commit)
     }
 
@@ -635,20 +643,26 @@ impl Steps {
             .text(path, &["clean", "-q", "-f", "-d", "--", "."])
             .await?;
         let tip = self.text(path, &["rev-parse", &head(workspace)]).await?;
-        self.move_branch(workspace, commit, &tip).await
+        self.update_branch(workspace, commit, &tip).await?;
+        self.sync_index(workspace).await
     }
 
-    async fn move_branch(
+    async fn update_branch(
         &self,
         workspace: &Workspace,
         commit: &str,
         from: &str,
     ) -> Result<(), GitError> {
         let path = &workspace.worktree.0;
-        let _ = self
-            .text(path, &["update-ref", &head(workspace), commit, from])
-            .await?;
-        self.text(path, &["reset", "--quiet"]).await.map(drop)
+        self.text(path, &["update-ref", &head(workspace), commit, from])
+            .await
+            .map(drop)
+    }
+
+    async fn sync_index(&self, workspace: &Workspace) -> Result<(), GitError> {
+        self.text(&workspace.worktree.0, &["reset", "--quiet"])
+            .await
+            .map(drop)
     }
 }
 
@@ -740,8 +754,27 @@ impl<'a> Plan<'a, Kept> {
 
 impl<'a> Plan<'a, u64> {
     #[must_use]
-    pub fn land(workspace: &'a Workspace, issue: &'a str) -> Self {
-        Self::new(|steps| async move { steps.land(workspace, issue).await })
+    pub fn land(
+        workspace: &'a Workspace,
+        issue: &'a str,
+        attempt: HostSeq,
+    ) -> Self {
+        Self::new(
+            |steps| async move { steps.land(workspace, issue, attempt).await },
+        )
+    }
+}
+
+impl<'a> Plan<'a, Option<u64>> {
+    #[must_use]
+    pub fn landing_receipt(
+        workspace: &'a Workspace,
+        issue: &'a str,
+        attempt: HostSeq,
+    ) -> Self {
+        Self::new(|steps| async move {
+            steps.landing_receipt(workspace, issue, attempt).await
+        })
     }
 }
 
@@ -759,7 +792,7 @@ impl<'a> Plan<'a, Push> {
 impl Steps {
     async fn remove(&self, workspace: &Workspace) -> Result<Kept, GitError> {
         let repository = &workspace.repository.0;
-        let trees = self.uncommitted(workspace).await?;
+        let trees = self.uncommitted(workspace, true).await?;
         let origin = self.origin(repository).await;
         let _ = owner(workspace)?;
         if let Some(tree) = trees.changed() {
@@ -778,12 +811,14 @@ impl Steps {
             let _ = self.text(repository, &["worktree", "prune"]).await?;
         }
         self.forget(repository, &checkpoints(workspace)?).await?;
+        self.forget(repository, &landing_refs(workspace)?).await?;
         Ok(kept(pushed))
     }
 
     async fn uncommitted(
         &self,
         workspace: &Workspace,
+        preserve_index: bool,
     ) -> Result<Trees, GitError> {
         let repository = &workspace.repository.0;
         let reference = format!("{}^{{tree}}", head(workspace));
@@ -793,12 +828,33 @@ impl Steps {
             .await?
         {
             let directory = self.validate(workspace).await?;
+            let path = &workspace.worktree.0;
             self.done(Step::OpenIndex(directory)).await?;
-            Some(self.tree(&workspace.worktree.0, "HEAD").await?)
+            let files = self.tree(path, "HEAD").await?;
+            if preserve_index {
+                self.preserve_index(path, &branch, &files).await?;
+            }
+            Some(files)
         } else {
             None
         };
         Ok(Trees { branch, worktree })
+    }
+
+    async fn preserve_index(
+        &self,
+        path: &str,
+        branch: &str,
+        files: &str,
+    ) -> Result<(), GitError> {
+        let staged = self.text(path, &["write-tree"]).await?;
+        if staged != branch && staged != files {
+            return Err(failure(
+                "keeping workspace changes",
+                "the Git index contains changes absent from the files; commit or unstage them and retry",
+            ));
+        }
+        Ok(())
     }
 
     async fn keep(
@@ -809,9 +865,7 @@ impl Steps {
         let path = &workspace.worktree.0;
         let parent = self.text(path, &["rev-parse", "HEAD"]).await?;
         let commit = self.commit(path, tree, &[&parent], KEPT).await?;
-        self.text(path, &["update-ref", &head(workspace), &commit, &parent])
-            .await
-            .map(drop)
+        self.update_branch(workspace, &commit, &parent).await
     }
 
     async fn forget(
@@ -842,7 +896,7 @@ impl Steps {
     }
 
     async fn origin(&self, repository: &str) -> Option<String> {
-        self.text(repository, &["remote", "get-url", "origin"])
+        self.text(repository, &["remote", "get-url", "--push", "origin"])
             .await
             .ok()
     }
@@ -864,62 +918,83 @@ impl Steps {
             .text(repository, &["push", "--quiet", "origin", &refspec])
             .await
             .map(drop)
-            .map_err(|error| error.to_string());
-        Some((remote, pushed))
+            .map_err(|_| {
+                String::from(
+                    "Git could not push to origin; the branch remains local",
+                )
+            });
+        Some((push_destination(&remote), pushed))
     }
 
     async fn land(
         &self,
         workspace: &Workspace,
         issue: &str,
+        attempt: HostSeq,
     ) -> Result<u64, GitError> {
-        let trees = self.uncommitted(workspace).await?;
+        let trees = self.uncommitted(workspace, false).await?;
         let repository = &workspace.repository.0;
-        let _ = self.origin(repository).await;
         if let Some(tree) = trees.changed() {
             self.keep(workspace, tree).await?;
         }
         let session = head(workspace);
+        let old = self.text(repository, &["rev-parse", issue]).await?;
+        let new = self.text(repository, &["rev-parse", &session]).await?;
         let count = self
             .text(
                 repository,
-                &["rev-list", "--count", &format!("{issue}..{session}")],
+                &["rev-list", "--count", &format!("{old}..{new}")],
             )
             .await?;
+        let ahead = count
+            .parse()
+            .map_err(|_| failure("landing", "Git counted no commits"))?;
+        if ahead == 0 {
+            return Ok(0);
+        }
         let fast_forward = self
-            .text(
-                repository,
-                &["merge-base", "--is-ancestor", issue, &session],
-            )
+            .text(repository, &["merge-base", "--is-ancestor", &old, &new])
             .await
             .is_ok();
         let listed = self
-            .text(repository, &["worktree", "list", "--porcelain"])
+            .text(repository, &["worktree", "list", "--porcelain", "-z"])
             .await?;
-        let ahead = count
-            .trim()
-            .parse()
-            .map_err(|_| failure("landing", "Git counted no commits"))?;
         if let Some(path) = checked_out(&listed, issue) {
-            Err(GitError::Failed(format!(
+            return Err(GitError::Failed(format!(
                 "the issue's branch is checked out at {path}, so it can't move under it; land the session's branch there"
-            )))
-        } else if ahead == 0 {
-            Ok(0)
-        } else {
-            self.land_commits(repository, issue, &session, fast_forward)
-                .await?;
-            Ok(ahead)
+            )));
+        }
+        let commit = self
+            .landing_commit(
+                repository,
+                (issue, &old),
+                (&session, &new),
+                fast_forward,
+            )
+            .await?;
+        let prefix = landing_attempt(workspace, issue, attempt)?;
+        match self
+            .perform(Step::LandRefs {
+                repository: repository.clone(),
+                issue: String::from(issue),
+                commit,
+                old,
+                receipt: format!("{prefix}{ahead}"),
+            })
+            .await?
+        {
+            Answer::Git(output) => checked(output, "update-ref").map(|_| ahead),
+            _ => Err(wrong_answer()),
         }
     }
 
-    async fn land_commits(
+    async fn landing_commit(
         &self,
         repository: &str,
-        issue: &str,
-        session: &str,
+        (issue, old): (&str, &str),
+        (session, new): (&str, &str),
         fast_forward: bool,
-    ) -> Result<(), GitError> {
+    ) -> Result<String, GitError> {
         let merge_tree = if fast_forward {
             None
         } else {
@@ -931,8 +1006,8 @@ impl Steps {
                         "--write-tree",
                         "--name-only",
                         "--no-messages",
-                        issue,
-                        session,
+                        old,
+                        new,
                     ],
                 )
                 .await?;
@@ -945,24 +1020,77 @@ impl Steps {
                 .map_err(|reason| failure("landing", &reason))?,
             )
         };
-        let old = self.text(repository, &["rev-parse", issue]).await?;
-        let new = self.text(repository, &["rev-parse", session]).await?;
-        let commit = match merge_tree {
-            None => new,
+        match merge_tree {
+            None => Ok(String::from(new)),
             Some(tree) => {
                 self.commit(
                     repository,
                     tree.trim(),
-                    &[&old, &new],
+                    &[old, new],
                     &merge_message(issue, session),
                 )
-                .await?
+                .await
             }
-        };
-        self.text(repository, &["update-ref", issue, &commit, &old])
-            .await
-            .map(drop)
+        }
     }
+
+    async fn landing_receipt(
+        &self,
+        workspace: &Workspace,
+        issue: &str,
+        attempt: HostSeq,
+    ) -> Result<Option<u64>, GitError> {
+        let prefix = landing_attempt(workspace, issue, attempt)?;
+        let refs = self
+            .text(
+                &workspace.repository.0,
+                &["for-each-ref", "--count=2", "--format=%(refname)", &prefix],
+            )
+            .await?;
+        if refs.is_empty() {
+            return Ok(None);
+        }
+        refs.strip_prefix(&prefix)
+            .and_then(|count| count.parse().ok())
+            .map(Some)
+            .ok_or_else(|| failure("landing", "invalid landing receipt"))
+    }
+}
+
+fn landing_refs(workspace: &Workspace) -> Result<String, GitError> {
+    Ok(format!("refs/conductor-landed/{}/", owner(workspace)?))
+}
+
+fn landing_attempt(
+    workspace: &Workspace,
+    issue: &str,
+    attempt: HostSeq,
+) -> Result<String, GitError> {
+    Ok(format!(
+        "{}{}/{issue}/",
+        landing_refs(workspace)?,
+        attempt.0
+    ))
+}
+
+fn push_destination(remote: &str) -> String {
+    if let Some((scheme, address)) = remote.split_once("://") {
+        let destination = address.split(['?', '#']).next().unwrap_or_default();
+        let (authority, path) =
+            destination.split_once('/').unwrap_or((destination, ""));
+        let host = authority.rsplit('@').next().unwrap_or_default();
+        return if path.is_empty() {
+            format!("{scheme}://{host}")
+        } else {
+            format!("{scheme}://{host}/{path}")
+        };
+    }
+    if let Some((authority, path)) = remote.split_once(':')
+        && let Some((_, host)) = authority.rsplit_once('@')
+    {
+        return format!("{host}:{path}");
+    }
+    String::from(remote)
 }
 
 const KEPT: &str = "Conductor: the session's uncommitted changes";

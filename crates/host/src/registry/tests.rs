@@ -758,7 +758,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
 }
 
 #[test]
-fn running_sessions_are_those_created_or_ready_and_not_closed_since() {
+fn undo_reopens_a_closed_session_for_instance_removal_checks() {
     let event = |session, kind| Event {
         seq: HostSeq(1),
         session: SessionId(session),
@@ -785,7 +785,13 @@ fn running_sessions_are_those_created_or_ready_and_not_closed_since() {
         event(3, EventKind::SessionReady),
         event(2, closed()),
         event(3, closed()),
-        event(3, EventKind::SessionReady),
+        event(
+            3,
+            EventKind::TurnsUndone {
+                checkpoint: proto::CheckpointId(2),
+                restored: proto::CheckpointId(1),
+            },
+        ),
     ];
     assert_eq!(
         running(&history),
@@ -1023,7 +1029,8 @@ fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
     let boot_jobs = registry.jobs;
     let claude = own(Provider::Claude);
     let before = availability(&registry, &claude);
-    let refresh = registry.signed_in(claude.clone(), None, "signed in");
+    let refresh =
+        registry.signed_in(claude.clone(), None, &BTreeSet::new(), "signed in");
     let during = availability(&registry, &claude);
     let answered =
         registry.refreshed(refreshed(boot_jobs + 1, &claude, Ok(listing())));
@@ -1073,6 +1080,7 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
     let signed = registry.signed_in(
         claude.clone(),
         Some(Account::Named(text("me@example.com"))),
+        &BTreeSet::new(),
         "signed in",
     );
     let mut roster = defaults(&catalog());
@@ -1137,6 +1145,7 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
             registry.signed_in(
                 me.clone(),
                 Some(Account::Named(text("me@example.com"))),
+                &BTreeSet::new(),
                 "again"
             ),
         ),
@@ -1593,4 +1602,123 @@ fn a_plain_start_checks_its_directory_without_an_issue_branch()
     };
     assert_eq!(path, directory);
     Ok(())
+}
+
+#[test]
+fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
+    let instance = api();
+    let mut registry = host_of(&[("api", instance.clone())]);
+    let boot = registry.jobs;
+    let _ = set(
+        &mut registry,
+        Provider::Claude,
+        gateway("old"),
+        "old credential",
+    );
+    let old = boot + 1;
+    for effect in
+        registry.remove_instance(instance.clone(), &BTreeSet::new(), "remove")
+    {
+        if let Effect::Save {
+            roster,
+            change,
+            reply,
+        } = effect
+        {
+            let _ = registry.saved(roster, change, reply, Ok(()));
+        }
+    }
+    let _ = set(
+        &mut registry,
+        Provider::Claude,
+        gateway("replacement"),
+        "re-add",
+    );
+    let launched = registry.jobs;
+    let _ = registry.started(Started {
+        id: launched,
+        instance: instance.clone(),
+        launcher: ready("replacement", OwnSignIn::Missing),
+    });
+    let _ = set(
+        &mut registry,
+        Provider::Claude,
+        gateway("current"),
+        "current",
+    );
+    let active = registry.jobs;
+    let _ = set(&mut registry, Provider::Claude, gateway("next"), "next");
+    let next = registry.jobs;
+
+    assert_eq!(
+        registry.refreshed(refreshed(old, &instance, Ok(listing()))),
+        []
+    );
+    assert_eq!(
+        registry.refreshed(refreshed(next, &instance, Ok(listing()))),
+        []
+    );
+    assert_eq!(
+        registry.refreshed(refreshed(active, &instance, Ok(listing()))),
+        [Effect::Refresh(job(
+            next,
+            &instance,
+            "replacement",
+            Some(gateway("next"))
+        ))]
+    );
+    assert_eq!(
+        registry.refreshed(refreshed(old, &instance, Ok(listing()))),
+        []
+    );
+    let complete =
+        registry.refreshed(refreshed(next, &instance, Ok(listing())));
+    let outcome = CommandResult::Instances(registry.instances());
+    assert_eq!(
+        complete,
+        [
+            Effect::Reply("current", outcome.clone()),
+            Effect::Reply("next", outcome),
+        ]
+    );
+}
+
+#[test]
+fn adoption_protects_sessions_on_the_source_and_destination() {
+    let source = InstanceId::named(Provider::Claude, "source");
+    let destination = InstanceId::named(Provider::Claude, "destination");
+    let mut registry = host_of(&[
+        ("source", source.clone()),
+        ("destination", destination.clone()),
+    ]);
+    registry.admit(SessionId(1), source.clone(), 1);
+    registry.admit(SessionId(2), destination, 2);
+    for busy in [SessionId(1), SessionId(2)] {
+        assert_eq!(
+            registry.signed_in(
+                source.clone(),
+                Some(Account::Named(text("destination"))),
+                &BTreeSet::from([busy]),
+                "sign in",
+            ),
+            [Effect::Reply(
+                "sign in",
+                rejected(Rejection::InstanceInUse { sessions: 1 })
+            )],
+        );
+    }
+    assert!(matches!(
+        registry
+            .signed_in(
+                source,
+                Some(Account::Named(text("destination"))),
+                &BTreeSet::new(),
+                "sign in"
+            )
+            .as_slice(),
+        [Effect::Save {
+            change: Change::SignedIn(_),
+            ..
+        }]
+    ));
 }

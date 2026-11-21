@@ -10,8 +10,11 @@
 use alloc::format;
 
 use proto::{
-    Event, EventKind, FinishState, HostSeq, Task, TaskStatus, TurnOutcome,
+    CommandId, Epoch, Event, EventKind, FinishState, HostSeq, Task, TaskStatus,
+    TurnOutcome,
 };
+
+use sha2::{Digest, Sha256};
 
 use crate::assignment::{Assigned, Assignment};
 use crate::prelude::*;
@@ -23,10 +26,16 @@ pub struct Progress {
     pub text: String,
 }
 
-/// Where the watch starts: after the last event `history` holds.
+/// The same turn uses the same durable home edit identity after a retry or restart.
 #[must_use]
-pub fn latest(history: &[Event]) -> HostSeq {
-    history.last().map_or(HostSeq(0), |event| event.seq)
+pub fn edit_id(epoch: Epoch, seq: HostSeq) -> CommandId {
+    let mut hash = Sha256::new();
+    hash.update(b"conductor turn progress");
+    hash.update(epoch.0.to_be_bytes());
+    hash.update(seq.0.to_be_bytes());
+    let mut id = [0; 16];
+    id.copy_from_slice(&hash.finalize()[..16]);
+    CommandId(u128::from_be_bytes(id))
 }
 
 #[must_use]

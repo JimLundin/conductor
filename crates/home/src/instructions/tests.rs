@@ -42,6 +42,16 @@ fn a_session_is_in_the_project_whose_checkout_holds_its_directory() {
 }
 
 #[test]
+fn a_nested_checkout_takes_precedence_over_its_enclosing_checkout() {
+    let projects = [project(&["/outer/"]), project(&["/outer/inner"])];
+    assert_eq!(
+        project_of(&projects, "/outer/inner/src")
+            .map(|(_, checkout)| checkout.path.0.as_str()),
+        Some("/outer/inner")
+    );
+}
+
+#[test]
 fn a_session_takes_the_shared_rules_its_profiles_and_the_project_rules_its_cli_skips()
  {
     let project = project(&["/p/conductor"]);

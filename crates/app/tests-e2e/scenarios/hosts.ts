@@ -1,5 +1,11 @@
-import type { Locator } from "playwright";
-import { LIVE, type Run, savedHosts, tools } from "../harness.ts";
+import type { Locator, Page } from "playwright";
+import {
+	JOIN_FRAGMENT,
+	LIVE,
+	type Run,
+	savedHosts,
+	tools,
+} from "../harness.ts";
 
 const HOSTS = ["desk", "laptop"] as const;
 
@@ -143,4 +149,140 @@ export const hosts = async (run: Run): Promise<void> => {
 		(await names()) === "desk" && (await rowsOf("desk")) === "desk",
 		"laptop stays forgotten after a reload",
 	);
+	await pairingPersistence(run);
+};
+
+const enterTicket = async (page: Page, ticket: string): Promise<void> => {
+	const input = page.locator("form.pair input");
+	await input.fill(ticket);
+	await input.press("Enter");
+};
+
+const concurrentPairings = async (
+	run: Run,
+	first: Page,
+	second: Page,
+): Promise<void> => {
+	const { check } = tools(run);
+	const { joinUrl, secondJoin, patience } = run;
+	if (secondJoin === undefined) {
+		throw new Error("FAILED: the hosts scenario needs SECOND_JOIN");
+	}
+	const root = joinUrl.replace(JOIN_FRAGMENT, "");
+	await Promise.all([first.goto(root), second.goto(root)]);
+	await enterTicket(first, "bad ticket");
+	await first
+		.getByText("That join link is not valid", { exact: false })
+		.waitFor({
+			timeout: patience,
+		});
+	await Promise.all([
+		enterTicket(first, new URL(joinUrl).hash.slice("#join=".length)),
+		enterTicket(second, secondJoin),
+	]);
+	await Promise.all([
+		first.locator(LIVE).waitFor({ timeout: patience }),
+		second.locator(LIVE).waitFor({ timeout: patience }),
+	]);
+	check(
+		(await savedHosts(first)).length === 2,
+		"two independent pairing writes both survive",
+	);
+	await first.getByRole("button", { name: "Credentials" }).click();
+	await first.getByRole("button", { name: "Forget desk" }).click();
+	await second.reload();
+	await second.locator(LIVE).waitFor({ timeout: patience });
+	check(
+		(await second.locator(".host-group .status .host").allInnerTexts()).join(
+			", ",
+		) === "laptop",
+		"the other tab sees the intentional removal on reload",
+	);
+};
+
+const storageRecovery = async (run: Run, page: Page): Promise<void> => {
+	const { check } = tools(run);
+	const url = new URL(run.joinUrl);
+	const ticket = url.hash.slice("#join=".length);
+	url.searchParams.set("storage-test", "preserve");
+	await page.addInitScript(() => {
+		const write = Storage.prototype.setItem;
+		Object.defineProperty(Storage.prototype, "setItem", {
+			value: function (this: Storage, key: string, value: string): void {
+				if (
+					this.getItem("test.deny-writes") === "1" &&
+					key.startsWith("conductor.")
+				) {
+					throw new DOMException("Test storage denial", "QuotaExceededError");
+				}
+				write.call(this, key, value);
+			},
+		});
+	});
+	await page.goto(url.href.replace(JOIN_FRAGMENT, ""));
+	await page.evaluate((legacy) => {
+		localStorage.clear();
+		localStorage.setItem("conductor.ticket", legacy);
+		localStorage.setItem("test.deny-writes", "1");
+	}, ticket);
+	await page.goto(url.href);
+	await page.reload();
+	await page.locator(".storage-error").waitFor({ timeout: run.patience });
+	check(
+		new URL(page.url()).hash.startsWith("#join=") &&
+			(await page.evaluate(
+				() => localStorage.getItem("conductor.ticket") !== null,
+			)),
+		"failed join persistence and legacy migration keep their original tickets",
+	);
+	await page.evaluate(() => localStorage.removeItem("test.deny-writes"));
+	await page.reload();
+	await page.locator(".host-group").waitFor({ timeout: run.patience });
+	check(
+		new URL(page.url()).search === url.search &&
+			new URL(page.url()).hash === "",
+		"successful persistence consumes the join fragment and preserves the query",
+	);
+	check(
+		await page.evaluate(
+			() => localStorage.getItem("conductor.ticket") === null,
+		),
+		"successful migration retires the legacy ticket",
+	);
+	await page.evaluate(() => {
+		const record = Object.keys(localStorage).find((key) =>
+			key.startsWith("conductor.host."),
+		);
+		const healthy = record === undefined ? null : localStorage.getItem(record);
+		localStorage.clear();
+		localStorage.setItem(
+			"conductor.hosts",
+			`{${healthy?.slice(1, -1) ?? ""},"malformed":{"ticket":42}}`,
+		);
+	});
+	await page.reload();
+	await page.locator(".host-group").waitFor({ timeout: run.patience });
+	await page.reload();
+	await page.locator(".host-group").waitFor({ timeout: run.patience });
+	check(
+		(await page.locator(".host-group").count()) === 1,
+		"a healthy saved host survives malformed neighbors and repeated reloads",
+	);
+};
+
+const pairingPersistence = async (run: Run): Promise<void> => {
+	const browser = run.page.context().browser();
+	if (browser === null) {
+		throw new Error("FAILED: pairing persistence needs a browser");
+	}
+	const context = await browser.newContext();
+	try {
+		const first = await context.newPage();
+		const second = await context.newPage();
+		await concurrentPairings(run, first, second);
+		await second.close();
+		await storageRecovery(run, first);
+	} finally {
+		await context.close();
+	}
 };

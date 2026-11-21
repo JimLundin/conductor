@@ -75,6 +75,11 @@ What is built and what comes next. Update it in the commit that changes it.
   (ALPN `conductor/23`). Credential retries retain their final durable
   `Instances` receipt.
 
+- **Issue edits and landing recovery**. Issue status and checklist edits
+  carry the browser's expected state. An interrupted landing can be
+  retried after the host restarts. These wire changes use ALPN
+  `conductor/24`.
+
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
   actual turn. The phone shows bounded immutable diffs and can undo files
@@ -110,7 +115,7 @@ What is built and what comes next. Update it in the commit that changes it.
   catch-up from the cursor. `HostView` folds events into what the UI shows.
 - **App.** One Dioxus web app, installed as an app on the desktop and the
   iPhone: session list, new session, session pane, phone layout. Browser e2e
-  on the real daemon with fake CLIs.
+  on the real daemon with fake CLIs. See [verification boundaries](verification.md).
 - **Several hosts in one app** (home step 2, architecture §8). The app keeps
   every paired host in local storage (`conductor.hosts`, keyed by endpoint
   id, with each host's name; the old single ticket moves in on first
@@ -167,11 +172,12 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Finishing a session** (home step 7b, architecture §5.4). *Finish* on a
   session on an issue asks its agent for a summary, stops it, lands its
   branch on the issue's (fast-forward, or a merge commit; a conflict
-  lands nothing), pushes that to the project's remote, adds the summary
+  lands nothing), tries to push to the project remote, adds the summary
   to the issue's notes and moves the issue to `review` when it gained
-  commits (ALPN `conductor/22`). Another host then continues the issue
-  from its branch. *Try:* finish a session on an issue, then start one on
-  another host.
+  commits (ALPN `conductor/22`). The transcript's **Finished** row shows
+  whether the branch was pushed or kept on the source host. *Try:* finish
+  an issue session, verify the push and start one on another host with a
+  checkout that can fetch the issue branch ([home](home.md#4-flows)).
 - **Turns as commits** (home step 7c, architecture §5.3). Each turn of a
   session is a commit on its branch, on top of any the agent made, and
   undoing a turn resets the branch to the turn before; a turn that

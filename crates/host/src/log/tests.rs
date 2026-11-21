@@ -180,18 +180,23 @@ fn dropping_a_running_command_stops_the_log_and_a_finished_one_does_not() {
 }
 
 #[test]
-fn a_command_waits_for_the_active_one_then_answers_its_receipt() {
+fn concurrent_session_retries_share_a_retryable_result() {
     let mut log = log();
-    let first = execute(&mut log, 1, Kind::Session);
+    let _ = execute(&mut log, 1, Kind::Session);
     let (retry, effects) = log.begin(CommandId(1), Kind::Session);
     assert_eq!(effects, Vec::<Effect>::new());
-    let (finished, effects) = log.finish(CommandId(1), CommandResult::Accepted);
-    assert_ne!(first, finished);
-    assert_eq!(effects.last(), Some(&Effect::Lookup(CommandId(1))));
+    let result = CommandResult::Rejected(proto::Rejection::NoSuchDirectory);
+    let (finished, effects) =
+        log.finish(CommandId(1), super::Completion::Retryable(result.clone()));
     assert_eq!(
-        log.receipt(Some(CommandResult::Accepted)),
-        [Effect::Begun(retry, Begun::Cached(CommandResult::Accepted))]
+        effects,
+        [
+            Effect::Commit,
+            Effect::Begun(retry, Begun::Cached(result)),
+            Effect::Finished(finished),
+        ],
     );
+    let _ = execute(&mut log, 1, Kind::Session);
 }
 
 #[test]
@@ -220,13 +225,9 @@ fn a_receipt_finish_waits_for_the_active_command_to_commit() {
                 CommandResult::Accepted
             )),
             Effect::Commit,
+            Effect::Begun(retry, Begun::Cached(CommandResult::Accepted)),
             Effect::Finished(held),
-            Effect::Lookup(CommandId(23)),
         ]
-    );
-    assert_eq!(
-        log.receipt(Some(CommandResult::Accepted)),
-        [Effect::Begun(retry, Begun::Cached(CommandResult::Accepted))]
     );
 }
 

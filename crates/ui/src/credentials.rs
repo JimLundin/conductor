@@ -7,7 +7,7 @@
 //! as. A secret only passes through: its field is cleared once it is sent,
 //! and nothing keeps it (§6.3). A pasted sign-in code is one.
 
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
 use proto::{
@@ -41,8 +41,6 @@ pub enum CredentialIntent {
     TypeSignInCode(InstanceId, String),
     SubmitSignInCode(InstanceId),
     CancelSignIn(InstanceId),
-    /// Copies the code the sign-in shows to the clipboard.
-    CopySignInCode(InstanceId, String),
 }
 
 /// Every paired host's instances, a section per host.
@@ -122,9 +120,49 @@ pub struct SignInButton {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeviceCode {
     pub code: String,
-    /// The copy button's text: whether it has copied the code.
-    pub copy: String,
     pub copy_label: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Clipboard {
+    Ready,
+    Writing,
+    Copied,
+    Failed,
+}
+
+impl Clipboard {
+    #[must_use]
+    pub const fn finished(copied: Option<bool>) -> Self {
+        if matches!(copied, Some(true)) {
+            Self::Copied
+        } else {
+            Self::Failed
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        if matches!(self, Self::Copied) {
+            "Copied"
+        } else {
+            "Copy"
+        }
+    }
+
+    #[must_use]
+    pub const fn disabled(self) -> bool {
+        matches!(self, Self::Writing)
+    }
+
+    #[must_use]
+    pub const fn error(self) -> Option<&'static str> {
+        if matches!(self, Self::Failed) {
+            Some("Could not copy the code. Select and copy it manually.")
+        } else {
+            None
+        }
+    }
 }
 
 /// The field for the code the sign-in page gives, a password field so the
@@ -213,8 +251,6 @@ pub struct Forms {
     sent: BTreeMap<Subject, Sent>,
     /// The code typed for each instance's sign-in, until it is sent.
     codes: BTreeMap<InstanceId, String>,
-    /// The instances whose shown code was copied.
-    copied: BTreeSet<InstanceId>,
 }
 
 impl Forms {
@@ -264,10 +300,7 @@ impl Forms {
             signing @ (CredentialIntent::StartSignIn(_)
             | CredentialIntent::TypeSignInCode(..)
             | CredentialIntent::SubmitSignInCode(_)
-            | CredentialIntent::CancelSignIn(_)
-            | CredentialIntent::CopySignInCode(..)) => {
-                self.signing(signing, at)
-            }
+            | CredentialIntent::CancelSignIn(_)) => self.signing(signing, at),
         }
     }
 
@@ -307,10 +340,6 @@ impl Forms {
                 let effects = self.sign_in(instance, body, at);
                 (self, effects)
             }
-            CredentialIntent::CopySignInCode(instance, code) => {
-                self.copied.insert(instance);
-                (self, Vec::from([Effect::Copy(code)]))
-            }
             CredentialIntent::Type { .. }
             | CredentialIntent::Save { .. }
             | CredentialIntent::Remove(_) => (self, Vec::new()),
@@ -326,11 +355,10 @@ impl Forms {
         self.send(Subject::Instance(instance), Done::SignIn, body, at)
     }
 
-    /// Drops what the person typed or copied for the instance's last
+    /// Drops what the person typed for the instance's last
     /// sign-in.
     fn forget_sign_in(&mut self, instance: &InstanceId) {
         self.codes.remove(instance);
-        self.copied.remove(instance);
     }
 
     /// Sends `body` for `subject`, which shows it is sending until the
@@ -476,7 +504,8 @@ impl Forms {
                     "To sign in on {host}'s terminal: conductord login {provider}"
                 ),
                 Account::Named(account) => format!(
-                    "To sign it in again on {host}'s terminal: conductord login {provider} --account {account}"
+                    "To sign it in again on {host}'s terminal: conductord login {provider} --account={}",
+                    shell_argument(account),
                 ),
             },
             sign_in: self.sign_in_view(instance, &name, (step, sending), host),
@@ -608,9 +637,7 @@ impl Forms {
                     *paste,
                 )))),
                 link: Some(url.clone()),
-                code: code
-                    .as_ref()
-                    .map(|shown| self.device_code(instance, shown)),
+                code: code.as_ref().map(|shown| device_code(shown)),
                 paste: paste.then(|| self.paste_form(instance, name, sending)),
                 cancel,
             },
@@ -634,18 +661,6 @@ impl Forms {
         }
     }
 
-    fn device_code(&self, instance: &InstanceId, code: &str) -> DeviceCode {
-        DeviceCode {
-            code: String::from(code),
-            copy: String::from(if self.copied.contains(instance) {
-                "Copied"
-            } else {
-                "Copy"
-            }),
-            copy_label: format!("Copy the code {code}"),
-        }
-    }
-
     fn paste_form(
         &self,
         instance: &InstanceId,
@@ -659,6 +674,17 @@ impl Forms {
             submit_disabled: sending || value.trim().is_empty(),
             value,
         }
+    }
+}
+
+fn shell_argument(argument: &str) -> String {
+    format!("'{}'", argument.replace('\'', "'\\''"))
+}
+
+fn device_code(code: &str) -> DeviceCode {
+    DeviceCode {
+        code: String::from(code),
+        copy_label: format!("Copy the code {code}"),
     }
 }
 
@@ -787,5 +813,16 @@ fn describe(
         Availability::Unavailable { reason } => {
             format!("Not available: {reason}")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::shell_argument;
+
+    #[test]
+    fn terminal_account_is_one_literal_shell_argument() {
+        assert_eq!(shell_argument("two words"), "'two words'");
+        assert_eq!(shell_argument("O'Neil"), "'O'\\''Neil'");
     }
 }

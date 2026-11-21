@@ -442,6 +442,7 @@ fn refusals_remain_visible_alongside_current_start_blocks() {
             alerts.extend(shown.directory_error);
         }
         alerts.extend(shown.instance_hint);
+        alerts.extend(shown.instance_error);
         alerts.extend(shown.refusal);
         alerts.extend(shown.error);
         alerts
@@ -466,7 +467,7 @@ fn refusals_remain_visible_alongside_current_start_blocks() {
     assert_eq!(
         alerts(&offline),
         [
-            text("a turn is already running"),
+            text("Claude Code on desk: a turn is already running"),
             text("The selected host is offline."),
         ]
     );

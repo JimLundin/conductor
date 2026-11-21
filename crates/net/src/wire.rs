@@ -16,6 +16,8 @@ pub enum WireError {
     Finish(#[from] ClosedStream),
     #[error("could not open a stream: {0}")]
     Open(#[from] iroh::endpoint::ConnectionError),
+    #[error("frame of {length} bytes exceeds the {limit}-byte stream limit")]
+    Limit { length: usize, limit: usize },
     #[error("{0}")]
     Frame(#[from] proto::FrameError),
 }
@@ -43,11 +45,28 @@ pub async fn write<T: Serialize + Sync>(
 pub async fn read<T: DeserializeOwned>(
     recv: &mut RecvStream,
 ) -> Result<Option<T>, WireError> {
+    read_bounded(recv, usize::MAX).await
+}
+
+/// Reads a frame with a smaller body limit for this stream.
+///
+/// # Errors
+///
+/// Returns the read or decoding error, or rejects an oversized frame before
+/// allocating its body.
+pub async fn read_bounded<T: DeserializeOwned>(
+    recv: &mut RecvStream,
+    limit: usize,
+) -> Result<Option<T>, WireError> {
     let mut header = [0u8; proto::HEADER_LEN];
     match recv.read_exact(&mut header).await {
         Ok(()) => {
-            let mut body = std::iter::repeat_n(0u8, proto::body_len(header)?)
-                .collect::<Vec<u8>>();
+            let length = proto::body_len(header)?;
+            if length > limit {
+                return Err(WireError::Limit { length, limit });
+            }
+            let mut body =
+                std::iter::repeat_n(0u8, length).collect::<Vec<u8>>();
             recv.read_exact(&mut body).await?;
             Ok(Some(proto::decode(&body)?))
         }

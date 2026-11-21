@@ -7,7 +7,7 @@ use iroh::{Endpoint, RelayMode};
 use net::wire;
 use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
-    AuthToken, Availability, ClientName, Epoch, HelloReply, HostSeq,
+    AuthToken, Availability, ClientName, Epoch, Feed, HelloReply, HostSeq,
     InstanceId, InstanceStatus, Instances, Open, Provider, Welcome,
 };
 use tokio::sync::mpsc;
@@ -75,13 +75,21 @@ async fn stalled_hello(endpoint: &Endpoint) -> TestResult<()> {
 async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
     let (conn, mut send) = accept_hello(endpoint).await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
+    welcome(&mut send).await?;
+    let (mut feed_send, _recv) = accept_subscription(&conn).await?;
+    wire::write(&mut feed_send, &Feed::Instances(Instances::default())).await?;
+    let _ = tokio::time::timeout(STEP, conn.closed()).await?;
+    Ok(())
+}
+
+async fn welcome(send: &mut SendStream) -> TestResult<()> {
     let unavailable = InstanceStatus {
         availability: Availability::Unavailable {
             reason: String::from("handshake test"),
         },
     };
     wire::write(
-        &mut send,
+        send,
         &HelloReply::Welcome(Welcome {
             host: String::from("test-host"),
             epoch: Epoch(11),
@@ -95,8 +103,16 @@ async fn delayed_hello(endpoint: &Endpoint) -> TestResult<()> {
     )
     .await?;
     send.finish()?;
-    let _ = tokio::time::timeout(STEP, conn.closed()).await?;
     Ok(())
+}
+
+async fn accept_subscription(
+    conn: &Connection,
+) -> TestResult<(SendStream, iroh::endpoint::RecvStream)> {
+    let (send, mut recv) = conn.accept_bi().await?;
+    let frame = wire::read::<Open>(&mut recv).await?;
+    assert!(matches!(frame, Some(Open::Subscribe(_))));
+    Ok((send, recv))
 }
 
 async fn until_live(
@@ -174,6 +190,33 @@ async fn slow_hello_succeeds_without_reconnecting() -> TestResult<()> {
     );
     link.stop().await?;
     serving.await??;
+    host.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stop_completes_while_a_dial_is_pending() -> TestResult<()> {
+    let host = endpoint().await?;
+    let (link, _updates) = link(&host).await?;
+    let incoming = tokio::time::timeout(STEP, host.accept()).await?;
+    assert!(incoming.is_some());
+    tokio::time::timeout(Duration::from_secs(3), link.stop()).await??;
+    drop(incoming);
+    host.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn stop_completes_while_a_subscription_is_pending() -> TestResult<()> {
+    let host = endpoint().await?;
+    let (link, _updates) = link(&host).await?;
+    let (conn, mut send) =
+        tokio::time::timeout(STEP, accept_hello(&host)).await??;
+    welcome(&mut send).await?;
+    let _halves =
+        tokio::time::timeout(STEP, accept_subscription(&conn)).await??;
+    assert_eq!(link.status().state, LinkState::CatchingUp);
+    tokio::time::timeout(Duration::from_secs(3), link.stop()).await??;
     host.close().await;
     Ok(())
 }

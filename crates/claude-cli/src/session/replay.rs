@@ -5,12 +5,14 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{ClaudeOptions, ClaudeSession, Error};
 use claude::{
-    AfterDeny, Block, ClaudeEvent, PermissionDecision, PermissionMode,
+    Block, ClaudeEvent, PermissionDecision, PermissionMode,
     PermissionRequestId, Role, SettingSource, VersionPolicy,
 };
 use install::Home;
@@ -383,7 +385,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             PermissionDecision::Allow,
             PermissionDecision::Deny {
                 message: String::from("no"),
-                then: AfterDeny::Continue,
             },
         ]),
     )
@@ -889,12 +890,29 @@ const FUTURE_CLI: &str = r#"{"type":"control_response","response":{"subtype":"su
 
 #[tokio::test]
 async fn unsupported_cli_version_is_refused() -> TestResult<()> {
-    let stdout = recording("future-cli", &[FUTURE_CLI])?;
+    const EXTRA: &str = r#"{"type":"unmapped_test_frame"}"#;
+    let mut frames = vec![
+        r#"{"fake":"await","match":{"type":"control_request","request":{"subtype":"initialize"}}}"#,
+        FUTURE_CLI,
+    ];
+    frames.extend(std::iter::repeat_n(EXTRA, 1025));
+    let stdout = recording("future-cli", &frames)?;
     let claude = fake_claude("future-cli", &stdout)?;
-    let refused = ClaudeSession::spawn(options(&claude))
-        .await
-        .err()
-        .map(|e| e.to_string());
+    let opts = options(&claude);
+    let mut starting =
+        super::start(&opts, claude::SessionId(String::from("future")))?;
+    let initialize = starting.initialize(&opts.resume).await?;
+    let refused = tokio::time::timeout(Duration::from_secs(20), async {
+        while starting.events.capacity() > 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        starting
+            .admit(initialize, opts.versions)
+            .await
+            .err()
+            .map(|e| e.to_string())
+    })
+    .await?;
     assert_eq!(
         refused.as_deref(),
         Some(
@@ -1005,7 +1023,6 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
 
     let deny = PermissionDecision::Deny {
         message: String::from("The user does not want b.txt."),
-        then: AfterDeny::Continue,
     };
     r.session
         .respond(
@@ -1122,21 +1139,39 @@ async fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
     let dir = test_dir(&format!("sandbox-tools-{}", ulid::Ulid::new()))?;
     let tools = dir.join("tools");
     std::fs::create_dir(&tools)?;
-    std::fs::write(tools.join("bwrap"), "")?;
-    std::os::unix::fs::symlink("/usr/bin/git", tools.join("git"))?;
+
+    let path = std::env::var_os("PATH").ok_or("missing PATH")?;
+    let git = std::env::split_paths(&path)
+        .map(|entry| entry.join("git"))
+        .find(|candidate| super::executable(candidate))
+        .ok_or("missing git")?;
+    symlink(git.canonicalize()?, tools.join("git"))?;
+    let bwrap = tools.join("bwrap");
+    let socat = tools.join("socat");
+    std::fs::write(&bwrap, "")?;
+    std::fs::set_permissions(&bwrap, std::fs::Permissions::from_mode(0o700))?;
     let (_, test) = TEST.split_once("::").ok_or("missing test module")?;
-    for expected in ["0", "1"] {
-        if expected == "1" {
-            std::fs::write(tools.join("socat"), "")?;
+    for (case, mode) in [
+        ("missing", None),
+        ("non-executable", Some(0o600)),
+        ("executable", Some(0o700)),
+    ] {
+        if let Some(permissions) = mode {
+            std::fs::write(&socat, "")?;
+            std::fs::set_permissions(
+                &socat,
+                std::fs::Permissions::from_mode(permissions),
+            )?;
         }
-        let cwd = dir.join(expected);
+        let expected = mode == Some(0o700);
+        let cwd = dir.join(case);
         std::fs::create_dir(&cwd)?;
         std::fs::write(cwd.join("stdout.jsonl"), VERSIONLESS_CLI)?;
         // Each test process gets its own PATH, including the launched CLI.
         let output = tokio::process::Command::new(std::env::current_exe()?)
             .args(["--exact", test])
             .current_dir(&cwd)
-            .env("PATH", &tools)
+            .env("PATH", "../tools")
             .env(CASE, "1")
             .env_remove("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB")
             .output()
@@ -1152,7 +1187,7 @@ async fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
             env.lines()
                 .find(|line| line
                     .starts_with("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=")),
-            (expected == "1").then_some("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"),
+            expected.then_some("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1"),
         );
     }
     std::fs::remove_dir_all(dir)?;

@@ -94,17 +94,17 @@ pub enum Sandbox {
 /// What Claude's sandbox needs on `PATH` on Linux and WSL2.
 pub const SANDBOX_TOOLS: &[&str] = &["bwrap", "socat"];
 
-/// Whether Claude's command sandbox runs on `os` (as Rust names it), given
-/// whether every one of [`SANDBOX_TOOLS`] is on `PATH`.
-///
-/// See "Sandboxing" in docs/architecture.md: Seatbelt on macOS always, on
-/// Linux and WSL2 with `bwrap` and `socat`, and never on native Windows,
-/// where Claude runs commands unsandboxed.
+/// Whether Claude's command sandbox runs on this OS and kernel with
+/// all of [`SANDBOX_TOOLS`] on `PATH`. WSL1 lacks the namespaces it needs.
 #[must_use]
-pub fn sandbox(os: &str, tools: bool) -> Sandbox {
-    match (os, tools) {
-        ("macos", _) | ("linux", true) => Sandbox::Available,
-        (_, _) => Sandbox::Missing,
+pub fn sandbox(os: &str, tools: bool, kernel_release: &str) -> Sandbox {
+    let release = kernel_release.to_ascii_lowercase();
+    let wsl1 = release.contains("microsoft")
+        && !release.contains("microsoft-standard")
+        && !release.contains("wsl2");
+    match (os, tools, wsl1) {
+        ("macos", _, _) | ("linux", true, false) => Sandbox::Available,
+        (_, _, _) => Sandbox::Missing,
     }
 }
 
@@ -616,10 +616,10 @@ mod tests {
     fn the_sandbox_runs_on_macos_and_on_linux_with_its_tools() {
         assert_eq!(
             [
-                sandbox("macos", false),
-                sandbox("linux", true),
-                sandbox("linux", false),
-                sandbox("windows", true),
+                sandbox("macos", false, ""),
+                sandbox("linux", true, ""),
+                sandbox("linux", false, ""),
+                sandbox("windows", true, ""),
             ],
             [
                 Sandbox::Available,
@@ -703,6 +703,24 @@ mod tests {
                 }),
                 None,
                 None
+            ]
+        );
+    }
+
+    #[test]
+    fn wsl1_cannot_sandbox_even_with_bubblewrap_and_socat() {
+        assert_eq!(
+            [
+                sandbox("linux", true, "4.4.0-19041-Microsoft"),
+                sandbox("linux", true, "5.15.167.4-microsoft-standard-WSL2"),
+                sandbox("linux", true, "6.12.0-generic"),
+                sandbox("linux", false, "6.12.0-generic"),
+            ],
+            [
+                Sandbox::Missing,
+                Sandbox::Available,
+                Sandbox::Available,
+                Sandbox::Missing,
             ]
         );
     }

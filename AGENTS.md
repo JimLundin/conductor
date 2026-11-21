@@ -44,9 +44,10 @@ Home Screen. The design is in
 - **Worktrees are temporary.** Create one per task beside the main
   checkout (`git worktree add ../conductor-<task> -b <branch>`), and remove
   it when the branch is merged or abandoned: `git worktree remove
-  ../conductor-<task>` and `git branch -d <branch>`. Scratch worktrees
-  outside `~/projects/apps/` get their own `../conductor-target`, so delete
-  them and that directory when done.
+  ../conductor-<task>` and `git branch -d <branch>`. Before removal, run
+  `tools/target-dir` in the worktree with the environment used to build it.
+  Remove an external build directory only when you can verify that it
+  belongs exclusively to that worktree.
 - **Provider wire types.** `crates/{claude,codex}/src/protocol.rs` model
   only the frames and fields we read or write; everything else stays
   `Unknown`, and each crate maps its events into the provider-agnostic

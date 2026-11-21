@@ -13,6 +13,7 @@
 
 mod adoption;
 
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -22,16 +23,22 @@ use anyhow::Context;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use host::registry::{AccountAdoption, AdoptionReplay, Change};
-use proto::{Catalog, Instance, InstanceId, Roster};
+use proto::{Catalog, CommandId, Instance, InstanceId, Instances, Roster};
+use serde::{Deserialize, Serialize};
 
 use adoption::Adoption;
 
 pub use host::registry::Stored;
 
-/// Format 5 holds the host's instances, each by its provider and account
-/// with its credential as its form's values; an older store reads as one
-/// that doesn't open, which removing an instance moves aside.
-const FORMAT: u8 = 5;
+const FORMAT: u8 = 6;
+const LEGACY_FORMAT: u8 = 5;
+
+#[derive(Default, Serialize, Deserialize)]
+struct Credentials {
+    roster: Roster,
+    removals: BTreeMap<CommandId, Instances>,
+}
+
 const PURPOSE: &[u8] = b"conductor credentials 1";
 const NONCE_LEN: usize = 24;
 
@@ -82,7 +89,8 @@ impl Store {
             cipher: XChaCha20Poly1305::new(&Key::from(key)),
         };
         let lock = store.lock()?;
-        store.recovered = store.recover()?.map(|adoption| adoption.account);
+        store.recovered =
+            store.recover(|_| true)?.map(|adoption| adoption.account);
         let stored = store.read();
         drop(lock);
         Ok((store, stored))
@@ -94,13 +102,11 @@ impl Store {
     ) -> anyhow::Result<SigningLease> {
         let _lock = self.lock()?;
         self.ensure_idle()?;
+        let settings =
+            self.read_roster()?.of(instance).cloned().with_context(|| {
+                format!("this host has no instance {instance}")
+            })?;
         let lock = self.lease(instance)?;
-        let settings = self
-            .read()
-            .roster(&self.catalog)
-            .of(instance)
-            .cloned()
-            .with_context(|| format!("this host has no instance {instance}"))?;
         Ok(SigningLease {
             instance: instance.clone(),
             settings,
@@ -133,6 +139,7 @@ impl Store {
         &self,
         planned: &Roster,
         change: &Change,
+        removal: Option<(CommandId, impl FnOnce(&Roster) -> Instances)>,
     ) -> anyhow::Result<Roster> {
         let _lock = self.lock()?;
         self.ensure_idle()?;
@@ -140,13 +147,23 @@ impl Store {
             Change::Removed(instance) => Some(self.lease(instance)?),
             _ => None,
         };
-        let mut roster = self.read_roster()?;
+        let mut credentials = self.read_credentials()?.unwrap_or_default();
+        let mut roster =
+            Stored::Opened(credentials.roster).roster(&self.catalog);
         anyhow::ensure!(
             change.apply(&mut roster, planned),
             "the instance changed before the credential could be stored"
         );
-        self.save(&roster)?;
-        Ok(roster)
+        if let Some((id, snapshot)) = removal {
+            credentials.removals.insert(id, snapshot(&roster));
+        }
+        credentials.roster = roster;
+        self.write_credentials(&credentials)?;
+        Ok(credentials.roster)
+    }
+
+    pub(crate) fn removal(&self, id: CommandId) -> Option<Instances> {
+        self.read_credentials().ok()??.removals.remove(&id)
     }
 
     fn ensure_idle(&self) -> anyhow::Result<()> {
@@ -184,15 +201,25 @@ impl Store {
             .and_then(|adoption| adoption.destination_for(source))
     }
 
-    pub fn resume_adoption(&self) -> anyhow::Result<Option<RecoveredAdoption>> {
+    pub fn resume_adoption(
+        &self,
+        ready: impl FnOnce(&AccountAdoption) -> bool,
+    ) -> anyhow::Result<Option<RecoveredAdoption>> {
         let _lock = self.lock()?;
-        self.recover()
+        self.recover(ready)
     }
 
-    fn recover(&self) -> anyhow::Result<Option<RecoveredAdoption>> {
+    fn recover(
+        &self,
+        ready: impl FnOnce(&AccountAdoption) -> bool,
+    ) -> anyhow::Result<Option<RecoveredAdoption>> {
         let Some(mut adoption) = Adoption::pending(&self.dir)? else {
             return Ok(None);
         };
+        anyhow::ensure!(
+            ready(&adoption.account),
+            "an earlier account adoption is waiting for its sessions to close"
+        );
         let _source = self.lease(&adoption.account.from)?;
         let _destination = self.lease(&adoption.account.to)?;
         let replay = adoption
@@ -228,7 +255,7 @@ impl Store {
         Ok(roster)
     }
 
-    fn read_roster(&self) -> anyhow::Result<Roster> {
+    pub(crate) fn read_roster(&self) -> anyhow::Result<Roster> {
         let stored = self.read();
         if let Stored::Unreadable(reason) = stored {
             anyhow::bail!("{reason}");
@@ -237,34 +264,37 @@ impl Store {
     }
 
     fn read(&self) -> Stored {
-        match std::fs::read(&self.path) {
-            Ok(sealed) => self.unseal(&sealed).map_or_else(
-                || {
-                    Stored::Unreadable(format!(
-                        "{} does not open with the store key; clearing a credential moves it aside",
-                        self.path.display()
-                    ))
-                },
-                Stored::Opened,
-            ),
-            Err(err) => match err.kind() {
-                ErrorKind::NotFound => Stored::Fresh,
-                _ => Stored::Unreadable(format!("reading {}: {err}", self.path.display())),
-            },
+        match self.read_credentials() {
+            Ok(Some(credentials)) => Stored::Opened(credentials.roster),
+            Ok(None) => Stored::Fresh,
+            Err(err) => Stored::Unreadable(format!("{err:#}")),
         }
     }
 
-    /// Replaces what the store holds. It writes and syncs a new file, then
-    /// renames it over the old one, so a crash leaves either.
-    ///
-    /// # Errors
-    ///
-    /// Fails if there is no random source, or writing, renaming or syncing
-    /// the file fails.
+    fn read_credentials(&self) -> anyhow::Result<Option<Credentials>> {
+        match std::fs::read(&self.path) {
+            Ok(sealed) => self.unseal(&sealed).map(Some).with_context(|| format!(
+                "{} does not open with the store key; clearing a credential moves it aside",
+                self.path.display()
+            )),
+            Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err).with_context(|| format!("reading {}", self.path.display())),
+        }
+    }
+
     fn save(&self, roster: &Roster) -> anyhow::Result<()> {
+        let mut credentials = self.read_credentials()?.unwrap_or_default();
+        credentials.roster = roster.clone();
+        self.write_credentials(&credentials)
+    }
+
+    fn write_credentials(
+        &self,
+        credentials: &Credentials,
+    ) -> anyhow::Result<()> {
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).context("no random source")?;
-        let plain = postcard::to_stdvec(roster)?;
+        let plain = postcard::to_stdvec(credentials)?;
         let payload = Payload {
             msg: &plain,
             aad: PURPOSE,
@@ -306,9 +336,9 @@ impl Store {
         Ok(aside)
     }
 
-    fn unseal(&self, file: &[u8]) -> Option<Roster> {
-        let (nonce, ciphertext) =
-            file.strip_prefix(&[FORMAT])?.split_at_checked(NONCE_LEN)?;
+    fn unseal(&self, file: &[u8]) -> Option<Credentials> {
+        let (format, encrypted) = file.split_first()?;
+        let (nonce, ciphertext) = encrypted.split_at_checked(NONCE_LEN)?;
         let payload = Payload {
             msg: ciphertext,
             aad: PURPOSE,
@@ -317,7 +347,14 @@ impl Store {
             .cipher
             .decrypt(XNonce::from_slice(nonce), payload)
             .ok()?;
-        postcard::from_bytes(&plain).ok()
+        match *format {
+            FORMAT => postcard::from_bytes(&plain).ok(),
+            LEGACY_FORMAT => Some(Credentials {
+                roster: postcard::from_bytes(&plain).ok()?,
+                removals: BTreeMap::new(),
+            }),
+            _ => None,
+        }
     }
 }
 

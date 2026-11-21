@@ -215,8 +215,17 @@ fn a_turn_runs_from_the_message_to_its_end() {
 #[test]
 fn a_message_the_agent_never_got_fails_the_turn() {
     let _ = expect(
-        ready(),
+        restored(&in_workspace(), None),
         Vec::from([
+            (start(), Vec::from([launching("/work", None, None)])),
+            (
+                started("conv", Anchoring::Messages),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::SessionReady),
+                    accepted(),
+                ]),
+            ),
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (
@@ -231,6 +240,63 @@ fn a_message_the_agent_never_got_fails_the_turn() {
                 ]),
             ),
             (send("again"), Vec::from([record("again")])),
+            (Input::Recorded(HostSeq(7)), Vec::from([sending("again")])),
+            (sent(), Vec::from([saved(), accepted()])),
+            (
+                turn_started(),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::NativeTurnStarted {
+                        history: HistoryAnchor::Messages {
+                            conversation: text("conv"),
+                            message: None,
+                        },
+                        turn_start: Some(HostSeq(7)),
+                    }),
+                ]),
+            ),
+            (
+                Input::Step(Step::HistoryBoundary(Some(text("message")))),
+                Vec::from([Effect::Emit(EventKind::HistoryMaterialized {
+                    history: HistoryAnchor::Messages {
+                        conversation: text("conv"),
+                        message: Some(text("message")),
+                    },
+                })]),
+            ),
+            (
+                turn_ended(),
+                Vec::from([
+                    Effect::Emit(EventKind::CheckpointReserved {
+                        checkpoint: CheckpointId(1),
+                    }),
+                    Effect::Barrier,
+                    Effect::Call(Call::Snapshot {
+                        workspace: workspace(),
+                        checkpoint: CheckpointId(1),
+                        previous: Some(text("c0")),
+                    }),
+                ]),
+            ),
+            (
+                Input::Snapshotted(Ok(text("c1"))),
+                Vec::from([
+                    Effect::Emit(EventKind::CheckpointCreated {
+                        checkpoint: Checkpoint {
+                            id: CheckpointId(1),
+                            parent: Some(CheckpointId(0)),
+                            turn_start: Some(HostSeq(7)),
+                            commit: text("c1"),
+                            history: HistoryAnchor::Messages {
+                                conversation: text("conv"),
+                                message: Some(text("message")),
+                            },
+                            undo: UndoAvailability::Available,
+                        },
+                    }),
+                    completed(),
+                ]),
+            ),
         ]),
     );
 }
@@ -839,6 +905,16 @@ fn turns(listed: &[&str]) -> Input {
 
 /// A session anchored at turns whose directory is gone, on its way to
 /// undo checkpoint 1 in the worktree once it lists its turns.
+fn dispatch_revert() -> Vec<Effect> {
+    Vec::from([
+        Effect::Emit(EventKind::UndoRevertDispatched {
+            checkpoint: CheckpointId(1),
+        }),
+        Effect::Barrier,
+        agent(Command::Revert(text("t1"))),
+    ])
+}
+
 fn reverting() -> Session {
     let history = [
         event(EventKind::WorkspaceCreated {
@@ -887,10 +963,7 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
     let _ = expect(
         reverting(),
         Vec::from([
-            (
-                turns(&["t0", "t1"]),
-                Vec::from([agent(Command::Revert(text("t1")))]),
-            ),
+            (turns(&["t0", "t1"]), dispatch_revert()),
             (
                 Input::Agent(Outcome::Reverted(Ok(()))),
                 Vec::from([agent(Command::Turns)]),
@@ -913,6 +986,112 @@ fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
             ),
             (started("thread", Anchoring::Turns), undone()),
         ]),
+    );
+}
+
+#[test]
+fn an_unknown_rollback_reopens_and_verifies_history_before_continuing() {
+    let _ = expect(
+        reverting(),
+        Vec::from([
+            (turns(&["t0", "t1"]), dispatch_revert()),
+            (
+                Input::Agent(Outcome::RevertUnknown),
+                Vec::from([launching(
+                    "/worktree",
+                    Some(HistoryAnchor::Turns {
+                        conversation: text("thread"),
+                        turn: None,
+                    }),
+                    None,
+                )]),
+            ),
+            (
+                started("thread", Anchoring::Turns),
+                Vec::from([agent(Command::Turns)]),
+            ),
+            (turns(&["t0"]), Vec::from([agent(Command::Shutdown)])),
+            (
+                Input::Agent(Outcome::ShutDown(Ok(()))),
+                Vec::from([
+                    history_restored(thread("t0")),
+                    Effect::Call(Call::History),
+                ]),
+            ),
+        ]),
+    );
+}
+
+#[test]
+fn a_replayed_unverified_rollback_reads_history_without_sending_again() {
+    let session = restored(
+        &[
+            event(EventKind::WorkspaceCreated {
+                workspace: workspace(),
+            }),
+            checkpoint(0, thread("t0"), UndoAvailability::Available),
+            checkpoint(1, thread("t1"), UndoAvailability::Available),
+            event(EventKind::UndoStarted {
+                checkpoint: CheckpointId(1),
+                restore: CheckpointId(0),
+                history: thread("t1"),
+            }),
+            event(EventKind::UndoRevertDispatched {
+                checkpoint: CheckpointId(1),
+            }),
+        ],
+        None,
+    );
+    let verify = || {
+        Vec::from([
+            (
+                undo(),
+                Vec::from([Effect::Call(Call::Exists(HostPath(text(
+                    "/work",
+                ))))]),
+            ),
+            (
+                Input::Exists(true),
+                Vec::from([launching(
+                    "/work",
+                    Some(HistoryAnchor::Turns {
+                        conversation: text("thread"),
+                        turn: None,
+                    }),
+                    None,
+                )]),
+            ),
+            (
+                started("thread", Anchoring::Turns),
+                Vec::from([agent(Command::Turns)]),
+            ),
+        ])
+    };
+    let checking = expect(session, verify());
+    let unresolved = expect(
+        checking,
+        Vec::from([(
+            turns(&["t0", "t1"]),
+            Vec::from([
+                Effect::Emit(EventKind::Error {
+                    message: text(
+                        "could not verify the native rollback outcome: native history does not match the retained turn prefix",
+                    ),
+                }),
+                rejected(Rejection::UndoInProgress),
+            ]),
+        )]),
+    );
+    let retry = expect(unresolved, verify());
+    let _ = expect(
+        retry,
+        Vec::from([(
+            turns(&["t0"]),
+            Vec::from([
+                history_restored(thread("t0")),
+                Effect::Call(Call::History),
+            ]),
+        )]),
     );
 }
 
@@ -999,16 +1178,17 @@ fn the_tasks_before_a_checkpoint_are_the_session_s_last_before_it() {
             },
         )
     };
-    let taken = |seq, id| Event {
+    let taken = |seq, session, id| Event {
+        session: SessionId(session),
         seq: HostSeq(seq),
         ..checkpoint(id, HistoryAnchor::Fresh, UndoAvailability::Available)
     };
     let history = [
         changed(1, 1, "first"),
-        taken(2, 0),
+        taken(2, 2, 1),
         changed(3, 1, "second"),
         changed(4, 2, "another session's"),
-        taken(5, 1),
+        taken(5, 1, 1),
         changed(6, 1, "after"),
     ];
     assert_eq!(
@@ -1569,6 +1749,34 @@ fn a_session_without_a_workspace_is_removed_at_once_and_stays_removed() {
             start(),
             Vec::from([rejected(Rejection::SessionRemoved)]),
         )]),
+    );
+}
+
+#[test]
+fn a_failed_shutdown_keeps_the_agent_and_workspace_available_for_retry() {
+    let stop = || Input::Order(Order::Stop(text("finished")));
+    let failed = || Input::Agent(Outcome::ShutDown(Err(text("still running"))));
+    let no_shutdown = || {
+        Vec::from([
+            Effect::Emit(EventKind::Error {
+                message: text(
+                    "the agent did not confirm shutdown: still running",
+                ),
+            }),
+            rejected(Rejection::InstanceUnavailable {
+                reason: text("still running"),
+            }),
+        ])
+    };
+    let _ = expect(
+        ready(),
+        Vec::from([
+            (stop(), Vec::from([agent(Command::Shutdown)])),
+            (failed(), no_shutdown()),
+            (remove(), Vec::from([agent(Command::Shutdown)])),
+            (failed(), no_shutdown()),
+            (remove(), Vec::from([agent(Command::Shutdown)])),
+        ]),
     );
 }
 

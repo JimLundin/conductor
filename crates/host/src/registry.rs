@@ -35,8 +35,8 @@ use alloc::format;
 
 use proto::{
     Account, Auth, Availability, Catalog, CommandResult, Credential, Effort,
-    Event, EventKind, Instance, InstanceId, InstanceStatus, Instances, IssueId,
-    ModelId, Models, Provider, Rejection, Roster, SessionId,
+    Event, Instance, InstanceId, InstanceStatus, Instances, IssueId, ModelId,
+    Models, Provider, Rejection, Roster, SessionId,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -280,20 +280,19 @@ impl AccountAdoption {
     }
 }
 
-/// The sessions whose agents run, or start, after `history`: created or
-/// ready, and not closed since.
+/// The sessions whose agents run, or start, after `history`.
 #[must_use]
 pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
     let mut running = BTreeSet::new();
     for event in history {
-        match event.kind {
-            EventKind::SessionCreated { .. } | EventKind::SessionReady => {
+        match crate::restore::agent_activity(&event.kind) {
+            Some(true) => {
                 running.insert(event.session);
             }
-            EventKind::SessionClosed { .. } => {
+            Some(false) => {
                 running.remove(&event.session);
             }
-            _ => {}
+            None => {}
         }
     }
     running
@@ -443,7 +442,11 @@ struct Launch<S> {
 enum Refresh<S, R> {
     /// The latest job, which runs once the one running has ended unless it
     /// is that one, and the changes waiting for it.
-    Pending { latest: Job<S>, replies: Vec<R> },
+    Pending {
+        active: u64,
+        latest: Job<S>,
+        replies: Vec<R>,
+    },
     /// Changes arriving during launch need one live refresh, even if the
     /// last request repeats the credential the boot probe used.
     Starting {
@@ -512,15 +515,25 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// What `Welcome` tells a client the host can run.
     #[must_use]
     pub fn instances(&self) -> Instances {
+        self.instances_of(&self.roster)
+    }
+
+    #[must_use]
+    pub fn instances_of(&self, roster: &Roster) -> Instances {
         Instances(
-            self.roster
+            roster
                 .0
                 .keys()
                 .map(|id| {
                     (
                         id.clone(),
                         InstanceStatus {
-                            availability: self.availability(id),
+                            availability: self.availability(
+                                id,
+                                roster.of(id).and_then(|settings| {
+                                    settings.credential.as_ref()
+                                }),
+                            ),
                         },
                     )
                 })
@@ -613,6 +626,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         instance: InstanceId,
         account: Option<Account>,
+        running: &BTreeSet<SessionId>,
         reply: R,
     ) -> Vec<Effect<S, R>> {
         if let Some((adoption, roster)) =
@@ -620,6 +634,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 adoption.plan(&self.roster).map(|roster| (adoption, roster))
             })
         {
+            if let Some(reason) =
+                self.instance_in_use(&[&adoption.from, &adoption.to], running)
+            {
+                return Vec::from([rejected(reply, reason)]);
+            }
             return self.save(roster, Change::SignedIn(adoption), reply);
         }
         if let Some(Launcher::Running { own, .. }) =
@@ -691,22 +710,30 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         if instance.account == Account::Own {
             return Vec::from([self.answer(reply)]);
         }
-        let busy = self
-            .sessions
-            .iter()
-            .filter(|(id, (on, _))| on == &instance && running.contains(id))
-            .count();
-        if busy > 0 {
-            return Vec::from([rejected(
-                reply,
-                Rejection::InstanceInUse {
-                    sessions: u64::try_from(busy).unwrap_or(u64::MAX),
-                },
-            )]);
+        if let Some(reason) = self.instance_in_use(&[&instance], running) {
+            return Vec::from([rejected(reply, reason)]);
         }
         let mut roster = self.roster.clone();
         roster.0.remove(&instance);
         self.save(roster, Change::Removed(instance), reply)
+    }
+
+    #[must_use]
+    pub fn instance_in_use(
+        &self,
+        instances: &[&InstanceId],
+        running: &BTreeSet<SessionId>,
+    ) -> Option<Rejection> {
+        let busy = self
+            .sessions
+            .iter()
+            .filter(|(id, (on, _))| {
+                instances.contains(&on) && running.contains(id)
+            })
+            .count();
+        (busy > 0).then(|| Rejection::InstanceInUse {
+            sessions: u64::try_from(busy).unwrap_or(u64::MAX),
+        })
     }
 
     /// How the [`Effect::MoveAside`] went.
@@ -785,14 +812,28 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             configured,
         } = refreshed;
         match self.refreshes.remove(&instance) {
-            Some(Refresh::Pending { latest, replies }) if latest.id == id => {
+            Some(Refresh::Pending {
+                active,
+                latest,
+                replies,
+            }) if active == id && latest.id == id => {
                 let logged = self.configured(&instance, configured);
                 logged.into_iter().chain(self.answers(replies)).collect()
             }
-            Some(Refresh::Pending { latest, replies }) => {
+            Some(Refresh::Pending {
+                active,
+                latest,
+                replies,
+            }) if active == id => {
                 let job = latest.clone();
-                self.refreshes
-                    .insert(instance, Refresh::Pending { latest, replies });
+                self.refreshes.insert(
+                    instance,
+                    Refresh::Pending {
+                        active: latest.id,
+                        latest,
+                        replies,
+                    },
+                );
                 Vec::from([Effect::Refresh(job)])
             }
             settled => {
@@ -956,17 +997,27 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             adapter: start.clone(),
             credential,
         };
-        let (replies, run) = match self.refreshes.remove(&instance) {
-            Some(Refresh::Pending { mut replies, .. }) => {
+        let (active, replies, run) = match self.refreshes.remove(&instance) {
+            Some(Refresh::Pending {
+                active,
+                mut replies,
+                ..
+            }) => {
                 replies.extend(asked);
-                (replies, None)
+                (active, replies, None)
             }
             Some(Refresh::Starting { .. }) | None => {
-                (asked, Some(Effect::Refresh(latest.clone())))
+                (latest.id, asked, Some(Effect::Refresh(latest.clone())))
             }
         };
-        self.refreshes
-            .insert(instance, Refresh::Pending { latest, replies });
+        self.refreshes.insert(
+            instance,
+            Refresh::Pending {
+                active,
+                latest,
+                replies,
+            },
+        );
         run.into_iter().collect()
     }
 
@@ -989,8 +1040,12 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             .and_then(|known| known.credential.clone())
     }
 
-    fn availability(&self, instance: &InstanceId) -> Availability {
-        match self.ready(instance) {
+    fn availability(
+        &self,
+        instance: &InstanceId,
+        credential: Option<&Credential>,
+    ) -> Availability {
+        match self.ready_with(instance, credential) {
             Ok((_, auth, models)) => Availability::Available { auth, models },
             Err(reason) => Availability::Unavailable { reason },
         }
@@ -1003,6 +1058,19 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     fn ready(
         &self,
         instance: &InstanceId,
+    ) -> Result<(S, Auth, Models), String> {
+        self.ready_with(
+            instance,
+            self.roster
+                .of(instance)
+                .and_then(|settings| settings.credential.as_ref()),
+        )
+    }
+
+    fn ready_with(
+        &self,
+        instance: &InstanceId,
+        credential: Option<&Credential>,
     ) -> Result<(S, Auth, Models), String> {
         match self.refreshes.get(instance) {
             None => Ok(()),
@@ -1025,11 +1093,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 None,
             ) => {
                 let offered = models.clone()?;
-                let auth = self.signs_in(
-                    instance,
-                    self.credential(instance).as_ref(),
-                    *own,
-                )?;
+                let auth = self.signs_in(instance, credential, *own)?;
                 Ok((start.clone(), auth, offered))
             }
         }
@@ -1042,10 +1106,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         credential: Option<&Credential>,
         own: OwnSignIn,
     ) -> Result<Auth, String> {
-        let info = self
-            .roster
-            .of(instance)
-            .and_then(|_| self.catalog.of(instance.provider));
+        let info = self.catalog.of(instance.provider);
         credential.zip(info).map_or_else(
             || match (&instance.account, own) {
                 // Only a sign-in names an account without a credential, so

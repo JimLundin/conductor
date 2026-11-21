@@ -473,10 +473,10 @@ fn merged(success: bool, output: &str, error: &str) -> Result<String, String> {
 /// Where `branch`, a full ref, is checked out, from `git worktree list
 /// --porcelain`.
 #[must_use]
-fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
+pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
     let wanted = format!("branch {branch}");
-    porcelain.split("\n\n").find_map(|record| {
-        let mut lines = record.lines();
+    porcelain.split("\0\0").find_map(|record| {
+        let mut lines = record.split('\0');
         let path = lines.next()?.strip_prefix("worktree ")?;
         lines.any(|line| line == wanted).then(|| String::from(path))
     })

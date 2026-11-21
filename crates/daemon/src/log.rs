@@ -7,13 +7,13 @@
 
 use crate::storage::{self, Storage};
 use redb::WriteTransaction;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::Path;
 
 use host::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
 use proto::{
-    Catalog, CommandId, CommandResult, Event, EventKind, Home, HostSeq,
+    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -98,9 +98,17 @@ enum LogMsg {
         id: String,
         reply: oneshot::Sender<()>,
     },
+    ProgressCursor {
+        reply: oneshot::Sender<(Epoch, HostSeq)>,
+    },
+    ProgressDelivered {
+        seq: HostSeq,
+        reply: oneshot::Sender<()>,
+    },
     History {
         reply: oneshot::Sender<Vec<Event>>,
     },
+    RunningSessions(oneshot::Sender<std::collections::BTreeSet<SessionId>>),
     CurrentHistory {
         session: SessionId,
         reply: oneshot::Sender<Vec<Event>>,
@@ -263,8 +271,28 @@ impl Log {
             .await
     }
 
+    pub(crate) async fn progress_cursor(
+        &self,
+    ) -> Result<(Epoch, HostSeq), Stopped> {
+        self.ask(|reply| LogMsg::ProgressCursor { reply }).await
+    }
+
+    pub(crate) async fn progress_delivered(
+        &self,
+        seq: HostSeq,
+    ) -> Result<(), Stopped> {
+        self.ask(|reply| LogMsg::ProgressDelivered { seq, reply })
+            .await
+    }
+
     pub(crate) async fn history(&self) -> Result<Vec<Event>, Stopped> {
         self.ask(|reply| LogMsg::History { reply }).await
+    }
+
+    pub(crate) async fn running_sessions(
+        &self,
+    ) -> Result<std::collections::BTreeSet<SessionId>, Stopped> {
+        self.ask(LogMsg::RunningSessions).await
     }
 
     pub(crate) async fn finish_history(
@@ -349,12 +377,7 @@ impl Log {
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> LogMsg,
     ) -> Result<T, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(build(reply))
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
+        crate::ask(&self.inbox, build).await
     }
 }
 
@@ -367,8 +390,10 @@ impl LogActor {
             let msg = messages.recv().await.ok_or(Stopped {})?;
             match msg {
                 LogMsg::Shutdown { reply } => {
+                    drop(self);
+                    drop(messages);
                     let _ = reply.send(());
-                    break Err(Stopped {});
+                    return Err(Stopped {});
                 }
                 other => self.on(other).map_err(|err| {
                     tracing::error!(%err, "durable log stopped");
@@ -403,8 +428,24 @@ impl LogActor {
                 self.finishes.insert(ticket, reply);
                 self.perform(effects)?;
             }
+            LogMsg::ProgressCursor { reply } => {
+                let cursor = self
+                    .storage
+                    .as_ref()
+                    .map(Storage::progress_cursor)
+                    .transpose()?
+                    .unwrap_or(HostSeq(0));
+                let _ = reply.send((self.core.epoch(), cursor));
+            }
+            LogMsg::ProgressDelivered { seq, reply } => {
+                self.perform(self.core.delivered_progress(seq))?;
+                let _ = reply.send(());
+            }
             LogMsg::History { reply } => {
                 let _ = reply.send(self.core.history().to_vec());
+            }
+            LogMsg::RunningSessions(reply) => {
+                let _ = reply.send(self.core.running_sessions());
             }
             LogMsg::CurrentHistory { session, reply } => {
                 let _ = reply.send(self.core.current_history(session));
@@ -459,13 +500,18 @@ impl LogActor {
     }
 
     fn perform(&mut self, effects: Vec<Effect>) -> anyhow::Result<()> {
-        for effect in effects {
-            self.effect(effect)?;
+        let mut pending = VecDeque::from(effects);
+        while let Some(effect) = pending.pop_front() {
+            self.effect(effect, &mut pending)?;
         }
         Ok(())
     }
 
-    fn effect(&mut self, effect: Effect) -> anyhow::Result<()> {
+    fn effect(
+        &mut self,
+        effect: Effect,
+        pending: &mut VecDeque<Effect>,
+    ) -> anyhow::Result<()> {
         match effect {
             Effect::Open => {
                 self.transaction =
@@ -495,8 +541,9 @@ impl LogActor {
                     .map(|storage| storage.receipt(key))
                     .transpose()?
                     .flatten();
-                let effects = self.core.receipt(found);
-                self.perform(effects)?;
+                for effect in self.core.receipt(found).into_iter().rev() {
+                    pending.push_front(effect);
+                }
             }
             Effect::Begun(ticket, begun) => self.answer(ticket, begun)?,
             Effect::Finished(ticket) => {
@@ -705,6 +752,85 @@ mod durability_tests {
         };
         assert_eq!(cached, Some(CommandResult::Accepted));
         reopened.shutdown().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_releases_storage_with_an_open_transaction()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/tmp");
+        std::fs::create_dir_all(&directory)?;
+        let path =
+            directory.join(format!("shutdown-{}.redb", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let log = Log::open(String::from("test"), &path)?;
+        let running = lease(&log, 1).await?;
+        log.append(SessionId(1), EventKind::SessionReady).await?;
+        log.shutdown().await?;
+        let reopened = Log::open(String::from("test"), &path)?;
+        assert_eq!(reopened.history().await?, Vec::new());
+        drop(running);
+        reopened.shutdown().await?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn queued_cached_receipts_drain_in_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/tmp");
+        std::fs::create_dir_all(&directory)?;
+        let path = directory
+            .join(format!("receipt-queue-{}.redb", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let storage = super::Storage::open(&path)?;
+        let transaction = storage.begin()?;
+        for id in 1..=64 {
+            super::storage::receipt(
+                &transaction,
+                CommandId(id),
+                &CommandResult::Accepted,
+            )?;
+        }
+        transaction.commit()?;
+        drop(storage);
+        let log = Log::open(String::from("test"), &path)?;
+        let running = lease(&log, 0).await?;
+        let mut queued = Vec::new();
+        for id in 1..=64 {
+            let (reply, answer) = oneshot::channel();
+            log.inbox
+                .send(LogMsg::Begin(CommandStart {
+                    key: CommandId(id),
+                    kind: host::log::Kind::Session,
+                    reply,
+                }))
+                .await?;
+            queued.push(answer);
+        }
+        let (reply, cache_miss) = oneshot::channel();
+        log.inbox
+            .send(LogMsg::Begin(CommandStart {
+                key: CommandId(65),
+                kind: host::log::Kind::Session,
+                reply,
+            }))
+            .await?;
+        running.finish(CommandResult::Accepted).await?;
+        let BeginCommand::Execute(last) = cache_miss.await? else {
+            return Err("expected the cache miss to execute".into());
+        };
+        for mut answer in queued {
+            assert!(matches!(
+                answer.try_recv()?,
+                BeginCommand::Cached(CommandResult::Accepted)
+            ));
+        }
+        last.finish(CommandResult::Accepted).await?;
+        log.shutdown().await?;
+        std::fs::remove_file(path)?;
         Ok(())
     }
 

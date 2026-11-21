@@ -1,6 +1,8 @@
 //! A session's pane: what an empty transcript says, the agent's tasks, the
 //! changes under the turn they end, and the cards and lines it draws.
 
+use alloc::rc::Rc;
+
 use proto::{
     Change, CheckpointId, CommandBody, CommandResult, EventKind, FileChange,
     RequestId, Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolPhase,
@@ -12,8 +14,8 @@ use super::{
     paired, pane, questions, rows, run, said, sent, text,
 };
 use crate::{
-    DiffPanel, Intent, Place, Row, SessionIntent, TaskRow, Tasks, ToolDetail,
-    ToolFile,
+    DiffPanel, Effect, Focus, Intent, Place, Row, SessionIntent, TaskRow,
+    Tasks, ToolDetail, ToolFile,
 };
 
 #[test]
@@ -261,4 +263,74 @@ fn a_host_reset_drops_the_old_sessions_draft_and_pending_diff() {
         super::composer(&reopened).map(|composer| composer.0),
         Some(String::new())
     );
+}
+
+#[test]
+fn failed_changes_can_close_with_focus_returned_or_retry() {
+    let checkpoint = CheckpointId(1);
+    let show = Intent::Session(SessionIntent::ShowChanges(checkpoint));
+    let (loading, requested) = opened(
+        a_turn(UndoAvailability::Available)
+            .into_iter()
+            .chain([show.clone()])
+            .collect(),
+    );
+    let (failed, _) = run(
+        loading,
+        Vec::from([answer(&requested, Err(text("offline")))]),
+    );
+    assert_eq!(
+        changes(&failed).map(|shown| (shown.panel, shown.button_disabled)),
+        Some((DiffPanel::Failed(text("offline")), false))
+    );
+    let (_, retry) = run(failed.clone(), Vec::from([show]));
+    assert_eq!(sent(&retry), sent(&requested));
+    let (hidden, focus) = run(
+        failed,
+        Vec::from([Intent::Session(SessionIntent::CloseChanges(checkpoint))]),
+    );
+    assert_eq!(
+        changes(&hidden).map(|shown| shown.panel),
+        Some(DiffPanel::Hidden)
+    );
+    assert_eq!(
+        focus,
+        [Effect::Focus(Focus::NextFrame(text(
+            "checkpoint-1-changes"
+        )))]
+    );
+}
+
+#[test]
+fn a_transcript_rebuild_reuses_the_open_preview() {
+    let checkpoint = CheckpointId(1);
+    let (loading, requested) = opened(
+        a_turn(UndoAvailability::Available)
+            .into_iter()
+            .chain([Intent::Session(SessionIntent::ShowChanges(checkpoint))])
+            .collect(),
+    );
+    let mut large = diff();
+    large.files = (0..4)
+        .map(|index| proto::CheckpointFile {
+            path: alloc::format!("{index}.txt"),
+            change: Change::Edit,
+            patch: proto::FilePatch::Text("a".repeat(64 * 1024)),
+        })
+        .collect();
+    let (loaded, _) = run(
+        loading,
+        Vec::from([answer(&requested, Ok(CommandResult::Diff(large)))]),
+    );
+    let (busy, _) =
+        run(loaded.clone(), Vec::from([event(6, said("next turn"))]));
+    let before_panel = changes(&loaded).map(|shown| shown.panel);
+    let after_panel = changes(&busy).map(|shown| shown.panel);
+    assert!(matches!(
+        (before_panel, after_panel),
+        (Some(DiffPanel::Loaded(before)), Some(DiffPanel::Loaded(after)))
+            if Rc::ptr_eq(&before.preview, &after.preview)
+                && !before.undo_disabled
+                && after.undo_disabled
+    ));
 }

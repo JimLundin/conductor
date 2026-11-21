@@ -1,6 +1,6 @@
 //! The Claude handle and handshake over the shared line-JSON process runner.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use claude::ClaudeCredential;
@@ -227,7 +227,7 @@ fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
     let stdout_log = line_json::stdout_log(opts.stdout_log.as_deref())?;
     let mut driver = Session::default();
     let started = line_json::start(
-        command(opts, &id, sandbox()),
+        command(opts, &id, sandbox(&opts.cwd)),
         Options {
             stdout_log,
             stderr: StderrPolicy::Last,
@@ -323,13 +323,36 @@ async fn reason(
 
 /// Whether Claude's command sandbox can run here (`claude::sandbox`).
 #[must_use]
-pub fn sandbox() -> Sandbox {
+pub fn sandbox(cwd: &Path) -> Sandbox {
+    let kernel_release = if cfg!(target_os = "linux") {
+        std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    claude::sandbox(std::env::consts::OS, sandbox_tools(cwd), &kernel_release)
+}
+
+#[cfg(target_os = "linux")]
+fn sandbox_tools(cwd: &Path) -> bool {
     let path = std::env::var_os("PATH").unwrap_or_default();
-    let dirs = std::env::split_paths(&path).collect::<Vec<PathBuf>>();
-    let tools = claude::SANDBOX_TOOLS
-        .iter()
-        .all(|tool| dirs.iter().any(|dir| dir.join(tool).is_file()));
-    claude::sandbox(std::env::consts::OS, tools)
+    claude::SANDBOX_TOOLS.iter().all(|tool| {
+        std::env::split_paths(&path)
+            .any(|dir| executable(&cwd.join(dir).join(tool)))
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+const fn sandbox_tools(_: &Path) -> bool {
+    false
+}
+
+#[cfg(target_os = "linux")]
+fn executable(path: &Path) -> bool {
+    use rustix::fs::{Access, AtFlags, CWD, accessat};
+
+    path.is_file()
+        && accessat(CWD, path, Access::EXEC_OK, AtFlags::EACCESS).is_ok()
 }
 
 fn command(opts: &ClaudeOptions, id: &SessionId, sandbox: Sandbox) -> Command {

@@ -19,6 +19,8 @@
 //! the home looks like now is on a watch channel, so a `Welcome` and a
 //! subscription read it without waiting on a pull or a clone.
 
+mod issue_file;
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -30,13 +32,15 @@ use home::issue::{
     RecordEffect, RemoteProbe, SessionUpdate, Write,
 };
 use home::project::Project;
-use home::sync::{Git, Sync};
+use home::sync::{self, Git, Sync};
 use home::{Found, Stored};
 use host::log::Completion;
 use host::serve::HomeOrder;
+use issue_file::{read_issue, write_issue};
 use proto::{
-    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HostPath,
-    Issue, IssueChange, IssueFields, IssueId, ProjectId, Rejection, StartAt,
+    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeSync,
+    HostPath, Issue, IssueChange, IssueFields, IssueId, ProjectId, Rejection,
+    StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -133,19 +137,21 @@ enum Msg {
         summary: Option<String>,
         client: ClientName,
         landed: u64,
+        note_id: Option<CommandId>,
         reply: oneshot::Sender<()>,
     },
 }
 
 impl HomeClone {
-    /// Starts the task. It reads what it has at once, then clones or pulls
-    /// the home, and pulls it again every few minutes.
+    /// Starts the task, which syncs the home at once and every few minutes.
     #[must_use]
     pub fn spawn(homing: Homing) -> Self {
         let (inbox, messages) = mpsc::channel(16);
         let (shown, watched) = watch::channel(None);
         let clone = clone_of(&homing.data_dir);
-        tokio::spawn(Actor::new(homing, shown).run(messages));
+        let actor = Actor::new(homing, shown);
+        actor.publish();
+        tokio::spawn(actor.run(messages));
         Self {
             inbox,
             shown: watched,
@@ -156,8 +162,7 @@ impl HomeClone {
     /// What a session created in `created`, whose agent runs in
     /// `runs_in`, is told by a CLI that reads `file` by itself: the files
     /// as the clone and the directory it runs in have them now, read
-    /// without waiting on the task. Before the task first shows the home,
-    /// that is the shared rules alone.
+    /// without waiting on the task once the checkout is verified.
     #[must_use]
     pub fn instructions(
         &self,
@@ -165,7 +170,18 @@ impl HomeClone {
         runs_in: &HostPath,
         file: &str,
     ) -> Option<String> {
-        let projects = self.shown().map_or_default(|home| home.projects);
+        let projects = match self.shown() {
+            Some(home)
+                if matches!(
+                    home.sync,
+                    HomeSync::Synced | HomeSync::Behind { .. }
+                ) =>
+            {
+                home.projects
+            }
+            Some(_) => return None,
+            None => Vec::new(),
+        };
         let directory = Path::new(&runs_in.0);
         let own =
             home::instructions::project_of(&projects, &canonical(created)).map(
@@ -268,12 +284,14 @@ impl HomeClone {
         summary: Option<String>,
         client: ClientName,
         landed: u64,
+        note_id: Option<CommandId>,
     ) -> Result<(), Stopped> {
         self.ask(|reply| Msg::Finished {
             issue,
             summary,
             client,
             landed,
+            note_id,
             reply,
         })
         .await
@@ -283,12 +301,7 @@ impl HomeClone {
         &self,
         build: impl FnOnce(oneshot::Sender<T>) -> Msg,
     ) -> Result<T, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(build(reply))
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
+        crate::ask(&self.inbox, build).await
     }
 }
 
@@ -301,6 +314,8 @@ struct Actor {
     clones: String,
     stored: PathBuf,
     remote: Option<String>,
+    previous_remote: Option<String>,
+    destination: Option<Destination>,
     roots: Vec<PathBuf>,
     sync: Sync,
     projects: Vec<Project>,
@@ -335,6 +350,8 @@ impl Actor {
                 .to_string_lossy()
                 .into_owned(),
             remote: stored.remote(remote),
+            previous_remote: stored.remote.clone(),
+            destination: None,
             known: stored.known(),
             host,
             data_dir,
@@ -353,8 +370,6 @@ impl Actor {
     }
 
     async fn run(mut self, mut inbox: mpsc::Receiver<Msg>) {
-        let _ = self.load_edits().await;
-        self.scan().await;
         let mut ticks = tokio::time::interval(EVERY);
         while let Some(msg) = next(&mut inbox, &mut ticks).await {
             self.handle(msg).await;
@@ -420,8 +435,13 @@ impl Actor {
                 client,
                 reply,
             } => {
-                self.session_update(issue, &client, SessionUpdate::Started)
-                    .await;
+                self.session_update(
+                    issue,
+                    &client,
+                    SessionUpdate::Started,
+                    None,
+                )
+                .await;
                 let _ = reply.send(());
             }
             Msg::Finished {
@@ -429,12 +449,14 @@ impl Actor {
                 summary,
                 client,
                 landed,
+                note_id,
                 reply,
             } => {
                 self.session_update(
                     issue,
                     &client,
                     SessionUpdate::Finished { summary, landed },
+                    note_id,
                 )
                 .await;
                 let _ = reply.send(());
@@ -447,14 +469,30 @@ impl Actor {
         issue: IssueId,
         client: &ClientName,
         mut update: SessionUpdate,
+        note_id: Option<CommandId>,
     ) {
-        while let Some(change) = update.next(&self.issues, issue) {
-            let id = CommandId(ulid::Ulid::new().0);
+        while let Some(change) =
+            self.next_session_change(&mut update, issue).await
+        {
+            let id = SessionUpdate::command_for(&change, note_id)
+                .unwrap_or_else(|| CommandId(ulid::Ulid::new().0));
             if let Err(error) = self.change(issue, change, client, id).await {
                 let answer = error.completion().into_result();
                 tracing::warn!(target: "home", ?answer, "a session's issue update was rejected");
             }
         }
+    }
+
+    async fn next_session_change(
+        &mut self,
+        update: &mut SessionUpdate,
+        issue: IssueId,
+    ) -> Option<IssueChange> {
+        if *update == SessionUpdate::Done {
+            return None;
+        }
+        self.refresh().await;
+        update.next(&self.issues, issue)
     }
 
     async fn pull_now(&mut self) -> CommandResult {
@@ -480,27 +518,87 @@ impl Actor {
         };
         let outcome = self.bring_up(&remote).await;
         self.sync =
-            self.sync.clone().after(outcome, cloned(&self.clone), now());
-        self.scan().await;
+            self.sync
+                .clone()
+                .after(outcome, self.destination.is_some(), now());
+        if self.destination.is_some() {
+            self.scan().await;
+        } else {
+            self.projects.clear();
+            self.issues.clear();
+            self.found.clear();
+            self.publish();
+        }
     }
 
     /// Runs what brings the clone up to date with the remote.
     async fn bring_up(&mut self, remote: &str) -> Result<(), String> {
+        self.destination = None;
+        let (destination, existing) = self.prepare_destination(remote).await?;
+        self.destination = Some(destination.clone());
         self.load_edits().await?;
-        match home::sync::next(cloned(&self.clone), self.edits.count() != 0) {
-            Git::Clone => {
-                clone(&self.data_dir, remote, &self.clone).await?;
-                self.replay_after_fetch().await
+        self.previous_remote.clone_from(&self.remote);
+        match sync::next(existing, self.edits.count() != 0) {
+            Git::Clone => self.replay_after_fetch().await,
+            Git::Pull => {
+                destination.fetch(&self.clone).await?;
+                pull(&self.clone, &destination.tracking).await
             }
-            Git::Pull => pull(&self.clone).await,
             Git::Replay => {
-                if let Err(reason) = fetch(&self.clone).await {
+                if let Err(reason) = destination.fetch(&self.clone).await {
                     self.rewrite_all().await;
                     return Err(reason);
                 }
                 self.replay_after_fetch().await
             }
         }
+    }
+
+    async fn prepare_destination(
+        &self,
+        remote: &str,
+    ) -> Result<(Destination, bool), String> {
+        let address = remote_address(&self.data_dir, remote)?;
+        self.check_pending_home(&address)?;
+        let existing = cloned(&self.clone);
+        if !existing {
+            clone(&self.data_dir, &address, &self.clone).await?;
+        }
+        Destination::verified(&self.clone, address)
+            .await
+            .map(|destination| (destination, existing))
+    }
+
+    fn check_pending_home(&self, address: &str) -> Result<(), String> {
+        let previous = self
+            .previous_remote
+            .as_deref()
+            .filter(|_| self.edits_at.exists())
+            .map(|remote| remote_address(&self.data_dir, remote))
+            .transpose()?;
+        if sync::queue_needs_check(previous.as_deref(), address)
+            && !load_edits(&self.edits_at)?.is_empty()
+        {
+            return Err(String::from(
+                "pending issue changes belong to the previous home",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn load_current_edits(&mut self) -> Result<(), IssueError> {
+        home::configured(self.remote.as_deref())?;
+        if self.destination.is_none() {
+            self.fresh().await;
+        }
+        self.destination().map_err(IssueError::Retryable)?;
+        self.load_edits().await.map_err(IssueError::Retryable)
+    }
+
+    fn destination(&self) -> Result<&Destination, String> {
+        self.destination.as_ref().ok_or_else(|| {
+            String::from("the configured home's checkout is unavailable")
+        })
     }
 
     async fn replay_after_fetch(&mut self) -> Result<(), String> {
@@ -514,28 +612,58 @@ impl Actor {
         wanted: IssueFields,
         command: CommandId,
     ) -> Result<IssueId, IssueError> {
-        self.load_edits().await.map_err(IssueError::Retryable)?;
+        self.load_current_edits().await?;
         if let Some(kept) = self.kept_issue(command) {
             return kept;
         }
         self.fresh().await;
+        self.destination().map_err(IssueError::Retryable)?;
         let projects = self
             .projects
             .iter()
             .map(|known| known.id.clone())
             .collect::<Vec<ProjectId>>();
-        let issue_dir = self.clone.join(Listing::for_project(&project).path);
+        let issue_dir = Listing::for_project(&project).path;
         let issue = IssueId(ulid::Ulid::new().0);
         let request = self
             .issue_context(command)
             .open(&projects, project, issue, &wanted)?;
-        if let Some(opened) =
-            Listing::opened_by(command, issue_files(&issue_dir))
-        {
+        if let Some(opened) = self.created(&issue_dir, command).await? {
             return Ok(opened);
         }
         self.record(request).await?;
         Ok(issue)
+    }
+
+    async fn created(
+        &self,
+        path: &str,
+        command: CommandId,
+    ) -> Result<Option<IssueId>, IssueError> {
+        if !cloned(&self.clone) {
+            return Ok(None);
+        }
+        let pattern = Listing::creation_pattern(command);
+        let paths = text(
+            &self.clone,
+            &[
+                "log",
+                "--full-history",
+                "-1",
+                "--format=",
+                "--name-only",
+                "--no-renames",
+                "--diff-filter=A",
+                "-G",
+                &pattern,
+                "HEAD",
+                "--",
+                path,
+            ],
+        )
+        .await
+        .map_err(|err| IssueError::Retryable(err.to_string()))?;
+        Ok(paths.lines().find_map(Listing::created_from_path))
     }
 
     async fn change(
@@ -545,11 +673,22 @@ impl Actor {
         client: &ClientName,
         command: CommandId,
     ) -> Result<(), IssueError> {
-        self.load_edits().await.map_err(IssueError::Retryable)?;
+        self.load_current_edits().await?;
         if let Some(kept) = self.kept_issue(command) {
             return kept.map(drop);
         }
         self.fresh().await;
+        self.change_current(issue, change, client, command).await
+    }
+
+    async fn change_current(
+        &mut self,
+        issue: IssueId,
+        change: IssueChange,
+        client: &ClientName,
+        command: CommandId,
+    ) -> Result<(), IssueError> {
+        self.destination().map_err(IssueError::Retryable)?;
         let request =
             self.issue_context(command).edit(issue, change, &client.0)?;
         self.record(request).await
@@ -575,13 +714,8 @@ impl Actor {
     }
 
     async fn record(&mut self, request: Record) -> Result<(), IssueError> {
-        let path = self.clone.join(request.read().path);
-        let current = crate::read_if_exists(&path).map_err(|err| {
-            IssueError::Retryable(format!(
-                "could not read {}: {err}",
-                path.display()
-            ))
-        })?;
+        let current = read_issue(&self.clone, &request.read().path)
+            .map_err(IssueError::Retryable)?;
         let mut recorded = request
             .decide(current.as_deref(), &self.edits)
             .map_err(IssueError::local)?;
@@ -606,11 +740,14 @@ impl Actor {
     }
 
     async fn deliver(&mut self, mut step: Delivery) -> Result<(), String> {
+        let destination = self.destination()?.clone();
         loop {
             let outcome = match step {
-                Delivery::Push { .. } => push(&self.clone).await,
-                Delivery::Fetch => fetch(&self.clone).await,
-                Delivery::Reset => reset(&self.clone).await,
+                Delivery::Push { .. } => destination.push(&self.clone).await,
+                Delivery::Fetch => destination.fetch(&self.clone).await,
+                Delivery::Reset => {
+                    reset(&self.clone, &destination.tracking).await
+                }
                 Delivery::Rewrite => {
                     self.rewrite_all().await;
                     Ok(())
@@ -638,7 +775,9 @@ impl Actor {
     }
 
     async fn rewrite(&self, index: usize, path: &str) -> Result<(), String> {
-        let changed = changed_at(&self.clone, path).await?;
+        let changed =
+            changed_at(&self.clone, &self.destination()?.tracking, path)
+                .await?;
         let current = committed_issue(&self.clone, path).await;
         match self.edits.replay(
             index,
@@ -706,10 +845,12 @@ impl Actor {
         paths: BTreeMap<IssueId, String>,
     ) -> Result<BTreeMap<IssueId, String>, String> {
         let mut files = BTreeMap::new();
+        let tracking = &self.destination()?.tracking;
         for (issue, path) in paths {
-            let local = committed_blob(&self.clone, &path).await?;
+            let upstream =
+                committed_blob_at(&self.clone, tracking, &path).await?;
             if let Some(text) =
-                local.and_then(|blob| String::from_utf8(blob).ok())
+                upstream.and_then(|blob| String::from_utf8(blob).ok())
             {
                 files.insert(issue, text);
             }
@@ -735,12 +876,11 @@ impl Actor {
     }
 
     async fn commit(&self, commit: Commit) -> Result<(), String> {
-        let path = self.clone.join(&commit.target.path);
-        if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder).map_err(|err| err.to_string())?;
-        }
-        std::fs::write(path, &commit.text).map_err(|err| err.to_string())?;
-        commit_file(&self.clone, &commit).await
+        let target =
+            write_issue(&self.clone, &commit.target.path, &commit.text)?;
+        let result = commit_file(&self.clone, &commit).await;
+        drop(target);
+        result
     }
 
     async fn clone_project(&mut self, project: ProjectId) -> CommandResult {
@@ -838,20 +978,139 @@ async fn clone(
     remote: &str,
     into: &Path,
 ) -> Result<(), String> {
+    let address = remote_address(data_dir, remote)?;
     let target = into.to_string_lossy();
-    text(data_dir, &["clone", "--quiet", remote, &target])
-        .await
-        .map(drop)
-        .map_err(|err| err.to_string())
+    text(
+        data_dir,
+        &[
+            "clone", "--quiet", "--origin", "origin", "--", &address, &target,
+        ],
+    )
+    .await
+    .map(drop)
+    .map_err(|err| remote_failure(remote, &err.to_string()))
 }
 
-/// `git pull --rebase`, which fast-forwards when it can. A rebase that
-/// stops is aborted, so the clone stays as it was.
-async fn pull(clone: &Path) -> Result<(), String> {
-    let pulled = text(clone, &["pull", "--rebase", "--quiet"])
+fn remote_address(data_dir: &Path, remote: &str) -> Result<String, String> {
+    if remote.trim().is_empty()
+        || remote.trim_start().starts_with('-')
+        || remote.chars().any(char::is_control)
+    {
+        return Err(String::from("invalid Git remote address"));
+    }
+    Ok(std::fs::canonicalize(data_dir.join(remote)).map_or_else(
+        |_| remote.to_owned(),
+        |local| local.to_string_lossy().into_owned(),
+    ))
+}
+
+fn remote_failure(remote: &str, reason: &str) -> String {
+    let display = home::checkout::display(remote);
+    if display == remote {
+        reason.to_owned()
+    } else {
+        reason.replace(remote, &display)
+    }
+}
+
+#[derive(Clone)]
+struct Destination {
+    remote: String,
+    branch: String,
+    tracking: String,
+}
+
+impl Destination {
+    async fn verified(clone: &Path, remote: String) -> Result<Self, String> {
+        verify_checkout_path(clone).await?;
+        let origin = text(clone, &["remote", "get-url", "origin"])
+            .await
+            .map_err(|_| {
+                String::from("the existing home checkout has no origin")
+            })?;
+        let origin_address = remote_address(clone, &origin)?;
+        if !sync::same_remote(&origin_address, &remote) {
+            return Err(String::from(
+                "the existing home checkout belongs to a different remote",
+            ));
+        }
+        let tracking = text(
+            clone,
+            &["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
+        )
         .await
-        .map(drop)
-        .map_err(|err| err.to_string());
+        .map_err(|_| {
+            String::from("the home checkout has no origin default branch")
+        })?;
+        let head = text(clone, &["symbolic-ref", "--quiet", "HEAD"])
+            .await
+            .map_err(|_| String::from("the home checkout is detached"))?;
+        let branch = sync::publishing_branch(&tracking, &head)?;
+        Ok(Self {
+            remote,
+            branch,
+            tracking,
+        })
+    }
+
+    async fn fetch(&self, clone: &Path) -> Result<(), String> {
+        let refspec = format!("+{}:{}", self.branch, self.tracking);
+        run(
+            clone,
+            &[
+                "fetch",
+                "--quiet",
+                "--no-tags",
+                "--refmap=",
+                "--",
+                &self.remote,
+                &refspec,
+            ],
+        )
+        .await
+        .map_err(|reason| remote_failure(&self.remote, &reason))
+    }
+
+    async fn push(&self, clone: &Path) -> Result<(), String> {
+        let refspec = format!("{}:{}", self.branch, self.branch);
+        run(
+            clone,
+            &[
+                "push",
+                "--quiet",
+                "--no-follow-tags",
+                "--",
+                &self.remote,
+                &refspec,
+            ],
+        )
+        .await
+        .map_err(|reason| remote_failure(&self.remote, &reason))
+    }
+}
+
+async fn verify_checkout_path(clone: &Path) -> Result<(), String> {
+    let root =
+        std::fs::symlink_metadata(clone).map_err(|err| err.to_string())?;
+    if !root.is_dir() {
+        return Err(String::from("the home checkout is not a directory"));
+    }
+    let top = text(clone, &["rev-parse", "--show-toplevel"])
+        .await
+        .map_err(|err| err.to_string())?;
+    let canonical = |path: &Path| {
+        std::fs::canonicalize(path).map_err(|err| err.to_string())
+    };
+    if canonical(clone)? != canonical(Path::new(&top))? {
+        return Err(String::from(
+            "the home checkout is not at its managed path",
+        ));
+    }
+    Ok(())
+}
+
+async fn pull(clone: &Path, tracking: &str) -> Result<(), String> {
+    let pulled = run(clone, &["rebase", "--quiet", tracking]).await;
     if pulled.is_err() {
         let _ = text(clone, &["rebase", "--abort"]).await;
     }
@@ -880,6 +1139,15 @@ pub async fn ready_issue_branch(
         home::issue::Move::Keep => Ok(()),
         home::issue::Move::Refuse(reason) => Err(reason),
         home::issue::Move::Set { commit, old } => {
+            let listed =
+                text(checkout, &["worktree", "list", "--porcelain", "-z"])
+                    .await
+                    .map_err(|error| error.to_string())?;
+            if let Some(path) = host::workspace::checked_out(&listed, branch) {
+                return Err(format!(
+                    "the issue branch is checked out at {path}; switch that worktree to another branch before synchronizing"
+                ));
+            }
             let was = old.unwrap_or_default();
             run(checkout, &["update-ref", branch, &commit, &was]).await
         }
@@ -894,9 +1162,9 @@ async fn branch_facts(
     let remote = remote_branch(checkout, branch).await;
     let at = match &remote {
         home::issue::Remote::At(commit) => Some(commit.as_str()),
-        home::issue::Remote::Absent | home::issue::Remote::Unreachable(_) => {
-            None
-        }
+        home::issue::Remote::Absent
+        | home::issue::Remote::Unreachable(_)
+        | home::issue::Remote::PresentUnfetched(_) => None,
     };
     let behind = ancestor(checkout, local.as_deref(), at).await;
     let ahead = ancestor(checkout, at, local.as_deref()).await;
@@ -924,8 +1192,12 @@ async fn remote_branch(checkout: &Path, branch: &str) -> home::issue::Remote {
                 text(checkout, &["rev-parse", "--verify", "--quiet", &wanted])
                     .await
             }
-            RemoteProbe::Reachability => {
-                text(checkout, &["ls-remote", "--quiet", "origin"]).await
+            RemoteProbe::Reachability { branch, .. } => {
+                text(
+                    checkout,
+                    &["ls-remote", "--quiet", "--refs", "origin", branch],
+                )
+                .await
             }
             RemoteProbe::Observed(remote) => return remote.clone(),
         };
@@ -964,19 +1236,8 @@ async fn ancestor(
         .is_ok()
 }
 
-async fn fetch(clone: &Path) -> Result<(), String> {
-    run(clone, &["fetch", "--quiet"]).await
-}
-
-/// Moves the clone to its upstream as fetched, dropping its own commits:
-/// the host keeps their changes and applies them again.
-async fn reset(clone: &Path) -> Result<(), String> {
-    run(clone, &["reset", "--quiet", "--hard", "@{upstream}"]).await
-}
-
-/// Pushes the clone's branch to its upstream, never forced.
-async fn push(clone: &Path) -> Result<(), String> {
-    run(clone, &["push", "--quiet"]).await
+async fn reset(clone: &Path, tracking: &str) -> Result<(), String> {
+    run(clone, &["reset", "--quiet", "--hard", tracking]).await
 }
 
 async fn run(clone: &Path, args: &[&str]) -> Result<(), String> {
@@ -988,6 +1249,7 @@ async fn run(clone: &Path, args: &[&str]) -> Result<(), String> {
 
 async fn changed_at(
     clone: &Path,
+    tracking: &str,
     relative: &str,
 ) -> Result<Option<u64>, String> {
     let seconds = text(
@@ -997,7 +1259,7 @@ async fn changed_at(
             "--full-history",
             "-1",
             "--format=%ct",
-            "@{upstream}",
+            tracking,
             "--",
             relative,
         ],
@@ -1255,13 +1517,22 @@ async fn committed_blob(
     clone: &Path,
     path: &str,
 ) -> Result<Option<Vec<u8>>, String> {
-    let tracked = text(clone, &["ls-tree", "--name-only", "HEAD", "--", path])
-        .await
-        .map_err(|err| err.to_string())?;
+    committed_blob_at(clone, "HEAD", path).await
+}
+
+async fn committed_blob_at(
+    clone: &Path,
+    revision: &str,
+    path: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    let tracked =
+        text(clone, &["ls-tree", "--name-only", revision, "--", path])
+            .await
+            .map_err(|err| err.to_string())?;
     if tracked.is_empty() {
         return Ok(None);
     }
-    blob(clone, &format!("HEAD:{path}"))
+    blob(clone, &format!("{revision}:{path}"))
         .await
         .map(Some)
         .map_err(|err| err.to_string())
@@ -1271,4 +1542,224 @@ fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Actor, Destination, Homing, clone, remote_branch, run, text};
+    use home::issue::Remote;
+    use std::path::{Path, PathBuf};
+    use tokio::sync::watch;
+
+    type Outcome = Result<(), Box<dyn std::error::Error>>;
+
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new() -> std::io::Result<Self> {
+            let path = std::env::temp_dir()
+                .join(format!("conductor-home-test-{}", ulid::Ulid::new()));
+            std::fs::create_dir(&path)?;
+            Ok(Self(path))
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    async fn seed(path: &Path) -> Outcome {
+        std::fs::create_dir(path)?;
+        run(path, &["init", "-q", "-b", "main"]).await?;
+        add_commit(path, "initial").await
+    }
+
+    async fn add_commit(path: &Path, message: &str) -> Outcome {
+        run(
+            path,
+            &[
+                "-c",
+                "user.name=Tests",
+                "-c",
+                "user.email=tests@localhost",
+                "commit",
+                "-qm",
+                message,
+                "--allow-empty",
+            ],
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clone_rejects_invalid_remotes_and_can_clone_a_relative_local_path()
+    -> Outcome {
+        let scratch = Scratch::new()?;
+        let root = &scratch.0;
+        let dest = root.join("destination");
+        for remote in [
+            "",
+            "   ",
+            "--not-a-remote",
+            " --not-a-remote",
+            "remote\npath",
+        ] {
+            assert_eq!(
+                clone(root, remote, &dest).await,
+                Err(String::from("invalid Git remote address"))
+            );
+            assert!(!dest.exists());
+        }
+        seed(&root.join("local repo")).await?;
+        clone(root, "local repo", &dest).await?;
+        assert_eq!(
+            text(&dest, &["rev-parse", "HEAD"]).await?,
+            text(&root.join("local repo"), &["rev-parse", "HEAD"]).await?,
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_pending_home_commit_stays_with_its_verified_destination()
+    -> Outcome {
+        let scratch = Scratch::new()?;
+        let root = &scratch.0;
+        let source = root.join("source");
+        seed(&source).await?;
+        let origin = root.join("origin.git");
+        let other = root.join("other.git");
+        let source_url = source.to_str().ok_or("invalid source path")?;
+        for name in ["origin.git", "other.git"] {
+            run(root, &["clone", "--bare", "--", source_url, name]).await?;
+        }
+        let original_url = origin.to_str().ok_or("invalid origin path")?;
+        let other_url = other.to_str().ok_or("invalid other path")?;
+        let managed = root.join("home-repo");
+        clone(root, original_url, &managed).await?;
+        run(&managed, &["remote", "add", "elsewhere", other_url]).await?;
+        run(&managed, &["config", "remote.pushDefault", "elsewhere"]).await?;
+        add_commit(&managed, "pending").await?;
+        let pending = text(&managed, &["rev-parse", "HEAD"]).await?;
+        let previous = text(&other, &["rev-parse", "HEAD"]).await?;
+        let (shown, _) = watch::channel(None);
+        let mut actor = Actor::new(
+            Homing {
+                host: String::from("Tests"),
+                data_dir: root.clone(),
+                remote: Some(other_url.to_owned()),
+                roots: Vec::new(),
+            },
+            shown,
+        );
+        assert!(actor.bring_up(other_url).await.is_err());
+        assert_eq!(text(&managed, &["rev-parse", "HEAD"]).await?, pending);
+        assert_eq!(text(&origin, &["rev-parse", "HEAD"]).await?, previous);
+        let intended =
+            Destination::verified(&managed, original_url.to_owned()).await?;
+        intended.push(&managed).await?;
+        assert_eq!(text(&origin, &["rev-parse", "HEAD"]).await?, pending);
+        assert_eq!(text(&other, &["rev-parse", "HEAD"]).await?, previous);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_present_remote_branch_with_a_failed_tracking_update_blocks_a_start()
+    -> Outcome {
+        let scratch = Scratch::new()?;
+        let root = &scratch.0;
+        let source = root.join("source");
+        let checkout = root.join("checkout");
+        seed(&source).await?;
+        run(&source, &["branch", "issue/task"]).await?;
+        clone(
+            root,
+            source.to_str().ok_or("invalid source path")?,
+            &checkout,
+        )
+        .await?;
+        run(&source, &["branch", "-D", "issue/task"]).await?;
+        add_commit(&source, "new issue tip").await?;
+        run(&source, &["branch", "issue/task"]).await?;
+        let lock = checkout.join(".git/refs/remotes/origin/issue/task.lock");
+        std::fs::create_dir_all(lock.parent().ok_or("invalid ref lock path")?)?;
+        std::fs::File::create(lock)?;
+        assert!(matches!(
+            remote_branch(&checkout, "refs/heads/issue/task").await,
+            Remote::PresentUnfetched(_)
+        ));
+        assert_eq!(
+            remote_branch(&checkout, "refs/heads/issue/absent").await,
+            Remote::Absent
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_issue_reads_and_atomic_replacements_use_the_checkout() -> Outcome
+    {
+        let scratch = Scratch::new()?;
+        let checkout = scratch.0.join("checkout");
+        std::fs::create_dir(&checkout)?;
+        let path = "projects/alpha/issues/issue.md";
+        assert_eq!(super::read_issue(&checkout, path)?, None);
+        for contents in ["original", "replayed"] {
+            let written = super::write_issue(&checkout, path, contents)?;
+            assert_eq!(
+                super::read_issue(&checkout, path)?.as_deref(),
+                Some(contents)
+            );
+            drop(written);
+        }
+        assert_eq!(
+            std::fs::read_dir(checkout.join("projects/alpha/issues"))?.count(),
+            1
+        );
+        assert!(
+            super::write_issue(&checkout, "new/../outside/issue.md", "edited")
+                .is_err()
+        );
+        assert!(!checkout.join("new").try_exists()?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_issue_path_rejects_linked_components_before_creating_directories()
+    -> Outcome {
+        let scratch = Scratch::new()?;
+        let checkout = scratch.0.join("checkout");
+        let outside = scratch.0.join("outside");
+        std::fs::create_dir(&checkout)?;
+        std::fs::create_dir(&outside)?;
+        let sentinel = outside.join("sentinel");
+        std::fs::write(&sentinel, b"unchanged")?;
+        std::os::unix::fs::symlink(&outside, checkout.join("projects"))?;
+        assert!(
+            super::write_issue(&checkout, "projects/new/issue.md", "edited")
+                .is_err()
+        );
+        assert!(!outside.join("new").try_exists()?);
+        assert!(super::read_issue(&checkout, "projects/sentinel").is_err());
+        let linked_checkout = scratch.0.join("linked-checkout");
+        std::os::unix::fs::symlink(&outside, &linked_checkout)?;
+        assert!(
+            super::write_issue(&linked_checkout, "sentinel", "edited").is_err()
+        );
+        std::fs::remove_file(checkout.join("projects"))?;
+        std::fs::create_dir(checkout.join("projects"))?;
+        std::os::unix::fs::symlink(
+            &sentinel,
+            checkout.join("projects/issue.md"),
+        )?;
+        assert!(
+            super::write_issue(&checkout, "projects/issue.md", "edited")
+                .is_err()
+        );
+        assert!(super::read_issue(&checkout, "projects/issue.md").is_err());
+        assert_eq!(std::fs::read(sentinel)?, b"unchanged");
+        Ok(())
+    }
 }

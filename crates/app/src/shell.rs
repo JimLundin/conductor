@@ -21,11 +21,12 @@
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use crate::sessions::SessionList;
 use crate::ticket;
 use dioxus::prelude::*;
-use net::{HostLink, LinkOptions, Update};
+use net::{HostLink, LinkOptions, LinkState, StartError, Status, Update};
 use proto::{CommandBody, CommandResult};
 use tokio::sync::mpsc;
 use ui::{Detail, Dial, Effect, Focus, HostId, Intent, Place, Screen, State};
@@ -44,6 +45,7 @@ type Links = BTreeMap<HostId, (String, Rc<HostLink>)>;
 pub struct Shell {
     state: Signal<State>,
     links: Signal<Links>,
+    storage_failed: Signal<bool>,
 }
 
 impl Shell {
@@ -74,7 +76,15 @@ impl Shell {
                     self.dispatch(Intent::Replied(reply, answer));
                 });
             }
-            Effect::SaveHosts(hosts) => ticket::save(&hosts),
+            Effect::PairHost(saved) => {
+                let mut storage_failed = self.storage_failed;
+                storage_failed.set(!ticket::pair(saved));
+            }
+            Effect::ForgetHost(host) => {
+                let mut storage_failed = self.storage_failed;
+                storage_failed.set(!ticket::forget(host));
+            }
+            Effect::NameHost(saved) => ticket::name(saved),
             Effect::Focus(focus) => {
                 document::eval(&script(&focus));
             }
@@ -82,12 +92,6 @@ impl Shell {
                 document::eval(&format!(
                     "document.querySelector('select.effort-pick').value = '{effort}'"
                 ));
-            }
-            Effect::Copy(text) => {
-                let copy = document::eval(
-                    "navigator.clipboard.writeText(await dioxus.recv())",
-                );
-                let _ = copy.send(text);
             }
         }
     }
@@ -123,17 +127,27 @@ fn script(focus: &Focus) -> String {
 
 #[component]
 pub fn App() -> Element {
-    let state = use_signal(ticket::open);
+    let (state, storage_failed) = use_hook(|| {
+        let (opened, failed) = ticket::open();
+        (Signal::new(opened), Signal::new(failed))
+    });
     let links = use_signal(Links::new);
-    use_context_provider(|| Shell { state, links });
+    use_context_provider(|| Shell {
+        state,
+        links,
+        storage_failed,
+    });
     let screen = ui::view(&state.read());
     rsx! {
         document::Stylesheet { href: CSS }
+        if storage_failed() {
+            p { class: "error storage-error", role: "alert", "Browser storage could not save the pairing change. Keep your join link to reconnect." }
+        }
         match screen {
             Screen::Pair(pair) => rsx! {
                 main { class: "empty",
                     h1 { "Connect to a host" }
-                    p { "Paste the join link your host printed when it started." }
+                    p { "Paste the join link or ticket your host printed when it started." }
                     Pair { pair }
                 }
             },
@@ -157,7 +171,7 @@ fn Pair(pair: ui::Pair) -> Element {
                 shell.dispatch(Intent::Join(ticket::parse_join(&text)));
             },
             input {
-                r#type: "url",
+                r#type: "text",
                 placeholder: "https://…#join=…",
                 autocomplete: "off",
                 value: "{pair.text}",
@@ -191,7 +205,7 @@ fn Hosts(hosts: ui::HostsScreen) -> Element {
                         },
                         Detail::Pair(pair) => rsx! {
                             section { class: "pane new-pane",
-                                PaneHeader { title: "Add a host", subtitle: "Paste the join link it printed when it started." }
+                                PaneHeader { title: "Add a host", subtitle: "Paste the join link or ticket it printed when it started." }
                                 div { class: "new-session", Pair { pair } }
                             }
                         },
@@ -292,9 +306,48 @@ fn Band(
     reason = "runs on the single-threaded UI executor and holds signals and an Rc'd link"
 )]
 async fn run_link(dial: Dial, shell: Shell) {
-    let options = LinkOptions::new(net::platform::client_name());
-    let started = HostLink::start(&dial.ticket, options).await;
-    follow(dial, started.ok(), shell).await;
+    let ticket = &dial.ticket;
+    let host = dial.host;
+    let started = retry_start(
+        async || {
+            let options = LinkOptions::new(net::platform::client_name());
+            HostLink::start(ticket, options).await.map_err(|error| {
+                (!matches!(error, StartError::Ticket(_)), error.to_string())
+            })
+        },
+        |update| shell.dispatch(Intent::Link(host, update)),
+        async || n0_future::time::sleep(Duration::from_secs(2)).await,
+    )
+    .await;
+    if let Some((handle, updates)) = started {
+        follow(dial, handle, updates, shell).await;
+    }
+}
+
+async fn retry_start<T>(
+    mut start: impl AsyncFnMut() -> Result<T, (bool, String)>,
+    mut report: impl FnMut(Update),
+    mut wait: impl AsyncFnMut(),
+) -> Option<T> {
+    loop {
+        match start().await {
+            Ok(link) => return Some(link),
+            Err((retry, failure)) => {
+                report(startup_failure(&failure));
+                if !retry {
+                    return None;
+                }
+                wait().await;
+            }
+        }
+    }
+}
+
+fn startup_failure(error: &str) -> Update {
+    Update::Status(Status {
+        state: LinkState::Disconnected,
+        error: Some(format!("Could not start the host link: {error}")),
+    })
 }
 
 #[expect(
@@ -303,12 +356,10 @@ async fn run_link(dial: Dial, shell: Shell) {
 )]
 async fn follow(
     dial: Dial,
-    started: Option<(HostLink, mpsc::Receiver<Update>)>,
+    handle: HostLink,
+    mut updates: mpsc::Receiver<Update>,
     shell: Shell,
 ) {
-    let Some((handle, mut updates)) = started else {
-        return;
-    };
     let mut links = shell.links;
     links.write().insert(dial.host, (dial.key, Rc::new(handle)));
     while let Some(update) = updates.recv().await {
@@ -327,5 +378,53 @@ async fn send(
     match link {
         Some(host) => host.send(body).await.map_err(|err| err.to_string()),
         None => Err(String::from("Not connected to this host yet.")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future;
+    use std::task::{Context, Poll, Waker};
+
+    use super::{LinkState, Status, Update, retry_start};
+
+    #[test]
+    fn a_transient_startup_failure_is_reported_before_the_next_attempt() {
+        let mut attempts = 0;
+        let (report, mut updates) = tokio::sync::mpsc::unbounded_channel();
+        let (finish_waiting, mut waiting) = tokio::sync::oneshot::channel();
+        let ready = {
+            let mut started = std::pin::pin!(retry_start(
+                async || {
+                    attempts += 1;
+                    if attempts == 1 {
+                        Err((true, String::from("could not bind")))
+                    } else {
+                        Ok("link")
+                    }
+                },
+                |update| {
+                    let _ = report.send(update);
+                },
+                async || {
+                    let _ = (&mut waiting).await;
+                },
+            ));
+            let mut context = Context::from_waker(Waker::noop());
+            assert_eq!(started.as_mut().poll(&mut context), Poll::Pending);
+            assert_eq!(
+                updates.try_recv(),
+                Ok(Update::Status(Status {
+                    state: LinkState::Disconnected,
+                    error: Some(String::from(
+                        "Could not start the host link: could not bind"
+                    )),
+                }))
+            );
+            assert_eq!(finish_waiting.send(()), Ok(()));
+            started.as_mut().poll(&mut context)
+        };
+        assert_eq!(ready, Poll::Ready(Some("link")));
+        assert_eq!(attempts, 2);
     }
 }

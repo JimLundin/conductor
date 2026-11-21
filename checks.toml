@@ -6,10 +6,17 @@
 
 [[suite]]
 name = "ip-scrub"
-command = "git ls-files -z 'docs/**/*.txt' 'docs/**/*.log' 'docs/**/NOTES.md' | xargs -0 python3 tools/scrub-ips.py --check && echo 'no public addresses in the run records'"
+command = "python3 tools/scrub-ips.py --check --run-records && echo 'no public addresses in the run records'"
 [[suite.when]]
 tier = "commit"
 paths = ["docs/**/*.txt", "docs/**/*.log", "docs/**/NOTES.md", "tools/scrub-ips.py"]
+
+[[suite]]
+name = "tooling"
+command = "python3 -B tools/test-tooling.py"
+[[suite.when]]
+tier = "commit"
+paths = ["tools/test-tooling.py", "tools/scrub-ips.py", "tools/pin", "tools/live-host.sh", "tools/live-host-child.py"]
 
 [[suite]]
 name = "wasm-clippy"
@@ -19,11 +26,18 @@ tier = "commit"
 packages = ["proto", "client", "net", "app"]
 
 [[suite]]
+name = "e2e-fixtures"
+command = "python3 -I tools/check-e2e-fixtures.py"
+[[suite.when]]
+tier = "commit"
+paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
+
+[[suite]]
 name = "browser"
 # At step for a change the web app runs. Its waits are on what the page and
 # the hosts show, under a generous ceiling, so a loaded machine slows it
 # rather than fails it; it reuses the web build of an unchanged app.
-command = "E2E_RECORD=target/e2e-browser tools/e2e-browser.sh"
+command = "python3 -I tools/check-browser-harness.py && tools/e2e-browser.sh"
 [[suite.when]]
 tier = "release"
 [[suite.when]]
@@ -34,5 +48,13 @@ paths = [
     "crates/net/**",
     "crates/proto/**",
     "crates/client/**",
+    "fixtures/e2e/**",
+    "crates/claude-cli/tests/fake-claude.sh",
+    "crates/codex-cli/tests/fake-codex.sh",
     "tools/e2e-browser.sh",
+    "tools/check-browser-harness.py",
+    "tools/e2e-worktrees-browser.sh",
+    "tools/e2e-common.sh",
+    "tools/e2e-http.py",
+    "tools/e2e-host-log.py",
 ]

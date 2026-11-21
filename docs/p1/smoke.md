@@ -12,18 +12,36 @@ once, and how the whole thing feels.
 
 ## Setup
 
-- [ ] `main` is pushed, and the Pages deploy for that commit is green, so the
-      phone runs the same protocol as the host (ALPN `conductor/3`).
-- [ ] Make a scratch git repo: `mkdir -p /tmp/smoke && cd /tmp/smoke && git init`.
-- [ ] Start the host from the checkout, with cheap models:
+- [ ] Run from the checkout for the green Pages deployment. Check the
+      protocol in [the `ALPN` constant](../../crates/proto/src/lib.rs).
+- [ ] From the checkout, create a fresh run directory and seed a commit.
+      Keep the shell variables for restart and teardown.
+
+  ```sh
+  mkdir -p target
+  smoke_run=$(mktemp -d "$PWD/target/p1-smoke.XXXXXXXX")
+  smoke_repo="$smoke_run/repo"
+  smoke_outside="$smoke_run/outside"
+  mkdir "$smoke_outside"
+  git init "$smoke_repo"
+  git -C "$smoke_repo" -c user.name="Conductor smoke" \
+    -c user.email=smoke@example.invalid commit --allow-empty -m "Seed smoke repo"
+  printf '%s\n' "$smoke_repo" "$smoke_outside"
+  ```
+
+- [ ] Start the host from the checkout. Sign in or configure credentials for
+      this run's host if prompted. For a second host, repeat setup with a
+      separate run directory and use a distinct host name and data directory.
 
   ```sh
   cargo run -q -p conductord -- host \
+    --name smoke-primary --data-dir "$smoke_run/host-data" \
     --web-url https://jimlundin.github.io/conductor/ \
-    --model claude=haiku 2>host.log
+    --model claude=haiku 2>>"$smoke_run/host.log"
   ```
 
-  It prints the join link and a QR code. Keep `host.log`.
+  It prints the join link and a QR code. Keep the log and reuse the data
+  directory on restart so the host keeps its identity and session state.
 
 ## 1. Pairing
 
@@ -40,7 +58,7 @@ once, and how the whole thing feels.
 ## 2. Claude
 
 In the desktop browser, open **New session**, choose Claude Code, and enter
-`/tmp/smoke`.
+the absolute path printed for `$smoke_repo`.
 
 - [ ] Ask it to create `one.txt` containing `one`. Approve it on the tool
       card. The file exists, and the card says "Write" with the path and
@@ -52,18 +70,18 @@ In the desktop browser, open **New session**, choose Claude Code, and enter
 
 ## 3. Codex
 
-Start a second session with Codex in `/tmp/smoke`. Codex's workspace-write
+Start a second session with Codex using the same repository path. Codex's workspace-write
 sandbox lets it write inside the session's directory and anywhere under
-`/tmp` without asking, so ask for a file in your home directory to get an
-approval.
+`/tmp` without asking, so ask for a file under the absolute path printed for `$smoke_outside` to get an approval.
+Use a checkout outside `/tmp` for this approval test.
 
 - [ ] With Codex chosen, **New session** says in a muted line that Codex
       writes in this folder and in `/tmp` without asking, and asks before
       writing elsewhere, changing `.git` or using the network.
-- [ ] Ask it to create `~/smoke-outside/three.txt`. Approve it. The card
+- [ ] Ask it to create `three.txt` under `$smoke_outside`. Approve it. The card
       shows Codex's reason under the command, if it gave one. The file
       exists.
-- [ ] Ask for `~/smoke-outside/four.txt`. Deny it. No file appears.
+- [ ] Ask for `four.txt` under `$smoke_outside`. Deny it. No file appears.
 - [ ] Ask for a long answer and interrupt it once text streams. Codex may
       reason for 15 to 30 seconds before any text appears; meanwhile the
       transcript ends with "Thinking…".
@@ -71,7 +89,7 @@ approval.
 ## 4. Both at once, on the phone
 
 - [ ] Send a prompt to each session that needs an approval, without
-      answering (for Codex, a file under `~/smoke-outside`).
+      answering (for Codex, a file under `$smoke_outside`).
 - [ ] On the iPhone, the session list shows both sessions, each with an
       approval badge.
 - [ ] Approve one from the phone and the other from the desktop. Each card
@@ -98,13 +116,17 @@ approval.
 - [ ] In **New session**, enter a directory that doesn't exist. The form
       shows the rejection, and no session is created.
 - [ ] Stop the host, and start it again with `--cli codex=/nonexistent`.
-      After rejoining, **New session** shows Codex as unavailable, with a
-      reason, before you try it.
+      Repeat the start command with the same `--data-dir` and log append
+      redirection. After rejoining, **New session** shows Codex as
+      unavailable with a reason.
 
 ## Teardown
 
 - [ ] Stop the host with Ctrl-C. The phone shows that the host is gone.
-- [ ] `rm -rf /tmp/smoke ~/smoke-outside`.
+- [ ] Record findings and keep any needed extracts from each host's log.
+      After stopping both hosts, inspect the `$smoke_run` path on each
+      and remove only the directory created by that shell's `mktemp`
+      command. Leave it in place if you still need the logs or state.
 
 ## Findings
 

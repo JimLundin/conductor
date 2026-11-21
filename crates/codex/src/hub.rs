@@ -30,6 +30,53 @@ pub enum Routed {
     Stopped { reason: String },
 }
 
+/// Unrouted thread events received while open requests are pending. After a
+/// lost event, subsequent opens fail until the current batch has settled.
+#[derive(Debug, Default)]
+pub struct EarlyEvents {
+    by_thread: BTreeMap<ThreadId, Vec<CodexEvent>>,
+    count: usize,
+    overflowed: bool,
+}
+
+impl EarlyEvents {
+    /// Buffers an opening thread's event, or returns an event for diagnostics.
+    pub fn capture(
+        &mut self,
+        event: CodexEvent,
+        opening: bool,
+    ) -> Option<CodexEvent> {
+        const LIMIT: usize = 4096;
+        if let CodexEvent::Thread { thread, .. } = &event
+            && opening
+        {
+            if self.count < LIMIT {
+                self.count += 1;
+                self.by_thread
+                    .entry(thread.clone())
+                    .or_default()
+                    .push(event);
+            } else {
+                self.overflowed = true;
+            }
+            None
+        } else {
+            Some(event)
+        }
+    }
+
+    #[must_use]
+    pub const fn overflowed(&self) -> bool {
+        self.overflowed
+    }
+
+    pub fn take(&mut self, thread: &ThreadId) -> Vec<CodexEvent> {
+        let events = self.by_thread.remove(thread).unwrap_or_default();
+        self.count -= events.len();
+        events
+    }
+}
+
 /// What a handle asks of the hub.
 #[derive(Debug)]
 pub enum Command<T, M, C> {
@@ -56,11 +103,15 @@ pub enum Input<T, M, C, R, E> {
     Opened {
         thread: ThreadId,
         route: R,
+        generation: u64,
     },
     /// The running server's next event, `None` once its events end.
     Event(Option<CodexEvent>),
     /// The thread's session takes no more events.
-    Gone(ThreadId),
+    Gone {
+        thread: ThreadId,
+        generation: u64,
+    },
     /// Every handle is gone.
     Closed,
 }
@@ -128,7 +179,7 @@ pub struct Hub<T, M, R> {
     credential: Option<CodexCredential>,
     home_configured: bool,
     state: State<T, M>,
-    routes: BTreeMap<ThreadId, R>,
+    routes: BTreeMap<ThreadId, (u64, R)>,
 }
 
 impl<T, M, R: Clone> Hub<T, M, R> {
@@ -168,7 +219,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             }
             Input::Spawned(Ok(())) => self.spawned(),
             Input::Spawned(Err(error)) => self.unspawned(&error),
-            Input::Opened { thread, route } => self.opened(thread, route),
+            Input::Opened {
+                thread,
+                route,
+                generation,
+            } => self.opened(thread, route, generation),
             Input::Event(Some(CodexEvent::Thread { thread, event })) => {
                 self.route(thread, event)
             }
@@ -181,8 +236,14 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             Input::Event(None) => self.exited(Exit::Unknown(String::from(
                 "the app-server's events ended",
             ))),
-            Input::Gone(thread) => {
-                self.routes.remove(&thread);
+            Input::Gone { thread, generation } => {
+                if self
+                    .routes
+                    .get(&thread)
+                    .is_some_and(|(current, _)| *current == generation)
+                {
+                    self.routes.remove(&thread);
+                }
                 Vec::new()
             }
             Input::Closed => Vec::from([Effect::End]),
@@ -284,10 +345,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         &mut self,
         thread: ThreadId,
         route: R,
+        generation: u64,
     ) -> Vec<Effect<T, M, C, R, E>> {
         match self.state {
             State::Up => {
-                self.routes.insert(thread, route);
+                self.routes.insert(thread, (generation, route));
                 Vec::new()
             }
             State::Starting { .. } | State::Down => {
@@ -314,7 +376,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             event,
         };
         match self.routes.get(&thread) {
-            Some(route) => Vec::from([Effect::Route {
+            Some((_, route)) => Vec::from([Effect::Route {
                 thread,
                 route: route.clone(),
                 routed: Routed::Codex(codex),
@@ -342,7 +404,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
     fn close_all<C, E>(&mut self, last: &Routed) -> Vec<Effect<T, M, C, R, E>> {
         core::mem::take(&mut self.routes)
             .into_values()
-            .map(|route| Effect::Close {
+            .map(|(_, route)| Effect::Close {
                 route,
                 routed: last.clone(),
             })
@@ -406,6 +468,7 @@ mod tests {
         Input::Opened {
             thread: id(name),
             route,
+            generation: u64::from(route),
         }
     }
 
@@ -503,7 +566,10 @@ mod tests {
             &mut hub,
             Vec::from([
                 Input::Event(Some(turn("th_2"))),
-                Input::Gone(id("th_2")),
+                Input::Gone {
+                    thread: id("th_2"),
+                    generation: 2,
+                },
                 Input::Event(Some(turn("th_2"))),
                 Input::Event(Some(unknown.clone())),
             ]),

@@ -42,6 +42,9 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                 if let Some(text) = screen.notice {
                     button { class: "notice", onclick: move |_| shell.dispatch(Intent::DismissNotice), "{text}" }
                 }
+                for error in screen.submission_errors {
+                    p { class: "notice", "{error}" }
+                }
             }
             div { class: "new-session",
                 div { class: "issue-fields",
@@ -86,7 +89,7 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                                     r#type: "checkbox",
                                     checked: item.done,
                                     disabled,
-                                    onchange: move |_| issue(IssueIntent::Toggle(item.index)),
+                                    onchange: move |_| issue(item.toggle.clone()),
                                 }
                                 "{item.text}"
                             }
@@ -95,7 +98,7 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                                 class: "clear remove-item",
                                 "aria-label": "Remove {item.text}",
                                 disabled,
-                                onclick: move |_| issue(IssueIntent::RemoveItem(item.index)),
+                                onclick: move |_| issue(item.remove.clone()),
                                 "Remove"
                             }
                         }
@@ -113,7 +116,7 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                         value: "{screen.item}",
                         oninput: move |event| issue(IssueIntent::TypeItem(event.value())),
                     }
-                    button { r#type: "submit", class: "clear", disabled, "Add" }
+                    button { r#type: "submit", class: "clear", disabled: disabled || screen.item_pending, "Add" }
                 }
                 h3 { "Sessions" }
                 ul { class: "issue-sessions",
@@ -153,7 +156,7 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                         value: "{screen.note}",
                         oninput: move |event| issue(IssueIntent::TypeNote(event.value())),
                     }
-                    button { r#type: "submit", class: "clear", disabled, "Add note" }
+                    button { r#type: "submit", class: "clear", disabled: disabled || screen.note_pending, "Add note" }
                 }
             }
         }

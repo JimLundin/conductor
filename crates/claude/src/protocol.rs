@@ -2,6 +2,8 @@
 //! and mapped into our own types here, and every line we write is built here.
 //! Frames and fields we do not model are ignored or passed on as `Unknown`.
 
+use alloc::collections::BTreeSet;
+
 use agents::{Exit, PlanStep};
 use proto::{
     Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
@@ -30,10 +32,6 @@ pub struct PermissionRequestId(pub String);
 pub enum PermissionMode {
     Default,
     AcceptEdits,
-    Plan,
-    BypassPermissions,
-    DontAsk,
-    Auto,
 }
 
 impl PermissionMode {
@@ -43,21 +41,8 @@ impl PermissionMode {
         match self {
             Self::Default => "default",
             Self::AcceptEdits => "acceptEdits",
-            Self::Plan => "plan",
-            Self::BypassPermissions => "bypassPermissions",
-            Self::DontAsk => "dontAsk",
-            Self::Auto => "auto",
         }
     }
-}
-
-/// What happens to the turn after a denied tool call.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AfterDeny {
-    /// The model sees the denial and carries on.
-    Continue,
-    /// The denial also ends the turn.
-    Interrupt,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,7 +56,6 @@ pub enum PermissionDecision {
     Answer(Vec<Answer>),
     Deny {
         message: String,
-        then: AfterDeny,
     },
 }
 
@@ -518,7 +502,15 @@ fn grant(raw: Option<Value>) -> Option<Grant> {
 }
 
 fn questions(input: &Value) -> serde_json::Result<Vec<Asked>> {
-    serde_json::from_value::<AskInput>(input.clone()).map(|ask| ask.questions)
+    let asked = serde_json::from_value::<AskInput>(input.clone())?.questions;
+    let keys = asked
+        .iter()
+        .map(|one| &one.question)
+        .collect::<BTreeSet<&String>>();
+    if keys.len() != asked.len() {
+        return Err(serde::de::Error::custom("duplicate question text"));
+    }
+    Ok(asked)
 }
 
 #[derive(Deserialize)]
@@ -666,9 +658,13 @@ fn control_request(request_id: String, request: &Value) -> Inbound {
             permission_suggestions,
         }) => {
             let id = PermissionRequestId(request_id);
-            let (event, grant) = if let (ASK_USER_QUESTION, Ok(asked)) =
-                (tool_name.as_str(), questions(&input))
-            {
+            let (event, grant) = if tool_name == ASK_USER_QUESTION {
+                let Ok(asked) = questions(&input) else {
+                    return Inbound::UnsupportedControlRequest {
+                        request_id: id.0,
+                        subtype: String::from("invalid AskUserQuestion"),
+                    };
+                };
                 (
                     ClaudeEvent::QuestionAsked {
                         id: id.clone(),
@@ -821,7 +817,9 @@ fn block(raw: Value) -> Block {
 /// The CLI versions we have checked: from the version the fixtures were
 /// recorded at to the newest one these types were checked against. Widen it
 /// only after checking these types against the new CLI.
-const SUPPORTED_VERSIONS: &str = "2.1.316 to 2.1.322";
+const SUPPORTED_VERSIONS: [&str; 7] = [
+    "2.1.316", "2.1.317", "2.1.318", "2.1.319", "2.1.320", "2.1.321", "2.1.322",
+];
 
 /// Why the CLI's version is not one we support.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -922,14 +920,14 @@ pub fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map_err(|_| UnsupportedVersion::Unreported)?
         .claude_code_version;
-    match found.as_str() {
-        "2.1.316" | "2.1.317" | "2.1.318" | "2.1.319" | "2.1.320"
-        | "2.1.321" | "2.1.322" => Ok(()),
-        _ => Err(UnsupportedVersion::Outside {
-            found,
-            supported: String::from(SUPPORTED_VERSIONS),
-        }),
+    if SUPPORTED_VERSIONS.contains(&found.as_str()) {
+        return Ok(());
     }
+    let [first, .., last] = SUPPORTED_VERSIONS;
+    Err(UnsupportedVersion::Outside {
+        found,
+        supported: format!("{first} to {last}"),
+    })
 }
 
 /// A control request we originate.
@@ -1041,9 +1039,6 @@ enum Verdict {
     },
     Deny {
         message: String,
-        /// `interrupt` is only sent when it is `true`.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        interrupt: Option<bool>,
     },
 }
 
@@ -1115,20 +1110,7 @@ fn verdict(
             updated_input: answered(open.input, answers)?,
             updated_permissions: None,
         },
-        PermissionDecision::Deny {
-            message,
-            then: AfterDeny::Continue,
-        } => Verdict::Deny {
-            message,
-            interrupt: None,
-        },
-        PermissionDecision::Deny {
-            message,
-            then: AfterDeny::Interrupt,
-        } => Verdict::Deny {
-            message,
-            interrupt: Some(true),
-        },
+        PermissionDecision::Deny { message } => Verdict::Deny { message },
     })
 }
 
@@ -1136,7 +1118,11 @@ fn verdict(
 /// its answer, the chosen labels joined with ", " as the CLI's own prompt
 /// joins them.
 fn answered(input: Value, given: Vec<Answer>) -> serde_json::Result<Value> {
-    let answers = questions(&input)?
+    let prompts = questions(&input)?;
+    if prompts.len() != given.len() {
+        return Err(serde::de::Error::custom("wrong number of answers"));
+    }
+    let answers = prompts
         .into_iter()
         .zip(given)
         .map(|(asked, answer)| {
@@ -1164,9 +1150,9 @@ mod tests {
     };
 
     use super::{
-        AfterDeny, Block, ClaudeEvent, ControlCall, Inbound, MessageId, Open,
-        Outbound, PermissionDecision, PermissionMode, PermissionRequestId,
-        Role, encode, parse_line,
+        Block, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
+        PermissionDecision, PermissionMode, PermissionRequestId, Role, encode,
+        parse_line,
     };
 
     type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
@@ -1307,6 +1293,36 @@ mod tests {
     }
 
     const ASK: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"AskUserQuestion","display_name":"AskUserQuestion","input":{"questions":[{"question":"Which fruits do you like?","header":"Fruits","options":[{"label":"Apple","description":"Crisp"},{"label":"Pear","description":"Soft"}],"multiSelect":true},{"question":"Which color do you prefer?","header":"Color","options":[{"label":"Red","description":"Warm"},{"label":"Blue","description":"Cool"}],"multiSelect":false}]},"tool_use_id":"toolu_3","requires_user_interaction":true}}"#;
+
+    #[test]
+    fn repeated_question_text_is_refused_and_wrong_counts_fail()
+    -> TestResult<()> {
+        let line = ASK
+            .replace("Which color do you prefer?", "Which fruits do you like?");
+        assert!(matches!(
+            parse_line(&line)?,
+            Inbound::UnsupportedControlRequest { request_id, .. } if request_id == "r1"
+        ));
+
+        let (_, open) = asked(ASK)?;
+        let reply = |answers| Outbound::Permission {
+            id: PermissionRequestId(String::from("r1")),
+            decision: PermissionDecision::Answer(answers),
+            open: open.clone(),
+        };
+        let answer = Answer(Vec::from([String::from("Pear")]));
+        assert!(sent(reply(Vec::from([answer.clone()]))).is_err());
+        assert!(
+            sent(reply(Vec::from([
+                answer.clone(),
+                answer.clone(),
+                answer.clone()
+            ])))
+            .is_err()
+        );
+        assert!(sent(reply(Vec::from([answer.clone(), answer]))).is_ok());
+        Ok(())
+    }
 
     #[test]
     fn allow_echoes_the_proposed_input_as_updated_input() -> TestResult<()> {
@@ -1456,32 +1472,24 @@ mod tests {
         Ok(())
     }
 
-    fn denied(then: AfterDeny) -> TestResult<Value> {
+    fn denied() -> TestResult<Value> {
         let (_, open) = asked(WRITE)?;
         Ok(sent(Outbound::Permission {
             id: PermissionRequestId(String::from("r2")),
             decision: PermissionDecision::Deny {
                 message: String::from("not b.txt"),
-                then,
             },
             open,
         })?)
     }
 
     #[test]
-    fn deny_sends_interrupt_only_when_set() -> TestResult<()> {
+    fn denial_sends_the_reason() -> TestResult<()> {
         assert_eq!(
-            denied(AfterDeny::Continue)?,
+            denied()?,
             json(
                 r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
                 "response": {"behavior": "deny", "message": "not b.txt"}}}"#
-            )?
-        );
-        assert_eq!(
-            denied(AfterDeny::Interrupt)?,
-            json(
-                r#"{"type": "control_response", "response": {"subtype": "success", "request_id": "r2",
-                "response": {"behavior": "deny", "message": "not b.txt", "interrupt": true}}}"#
             )?
         );
         Ok(())

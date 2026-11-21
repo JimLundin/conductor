@@ -140,6 +140,9 @@ pub fn NewSession(form: ui::NewSessionForm) -> Element {
                     if let Some(hint) = form.instance_hint {
                         Hint { hint }
                     }
+                    if let Some(hint) = form.instance_error {
+                        Hint { hint }
+                    }
                 }
                 div { class: "choices",
                     label { class: "field",

@@ -95,7 +95,7 @@ pub fn view(
         unpushed,
     } = found;
     Home {
-        remote: remote.to_owned(),
+        remote: checkout::display(remote),
         synced: sync.synced,
         sync: sync.status.clone(),
         unpushed,
@@ -105,7 +105,7 @@ pub fn view(
                 id: project.id.clone(),
                 name: project.name.clone(),
                 title: project.title.clone(),
-                remote: project.remote.clone(),
+                remote: project.remote.as_deref().map(checkout::display),
                 profiles: project.profiles.clone(),
                 checkouts: checkouts
                     .get(&project.id)

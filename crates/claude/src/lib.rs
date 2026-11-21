@@ -27,8 +27,8 @@ pub use launch::{
 };
 pub use mapping::{claude_answer, claude_steps};
 pub use protocol::{
-    ASK_USER_QUESTION, AfterDeny, Applied, Block, ClaudeEvent, ControlCall,
-    Inbound, MessageId, Open, Outbound, PermissionDecision, PermissionMode,
+    ASK_USER_QUESTION, Applied, Block, ClaudeEvent, ControlCall, Inbound,
+    MessageId, Open, Outbound, PermissionDecision, PermissionMode,
     PermissionRequestId, Role, SessionId, UnsupportedVersion, applied,
     check_version, encode, models, parse_line,
 };

@@ -7,8 +7,8 @@ use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
 use proto::{
-    CommandBody, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
-    Priority, Project, ProjectId,
+    ChecklistAction, ChecklistItem, CommandBody, Issue, IssueChange,
+    IssueFields, IssueId, IssueStatus, Priority, Project, ProjectId,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -30,9 +30,11 @@ pub enum IssueIntent {
     SetStatus(String),
     /// A priority's word, as the picker gives it.
     SetPriority(String),
-    /// The checklist's item at this index, checked or unchecked.
-    Toggle(usize),
-    RemoveItem(usize),
+    Checklist {
+        snapshot: Vec<ChecklistItem>,
+        index: usize,
+        action: ChecklistAction,
+    },
     TypeItem(String),
     AddItem,
     TypeNote(String),
@@ -55,14 +57,52 @@ pub struct Titles(BTreeMap<ProjectId, String>);
 pub struct IssueDraft {
     item: String,
     note: String,
+    item_sent: Option<String>,
+    note_sent: Option<String>,
+    saving: Option<Save>,
+    errors: Vec<String>,
     editing: Option<Editing>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Editing {
+    fields: EditFields,
+    original: EditFields,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EditFields {
     title: String,
     body: String,
     labels: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Save {
+    fields: EditFields,
+    pending: usize,
+    failed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Submission {
+    Item,
+    Note,
+    Title,
+    Body,
+    Labels,
+}
+
+impl Submission {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Item => "Checklist item",
+            Self::Note => "Note",
+            Self::Title => "Title",
+            Self::Body => "Body",
+            Self::Labels => "Labels",
+        }
+    }
 }
 
 /// The issue shown, and where commands about it go.
@@ -133,36 +173,39 @@ impl IssueDraft {
                         change(IssueChange::Priority(priority))
                     }),
             ),
-            IssueIntent::Toggle(index) => (
+            IssueIntent::Checklist {
+                snapshot,
+                index,
+                action,
+            } => (
                 self,
-                issue.checklist.get(index).map_or_else(Vec::new, |item| {
-                    change(IssueChange::Check {
-                        item: item.text.clone(),
-                        done: !item.done,
-                    })
-                }),
-            ),
-            IssueIntent::RemoveItem(index) => (
-                self,
-                issue.checklist.get(index).map_or_else(Vec::new, |item| {
-                    change(IssueChange::RemoveItem(item.text.clone()))
+                change(IssueChange::Checklist {
+                    snapshot,
+                    index,
+                    action,
                 }),
             ),
             IssueIntent::TypeItem(item) => (Self { item, ..self }, Vec::new()),
             IssueIntent::AddItem => self.add_item(shown),
             IssueIntent::TypeNote(note) => (Self { note, ..self }, Vec::new()),
             IssueIntent::AddNote => self.add_note(shown),
-            IssueIntent::Edit => (
-                Self {
-                    editing: Some(Editing {
-                        title: issue.title.clone(),
-                        body: issue.body.clone(),
-                        labels: issue.labels.join(", "),
-                    }),
-                    ..self
-                },
-                Vec::new(),
-            ),
+            IssueIntent::Edit => {
+                let fields = EditFields {
+                    title: issue.title.clone(),
+                    body: issue.body.clone(),
+                    labels: issue.labels.join(", "),
+                };
+                (
+                    Self {
+                        editing: Some(Editing {
+                            original: fields.clone(),
+                            fields,
+                        }),
+                        ..self
+                    },
+                    Vec::new(),
+                )
+            }
             IssueIntent::TypeTitle(title) => {
                 (self.edited(|editing| editing.title = title), Vec::new())
             }
@@ -173,6 +216,7 @@ impl IssueDraft {
                 (self.edited(|editing| editing.labels = labels), Vec::new())
             }
             IssueIntent::Save => self.save(shown),
+            IssueIntent::Cancel if self.saving.is_some() => (self, Vec::new()),
             IssueIntent::Cancel => (
                 Self {
                     editing: None,
@@ -183,90 +227,177 @@ impl IssueDraft {
         }
     }
 
-    fn add_item(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let text = String::from(self.item.trim());
-        if text.is_empty() {
+    fn add_item(mut self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
+        let text = self.item.trim();
+        if text.is_empty() || self.item_sent.is_some() {
             return (self, Vec::new());
         }
-        (
-            Self {
-                item: String::new(),
-                ..self
-            },
-            send(shown, IssueChange::AddItem(text)),
-        )
+        let change = IssueChange::AddItem(String::from(text));
+        self.item_sent = Some(self.item.clone());
+        (self, submit(shown, change, Submission::Item))
     }
 
-    fn add_note(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let text = String::from(self.note.trim());
-        if text.is_empty() {
+    fn add_note(mut self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
+        let text = self.note.trim();
+        if text.is_empty() || self.note_sent.is_some() {
             return (self, Vec::new());
         }
-        (
-            Self {
-                note: String::new(),
-                ..self
-            },
-            send(shown, IssueChange::Note(text)),
-        )
+        let change = IssueChange::Note(String::from(text));
+        self.note_sent = Some(self.note.clone());
+        (self, submit(shown, change, Submission::Note))
     }
 
-    fn edited(self, change: impl FnOnce(&mut Editing)) -> Self {
-        let mut editing = self.editing;
-        if let Some(open) = editing.as_mut() {
-            change(open);
+    fn edited(mut self, change: impl FnOnce(&mut EditFields)) -> Self {
+        if let Some(open) = self.editing.as_mut() {
+            change(&mut open.fields);
         }
-        Self { editing, ..self }
+        self
     }
 
-    /// Sends each field the form changed, its own change.
-    fn save(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let Some(editing) = self.editing.clone().filter(Editing::saves) else {
+    fn save(mut self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
+        let Some(editing) = self
+            .editing
+            .as_ref()
+            .filter(|editing| self.saving.is_none() && editing.saves())
+        else {
             return (self, Vec::new());
         };
-        let issue = shown.issue;
-        let labels = editing
-            .labels
-            .split(',')
-            .map(|label| String::from(label.trim()))
-            .filter(|label| !label.is_empty())
-            .collect::<Vec<String>>();
+        let fields = &editing.fields;
+        let original = &editing.original;
         let changes = [
-            (editing.title.trim() != issue.title)
-                .then(|| IssueChange::Title(editing.title.clone())),
-            (editing.body.trim() != issue.body)
-                .then(|| IssueChange::Body(editing.body.clone())),
-            (labels != issue.labels).then_some(IssueChange::Labels(labels)),
+            (
+                Submission::Title,
+                (fields.title.trim() != original.title.trim())
+                    .then(|| IssueChange::Title(fields.title.clone())),
+            ),
+            (
+                Submission::Body,
+                (fields.body.trim() != original.body.trim())
+                    .then(|| IssueChange::Body(fields.body.clone())),
+            ),
+            (
+                Submission::Labels,
+                (fields.labels.trim() != original.labels.trim()).then(|| {
+                    IssueChange::Labels(
+                        fields
+                            .labels
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|label| !label.is_empty())
+                            .map(String::from)
+                            .collect(),
+                    )
+                }),
+            ),
         ];
-        (
-            Self {
-                editing: None,
-                ..self
-            },
-            changes
-                .into_iter()
-                .flatten()
-                .flat_map(|change| send(shown, change))
-                .collect(),
-        )
+        let effects: Vec<_> = changes
+            .into_iter()
+            .filter_map(|(field, modified)| {
+                modified
+                    .map(|change| effect(shown, change, ReplyTo::Issue(field)))
+            })
+            .collect();
+        if effects.is_empty() {
+            self.editing = None;
+        } else {
+            self.saving = Some(Save {
+                fields: fields.clone(),
+                pending: effects.len(),
+                failed: false,
+            });
+        }
+        (self, effects)
+    }
+
+    pub(crate) fn answered(
+        &mut self,
+        field: Submission,
+        error: Option<String>,
+    ) {
+        let prefix = format!("{}: ", field.label());
+        let failed = error.is_some();
+        self.errors.retain(|kept| !kept.starts_with(&prefix));
+        self.errors
+            .extend(error.map(|message| format!("{prefix}{message}")));
+        match field {
+            Submission::Item => {
+                settle_text(&mut self.item_sent, &mut self.item, failed);
+            }
+            Submission::Note => {
+                settle_text(&mut self.note_sent, &mut self.note, failed);
+            }
+            Submission::Title | Submission::Body | Submission::Labels => {
+                self.saved_field(field, failed);
+            }
+        }
+    }
+
+    fn saved_field(&mut self, field: Submission, failed: bool) {
+        let (Some(save), Some(editing)) = (&mut self.saving, &mut self.editing)
+        else {
+            return;
+        };
+        if !failed {
+            match field {
+                Submission::Title => {
+                    editing.original.title.clone_from(&save.fields.title);
+                }
+                Submission::Body => {
+                    editing.original.body.clone_from(&save.fields.body);
+                }
+                Submission::Labels => {
+                    editing.original.labels.clone_from(&save.fields.labels);
+                }
+                Submission::Item | Submission::Note => {}
+            }
+        }
+        save.failed |= failed;
+        save.pending -= 1;
+        if save.pending == 0 {
+            if !save.failed && editing.fields == save.fields {
+                self.editing = None;
+            }
+            self.saving = None;
+        }
+    }
+}
+
+fn settle_text(sent: &mut Option<String>, draft: &mut String, failed: bool) {
+    if sent.take().as_ref() == Some(draft) && !failed {
+        draft.clear();
     }
 }
 
 impl Editing {
-    /// An issue keeps a title.
     fn saves(&self) -> bool {
-        !self.title.trim().is_empty()
+        !self.fields.title.trim().is_empty()
     }
 }
 
+fn submit(
+    shown: &Shown<'_>,
+    change: IssueChange,
+    field: Submission,
+) -> Vec<Effect> {
+    Vec::from([effect(shown, change, ReplyTo::Issue(field))])
+}
+
 fn send(shown: &Shown<'_>, change: IssueChange) -> Vec<Effect> {
-    Vec::from([shown.at.send(
+    Vec::from([effect(shown, change, ReplyTo::Notice)])
+}
+
+const fn effect(
+    shown: &Shown<'_>,
+    change: IssueChange,
+    reply: ReplyTo,
+) -> Effect {
+    shown.at.send(
         CommandBody::ChangeIssue {
             issue: shown.issue.id,
             change,
         },
-        ReplyTo::Notice,
-    )])
+        reply,
+    )
 }
 
 /// A project's issues, as the projects view lists them.
@@ -388,6 +519,9 @@ pub struct IssueScreen {
     pub item: String,
     pub notes: Vec<String>,
     pub note: String,
+    pub item_pending: bool,
+    pub note_pending: bool,
+    pub submission_errors: Vec<String>,
     pub editing: Option<EditForm>,
     /// The host is live, so the issue can change.
     pub enabled: bool,
@@ -416,7 +550,8 @@ pub struct Pick {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemRow {
-    pub index: usize,
+    pub toggle: IssueIntent,
+    pub remove: IssueIntent,
     pub key: String,
     pub text: String,
     pub done: bool,
@@ -481,7 +616,16 @@ pub fn screen(
             .iter()
             .enumerate()
             .map(|(index, item)| ItemRow {
-                index,
+                toggle: IssueIntent::Checklist {
+                    snapshot: issue.checklist.clone(),
+                    index,
+                    action: ChecklistAction::SetDone(!item.done),
+                },
+                remove: IssueIntent::Checklist {
+                    snapshot: issue.checklist.clone(),
+                    index,
+                    action: ChecklistAction::Remove,
+                },
                 key: format!("{index}-{}", item.text),
                 text: item.text.clone(),
                 done: item.done,
@@ -490,11 +634,14 @@ pub fn screen(
         item: drafts.item.clone(),
         notes: issue.notes.clone(),
         note: drafts.note.clone(),
+        item_pending: drafts.item_sent.is_some(),
+        note_pending: drafts.note_sent.is_some(),
+        submission_errors: drafts.errors.clone(),
         editing: drafts.editing.as_ref().map(|editing| EditForm {
-            title: editing.title.clone(),
-            body: editing.body.clone(),
-            labels: editing.labels.clone(),
-            save_disabled: !editing.saves(),
+            title: editing.fields.title.clone(),
+            body: editing.fields.body.clone(),
+            labels: editing.fields.labels.clone(),
+            save_disabled: !editing.saves() || drafts.saving.is_some(),
         }),
         enabled: host.fold.live(),
         notice,

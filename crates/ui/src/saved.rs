@@ -55,7 +55,7 @@ pub fn encode(hosts: &[Saved]) -> String {
 #[must_use]
 pub fn decode(stored: &Stored) -> Vec<Saved> {
     let listed = stored.hosts.as_deref().and_then(|text| {
-        serde_json::from_str::<BTreeMap<String, Entry>>(text).ok()
+        serde_json::from_str::<BTreeMap<String, serde_json::Value>>(text).ok()
     });
     listed.map_or_else(
         || {
@@ -69,9 +69,11 @@ pub fn decode(stored: &Stored) -> Vec<Saved> {
         },
         |entries| {
             entries
-                .into_values()
-                .filter_map(|entry| {
-                    Ticket::parse(&entry.ticket).ok().map(|ticket| Saved {
+                .into_iter()
+                .filter_map(|(key, value)| {
+                    let entry = serde_json::from_value::<Entry>(value).ok()?;
+                    let ticket = Ticket::parse(&entry.ticket).ok()?;
+                    (HostId::of(&ticket).key() == key).then_some(Saved {
                         ticket,
                         name: entry.name,
                     })
@@ -79,4 +81,64 @@ pub fn decode(stored: &Stored) -> Vec<Saved> {
                 .collect()
         },
     )
+}
+
+// Per-host overrides cover removals from the old shared map. Only explicit
+// pairing can replace a removal marker.
+pub const HOST_KEY: &str = "conductor.host.";
+pub const NAME_KEY: &str = "conductor.name.";
+
+#[must_use]
+pub fn host_storage_key(key: &str) -> bool {
+    key.starts_with(HOST_KEY) || key.starts_with(NAME_KEY)
+}
+
+#[must_use]
+pub fn restored(stored: &Stored, entries: Vec<(String, String)>) -> Vec<Saved> {
+    let mut hosts = decode(stored)
+        .into_iter()
+        .map(|saved| (HostId::of(&saved.ticket).key(), saved))
+        .collect::<BTreeMap<_, _>>();
+    let mut names = BTreeMap::new();
+    for (key, value) in entries {
+        if let Some(id) = key.strip_prefix(HOST_KEY) {
+            if value.is_empty() {
+                hosts.remove(id);
+            } else if let Some(saved) = decode(&Stored {
+                hosts: Some(value),
+                ticket: None,
+            })
+            .into_iter()
+            .find(|saved| HostId::of(&saved.ticket).key() == id)
+            {
+                hosts.insert(id.to_owned(), saved);
+            }
+        } else if let Some(id) = key.strip_prefix(NAME_KEY) {
+            names.insert(id.to_owned(), value);
+        }
+    }
+    hosts
+        .into_iter()
+        .map(|(id, saved)| Saved {
+            name: names.remove(&id).or(saved.name),
+            ..saved
+        })
+        .collect()
+}
+
+#[must_use]
+pub fn legacy_to_migrate(text: Option<&str>) -> Option<&str> {
+    text.filter(|ticket| Ticket::parse(ticket).is_ok())
+}
+
+#[must_use]
+pub fn joined_host(hosts: &[Saved], ticket: &Ticket) -> Saved {
+    let name = hosts
+        .iter()
+        .find(|saved| saved.ticket.host == ticket.host)
+        .and_then(|saved| saved.name.clone());
+    Saved {
+        ticket: ticket.clone(),
+        name,
+    }
 }

@@ -67,6 +67,7 @@ pub enum Input {
     },
     /// The turns [`Effect::Turns`] listed.
     Listed(Result<Vec<TurnId>, String>),
+    RevertUnknown,
     /// The thread's next event, `None` once its events end.
     Event(Option<Routed>),
 }
@@ -124,6 +125,7 @@ impl Runtime {
                     turns.into_iter().map(|turn| turn.0).collect()
                 })))
             }
+            Input::RevertUnknown => Report::emit(Outcome::RevertUnknown),
             Input::Event(Some(routed)) => self.routed(routed),
             Input::Event(None) => self.lifecycle.ended(),
         }
@@ -336,7 +338,7 @@ mod tests {
                 },
                 Input::Command(Command::Interrupt(NativeTurn(text("tu_1")))),
                 Input::Command(Command::Reply {
-                    native: NativeRequest(text("7")),
+                    native: NativeRequest(text("integer:7")),
                     reply: Reply::Decide(Chosen::Deny),
                     by: ClientName(text("phone")),
                 }),
@@ -366,7 +368,7 @@ mod tests {
                 }]),
                 Vec::from([Effect::Call {
                     call: Call::Respond {
-                        id: ApprovalId(text("7")),
+                        id: ApprovalId(text("integer:7")),
                         decision: Decision::Decline,
                     },
                     then: Then::Replied,
@@ -410,18 +412,18 @@ mod tests {
     }
 
     #[test]
-    fn unknown_thread_frames_keep_the_thread_id() {
+    fn unknown_thread_frame_diagnostics_only_keep_the_thread_id() {
         assert_eq!(
             running().step(Input::Event(Some(Routed::Codex(
                 CodexEvent::Thread {
                     thread: ThreadId(text("th_1")),
-                    event: ThreadEvent::Unknown(json!({ "method": "x" })),
+                    event: ThreadEvent::Unknown(json!({ "method": "private-test-marker", "content": "private-test-marker" })),
                 }
             )))),
             [Report::Log(Note::UnmappedOnThread {
                 provider: Provider::Codex,
                 thread: text("th_1"),
-                frame: text("{\"method\":\"x\"}"),
+                frame: text("unknown"),
             })
             .into()],
         );

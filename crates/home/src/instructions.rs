@@ -41,13 +41,16 @@ pub fn project_of<'a>(
     projects: &'a [Project],
     directory: &str,
 ) -> Option<(&'a Project, &'a Checkout)> {
-    projects.iter().find_map(|project| {
-        project
-            .checkouts
-            .iter()
-            .find(|checkout| holds(&checkout.path.0, directory))
-            .map(|checkout| (project, checkout))
-    })
+    projects
+        .iter()
+        .flat_map(|project| {
+            project
+                .checkouts
+                .iter()
+                .map(move |checkout| (project, checkout))
+        })
+        .filter(|(_, checkout)| holds(&checkout.path.0, directory))
+        .max_by_key(|(_, checkout)| checkout.path.0.trim_end_matches('/').len())
 }
 
 fn holds(checkout: &str, directory: &str) -> bool {

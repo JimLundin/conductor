@@ -86,7 +86,7 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
 pub fn account(auth: &str) -> Option<String> {
     let kept = serde_json::from_str::<serde_json::Value>(auth).ok()?;
     let tokens = kept.get("tokens")?;
-    let email = tokens
+    let reported_email = tokens
         .get("id_token")
         .and_then(serde_json::Value::as_str)
         .and_then(|token| token.split('.').nth(1))
@@ -104,7 +104,8 @@ pub fn account(auth: &str) -> Option<String> {
                 .and_then(serde_json::Value::as_str)
                 .map(String::from)
         });
-    email
+    reported_email
+        .filter(|email| !email.is_empty())
         .or_else(|| {
             tokens
                 .get("account_id")
@@ -154,6 +155,22 @@ mod tests {
             ]
             .map(|(id, value)| (String::from(id), String::from(value)))
             .into(),
+        }
+    }
+
+    #[test]
+    fn only_a_populated_email_takes_precedence_over_the_account_id() {
+        for (claims, expected) in [
+            (r#"{"email":""}"#, "acct-1"),
+            ("{}", "acct-1"),
+            (r#"{"email":"owner@example.com"}"#, "owner@example.com"),
+        ] {
+            let encoded_claims =
+                data_encoding::BASE64URL_NOPAD.encode(claims.as_bytes());
+            let auth = format!(
+                r#"{{"tokens":{{"id_token":"e30.{encoded_claims}.sig","account_id":"acct-1"}}}}"#
+            );
+            assert_eq!(account(&auth).as_deref(), Some(expected));
         }
     }
 

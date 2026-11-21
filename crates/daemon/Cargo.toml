@@ -9,8 +9,10 @@ publish = false
 layer = "shell"
 
 [dependencies]
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
+cap-fs-ext = "4.0.2"
+cap-std = "4.0.2"
 # The credential store's cipher (§6.3), XChaCha20-Poly1305.
 chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
 data-encoding.workspace = true
@@ -33,6 +35,12 @@ ulid = "1.2"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["net", "signal"] }
 tracing = { workspace = true, features = ["std"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winx = "0.36.4"
 
 [dev-dependencies]
 # The end-to-end tests run the providers' agents on their fake CLIs.

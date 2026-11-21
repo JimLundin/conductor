@@ -87,6 +87,7 @@ pub enum Outcome {
     Replied(Result<(), String>),
     Turns(Result<Vec<String>, String>),
     Reverted(Result<(), String>),
+    RevertUnknown,
     ShutDown(Result<(), String>),
 }
 

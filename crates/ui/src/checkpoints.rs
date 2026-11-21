@@ -1,6 +1,8 @@
 //! Per-turn changes and undo. The host's events own the undo state; the
 //! pane holds only which diffs are open.
 
+use alloc::rc::Rc;
+
 use crate::prelude::*;
 use client::host_view::{Composer, TurnCheckpoint};
 use proto::{
@@ -13,14 +15,16 @@ pub enum DiffState {
     Hidden,
     /// Waiting for the answer to this request.
     Loading(u64),
-    Loaded(CheckpointDiff),
+    Loaded(Rc<Preview>),
     Failed(String),
 }
 
 impl DiffState {
     pub fn answered(answer: Result<CommandResult, String>, host: &str) -> Self {
         match answer {
-            Ok(CommandResult::Diff(changes)) => Self::Loaded(changes),
+            Ok(CommandResult::Diff(changes)) => {
+                Self::Loaded(Rc::new(preview(changes)))
+            }
             Ok(CommandResult::Rejected(reason)) => Self::Failed(reason.label()),
             Ok(
                 CommandResult::Accepted
@@ -55,12 +59,17 @@ pub enum DiffPanel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diff {
+    pub preview: Rc<Preview>,
+    pub undo_disabled: bool,
+    pub undo_hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Preview {
     /// Why no file shows.
     pub empty: Option<&'static str>,
     pub files: Vec<DiffFile>,
     pub truncated: Option<&'static str>,
-    pub undo_disabled: bool,
-    pub undo_hint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,11 +111,29 @@ pub fn changes(
 }
 
 fn loaded(
-    changes: &CheckpointDiff,
+    changes: &Rc<Preview>,
     composer: Composer,
     availability: &UndoAvailability,
 ) -> Diff {
     Diff {
+        preview: Rc::clone(changes),
+        undo_disabled: !matches!(
+            (composer, availability),
+            (Composer::Open, UndoAvailability::Available)
+        ),
+        undo_hint: match availability {
+            UndoAvailability::Available => {
+                String::from("Undo is available when the session is idle.")
+            }
+            UndoAvailability::Unavailable { reason } => {
+                format!("Undo unavailable: {reason}")
+            }
+        },
+    }
+}
+
+fn preview(changes: CheckpointDiff) -> Preview {
+    Preview {
         empty: match (changes.files.first(), changes.extent) {
             (None, DiffExtent::Complete) => {
                 Some("No file changes in this turn.")
@@ -118,12 +145,12 @@ fn loaded(
         },
         files: changes
             .files
-            .iter()
+            .into_iter()
             .map(|file| DiffFile {
                 path: format!("{} {}", change_label(file.change), file.path),
-                patch: match &file.patch {
+                patch: match file.patch {
                     FilePatch::Text(patch) => Patch::Text {
-                        text: patch.clone(),
+                        text: patch,
                         label: format!("{} patch", file.path),
                     },
                     FilePatch::Binary => Patch::Note(String::from(
@@ -142,18 +169,6 @@ fn loaded(
             DiffExtent::Complete => None,
             DiffExtent::Truncated => {
                 Some("Preview limit reached. Some changes are omitted.")
-            }
-        },
-        undo_disabled: !matches!(
-            (composer, availability),
-            (Composer::Open, UndoAvailability::Available)
-        ),
-        undo_hint: match availability {
-            UndoAvailability::Available => {
-                String::from("Undo is available when the session is idle.")
-            }
-            UndoAvailability::Unavailable { reason } => {
-                format!("Undo unavailable: {reason}")
             }
         },
     }

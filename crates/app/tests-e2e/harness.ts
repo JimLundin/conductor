@@ -107,24 +107,88 @@ export const lastSegment = (path: string): string =>
 	path.split("/").at(-1) ?? "";
 
 export const savedHosts = async (page: Page): Promise<readonly SavedHost[]> => {
-	const stored = await page.evaluate(() =>
-		localStorage.getItem("conductor.hosts"),
+	return page.evaluate(() =>
+		Object.keys(localStorage)
+			.filter((key) => key.startsWith("conductor.host."))
+			.flatMap((key) => {
+				const stored = localStorage.getItem(key);
+				if (stored === null || stored === "") {
+					return [];
+				}
+				const hosts: Readonly<Record<string, SavedHost>> = JSON.parse(stored);
+				return Object.entries(hosts).map(([id, host]) => {
+					const name = localStorage.getItem(`conductor.name.${id}`);
+					return name === null ? host : { ...host, name };
+				});
+			}),
 	);
-	const hosts: Readonly<Record<string, SavedHost>> = JSON.parse(String(stored));
-	return Object.values(hosts);
 };
 
 /** Everything the page keeps or shows, to look for a secret in. */
 export const pageKeeps = (page: Page): Promise<string> =>
-	page.evaluate(async () =>
-		JSON.stringify([
-			{ ...localStorage },
-			{ ...sessionStorage },
-			location.href,
-			document.documentElement.outerHTML,
-			await indexedDB.databases(),
-		]),
-	);
+	page.evaluate(async () => {
+		const read = <T>(request: IDBRequest<T>): Promise<T> =>
+			new Promise((resolve, reject) => {
+				request.addEventListener("success", () => resolve(request.result), {
+					once: true,
+				});
+				request.addEventListener(
+					"error",
+					() =>
+						reject(
+							new Error("IndexedDB read failed", { cause: request.error }),
+						),
+					{ once: true },
+				);
+			});
+		const contents = async (db: IDBDatabase): Promise<unknown> => {
+			const stores = Array.from(db.objectStoreNames);
+			if (stores.length === 0) {
+				return [];
+			}
+			const tx = db.transaction(stores, "readonly");
+			return Promise.all(
+				stores.map((name) => {
+					const store = tx.objectStore(name);
+					return Promise.all([
+						name,
+						read(store.getAllKeys()),
+						read(store.getAll()),
+					]);
+				}),
+			);
+		};
+		const records = async (info: IDBDatabaseInfo): Promise<unknown> => {
+			if (info.name === undefined) {
+				throw new Error("IndexedDB database has no name");
+			}
+			const open = indexedDB.open(info.name);
+			open.addEventListener("upgradeneeded", () => open.transaction?.abort(), {
+				once: true,
+			});
+			const db = await read(open);
+			try {
+				return { name: info.name, stores: await contents(db) };
+			} finally {
+				db.close();
+			}
+		};
+		return JSON.stringify(
+			[
+				{ ...localStorage },
+				{ ...sessionStorage },
+				location.href,
+				document.documentElement.outerHTML,
+				await Promise.all((await indexedDB.databases()).map(records)),
+			],
+			(_key: string, value: unknown): unknown => {
+				if (value instanceof Map || value instanceof Set) {
+					return Array.from(value.entries());
+				}
+				return value;
+			},
+		);
+	});
 
 export const isWithinWidth = (page: Page): Promise<boolean> =>
 	page.evaluate(

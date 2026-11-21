@@ -9,12 +9,13 @@ provider's pin in crates/agents/src/pin/pins.rs, preserving the other provider.
 Claude: manifest.json.sig against Anthropic's release key, then each binary
 against the manifest. Codex: each
 codex-package-<triple>.tar.gz against GitHub's published digest and
-codex-package_SHA256SUMS, and the Linux cosign bundles when cosign is
-installed.
+codex-package_SHA256SUMS, and the Linux cosign bundles using cosign.
 """
 
+import fcntl
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -30,6 +31,11 @@ PINS_RS = ROOT / "crates/agents/src/pin/pins.rs"
 CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
 CLAUDE_KEY = "https://downloads.claude.ai/keys/claude-code.asc"
 CLAUDE_FINGERPRINT = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+
+CLAUDE_PLATFORMS = {
+    "linux-x64", "linux-arm64", "linux-x64-musl", "linux-arm64-musl",
+    "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64",
+}
 
 CODEX_RELEASE = "https://api.github.com/repos/openai/codex/releases/tags/rust-v{}"
 CODEX_TRIPLES = [
@@ -85,6 +91,7 @@ def pin_claude(version, work):
     listed = json.loads(manifest.read_text())
     if listed["version"] != version:
         fail(f"the manifest is for {listed['version']}, not {version}")
+    require_platforms("claude", listed["platforms"], CLAUDE_PLATFORMS)
     hashes = {}
     for platform, entry in listed["platforms"].items():
         url = f"{CLAUDE_BASE}/{version}/{platform}/{entry['binary']}"
@@ -103,14 +110,20 @@ def pin_claude(version, work):
     }
 
 
+def require_platforms(provider, entries, expected):
+    missing = sorted(set(expected) - entries.keys())
+    if missing:
+        fail(f"{provider} release is missing supported platforms: {', '.join(missing)}")
+
+
 def pin_codex(version, work):
+    cosign = shutil.which("cosign")
+    if cosign is None:
+        fail("cosign is not installed; it is needed to verify the Linux bundles")
     release = json.loads(fetch(CODEX_RELEASE.format(version)))
     assets = {asset["name"]: asset for asset in release["assets"]}
     sums = fetch(assets["codex-package_SHA256SUMS"]["browser_download_url"]).decode()
     listed = {name: digest for digest, name in (line.split() for line in sums.splitlines() if line.strip())}
-    cosign = shutil.which("cosign")
-    if cosign is None:
-        print("cosign is not installed: the Linux cosign bundles are skipped")
     hashes = {}
     for triple in CODEX_TRIPLES:
         name = f"codex-package-{triple}.tar.gz"
@@ -126,25 +139,30 @@ def pin_codex(version, work):
             if binary not in tar.getnames():
                 fail(f"{name} holds no {binary}")
         print(f"  {triple}: {found} matches GitHub's digest and codex-package_SHA256SUMS; holds {binary}")
-        if cosign is not None and "linux" in triple:
-            bundle = work / f"{name}.sigstore"
-            bundle.write_bytes(fetch(assets[bundle.name]["browser_download_url"]))
-            checked = subprocess.run(
-                [cosign, "verify-blob", "--bundle", str(bundle),
-                 "--certificate-identity", CODEX_IDENTITY.format(version),
-                 "--certificate-oidc-issuer", CODEX_ISSUER, str(archive)],
-                capture_output=True, text=True)
-            if checked.returncode != 0:
-                fail(f"cosign rejects {name}:\n{checked.stderr}")
-            print(f"  {triple}: cosign verifies {name}")
+        if "linux" in triple:
+            verify_codex_bundle(cosign, version, archive, assets)
         archive.unlink()
         hashes[triple] = found
-    bundles = "the Linux cosign bundles verify" if cosign else "the Linux cosign bundles were skipped: cosign was not installed"
     return {
         "version": version,
-        "verified": f"every package matches GitHub's published digest and codex-package_SHA256SUMS; {bundles}",
+        "verified": "every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles verify",
         "sha256": hashes,
     }
+
+
+def verify_codex_bundle(cosign, version, archive, assets):
+    bundle = archive.with_name(f"{archive.name}.sigstore")
+    if bundle.name not in assets:
+        fail(f"rust-v{version} has no signature bundle {bundle.name}")
+    bundle.write_bytes(fetch(assets[bundle.name]["browser_download_url"]))
+    checked = subprocess.run(
+        [cosign, "verify-blob", "--bundle", str(bundle),
+         "--certificate-identity", CODEX_IDENTITY.format(version),
+         "--certificate-oidc-issuer", CODEX_ISSUER, str(archive)],
+        capture_output=True, text=True)
+    if checked.returncode != 0:
+        fail(f"cosign rejects {archive.name}:\n{checked.stderr}")
+    print(f"  cosign verifies {archive.name}")
 
 
 def read():
@@ -181,26 +199,39 @@ def rust_fn(name, what, pin):
 
 
 def write(pins):
-    PINS_RS.write_text(
+    source = (
         "//! The pinned CLIs, written by `tools/pin`. Run it again to change a pin.\n\n"
         "use crate::prelude::*;\n\n"
         + rust_fn("claude", "`claude` binary for a platform named as in Claude's manifest", pins["claude"]) + "\n"
         + rust_fn("codex", "`codex-package-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
-    subprocess.run(["rustfmt", "--edition", "2024", str(PINS_RS)], check=True)
+    with tempfile.TemporaryDirectory(dir=PINS_RS.parent, prefix=".pin-") as work:
+        staged = Path(work) / PINS_RS.name
+        staged.write_text(source, encoding="utf-8")
+        staged.chmod(PINS_RS.stat().st_mode)
+        subprocess.run(["rustfmt", "--edition", "2024", str(staged)], check=True)
+        os.replace(staged, PINS_RS)
     print(f"wrote {PINS_RS.relative_to(ROOT)}")
+
+
+def update(provider, pinned, scratch):
+    expected = CLAUDE_PLATFORMS if provider == "claude" else CODEX_TRIPLES
+    require_platforms(provider, pinned["sha256"], expected)
+    with (scratch / "pin.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        pins = read()
+        pins[provider] = pinned
+        write(pins)
 
 
 def main():
     if len(sys.argv) != 3 or sys.argv[1] not in ("claude", "codex"):
         fail("usage: tools/pin claude|codex <version>")
     provider, version = sys.argv[1], sys.argv[2]
-    pins = read()
     scratch = ROOT / "target"
     scratch.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(dir=scratch, prefix="pin-") as work:
         pinned = (pin_claude if provider == "claude" else pin_codex)(version, Path(work))
-    pins[provider] = pinned
-    write(pins)
+    update(provider, pinned, scratch)
 
 
 if __name__ == "__main__":

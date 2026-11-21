@@ -16,11 +16,13 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use proto::{
-    ChecklistItem, CommandId, Home, HostPath, Issue, IssueChange, IssueFields,
-    IssueId, IssueStatus, Priority, ProjectId, Rejection,
+    ChecklistAction, ChecklistItem, CommandId, Home, HostPath, Issue,
+    IssueChange, IssueFields, IssueId, IssueStatus, Priority, ProjectId,
+    Rejection,
 };
 use serde::{Deserialize, Serialize};
-use toml::{Table, Value};
+use toml::{Spanned, Table, Value};
+use toml_parser::{Source, lexer::TokenKind};
 
 use crate::prelude::*;
 
@@ -85,33 +87,43 @@ impl Lines {
             .map_err(|err| format!("front matter: {err}"))
     }
 
-    /// Sets the front matter's top-level `key`, keeping the comment its
-    /// line had; a key it lacks goes before the first table.
-    fn set(&mut self, key: &str, value: &str) {
-        let tables = self
-            .front
-            .iter()
-            .position(|line| line.trim_start().starts_with('['))
-            .unwrap_or(self.front.len());
-        let found = self.front.iter().take(tables).position(|line| {
-            line.split_once('=')
-                .is_some_and(|(named, _)| named.trim() == key)
-        });
-        match found.and_then(|at| self.front.get_mut(at)) {
-            Some(line) => {
-                let kept = String::from(comment(line));
-                *line = format!("{key} = {value}{kept}");
+    fn set(&mut self, key: &str, value: &str) -> Option<()> {
+        let mut front = self.front.join("\n");
+        let spans =
+            toml::from_str::<BTreeMap<String, Spanned<Value>>>(&front).ok()?;
+        if let Some(found) = spans.get(key) {
+            let comments = array_with_comments(front.get(found.span())?, value);
+            front.replace_range(
+                found.span(),
+                comments.as_deref().unwrap_or(value),
+            );
+        } else {
+            let last_value = spans
+                .values()
+                .filter(|item| !item.get_ref().is_table())
+                .map(|item| item.span().end)
+                .max();
+            if let Some(end) = last_value {
+                let at = front
+                    .get(end..)?
+                    .find('\n')
+                    .map_or(front.len(), |offset| end + offset);
+                front.insert_str(at, &format!("\n{key} = {value}"));
+            } else {
+                front.insert_str(0, &format!("{key} = {value}\n"));
             }
-            None => self.front.insert(tables, format!("{key} = {value}")),
         }
+        self.front = front.split('\n').map(String::from).collect();
+        Some(())
     }
 
     /// Where the body ends: at the checklist or the notes, whichever is
     /// first.
     fn body_end(&self) -> usize {
-        self.rest
-            .iter()
-            .position(|line| matches!(line.trim_end(), CHECKLIST | NOTES))
+        markdown(&self.rest)
+            .position(|(line, outside)| {
+                outside && matches!(line.trim_end(), CHECKLIST | NOTES)
+            })
             .unwrap_or(self.rest.len())
     }
 
@@ -129,31 +141,33 @@ impl Lines {
     /// heading or the end, if the file has one.
     fn section(&self, heading: &str) -> Option<(usize, usize)> {
         let body_end = self.body_end();
-        let start = self
-            .rest
-            .iter()
+        let mut headings = markdown(&self.rest)
+            .enumerate()
             .skip(body_end)
-            .position(|line| line.trim_end() == heading)?
-            + body_end;
-        let end = self
-            .rest
-            .iter()
-            .skip(start + 1)
-            .position(|line| line.starts_with("## "))
-            .map_or(self.rest.len(), |at| at + start + 1);
+            .filter(|(_, (line, outside))| *outside && line.starts_with("## "));
+        let (start, _) =
+            headings.find(|(_, (line, _))| line.trim_end() == heading)?;
+        let end = headings.next().map_or(self.rest.len(), |(index, _)| index);
         Some((start, end))
     }
 
-    /// The checklist line whose item has this text.
+    fn items(&self) -> impl Iterator<Item = (usize, ChecklistItem)> + '_ {
+        let mut checklist = false;
+        markdown(&self.rest).enumerate().filter_map(
+            move |(at, (line, outside))| {
+                if outside && line.starts_with("## ") {
+                    checklist = line.trim_end() == CHECKLIST;
+                }
+                (outside && checklist)
+                    .then(|| item(line))
+                    .flatten()
+                    .map(|found| (at, found))
+            },
+        )
+    }
+
     fn item(&self, text: &str) -> Option<(usize, ChecklistItem)> {
-        let (start, end) = self.section(CHECKLIST)?;
-        (start..end).find_map(|at| {
-            self.rest
-                .get(at)
-                .and_then(|line| item(line))
-                .filter(|found| found.text == text)
-                .map(|found| (at, found))
-        })
+        self.items().find(|(_, found)| found.text == text)
     }
 
     /// Adds `lines` after the last line with text of the section under
@@ -192,29 +206,64 @@ impl Lines {
     }
 }
 
-/// The comment ending a line of TOML, with the space before it, or
-/// nothing: a `#` outside a string.
-fn comment(line: &str) -> &str {
-    let mut quote = None;
-    let mut escaped = false;
-    for (at, character) in line.char_indices() {
-        match (quote, character, escaped) {
-            (Some('"'), '\\', false) => {
-                escaped = true;
-                continue;
-            }
-            (Some(open), close, false) if close == open => quote = None,
-            (None, '"' | '\'', _) => quote = Some(character),
-            (None, '#', _) => {
-                let start =
-                    line.get(..at).map_or(at, |before| before.trim_end().len());
-                return line.get(start..).unwrap_or("");
-            }
-            _ => {}
-        }
-        escaped = false;
+fn array_with_comments(previous: &str, value: &str) -> Option<String> {
+    let elements = value.strip_prefix('[')?.strip_suffix(']')?;
+    let source = Source::new(previous);
+    let mut comments = String::new();
+    for token in source
+        .lex()
+        .filter(|token| token.kind() == TokenKind::Comment)
+    {
+        let comment = source.get(token)?;
+        comments.push_str("    ");
+        comments.push_str(comment.as_str());
+        comments.push('\n');
     }
-    ""
+    if comments.is_empty() {
+        return None;
+    }
+    if !elements.is_empty() {
+        comments.push_str("    ");
+        comments.push_str(elements);
+        comments.push('\n');
+    }
+    Some(format!("[\n{comments}]"))
+}
+
+fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
+    let mut fence = None;
+    rest.iter().map(move |line| {
+        let previously_open = fence.is_some();
+        if let Some((marker, width, suffix)) = fence_line(line) {
+            match fence {
+                Some((open, minimum))
+                    if open == marker
+                        && width >= minimum
+                        && suffix.trim().is_empty() =>
+                {
+                    fence = None;
+                }
+                None if marker == b'~' || !suffix.contains('`') => {
+                    fence = Some((marker, width));
+                }
+                _ => {}
+            }
+        }
+        (line.as_str(), !previously_open && fence.is_none())
+    })
+}
+
+fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
+    let rest = line.trim_start_matches(' ');
+    if line.len() - rest.len() > 3 {
+        return None;
+    }
+    let marker = *rest.as_bytes().first()?;
+    let width = rest.bytes().take_while(|byte| *byte == marker).count();
+    if width < 3 || !matches!(marker, b'`' | b'~') {
+        return None;
+    }
+    Some((marker, width, rest.get(width..)?))
 }
 
 /// The issue in the file named `stem`.md.
@@ -305,13 +354,19 @@ fn sections(rest: &[String]) -> (String, Vec<ChecklistItem>, Vec<String>) {
     let mut checklist = Vec::new();
     let mut notes: Vec<String> = Vec::new();
     let mut section = "";
-    for line in rest {
+    for (line, outside) in markdown(rest) {
+        if !outside {
+            if section.is_empty() {
+                body.push(line);
+            }
+            continue;
+        }
         match (line.trim_end(), section) {
             (heading @ (CHECKLIST | NOTES), _) => section = heading,
             (other, CHECKLIST | NOTES) if other.starts_with("## ") => {
                 section = "other";
             }
-            (_, "") => body.push(line.as_str()),
+            (_, "") => body.push(line),
             (_, CHECKLIST) => checklist.extend(item(line)),
             (_, NOTES) => noted(&mut notes, line),
             _ => {}
@@ -492,8 +547,10 @@ fn changing(
         }
         other @ (IssueChange::Priority(_)
         | IssueChange::Status(_)
+        | IssueChange::Transition { .. }
         | IssueChange::Check { .. }
-        | IssueChange::RemoveItem(_)) => Ok(other),
+        | IssueChange::RemoveItem(_)
+        | IssueChange::Checklist { .. }) => Ok(other),
     };
     checked
         .map(|change| (project, change))
@@ -526,19 +583,40 @@ fn message(edit: &EditData) -> String {
         Change::Issue(IssueChange::Priority(priority)) => {
             format!("Give issue {id} {} priority", priority.word())
         }
-        Change::Issue(IssueChange::Status(status)) => {
+        Change::Issue(
+            IssueChange::Status(status)
+            | IssueChange::Transition { to: status, .. },
+        ) => {
             format!("Move issue {id} to {}", status.word())
         }
-        Change::Issue(IssueChange::Check { done: true, .. }) => {
+        Change::Issue(
+            IssueChange::Check { done: true, .. }
+            | IssueChange::Checklist {
+                action: ChecklistAction::SetDone(true),
+                ..
+            },
+        ) => {
             format!("Check off an item of issue {id}")
         }
-        Change::Issue(IssueChange::Check { done: false, .. }) => {
+        Change::Issue(
+            IssueChange::Check { done: false, .. }
+            | IssueChange::Checklist {
+                action: ChecklistAction::SetDone(false),
+                ..
+            },
+        ) => {
             format!("Uncheck an item of issue {id}")
         }
         Change::Issue(IssueChange::AddItem(_)) => {
             format!("Add an item to issue {id}")
         }
-        Change::Issue(IssueChange::RemoveItem(_)) => {
+        Change::Issue(
+            IssueChange::RemoveItem(_)
+            | IssueChange::Checklist {
+                action: ChecklistAction::Remove,
+                ..
+            },
+        ) => {
             format!("Remove an item from issue {id}")
         }
         Change::Issue(IssueChange::Note(_)) => format!("Note on issue {id}"),
@@ -564,6 +642,7 @@ enum EditIdentity {
     Legacy,
     Command(CommandId),
     NoteOccurrence(usize),
+    MigratedNote { ordinal: usize, marker: String },
 }
 
 /// The contents of an issue edit, also the original queue's disk format.
@@ -635,12 +714,15 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
     match change {
         IssueChange::Title(_) => Some(issue.title.clone()),
         IssueChange::Body(_) => Some(issue.body.clone()),
-        IssueChange::Labels(_) => Some(issue.labels.join(", ")),
+        IssueChange::Labels(_) => Some(labels_value(&issue.labels)),
         IssueChange::Priority(_) => Some(String::from(issue.priority.word())),
-        IssueChange::Status(_) => Some(String::from(issue.status.word())),
+        IssueChange::Status(_) | IssueChange::Transition { .. } => {
+            Some(String::from(issue.status.word()))
+        }
         IssueChange::Check { .. }
         | IssueChange::AddItem(_)
         | IssueChange::RemoveItem(_)
+        | IssueChange::Checklist { .. }
         | IssueChange::Note(_) => None,
     }
 }
@@ -650,8 +732,9 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
 #[must_use]
 fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     let data = &edit.data;
-    let marker = match edit.identity {
-        EditIdentity::Command(id) => Some(edit_marker(id)),
+    let marker = match &edit.identity {
+        EditIdentity::Command(id) => Some(edit_marker(*id)),
+        EditIdentity::MigratedNote { marker, .. } => Some(marker.clone()),
         _ => None,
     };
     match (&data.change, current) {
@@ -663,7 +746,7 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
         }
         (Change::Create(wanted), None) => fields(wanted)
             .map_or(Applied::Unchanged, |made| {
-                marked(render(&opened(data, made)), marker)
+                marked(render(&opened(data, made)), marker, data.issue)
             }),
         (Change::Issue(_), None) => Applied::Gone,
         (Change::Issue(change), Some(text)) => {
@@ -678,14 +761,29 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
                     {
                         return Applied::AlreadyRecorded;
                     }
+                    if let IssueChange::Checklist {
+                        snapshot, index, ..
+                    } = change
+                        && (snapshot != &issue.checklist
+                            || *index >= snapshot.len())
+                    {
+                        return match mode {
+                            Mode::Record => Applied::Unreadable(String::from(
+                                "The checklist changed. Select the item again.",
+                            )),
+                            Mode::Replay { .. } => {
+                                marked(lines, marker, data.issue)
+                            }
+                        };
+                    }
                     match changed(lines, &issue, change, (edit, mode)) {
-                        Some(next) => marked(next, marker),
+                        Some(next) => marked(next, marker, data.issue),
                         None if marker.is_some()
                             && matches!(mode, Mode::Replay { .. }) =>
                         {
                             Lines::of(text)
                                 .map_or_else(Applied::Unreadable, |lines| {
-                                    marked(lines, marker)
+                                    marked(lines, marker, data.issue)
                                 })
                         }
                         None => Applied::Unchanged,
@@ -700,9 +798,13 @@ fn edit_marker(id: CommandId) -> String {
     format!("# conductor-edit: {:032x}", id.0)
 }
 
-fn marked(mut lines: Lines, marker: Option<String>) -> Applied {
+fn marked(mut lines: Lines, marker: Option<String>, issue: IssueId) -> Applied {
     lines.front.extend(marker);
-    Applied::Write(lines.text())
+    let text = lines.text();
+    match parse(&name(issue), &text) {
+        Ok(_) => Applied::Write(text),
+        Err(reason) => Applied::Unreadable(reason),
+    }
 }
 
 /// The file's lines with the change, or `None` when it changes nothing: it
@@ -729,7 +831,8 @@ fn changed(
             let replay_occurrence = match (&edit.identity, mode) {
                 (EditIdentity::Legacy, Mode::Replay { .. }) => Some(1),
                 (
-                    EditIdentity::NoteOccurrence(ordinal),
+                    EditIdentity::NoteOccurrence(ordinal)
+                    | EditIdentity::MigratedNote { ordinal, .. },
                     Mode::Replay { .. },
                 ) => Some(*ordinal),
                 _ => None,
@@ -738,12 +841,16 @@ fn changed(
         }
         IssueChange::Check { .. }
         | IssueChange::AddItem(_)
-        | IssueChange::RemoveItem(_) => checking(lines, change, legacy_replay),
+        | IssueChange::RemoveItem(_)
+        | IssueChange::Checklist { .. } => {
+            checking(lines, change, legacy_replay)
+        }
         IssueChange::Title(_)
         | IssueChange::Body(_)
         | IssueChange::Labels(_)
         | IssueChange::Priority(_)
-        | IssueChange::Status(_) => setting(lines, issue, change),
+        | IssueChange::Status(_)
+        | IssueChange::Transition { .. } => setting(lines, issue, change),
     }
 }
 
@@ -754,17 +861,20 @@ fn setting(
 ) -> Option<Lines> {
     match change {
         IssueChange::Title(title) if issue.title != *title => {
-            lines.set("title", &quoted(title));
+            lines.set("title", &quoted(title))?;
         }
         IssueChange::Body(body) if issue.body != *body => lines.body(body),
         IssueChange::Labels(labels) if issue.labels != *labels => {
-            lines.set("labels", &labels_value(labels));
+            lines.set("labels", &labels_value(labels))?;
         }
         IssueChange::Priority(priority) if issue.priority != *priority => {
-            lines.set("priority", &quoted(priority.word()));
+            lines.set("priority", &quoted(priority.word()))?;
         }
         IssueChange::Status(status) if issue.status != *status => {
-            lines.set("status", &quoted(status.word()));
+            lines.set("status", &quoted(status.word()))?;
+        }
+        IssueChange::Transition { from, to } if issue.status == *from => {
+            lines.set("status", &quoted(to.word()))?;
         }
         _ => return None,
     }
@@ -803,6 +913,21 @@ fn checking(
         IssueChange::RemoveItem(text) => {
             let (at, _) = lines.item(text)?;
             lines.rest.remove(at);
+        }
+        IssueChange::Checklist { index, action, .. } => {
+            let (at, found) = lines.items().nth(*index)?;
+            match action {
+                ChecklistAction::SetDone(done) if found.done != *done => {
+                    *lines.rest.get_mut(at)? = item_line(&ChecklistItem {
+                        done: *done,
+                        text: found.text,
+                    });
+                }
+                ChecklistAction::SetDone(_) => return None,
+                ChecklistAction::Remove => {
+                    lines.rest.remove(at);
+                }
+            }
         }
         _ => return None,
     }
@@ -1020,6 +1145,8 @@ pub enum Remote {
     At(String),
     /// The remote couldn't be read, for this reason.
     Unreachable(String),
+    /// The ref exists, but the checkout did not obtain it.
+    PresentUnfetched(String),
 }
 
 /// Where an issue's branch stands in a checkout, before a session on it
@@ -1067,6 +1194,9 @@ impl Branch {
                 commit: remote,
                 old: None,
             },
+            (_, Remote::PresentUnfetched(reason)) => Move::Refuse(format!(
+                "the issue's remote branch could not be fetched: {reason}"
+            )),
             (None, Remote::Unreachable(reason)) => Move::Refuse(format!(
                 "the project's remote can't be read, and the issue's branch may be there: {reason}"
             )),

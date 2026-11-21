@@ -17,6 +17,8 @@
     reason = "rsx! expands each \"{text}\" node to format!"
 )]
 
+use std::rc::Rc;
+
 use dioxus::prelude::*;
 use proto::CheckpointId;
 use ui::{DiffPanel, Intent, Patch, SessionIntent};
@@ -42,7 +44,10 @@ pub fn TurnChanges(changes: ui::TurnChanges) -> Element {
                     p { role: "status", "Loading changes…" }
                     CloseDiff { checkpoint }
                 },
-                DiffPanel::Failed(reason) => rsx! { p { class: "error", role: "alert", "{reason}" } },
+                DiffPanel::Failed(reason) => rsx! {
+                    p { class: "error", role: "alert", "{reason}" }
+                    CloseDiff { checkpoint }
+                },
                 DiffPanel::Loaded(diff) => rsx! { Diff { checkpoint, diff } },
             }
         }
@@ -70,23 +75,7 @@ fn Diff(checkpoint: CheckpointId, diff: ui::Diff) -> Element {
                 h2 { "Changes for this turn" }
                 CloseDiff { checkpoint }
             }
-            div { class: "diff-files", tabindex: "0", role: "region", "aria-label": "Changed files",
-                if let Some(note) = diff.empty {
-                    p { class: "diff-note", "{note}" }
-                }
-                for file in diff.files {
-                    section { class: "diff-file",
-                        code { class: "diff-path", "{file.path}" }
-                        match file.patch {
-                            Patch::Text { text, label } => rsx! { pre { class: "diff-patch", tabindex: "0", "aria-label": "{label}", "{text}" } },
-                            Patch::Note(note) => rsx! { p { class: "diff-note", "{note}" } },
-                        }
-                    }
-                }
-            }
-            if let Some(note) = diff.truncated {
-                p { class: "diff-note", "{note}" }
-            }
+            Preview { preview: diff.preview }
             p { class: "undo-scope", "Undo removes this turn and every later turn from the conversation, and restores files to before this turn." }
             button {
                 class: "undo-turn",
@@ -96,5 +85,28 @@ fn Diff(checkpoint: CheckpointId, diff: ui::Diff) -> Element {
             }
             p { class: "undo-hint", "{diff.undo_hint}" }
         }
+    }
+}
+
+#[component]
+fn Preview(preview: Rc<ui::Preview>) -> Element {
+    rsx! {
+            div { class: "diff-files", tabindex: "0", role: "region", "aria-label": "Changed files",
+                if let Some(note) = preview.empty {
+                    p { class: "diff-note", "{note}" }
+                }
+                for file in &preview.files {
+                    section { class: "diff-file",
+                        code { class: "diff-path", "{file.path}" }
+                        match &file.patch {
+                            Patch::Text { text, label } => rsx! { pre { class: "diff-patch", tabindex: "0", "aria-label": "{label}", "{text}" } },
+                            Patch::Note(note) => rsx! { p { class: "diff-note", "{note}" } },
+                        }
+                    }
+                }
+            }
+            if let Some(note) = preview.truncated {
+                p { class: "diff-note", "{note}" }
+            }
     }
 }

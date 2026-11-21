@@ -1,58 +1,9 @@
-// Drives the web build at an iPhone viewport against a live `conductord host`
-// on the fake CLIs, through n0's relays. ENGINE picks
-// chromium or webkit; webkit stands in for iOS Safari, which Chromium does
-// not catch (it accepted the relay's root-dot hostname that Safari rejected).
-//
-// usage: ENGINE=webkit node browser.ts <join-url> <out> <scenario> <dir>
-//
-// Scenarios, each against its own host and each in scenarios/. <dir> is the
-// session directory on the host, holding the fake's recording; <out> is a
-// screenshot, or for screens the directory the screenshots go to.
-//   turn      Live on the relay, a Claude turn through approval, reload,
-//             and pairing a fresh install.
-//   worktrees A session's checkpointed turns: a turn's changes shown and
-//             one undone with every later turn, across a reload.
-//   codex     Two Codex sessions in <dir>/first and <dir>/second, one
-//             approved and one denied.
-//   credentials  The forms the host's catalog describes, and a Claude
-//             gateway entered in its form, which makes the instance of the
-//             gateway's account beside Claude's own; that instance removed,
-//             added again and listed in the new-session picker; <dir> is
-//             unused.
-//   sign-in   Claude signed in from the app on the fake's sign-in: the
-//             link it printed, a refused code, then the accepted one, and
-//             the account the CLI named shown as an instance, signed in,
-//             without a reload; <dir> is unused, and <out> also gets a
-//             -refused shot.
-//   questions A Claude question in <dir>/question answered by tapping an
-//             option, and a command in <dir>/for-session allowed for the
-//             session, which then runs again without asking.
-//   continue  A Claude session in <dir>/killed started with a model and
-//             an effort picked in the form, its CLI killed mid-turn and
-//             continued; and one in <dir>/reasoning whose reasoning streams
-//             under "Thinking…" and folds into a "Thinking" disclosure.
-//   tasks     A Claude session in <dir> whose turn keeps a checklist, shown
-//             as its tasks, and whose effort is changed in the header
-//             before the next turn; <out> is the phone screenshot.
-//   subagents A sub-agent folded under the call that started it, opened,
-//             and kept across a reload.
-//   screens   Sessions in <dir>/conductor (held mid-reply), <dir>/scratch
-//             (the CLI hangs up) and <dir>/notes (never sent to), shot at
-//             1280x800 and 390x844, light and dark.
-//   hosts     Two hosts, desk (the join link) and laptop (SECOND_JOIN),
-//             paired in one app: a Claude session started on each from the
-//             one form, each listed under its own host, both kept across a
-//             reload, desk paired again, and laptop forgotten.
-//   projects  A host whose home lists alpha, checked out in <dir>/roots,
-//             and beta, cloned from the projects view; then a Claude
-//             session started in alpha from the form's project picker.
-//
-// This file is the boundary: it alone reads the arguments, the environment
-// and the clock, and writes to the console.
+// Usage: ENGINE=webkit node browser.ts <join-url> <out> <scenario> <dir>
+// <dir> holds the host's fake CLI recording. The screens scenario writes to
+// a directory at <out>; other scenarios write a screenshot file.
 
 import { type Browser, chromium, type Page, webkit } from "playwright";
 import {
-	JOIN_FRAGMENT,
 	LIVE,
 	MS_PER_SECOND,
 	PHONE,
@@ -61,7 +12,14 @@ import {
 	stamp,
 	tools,
 } from "./harness.ts";
-import { checkConsole, type Recorder, recorder } from "./records.ts";
+import {
+	checkConsole,
+	messageOf,
+	pairingRedactor,
+	type Recorder,
+	recorder,
+	traceOf,
+} from "./records.ts";
 import { codex } from "./scenarios/codex.ts";
 import { continueSession } from "./scenarios/continue.ts";
 import { credentials } from "./scenarios/credentials.ts";
@@ -91,9 +49,6 @@ const SCENARIOS = {
 } as const;
 const ENGINES = { chromium, webkit } as const;
 
-// Every wait is on something the page or the host shows, so none needs a
-// tight bound: each may take up to PATIENCE, which only a broken step uses
-// up, and the whole scenario up to DEADLINE.
 const {
 	E2E_PATIENCE: patienceSetting,
 	E2E_DEADLINE: deadlineSetting,
@@ -103,9 +58,8 @@ const {
 }: Readonly<Record<string, string | undefined>> = process.env;
 const DEFAULT_PATIENCE_MS = 120_000;
 const DEFAULT_DEADLINE_MS = 600_000;
-const PATIENCE = Number(patienceSetting ?? DEFAULT_PATIENCE_MS);
-const DEADLINE = Number(deadlineSetting ?? DEFAULT_DEADLINE_MS);
-const FAILURE_SHOT_MS = 10_000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
+const FAILURE_DIAGNOSTICS_MS = 10_000;
 const USAGE_EXIT = 2;
 const FIRST_ARGUMENT = 2;
 
@@ -113,8 +67,6 @@ const FIRST_ARGUMENT = 2;
 const IPHONE_UA =
 	"Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1";
 
-/** The run's positional arguments: usage: node browser.ts <join-url> <out>
- * <scenario> <dir>. */
 interface Arguments {
 	readonly joinUrl: string;
 	readonly out: string;
@@ -133,20 +85,6 @@ const isScenario = (name: string): name is keyof typeof SCENARIOS =>
 const isEngine = (name: string): name is keyof typeof ENGINES =>
 	Object.hasOwn(ENGINES, name);
 
-const traceOf = (error: unknown): string => {
-	if (error instanceof Error && error.stack !== undefined) {
-		return error.stack;
-	}
-	return String(error);
-};
-
-const messageOf = (error: unknown): string => {
-	if (error instanceof Error) {
-		return error.message;
-	}
-	return String(error);
-};
-
 const argumentsOf = (args: readonly string[]): Arguments => {
 	const [joinUrl, out, scenario, dir] = args;
 	if (
@@ -163,8 +101,23 @@ const argumentsOf = (args: readonly string[]): Arguments => {
 	return { joinUrl, out, scenario, dir };
 };
 
+const duration = (
+	name: string,
+	setting: string | undefined,
+	fallback: number,
+): number => {
+	const ms = Number(setting ?? fallback);
+	if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMEOUT_MS) {
+		throw new RangeError(
+			`${name} must be an integer between 1 and ${MAX_TIMEOUT_MS} milliseconds`,
+		);
+	}
+	return ms;
+};
+
 const launch = async (
 	scenario: string,
+	patience: number,
 	log: (line: string) => void,
 ): Promise<{ readonly browser: Browser; readonly page: Page }> => {
 	if (!isEngine(engine)) {
@@ -179,12 +132,10 @@ const launch = async (
 		hasTouch: true,
 		userAgent: IPHONE_UA,
 	});
-	context.setDefaultTimeout(PATIENCE);
+	context.setDefaultTimeout(patience);
 	return { browser, page: await context.newPage() };
 };
 
-/** The page as it was at a failure, and its status line, so a failure under
- * load says what the page was waiting on. */
 const shootFailure = async (run: Run, scenario: string): Promise<void> => {
 	const { page, log } = run;
 	try {
@@ -196,7 +147,7 @@ const shootFailure = async (run: Run, scenario: string): Promise<void> => {
 			await page.screenshot({
 				path: shot,
 				fullPage: true,
-				timeout: FAILURE_SHOT_MS,
+				timeout: FAILURE_DIAGNOSTICS_MS,
 			});
 			log(`failure screenshot ${shot}`);
 		}
@@ -205,20 +156,41 @@ const shootFailure = async (run: Run, scenario: string): Promise<void> => {
 	}
 };
 
-// A failed step leaves the page as it was and what the app last logged.
-const onFailure =
-	({ run, record, scenario }: Started) =>
-	async (failure: unknown): Promise<void> => {
-		run.log(traceOf(failure));
-		await shootFailure(run, scenario);
-		run.log("last console lines:");
-		for (const line of record.tail()) {
-			console.log(`    ${line}`);
-		}
-		process.exit(1);
-	};
+const reportFailure = async ({
+	run,
+	record,
+	scenario,
+}: Started): Promise<void> => {
+	run.log("last console lines:");
+	for (const line of record.tail()) {
+		run.log(`    ${line}`);
+	}
+	await shootFailure(run, scenario);
+};
 
-const clock = (): {
+const failureHandler = (
+	log: Run["log"],
+): ((failure: unknown, started?: Started) => void) => {
+	let hasFailed = false;
+	return (failure: unknown, started?: Started): void => {
+		if (hasFailed) {
+			return;
+		}
+		hasFailed = true;
+		setTimeout(() => process.exit(1), FAILURE_DIAGNOSTICS_MS);
+		log(traceOf(failure));
+		if (started === undefined) {
+			process.exit(1);
+		}
+		reportFailure(started)
+			.catch((error: unknown) => log(traceOf(error)))
+			.finally(() => process.exit(1));
+	};
+};
+
+const clock = (
+	redact: (line: string) => string,
+): {
 	readonly now: () => number;
 	readonly elapsed: () => number;
 	readonly log: (line: string) => void;
@@ -230,24 +202,17 @@ const clock = (): {
 		now,
 		elapsed,
 		log: (line: string): void => {
-			console.log(stamp(elapsed(), line));
+			console.log(stamp(elapsed(), redact(line)));
 		},
 	};
 };
 
-const armDeadline = (): void => {
-	setTimeout(() => {
-		throw new Error(
-			`FAILED: the scenario took longer than ${DEADLINE / MS_PER_SECOND}s`,
-		);
-	}, DEADLINE).unref();
-};
-
-const start = async (args: readonly string[]): Promise<Started> => {
-	const { joinUrl, out, scenario, dir } = argumentsOf(args);
-	const { now, elapsed, log } = clock();
-	armDeadline();
-	const { browser, page } = await launch(scenario, log);
+const start = async (
+	{ joinUrl, out, scenario, dir }: Arguments,
+	patience: number,
+	{ now, elapsed, log }: ReturnType<typeof clock>,
+): Promise<Started> => {
+	const { browser, page } = await launch(scenario, patience, log);
 	const record = recorder(elapsed);
 	record.watch(page);
 	const run: Run = {
@@ -257,21 +222,19 @@ const start = async (args: readonly string[]): Promise<Started> => {
 		out,
 		dir,
 		secondJoin,
-		patience: PATIENCE,
+		patience,
 		now,
 		log,
 		watch: record.watch,
 		consoleError: record.consoleError,
 	};
-	const started = { run, record, scenario };
-	process.on("uncaughtException", onFailure(started));
-	return started;
+	return { run, record, scenario };
 };
 
 const connect = async (run: Run): Promise<void> => {
 	const { page, joinUrl, log, now } = run;
 	const { statusLine, waitFor } = tools(run);
-	log(`open ${joinUrl.replace(JOIN_FRAGMENT, "#join=<ticket>")}`);
+	log(`open ${joinUrl}`);
 	const opened = now();
 	await page.goto(joinUrl);
 	await waitFor(LIVE);
@@ -279,8 +242,7 @@ const connect = async (run: Run): Promise<void> => {
 	log(`status line: "${await statusLine()}"`);
 };
 
-const main = async (args: readonly string[]): Promise<void> => {
-	const { run, record, scenario } = await start(args);
+const drive = async ({ run, record, scenario }: Started): Promise<void> => {
 	await connect(run);
 	if (!isScenario(scenario)) {
 		throw new Error(`unknown scenario ${scenario}`);
@@ -288,7 +250,51 @@ const main = async (args: readonly string[]): Promise<void> => {
 	await SCENARIOS[scenario](run);
 	checkConsole(run, record);
 	await run.browser.close();
-	run.log("PASS");
+};
+
+const beforeDeadline = async (
+	deadline: number,
+	run: () => Promise<void>,
+): Promise<void> => {
+	const { promise, reject } = Promise.withResolvers<void>();
+	const timer = setTimeout(() => {
+		reject(
+			new Error(
+				`FAILED: the scenario took longer than ${deadline / MS_PER_SECOND}s`,
+			),
+		);
+	}, deadline);
+	try {
+		await Promise.race([run(), promise]);
+	} finally {
+		clearTimeout(timer);
+	}
+};
+
+const main = async (args: readonly string[]): Promise<void> => {
+	const parsed = argumentsOf(args);
+	const time = clock(pairingRedactor([parsed.joinUrl, secondJoin]));
+	const fail = failureHandler(time.log);
+	let started: Started | undefined;
+	const onFailure = (failure: unknown): void => fail(failure, started);
+	const runScenario = async (): Promise<void> => {
+		const patience = duration(
+			"E2E_PATIENCE",
+			patienceSetting,
+			DEFAULT_PATIENCE_MS,
+		);
+		const deadline = duration(
+			"E2E_DEADLINE",
+			deadlineSetting,
+			DEFAULT_DEADLINE_MS,
+		);
+		await beforeDeadline(deadline, async () => {
+			started = await start(parsed, patience, time);
+			await drive(started);
+		});
+		time.log("PASS");
+	};
+	await runScenario().catch(onFailure);
 };
 
 await main(process.argv.slice(FIRST_ARGUMENT));

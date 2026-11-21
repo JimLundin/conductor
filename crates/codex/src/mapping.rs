@@ -36,9 +36,11 @@ pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
 #[must_use]
 pub fn codex_note(event: &CodexEvent) -> Option<Note> {
     match event {
-        CodexEvent::Unknown(frame) => {
-            Some(Note::unmapped(Provider::Codex, frame.to_string(), None))
-        }
+        CodexEvent::Unknown(_) => Some(Note::unmapped(
+            Provider::Codex,
+            String::from("unknown"),
+            None,
+        )),
         CodexEvent::Thread {
             thread,
             event: ThreadEvent::SettingsChanged(settings),
@@ -49,10 +51,10 @@ pub fn codex_note(event: &CodexEvent) -> Option<Note> {
         }),
         CodexEvent::Thread {
             thread,
-            event: ThreadEvent::Unknown(frame),
+            event: ThreadEvent::Unknown(_),
         } => Some(Note::unmapped(
             Provider::Codex,
-            frame.to_string(),
+            String::from("unknown"),
             Some(thread.0.clone()),
         )),
         CodexEvent::Thread { .. } | CodexEvent::Exited { .. } => None,
@@ -143,7 +145,7 @@ fn approval_step(
             }
         }
         // The request names no paths; the tool card the item started has them.
-        ApprovalKind::FileChange { reason, .. } => Step::Open {
+        ApprovalKind::FileChange { reason } => Step::Open {
             native,
             call,
             tool: ToolKind::FileChange { files: Vec::new() },
@@ -308,7 +310,7 @@ mod tests {
         assert_cases([
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {
-                    id: ApprovalId(String::from("1")),
+                    id: ApprovalId(String::from("integer:1")),
                     turn: turn(),
                     item: String::from("exec-2"),
                     kind: ApprovalKind::Command {
@@ -318,10 +320,9 @@ mod tests {
                             "needs to write outside the workspace",
                         )),
                     },
-                    options: Vec::new(),
                 }),
                 want: Vec::from([Step::Open {
-                    native: NativeRequest(String::from("1")),
+                    native: NativeRequest(String::from("integer:1")),
                     call: ToolCallId(String::from("exec-2")),
                     tool: ToolKind::Command {
                         command: String::from("touch ~/b.txt"),
@@ -334,7 +335,7 @@ mod tests {
             },
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {
-                    id: ApprovalId(String::from("2")),
+                    id: ApprovalId(String::from("integer:2")),
                     turn: turn(),
                     item: String::from("exec-3"),
                     kind: ApprovalKind::Permissions {
@@ -347,10 +348,9 @@ mod tests {
                             ])),
                         ]),
                     },
-                    options: Vec::new(),
                 }),
                 want: Vec::from([Step::Open {
-                    native: NativeRequest(String::from("2")),
+                    native: NativeRequest(String::from("integer:2")),
                     call: ToolCallId(String::from("exec-3")),
                     tool: ToolKind::Other {
                         name: String::from("permissions"),
@@ -366,16 +366,15 @@ mod tests {
             },
             Case {
                 got: on_thread(ThreadEvent::ApprovalRequested {
-                    id: ApprovalId(String::from("0")),
+                    id: ApprovalId(String::from("integer:0")),
                     turn: turn(),
                     item: String::from("exec-1"),
                     kind: ApprovalKind::UserInput {
                         questions: Vec::from([color()]),
                     },
-                    options: Vec::new(),
                 }),
                 want: Vec::from([Step::Ask {
-                    native: NativeRequest(String::from("0")),
+                    native: NativeRequest(String::from("integer:0")),
                     questions: Vec::from([color()]),
                 }]),
             },

@@ -448,13 +448,13 @@ pub async fn login(
 ) -> anyhow::Result<()> {
     let data_dir = data_dir_or_default(given)?;
     let catalog = plugins.catalog();
-    let (store, stored) = Store::open(&data_dir, catalog.clone())?;
+    let (store, _) = Store::open(&data_dir, catalog)?;
     let requested = sign_in_instance(provider, account.as_deref());
     if let Some(to) = store.recovered_account(&requested) {
         tracing::info!(target: "host", instance = %to, "signed in");
         return Ok(());
     }
-    let roster = stored.roster(&catalog);
+    let roster = store.read_roster()?;
     let instance =
         host::registry::picked(&roster, provider, account.as_deref())
             .map_err(anyhow::Error::msg)?;
@@ -523,9 +523,18 @@ pub async fn sign_in_check(
 }
 
 /// How the CLI's `--version` run exited.
-async fn version(mut cli: tokio::process::Command) -> Result<Output, String> {
-    cli.output()
+async fn version(cli: tokio::process::Command) -> Result<Output, String> {
+    version_within(cli, std::time::Duration::from_secs(15)).await
+}
+
+async fn version_within(
+    mut cli: tokio::process::Command,
+    deadline: std::time::Duration,
+) -> Result<Output, String> {
+    cli.kill_on_drop(true);
+    tokio::time::timeout(deadline, cli.output())
         .await
+        .map_err(|_| String::from("the CLI version probe timed out"))?
         .map(|output| Output {
             code: output.status.code(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -568,7 +577,7 @@ fn announce(
             let svg_path = data_dir.join("join-qr.svg");
             let image =
                 code.render::<svg::Color>().min_dimensions(512, 512).build();
-            match std::fs::write(&svg_path, image) {
+            match crate::write_private(&svg_path, image.as_bytes()) {
                 Ok(()) => writeln!(out, "qr image: {}", svg_path.display())?,
                 Err(err) => tracing::warn!(
                     "could not write {}: {err}",
@@ -594,4 +603,19 @@ fn n0_relays() -> iroh::RelayMap {
         .iter()
         .map(net::without_root_dot)
         .collect()
+}
+
+#[cfg(all(test, unix))]
+mod version_tests {
+    #[tokio::test]
+    async fn a_pending_version_probe_times_out() {
+        let mut cli = tokio::process::Command::new("sleep");
+        cli.arg("3600");
+        let result =
+            super::version_within(cli, std::time::Duration::ZERO).await;
+        assert_eq!(
+            result.err().as_deref(),
+            Some("the CLI version probe timed out")
+        );
+    }
 }

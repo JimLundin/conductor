@@ -115,7 +115,7 @@ fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
     let shell = use_context::<Shell>();
     let host = use_context::<HostId>();
     let start = instance.clone();
-    let cancel = instance.clone();
+    let cancel = instance;
     rsx! {
         div { class: "sign-in",
             if let Some(button) = view.start {
@@ -131,17 +131,21 @@ fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
             if let Some(hint) = view.progress {
                 Hint { hint }
             }
-            if let Some(url) = view.link {
-                a {
-                    class: "sign-in-link",
-                    href: url,
-                    target: "_blank",
-                    rel: "noopener noreferrer",
-                    "Open the sign-in page"
+            if let Some(link) = view.link {
+                if let Some(url) = sign_in_url(&link) {
+                    a {
+                        class: "sign-in-link",
+                        href: url,
+                        target: "_blank",
+                        rel: "noopener noreferrer",
+                        "Open the sign-in page"
+                    }
+                } else {
+                    p { class: "error", role: "alert", "The host supplied an invalid sign-in link. Cancel and try signing in again." }
                 }
             }
             if let Some(code) = view.code {
-                DeviceCode { instance, code }
+                DeviceCode { key: "{code.code}", code }
             }
             if let Some(form) = view.paste {
                 PasteForm { form }
@@ -160,24 +164,50 @@ fn SignIn(instance: proto::InstanceId, view: ui::SignInView) -> Element {
     }
 }
 
+fn sign_in_url(link: &str) -> Option<String> {
+    let (scheme, rest) = link.split_once("://")?;
+    if !scheme.eq_ignore_ascii_case("https")
+        || rest.starts_with(['/', '\\'])
+        || link.contains(char::is_whitespace)
+    {
+        return None;
+    }
+    let url = url::Url::parse(link).ok()?;
+    url.has_host().then(|| url.into())
+}
+
 #[component]
-fn DeviceCode(instance: proto::InstanceId, code: ui::DeviceCode) -> Element {
-    let shell = use_context::<Shell>();
-    let host = use_context::<HostId>();
+fn DeviceCode(code: ui::DeviceCode) -> Element {
+    let mut clipboard = use_signal(|| ui::Clipboard::Ready);
     let copied = code.code.clone();
+    let status = clipboard();
+    let label = status.label();
     rsx! {
         p { class: "device-code",
             code { "{code.code}" }
             button {
                 r#type: "button",
                 class: "clear",
+                disabled: status.disabled(),
                 "aria-label": "{code.copy_label}",
-                onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::CopySignInCode(
-                    instance.clone(),
-                    copied.clone(),
-                ))),
-                "{code.copy}"
+                onclick: move |_| {
+                    clipboard.set(ui::Clipboard::Writing);
+                    let copy = document::eval("try { await navigator.clipboard.writeText(await dioxus.recv()); return true; } catch { return false; }");
+                    let sent = copy.send(copied.clone()).is_ok();
+                    spawn(async move {
+                        let result = if sent {
+                            copy.join::<bool>().await.ok()
+                        } else {
+                            None
+                        };
+                        clipboard.set(ui::Clipboard::finished(result));
+                    });
+                },
+                {label}
             }
+        }
+        if let Some(error) = status.error() {
+            p { class: "error", role: "alert", {error} }
         }
     }
 }
@@ -284,6 +314,26 @@ fn Field(field: ui::FieldView) -> Element {
                     text: event.value(),
                 })),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sign_in_url;
+
+    #[test]
+    fn only_offers_valid_https_sign_in_destinations() {
+        let valid = "https://example.test/device?state=sent";
+        assert_eq!(sign_in_url(valid).as_deref(), Some(valid));
+        for invalid in [
+            "http://example.test",
+            "javascript:alert(1)",
+            "https:///device",
+            "https://",
+            "https://[invalid",
+        ] {
+            assert_eq!(sign_in_url(invalid), None);
         }
     }
 }

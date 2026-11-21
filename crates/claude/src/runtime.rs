@@ -221,9 +221,11 @@ impl Runtime {
 
     fn event(&mut self, event: ClaudeEvent) -> Vec<Effect> {
         let note = match &event {
-            ClaudeEvent::Unknown(frame) => {
-                Some(Note::unmapped(Provider::Claude, frame.to_string(), None))
-            }
+            ClaudeEvent::Unknown(_) => Some(Note::unmapped(
+                Provider::Claude,
+                String::from("unknown"),
+                None,
+            )),
             _ => None,
         };
         self.lifecycle.steps(claude_steps(event), note)

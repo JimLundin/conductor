@@ -81,28 +81,40 @@ impl<C> Clone for Handle<C> {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("the process runner is unavailable")]
+pub struct Unavailable;
+
 impl<C> Handle<C> {
     /// # Errors
     /// Returns a receive error if the runner disappears before answering.
     pub async fn ask<T>(
         &self,
         call: impl FnOnce(oneshot::Sender<T>) -> C,
-    ) -> Result<T, oneshot::error::RecvError> {
+    ) -> Result<T, Unavailable> {
+        self.enqueue(call)
+            .await
+            .ok_or(Unavailable)?
+            .await
+            .map_err(|_| Unavailable)
+    }
+
+    pub async fn enqueue<T>(
+        &self,
+        call: impl FnOnce(oneshot::Sender<T>) -> C,
+    ) -> Option<oneshot::Receiver<T>> {
         let (reply, answer) = oneshot::channel();
         match self.calls.acquire().await {
             Ok(slot) => {
-                if self
-                    .mailbox
+                self.mailbox
                     .send(DriverCommand::Call(call(reply)))
                     .await
-                    .is_ok()
-                {
-                    slot.forget();
-                }
+                    .ok()?;
+                slot.forget();
+                Some(answer)
             }
-            Err(_) => drop(reply),
+            Err(_) => None,
         }
-        answer.await
     }
 
     /// # Errors
@@ -289,7 +301,7 @@ where
                 Ok(Some(Input::Wrote { then, outcome }))
             }
             Effect::Emit(event) => {
-                let _ = self.events.send(event).await;
+                self.emit(event).await;
                 Ok(None)
             }
             Effect::Log(note) => {
@@ -319,6 +331,19 @@ where
 }
 
 impl<C, V> Runner<C, V> {
+    async fn emit(&mut self, event: V) {
+        if let Err(mpsc::error::TrySendError::Full(queued)) =
+            self.events.try_send(event)
+            && !self.interrupted
+        {
+            tokio::select! {
+                biased;
+                _ = self.closing.changed() => self.interrupted = true,
+                _ = self.events.send(queued) => {}
+            }
+        }
+    }
+
     async fn write(&mut self, line: &str) -> io::Result<()> {
         let process = self.process.as_mut().ok_or(io::ErrorKind::BrokenPipe)?;
         if self.interrupted {

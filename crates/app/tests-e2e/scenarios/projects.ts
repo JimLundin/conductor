@@ -133,12 +133,13 @@ const projectSession = async (run: Run): Promise<void> => {
 	await form.locator('input[name="directory"]').fill(missing);
 	await form.getByRole("button", { name: "Start session" }).click();
 	await form
+		.locator('.field:has(input[name="directory"])')
 		.getByRole("alert")
 		.filter({ hasText: "There is no directory at that path on conductor." })
 		.waitFor({ timeout: patience });
 	await form.locator('select[name="project"]').selectOption({ label: "alpha" });
 	await form
-		.getByRole("alert")
+		.locator(":scope > [role=alert]")
 		.filter({ hasText: `There is no directory at ${missing} on conductor.` })
 		.waitFor({ timeout: patience });
 	check(

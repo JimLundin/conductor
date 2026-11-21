@@ -194,10 +194,11 @@ fn a_command_goes_to_the_host_of_the_session_or_form_it_comes_from() {
         .into_iter()
         .filter_map(|effect| match effect {
             Effect::Send { host, body, .. } => Some((host, body)),
-            Effect::SaveHosts(_)
+            Effect::PairHost(_)
+            | Effect::ForgetHost(_)
+            | Effect::NameHost(_)
             | Effect::Focus(_)
-            | Effect::ShowEffort(_)
-            | Effect::Copy(_) => None,
+            | Effect::ShowEffort(_) => None,
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -296,10 +297,7 @@ fn forgetting_a_host_drops_its_sessions_and_ignores_what_it_still_sends() {
         (
             Vec::from([text("desk")]),
             Some("list"),
-            Some(Effect::SaveHosts(Vec::from([Saved {
-                ticket: ticket(),
-                name: Some(text("desk")),
-            }]))),
+            Some(Effect::ForgetHost(OTHER)),
             true,
         )
     );
@@ -349,16 +347,10 @@ fn pairing_a_host_again_takes_its_new_ticket_and_keeps_its_sessions() {
                 (text("desk"), Vec::from([text("conductor")])),
                 (text("laptop"), Vec::from([text("notes")])),
             ]),
-            Vec::from([Effect::SaveHosts(Vec::from([
-                Saved {
-                    ticket: renewed,
-                    name: Some(text("laptop")),
-                },
-                Saved {
-                    ticket: ticket(),
-                    name: Some(text("desk")),
-                },
-            ]))]),
+            Vec::from([Effect::PairHost(Saved {
+                ticket: renewed,
+                name: Some(text("laptop")),
+            })]),
             Some("list"),
         )
     );
@@ -610,5 +602,83 @@ fn a_host_pick_arriving_after_unpairing_does_not_start_on_another_host() {
             Some(text("The selected host is no longer paired.")),
             Some((HOST.key(), true))
         ))
+    );
+}
+
+#[test]
+fn a_late_start_cannot_navigate_after_switching_hosts() {
+    let (pending, first) = run(
+        two(LinkState::Live),
+        Vec::from([
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    let (switched, second) = run(
+        pending,
+        Vec::from([
+            Intent::Form(FormIntent::PickHost(OTHER.key())),
+            Intent::Form(FormIntent::Start),
+            answer(&first, Ok(CommandResult::Started { session: SESSION })),
+        ]),
+    );
+    assert_eq!(
+        form(&switched).map(|form| form.start_label),
+        Some("Starting…")
+    );
+    let (refused, _) = run(
+        switched,
+        Vec::from([answer(&second, Err(text("command timed out")))]),
+    );
+    assert_eq!(
+        form(&refused)
+            .and_then(|form| form.refusal)
+            .map(|hint| hint.text),
+        Some(text("Codex on laptop: command timed out"))
+    );
+}
+
+#[test]
+fn equal_host_display_names_keep_distinct_instance_refusals() {
+    let reason = "setup required";
+    let (pending, effects) = run(
+        two(LinkState::Live),
+        Vec::from([
+            welcomed(
+                OTHER,
+                "desk",
+                claude(proto::Availability::Unavailable {
+                    reason: text(reason),
+                }),
+                None,
+            ),
+            Intent::Show(Place::NewSession),
+            Intent::Form(FormIntent::PickHost(HOST.key())),
+            Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
+            Intent::Form(FormIntent::Start),
+        ]),
+    );
+    let (switched, _) = run(
+        pending,
+        Vec::from([
+            answer(
+                &effects,
+                Ok(CommandResult::Rejected(
+                    proto::Rejection::InstanceUnavailable {
+                        reason: text(reason),
+                    },
+                )),
+            ),
+            Intent::Form(FormIntent::PickHost(OTHER.key())),
+        ]),
+    );
+    let message = "Claude Code can't run on desk: setup required";
+    assert_eq!(
+        form(&switched).map(|form| (
+            form.instance_hint.map(|hint| hint.text),
+            form.refusal.map(|hint| hint.text),
+        )),
+        Some((Some(text(message)), Some(text(message))))
     );
 }

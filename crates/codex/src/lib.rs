@@ -31,8 +31,8 @@ pub use mapping::{codex_answer, codex_steps};
 pub use protocol::{
     AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call,
     CodexEvent, Decision, INITIALIZE, Inbound, Outbound, PermissionAsk,
-    RequestId, Sandbox, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings,
-    TurnId, answer, encode, history_page, models, parse_line, thread_started,
-    turn_id, user_agent,
+    RequestId, ResponseError, Sandbox, ThreadEvent, ThreadId, ThreadOptions,
+    ThreadSettings, TurnId, answer, encode, history_page, models, parse_line,
+    thread_started, turn_id, user_agent,
 };
 pub use sign_in::sign_in;

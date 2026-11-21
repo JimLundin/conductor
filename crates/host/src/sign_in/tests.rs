@@ -146,6 +146,7 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
         &key(1),
         Ok(Some(Account::Named(String::from("me@example.com")))),
     );
+    assert_eq!(sign_ins.cancel(id()), (CommandResult::Accepted, Vec::new()));
     let listed = sign_ins
         .listed(&key(1), CommandResult::Instances(Instances::default()));
     assert_eq!(
@@ -421,4 +422,24 @@ fn a_sign_in_succeeds_only_when_it_exits_zero() {
             Err(String::from("the sign-in exited with signal: 9")),
         ]
     );
+}
+
+#[test]
+fn a_failed_input_write_stops_only_the_matching_run() {
+    let mut sign_ins = shown(pasted());
+    let _ = sign_ins.submit(id(), code());
+    assert_eq!(
+        sign_ins.write_failed(&key(2), String::from("closed pipe")),
+        []
+    );
+    assert_eq!(
+        sign_ins.write_failed(&key(1), String::from("closed pipe")),
+        [
+            Effect::Kill(key(1)),
+            step(SignInStep::Failed {
+                reason: String::from("closed pipe")
+            }),
+        ],
+    );
+    assert_eq!(sign_ins.running(), []);
 }

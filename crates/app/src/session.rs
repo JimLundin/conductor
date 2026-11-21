@@ -441,6 +441,18 @@ fn Composer(composer: ui::Composer) -> Element {
     let shell = use_context::<Shell>();
     let session = move |intent| shell.dispatch(Intent::Session(intent));
     rsx! {
+        if let Some(draft) = composer.refused.last() {
+            div {
+                p { "Unsent message" }
+                p { "{draft}" }
+                button {
+                    r#type: "button",
+                    disabled: composer.disabled || composer.pending,
+                    onclick: move |_| session(SessionIntent::RetryMessage),
+                    "Retry unsent message"
+                }
+            }
+        }
         form { class: "composer",
             onsubmit: move |event: FormEvent| {
                 event.prevent_default();
@@ -472,7 +484,7 @@ fn Composer(composer: ui::Composer) -> Element {
                 r#type: "submit",
                 class: "send",
                 "aria-label": "Send",
-                disabled: composer.disabled,
+                disabled: composer.disabled || composer.pending,
             }
         }
     }

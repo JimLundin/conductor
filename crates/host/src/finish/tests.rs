@@ -97,6 +97,7 @@ fn a_session_on_an_issue_finishes_between_turns() {
     assert_eq!(
         finishing(&started(), SESSION),
         Ok(Finishing {
+            retry: false,
             assignment: Assignment {
                 issue: ISSUE,
                 instance: instance(),
@@ -528,5 +529,41 @@ fn a_failed_push_still_notes_the_commits_that_landed() {
                 reason: text("offline"),
             },
         },
+    );
+}
+
+#[test]
+fn a_restarted_finish_reuses_its_pending_attempt_and_summary() {
+    let history = and(
+        started(),
+        Vec::from([
+            event(5, EventKind::FinishStarted),
+            user(6),
+            reply(7, "saved summary"),
+            done(8),
+            event(
+                9,
+                EventKind::SessionClosed {
+                    reason: crate::restore::restarted(),
+                },
+            ),
+        ]),
+    );
+    assert!(crate::restore::finish_interrupted(&history));
+    let interrupted = and(
+        history,
+        Vec::from([event(10, EventKind::FinishInterrupted)]),
+    );
+    let (mut finish, _) = Finish::new(SESSION, client());
+    assert_eq!(
+        finish.step(Input::History(interrupted)),
+        [Effect::Reply(CommandResult::Accepted), Effect::ReadHome]
+    );
+    let _ = finish.step(Input::Home(None));
+    let _ = finish.step(Input::Ready(Ok(())));
+    let _ = finish.step(Input::Landed(Ok(2)));
+    assert_eq!(
+        finish.step(Input::Pushed(None)),
+        [note(Some("saved summary"), 2)]
     );
 }

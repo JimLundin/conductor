@@ -167,19 +167,24 @@ What to build and why, as written by whoever opened it.
 ## 4. Flows
 
 **Start a session on an issue.** In the app: pick an issue, then a node,
-then one of its instances. The node checks it has a copy of the project (or
-clones it), makes the session's workspace on a branch cut from the issue's
-branch, and starts the agent with a first message built from the issue:
-its text, its checklist, its notes, and what to do when done.
+then one of its instances. The node needs a checkout of the project. Clone
+or otherwise provide one before starting a session. The node creates the
+session's workspace from the issue branch and gives the agent the issue's
+text, checklist, notes and instructions for finishing.
 
-**Continue elsewhere.** The same flow on another instance or node. The
-issue's branch travels through the remote, or a bundle when there is none,
-and the new session starts from it and from the notes.
+**Continue elsewhere.** Start a new session on the same issue to use its
+branch and notes. To carry landed commits to another node, first publish the
+issue branch to the project remote and make sure the target node has a
+checkout that can fetch it.
 
-**Finish.** When the agent ends its work or the person stops it, the node
-asks it for a summary, appends it to the issue's notes, lands the session's
-branch on the issue's branch, and moves the issue to `review` when there is
-something to look at. Removing the session then removes its workspace.
+**Finish.** Select **Finish** in the session. The node asks the agent for a
+summary, stops it and tries to land the session branch on the issue branch.
+It adds the summary to the issue notes and moves the issue to `review` when
+landing adds commits. Check the transcript's **Finished** row for the landing
+and push result. If it says the branch was kept on this host, inspect
+`issue/<id>` in the source checkout and check the remote configuration or
+reported push error before trying to continue on another node. Removing the
+session removes its workspace.
 
 **Agents updating issues.** Agents don't edit the home. They report through
 Conductor, as data the session already carries: the summary at the end and
@@ -259,12 +264,9 @@ call that started each, a description, its own transcript and status.
    (architecture §5.4).
 7. Sessions on issues: start, finish, continue elsewhere, with the
    session's branch cut from the issue's and each turn a commit on it
-   (§2.3). Done (architecture §5.3, §5.4): finishing pushes the issue's
-   branch to the project's remote, and the next host takes it from there;
-   each turn is a commit on the session's branch, and undoing resets it.
-   A project with no checkout on the host is cloned first by hand; one
-   with no remote keeps its issues' branches on one host until bundles
-   are built.
+   (§2.3). Done (architecture §5.3, §5.4). See §4 for the checkout
+   and publication prerequisites. Each turn is a commit on the session
+   branch, and undoing resets it.
 8. Standards and instructions composed into sessions. Done (§5).
 9. Agents reporting progress notes during a session. Done (§4).
 

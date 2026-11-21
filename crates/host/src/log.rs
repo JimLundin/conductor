@@ -7,7 +7,7 @@
 //! The shell owns the database and the channels. It hands [`Log`] what
 //! happened and performs each [`Effect`] in order.
 
-use alloc::collections::{BTreeMap, VecDeque};
+use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
 use core::mem;
 
@@ -79,6 +79,7 @@ pub enum Write {
     Event(Event),
     Receipt(CommandId, CommandResult),
     Conversation(SessionId, String),
+    Progress(HostSeq),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +135,7 @@ pub struct Log {
     /// The active command's events, published when it commits.
     staged: Vec<Event>,
     active: Option<CommandId>,
+    active_waiters: Vec<Ticket>,
     waiting: VecDeque<Start>,
     /// The start whose receipt the shell is reading.
     starting: Option<Start>,
@@ -165,6 +167,7 @@ impl Log {
             events,
             staged: Vec::new(),
             active: None,
+            active_waiters: Vec::new(),
             waiting: VecDeque::new(),
             starting: None,
             receipts: BTreeMap::new(),
@@ -174,8 +177,20 @@ impl Log {
     }
 
     #[must_use]
+    pub const fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    #[must_use]
     pub fn history(&self) -> &[Event] {
         &self.events
+    }
+
+    #[must_use]
+    pub fn running_sessions(&self) -> BTreeSet<SessionId> {
+        let mut running = crate::registry::running(&self.events);
+        running.extend(crate::registry::running(&self.staged));
+        running
     }
 
     /// Admission in the session actor also sees the changes it just staged
@@ -269,6 +284,15 @@ impl Log {
         }
     }
 
+    #[must_use]
+    pub fn delivered_progress(&self, seq: HostSeq) -> Vec<Effect> {
+        let write = Write::Progress(seq);
+        match self.active {
+            Some(_) => Vec::from([Effect::Store(write)]),
+            None => alone(write),
+        }
+    }
+
     /// Undo's durable boundary: commits what the active command has staged,
     /// and keeps it active in a new transaction.
     pub fn barrier(&mut self) -> Vec<Effect> {
@@ -291,12 +315,20 @@ impl Log {
             key,
             kind,
         };
-        let effects = match self.active {
-            Some(_) => {
+        let effects = match (self.active, self.receipts.get_mut(&key)) {
+            (Some(active), _) if active == key => {
+                self.active_waiters.push(start.ticket);
+                Vec::new()
+            }
+            (Some(_), Some(waiters)) => {
+                waiters.push(start.ticket);
+                Vec::new()
+            }
+            (Some(_), None) => {
                 self.waiting.push_back(start);
                 Vec::new()
             }
-            None => Vec::from([self.look_up(start)]),
+            (None, _) => Vec::from([self.look_up(start)]),
         };
         (start.ticket, effects)
     }
@@ -318,6 +350,14 @@ impl Log {
                     Kind::Session => {
                         effects.push(Effect::Open);
                         self.active = Some(start.key);
+                        self.waiting.retain(|waiting| {
+                            if waiting.key == start.key {
+                                self.active_waiters.push(waiting.ticket);
+                                false
+                            } else {
+                                true
+                            }
+                        });
                     }
                     Kind::Receipt => {
                         self.receipts.insert(start.key, Vec::new());
@@ -354,7 +394,7 @@ impl Log {
                 Vec::new()
             }
             (true, None) => self.settle(&finish),
-            (false, _) => self.close(finish),
+            (false, _) => self.close(&finish),
         };
         (ticket, effects)
     }
@@ -368,14 +408,21 @@ impl Log {
         running.then_some(Effect::Stop).into_iter().collect()
     }
 
-    fn close(&mut self, finish: Finish) -> Vec<Effect> {
+    fn close(&mut self, finish: &Finish) -> Vec<Effect> {
         let mut effects = Vec::new();
         if self.active.is_some() && finish.keep_receipt {
-            effects
-                .push(Effect::Store(Write::Receipt(finish.key, finish.result)));
+            effects.push(Effect::Store(Write::Receipt(
+                finish.key,
+                finish.result.clone(),
+            )));
         }
         effects.extend(self.commit());
         self.active = None;
+        effects.extend(mem::take(&mut self.active_waiters).into_iter().map(
+            |waiter| {
+                Effect::Begun(waiter, Begun::Cached(finish.result.clone()))
+            },
+        ));
         effects.push(Effect::Finished(finish.ticket));
         for held in mem::take(&mut self.held) {
             effects.extend(self.settle(&held));

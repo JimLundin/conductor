@@ -143,16 +143,10 @@ impl<R> Session<R> {
     fn line<S, E: fmt::Display>(&mut self, line: &str) -> Vec<Effect<R, S, E>> {
         match parse_line(line) {
             Ok(inbound) => self.inbound(inbound),
-            Err(error) => Vec::from([
-                Effect::Log(Note::NotJson {
-                    provider: Provider::Claude,
-                    error: error.to_string(),
-                    line: line.to_owned(),
-                }),
-                Effect::Emit(ClaudeEvent::Unknown(Value::String(
-                    line.to_owned(),
-                ))),
-            ]),
+            Err(error) => Vec::from([Effect::Log(Note::NotJson {
+                provider: Provider::Claude,
+                error: error.to_string(),
+            })]),
         }
     }
 
@@ -423,7 +417,7 @@ fn failed<R, S, E: fmt::Display>(
 #[cfg(test)]
 mod tests {
     use agents::{Exit, Note};
-    use proto::Provider;
+    use proto::{Answer, Provider};
     use serde_json::{Value, json};
 
     use super::{
@@ -697,6 +691,63 @@ mod tests {
     }
 
     #[test]
+    fn a_question_can_be_answered_after_a_wrong_answer_count()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut session = Session::default();
+        let mut question = permission("question_1");
+        question["request"]["tool_name"] = json!("AskUserQuestion");
+        question["request"]["input"] = json!({
+            "questions": [{
+                "question": "Which color?",
+                "header": "Color",
+                "options": [{"label": "Blue", "description": "Cool"}],
+                "multiSelect": false,
+            }],
+        });
+        let respond = |answers, reply| {
+            Input::Command(Command::Call(CallRequest::Respond {
+                id: PermissionRequestId(String::from("question_1")),
+                decision: PermissionDecision::Answer(answers),
+                reply,
+            }))
+        };
+        let seen = walk(
+            &mut session,
+            Vec::from([
+                line(&question),
+                respond(Vec::new(), 1),
+                respond(
+                    Vec::from([Answer(Vec::from([String::from("Blue")]))]),
+                    2,
+                ),
+            ]),
+        );
+        assert!(matches!(
+            seen[1].as_slice(),
+            [Effect::Reply(1, Err(Failure::Json(_)))]
+        ));
+        let [
+            Effect::Write {
+                line: wire,
+                then: Then::Answer(2),
+            },
+        ] = seen[2].as_slice()
+        else {
+            return Err("corrected Claude answer was not written".into());
+        };
+        let wire_answer = serde_json::from_str::<Value>(wire)?;
+        assert_eq!(
+            wire_answer.pointer("/response/request_id"),
+            Some(&json!("question_1"))
+        );
+        assert_eq!(
+            wire_answer.pointer("/response/response/updatedInput/answers"),
+            Some(&json!({"Which color?": "Blue"}))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_permission_is_answered_once_and_a_withdrawn_one_not_at_all() {
         let mut session = Session::default();
         let respond = |id: &str, reply| {
@@ -788,22 +839,16 @@ mod tests {
     }
 
     #[test]
-    fn a_line_that_is_not_json_passes_on_as_unknown() {
+    fn malformed_output_logs_the_parse_error() {
         let mut session = Session::<u8>::default();
-        let seen: Vec<Step> =
-            session.step(Input::Read(Ok(Some(String::from("oops")))));
+        let seen: Vec<Step> = session
+            .step(Input::Read(Ok(Some(String::from("private-test-marker")))));
         assert_eq!(
             seen,
-            Vec::from([
-                Effect::Log(Note::NotJson {
-                    provider: Provider::Claude,
-                    error: String::from("expected value at line 1 column 1"),
-                    line: String::from("oops"),
-                }),
-                Effect::Emit(ClaudeEvent::Unknown(Value::String(
-                    String::from("oops")
-                )))
-            ])
+            Vec::from([Effect::Log(Note::NotJson {
+                provider: Provider::Claude,
+                error: String::from("expected value at line 1 column 1"),
+            })])
         );
     }
 

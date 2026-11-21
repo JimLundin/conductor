@@ -167,9 +167,15 @@ impl State {
             Intent::Join(Ok(ticket))
                 if matches!(self.shown, ShownPlace::AddHost(_)) =>
             {
-                let next = self.paired(ticket);
-                let saved = next.saved();
-                (next, Vec::from([Effect::SaveHosts(saved)]))
+                let id = HostId::of(&ticket);
+                let saved = Saved {
+                    ticket: ticket.clone(),
+                    name: self
+                        .hosts
+                        .get(&id)
+                        .and_then(|host| host.saved.clone()),
+                };
+                (self.paired(ticket), Vec::from([Effect::PairHost(saved)]))
             }
             Intent::Join(Ok(_)) => (self, Vec::new()),
             Intent::Join(Err(error)) => {
@@ -251,8 +257,7 @@ impl State {
                 _ => {}
             }
         }
-        let saved = self.saved();
-        (self, Vec::from([Effect::SaveHosts(saved)]))
+        (self, Vec::from([Effect::ForgetHost(host)]))
     }
 
     fn linked(mut self, host: HostId, update: Update) -> (Self, Vec<Effect>) {
@@ -272,11 +277,16 @@ impl State {
         if left {
             self.visit = self.visit.wrapping_add(1);
         }
-        self.hosts.insert(host, next);
         let effects = renamed
-            .then(|| Effect::SaveHosts(self.saved()))
+            .then(|| {
+                Effect::NameHost(Saved {
+                    ticket: next.ticket.clone(),
+                    name: next.saved.clone(),
+                })
+            })
             .into_iter()
             .collect();
+        self.hosts.insert(host, next);
         (self, effects)
     }
 
@@ -422,15 +432,22 @@ impl State {
         };
         match (&mut self.shown, reply.to) {
             (_, ReplyTo::Notice) => self.notice = refusal(answer),
+            (ShownPlace::Issue(_, _, Some(draft)), ReplyTo::Issue(field)) => {
+                draft.answered(field, refusal(answer));
+            }
             (ShownPlace::Session(_, _, Some(_)), ReplyTo::Effort(shown)) => {
                 return self.effort_refused(shown, answer);
             }
-            (ShownPlace::NewSession(form), ReplyTo::Start) => {
-                if let Ok(CommandResult::Started { session }) = answer {
+            (ShownPlace::NewSession(form), ReplyTo::Start(starts)) => {
+                if let Some(session) =
+                    form.answered(reply.host, starts, known, answer)
+                {
                     self = self.show(Place::Session(reply.host, session));
-                } else {
-                    form.answered(known, answer);
                 }
+            }
+            (ShownPlace::Session(_, _, Some(pane)), ReplyTo::Message) => {
+                self.notice = refusal(answer);
+                pane.message_answered(self.notice.is_none());
             }
             (ShownPlace::Projects(_), ReplyTo::Created) => {
                 if let Ok(CommandResult::IssueCreated { issue }) = answer {

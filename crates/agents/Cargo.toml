@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 proto = { path = "../proto" }
 serde_json.workspace = true
+url = { version = "2.5.8", default-features = false }
 
 [lints]
 workspace = true

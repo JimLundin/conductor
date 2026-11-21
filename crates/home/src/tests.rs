@@ -277,7 +277,7 @@ fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
         probe(
             "/b",
             &[OTHER, ROOT],
-            Some("https://GitHub.com/jimlundin/conductor/"),
+            Some("https://GitHub.com/JimLundin/conductor/"),
         ),
         probe("/c", &[OTHER], Some(REMOTE)),
         probe(
@@ -307,28 +307,61 @@ fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
 }
 
 #[test]
-fn a_remote_is_normal_without_scheme_user_suffix_or_case() {
+fn repository_identity_preserves_local_and_network_path_case() {
     assert_eq!(
-        [
-            "https://github.com/JimLundin/conductor.git",
-            "git@github.com:JimLundin/conductor.git",
-            "ssh://git@github.com/JimLundin/conductor",
-            " https://github.com/JimLundin/conductor/ ",
-            "file:///srv/Home.git",
-            "/srv/home",
-            "https://host:8443/x",
-        ]
-        .map(normal),
-        [
-            "github.com/jimlundin/conductor",
-            "github.com/jimlundin/conductor",
-            "github.com/jimlundin/conductor",
-            "github.com/jimlundin/conductor",
-            "/srv/home",
-            "/srv/home",
-            "host:8443/x",
-        ]
+        normal("https://GitHub.com/JimLundin/conductor.git"),
+        normal("git@github.com:JimLundin/conductor")
     );
+    assert_ne!(
+        normal("https://github.com/JimLundin/conductor.git"),
+        normal("https://github.com/jimlundin/conductor.git")
+    );
+    assert_ne!(normal("/srv/a@Home.git"), normal("/srv/a@home.git"));
+    assert_ne!(normal("/srv/a@Home.git"), normal("/srv/Home.git"));
+    assert_eq!(
+        crate::checkout::display("/srv/a@Home.git"),
+        "/srv/a@Home.git"
+    );
+}
+
+#[test]
+fn home_and_project_snapshots_use_credential_free_addresses()
+-> Result<(), serde_json::Error> {
+    let private = "https://synthetic-user:synthetic-password@github.com/JimLundin/conductor.git?access_token=synthetic-query#synthetic-fragment";
+    let projects = [project("conductor", Some(private))];
+    let shown = view(
+        private,
+        &Sync::new(),
+        &projects,
+        Found {
+            checkouts: &BTreeMap::new(),
+            cloning: &BTreeMap::new(),
+            issues: &BTreeMap::new(),
+            unpushed: 0,
+        },
+    );
+    assert_eq!(shown.remote, REMOTE);
+    assert_eq!(
+        shown
+            .projects
+            .first()
+            .and_then(|project| project.remote.as_deref()),
+        Some(REMOTE)
+    );
+    assert_eq!(
+        remote_of(&projects, &id("conductor")),
+        Ok(String::from(private))
+    );
+    assert_eq!(normal(private), normal(REMOTE));
+    let local = "/srv/repository?literal#local.git";
+    assert_eq!(crate::checkout::display(local), local);
+    let file = "file:///srv/repository%3Fliteral%23local.git";
+    assert_eq!(crate::checkout::display(file), file);
+    let json = serde_json::to_string(&shown)?;
+    assert!(json.contains(REMOTE));
+    assert!(!json.contains("synthetic-"));
+    assert!(!format!("{shown:?}").contains("synthetic-"));
+    Ok(())
 }
 
 #[test]

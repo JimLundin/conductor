@@ -15,6 +15,7 @@ use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::mpsc;
 
 use super::hub::{Hub, Thread};
+use super::server::Error;
 
 impl ProviderInstance for Hub {
     fn configure(&self, given: Option<Credential>) -> Configuring<'_> {
@@ -65,9 +66,12 @@ impl Agent<Input, Effect> for Task {
     async fn perform(&mut self, effect: Effect) -> Performed<Input> {
         let feedback = match effect {
             Effect::Open(open) => Input::Opened(self.open(open).await),
-            Effect::Call { call, then } => Input::Called {
-                then,
-                outcome: self.call(call).await,
+            Effect::Call { call, then } => match self.call(call).await {
+                Err(Error::MutationUnknown(_)) => Input::RevertUnknown,
+                outcome => Input::Called {
+                    then,
+                    outcome: outcome.map_err(|error| error.to_string()),
+                },
             },
             Effect::Turns => Input::Listed(self.turns().await),
             Effect::Runtime(report) => return Performed::Report(report),
@@ -89,9 +93,9 @@ impl Task {
         Ok(id)
     }
 
-    async fn call(&self, call: Call) -> Result<(), String> {
+    async fn call(&self, call: Call) -> Result<(), Error> {
         let Some((thread, _)) = &self.thread else {
-            return Err(String::from(NOT_RUNNING));
+            return Err(Error::NotRunning);
         };
         match call {
             Call::SendTurn { text, effort } => {
@@ -103,7 +107,6 @@ impl Task {
             }
             Call::Revert(turn) => thread.revert(turn).await,
         }
-        .map_err(|error| error.to_string())
     }
 
     async fn turns(&self) -> Result<Vec<TurnId>, String> {

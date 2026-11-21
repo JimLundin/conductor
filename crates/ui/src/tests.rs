@@ -6,6 +6,7 @@ mod places;
 mod projects;
 
 use alloc::collections::BTreeMap;
+use alloc::rc::Rc;
 
 use client::link::{LinkState, Status, Update};
 use proto::StartAt;
@@ -26,9 +27,9 @@ use crate::{
     Action, AgentGroup, Ask, CredentialIntent, Detail, Diff, DiffFile,
     DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
     HostsScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
-    Patch, Place, QuestionBody, Row, Saved, Screen, SessionIntent, SessionPane,
-    State, Stored, ToolDetail, ToolLine, TurnChanges, UndoNote, sends, update,
-    view,
+    Patch, Place, Preview, QuestionBody, Row, Saved, Screen, SessionIntent,
+    SessionPane, State, Stored, ToolDetail, ToolLine, TurnChanges, UndoNote,
+    sends, update, view,
 };
 
 const SESSION: SessionId = SessionId(7);
@@ -270,10 +271,11 @@ fn sent(effects: &[Effect]) -> Vec<CommandBody> {
         .iter()
         .filter_map(|effect| match effect {
             Effect::Send { body, .. } => Some(body.clone()),
-            Effect::SaveHosts(_)
+            Effect::PairHost(_)
+            | Effect::ForgetHost(_)
+            | Effect::NameHost(_)
             | Effect::Focus(_)
-            | Effect::ShowEffort(_)
-            | Effect::Copy(_) => None,
+            | Effect::ShowEffort(_) => None,
         })
         .collect()
 }
@@ -293,7 +295,13 @@ fn local(effects: &[Effect]) -> Vec<Effect> {
     effects
         .iter()
         .filter(|effect| {
-            !matches!(effect, Effect::Send { .. } | Effect::SaveHosts(_))
+            !matches!(
+                effect,
+                Effect::Send { .. }
+                    | Effect::PairHost(_)
+                    | Effect::ForgetHost(_)
+                    | Effect::NameHost(_)
+            )
         })
         .cloned()
         .collect()
@@ -335,12 +343,12 @@ fn pairing_saves_a_valid_link_reports_a_bad_one_and_forgets_the_host() {
                 key: ticket().to_text(),
                 ticket: ticket(),
             }])),
-            Vec::from([Effect::SaveHosts(Vec::from([Saved {
+            Vec::from([Effect::PairHost(Saved {
                 ticket: ticket(),
                 name: None,
-            }]))]),
+            })]),
             Some((true, invalid)),
-            Vec::from([Effect::SaveHosts(Vec::new())]),
+            Vec::from([Effect::ForgetHost(HOST)]),
         )
     );
 }
@@ -940,6 +948,80 @@ fn the_composer_sends_trimmed_text_only_when_the_agent_takes_messages() {
 }
 
 #[test]
+fn a_failed_send_keeps_the_text_typed_while_the_message_was_pending() {
+    let send = Intent::Session(SessionIntent::SendMessage);
+    let typed =
+        |words: &str| Intent::Session(SessionIntent::TypeMessage(text(words)));
+    let (pending, sent_message) =
+        opened(Vec::from([typed(" first "), send.clone()]));
+    let (rejected, blocked) = run(
+        pending,
+        Vec::from([
+            typed("next"),
+            send,
+            event(3, said("another client's turn")),
+            answer(
+                &sent_message,
+                Ok(CommandResult::Rejected(Rejection::TurnInProgress)),
+            ),
+        ]),
+    );
+    assert_eq!(sent(&blocked), []);
+    assert_eq!(composer(&rejected).map(|shown| shown.0), Some(text("next")));
+    assert_eq!(
+        pane(&rejected).and_then(|shown| match shown.footer {
+            Footer::Composer(composer) => Some(composer.refused),
+            Footer::Closed { .. } => None,
+        }),
+        Some(Vec::from([text(" first ")]))
+    );
+
+    let (retried, retried_message) = run(
+        rejected,
+        Vec::from([
+            event(
+                4,
+                EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Completed,
+                },
+            ),
+            Intent::Session(SessionIntent::RetryMessage),
+        ]),
+    );
+    assert_eq!(
+        sent(&retried_message),
+        [CommandBody::SendMessage {
+            session: SESSION,
+            text: text("first")
+        }]
+    );
+    let (accepted, _) = run(
+        retried,
+        Vec::from([answer(&retried_message, Ok(CommandResult::Accepted))]),
+    );
+    assert_eq!(composer(&accepted).map(|shown| shown.0), Some(text("next")));
+}
+
+#[test]
+fn a_failed_transport_restores_the_submitted_text_to_an_empty_composer() {
+    let send = Intent::Session(SessionIntent::SendMessage);
+    let (pending, sent_message) = opened(Vec::from([
+        Intent::Session(SessionIntent::TypeMessage(text(" first "))),
+        send.clone(),
+    ]));
+    let (restored, _) = run(
+        pending,
+        Vec::from([answer(&sent_message, Err(text("connection lost")))]),
+    );
+    assert_eq!(
+        composer(&restored).map(|shown| shown.0),
+        Some(text(" first "))
+    );
+    let (_, retry) = run(restored, Vec::from([send]));
+    assert_eq!(sent(&retry), sent(&sent_message));
+}
+
+#[test]
 fn return_sends_unless_shifted_or_composing() {
     let key = |enter, shift, composing| Keystroke {
         enter,
@@ -1393,7 +1475,7 @@ fn each_instance_is_its_account_and_each_provider_has_its_forms() {
                     text("Gateway at https://gw.example"),
                     true,
                     text(
-                        "To sign it in again on desk's terminal: conductord login claude --account https://gw.example"
+                        "To sign it in again on desk's terminal: conductord login claude --account='https://gw.example'"
                     ),
                 ),
             ]),
@@ -1599,16 +1681,18 @@ fn a_turns_changes_load_once_and_offer_undo_only_while_idle() {
                 checkpoint: CheckpointId(1)
             }]),
             Some(DiffPanel::Loaded(Diff {
-                empty: None,
-                files: Vec::from([DiffFile {
-                    path: text("Added a.txt"),
-                    patch: Patch::Note(text(
-                        "Binary file changed. Preview unavailable."
-                    )),
-                }]),
-                truncated: Some(
-                    "Preview limit reached. Some changes are omitted."
-                ),
+                preview: Rc::new(Preview {
+                    empty: None,
+                    files: Vec::from([DiffFile {
+                        path: text("Added a.txt"),
+                        patch: Patch::Note(text(
+                            "Binary file changed. Preview unavailable."
+                        )),
+                    }]),
+                    truncated: Some(
+                        "Preview limit reached. Some changes are omitted."
+                    ),
+                }),
                 undo_disabled: false,
                 undo_hint: text("Undo is available when the session is idle."),
             })),
@@ -1819,13 +1903,6 @@ fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
         code: Some(text("ABCD-12345")),
         paste: false,
     }));
-    let (copied, copy) = run(
-        device.clone(),
-        Vec::from([sign_in(CredentialIntent::CopySignInCode(
-            id("claude"),
-            text("ABCD-12345"),
-        ))]),
-    );
     let (_, cancelled) = run(
         device.clone(),
         Vec::from([sign_in(CredentialIntent::CancelSignIn(id("claude")))]),
@@ -1833,7 +1910,7 @@ fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
     let code = |state: &State| {
         sign_in_of(state)
             .and_then(|view| view.code)
-            .map(|shown| (shown.code, shown.copy))
+            .map(|shown| shown.code)
     };
     let progress = |step| {
         sign_in_of(&signing(Some(step))).map(|view| {
@@ -1848,15 +1925,11 @@ fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
         (
             code(&device),
             sign_in_of(&device).map(|view| view.paste.is_none()),
-            copy,
-            code(&copied),
             sent(&cancelled),
         ),
         (
-            Some((text("ABCD-12345"), text("Copy"))),
+            Some(text("ABCD-12345")),
             Some(true),
-            Vec::from([Effect::Copy(text("ABCD-12345"))]),
-            Some((text("ABCD-12345"), text("Copied"))),
             Vec::from([CommandBody::CancelSignIn {
                 instance: id("claude")
             }]),

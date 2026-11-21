@@ -24,6 +24,7 @@ use crate::{At, Effect, Focus, ReplyTo};
 pub enum SessionIntent {
     TypeMessage(String),
     SendMessage,
+    RetryMessage,
     Interrupt,
     /// Start a closed session's agent again.
     Continue,
@@ -157,12 +158,16 @@ pub struct Composer {
     pub text: String,
     pub placeholder: String,
     pub disabled: bool,
+    pub pending: bool,
+    pub refused: Vec<String>,
 }
 
 /// What the pane holds while one session is shown.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Pane {
     draft: String,
+    pending_message: Option<String>,
+    refused_messages: Vec<String>,
     answers: BTreeMap<RequestId, Draft>,
     diffs: BTreeMap<CheckpointId, DiffState>,
     /// Numbers each diff request, so only the latest one's answer shows.
@@ -184,7 +189,12 @@ impl Pane {
             SessionIntent::TypeMessage(draft) => {
                 (Self { draft, ..self }, Vec::new())
             }
-            SessionIntent::SendMessage => self.send_message(id, session, at),
+            SessionIntent::SendMessage => {
+                self.send_message(id, session, at, false)
+            }
+            SessionIntent::RetryMessage => {
+                self.send_message(id, session, at, true)
+            }
             SessionIntent::Interrupt => (
                 self,
                 Vec::from([notify(CommandBody::Interrupt { session: id }, at)]),
@@ -271,30 +281,46 @@ impl Pane {
         }
     }
 
-    /// Sends the draft, once there is one and the agent takes messages.
     fn send_message(
-        self,
+        mut self,
         id: SessionId,
         session: &SessionView,
         at: At,
+        retry: bool,
     ) -> (Self, Vec<Effect>) {
-        match (session.controls().composer, self.draft.trim()) {
-            (host_view::Composer::Open, "")
-            | (host_view::Composer::Busy | host_view::Composer::Closed, _) => {
-                (self, Vec::new())
+        if session.controls().composer != host_view::Composer::Open
+            || self.pending_message.is_some()
+        {
+            return (self, Vec::new());
+        }
+        let draft = if retry {
+            let Some(draft) = self.refused_messages.pop() else {
+                return (self, Vec::new());
+            };
+            draft
+        } else {
+            if self.draft.trim().is_empty() {
+                return (self, Vec::new());
             }
-            (host_view::Composer::Open, text) => {
-                let body = CommandBody::SendMessage {
-                    session: id,
-                    text: text.to_owned(),
-                };
-                (
-                    Self {
-                        draft: String::new(),
-                        ..self
-                    },
-                    Vec::from([notify(body, at)]),
-                )
+            core::mem::take(&mut self.draft)
+        };
+        let body = CommandBody::SendMessage {
+            session: id,
+            text: draft.trim().to_owned(),
+        };
+        self.pending_message = Some(draft);
+        (self, Vec::from([at.send(body, ReplyTo::Message)]))
+    }
+
+    pub fn message_answered(&mut self, accepted: bool) {
+        let Some(draft) = self.pending_message.take() else {
+            return;
+        };
+        if !accepted {
+            if self.draft.is_empty() {
+                self.draft = draft;
+            } else {
+                self.refused_messages.push(draft);
             }
         }
     }
@@ -481,6 +507,8 @@ impl Pane {
                 || {
                     Footer::Composer(Composer {
                         text: self.draft.clone(),
+                        pending: self.pending_message.is_some(),
+                        refused: self.refused_messages.clone(),
                         placeholder: match controls.composer {
                             host_view::Composer::Open => {
                                 format!("Message {provider}")
@@ -507,6 +535,10 @@ impl Pane {
 
     fn entries(&self, session: &SessionView) -> Vec<Entry> {
         let composer = session.controls().composer;
+        let mut checkpoints = BTreeMap::new();
+        for turn in &session.checkpoints {
+            checkpoints.entry(turn.end).or_insert(turn);
+        }
         session
             .items
             .iter()
@@ -524,18 +556,14 @@ impl Pane {
                         })
                         .collect()
                 }),
-                changes: session
-                    .checkpoints
-                    .iter()
-                    .find(|turn| turn.end == index)
-                    .map(|turn| {
-                        checkpoints::changes(
-                            turn,
-                            self.diffs.get(&turn.checkpoint),
-                            composer,
-                            session.can_view_changes(),
-                        )
-                    }),
+                changes: checkpoints.get(&index).map(|turn| {
+                    checkpoints::changes(
+                        turn,
+                        self.diffs.get(&turn.checkpoint),
+                        composer,
+                        session.can_view_changes(),
+                    )
+                }),
             })
             .collect()
     }

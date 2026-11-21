@@ -150,4 +150,19 @@ pub enum IssueChange {
     RemoveItem(String),
     /// A note, which the host signs and dates.
     Note(String),
+    Transition {
+        from: IssueStatus,
+        to: IssueStatus,
+    },
+    Checklist {
+        snapshot: Vec<ChecklistItem>,
+        index: usize,
+        action: ChecklistAction,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChecklistAction {
+    SetDone(bool),
+    Remove,
 }

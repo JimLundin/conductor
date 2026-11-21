@@ -31,11 +31,11 @@ use proto::{
     Ticket, TicketError,
 };
 
-pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, TurnChanges};
+pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, Preview, TurnChanges};
 pub use credentials::{
-    ClearButton, CredentialIntent, CredentialsPane, CredentialsScreen,
-    DeviceCode, FieldView, InstanceCredentials, KindForm, PasteForm,
-    ProviderForms, SignInButton, SignInView, instance_name,
+    ClearButton, Clipboard, CredentialIntent, CredentialsPane,
+    CredentialsScreen, DeviceCode, FieldView, InstanceCredentials, KindForm,
+    PasteForm, ProviderForms, SignInButton, SignInView, instance_name,
 };
 pub use host::{HostId, StatusLine};
 pub use issues::{
@@ -49,7 +49,10 @@ pub use projects::{
     CheckoutRow, CloneButton, HomeLine, ProjectGroup, ProjectIntent,
     ProjectsScreen, when,
 };
-pub use saved::{Saved, Stored, decode, encode};
+pub use saved::{
+    HOST_KEY, NAME_KEY, Saved, Stored, decode, encode, host_storage_key,
+    joined_host, legacy_to_migrate, restored,
+};
 pub use session::{
     Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
     TaskRow, Tasks, UndoNote, WorkspaceContext,
@@ -141,14 +144,13 @@ pub enum Effect {
         body: CommandBody,
         reply: Reply,
     },
-    /// Keep these hosts in local storage, as [`encode`] writes them.
-    SaveHosts(Vec<Saved>),
+    PairHost(Saved),
+    ForgetHost(HostId),
+    NameHost(Saved),
     Focus(Focus),
     /// Put the session's effort picker back on this value, which a refused
     /// change left behind.
     ShowEffort(String),
-    /// Put this text on the clipboard.
-    Copy(String),
 }
 
 /// Where focus goes once a control it was on goes away.
@@ -178,9 +180,11 @@ enum ReplyTo {
     Notice,
     /// A refused effort change puts the picker back on this effort.
     Effort(Option<Effort>),
-    Start,
+    Start(u64),
+    Message,
     /// A new issue in this project: it opens once the host has it.
     Created,
+    Issue(issues::Submission),
     Instance(Subject, Done),
     Diff {
         checkpoint: CheckpointId,

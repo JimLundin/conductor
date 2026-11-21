@@ -177,6 +177,17 @@ impl Recovery {
     }
 }
 
+/// Whether a finish lost its actor before recording its outcome.
+#[must_use]
+pub fn finish_interrupted(events: &[Event]) -> bool {
+    events
+        .iter()
+        .fold(proto::FinishState::Ready, |state, event| {
+            state.after(&event.kind)
+        })
+        == proto::FinishState::Finishing
+}
+
 fn open_requests(events: &[Event]) -> Vec<RequestId> {
     let resolved = events
         .iter()
@@ -214,14 +225,21 @@ fn agent_running(events: &[Event]) -> bool {
     events
         .iter()
         .rev()
-        .find_map(|event| match &event.kind {
-            EventKind::SessionClosed { .. } => Some(false),
-            EventKind::SessionCreated { .. } | EventKind::SessionReady => {
-                Some(true)
-            }
-            _ => None,
-        })
+        .find_map(|event| agent_activity(&event.kind))
         .unwrap_or(false)
+}
+
+/// An undo can only complete after its restored agent is running.
+pub(crate) const fn agent_activity(kind: &EventKind) -> Option<bool> {
+    match kind {
+        EventKind::SessionClosed { .. } | EventKind::SessionRemoved { .. } => {
+            Some(false)
+        }
+        EventKind::SessionCreated { .. }
+        | EventKind::SessionReady
+        | EventKind::TurnsUndone { .. } => Some(true),
+        _ => None,
+    }
 }
 
 fn replay_choice(created: Choice, events: &[Event]) -> Choice {

@@ -324,6 +324,7 @@ enum Flow {
     Listing(Revert),
     Reverting(Revert),
     Checking(Revert),
+    Reconciling(Revert),
     /// The agent restored in another directory stops.
     Leaving(Undoing, HistoryAnchor),
     Retasking(Undoing),
@@ -353,6 +354,7 @@ enum Saved {
 enum Launched {
     Ready,
     Revert(Revert),
+    Reconcile(Revert),
     Restart(Undoing, HostPath, HistoryAnchor),
     Complete(Undoing),
 }
@@ -485,9 +487,13 @@ impl Session {
                 Flow::Reverting(revert),
                 Input::Agent(Outcome::Reverted(reverted)),
             ) => self.reverted(revert, reverted),
-            (Flow::Checking(revert), Input::Agent(Outcome::Turns(listed))) => {
-                self.checked(revert, listed)
+            (Flow::Reverting(revert), Input::Agent(Outcome::RevertUnknown)) => {
+                self.launch_revert(revert, Launched::Reconcile)
             }
+            (
+                Flow::Reconciling(revert) | Flow::Checking(revert),
+                Input::Agent(Outcome::Turns(listed)),
+            ) => self.checked(revert, listed),
             (
                 Flow::Leaving(undoing, history),
                 Input::Agent(Outcome::ShutDown(left)),
@@ -498,27 +504,34 @@ impl Session {
             (Flow::Restoring(undoing), Input::Done(restored)) => {
                 self.files_restored(undoing, restored)
             }
-            (Flow::Stopping, Input::Agent(Outcome::ShutDown(_))) => join(
+            (Flow::Stopping, Input::Agent(Outcome::ShutDown(Ok(())))) => join(
                 self.closed(CloseReason::Stopped {
                     reason: String::from(REMOVED),
                 }),
                 self.clean(),
             ),
-            (Flow::Halting(reason), Input::Agent(Outcome::ShutDown(_))) => {
-                join(
-                    self.closed(CloseReason::Stopped { reason }),
-                    [Effect::Reply(CommandResult::Accepted)],
-                )
-            }
+            (
+                Flow::Halting(reason),
+                Input::Agent(Outcome::ShutDown(Ok(()))),
+            ) => join(
+                self.closed(CloseReason::Stopped { reason }),
+                [Effect::Reply(CommandResult::Accepted)],
+            ),
+            (
+                Flow::Stopping | Flow::Halting(_),
+                Input::Agent(Outcome::ShutDown(Err(reason))),
+            ) => join(
+                [Effect::Emit(EventKind::Error {
+                    message: format!(
+                        "the agent did not confirm shutdown: {reason}"
+                    ),
+                })],
+                rejected(Rejection::InstanceUnavailable { reason }),
+            ),
             (Flow::Removing, Input::Removed(Ok(kept))) => self.gone(Some(kept)),
-            (Flow::Removing, Input::Removed(Err(reason))) => Vec::from([
-                Effect::Emit(EventKind::Error {
-                    message: format!("the session was not removed: {reason}"),
-                }),
-                Effect::Reply(CommandResult::Rejected(
-                    Rejection::WorkspaceFailure { reason },
-                )),
-            ]),
+            (Flow::Removing, Input::Removed(Err(reason))) => {
+                removal_failed(reason)
+            }
             (waiting, _) => {
                 self.flow = waiting;
                 Vec::new()
@@ -691,12 +704,15 @@ impl Session {
                     [Effect::Reply(CommandResult::Accepted)],
                 )
             }
-            Err(message) => Vec::from([
-                Effect::Emit(EventKind::TurnCompleted {
-                    outcome: TurnOutcome::Failed { message },
-                }),
-                Effect::Reply(CommandResult::Accepted),
-            ]),
+            Err(message) => {
+                self.turn_start = None;
+                Vec::from([
+                    self.checkpoint_event(EventKind::TurnCompleted {
+                        outcome: TurnOutcome::Failed { message },
+                    }),
+                    Effect::Reply(CommandResult::Accepted),
+                ])
+            }
         }
     }
 
@@ -1180,6 +1196,13 @@ impl Session {
                 Effect::Reply(CommandResult::Accepted),
             ]),
             (Launched::Revert(revert), Ok(_)) => self.list(revert),
+            (Launched::Reconcile(revert), Ok(_)) => {
+                self.flow = Flow::Reconciling(revert);
+                Vec::from([Effect::Call(Call::Agent(Command::Turns))])
+            }
+            (Launched::Reconcile(_), Err(reason)) => {
+                verification_pending(&reason)
+            }
             (
                 Launched::Restart(undoing, directory, history),
                 Ok(conversation),
@@ -1231,9 +1254,9 @@ impl Session {
                 self.flow = Flow::Preflighting(undo);
                 Vec::from([Effect::Call(Call::Preflight { workspace, commit })])
             }
-            Ok(UndoPlan::Resume(Recovery::Native(undo))) => {
-                self.restore_native(undo)
-            }
+            Ok(UndoPlan::Resume(
+                Recovery::Native(undo) | Recovery::Verify(undo),
+            )) => self.restore_native(undo),
             Ok(UndoPlan::Resume(Recovery::Files(undo))) => {
                 self.restore_files(Undoing { undo })
             }
@@ -1280,22 +1303,19 @@ impl Session {
             HistoryAnchor::Turns {
                 conversation,
                 turn: Some(turn),
-            } => {
-                let at = (
-                    Some(HistoryAnchor::Turns {
-                        conversation: conversation.clone(),
-                        turn: None,
-                    }),
-                    None,
-                );
-                let revert = Revert {
+            } => self.launch_revert(
+                Revert {
                     undoing,
-                    directory: directory.clone(),
+                    directory,
                     conversation,
                     turn,
-                };
-                self.start(directory, at, Launched::Revert(revert))
-            }
+                },
+                if self.book.awaiting_revert() {
+                    Launched::Reconcile
+                } else {
+                    Launched::Revert
+                },
+            ),
             HistoryAnchor::Fresh | HistoryAnchor::Fork { .. } => {
                 self.agent = Agent::Down;
                 self.flow = Flow::Restarting(undoing, directory, history);
@@ -1307,6 +1327,21 @@ impl Session {
                 Err(String::from("native undo boundary is unavailable")),
             ),
         }
+    }
+
+    fn launch_revert(
+        &mut self,
+        revert: Revert,
+        then: fn(Revert) -> Launched,
+    ) -> Vec<Effect> {
+        let at = (
+            Some(HistoryAnchor::Turns {
+                conversation: revert.conversation.clone(),
+                turn: None,
+            }),
+            None,
+        );
+        self.start(revert.directory.clone(), at, then(revert))
     }
 
     /// The agent stopped; it starts again in `directory` at `history`.
@@ -1355,8 +1390,12 @@ impl Session {
         match listed {
             Ok(before) if before.contains(&revert.turn) => {
                 let call = Call::Agent(Command::Revert(revert.turn.clone()));
+                let dispatched =
+                    self.checkpoint_event(EventKind::UndoRevertDispatched {
+                        checkpoint: revert.undoing.undo.selected,
+                    });
                 self.flow = Flow::Reverting(revert);
-                Vec::from([Effect::Call(call)])
+                Vec::from([dispatched, Effect::Barrier, Effect::Call(call)])
             }
             Ok(_) => self.reverted(revert, Ok(())),
             Err(reason) => {
@@ -1400,7 +1439,12 @@ impl Session {
                     )
                 })
         });
-        self.restored(revert.undoing, &revert.directory, history)
+        match history {
+            Err(reason) if self.book.awaiting_revert() => {
+                verification_pending(&reason)
+            }
+            other => self.restored(revert.undoing, &revert.directory, other),
+        }
     }
 
     /// An agent restored outside the session's directory stops, so the
@@ -1498,7 +1542,7 @@ impl Session {
     ) -> Vec<Effect> {
         self.flow = Flow::Idle;
         Vec::from([
-            Effect::Emit(EventKind::UndoFailed {
+            self.checkpoint_event(EventKind::UndoFailed {
                 checkpoint,
                 reason: reason.clone(),
             }),
@@ -1533,6 +1577,28 @@ impl Session {
             resolution: Resolution::Withdrawn,
         })])
     }
+}
+
+fn removal_failed(reason: String) -> Vec<Effect> {
+    Vec::from([
+        Effect::Emit(EventKind::Error {
+            message: format!("the session was not removed: {reason}"),
+        }),
+        Effect::Reply(CommandResult::Rejected(Rejection::WorkspaceFailure {
+            reason,
+        })),
+    ])
+}
+
+fn verification_pending(reason: &str) -> Vec<Effect> {
+    join(
+        [Effect::Emit(EventKind::Error {
+            message: format!(
+                "could not verify the native rollback outcome: {reason}"
+            ),
+        })],
+        rejected(Rejection::UndoInProgress),
+    )
 }
 
 /// Whether `reply` answers what the request asked, and if not, why.
@@ -1609,11 +1675,9 @@ fn tasks_before(
 ) -> Vec<Task> {
     let taken = history
         .iter()
-        .position(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => {
-                checkpoint.id == restored
-            }
-            _ => false,
+        .position(|event| {
+            event.session == session
+                && matches!(&event.kind, EventKind::CheckpointCreated { checkpoint } if checkpoint.id == restored)
         })
         .unwrap_or(0);
     last_tasks(

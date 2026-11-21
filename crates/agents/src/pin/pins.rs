@@ -37,7 +37,7 @@ pub fn claude_sha256(platform: &str) -> Option<String> {
     }
 }
 
-/// Verified: every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles were skipped: cosign was not installed
+/// Verified: every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles verify
 pub const CODEX_VERSION: &str = "0.166.0";
 
 /// The SHA-256 of the `codex-package-<triple>.tar.gz` release asset for a target triple.

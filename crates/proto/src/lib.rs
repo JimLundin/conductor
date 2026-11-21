@@ -47,8 +47,8 @@ pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };
 pub use issue::{
-    ChecklistItem, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
-    Priority,
+    ChecklistAction, ChecklistItem, Issue, IssueChange, IssueFields, IssueId,
+    IssueStatus, Priority,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
@@ -56,7 +56,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/23";
+pub const ALPN: &[u8] = b"conductor/24";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -911,6 +911,13 @@ pub enum EventKind {
     },
     /// Finishing the session has begun; `SessionFinished` ends it.
     FinishStarted,
+    /// A restarted host can resume the interrupted landing.
+    FinishInterrupted,
+    /// The native rollback may execute. Until verified, recovery reads
+    /// native history without sending the rollback again.
+    UndoRevertDispatched {
+        checkpoint: CheckpointId,
+    },
 }
 
 /// Where a session on an issue stands with finishing, as its events say:
@@ -921,6 +928,7 @@ pub enum FinishState {
     #[default]
     Ready,
     Finishing,
+    Retrying,
     Done,
 }
 
@@ -930,6 +938,7 @@ impl FinishState {
     pub const fn after(self, kind: &EventKind) -> Self {
         match (self, kind) {
             (_, EventKind::FinishStarted) => Self::Finishing,
+            (Self::Finishing, EventKind::FinishInterrupted) => Self::Retrying,
             (_, EventKind::SessionFinished { .. }) => Self::Done,
             (Self::Done, EventKind::UserMessage { .. }) => Self::Ready,
             (state, _) => state,

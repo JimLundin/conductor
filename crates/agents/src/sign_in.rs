@@ -102,9 +102,13 @@ impl Pick {
 impl Word {
     fn fits(self, word: &str) -> bool {
         match self {
-            Self::Link => word.starts_with("https://"),
+            Self::Link => word.strip_prefix("https://").is_some_and(|tail| {
+                !tail.starts_with(['/', '\\', '?', '#'])
+                    && url::Url::parse(word).is_ok()
+            }),
             Self::Code => {
                 word.len() >= 6
+                    && word.bytes().any(|c| c.is_ascii_alphanumeric())
                     && word.chars().all(|c| {
                         c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-'
                     })
@@ -129,11 +133,21 @@ pub fn plain(line: &str) -> String {
     text
 }
 
-/// Skips the rest of an escape sequence: a CSI one up to its final byte,
-/// any other the one character after the escape.
 fn skip_escape(chars: &mut core::str::Chars<'_>) {
-    if chars.next() == Some('[') {
-        let _ = chars.find(|c| ('@'..='~').contains(c));
+    match chars.next() {
+        Some('[') => {
+            let _ = chars.find(|c| ('@'..='~').contains(c));
+        }
+        Some(']') => {
+            let mut escape = false;
+            for c in chars {
+                if c == '\u{7}' || (escape && c == '\\') {
+                    break;
+                }
+                escape = c == '\u{1b}';
+            }
+        }
+        _ => {}
     }
 }
 
@@ -192,6 +206,24 @@ mod tests {
             device().shown(&output),
             Some(Shown {
                 link: String::from("https://example.test/device"),
+                code: Some(String::from("AB12-CD34E")),
+            })
+        );
+    }
+
+    #[test]
+    fn skips_unusable_candidates_and_strips_terminal_links() {
+        let output = lines(concat!(
+            "Open this link https:// https:///invalid https://[invalid]\n",
+            "\u{1b}]8;;https://invisible.example\u{1b}\\",
+            "\u{1b}[94mhttps://example.test/device?session=test\u{1b}[0m",
+            "\u{1b}]8;;\u{7}\n",
+            "Enter this one-time code ------\nAB12-CD34E\n",
+        ));
+        assert_eq!(
+            device().shown(&output),
+            Some(Shown {
+                link: String::from("https://example.test/device?session=test"),
                 code: Some(String::from("AB12-CD34E")),
             })
         );

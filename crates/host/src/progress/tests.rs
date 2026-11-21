@@ -3,7 +3,7 @@ use proto::{
     Provider, SessionId, Task, TaskId, TaskStatus, TurnOutcome,
 };
 
-use super::{Progress, ends_turn, latest, progress};
+use super::{Progress, edit_id, ends_turn, progress};
 use crate::assignment::Assignment;
 
 const SESSION: SessionId = SessionId(1);
@@ -130,12 +130,20 @@ fn a_session_on_no_issue_or_taken_off_it_notes_nothing() {
 }
 
 #[test]
-fn the_watch_starts_after_the_log_and_looks_only_at_turn_ends() {
+fn only_a_completed_turn_is_eligible_for_a_progress_note() {
     let log = history(Vec::from([created(SESSION), ended(SESSION)]));
-    assert_eq!(latest(&log), HostSeq(2));
-    assert_eq!(latest(&[]), HostSeq(0));
     assert!(ends_turn(&log[1]));
     assert!(!ends_turn(&log[0]));
+}
+
+#[test]
+fn a_progress_edit_is_named_by_its_epoch_and_turn() {
+    let epoch = proto::Epoch(1);
+    let turn = HostSeq(2);
+    let first = edit_id(epoch, turn);
+    assert_eq!(edit_id(epoch, turn), first);
+    assert_ne!(edit_id(proto::Epoch(2), turn), first);
+    assert_ne!(edit_id(epoch, HostSeq(3)), first);
 }
 
 #[test]

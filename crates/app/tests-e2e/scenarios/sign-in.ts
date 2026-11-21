@@ -55,6 +55,43 @@ const refusedCode = async (
 	await page.screenshot({ path: shotNamed(out, "refused") });
 };
 
+const deniedClipboard = async (run: Run): Promise<void> => {
+	const { page, patience } = run;
+	const { check } = tools(run);
+	await page.evaluate(() => {
+		Object.defineProperty(navigator, "clipboard", {
+			value: {
+				writeText: () =>
+					Promise.reject(
+						new DOMException("Clipboard denied", "NotAllowedError"),
+					),
+			},
+		});
+	});
+	await page
+		.getByRole("button", { name: "Sign in: Codex", exact: true })
+		.click();
+	const shown = page.locator(".sign-in", {
+		has: page.getByRole("button", { name: "Copy the code ABCD-12345" }),
+	});
+	await shown.getByRole("button", { name: "Copy the code ABCD-12345" }).click();
+	await shown
+		.getByRole("alert")
+		.filter({ hasText: "Could not copy the code" })
+		.waitFor({ timeout: patience });
+	check(
+		(await shown.locator(".device-code code").textContent()) === "ABCD-12345" &&
+			(await shown
+				.getByRole("button", { name: "Copy the code ABCD-12345" })
+				.textContent()) === "Copy",
+		"clipboard denial leaves the code and a retry without saying Copied",
+	);
+	await shown.getByRole("button", { name: "Cancel" }).click();
+	await page
+		.getByRole("button", { name: "Sign in: Codex", exact: true })
+		.waitFor({ timeout: patience });
+};
+
 export const signIn = async (run: Run): Promise<void> => {
 	const { page, out, patience, log } = run;
 	const { check, waitFor } = tools(run);
@@ -113,4 +150,5 @@ export const signIn = async (run: Run): Promise<void> => {
 			.innerText()) === "Signed in on conductor",
 		"a reload finds the account's instance signed in",
 	);
+	await deniedClipboard(run);
 };

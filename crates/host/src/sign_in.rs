@@ -119,6 +119,7 @@ struct Running {
     step: SignInStep,
     /// What the output said a failure means.
     failure: Option<String>,
+    adopting: bool,
 }
 
 impl SignIns {
@@ -161,7 +162,14 @@ impl SignIns {
     ) -> Result<Option<Key>, Rejection> {
         adoption
             .destination_for(requested)
-            .map(|_| self.begin(requested.clone(), SignInStep::Finishing))
+            .map(|_| {
+                let key =
+                    self.begin(requested.clone(), SignInStep::Finishing)?;
+                if let Some(running) = self.current(&key) {
+                    running.adopting = true;
+                }
+                Ok(key)
+            })
             .transpose()
     }
 
@@ -183,6 +191,7 @@ impl SignIns {
                 seen: Vec::new(),
                 step,
                 failure: None,
+                adopting: false,
             },
         );
         Ok(Key { instance, run })
@@ -223,6 +232,9 @@ impl SignIns {
         &mut self,
         instance: InstanceId,
     ) -> (CommandResult, Vec<Effect>) {
+        if self.running.get(&instance).is_some_and(|run| run.adopting) {
+            return (CommandResult::Accepted, Vec::new());
+        }
         let effects =
             self.running
                 .remove(&instance)
@@ -237,6 +249,16 @@ impl SignIns {
                     ])
                 });
         (CommandResult::Accepted, effects)
+    }
+
+    pub fn write_failed(&mut self, key: &Key, reason: String) -> Vec<Effect> {
+        if self.current(key).is_some() {
+            let mut effects = Vec::from([Effect::Kill(key.clone())]);
+            effects.extend(self.fail(key, reason));
+            effects
+        } else {
+            Vec::new()
+        }
     }
 
     /// The run started, reading its output as `flow` says, or why not.
@@ -311,11 +333,15 @@ impl SignIns {
         key: &Key,
         result: Result<Option<Account>, String>,
     ) -> Vec<Effect> {
-        if self.current(key).is_none() {
+        let Some(running) = self.current(key) else {
             return Vec::new();
-        }
+        };
         match result {
-            Ok(account) => Vec::from([Effect::Refresh(key.clone(), account)]),
+            Ok(account) => {
+                // The registry attempts adoption in the same turn as this effect.
+                running.adopting = true;
+                Vec::from([Effect::Refresh(key.clone(), account)])
+            }
             Err(reason) => self.fail(key, reason),
         }
     }

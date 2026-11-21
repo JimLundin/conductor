@@ -75,6 +75,7 @@ pub enum Report {
     Exited(Option<i32>, String),
     Expired,
     Checked(Result<Option<Account>, String>),
+    Written(Result<ChildStdin, String>),
     Listed(CommandResult),
 }
 
@@ -84,6 +85,8 @@ pub struct Runs {
     tasks: JoinSet<()>,
     aborts: BTreeMap<Key, AbortHandle>,
     stdins: BTreeMap<Key, ChildStdin>,
+    writes: BTreeMap<Key, AbortHandle>,
+    exits: BTreeMap<Key, (Option<i32>, String)>,
     checks: BTreeMap<Key, Signing>,
     reports: mpsc::UnboundedReceiver<(Key, Report)>,
     sender: mpsc::UnboundedSender<(Key, Report)>,
@@ -96,6 +99,8 @@ impl Default for Runs {
             tasks: JoinSet::new(),
             aborts: BTreeMap::new(),
             stdins: BTreeMap::new(),
+            writes: BTreeMap::new(),
+            exits: BTreeMap::new(),
             checks: BTreeMap::new(),
             reports,
             sender,
@@ -148,23 +153,74 @@ impl Runs {
         spawned.map(|run| {
             let Spawned { signing, stdin } = *run;
             let flow = signing.flow.clone();
-            self.stdins.insert(key.clone(), stdin);
-            self.checks.insert(key.clone(), signing);
+            if self.aborts.contains_key(key) {
+                self.stdins.insert(key.clone(), stdin);
+                self.checks.insert(key.clone(), signing);
+            }
             flow
         })
     }
 
-    /// Writes the code to the run's stdin. A CLI that has gone reports its
-    /// exit.
-    pub async fn write(&mut self, key: &Key, code: &SignInCode) {
-        if let Some(stdin) = self.stdins.get_mut(key) {
-            let _ = write_line(stdin, &code.0).await;
+    pub fn write(&mut self, key: Key, code: SignInCode) {
+        let stdin = self.stdins.remove(&key);
+        self.start_write(key, async move {
+            match stdin {
+                Some(mut input) => {
+                    submit(&mut input, &code).await.map(|()| input)
+                }
+                None => Err(String::from("the sign-in input is closed")),
+            }
+        });
+    }
+
+    fn start_write(
+        &mut self,
+        key: Key,
+        write: impl Future<Output = Result<ChildStdin, String>> + Send + 'static,
+    ) {
+        let sender = self.sender.clone();
+        let written = key.clone();
+        let task = self.tasks.spawn(async move {
+            let _ = sender.send((written, Report::Written(write.await)));
+        });
+        self.writes.insert(key, task);
+    }
+
+    pub fn written(
+        &mut self,
+        key: &Key,
+        result: Result<ChildStdin, String>,
+    ) -> Result<Option<(Option<i32>, String)>, String> {
+        if self.writes.remove(key).is_none() {
+            return Ok(None);
         }
+        self.stdins.insert(key.clone(), result?);
+        Ok(self.exits.remove(key))
+    }
+
+    pub fn exited(
+        &mut self,
+        key: &Key,
+        code: Option<i32>,
+        status: String,
+    ) -> Option<(Option<i32>, String)> {
+        if self.writes.contains_key(key) {
+            self.exits.insert(key.clone(), (code, status));
+            None
+        } else {
+            Some((code, status))
+        }
+    }
+
+    fn close_stdin(&mut self, key: &Key) {
+        self.writes.remove(key).iter().for_each(AbortHandle::abort);
+        self.stdins.remove(key);
+        self.exits.remove(key);
     }
 
     pub fn kill(&mut self, key: &Key) {
         self.aborts.remove(key).iter().for_each(AbortHandle::abort);
-        self.stdins.remove(key);
+        self.close_stdin(key);
         self.checks.remove(key);
     }
 
@@ -176,7 +232,7 @@ impl Runs {
         login: Login,
         claimed: Option<SigningLease>,
     ) {
-        self.stdins.remove(&key);
+        self.close_stdin(&key);
         if let Some((signing, lease)) = self.checks.remove(&key).zip(claimed) {
             let sender = self.sender.clone();
             let checked = key.clone();
@@ -201,6 +257,19 @@ impl Runs {
             let _ = sender.send((key, Report::Listed(result)));
         });
     }
+}
+
+async fn submit(
+    stdin: &mut ChildStdin,
+    code: &SignInCode,
+) -> Result<(), String> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        write_line(stdin, &code.0),
+    )
+    .await
+    .map_err(|_| String::from("timed out submitting the sign-in code"))?
+    .map_err(|err| format!("the sign-in code could not be submitted: {err}"))
 }
 
 /// Resolves how the instance signs in, runs the sign-in, and reports it
@@ -245,3 +314,6 @@ fn exited(status: io::Result<ExitStatus>) -> Report {
         |ran| Report::Exited(ran.code(), ran.to_string()),
     )
 }
+
+#[cfg(test)]
+mod tests;

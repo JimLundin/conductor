@@ -9,6 +9,8 @@
 
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 pub use agents::pin::Cli;
@@ -28,6 +30,12 @@ const READ_BUFFER: usize = 1_048_576;
 pub enum InstallError {
     #[error("no pinned build for {os} on {arch}")]
     Platform { os: String, arch: String },
+    #[error(
+        "Claude has no pinned Linux build for this libc; supported: GNU libc and musl"
+    )]
+    Libc,
+    #[error("starting or joining the archive extraction worker: {0}")]
+    Worker(#[from] tokio::task::JoinError),
     #[error("downloading the pinned CLI: {0}")]
     Http(#[from] reqwest::Error),
     #[error("{path}: {error}")]
@@ -50,11 +58,18 @@ fn unpinned() -> InstallError {
 }
 
 fn pin(cli: Cli) -> Result<Pin, InstallError> {
+    if cli == Cli::Claude
+        && cfg!(target_os = "linux")
+        && !cfg!(any(target_env = "gnu", target_env = "musl"))
+    {
+        return Err(InstallError::Libc);
+    }
     agents::pin::pin(
         cli,
         std::env::consts::OS,
         std::env::consts::ARCH,
         std::env::consts::EXE_SUFFIX,
+        cfg!(target_env = "musl"),
     )
     .ok_or_else(unpinned)
 }
@@ -85,9 +100,9 @@ async fn put(
     pin: Pin,
     parent: &Path,
 ) -> Result<PathBuf, InstallError> {
-    let _lock = lock(parent).await?;
+    let lock = lock(parent).await?;
     remove_others(parent, &pin.version)?;
-    ensure(name, pin, parent).await
+    ensure(name, pin, parent, lock).await
 }
 
 /// Takes `parent`'s lock, which is held until the file is dropped.
@@ -105,6 +120,7 @@ async fn ensure(
     name: &str,
     pin: Pin,
     parent: &Path,
+    lock: File,
 ) -> Result<PathBuf, InstallError> {
     let binary = parent.join(&pin.version).join(&pin.binary);
     match presence(&binary) {
@@ -112,7 +128,7 @@ async fn ensure(
             tracing::info!(path = %binary.display(), "pinned {name} {} is installed", pin.version);
             Ok(binary)
         }
-        Presence::Missing => download(name, pin, parent, binary).await,
+        Presence::Missing => download(name, pin, parent, binary, lock).await,
     }
 }
 
@@ -122,12 +138,19 @@ async fn download(
     pin: Pin,
     parent: &Path,
     binary: PathBuf,
+    lock: File,
 ) -> Result<PathBuf, InstallError> {
     tracing::info!(url = %pin.url, "installing pinned {name} {}", pin.version);
     let download = parent.join(format!("{}.download", pin.version));
     fetch_verified(&pin, &download).await?;
-    unpack(&pin.package, &download, &parent.join(&pin.version), &binary)
-        .await?;
+    unpack(
+        &pin.package,
+        download,
+        parent.join(&pin.version),
+        &binary,
+        lock,
+    )
+    .await?;
     tracing::info!(
         path = %binary.display(),
         sha256 = %pin.sha256,
@@ -219,36 +242,64 @@ fn remove(path: &Path) -> Result<(), InstallError> {
 /// `binary`.
 async fn unpack(
     package: &Package,
-    download: &Path,
-    dir: &Path,
+    download: PathBuf,
+    dir: PathBuf,
     binary: &Path,
+    lock: File,
 ) -> Result<(), InstallError> {
     match package {
         Package::Binary => {
-            std::fs::create_dir_all(dir).map_err(|error| io(dir, error))?;
-            make_executable(download).map_err(|error| io(download, error))?;
-            std::fs::rename(download, binary).map_err(|error| io(binary, error))
+            std::fs::create_dir_all(&dir).map_err(|error| io(&dir, error))?;
+            make_executable(&download).map_err(|error| io(&download, error))?;
+            let result = std::fs::rename(download, binary)
+                .map_err(|error| io(binary, error));
+            drop(lock);
+            result
         }
-        Package::Archive => unpack_archive(download, dir).await,
+        Package::Archive => {
+            let mut extractor = tar().map_err(|error| io(&download, error))?;
+            extractor.args(["-xzf", "-"]);
+            extract_archive(download, dir, lock, extractor).await
+        }
     }
+}
+
+async fn extract_archive(
+    download: PathBuf,
+    dir: PathBuf,
+    lock: File,
+    extractor: Command,
+) -> Result<(), InstallError> {
+    // The caller can drop this future. The worker owns the lock until tar is
+    // reaped, even when the caller's Tokio runtime is shutting down.
+    let (caller, cancelled) = mpsc::channel();
+    let result = tokio::task::spawn_blocking(move || {
+        let _lock = lock;
+        unpack_archive(&download, &dir, extractor, &cancelled)
+    })
+    .await?;
+    drop(caller);
+    result
 }
 
 /// Unpacks the archive at `download` into `dir`, through a staging
 /// directory so `dir` appears whole.
-async fn unpack_archive(
+fn unpack_archive(
     download: &Path,
     dir: &Path,
+    mut extractor: Command,
+    cancelled: &Receiver<()>,
 ) -> Result<(), InstallError> {
     let staging = download.with_extension("unpack");
     let _ = std::fs::remove_dir_all(&staging);
     std::fs::create_dir_all(&staging).map_err(|error| io(&staging, error))?;
-    let status = tokio::process::Command::new("tar")
-        .arg("-xzf")
-        .arg(download)
-        .arg("-C")
-        .arg(&staging)
-        .status()
-        .await
+    let archive = File::open(download).map_err(|error| io(download, error))?;
+    let mut child = extractor
+        .stdin(archive)
+        .current_dir(&staging)
+        .spawn()
+        .map_err(|error| io(download, error))?;
+    let status = extractor_status(&mut child, cancelled)
         .map_err(|error| io(download, error))?;
     match status.code() {
         Some(0) => place(&staging, download, dir),
@@ -256,6 +307,45 @@ async fn unpack_archive(
             archive: download.display().to_string(),
             status: status.to_string(),
         }),
+    }
+}
+
+fn extractor_status(
+    child: &mut Child,
+    cancelled: &Receiver<()>,
+) -> std::io::Result<ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
+        if cancelled.recv_timeout(LOCK_POLL)
+            == Err(RecvTimeoutError::Disconnected)
+        {
+            let _ = child.kill();
+            return child.wait();
+        }
+    }
+}
+
+fn tar() -> std::io::Result<Command> {
+    if cfg!(windows) {
+        let root = std::env::var_os("SystemRoot").ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "SystemRoot is not set",
+            )
+        })?;
+        Ok(Command::new(
+            PathBuf::from(root).join("System32").join("tar.exe"),
+        ))
+    } else {
+        Ok(Command::new("tar"))
     }
 }
 
@@ -560,6 +650,58 @@ mod tests {
             BTreeSet::from([String::from("1.0.0"), String::from("lock")])
         );
         let _ = std::fs::remove_dir_all(&parent);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn cancelling_archive_extraction_reaps_before_unlocking()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::process::Command;
+        use std::time::Duration;
+
+        let parent = root()
+            .join("target")
+            .join(format!("cancel-install-{}", std::process::id()));
+        std::fs::create_dir_all(&parent)?;
+        let download = parent.join("1.0.0.download");
+        let staging = download.with_extension("unpack");
+        let marker = staging.join("pid");
+        std::fs::write(&download, b"")?;
+        let held = super::lock(&parent).await?;
+        let mut extractor = Command::new("sh");
+        extractor.args(["-c", "echo $$ > pid; exec sleep 60"]);
+        let install = tokio::spawn(super::extract_archive(
+            download,
+            parent.join("1.0.0"),
+            held,
+            extractor,
+        ));
+        let pid = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&marker)
+                    && let Ok(pid) = text.trim().parse::<u32>()
+                {
+                    break pid;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        install.abort();
+        let _ = install.await;
+        let next =
+            tokio::time::timeout(Duration::from_secs(5), super::lock(&parent))
+                .await??;
+        let process = PathBuf::from(format!("/proc/{}", pid?));
+        assert!(
+            !process.exists(),
+            "extractor still exists after lock was acquired"
+        );
+        super::remove_others(&parent, "1.0.0")?;
+        assert!(!staging.exists());
+        drop(next);
+        std::fs::remove_dir_all(&parent)?;
         Ok(())
     }
 }

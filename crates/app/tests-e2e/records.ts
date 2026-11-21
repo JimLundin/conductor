@@ -1,6 +1,8 @@
 import type { Page } from "playwright";
 import { type Run, stamp, tools } from "./harness.ts";
 
+const JOIN_MARKER = /#join=(?<ticket>[^\s"'<>]+)/gu;
+
 const TAIL_LINES = 60;
 const CONSOLE_STYLE = /%c|color:.*$/gsu;
 const LINK_STATUS = /link status/u;
@@ -100,4 +102,35 @@ export const checkConsole = (run: Run, record: Recorder): void => {
 		"no relay dialled with the root dot",
 	);
 	check(realErrors.length === 0, `no console errors${detail(realErrors)}`);
+};
+
+export const pairingRedactor = (
+	links: readonly (string | undefined)[],
+): ((line: string) => string) => {
+	const tickets = links.flatMap((link) =>
+		Array.from(link?.matchAll(JOIN_MARKER) ?? [], (match) => match[1] ?? ""),
+	);
+	return (line: string): string => {
+		let redacted = line.replace(JOIN_MARKER, "<ticket>");
+		for (const ticket of tickets) {
+			if (ticket) {
+				redacted = redacted.replaceAll(ticket, "<ticket>");
+			}
+		}
+		return redacted;
+	};
+};
+
+export const traceOf = (error: unknown): string => {
+	if (error instanceof Error && error.stack !== undefined) {
+		return error.stack;
+	}
+	return String(error);
+};
+
+export const messageOf = (error: unknown): string => {
+	if (error instanceof Error) {
+		return error.message;
+	}
+	return String(error);
 };

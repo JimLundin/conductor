@@ -100,6 +100,7 @@ pub struct HostLink {
     requests: mpsc::Sender<Request>,
     answers: mpsc::UnboundedSender<Answer>,
     status: watch::Receiver<Status>,
+    shutdown: oneshot::Sender<oneshot::Sender<()>>,
 }
 
 #[derive(Debug)]
@@ -109,9 +110,6 @@ enum Request {
         reply: oneshot::Sender<Option<Connection>>,
     },
     Reconnect,
-    Stop {
-        reply: oneshot::Sender<()>,
-    },
 }
 
 #[derive(Debug)]
@@ -183,11 +181,13 @@ impl HostLink {
                 updates: updates_tx,
             },
         };
-        task::spawn(link.run(core, first));
+        let (shutdown, cancelled) = oneshot::channel();
+        task::spawn(link.run(core, first, cancelled));
         let handle = Self {
             requests: requests_tx,
             answers: answers_tx,
             status: status_rx,
+            shutdown,
         };
         Ok((handle, updates_rx))
     }
@@ -239,7 +239,9 @@ impl HostLink {
     /// # Errors
     /// Fails when the link has already stopped.
     pub async fn stop(self) -> Result<(), SendError> {
-        self.ask(|reply| Request::Stop { reply }).await
+        let (reply, finished) = oneshot::channel();
+        self.shutdown.send(reply).map_err(|_| SendError::Stopped)?;
+        finished.await.map_err(|_| SendError::Stopped)
     }
 
     async fn ask<T>(
@@ -255,11 +257,7 @@ impl HostLink {
     }
 }
 
-/// The link's task ends: asked to stop, or every [`HostLink`] was dropped.
-#[derive(Default)]
-struct Stopped {
-    reply: Option<oneshot::Sender<()>>,
-}
+struct Stopped;
 
 type Halves = (SendStream, RecvStream);
 
@@ -268,6 +266,7 @@ enum Done {
     Input(Input),
     /// The feed's next frame is due on `Halves`.
     Read(Input, Halves),
+    Subscribed(Feed, Halves),
 }
 
 enum Happening {
@@ -304,12 +303,28 @@ struct Outbox {
     updates: mpsc::Sender<Update>,
 }
 
+async fn until_shutdown(
+    drive: impl Future<Output = Result<Infallible, Stopped>>,
+    cancelled: oneshot::Receiver<oneshot::Sender<()>>,
+) -> Option<oneshot::Sender<()>> {
+    tokio::select! {
+        biased;
+        reply = cancelled => reply.ok(),
+        _ = drive => None,
+    }
+}
+
 impl Link {
-    async fn run(mut self, core: Core, first: Vec<Effect>) {
-        let Err(stopped) = self.drive(core, first).await;
+    async fn run(
+        mut self,
+        core: Core,
+        first: Vec<Effect>,
+        cancelled: oneshot::Receiver<oneshot::Sender<()>>,
+    ) {
+        let reply = until_shutdown(self.drive(core, first), cancelled).await;
         self.close().await;
-        if let Some(reply) = stopped.reply {
-            let _ = reply.send(());
+        if let Some(finished) = reply {
+            let _ = finished.send(());
         }
     }
 
@@ -361,7 +376,7 @@ impl Link {
                     Ok(core)
                 }
             }
-            Happening::Request(None) => Err(Stopped::default()),
+            Happening::Request(None) => Err(Stopped),
         }
     }
 
@@ -376,7 +391,6 @@ impl Link {
                 Ok(core)
             }
             Request::Reconnect => self.step(core, Input::Reconnect).await,
-            Request::Stop { reply } => Err(Stopped { reply: Some(reply) }),
         }
     }
 
@@ -477,6 +491,11 @@ impl Link {
                 self.pending = Box::pin(read(halves));
                 input
             }
+            Done::Subscribed(frame, halves) => {
+                self.pending =
+                    Box::pin(ready(Done::Read(Input::Frame(frame), halves)));
+                Input::Subscribed
+            }
         }
     }
 
@@ -519,6 +538,8 @@ impl Link {
     /// out the retired ones and those of dials still running.
     async fn close(&mut self) {
         self.hang_up();
+        self.pending = idle();
+        self.dials = FuturesUnordered::new();
         self.endpoint.close().await;
         let dialing = std::mem::take(&mut self.attempts);
         self.retiring.extend(dialing.into_values().map(retire));
@@ -535,10 +556,7 @@ impl Outbox {
     }
 
     async fn emit(&self, update: Update) -> Result<(), Stopped> {
-        self.updates
-            .send(update)
-            .await
-            .map_err(|_| Stopped::default())
+        self.updates.send(update).await.map_err(|_| Stopped)
     }
 }
 
@@ -604,21 +622,23 @@ async fn hello_reply(
     Ok(reply)
 }
 
-/// Opens the subscription; its frames follow as [`Done::Read`].
+/// The host always sends an initial frame after accepting a subscription.
 async fn subscribed(conn: Connection, subscribe: Subscribe) -> Done {
-    open_subscription(&conn, subscribe).await.map_or_else(
-        |err| Done::Input(broken(&err)),
-        |halves| Done::Read(Input::Subscribed, halves),
-    )
+    match open_subscription(&conn, subscribe).await {
+        Ok((Some(frame), halves)) => Done::Subscribed(frame, halves),
+        Ok((None, _)) => Done::Input(Input::from(None::<Feed>)),
+        Err(err) => Done::Input(broken(&err)),
+    }
 }
 
 async fn open_subscription(
     conn: &Connection,
     subscribe: Subscribe,
-) -> Result<Halves, WireError> {
-    let (mut send, recv) = conn.open_bi().await?;
+) -> Result<(Option<Feed>, Halves), WireError> {
+    let (mut send, mut recv) = conn.open_bi().await?;
     wire::write(&mut send, &Open::Subscribe(subscribe)).await?;
-    Ok((send, recv))
+    let first = wire::read(&mut recv).await?;
+    Ok((first, (send, recv)))
 }
 
 /// Reads one frame and hands the halves back for the next. Holding both
@@ -706,4 +726,45 @@ fn retire(endpoint: Endpoint) -> Endpoint {
     let closing = endpoint.clone();
     task::spawn(async move { closing.close().await });
     endpoint
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::poll_fn;
+    use std::pin::pin;
+    use std::task::Poll;
+
+    use super::{Outbox, Status, Update, until_shutdown};
+    use tokio::sync::{mpsc, oneshot, watch};
+
+    #[tokio::test]
+    async fn shutdown_preempts_delivery_to_a_full_updates_buffer()
+    -> anyhow::Result<()> {
+        let (updates, _unread) = mpsc::channel(1);
+        let (status, _observed) = watch::channel(Status::default());
+        let outbox = Outbox { status, updates };
+        outbox
+            .emit(Update::Status(Status::default()))
+            .await
+            .map_err(|_| anyhow::anyhow!("updates channel stopped"))?;
+        let (shutdown, cancelled) = oneshot::channel();
+        let mut stopped = pin!(until_shutdown(
+            async {
+                outbox.emit(Update::Status(Status::default())).await?;
+                std::future::pending().await
+            },
+            cancelled
+        ));
+        poll_fn(|cx| {
+            assert!(stopped.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let (ack, _acknowledged) = oneshot::channel();
+        shutdown
+            .send(ack)
+            .map_err(|_| anyhow::anyhow!("shutdown channel stopped"))?;
+        assert!(stopped.await.is_some());
+        Ok(())
+    }
 }

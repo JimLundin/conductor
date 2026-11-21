@@ -18,26 +18,24 @@
 # session started in a project (projects,
 # Chromium), and the screenshots of the
 # states a real CLI shows only with careful timing (screens).
-# Output: docs/p1/browser-run.txt, docs/p1/screens/*-{running,closed,idle}.png
-# and docs/p1/screens/phone-light-tasks.png, or the same under $E2E_RECORD
-# (the gate's suite writes them to target/). Every scenario runs even after
-# one fails; the script exits non-zero if any did. A failed scenario's record
-# carries its host logs, and its page is shot to target/e2e-failures. Each
-# browser wait is on what the page shows, bounded by E2E_PATIENCE ms per wait
-# and E2E_DEADLINE ms per scenario (crates/app/tests-e2e/browser.ts). The
-# web build is reused while the files it is built from are unchanged.
+# Output: browser-run.txt and screens/ under target/e2e-browser, or under
+# $E2E_RECORD. Failed pages go to target/e2e-failures.
 set -euo pipefail
+umask 077
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH" NO_COLOR=1
+source tools/e2e-common.sh
 recordings=$PWD/fixtures/e2e
-record=${E2E_RECORD:-docs/p1}
-mkdir -p "$record/screens"
 claude=$PWD/crates/claude-cli/tests/fake-claude.sh
 target=$(tools/target-dir)
-# A failed scenario's page, as it was when it failed.
+lock_browser
+record=${E2E_RECORD:-$target/e2e-browser}
+mkdir -p "$record/screens"
 export E2E_FAILURES=$target/e2e-failures
 rm -rf "$E2E_FAILURES"
 mkdir -p "$E2E_FAILURES"
+install_browser_dependencies
+init_browser_scratch
 
 # app_tree: the git tree of the files the web build reads, as they are on
 # disk: the workspace crates the app depends on, and the workspace's
@@ -75,32 +73,8 @@ else
   (cd crates/app && dx build --platform web --release >/dev/null)
   echo "$built" >"$web/built-from"
 fi
-site=$(mktemp -d)
-ln -s "$target/dx/app/release/web/public" "$site/conductor"
-(cd crates/app/tests-e2e && [ -d node_modules ] || npm install --silent)
 cargo build -q -p conductord
-
-# Fixed session paths, which the screenshots show, so a rerun that changes
-# nothing redraws nothing. A second run, from another worktree too, waits
-# for the first rather than share them; nothing started in the background
-# holds the lock. Checkouts from before the lock used /tmp/conductor-e2e
-# and port 8080 without one, so this run keeps clear of both.
-scratch=/tmp/conductor-browser-e2e
-exec 9>"$scratch.lock"
-flock -n 9 || { echo "waiting for the browser run that holds $scratch.lock" >&2; flock 9; }
-rm -rf "$scratch"
-mkdir -p "$scratch"
-server=
-trap 'kill "$server" 2>/dev/null || true; rm -rf "$site" "$scratch"' EXIT
-
-# The site on a port of its own, or $PORT, once it listens.
-python3 -u -m http.server "${PORT:-0}" --bind 127.0.0.1 --directory "$site" >"$scratch/site.log" 2>&1 9>&- &
-server=$!
-until port=$(grep -om1 'port [0-9]*' "$scratch/site.log"); do
-  kill -0 "$server" 2>/dev/null || { cat "$scratch/site.log"; exit 1; }
-  sleep 0.1
-done
-port=${port#port }
+start_browser_server
 
 # repo <dir>: a Git repository with one commit, which a session needs to
 # start (its worktree branches from it).
@@ -142,17 +116,17 @@ start_host() {
     >"$scratch/$name.log" 2>&1 9>&- &
   hosts+=($!)
   names+=("$name")
-  until grep -q '^join:' "$scratch/$name.log"; do
-    kill -0 "${hosts[-1]}" 2>/dev/null || { cat "$scratch/$name.log"; return 1; }
-    sleep 0.5
-  done
+  wait_for_join "${hosts[-1]}" "$name" "$scratch/$name.log"
   join=$(awk '/^join:/ {print $2}' "$scratch/$name.log")
 }
 
 # host_log <name>: the host's log without the ticket, QR code and paths.
 host_log() {
-  sed -E 's/^[0-9TZ:.-]+ +//' "$scratch/$1.log" |
-    grep -v '^\(ticket\|join\|data dir\|qr image\|host id\|relay\):' | grep -v '[█▀▄]'
+  if ! grep -q '^join:' "$scratch/$1.log"; then
+    echo "host $1 did not announce pairing readiness"
+    return
+  fi
+  python3 -I tools/e2e-host-log.py "$scratch/$1.log"
 }
 
 # expect <name> <count> <pattern> <what>: the host log has <count> lines matching.
@@ -161,6 +135,17 @@ expect() {
   got=$(host_log "$1" | grep -c -- "$3" || true)
   [ "$got" -eq "$2" ] || { echo "FAILED: host $1: $4 (expected $2, got $got)"; return 1; }
   echo "ok: host $1: $4 ($got)"
+}
+
+# expect_commands <host> <count> <operation> <outcome>
+expect_commands() {
+  local got
+  got=$(host_log "$1" | count_browser_commands "$3" "$4")
+  [ "$got" -eq "$2" ] || {
+    echo "FAILED: host $1: $3 -> $4 (expected $2, got $got)"
+    return 1
+  }
+  echo "ok: host $1: $3 -> $4 ($got)"
 }
 
 # run <engine> <scenario> <output> <session dir>
@@ -186,7 +171,9 @@ turn_in() {
   host_log "turn-$1"
   echo
   expect "turn-$1" 1 'host: ready path=.* version=fake-claude own=Unmanaged models=4' 'the host found Claude'
-  expect "turn-$1" 3 'serve: command client="iPhone"' 'the start, the message and the approval reached the host'
+  expect_commands "turn-$1" 1 start_session started
+  expect_commands "turn-$1" 1 send_message accepted
+  expect_commands "turn-$1" 1 resolve accepted
 }
 
 turn_chromium() { turn_in chromium; }
@@ -220,9 +207,13 @@ questions() {
   echo "## Questions, host log"
   host_log questions
   echo
-  expect questions 7 'serve: command client="iPhone"' 'both starts, three messages, the answer and the approval reached the host'
-  expect questions 1 'body: Answer {' 'one answer reached the host'
-  expect questions 1 'decision: ApproveForSession' 'one approval for the session reached the host'
+  expect_commands questions 2 start_session started
+  expect_commands questions 3 send_message accepted
+  expect_commands questions 1 answer accepted
+  expect_commands questions 1 resolve accepted
+  grep -Eq '"updatedPermissions": ?\[.*"destination": ?"session"' "$scratch/questions/for-session/stdin.jsonl" ||
+    { echo "FAILED: host questions: the fake CLI read no session-scoped approval"; return 1; }
+  echo "ok: host questions: the fake CLI received a session-scoped approval"
 }
 
 continue_scenario() {
@@ -237,8 +228,17 @@ continue_scenario() {
   echo "## Continue, host log"
   host_log continue-host
   echo
-  expect continue-host 1 'body: Continue {' 'one Continue reached the host'
-  expect continue-host 1 'model: Some(ModelId("sonnet")), effort: Some(High)' 'the picked model and effort reached the host'
+  expect_commands continue-host 1 continue accepted
+  awk '
+    $0 == "run" { model = effort = 0 }
+    prev == "--model" && $0 == "sonnet" { model = 1 }
+    prev == "--effort" && $0 == "high" { effort = 1 }
+    model && effort { found = 1 }
+    { prev = $0 }
+    END { exit !found }
+  ' "$scratch/continue/killed/argv.txt" ||
+    { echo "FAILED: host continue-host: no CLI launch used Sonnet with high effort"; return 1; }
+  echo "ok: host continue-host: the CLI received the picked model and effort"
 }
 
 tasks() {
@@ -251,7 +251,7 @@ tasks() {
   echo "## Tasks, host log"
   host_log tasks
   echo
-  expect tasks 1 'body: SetEffort {' 'one effort change reached the host'
+  expect_commands tasks 1 set_effort accepted
   # The CLI gets the effort right before the next message, not mid-turn.
   order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/tasks/stdin.jsonl" | tr '\n' ' ')
   [ "$order" = '"subtype":"initialize" "text":"plan" "subtype":"apply_flag_settings" "text":"pong" ' ] ||
@@ -269,7 +269,8 @@ subagents() {
   echo "## Sub-agents, host log"
   host_log subagents
   echo
-  expect subagents 2 'serve: command client="iPhone"' 'the start and the message reached the host'
+  expect_commands subagents 1 start_session started
+  expect_commands subagents 1 send_message accepted
 }
 
 credentials() {
@@ -293,7 +294,7 @@ credentials() {
 }
 
 sign_in() {
-  start_host sign-in
+  codex=$PWD/crates/codex-cli/tests/fake-codex.sh start_host sign-in
   echo
   echo "## Sign-in from the app, webkit"
   run webkit sign-in "$scratch/sign-in.png" "$scratch"
@@ -301,8 +302,8 @@ sign_in() {
   echo "## Sign-in, host log"
   host_log sign-in
   echo
-  expect sign-in 2 'body: StartSignIn {' 'both sign-ins reached the host'
-  expect sign-in 2 'code: SignInCode(..)' 'both codes reached the host, logged without their text'
+  expect_commands sign-in 3 start_sign_in accepted
+  expect_commands sign-in 2 submit_sign_in_code accepted
   expect sign-in 1 'sign-in instance=claude step=failed: Claude' 'the refused code failed the first sign-in'
   expect sign-in 1 'sign-in instance=claude step=signed in' 'the second signed the instance in'
   expect sign-in 1 'added an instance instance=claude conductor-test@example.invalid' 'the account the CLI named became an instance'
@@ -328,8 +329,8 @@ two_hosts() {
   host_log desk
   host_log laptop
   echo
-  expect desk 1 'serve: command client="iPhone"' "desk's session started on desk"
-  expect laptop 1 'serve: command client="iPhone"' "laptop's session started on laptop"
+  expect_commands desk 1 start_session started
+  expect_commands laptop 1 start_session started
 }
 
 # listed <home> <id> <remote> <source>: the project's project.toml in the
@@ -371,9 +372,9 @@ projects_scenario() {
   echo "## Projects, host log"
   host_log projects-host
   echo
-  expect projects-host 1 'body: CloneProject { project: ProjectId("beta") }' 'the clone reached the host'
-  expect projects-host 1 'at: Project(ProjectId("alpha"))' 'the session started in alpha'
-  expect projects-host 1 'at: Issue(IssueId(' 'a session started on the issue'
+  expect_commands projects-host 1 clone_project accepted
+  expect_commands projects-host 2 start_session started
+  expect_commands projects-host 1 start_session rejected
   [ -n "$(git -C "$at/roots/alpha" for-each-ref 'refs/heads/issue/')" ] ||
     { echo "FAILED: host projects-host: the checkout has no issue branch"; return 1; }
   echo "ok: host projects-host: the issue's branch is in the checkout"
@@ -426,7 +427,7 @@ scenario() {
     set -e
     hosts=()
     names=()
-    trap 'failed_logs $?; kill "${hosts[@]}" 2>/dev/null || true' EXIT
+    trap 'failed_logs $?; stop_children "${hosts[@]}"' EXIT
     "$2"
   )
   status=$?

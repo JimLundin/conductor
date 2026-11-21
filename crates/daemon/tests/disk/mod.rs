@@ -2,12 +2,16 @@ use std::path::Path;
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{XChaCha20Poly1305, XNonce};
-use proto::{Epoch, Event, EventKind, HostSeq, Roster, SessionId};
-use redb::{Database, ReadableTableMetadata, TableDefinition};
+use proto::{
+    CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, Roster,
+    SessionId,
+};
+use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::Fallible;
 
-const HEADER: u8 = 5;
+const LEGACY_HEADER: u8 = 5;
+const HEADER: u8 = 6;
 const PURPOSE: &[u8] = b"conductor credentials 1";
 
 pub fn seed_roster(data: &Path, roster: &Roster) -> Fallible {
@@ -32,7 +36,7 @@ pub fn seed_roster(data: &Path, roster: &Roster) -> Fallible {
     )?;
     std::fs::write(
         data.join("credentials"),
-        [&[HEADER], nonce.as_slice(), &sealed].concat(),
+        [&[LEGACY_HEADER], nonce.as_slice(), &sealed].concat(),
     )?;
     Ok(())
 }
@@ -43,9 +47,9 @@ pub fn roster(data: &Path) -> Fallible<Roster> {
         .try_into()
         .map_err(|_| "invalid test store key")?;
     let file = std::fs::read(data.join("credentials"))?;
-    let (nonce, encrypted) = file
-        .strip_prefix(&[HEADER])
-        .and_then(|body| body.split_at_checked(24))
+    let (header, body) = file.split_first().ok_or("missing roster header")?;
+    let (nonce, encrypted) = body
+        .split_at_checked(24)
         .ok_or("not a sealed test roster")?;
     let cipher = XChaCha20Poly1305::new(&key.into());
     let plain = cipher
@@ -57,7 +61,26 @@ pub fn roster(data: &Path) -> Fallible<Roster> {
             },
         )
         .map_err(|_| "cannot open test roster")?;
-    Ok(postcard::from_bytes(&plain)?)
+    match *header {
+        LEGACY_HEADER => Ok(postcard::from_bytes(&plain)?),
+        HEADER => Ok(postcard::take_from_bytes(&plain)?.0),
+        _ => Err("unknown test roster format".into()),
+    }
+}
+
+pub fn remove_receipt(data: &Path, id: CommandId) -> Fallible<CommandResult> {
+    let database = Database::open(data.join("conductor.redb"))?;
+    let write = database.begin_write()?;
+    let result = {
+        let mut receipts = write.open_table(
+            TableDefinition::<u128, Vec<u8>>::new("command_receipts"),
+        )?;
+        let removed =
+            receipts.remove(id.0)?.ok_or("expected a command receipt")?;
+        postcard::from_bytes(&removed.value())?
+    };
+    write.commit()?;
+    Ok(result)
 }
 
 /// The wire cannot create pre-worktree history or records from an interrupted write.
@@ -85,6 +108,41 @@ pub fn append(
             let _ = table.insert(seq.0, postcard::to_stdvec(&event)?)?;
         }
     }
+    write.commit()?;
+    Ok(())
+}
+
+/// Restores the log boundary immediately before the terminal finish event,
+/// leaving the Git refs and delivered issue note as they were at that point.
+pub fn lose_terminal_finish(data: &Path, session: SessionId) -> Fallible {
+    let database = Database::create(data.join("conductor.redb"))?;
+    let write = database.begin_write()?;
+    {
+        let mut events =
+            write.open_table(TableDefinition::<u64, Vec<u8>>::new("events"))?;
+        let seq = {
+            let (key, value) =
+                events.last()?.ok_or("no terminal finish event")?;
+            let event: Event = postcard::from_bytes(&value.value())?;
+            if event.session != session
+                || !matches!(event.kind, EventKind::SessionFinished { .. })
+            {
+                return Err("the last durable event was not this session's terminal finish".into());
+            }
+            key.value()
+        };
+        let _ = events.remove(seq)?;
+    }
+    write.commit()?;
+    Ok(())
+}
+
+pub fn rewind_progress_cursor(data: &Path) -> Fallible {
+    let database = Database::create(data.join("conductor.redb"))?;
+    let write = database.begin_write()?;
+    let _ = write
+        .open_table(TableDefinition::<&str, Vec<u8>>::new("metadata"))?
+        .insert("progress_cursor", postcard::to_stdvec(&HostSeq(0))?)?;
     write.commit()?;
     Ok(())
 }

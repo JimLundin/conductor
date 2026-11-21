@@ -8,10 +8,11 @@ use std::convert::Infallible;
 use std::sync::Arc;
 
 use codex::CodexCredential;
-use codex::hub::{Ask, Command, Routed};
+use codex::hub::{Ask, Command, EarlyEvents, Routed};
 use codex::{CodexEvent, ThreadId, ThreadOptions};
 use proto::Models;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinSet;
 
 use super::server::{CodexServer, CodexThread, Error, ServerOptions};
 
@@ -27,7 +28,39 @@ struct Asked {
 
 type Listed = oneshot::Sender<Result<Models, Error>>;
 type Configured = oneshot::Sender<Result<(), Error>>;
-type Route = mpsc::Sender<Routed>;
+const ROUTE_BACKLOG: usize = 256;
+const OVERFLOW: &str = "the Codex session event backlog was exceeded";
+
+#[derive(Clone)]
+struct Route {
+    events: mpsc::Sender<Routed>,
+    terminal: watch::Sender<Option<Routed>>,
+    generation: u64,
+}
+
+impl Route {
+    fn send(&self, routed: Routed) -> bool {
+        match self.events.try_send(routed) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.close(Routed::Stopped {
+                    reason: String::from(OVERFLOW),
+                });
+                false
+            }
+        }
+    }
+
+    fn close(&self, routed: Routed) {
+        self.terminal.send_replace(Some(routed));
+    }
+}
+
+struct Completed {
+    reply: oneshot::Sender<Result<Thread, Error>>,
+    outcome: Result<CodexThread, Error>,
+}
 type Machine = codex::hub::Hub<Asked, Listed, Route>;
 type Input = codex::hub::Input<Asked, Listed, Configured, Route, Arc<Error>>;
 type Effect = codex::hub::Effect<Asked, Listed, Configured, Route, Arc<Error>>;
@@ -45,12 +78,7 @@ impl Hub {
     #[must_use]
     pub fn spawn(options: ServerOptions) -> Self {
         let (inbox, commands) = mpsc::channel(16);
-        let task = Task {
-            machine: Machine::new(options.credential.clone()),
-            options,
-            server: None,
-        };
-        tokio::spawn(task.run(commands));
+        tokio::spawn(Task::new(options).run(commands));
         Self { inbox }
     }
 
@@ -122,9 +150,27 @@ struct Task {
     machine: Machine,
     options: ServerOptions,
     server: Option<Up>,
+    opens: JoinSet<Completed>,
+    lists: JoinSet<()>,
+    relays: JoinSet<(ThreadId, u64)>,
+    early: EarlyEvents,
+    generation: u64,
 }
 
 impl Task {
+    fn new(options: ServerOptions) -> Self {
+        Self {
+            machine: Machine::new(options.credential.clone()),
+            options,
+            server: None,
+            opens: JoinSet::new(),
+            lists: JoinSet::new(),
+            relays: JoinSet::new(),
+            early: EarlyEvents::default(),
+            generation: 0,
+        }
+    }
+
     async fn run(
         mut self,
         mut commands: mpsc::Receiver<Msg>,
@@ -133,6 +179,15 @@ impl Task {
             let input = tokio::select! {
                 command = commands.recv() => command.map_or(Input::Closed, Input::Command),
                 event = next_event(self.server.as_mut()) => Input::Event(event),
+                completed = self.opens.join_next(), if !self.opens.is_empty() => {
+                    self.opened(completed).await?;
+                    continue;
+                }
+                _ = self.lists.join_next(), if !self.lists.is_empty() => continue,
+                gone = self.relays.join_next(), if !self.relays.is_empty() => {
+                    let Some(Ok((thread, generation))) = gone else { continue };
+                    Input::Gone { thread, generation }
+                }
             };
             self.feed(input).await?;
         }
@@ -158,10 +213,8 @@ impl Task {
             Effect::SpawnConfigured(credential) => {
                 return Ok(self.spawn(credential, CodexServer::open).await);
             }
-            Effect::Open(asked) => return Ok(self.open(asked).await),
-            Effect::List(reply) => {
-                let _ = reply.send(self.list().await);
-            }
+            Effect::Open(asked) => self.open(asked),
+            Effect::List(reply) => self.list_models(reply),
             Effect::Fail(Ask::Thread(asked), error) => {
                 let _ = asked.reply.send(Err(Error::Start(error)));
             }
@@ -173,22 +226,21 @@ impl Task {
                 route,
                 routed,
             } => {
-                if route.send(routed).await.is_err() {
-                    return Ok(self.machine.step(Input::Gone(thread)));
+                if !route.send(routed) {
+                    return Ok(self.machine.step(Input::Gone {
+                        thread,
+                        generation: route.generation,
+                    }));
                 }
             }
-            // A session that has gone fails its send, which is fine.
-            Effect::Close { route, routed } => {
-                let _ = route.send(routed).await;
-            }
+            Effect::Close { route, routed } => route.close(routed),
             Effect::Stop => self.stop().await,
             Effect::Lost(status) => {
                 tracing::warn!(status = %status.describe(), "the codex app-server exited");
                 self.server = None;
+                self.clear_opening();
             }
-            Effect::Unrouted(event) => {
-                tracing::debug!(?event, "a codex event for no thread");
-            }
+            Effect::Unrouted(event) => self.unrouted(event),
             Effect::Configured(reply) => {
                 let applied = crate::config::write(
                     &self.options.home,
@@ -201,6 +253,30 @@ impl Task {
             Effect::End => return Err(Ended),
         }
         Ok(Vec::new())
+    }
+
+    fn list_models(&mut self, reply: Listed) {
+        let server = self.running();
+        self.lists.spawn(async move {
+            let listed = match server {
+                Ok(running) => running.list_models().await,
+                Err(error) => Err(error),
+            };
+            let _ = reply.send(listed);
+        });
+    }
+
+    fn unrouted(&mut self, event: CodexEvent) {
+        if let Some(unhandled) =
+            self.early.capture(event, !self.opens.is_empty())
+        {
+            let (kind, thread) = unhandled.diagnostic();
+            tracing::debug!(
+                event = kind,
+                thread = thread.map(|id| id.0.as_str()),
+                "a codex event for no thread"
+            );
+        }
     }
 
     async fn spawn(
@@ -227,45 +303,88 @@ impl Task {
         self.machine.step(Input::Spawned(spawned.map_err(Arc::new)))
     }
 
-    /// Starts the thread, and has the machine route its events before it
-    /// answers, so its first events, which wait in the server's channel
-    /// meanwhile, all find their route.
-    async fn open(&mut self, asked: Asked) -> Vec<Effect> {
+    fn open(&mut self, asked: Asked) {
         let Asked {
             options,
             resume,
             reply,
         } = asked;
-        match self.start(options, resume).await {
-            Ok(thread) => {
-                let (route, events) = mpsc::channel(256);
-                let effects = self.machine.step(Input::Opened {
-                    thread: thread.id.clone(),
-                    route,
-                });
-                let _ = reply.send(Ok((thread, events)));
-                effects
-            }
-            Err(error) => {
-                let _ = reply.send(Err(error));
-                Vec::new()
+        if reply.is_closed() {
+            return;
+        }
+        let server = self.running();
+        self.opens.spawn(async move {
+            let outcome = match server {
+                Ok(running) => running.open_thread(options, resume).await,
+                Err(error) => Err(error),
+            };
+            Completed { reply, outcome }
+        });
+    }
+
+    async fn opened(
+        &mut self,
+        completed: Option<Result<Completed, tokio::task::JoinError>>,
+    ) -> Result<(), Ended> {
+        let route = completed.and_then(Result::ok).and_then(
+            |Completed { reply, outcome }| {
+                connect_open(outcome, reply, self.early.overflowed())
+            },
+        );
+        if let Some((id, sender)) = route {
+            self.install_route(id, sender).await?;
+        }
+        if self.opens.is_empty() {
+            self.early = EarlyEvents::default();
+        }
+        Ok(())
+    }
+
+    async fn install_route(
+        &mut self,
+        thread: ThreadId,
+        sender: mpsc::Sender<Routed>,
+    ) -> Result<(), Ended> {
+        let early = self.early.take(&thread);
+        let (events, queued) = mpsc::channel(ROUTE_BACKLOG);
+        let (terminal, closing) = watch::channel(None);
+        self.generation += 1;
+        let generation = self.generation;
+        let route = Route {
+            events,
+            terminal,
+            generation,
+        };
+        self.relays.spawn(relay(
+            thread.clone(),
+            generation,
+            queued,
+            closing,
+            sender,
+        ));
+        self.feed(Input::Opened {
+            thread: thread.clone(),
+            route: route.clone(),
+            generation,
+        })
+        .await?;
+        for event in early {
+            if !route.send(Routed::Codex(event)) {
+                self.feed(Input::Gone { thread, generation }).await?;
+                break;
             }
         }
+        Ok(())
     }
 
-    async fn start(
-        &self,
-        options: ThreadOptions,
-        resume: Option<ThreadId>,
-    ) -> Result<CodexThread, Error> {
-        self.running()?.open_thread(options, resume).await
-    }
-
-    async fn list(&self) -> Result<Models, Error> {
-        self.running()?.list_models().await
+    fn clear_opening(&mut self) {
+        self.opens = JoinSet::new();
+        self.lists = JoinSet::new();
+        self.early = EarlyEvents::default();
     }
 
     async fn stop(&mut self) {
+        self.clear_opening();
         if let Some(up) = self.server.take() {
             let stopped = up.server.shutdown().await;
             tracing::info!(
@@ -284,11 +403,322 @@ impl Task {
     }
 }
 
+fn connect_open(
+    outcome: Result<CodexThread, Error>,
+    reply: oneshot::Sender<Result<Thread, Error>>,
+    overflowed: bool,
+) -> Option<(ThreadId, mpsc::Sender<Routed>)> {
+    match outcome {
+        Ok(thread) if !overflowed => {
+            let id = thread.id.clone();
+            connect(thread, reply).map(|sender| (id, sender))
+        }
+        rejected => {
+            let error = rejected.err().unwrap_or(Error::EventBacklog);
+            let _ = reply.send(Err(error));
+            None
+        }
+    }
+}
+
+fn connect<T>(
+    thread: T,
+    reply: oneshot::Sender<Result<(T, mpsc::Receiver<Routed>), Error>>,
+) -> Option<mpsc::Sender<Routed>> {
+    let (sender, events) = mpsc::channel(256);
+    reply.send(Ok((thread, events))).ok().map(|()| sender)
+}
+
+async fn relay(
+    thread: ThreadId,
+    generation: u64,
+    queued: mpsc::Receiver<Routed>,
+    closing: watch::Receiver<Option<Routed>>,
+    sender: mpsc::Sender<Routed>,
+) -> (ThreadId, u64) {
+    let _ = forward(queued, closing, sender).await;
+    (thread, generation)
+}
+
+struct ReceiverClosed;
+
+async fn forward(
+    mut queued: mpsc::Receiver<Routed>,
+    mut closing: watch::Receiver<Option<Routed>>,
+    sender: mpsc::Sender<Routed>,
+) -> Result<(), ReceiverClosed> {
+    let mut watch_open = true;
+    loop {
+        let next = tokio::select! {
+            () = sender.closed() => return Ok(()),
+            _ = closing.changed(), if watch_open => {
+                watch_open = false;
+                queued.close();
+                continue;
+            }
+            routed = queued.recv() => routed,
+        };
+        let Some(routed) = next else { break };
+        sender.send(routed).await.map_err(|_| ReceiverClosed)?;
+    }
+    let last = closing.borrow_and_update().clone();
+    if let Some(terminal) = last {
+        sender.send(terminal).await.map_err(|_| ReceiverClosed)?;
+    }
+    Ok(())
+}
+
 /// The running server's next event. With none running, it waits forever,
 /// so the hub only takes commands.
 async fn next_event(server: Option<&mut Up>) -> Option<CodexEvent> {
     match server {
         Some(up) => up.events.recv().await,
         None => std::future::pending().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use codex::{ThreadEvent, TurnId};
+    use install::Home;
+    use tokio::sync::{mpsc, oneshot, watch};
+
+    use super::{
+        Command, Input, OVERFLOW, Route, Routed, ServerOptions, Task, connect,
+        relay,
+    };
+    use codex::{CodexEvent, ThreadId};
+
+    fn task() -> Task {
+        let mut task = Task::new(ServerOptions {
+            codex_path: "codex".into(),
+            home: Home::User,
+            credential: None,
+            cwd: ".".into(),
+        });
+        let (reply, _) = oneshot::channel();
+        let _: Vec<super::Effect> =
+            task.machine.step(Input::Command(Command::Models(reply)));
+        let _: Vec<super::Effect> = task.machine.step(Input::Spawned(Ok(())));
+        task
+    }
+
+    fn event(thread: &ThreadId, turn: &str) -> CodexEvent {
+        CodexEvent::Thread {
+            thread: thread.clone(),
+            event: ThreadEvent::TurnStarted {
+                turn: TurnId(String::from(turn)),
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn a_paused_receiver_preserves_order_without_blocking_another_thread()
+    -> Result<(), &'static str> {
+        let mut task = task();
+        let paused = ThreadId(String::from("paused"));
+        let active = ThreadId(String::from("active"));
+        let (paused_sender, mut paused_receiver) = mpsc::channel(1);
+        let (active_sender, mut active_receiver) = mpsc::channel(1);
+        task.install_route(paused.clone(), paused_sender)
+            .await
+            .map_err(|_| "stopped")?;
+        task.install_route(active.clone(), active_sender)
+            .await
+            .map_err(|_| "stopped")?;
+
+        let first = event(&paused, "first");
+        let second = event(&paused, "second");
+        let other = event(&active, "other");
+        for event in [&first, &second, &other] {
+            task.feed(Input::Event(Some(event.clone())))
+                .await
+                .map_err(|_| "stopped")?;
+        }
+        assert_eq!(active_receiver.recv().await, Some(Routed::Codex(other)));
+        assert_eq!(paused_receiver.recv().await, Some(Routed::Codex(first)));
+        assert_eq!(paused_receiver.recv().await, Some(Routed::Codex(second)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_full_route_delivers_accepted_events_then_disconnects()
+    -> Result<(), &'static str> {
+        let mut task = task();
+        let thread = ThreadId(String::from("paused"));
+        let (events, queued) = mpsc::channel(1);
+        let (terminal, closing) = watch::channel(None);
+        task.feed(Input::Opened {
+            thread: thread.clone(),
+            route: Route {
+                events,
+                terminal,
+                generation: 1,
+            },
+            generation: 1,
+        })
+        .await
+        .map_err(|_| "stopped")?;
+
+        let accepted = event(&thread, "accepted");
+        for event in [accepted.clone(), event(&thread, "over capacity")] {
+            task.feed(Input::Event(Some(event)))
+                .await
+                .map_err(|_| "stopped")?;
+        }
+        assert!(matches!(
+            task.machine
+                .step::<(), ()>(codex::hub::Input::Event(Some(event(
+                    &thread, "later"
+                ))))
+                .as_slice(),
+            [codex::hub::Effect::Unrouted(_)]
+        ));
+        let (sender, mut receiver) = mpsc::channel(1);
+        let task =
+            tokio::spawn(relay(thread.clone(), 1, queued, closing, sender));
+        assert_eq!(receiver.recv().await, Some(Routed::Codex(accepted)));
+        assert_eq!(
+            receiver.recv().await,
+            Some(Routed::Stopped {
+                reason: String::from(OVERFLOW)
+            })
+        );
+        assert!(receiver.recv().await.is_none());
+        assert_eq!(task.await.map_err(|_| "relay failed")?, (thread, 1));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn early_events_are_delivered_when_an_open_completes()
+    -> Result<(), &'static str> {
+        let mut task = task();
+        let (unblock, blocked) = oneshot::channel();
+        let (reply, _) = oneshot::channel();
+        task.opens.spawn(async move {
+            let _ = blocked.await;
+            super::Completed {
+                reply,
+                outcome: Err(super::Error::Exited),
+            }
+        });
+        let thread = ThreadId(String::from("opening"));
+        let first = event(&thread, "early");
+        task.feed(Input::Event(Some(first.clone())))
+            .await
+            .map_err(|_| "stopped")?;
+        assert!(unblock.send(()).is_ok());
+        let _ = task.opens.join_next().await;
+
+        let (sender, mut events) = mpsc::channel(1);
+        task.install_route(thread.clone(), sender)
+            .await
+            .map_err(|_| "stopped")?;
+        let later = event(&thread, "later");
+        task.feed(Input::Event(Some(later.clone())))
+            .await
+            .map_err(|_| "stopped")?;
+        assert_eq!(events.recv().await, Some(Routed::Codex(first)));
+        assert_eq!(events.recv().await, Some(Routed::Codex(later)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn quiet_and_cancelled_sessions_leave_no_routes()
+    -> Result<(), &'static str> {
+        let mut task = task();
+        let thread = ThreadId(String::from("quiet"));
+        let (reply, cancel) = oneshot::channel();
+        drop(cancel);
+        assert!(connect((), reply).is_none());
+
+        for _ in 0..3 {
+            let (sender, events) = mpsc::channel(1);
+            task.install_route(thread.clone(), sender)
+                .await
+                .map_err(|_| "stopped")?;
+            drop(events);
+            let (gone, generation) = task
+                .relays
+                .join_next()
+                .await
+                .ok_or("no relay")?
+                .map_err(|_| "relay failed")?;
+            task.feed(Input::Gone {
+                thread: gone,
+                generation,
+            })
+            .await
+            .map_err(|_| "stopped")?;
+            assert!(matches!(
+                task.machine
+                    .step::<(), ()>(codex::hub::Input::Event(Some(event(
+                        &thread, "later"
+                    ))))
+                    .as_slice(),
+                [codex::hub::Effect::Unrouted(_)]
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod backpressure_tests {
+    use std::time::Duration;
+
+    use install::Home;
+    use tokio::sync::oneshot;
+
+    use crate::replay_support::{TestResult, fake_cli_path};
+
+    use super::{CodexServer, Command, Input, ServerOptions, Task, Up};
+
+    #[tokio::test]
+    async fn credential_rotation_stops_a_server_with_a_full_event_queue()
+    -> TestResult<()> {
+        let dir = tempfile::tempdir_in(env!("CARGO_MANIFEST_DIR"))?;
+        let cwd = dir.path().to_path_buf();
+        let mut frames = String::from(
+            "{\"id\":1,\"result\":{\"userAgent\":\"codex-test/1.0.0\"}}\n",
+        );
+        frames
+            .push_str(&"{\"method\":\"conductor/testUnknown\"}\n".repeat(4097));
+        std::fs::write(cwd.join("stdout.jsonl"), frames)?;
+        let options = ServerOptions {
+            codex_path: fake_cli_path(),
+            home: Home::User,
+            credential: None,
+            cwd,
+        };
+        let (server, events) = CodexServer::open(options.clone()).await?;
+        let mut task = Task::new(options);
+        task.server = Some(Up { server, events });
+        let _ = task
+            .machine
+            .step::<(), ()>(codex::hub::Input::Spawned(Ok(())));
+        let (reply, answer) = oneshot::channel();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            let events = &task.server.as_ref().ok_or("server missing")?.events;
+            while events.capacity() > 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            task.feed(Input::Command(Command::Credential {
+                credential: Some(codex::CodexCredential::Provider {
+                    name: String::from("Test gateway"),
+                    base_url: String::from("https://gateway.example"),
+                    model: String::from("test-model"),
+                    key: String::from("conductor-test-key"),
+                }),
+                reply,
+            }))
+            .await
+            .map_err(|_| "hub stopped")?;
+            answer.await??;
+            assert!(task.server.is_none());
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+        })
+        .await??;
+        Ok(())
     }
 }
