@@ -375,14 +375,18 @@ struct Grant {
 
 /// An entry of `permission_suggestions` that allows calls by rule. Rules
 /// are suggested for `localSettings`, which would outlive the session, so a
-/// grant keeps only their rules, verbatim, and sends them for `session`.
+/// grant keeps only their rules and sends them for `session`.
 /// Any other entry fails this parse and is skipped: a `setMode`, which
 /// would allow every edit and change the mode behind the host's back, a
 /// rule that denies or asks, and `addDirectories`.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Suggestion {
-    AddRules { rules: Value, behavior: Behavior },
+    AddRules {
+        #[serde(default)]
+        rules: Value,
+        behavior: Behavior,
+    },
 }
 
 #[derive(Deserialize)]
@@ -391,11 +395,11 @@ enum Behavior {
     Allow,
 }
 
-/// A permission rule, read only to name it.
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Rule {
     tool_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     rule_content: Option<String>,
 }
 
@@ -404,7 +408,7 @@ struct Rule {
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Update {
     AddRules {
-        rules: Value,
+        rules: Vec<Rule>,
         behavior: String,
         destination: String,
     },
@@ -483,39 +487,34 @@ impl Rule {
 /// The session grant the CLI's suggestions offer: their allow rules, if
 /// any.
 fn grant(raw: Option<Value>) -> Option<Grant> {
-    let suggestions = raw
-        .and_then(|value| serde_json::from_value::<Vec<Value>>(value).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|value| serde_json::from_value::<Suggestion>(value).ok())
-        .collect::<Vec<Suggestion>>();
-    let allowed = suggestions
-        .into_iter()
-        .filter_map(|suggestion| match suggestion {
-            Suggestion::AddRules {
-                rules,
-                behavior: Behavior::Allow,
-            } => serde_json::from_value::<Vec<Value>>(rules).ok(),
-        })
-        .flatten()
-        .collect::<Vec<Value>>();
-    Some(allowed)
-        .filter(|rules| !rules.is_empty())
-        .map(|rules| Grant {
-            label: rules
-                .iter()
-                .filter_map(|rule| {
-                    serde_json::from_value::<Rule>(rule.clone()).ok()
-                })
-                .map(|rule| rule.label())
-                .collect::<Vec<String>>()
-                .join(", "),
-            update: Update::AddRules {
-                rules: Value::Array(rules),
-                behavior: String::from("allow"),
-                destination: String::from("session"),
-            },
-        })
+    let suggestions = serde_json::from_value::<Vec<Value>>(raw?).ok()?;
+    let mut rules = Vec::new();
+    for suggestion in suggestions {
+        if let Ok(Suggestion::AddRules {
+            rules: proposed,
+            behavior: Behavior::Allow,
+        }) = serde_json::from_value(suggestion)
+        {
+            rules.extend(serde_json::from_value::<Vec<Rule>>(proposed).ok()?);
+        }
+    }
+    if rules.is_empty()
+        || rules.iter().any(|rule| rule.tool_name.trim().is_empty())
+    {
+        return None;
+    }
+    Some(Grant {
+        label: rules
+            .iter()
+            .map(Rule::label)
+            .collect::<Vec<String>>()
+            .join(", "),
+        update: Update::AddRules {
+            rules,
+            behavior: String::from("allow"),
+            destination: String::from("session"),
+        },
+    })
 }
 
 fn questions(input: &Value) -> serde_json::Result<Vec<Asked>> {
@@ -1346,6 +1345,25 @@ mod tests {
                     "behavior": "allow", "destination": "session"}]}"#
             )?
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_mixed_rule_list_offers_no_session_grant() -> TestResult<()> {
+        let mut frame = json(BASH)?;
+        frame["request"]["permission_suggestions"][0]["rules"] = json(
+            r#"[{"toolName":"Bash","ruleContent":"touch t1.txt"},{"toolName":"Bash","scope":{"future":"wildcard"}}]"#,
+        )?;
+        let (event, response) =
+            answered(&frame.to_string(), PermissionDecision::AllowForSession)?;
+        assert!(matches!(
+            event,
+            ClaudeEvent::PermissionRequested {
+                for_session: None,
+                ..
+            }
+        ));
+        assert_eq!(response.get("updatedPermissions"), Some(&json("[]")?));
         Ok(())
     }
 

@@ -306,17 +306,27 @@ impl<R> Session<R> {
                 id,
                 decision,
                 reply,
-            } => match self.open.remove(&id) {
+            } => match self.open.get(&id) {
                 None => Vec::from([Effect::Reply(
                     reply,
                     Err(Failure::Protocol(Problem::UnknownPermissionRequest(
                         id,
                     ))),
                 )]),
-                Some(open) => self.write(
-                    Outbound::Permission { id, decision, open },
-                    Then::Answer(reply),
-                ),
+                Some(open) => {
+                    let effects = self.write(
+                        Outbound::Permission {
+                            id: id.clone(),
+                            decision,
+                            open: open.clone(),
+                        },
+                        Then::Answer(reply),
+                    );
+                    if matches!(effects.as_slice(), [Effect::Write { .. }]) {
+                        self.open.remove(&id);
+                    }
+                    effects
+                }
             },
         }
     }
@@ -658,6 +668,32 @@ mod tests {
                 )
             ])
         );
+    }
+
+    #[test]
+    fn a_permission_can_be_answered_after_an_invalid_decision() {
+        let mut session = Session::default();
+        let respond = |decision, reply| {
+            Input::Command(Command::Call(CallRequest::Respond {
+                id: PermissionRequestId(String::from("perm_1")),
+                decision,
+                reply,
+            }))
+        };
+        let seen = walk(
+            &mut session,
+            Vec::from([
+                line(&permission("perm_1")),
+                respond(PermissionDecision::Answer(Vec::new()), 1),
+                respond(PermissionDecision::Allow, 2),
+            ]),
+        );
+        assert!(matches!(seen.as_slice(), [
+            _,
+            invalid,
+            valid,
+        ] if matches!(invalid.as_slice(), [Effect::Reply(1, Err(Failure::Json(_)))])
+            && matches!(valid.as_slice(), [Effect::Write { then: Then::Answer(2), .. }])));
     }
 
     #[test]

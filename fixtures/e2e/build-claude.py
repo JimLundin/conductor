@@ -73,7 +73,30 @@ def wait(match):
     return json.dumps({"fake": "await", "match": match})
 
 
-def gated(line, released, withdrawn):
+def permission_response(msg, recording):
+    body = msg["request"]
+    verdict = {"behavior": "allow", "updatedInput": body["input"]}
+    if recording == "claude-question.jsonl":
+        question = body["input"]["questions"][0]["question"]
+        verdict["updatedInput"] = {**body["input"], "answers": {question: "Blue"}}
+    if recording == "claude-for-session.jsonl":
+        verdict["updatedPermissions"] = [
+            {"type": "addRules", "behavior": "allow", "destination": "session",
+             "rules": [{"toolName": "Bash", "ruleContent": "touch t1.txt"}]}
+        ]
+    if recording == "claude-deny-interrupt.jsonl":
+        verdict = {"behavior": "deny"}
+    return {
+        "type": "control_response",
+        "response": {
+            "subtype": "success",
+            "request_id": msg["request_id"],
+            "response": verdict,
+        },
+    }
+
+
+def gated(line, released, withdrawn, recording=None):
     msg = json.loads(line)
     kind = (msg.get("type"), msg.get("subtype"))
     if kind == ("control_cancel_request", None):
@@ -84,7 +107,7 @@ def gated(line, released, withdrawn):
         release = [json.dumps({"fake": "release", "file": "release"})] if released else []
         return [wait({"type": "user"})] + release + [line]
     if kind == ("control_request", None) and msg["request"]["subtype"] == "can_use_tool":
-        return [line] if withdrawn else [line, wait({"type": "control_response"})]
+        return [line] if withdrawn else [line, wait(permission_response(msg, recording))]
     return [line]
 
 
@@ -105,7 +128,7 @@ for name, (source, picked) in RECORDINGS.items():
     initialize, played = turns(source.read_text().splitlines())
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
     hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
-    turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN)]
+    turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN, name)]
     killed = [wait({"type": "user"}), json.dumps({"fake": "exit"})] if name in KILLED else []
     out = hang_up + gated(lines[0], False, False) + turn + killed
     (HERE / name).write_text("\n".join(out) + "\n")
