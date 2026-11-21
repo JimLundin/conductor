@@ -28,3 +28,9 @@
 - **Shared configuration application** is one host’s adoption of an
   accepted shared configuration change. Its progress and outcome are
   separate from acceptance.
+- **Instance availability** is whether a host can currently run work with
+  an instance. A host can adopt shared configuration while its affected
+  instances remain unavailable.
+- **Instance retirement** withdraws an instance from new work and stops
+  its agents within a bounded grace period. Work still running when that
+  period expires is stopped forcibly.
