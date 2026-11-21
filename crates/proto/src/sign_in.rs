@@ -33,6 +33,7 @@ pub enum SignInStep {
     /// home and lists the instance's models.
     Finishing,
     /// The home is signed in, and the host runs these instances now.
+    ConfigurationAccepted,
     SignedIn {
         instances: Instances,
     },

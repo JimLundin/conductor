@@ -1,6 +1,16 @@
 # Where Conductor departs from the shared Rust standard, and why.
 
 [[exception]]
+path = "crates/install/src/process/owned.rs"
+rule = "clippy::disallowed_types"
+reason = "Independent retirement and pipe runners share non-cloneable OS process handles; short synchronous mutex guards serialize spawn, signal and reap without holding a guard across a wait. Retry and retirement policy remain in host's pure core."
+
+[[exception]]
+path = "crates/daemon/src/start/control.rs"
+rule = "clippy::disallowed_types"
+reason = "The registry must atomically cancel a launch or obtain its newly created adapter before configure can block. This shell-only synchronization protects an executing effect; generation and retirement decisions remain in the core."
+
+[[exception]]
 path = "Cargo.toml"
 rule = "drift:lints.clippy.multiple_crate_versions"
 reason = "iroh and dioxus pin different majors of windows-sys, netlink, thiserror, syn and others; only upstream can unify them"

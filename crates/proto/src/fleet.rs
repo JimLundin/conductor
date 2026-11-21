@@ -301,3 +301,20 @@ fn decode_text<T: serde::de::DeserializeOwned>(
         .map_err(|_| TextError)?;
     postcard::from_bytes(&bytes).map_err(|_| TextError)
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Application {
+    pub desired: u64,
+    pub adopted: Option<u64>,
+    pub instances: BTreeMap<crate::InstanceId, ApplicationState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ApplicationState {
+    Pending,
+    Applying,
+    Applied,
+    Retiring,
+    Retrying { attempt: u32, after_seconds: u64 },
+    Refused,
+}

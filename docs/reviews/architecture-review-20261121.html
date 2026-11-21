@@ -54,8 +54,8 @@ mermaid.initialize({startOnLoad:true,theme:"base",securityLevel:"strict",themeVa
 <details open><summary>Deletion test, seam and verification</summary><dl><dt>Deletion test</dt><dd>Deleting today’s forwarding configure module leaves the same two-write obligation with its caller. A deep workflow must absorb that obligation.</dd><dt>Adapters</dt><dd>Signed membership, local credential storage and provider plugins already vary at real seams. Reuse those adapters.</dd><dt>Test surface</dt><dd>Drive a busy-instance removal through the command interface and compare its outcome with signed state. Inject local-save failure; reopen and verify retry agrees with durable intent. Distinguish scheduled provider refresh from successful application.</dd><dt>Existing evidence</dt><dd><a href="https://github.com/JimLundin/conductor/blob/22a49a42bb53405159890a9a8974ae5299fe33ea/crates/daemon/src/fleet/tests.rs#L339">Fleet replication tests:339</a> cover signed data; <a href="https://github.com/JimLundin/conductor/blob/22a49a42bb53405159890a9a8974ae5299fe33ea/crates/daemon/src/fleet/credentials.rs#L167">revision application:167</a> currently records scheduling separately from provider outcomes.</dd></dl></details>
 <p class="decision">Preserves F1–F4: one root writer, shared keys and selected Claude token, local Codex login. This does not require an atomic transaction across hosts.</p>
 <details open id="selected-configuration-design">
-<summary>Selected direction — agreed behavior and proposed seams</summary>
-<p style="margin-top:12px">Design discussion of 21 November 2026. The owner selected this candidate and agreed the behavior below. The proposed ownership is ready for final design confirmation; runtime implementation has not begun.</p>
+<summary>Selected direction — implemented behavior and seams</summary>
+<p style="margin-top:12px">Design discussion of 21 November 2026. The owner approved this direction. The implementation separates durable root acceptance, local adoption and instance availability, with pure host cores and provider-neutral adapter effects. The new command/feed fixture exercises two hosts, including retirement during a stuck provider call; persistence fixtures cover replay, reopening and uncertain replacement outcomes.</p>
 <dl>
 <dt>Acceptance</dt><dd>The root durably records the intended shared configuration. A known rejection leaves that configuration unchanged. Host application and instance availability are reported independently.</dd>
 <dt>Retirement</dt><dd>Stop admitting new work once the host receives removal. Allow a brief graceful finish, then interrupt and force-stop owned processes if necessary. Aim for roughly 60 seconds from root acceptance through propagation and stopping on reachable hosts. Unreachable hosts remain visibly pending.</dd>
@@ -133,7 +133,7 @@ flowchart TD
 <div class="eyebrow">Top recommendation</div>
 <h2>02 · Shared configuration acceptance and application</h2>
 <p>A command reported as rejected can already change credentials on other hosts. Owning that decision and its durable follow-through fixes a current correctness problem and gives the planned UI trustworthy progress and failure states. <a href="#shared-configuration">Explore candidate 02 →</a></p>
-<div class="next">Selected: candidate 02. <a href="#selected-configuration-design">Review the agreed behavior and proposed seams →</a></div>
+<div class="next">Implemented: candidate 02. <a href="#selected-configuration-design">Review the behavior and seams →</a></div>
 </section>
 </main>
 </body>

@@ -361,6 +361,9 @@ fn fixture_instance(_: Launch) -> Instance {
 }
 
 impl ProviderInstance for FakeProvider {
+    fn retire(&self, _: agents::Retirement) -> runtime::Terminating<'_> {
+        Box::pin(async { Ok(()) })
+    }
     fn configure(&self, _: Option<proto::Credential>) -> Configuring<'_> {
         Box::pin(async {
             Ok(Configuration {

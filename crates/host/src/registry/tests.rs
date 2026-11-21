@@ -1,5 +1,7 @@
 use agents::Configuration;
 
+mod lifecycle;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow::{Break, Continue};
 
@@ -231,7 +233,7 @@ fn refreshed(
     Refreshed {
         id: number,
         instance: id.clone(),
-        configured,
+        configured: configured.map_err(agents::ConfigurationFailure::Temporary),
     }
 }
 
@@ -627,8 +629,7 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
     let boot_jobs = registry.jobs;
     let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
     let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
-    let removed =
-        registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
+    let removed = registry.remove_instance(codex_api.clone(), "remove");
     let result = CommandResult::Instances(claude(Availability::Available {
         auth: Auth::Unmanaged,
         models: listed(),
@@ -640,6 +641,12 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
                 instance: codex_api.clone()
             }),
             Effect::Reply("add", result.clone()),
+            Effect::Retire {
+                instance: codex_api.clone(),
+                id: boot_jobs + 2,
+                adapter: None,
+                stage: agents::Retirement::Drain
+            },
             Effect::Reply("remove", result),
         ])
     );
@@ -649,83 +656,27 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
             instance: codex_api.clone(),
             launcher: ready("codex-api", OwnSignIn::Unmanaged),
         }),
-        Vec::new()
+        Vec::from([Effect::Retire {
+            instance: codex_api.clone(),
+            id: boot_jobs + 1,
+            adapter: Some("codex-api"),
+            stage: agents::Retirement::Kill
+        }])
     );
     assert_eq!(registry.instances().of(&codex_api), None);
 }
 
-/// Starting an instance added again runs only its new CLI: the start of
-/// the one removed meanwhile is dropped.
 #[test]
-fn a_start_from_before_an_instance_was_added_again_is_dropped() {
-    let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let boot_jobs = registry.jobs;
-    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
-    let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
-    let removed =
-        registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
-    let _ = saving(&mut registry, removed);
-    let again = set(&mut registry, Provider::Codex, gateway("k"), "again");
-    let stale = registry.started(Started {
-        id: boot_jobs + 1,
-        instance: codex_api.clone(),
-        launcher: ready("old", OwnSignIn::Unmanaged),
-    });
-    let starting = availability(&registry, &codex_api);
-    let current = registry.started(Started {
-        id: boot_jobs + 2,
-        instance: codex_api.clone(),
-        launcher: ready("codex-api", OwnSignIn::Unmanaged),
-    });
-    assert_eq!(
-        (again, stale, starting, current),
-        (
-            Vec::from([
-                Effect::Log(Note::InstanceAdded {
-                    instance: codex_api.clone()
-                }),
-                Effect::Start(Starting {
-                    mode: crate::start::Mode::Change,
-                    id: boot_jobs + 2,
-                    instance: codex_api,
-                    settings: Instance {
-                        credential: Some(gateway("k")),
-                        ..Instance::default()
-                    },
-                }),
-            ]),
-            Vec::new(),
-            Some(unavailable("starting the instance's CLI")),
-            Vec::from([Effect::Reply(
-                "again",
-                CommandResult::Instances(registry.instances())
-            )]),
-        )
-    );
-}
-
-#[test]
-fn an_instance_is_removed_only_while_no_session_runs_on_it() {
+fn removing_a_busy_instance_preserves_its_session_history() {
     let mut registry = host_of(&[("api", api())]);
     registry.admit(SessionId(1), api(), 1);
     registry.admit(SessionId(2), api(), 2);
     registry.admit(SessionId(3), own(Provider::Codex), 3);
-    assert_eq!(
-        registry.remove_instance(
-            api(),
-            &BTreeSet::from([SessionId(1), SessionId(3)]),
-            "busy"
-        ),
-        Vec::from([Effect::Reply(
-            "busy",
-            rejected(Rejection::InstanceInUse { sessions: 1 })
-        )])
-    );
-    let removed = registry.remove_instance(
-        api(),
-        &BTreeSet::from([SessionId(3)]),
-        "remove",
-    );
+    assert!(matches!(
+        registry.remove_instance(api(), "busy").as_slice(),
+        [Effect::Save { .. }]
+    ));
+    let removed = registry.remove_instance(api(), "remove");
     let _ = saving(&mut registry, removed);
     assert_eq!(
         (
@@ -736,18 +687,12 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         (
             None,
             Err(Rejection::InstanceUnavailable {
-                reason: text(
-                    "this host has no instance claude https://gateway.example"
-                )
+                reason: text("instance is retiring")
             }),
             Some(2),
         )
     );
-    let kept = registry.remove_instance(
-        own(Provider::Claude),
-        &BTreeSet::new(),
-        "own",
-    );
+    let kept = registry.remove_instance(own(Provider::Claude), "own");
     assert_eq!(
         kept,
         Vec::from([Effect::Reply(
@@ -923,8 +868,8 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
         (
             registry.set_credential(Provider::Claude, bad, "bad"),
             registry.set_credential(Provider::Claude, gateway("t"), "set"),
-            registry.remove_instance(api(), &BTreeSet::new(), "unknown"),
-            registry.remove_instance(codex.clone(), &BTreeSet::new(), "remove"),
+            registry.remove_instance(api(), "unknown"),
+            registry.remove_instance(codex.clone(), "remove"),
             registry.moved_aside(codex.clone(), "remove", Err(text("busy"))),
             registry.saved(
                 Roster::default(),
@@ -972,33 +917,17 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
 }
 
 #[test]
-fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
+fn correcting_an_unavailable_instance_attempts_a_new_launch() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
     let codex = own(Provider::Codex);
-    assert_eq!(
-        registry.saved(
-            defaults(&catalog()),
-            Change::Credential(codex.clone()),
-            "set",
-            Ok(())
-        ),
-        Vec::from([
-            stored_note(&codex),
-            Effect::Reply(
-                "set",
-                CommandResult::Instances(claude(Availability::Available {
-                    auth: Auth::Unmanaged,
-                    models: listed(),
-                }))
-            ),
-        ])
+    let effects = registry.saved(
+        defaults(&catalog()),
+        Change::Credential(codex.clone()),
+        "set",
+        Ok(()),
     );
-    assert_eq!(
-        registry.launch_session(&codex, true, None, None),
-        Err(Rejection::InstanceUnavailable {
-            reason: text("no codex")
-        })
-    );
+    assert!(effects.iter().any(|effect| matches!(effect, Effect::Start(starting) if starting.instance == codex)));
+    assert!(registry.launch_session(&codex, true, None, None).is_err());
 }
 
 #[test]
@@ -1617,9 +1546,7 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
         "old credential",
     );
     let old = boot + 1;
-    for effect in
-        registry.remove_instance(instance.clone(), &BTreeSet::new(), "remove")
-    {
+    for effect in registry.remove_instance(instance.clone(), "remove") {
         if let Effect::Save {
             roster,
             change,
@@ -1629,6 +1556,12 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
             let _ = registry.saved(roster, change, reply, Ok(()));
         }
     }
+    let _ = registry.retired(
+        &instance,
+        registry.jobs,
+        agents::Retirement::Kill,
+        true,
+    );
     let _ = set(
         &mut registry,
         Provider::Claude,

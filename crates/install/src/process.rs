@@ -7,11 +7,14 @@ use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 
 use agents::{Exit, Invocation, Var};
 
 use crate::Home;
+mod owned;
+pub(crate) use owned::Child;
+pub use owned::Processes;
 
 const EXIT_GRACE: Duration = Duration::from_secs(5);
 
@@ -35,26 +38,8 @@ fn set(cmd: &mut Command, var: Var, home: &Home) {
     };
 }
 
-/// Keeps a host started without a console, such as from Task Scheduler, from
-/// opening a console window for each agent process.
-#[cfg(not(unix))]
-#[must_use]
-fn no_window(mut cmd: Command) -> Command {
-    use std::os::windows::process::CommandExt;
-    /// `CREATE_NO_WINDOW` from the Win32 process creation flags.
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
-    cmd
-}
-
-#[cfg(unix)]
-#[must_use]
-const fn no_window(cmd: Command) -> Command {
-    cmd
-}
-
 /// Closes stdin, waits briefly for a clean exit, then kills.
-pub(crate) async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
+pub(crate) async fn stop(child: Child, stdin: ChildStdin) -> Exit {
     drop(stdin);
     let graceful = tokio::time::timeout(EXIT_GRACE, child.wait())
         .await
@@ -76,9 +61,11 @@ async fn waited(
     }
 }
 
-async fn killed(mut child: Child) -> std::io::Result<ExitStatus> {
+async fn killed(child: Child) -> std::io::Result<ExitStatus> {
     let _ = child.start_kill();
-    child.wait().await
+    tokio::time::timeout(EXIT_GRACE, child.wait())
+        .await
+        .map_err(io::Error::other)?
 }
 
 /// A CLI's sign-in, running with its output on pipes. Dropping it kills
@@ -108,16 +95,19 @@ pub fn sign_in(
 pub(crate) fn piped(
     command: Command,
 ) -> io::Result<(Child, ChildStdin, ChildStdout, ChildStderr)> {
-    let mut cmd = no_window(command);
+    piped_owned(command, &Processes::default())
+}
+
+pub(crate) fn piped_owned(
+    command: Command,
+    processes: &Processes,
+) -> io::Result<(Child, ChildStdin, ChildStdout, ChildStderr)> {
+    let mut cmd = command;
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    let mut child = cmd.spawn()?;
-    let stdin = child.stdin.take().ok_or_else(|| unpiped("stdin"))?;
-    let out = child.stdout.take().ok_or_else(|| unpiped("stdout"))?;
-    let err = child.stderr.take().ok_or_else(|| unpiped("stderr"))?;
-    Ok((child, stdin, out, err))
+    owned::spawn(cmd, processes)
 }
 
 fn unpiped(stream: &str) -> io::Error {
@@ -132,7 +122,7 @@ impl SignInRun {
     ///
     /// Why waiting for it failed.
     pub async fn finish(
-        mut self,
+        self,
         printed: impl Fn(String),
     ) -> io::Result<ExitStatus> {
         tokio::join!(lines(self.out, &printed), lines(self.err, &printed));

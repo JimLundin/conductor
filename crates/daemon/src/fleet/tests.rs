@@ -14,6 +14,9 @@ use super::crypto;
 use super::member::clock;
 use super::peer::{Protocol, admit_existing, join, sync_with};
 
+#[cfg(unix)]
+mod application;
+
 async fn endpoint(seed: u8) -> anyhow::Result<Endpoint> {
     Ok(Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)
@@ -346,21 +349,22 @@ async fn verify_replication(
     owner: proto::fleet::NodeId,
 ) -> anyhow::Result<()> {
     let instance = proto::InstanceId::named(proto::Provider::Claude, "fixture");
-    root.change_credentials(|roster| {
-        let key = proto::Credential {
-            kind: String::from("api_key"),
-            values: [(String::from("key"), String::from("synthetic-value"))]
-                .into(),
-        };
-        roster.0.insert(
-            instance.clone(),
-            proto::Instance {
-                credential: Some(key),
-                ..proto::Instance::default()
-            },
-        );
-    })
-    .await?;
+    let key = proto::Credential {
+        kind: String::from("api_key"),
+        values: [(String::from("key"), String::from("synthetic-value"))].into(),
+    };
+    assert_eq!(
+        root.accept(
+            proto::CommandId(1),
+            &host::fleet::acceptance::Mutation::Set {
+                instance: instance.clone(),
+                credential: key,
+                sharing: host::fleet::Sharing::Shared,
+            }
+        )
+        .await?,
+        proto::CommandResult::Accepted
+    );
     root.revoke(owner).await?;
     sync(outsider, witness, root_endpoint).await?;
 

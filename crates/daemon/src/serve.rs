@@ -94,6 +94,7 @@ struct Feed {
     sign_ins: broadcast::Receiver<SignIn>,
     home: watch::Receiver<Option<Home>>,
     offers: watch::Receiver<Instances>,
+    configuration: watch::Receiver<Option<proto::fleet::Application>>,
     movement: Option<MovementFeed>,
 }
 
@@ -227,6 +228,7 @@ fn trace_command(command: &Command) {
         CommandBody::UndoTurn { .. } => "undo_turn",
         CommandBody::SetEffort { .. } => "set_effort",
         CommandBody::RemoveInstance { .. } => "remove_instance",
+        CommandBody::RetryInstance { .. } => "retry_instance",
         CommandBody::StartSignIn { .. } => "start_sign_in",
         CommandBody::StartCredentialSignIn { .. } => "start_credential_sign_in",
         CommandBody::SubmitSignInCode { .. } => "submit_sign_in_code",
@@ -571,9 +573,13 @@ impl Conductor {
         if let Some(result) = self.resume_arrival(session, &order).await? {
             return Ok(result);
         }
-        match self.registry.find(session).await? {
-            None => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
-            Some(handle) => Ok(handle
+        match self
+            .registry
+            .for_order(session, order.requires_instance())
+            .await?
+        {
+            Err(reason) => Ok(CommandResult::Rejected(reason)),
+            Ok(handle) => Ok(handle
                 .order(order)
                 .await
                 .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
@@ -627,8 +633,10 @@ impl Conductor {
                     running,
                     sign_ins,
                     mut offers,
+                    mut configuration,
                 } = self.registry.watch().await?;
                 let snapshot = offers.borrow_and_update().clone();
+                let application = configuration.borrow_and_update().clone();
                 let mut home = self.home.watch();
                 let current = home.borrow_and_update().clone();
                 let membership = self.fleet.borrow().clone();
@@ -644,6 +652,7 @@ impl Conductor {
                     .map(Frame::Event)
                     .chain([
                         Frame::Instances(snapshot),
+                        Frame::Configuration(application),
                         Frame::MoveTargets(self.move_targets().await),
                     ])
                     .chain(running.into_iter().map(Frame::SignIn))
@@ -656,6 +665,7 @@ impl Conductor {
                     sign_ins,
                     home,
                     offers,
+                    configuration,
                     movement,
                 };
                 let result = feed.run(conn).await;
@@ -694,6 +704,7 @@ impl Feed {
                 next = self.live.recv() => upcoming(next.map(Frame::Event)),
                 next = self.sign_ins.recv() => upcoming(next.map(Frame::SignIn)),
                 next = next_move_targets(&mut self.movement) => next,
+                changed = self.configuration.changed() => changed.map_or(Upcoming::Resubscribe, |()| Upcoming::Frame(Frame::Configuration(self.configuration.borrow_and_update().clone()))),
                 changed = self.offers.changed() => changed.map_or(Upcoming::Resubscribe, |()| Upcoming::Frame(Frame::Instances(self.offers.borrow_and_update().clone()))),
                 changed = self.home.changed() => changed.map_or(
                     Upcoming::Resubscribe,

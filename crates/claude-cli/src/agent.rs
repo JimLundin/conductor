@@ -25,21 +25,37 @@ use crate::session::{ClaudeOptions, ClaudeSession, Error, sandbox};
 #[derive(Debug)]
 struct ClaudeInstance {
     launch: Launch,
+    processes: install::process::Processes,
     credential: watch::Sender<Option<ClaudeCredential>>,
 }
 
 pub fn instance(launch: Launch) -> Instance {
     Arc::new(ClaudeInstance {
         launch,
+        processes: install::process::Processes::default(),
         credential: watch::channel(None).0,
     })
 }
 
 impl ProviderInstance for ClaudeInstance {
+    fn retire(&self, stage: agents::Retirement) -> runtime::Terminating<'_> {
+        Box::pin(async move {
+            match stage {
+                agents::Retirement::Drain => self.processes.retire(),
+                agents::Retirement::Interrupt => self.processes.interrupt(),
+                agents::Retirement::Kill => self.processes.terminate().await,
+            }
+            .map_err(|error| error.to_string())
+        })
+    }
+
     fn configure(&self, given: Option<Credential>) -> Configuring<'_> {
         Box::pin(async move {
-            let credential =
-                given.as_ref().map(claude::credential).transpose()?;
+            let credential = given
+                .as_ref()
+                .map(claude::credential)
+                .transpose()
+                .map_err(agents::ConfigurationFailure::Refused)?;
             if let Some(note) = claude::unprotected(
                 credential.as_ref(),
                 sandbox(&self.launch.work),
@@ -49,7 +65,7 @@ impl ProviderInstance for ClaudeInstance {
             self.credential.send_replace(credential.clone());
             Ok(Configuration {
                 named: None,
-                models: probe(&self.launch, credential).await,
+                models: probe(&self.launch, credential, &self.processes).await,
             })
         })
     }
@@ -158,6 +174,7 @@ impl Task {
 /// own project directory.
 fn options(shared: &ClaudeInstance, spawn: Spawn) -> ClaudeOptions {
     ClaudeOptions {
+        processes: shared.processes.clone(),
         claude_path: shared.launch.path.clone(),
         home: shared.launch.home.clone(),
         credential: shared.credential.borrow().clone(),
@@ -206,10 +223,12 @@ async fn shutdown(agent: Option<Session>) -> Result<(), String> {
 async fn probe(
     launch: &Launch,
     credential: Option<ClaudeCredential>,
+    processes: &install::process::Processes,
 ) -> Result<Models, String> {
     let directory = &launch.work;
     std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     let (session, _events) = ClaudeSession::spawn(ClaudeOptions {
+        processes: processes.clone(),
         claude_path: launch.path.clone(),
         home: launch.home.clone(),
         credential,

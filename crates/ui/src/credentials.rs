@@ -237,6 +237,7 @@ pub enum Subject {
 enum Sent {
     Sending,
     Done(Done),
+    Accepted(Done),
     Failed(String),
 }
 
@@ -460,12 +461,12 @@ impl Forms {
             Ok(CommandResult::Accepted) if done == Done::SignIn => {
                 Sent::Done(done)
             }
+            Ok(CommandResult::Accepted) => Sent::Accepted(done),
             Ok(CommandResult::Rejected(rejection)) => {
                 Sent::Failed(rejection.label())
             }
             Ok(
-                CommandResult::Accepted
-                | CommandResult::Started { .. }
+                CommandResult::Started { .. }
                 | CommandResult::Diff(_)
                 | CommandResult::IssueCreated { .. }
                 | CommandResult::PushPublicKey(_)
@@ -607,9 +608,10 @@ impl Forms {
         self.sent
             .iter()
             .any(|(subject, sent)| match (subject, sent) {
-                (Subject::Instance(id), Sent::Done(Done::Removed)) => {
-                    instances.is_some_and(|known| known.of(id).is_none())
-                }
+                (
+                    Subject::Instance(id),
+                    Sent::Done(Done::Removed) | Sent::Accepted(Done::Removed),
+                ) => instances.is_some_and(|known| known.of(id).is_none()),
                 _ => false,
             })
             .then(|| status(format!("Removed from {host}.")))
@@ -715,6 +717,13 @@ impl Forms {
                     "Finishing the sign-in on {host}…"
                 ))),
                 cancel,
+                ..idle
+            },
+            Some(SignInStep::ConfigurationAccepted) => SignInView {
+                start: Some(start("Sign in again")),
+                progress: Some(status(String::from(
+                    "Credential saved for the fleet. Hosts are applying it.",
+                ))),
                 ..idle
             },
             Some(SignInStep::SignedIn { .. }) => SignInView {
@@ -861,7 +870,14 @@ fn outcome(sent: &Sent, host: &str) -> Option<Hint> {
         Sent::Done(Done::Stored) => Some(status(format!(
             "Sent to {host} over the encrypted link. This app doesn't keep it; your browser may offer to save it."
         ))),
-        Sent::Done(Done::Removed | Done::SignIn) => None,
+        Sent::Done(Done::Removed | Done::SignIn)
+        | Sent::Accepted(Done::SignIn) => None,
+        Sent::Accepted(Done::Stored) => Some(status(String::from(
+            "Credential saved for the fleet. Hosts are applying it.",
+        ))),
+        Sent::Accepted(Done::Removed) => Some(status(String::from(
+            "Removal saved for the fleet. Hosts are stopping the instance.",
+        ))),
         Sent::Failed(error) => Some(alert(error.clone())),
     }
 }

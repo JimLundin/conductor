@@ -29,9 +29,12 @@
 //! gets the answer of the last. An added instance is unavailable until its
 //! CLI has started.
 
-use agents::Configuration;
+pub mod reconciliation;
+
+use agents::{Configuration, ConfigurationFailure, Retirement};
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
+use alloc::string::ToString;
 
 use proto::{
     Account, Auth, Availability, Catalog, CommandResult, Credential, Effort,
@@ -102,6 +105,7 @@ pub enum Launcher<S> {
     },
     /// The host can't run this instance's sessions, for this reason.
     Unavailable(String),
+    Refused(String),
 }
 
 /// What the store holds.
@@ -341,7 +345,7 @@ pub struct Job<S> {
 pub struct Refreshed {
     pub id: u64,
     pub instance: InstanceId,
-    pub configured: Result<Configuration, String>,
+    pub configured: Result<Configuration, ConfigurationFailure>,
 }
 
 /// The settings and discovery policy for one instance launch.
@@ -425,6 +429,12 @@ pub enum Effect<S, R> {
     Refresh(Job<S>),
     /// Start the instance's CLI, and report [`Registry::started`].
     Start(Starting),
+    Retire {
+        instance: InstanceId,
+        id: u64,
+        adapter: Option<S>,
+        stage: Retirement,
+    },
     Log(Note),
 }
 
@@ -457,6 +467,30 @@ enum Refresh<S, R> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct Retiring<S> {
+    id: u64,
+    adapter: Option<S>,
+    stage: Retirement,
+    deadline: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Retry {
+    attempt: u32,
+    at: u64,
+}
+
+impl Retry {
+    fn after(now: u64, attempt: u32) -> Self {
+        Self {
+            attempt,
+            at: now
+                .saturating_add(2_u64.saturating_pow(attempt.min(5)).min(30)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registry<S, H, R> {
     roster: Roster,
     /// Why the store doesn't open, while it doesn't.
@@ -468,6 +502,11 @@ pub struct Registry<S, H, R> {
     refreshes: BTreeMap<InstanceId, Refresh<S, R>>,
     sessions: BTreeMap<SessionId, (InstanceId, H)>,
     jobs: u64,
+    now: u64,
+    shared: Option<proto::fleet::Application>,
+    blocked: BTreeSet<InstanceId>,
+    retirements: BTreeMap<InstanceId, Retiring<S>>,
+    retries: BTreeMap<InstanceId, Retry>,
 }
 
 impl<S: Clone, H: Clone, R> Registry<S, H, R> {
@@ -487,16 +526,34 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             refreshes: BTreeMap::new(),
             sessions: BTreeMap::new(),
             jobs: 0,
+            now: 0,
+            shared: None,
+            blocked: BTreeSet::new(),
+            retirements: BTreeMap::new(),
+            retries: BTreeMap::new(),
         }
     }
 
     /// Starts the instances already in the roster.
     pub fn boot(&mut self) -> Vec<Starting> {
-        let roster = self.roster.0.clone();
+        let roster: BTreeMap<_, _> = self
+            .roster
+            .0
+            .iter()
+            .filter(|(id, _)| !self.blocked.contains(*id))
+            .map(|(id, settings)| (id.clone(), settings.clone()))
+            .collect();
         roster
             .into_iter()
             .map(|(instance, settings)| {
-                self.starting(instance, settings, Vec::new(), Mode::Boot)
+                let mode = if self.shared.as_ref().is_some_and(|shared| {
+                    shared.instances.contains_key(&instance)
+                }) {
+                    Mode::Change
+                } else {
+                    Mode::Boot
+                };
+                self.starting(instance, settings, Vec::new(), mode)
             })
             .collect()
     }
@@ -716,14 +773,13 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.save(roster, change, reply)
     }
 
-    /// Removes an instance on which none of the `running` sessions runs.
-    /// Its closed sessions stay, and can't continue. A provider's own
+    /// Removes an instance and retires its active processes.
+    /// Its sessions stay, and cannot continue. A provider's own
     /// instance stays; a store that doesn't open is moved aside first,
     /// which is how removing one recovers it.
     pub fn remove_instance(
         &mut self,
         instance: InstanceId,
-        running: &BTreeSet<SessionId>,
         reply: R,
     ) -> Vec<Effect<S, R>> {
         if self.roster.of(&instance).is_none() {
@@ -734,9 +790,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
         if instance.account == Account::Own {
             return Vec::from([self.answer(reply)]);
-        }
-        if let Some(reason) = self.instance_in_use(&[&instance], running) {
-            return Vec::from([rejected(reply, reason)]);
         }
         let mut roster = self.roster.clone();
         roster.0.remove(&instance);
@@ -771,7 +824,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         match moved {
             Ok(()) => {
                 self.unreadable = None;
-                self.remove_instance(instance, &BTreeSet::new(), reply)
+                self.remove_instance(instance, reply)
             }
             Err(reason) => Vec::from([not_saved(reply, reason)]),
         }
@@ -789,6 +842,14 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             return Vec::from([not_saved(reply, reason)]);
         }
         self.roster = roster;
+        match &change {
+            Change::Credential(id)
+            | Change::Added(id)
+            | Change::Removed(id) => {
+                self.blocked.remove(id);
+            }
+            Change::SignedIn(_) => {}
+        }
         match change {
             Change::Credential(instance) => {
                 let note = Note::CredentialStored {
@@ -818,12 +879,9 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 effects
             }
             Change::Removed(instance) => {
-                let mut waiting = self.forget(&instance);
-                waiting.push(reply);
-                logged(
-                    Note::InstanceRemoved { instance },
-                    self.answers(waiting),
-                )
+                let mut effects = self.retire(instance.clone());
+                effects.push(self.answer(reply));
+                logged(Note::InstanceRemoved { instance }, effects)
             }
         }
     }
@@ -842,6 +900,14 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 latest,
                 replies,
             }) if active == id && latest.id == id => {
+                if configured
+                    .as_ref()
+                    .is_ok_and(|config| config.models.is_err())
+                {
+                    self.retry(&instance);
+                } else {
+                    self.failed(&instance, configured.as_ref().err());
+                }
                 let logged = self.configured(&instance, configured);
                 logged.into_iter().chain(self.answers(replies)).collect()
             }
@@ -885,6 +951,16 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 refresh_requested,
                 replies,
             }) if current == id => {
+                match &launcher {
+                    Launcher::Unavailable(_)
+                    | Launcher::Running { models: Err(_), .. } => {
+                        self.retry(&instance);
+                    }
+                    Launcher::Refused(_)
+                    | Launcher::Running { models: Ok(_), .. } => {
+                        self.retries.remove(&instance);
+                    }
+                }
                 self.launchers.insert(instance.clone(), launcher);
                 if refresh_requested {
                     self.schedule(instance, replies)
@@ -894,8 +970,20 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             }
             other => {
                 self.refreshes
-                    .extend(other.map(|refresh| (instance, refresh)));
-                Vec::new()
+                    .extend(other.map(|refresh| (instance.clone(), refresh)));
+                match launcher {
+                    Launcher::Running { start, .. } => {
+                        Vec::from([Effect::Retire {
+                            instance,
+                            id,
+                            adapter: Some(start),
+                            stage: Retirement::Kill,
+                        }])
+                    }
+                    Launcher::Unavailable(_) | Launcher::Refused(_) => {
+                        Vec::new()
+                    }
+                }
             }
         }
     }
@@ -937,6 +1025,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         instance: InstanceId,
         replies: Vec<R>,
     ) -> Vec<Effect<S, R>> {
+        if self.retirements.contains_key(&instance)
+            || self.blocked.contains(&instance)
+        {
+            return self.answers(replies);
+        }
         let Some(settings) = self.roster.of(&instance).cloned() else {
             return self.answers(replies);
         };
@@ -975,14 +1068,16 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     fn configured(
         &mut self,
         instance: &InstanceId,
-        result: Result<Configuration, String>,
+        result: Result<Configuration, ConfigurationFailure>,
     ) -> Option<Effect<S, R>> {
         let Launcher::Running { chosen, models, .. } =
             self.launchers.get_mut(instance)?
         else {
             return None;
         };
-        *models = result.and_then(|config| offered(config, chosen.as_ref()));
+        *models = result
+            .map_err(|error| error.to_string())
+            .and_then(|config| offered(config, chosen.as_ref()));
         models.as_ref().err().map(|reason| {
             Effect::Log(Note::RefreshFailed {
                 instance: instance.clone(),
@@ -999,6 +1094,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         instance: InstanceId,
         asked: Vec<R>,
     ) -> Vec<Effect<S, R>> {
+        if self.retirements.contains_key(&instance)
+            || self.blocked.contains(&instance)
+        {
+            return self.answers(asked);
+        }
         if let Some(Refresh::Starting {
             refresh_requested,
             replies,
@@ -1012,7 +1112,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let Some(Launcher::Running { start, .. }) =
             self.launchers.get(&instance)
         else {
-            return self.answers(asked);
+            return self.launch(instance, asked);
         };
         let credential = self.credential(&instance);
         self.jobs = self.jobs.saturating_add(1);
@@ -1044,6 +1144,307 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             },
         );
         run.into_iter().collect()
+    }
+
+    pub fn desire(
+        &mut self,
+        version: u64,
+        desired: &Roster,
+        known: &BTreeSet<InstanceId>,
+    ) -> Vec<Effect<S, R>> {
+        if self
+            .shared
+            .as_ref()
+            .is_some_and(|shared| shared.desired > version)
+        {
+            return Vec::new();
+        }
+        self.blocked = known
+            .iter()
+            .chain(desired.0.keys())
+            .filter(|id| {
+                self.roster
+                    .of(id)
+                    .and_then(|settings| settings.credential.as_ref())
+                    != desired
+                        .of(id)
+                        .and_then(|settings| settings.credential.as_ref())
+                    || (desired.of(id).is_none()
+                        && self.roster.of(id).is_some())
+            })
+            .cloned()
+            .collect();
+        let adopted = self.shared.as_ref().and_then(|shared| shared.adopted);
+        self.shared = Some(proto::fleet::Application {
+            desired: version,
+            adopted,
+            instances: desired
+                .0
+                .keys()
+                .chain(known)
+                .chain(self.retirements.keys())
+                .map(|id| (id.clone(), proto::fleet::ApplicationState::Pending))
+                .collect(),
+        });
+        let obsolete: Vec<_> = self
+            .blocked
+            .iter()
+            .filter(|id| {
+                self.launchers.contains_key(*id)
+                    || self.refreshes.contains_key(*id)
+            })
+            .cloned()
+            .collect();
+        let mut effects = Vec::new();
+        for id in obsolete {
+            effects.extend(self.retire(id));
+        }
+        effects
+    }
+
+    pub const fn adopted(&mut self, version: u64) {
+        if let Some(shared) = &mut self.shared
+            && shared.desired == version
+        {
+            shared.adopted = Some(version);
+        }
+    }
+
+    #[must_use]
+    pub fn application(&self) -> Option<proto::fleet::Application> {
+        use proto::fleet::ApplicationState;
+        let mut application = self.shared.clone()?;
+        for (id, status) in &mut application.instances {
+            *status = if self.blocked.contains(id) {
+                ApplicationState::Pending
+            } else if self.retirements.contains_key(id) {
+                ApplicationState::Retiring
+            } else if self.refreshes.contains_key(id) {
+                ApplicationState::Applying
+            } else if let Some(retry) = self.retries.get(id) {
+                ApplicationState::Retrying {
+                    attempt: retry.attempt,
+                    after_seconds: retry.at.saturating_sub(self.now),
+                }
+            } else if self.roster.of(id).is_none()
+                || matches!(
+                    self.launchers.get(id),
+                    Some(Launcher::Running { models: Ok(_), .. })
+                )
+            {
+                ApplicationState::Applied
+            } else {
+                ApplicationState::Refused
+            };
+        }
+        Some(application)
+    }
+
+    pub fn adopted_change(
+        &mut self,
+        roster: Roster,
+        change: Change,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        match change {
+            Change::Credential(id) | Change::Added(id)
+                if self.launchers.contains_key(&id)
+                    || self.refreshes.contains_key(&id)
+                    || self.retirements.contains_key(&id) =>
+            {
+                self.roster = roster;
+                self.blocked.remove(&id);
+                let mut effects = self.retire(id);
+                effects.push(self.answer(reply));
+                effects
+            }
+            other => self.saved(roster, other, reply, Ok(())),
+        }
+    }
+
+    pub fn reconfigure(
+        &mut self,
+        providers: &BTreeSet<Provider>,
+    ) -> Vec<Effect<S, R>> {
+        let instances: Vec<_> = self
+            .roster
+            .0
+            .keys()
+            .filter(|id| providers.contains(&id.provider))
+            .cloned()
+            .collect();
+        let mut effects = Vec::new();
+        for id in instances {
+            effects.extend(self.retire(id));
+        }
+        effects
+    }
+
+    pub fn retry_instance(
+        &mut self,
+        instance: InstanceId,
+        reply: R,
+    ) -> Vec<Effect<S, R>> {
+        if self.roster.of(&instance).is_none() {
+            return Vec::from([rejected(reply, Rejection::UnknownInstance)]);
+        }
+        self.retries.remove(&instance);
+        self.schedule(instance, Vec::from([reply]))
+    }
+
+    fn failed(
+        &mut self,
+        instance: &InstanceId,
+        failure: Option<&ConfigurationFailure>,
+    ) {
+        match failure {
+            Some(ConfigurationFailure::Temporary(_)) => self.retry(instance),
+            Some(ConfigurationFailure::Refused(_)) | None => {
+                self.retries.remove(instance);
+            }
+        }
+    }
+
+    fn retry(&mut self, instance: &InstanceId) {
+        let attempt = self
+            .retries
+            .get(instance)
+            .map_or(0, |retry| retry.attempt.saturating_add(1));
+        self.retries
+            .insert(instance.clone(), Retry::after(self.now, attempt));
+    }
+
+    fn retire(&mut self, instance: InstanceId) -> Vec<Effect<S, R>> {
+        if self.retirements.contains_key(&instance) {
+            return Vec::new();
+        }
+        let adapter = match self.launchers.get(&instance) {
+            Some(Launcher::Running { start, .. }) => Some(start.clone()),
+            _ => None,
+        };
+        let waiting = self.forget(&instance);
+        self.retries.remove(&instance);
+        self.jobs = self.jobs.saturating_add(1);
+        self.retirements.insert(
+            instance.clone(),
+            Retiring {
+                id: self.jobs,
+                adapter: adapter.clone(),
+                stage: Retirement::Drain,
+                deadline: self.now.saturating_add(5),
+            },
+        );
+        let mut effects = self.answers(waiting);
+        effects.push(Effect::Retire {
+            instance,
+            id: self.jobs,
+            adapter,
+            stage: Retirement::Drain,
+        });
+        effects
+    }
+
+    pub fn tick(&mut self, now: u64) -> Vec<Effect<S, R>> {
+        self.now = self.now.max(now);
+        let mut effects = Vec::new();
+        for (instance, retirement) in &mut self.retirements {
+            if retirement.deadline <= self.now {
+                retirement.stage = match retirement.stage {
+                    Retirement::Drain => Retirement::Interrupt,
+                    Retirement::Interrupt | Retirement::Kill => {
+                        Retirement::Kill
+                    }
+                };
+                retirement.deadline = self.now.saturating_add(5);
+                effects.push(Effect::Retire {
+                    instance: instance.clone(),
+                    id: retirement.id,
+                    adapter: retirement.adapter.clone(),
+                    stage: retirement.stage,
+                });
+            }
+        }
+        let retries: Vec<_> = self
+            .retries
+            .iter()
+            .filter(|(_, retry)| retry.at <= self.now)
+            .map(|(instance, _)| instance.clone())
+            .collect();
+        for instance in retries {
+            if !self.refreshes.contains_key(&instance)
+                && !self.retirements.contains_key(&instance)
+            {
+                effects.extend(self.schedule(instance, Vec::new()));
+            }
+        }
+        effects
+    }
+
+    #[must_use]
+    pub fn retirement_is_current(
+        &self,
+        instance: &InstanceId,
+        id: u64,
+    ) -> bool {
+        self.retirements
+            .get(instance)
+            .is_some_and(|retiring| retiring.id == id)
+    }
+
+    pub fn retiring_adapter(
+        &mut self,
+        instance: &InstanceId,
+        id: u64,
+        adapter: S,
+    ) {
+        if let Some(retiring) = self.retirements.get_mut(instance)
+            && retiring.id == id
+        {
+            retiring.adapter = Some(adapter);
+        }
+    }
+
+    pub fn retired(
+        &mut self,
+        instance: &InstanceId,
+        id: u64,
+        stage: Retirement,
+        success: bool,
+    ) -> Vec<Effect<S, R>> {
+        if !success
+            || stage != Retirement::Kill
+            || self
+                .retirements
+                .get(instance)
+                .is_none_or(|retiring| retiring.id != id)
+        {
+            return Vec::new();
+        }
+        self.retirements.remove(instance);
+        self.launch(instance.clone(), Vec::new())
+    }
+
+    /// # Errors
+    /// The session is unknown or its instance no longer admits work.
+    pub fn for_order(
+        &self,
+        session: SessionId,
+        requires_instance: bool,
+    ) -> Result<H, Rejection> {
+        let (instance, handle) = self
+            .sessions
+            .get(&session)
+            .ok_or(Rejection::UnknownSession)?;
+        if requires_instance
+            && (self.roster.of(instance).is_none()
+                || self.retirements.contains_key(instance)
+                || self.blocked.contains(instance))
+        {
+            return Err(Rejection::InstanceUnavailable {
+                reason: String::from("instance configuration is changing"),
+            });
+        }
+        Ok(handle.clone())
     }
 
     fn answer(&self, reply: R) -> Effect<S, R> {
@@ -1097,6 +1498,12 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         instance: &InstanceId,
         credential: Option<&Credential>,
     ) -> Result<(S, Auth, Models), String> {
+        if self.blocked.contains(instance) {
+            return Err(String::from("shared configuration is pending"));
+        }
+        if self.retirements.contains_key(instance) {
+            return Err(String::from("instance is retiring"));
+        }
         match self.refreshes.get(instance) {
             None => Ok(()),
             Some(
@@ -1109,7 +1516,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             Some(Refresh::Starting { .. }) => Err(String::from(STARTING)),
         }?;
         match (self.launcher_of(instance)?, &self.unreadable) {
-            (Launcher::Unavailable(reason), _)
+            (Launcher::Unavailable(reason) | Launcher::Refused(reason), _)
             | (Launcher::Running { .. }, Some(reason)) => Err(reason.clone()),
             (
                 Launcher::Running {

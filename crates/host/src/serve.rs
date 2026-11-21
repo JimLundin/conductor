@@ -95,6 +95,11 @@ pub enum Order {
 }
 
 impl Order {
+    #[must_use]
+    pub const fn requires_instance(&self) -> bool {
+        !matches!(self, Self::Interrupt | Self::Diff(_) | Self::Remove)
+    }
+
     /// The order for the session's state machine. A conversation an undo
     /// forks takes `fork` as its id.
     #[must_use]
@@ -224,11 +229,50 @@ pub enum SignInOrder {
 /// now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Configure {
+    Retry(InstanceId),
     SetCredential {
         provider: Provider,
         credential: Credential,
     },
     Remove(InstanceId),
+}
+
+impl Configure {
+    #[must_use]
+    pub const fn removal(&self) -> Option<&InstanceId> {
+        match self {
+            Self::Remove(instance) => Some(instance),
+            Self::Retry(_) | Self::SetCredential { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub fn instance(&self, catalog: &proto::Catalog) -> Option<InstanceId> {
+        match self {
+            Self::Retry(id) | Self::Remove(id) => Some(id.clone()),
+            Self::SetCredential {
+                provider,
+                credential,
+            } => catalog
+                .of(*provider)
+                .and_then(|profile| profile.account(credential).ok())
+                .map(|account| InstanceId {
+                    provider: *provider,
+                    account,
+                }),
+        }
+    }
+
+    #[must_use]
+    pub const fn credential(&self) -> Option<(Provider, &Credential)> {
+        match self {
+            Self::SetCredential {
+                provider,
+                credential,
+            } => Some((*provider, credential)),
+            Self::Retry(_) | Self::Remove(_) => None,
+        }
+    }
 }
 
 /// How the command log keeps a command's receipt, so a retry with the same
@@ -269,6 +313,10 @@ impl Route {
             | Self::Handoff { .. } => Ledger::Session,
         }
     }
+}
+
+const fn retry_instance(instance: InstanceId) -> Route {
+    Route::Configure(Configure::Retry(instance))
 }
 
 #[must_use]
@@ -354,6 +402,7 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             provider,
             credential,
         } => set_credential(provider, credential),
+        CommandBody::RetryInstance { instance } => retry_instance(instance),
         CommandBody::RemoveInstance { instance } => {
             Route::Configure(Configure::Remove(instance))
         }

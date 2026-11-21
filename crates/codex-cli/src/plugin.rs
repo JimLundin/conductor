@@ -24,6 +24,7 @@ pub fn plugin(settings: Settings) -> Plugin {
 /// directory.
 fn instance(launch: Launch) -> Instance {
     Arc::new(Hub::spawn(ServerOptions {
+        processes: install::process::Processes::default(),
         codex_path: launch.path,
         home: launch.home,
         credential: None,

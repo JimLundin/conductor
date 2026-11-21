@@ -1,6 +1,9 @@
 //! `conductord`'s commands, for the plugins it is handed: start the host,
 //! or sign an instance's CLI in.
 
+mod control;
+pub use control::Control;
+
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -102,6 +105,10 @@ impl Providers {
         }
     }
 
+    pub(crate) fn membership(&self) -> Option<crate::fleet::Membership> {
+        self.fleet.borrow().clone()
+    }
+
     pub fn catalog(&self) -> Catalog {
         self.plugins.catalog()
     }
@@ -113,11 +120,12 @@ impl Providers {
             .map(|plugin| plugin.profile.instructions_file.clone())
     }
 
-    pub async fn launch(
+    pub(crate) async fn launch(
         &self,
         id: &InstanceId,
         instance: Instance,
         mode: Mode,
+        control: &Control,
     ) -> Launcher {
         let span = tracing::info_span!("instance", id = %id);
         let membership = self.fleet.borrow().clone();
@@ -127,7 +135,7 @@ impl Providers {
         };
         match prepare(&self.plugins, &self.data_dir, id, &instance, revision) {
             Ok(prepared) => {
-                run(prepared, &self.data_dir, instance, mode)
+                run(prepared, &self.data_dir, instance, mode, control)
                     .instrument(span)
                     .await
             }
@@ -189,14 +197,25 @@ impl Providers {
         &self,
         id: InstanceId,
         credential: &proto::Credential,
-    ) -> Result<(), proto::Rejection> {
+    ) -> Result<Option<proto::CommandResult>, crate::Stopped> {
         let membership = self.fleet.borrow().clone();
         if let Some(fleet) = membership {
             let sharing = self.plugins.sharing(id.provider, credential);
-            crate::fleet::share_credential(&fleet, id, credential, sharing)
-                .await?;
+            if sharing != crate::fleet::Sharing::Local {
+                let mut bytes = [0; 16];
+                getrandom::fill(&mut bytes).map_err(|_| crate::Stopped {})?;
+                return crate::fleet::share_credential(
+                    &fleet,
+                    proto::CommandId(u128::from_le_bytes(bytes)),
+                    id,
+                    credential,
+                    sharing,
+                )
+                .await
+                .map(Some);
+            }
         }
-        Ok(())
+        Ok(None)
     }
 
     pub(crate) async fn credential_sign_in(
@@ -651,6 +670,7 @@ async fn run(
     data_dir: &Path,
     instance: Instance,
     mode: Mode,
+    control: &Control,
 ) -> Launcher {
     let Prepared {
         plugin,
@@ -680,6 +700,12 @@ async fn run(
                         fleet.settings.provider_flags(profile.provider)
                     }),
                 });
+                if !control.record(start.clone()) {
+                    let _ = start.retire(agents::Retirement::Kill).await;
+                    return Launcher::Unavailable(String::from(
+                        "instance retired during launch",
+                    ));
+                }
                 let program = path.display().to_string();
                 let ran =
                     version(command(&path, &home, profile.version.clone()))

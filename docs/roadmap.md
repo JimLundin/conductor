@@ -38,7 +38,7 @@ What is built and what comes next. Update it in the commit that changes it.
   instance gets its own app-server. Sessions start on an instance and
   record it, so Continue and undo stay on it. The app's credentials screen
   lists the instances by account, takes a credential per provider and
-  removes an instance (refused while a session runs on one), and the
+  removes an instance (retiring any sessions still running on it), and the
   new-session picker lists instances. `--cli` and `--model` are each
   provider's defaults, and `conductord login <provider> [--account
   <account>]` signs one in on the host (ALPN `conductor/18`, credential
@@ -72,8 +72,22 @@ What is built and what comes next. Update it in the commit that changes it.
   Pending and failed instances report unavailability; unrelated sessions
   and connections remain usable. At boot the stored instances start
   independently. Subscribers receive `Feed::Instances` whenever offers change
-  (ALPN `conductor/23`). Credential retries retain their final durable
+  (ALPN `conductor/23`). Standalone credential retries retain their final durable
   `Instances` receipt.
+
+- **Shared configuration acceptance and application.** The root atomically
+  stores each accepted shared credential change with its signed configuration.
+  Hosts adopt it independently and report configuration progress separately
+  from instance availability (`Feed::Configuration`, ALPN `conductor/27`).
+  Pure host cores own generic admission, reconciliation, retirement deadlines
+  and capped retries. Provider adapters classify failures and stop their owned
+  process trees independently of stuck calls. Busy instances drain, interrupt
+  at five seconds and force-stop at ten; latest settings launch only after
+  acknowledgment. Reopen blocks superseded credentials before launch.
+  Deterministic core tests, uncertain-write recovery, a two-host command/feed
+  fixture and process-tree termination cover the seams. The client projection
+  exposes progress for the planned fleet UI; credential submission acknowledges
+  fleet acceptance without waiting for provider availability.
 
 - **Issue edits and landing recovery**. Issue status and checklist edits
   carry the browser's expected state. An interrupted landing can be

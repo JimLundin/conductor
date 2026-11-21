@@ -17,6 +17,7 @@ pub struct HostFold {
     pub epoch: Option<Epoch>,
     pub move_targets: Vec<NodeId>,
     pub instances: Option<Instances>,
+    pub configuration: Option<proto::fleet::Application>,
     pub catalog: Catalog,
     pub home: Option<Home>,
     pub sign_ins: BTreeMap<InstanceId, SignInStep>,
@@ -38,11 +39,13 @@ impl HostFold {
                 self.view = HostView::empty();
                 self.epoch = Some(epoch);
                 self.move_targets.clear();
+                self.configuration = None;
             }
             Update::Welcome(welcome) => {
                 self.name = Some(welcome.host);
                 self.epoch = Some(welcome.epoch);
                 self.move_targets.clear();
+                self.configuration = None;
                 self.instances = Some(welcome.instances);
                 self.catalog = welcome.catalog;
                 self.home = welcome.home;
@@ -53,6 +56,9 @@ impl HostFold {
             }
             Update::Feed(Feed::MoveTargets(targets)) => {
                 self.move_targets = targets;
+            }
+            Update::Feed(Feed::Configuration(configuration)) => {
+                self.configuration = configuration;
             }
             Update::Feed(Feed::Home(home)) => self.home = Some(home),
             Update::Feed(Feed::SignIn(sign_in)) => self.sign_in(sign_in),
@@ -182,5 +188,29 @@ mod tests {
         assert_eq!((host.live(), host.view.sessions.len()), (true, 1));
         host.apply(Update::Reset(Epoch(2)));
         assert!(host.view.sessions.is_empty());
+    }
+
+    #[test]
+    fn application_progress_is_independent_of_availability_and_receipts() {
+        let mut host = HostFold::default();
+        host.apply(welcome(1));
+        let progress = proto::fleet::Application {
+            desired: 3,
+            adopted: Some(3),
+            instances: [(
+                InstanceId::own(Provider::Claude),
+                proto::fleet::ApplicationState::Refused,
+            )]
+            .into(),
+        };
+        host.apply(Update::Feed(Feed::Configuration(Some(progress.clone()))));
+        host.apply(Update::Answer(CommandResult::Accepted));
+        host.apply(Update::Feed(Feed::Instances(instances("refused"))));
+        assert_eq!(host.configuration, Some(progress.clone()));
+        host.apply(welcome(1));
+        assert_eq!(host.configuration, None);
+        host.apply(Update::Feed(Feed::Configuration(Some(progress))));
+        host.apply(Update::Reset(Epoch(2)));
+        assert_eq!(host.configuration, None);
     }
 }

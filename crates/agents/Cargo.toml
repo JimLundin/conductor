@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+thiserror.workspace = true
 proto = { path = "../proto" }
 serde_json.workspace = true
 url = { version = "2.5.8", default-features = false }

@@ -46,6 +46,7 @@ pub struct Watch {
     pub running: Vec<SignIn>,
     pub sign_ins: broadcast::Receiver<SignIn>,
     pub offers: watch::Receiver<Instances>,
+    pub configuration: watch::Receiver<Option<proto::fleet::Application>>,
 }
 
 pub type Launcher = host::registry::Launcher<Instance>;
@@ -53,7 +54,8 @@ pub type Launcher = host::registry::Launcher<Instance>;
 struct Reply {
     removal: Option<CommandId>,
     credential: Option<CredentialLease>,
-    channel: oneshot::Sender<CommandResult>,
+    application: bool,
+    channel: Option<oneshot::Sender<CommandResult>>,
 }
 type Core = host::registry::Registry<Instance, Session, Reply>;
 type Effect = host::registry::Effect<Instance, Reply>;
@@ -105,9 +107,11 @@ enum RegistryMsg {
         reply: oneshot::Sender<(Instances, Catalog)>,
     },
     ReconfigureFleet {
+        providers: BTreeSet<Provider>,
         reply: oneshot::Sender<bool>,
     },
     Configure {
+        application: bool,
         configure: Configure,
         id: CommandId,
         reply: oneshot::Sender<CommandResult>,
@@ -120,6 +124,11 @@ enum RegistryMsg {
         reply: oneshot::Sender<Watch>,
     },
     Run(Key, Report),
+    ForOrder(SessionId, bool, oneshot::Sender<Result<Session, Rejection>>),
+    Tick(u64),
+    Desire(u64, Roster, BTreeSet<InstanceId>, oneshot::Sender<()>),
+    Adopted(u64, oneshot::Sender<()>),
+    Retired(InstanceId, u64, agents::Retirement, bool),
 }
 
 struct RegistryActor {
@@ -128,10 +137,16 @@ struct RegistryActor {
     core: Core,
     providers: Providers,
     home: HomeClone,
+    retirements: JoinSet<(InstanceId, u64, agents::Retirement, bool)>,
     refreshes: JoinSet<Refreshed>,
     starts: JoinSet<Started<Instance>>,
     refresh_jobs: BTreeMap<Id, (u64, InstanceId)>,
     start_jobs: BTreeMap<Id, (u64, InstanceId)>,
+    start_controls: BTreeMap<
+        InstanceId,
+        (u64, crate::start::Control, tokio::task::AbortHandle),
+    >,
+    refresh_controls: BTreeMap<InstanceId, tokio::task::AbortHandle>,
     relaunching: BTreeMap<SessionId, Weak<()>>,
     arrivals: BTreeMap<SessionId, proto::movement::MoveId>,
     branches: JoinSet<BranchReady>,
@@ -140,6 +155,7 @@ struct RegistryActor {
     runs: Runs,
     live: broadcast::Sender<SignIn>,
     offers: watch::Sender<Instances>,
+    configuration: watch::Sender<Option<proto::fleet::Application>>,
     initialized: Option<watch::Sender<bool>>,
 }
 
@@ -152,6 +168,10 @@ impl Registry {
         home: HomeClone,
     ) -> Result<(Self, watch::Receiver<bool>), Stopped> {
         let mut core = Core::new(stored, providers.catalog());
+        if let Some(fleet) = providers.membership() {
+            let desired = fleet.desired().await?;
+            core.desire(desired.version, &desired.credentials, &desired.owned);
+        }
         let starts = core.boot();
         let (ready, initialized) = watch::channel(false);
         let mut actor =
@@ -218,6 +238,17 @@ impl Registry {
     /// # Errors
     ///
     /// Fails if the registry has stopped.
+    pub(crate) async fn for_order(
+        &self,
+        session: SessionId,
+        requires_instance: bool,
+    ) -> Result<Result<Session, Rejection>, Stopped> {
+        self.ask(|reply| {
+            RegistryMsg::ForOrder(session, requires_instance, reply)
+        })
+        .await
+    }
+
     pub async fn find(
         &self,
         session: SessionId,
@@ -270,6 +301,7 @@ impl Registry {
         id: CommandId,
     ) -> Result<CommandResult, Stopped> {
         self.ask(|reply| RegistryMsg::Configure {
+            application: false,
             configure,
             id,
             reply,
@@ -277,9 +309,40 @@ impl Registry {
         .await
     }
 
-    pub(crate) async fn reconfigure_fleet(&self) -> Result<bool, Stopped> {
-        self.ask(|reply| RegistryMsg::ReconfigureFleet { reply })
+    pub(crate) async fn reconfigure_fleet(
+        &self,
+        providers: BTreeSet<Provider>,
+    ) -> Result<bool, Stopped> {
+        self.ask(|reply| RegistryMsg::ReconfigureFleet { providers, reply })
             .await
+    }
+
+    pub(crate) async fn apply(
+        &self,
+        configure: Configure,
+        id: CommandId,
+    ) -> Result<CommandResult, Stopped> {
+        self.ask(|reply| RegistryMsg::Configure {
+            application: true,
+            configure,
+            id,
+            reply,
+        })
+        .await
+    }
+
+    pub(crate) async fn desire(
+        &self,
+        version: u64,
+        desired: Roster,
+        known: BTreeSet<InstanceId>,
+    ) -> Result<(), Stopped> {
+        self.ask(|reply| RegistryMsg::Desire(version, desired, known, reply))
+            .await
+    }
+
+    pub(crate) async fn adopted(&self, version: u64) -> Result<(), Stopped> {
+        self.ask(|reply| RegistryMsg::Adopted(version, reply)).await
     }
 
     /// Starts, answers or cancels an instance's sign-in.
@@ -324,13 +387,17 @@ impl RegistryActor {
             log,
             store,
             offers: watch::channel(core.instances()).0,
+            configuration: watch::channel(core.application()).0,
             core,
             providers,
             home,
+            retirements: JoinSet::new(),
             refreshes: JoinSet::new(),
             starts: JoinSet::new(),
             refresh_jobs: BTreeMap::new(),
             start_jobs: BTreeMap::new(),
+            start_controls: BTreeMap::new(),
+            refresh_controls: BTreeMap::new(),
             relaunching: BTreeMap::new(),
             arrivals: BTreeMap::new(),
             branches: JoinSet::new(),
@@ -353,12 +420,17 @@ impl RegistryActor {
         mut self,
         mut messages: mpsc::Receiver<RegistryMsg>,
     ) -> Result<Infallible, Stopped> {
+        let began = tokio::time::Instant::now();
+        let mut clock =
+            tokio::time::interval(std::time::Duration::from_millis(250));
         loop {
             let msg = tokio::select! {
+                _ = clock.tick() => RegistryMsg::Tick(began.elapsed().as_secs()),
+                Some(Ok((instance, id, stage, success))) = self.retirements.join_next() => RegistryMsg::Retired(instance, id, stage, success),
                 msg = messages.recv() => msg.ok_or(Stopped {})?,
                 Some(result) = self.refreshes.join_next_with_id() => {
                     match complete_job(&mut self.refresh_jobs, result, |id, instance, reason| Refreshed {
-                        id, instance, configured: Err(reason),
+                        id, instance, configured: Err(agents::ConfigurationFailure::Temporary(reason)),
                     }) {
                         Some(refreshed) => RegistryMsg::Refreshed(refreshed),
                         None => continue,
@@ -381,14 +453,32 @@ impl RegistryActor {
 
     async fn on(&mut self, msg: RegistryMsg) -> Result<(), Stopped> {
         match msg {
+            RegistryMsg::Tick(now) => {
+                let effects = self.core.tick(now);
+                self.perform(effects);
+            }
+            RegistryMsg::ForOrder(session, required, reply) => {
+                let _ = reply.send(self.core.for_order(session, required));
+            }
+            RegistryMsg::Desire(version, desired, known, reply) => {
+                let effects = self.core.desire(version, &desired, &known);
+                self.perform(effects);
+                let _ = reply.send(());
+            }
+            RegistryMsg::Adopted(version, reply) => {
+                self.core.adopted(version);
+                self.publish_offers();
+                let _ = reply.send(());
+            }
+            RegistryMsg::Retired(instance, id, stage, success) => {
+                let effects = self.core.retired(&instance, id, stage, success);
+                self.perform(effects);
+            }
             RegistryMsg::Refreshed(result) => {
                 let effects = self.core.refreshed(result);
                 self.perform(effects);
             }
-            RegistryMsg::Started(result) => {
-                let effects = self.core.started(result);
-                self.perform(effects);
-            }
+            RegistryMsg::Started(result) => self.started(result),
             RegistryMsg::Start {
                 request,
                 placed,
@@ -404,18 +494,7 @@ impl RegistryActor {
                 self.run_start(decision, reply).await?;
             }
             RegistryMsg::Continue { session, reply } => {
-                let _ = reply.send(self.core.relaunch(session).map(
-                    |(handle, adapter, models)| {
-                        let reservation = self
-                            .relaunching
-                            .get(&session)
-                            .and_then(Weak::upgrade)
-                            .unwrap_or_default();
-                        self.relaunching
-                            .insert(session, Arc::downgrade(&reservation));
-                        (handle, adapter, models, reservation)
-                    },
-                ));
+                let _ = reply.send(self.reserve_relaunch(session));
             }
             RegistryMsg::Find { session, reply } => {
                 let _ = reply.send(self.core.find(session));
@@ -435,22 +514,18 @@ impl RegistryActor {
                 let _ = reply
                     .send((self.core.instances(), self.core.catalog().clone()));
             }
-            RegistryMsg::ReconfigureFleet { reply } => {
-                let settled = self.core.offers_settled();
-                if settled {
-                    let starts = self.core.boot();
-                    self.perform(
-                        starts.into_iter().map(Effect::Start).collect(),
-                    );
-                }
-                let _ = reply.send(settled);
+            RegistryMsg::ReconfigureFleet { providers, reply } => {
+                self.reconfigure(providers).await?;
+                let _ = reply.send(true);
             }
             RegistryMsg::Configure {
+                application,
                 configure,
                 id,
                 reply,
             } => {
-                let effects = self.configure(configure, id, reply).await?;
+                let effects =
+                    self.configure(configure, id, reply, application).await?;
                 self.perform(effects);
             }
             RegistryMsg::SignIn { order, reply } => {
@@ -463,6 +538,7 @@ impl RegistryActor {
                     running: self.sign_ins.running(),
                     sign_ins: self.live.subscribe(),
                     offers: self.offers.subscribe(),
+                    configuration: self.configuration.subscribe(),
                 });
             }
             RegistryMsg::Run(key, report) => {
@@ -470,6 +546,51 @@ impl RegistryActor {
                 self.signs_in(effects).await?;
             }
         }
+        Ok(())
+    }
+
+    fn started(&mut self, result: Started<Instance>) {
+        if self
+            .start_controls
+            .get(&result.instance)
+            .is_some_and(|(id, _, _)| *id == result.id)
+        {
+            self.start_controls.remove(&result.instance);
+        }
+        let effects = self.core.started(result);
+        self.perform(effects);
+    }
+
+    fn reserve_relaunch(
+        &mut self,
+        session: SessionId,
+    ) -> Result<Relaunch, Rejection> {
+        self.core
+            .relaunch(session)
+            .map(|(handle, adapter, models)| {
+                let reservation = self
+                    .relaunching
+                    .get(&session)
+                    .and_then(Weak::upgrade)
+                    .unwrap_or_default();
+                self.relaunching
+                    .insert(session, Arc::downgrade(&reservation));
+                (handle, adapter, models, reservation)
+            })
+    }
+
+    async fn reconfigure(
+        &mut self,
+        providers: BTreeSet<Provider>,
+    ) -> Result<(), Stopped> {
+        for sign_in in self.sign_ins.running() {
+            if providers.contains(&sign_in.instance.provider) {
+                let effects = self.sign_ins.retire(sign_in.instance);
+                self.signs_in(effects).await?;
+            }
+        }
+        let effects = self.core.reconfigure(&providers);
+        self.perform(effects);
         Ok(())
     }
 
@@ -598,7 +719,8 @@ impl RegistryActor {
         let mut reply = Reply {
             removal: None,
             credential: None,
-            channel,
+            application: false,
+            channel: Some(channel),
         };
         let admitted = self.admit_credential(&target, &credential, &running);
         let result = match admitted {
@@ -606,19 +728,17 @@ impl RegistryActor {
                 reply.credential = Some(claim);
                 self.providers
                     .share_credential(target.destination.clone(), &credential)
-                    .await
+                    .await?
             }
-            Err(rejection) => Err(rejection),
+            Err(rejection) => Some(CommandResult::Rejected(rejection)),
         };
         let effects = match result {
-            Ok(()) => self.core.set_credential(
+            None => self.core.set_credential(
                 target.destination.provider,
                 credential,
                 reply,
             ),
-            Err(reason) => {
-                vec![Effect::Reply(reply, CommandResult::Rejected(reason))]
-            }
+            Some(outcome) => vec![Effect::Reply(reply, outcome)],
         };
         self.perform(effects);
         self.runs.listen(key, answer);
@@ -661,7 +781,8 @@ impl RegistryActor {
         let reply = Reply {
             removal: None,
             credential: None,
-            channel,
+            application: false,
+            channel: Some(channel),
         };
         let effects =
             self.core
@@ -752,7 +873,8 @@ impl RegistryActor {
                 let reply = Reply {
                     removal: None,
                     credential: None,
-                    channel,
+                    application: false,
+                    channel: Some(channel),
                 };
                 let running = self.running_sessions().await?;
                 let effects = self.core.signed_in(
@@ -793,29 +915,56 @@ impl RegistryActor {
         configure: Configure,
         id: CommandId,
         channel: oneshot::Sender<CommandResult>,
+        application: bool,
     ) -> Result<Vec<Effect>, Stopped> {
-        let removal = matches!(configure, Configure::Remove(_)).then_some(id);
+        if application {
+            self.retire_sign_in(configure.instance(self.core.catalog()))
+                .await?;
+        }
+        let removal = configure.removal().map(|_| id);
         let reply = Reply {
             removal,
             credential: None,
-            channel,
+            application,
+            channel: Some(channel),
         };
         Ok(match configure {
+            Configure::Retry(instance) => {
+                self.core.retry_instance(instance, reply)
+            }
             Configure::SetCredential {
                 provider,
                 credential,
             } => self.core.set_credential(provider, credential, reply),
             Configure::Remove(instance) => {
-                if let Some(instances) = self.store.removal(id) {
-                    return Ok(vec![Effect::Reply(
-                        reply,
-                        CommandResult::Instances(instances),
-                    )]);
-                }
-                let running = self.running_sessions().await?;
-                self.core.remove_instance(instance, &running, reply)
+                self.remove_instance(instance, id, reply)
             }
         })
+    }
+
+    async fn retire_sign_in(
+        &mut self,
+        target: Option<InstanceId>,
+    ) -> Result<(), Stopped> {
+        if let Some(instance) = target {
+            let effects = self.sign_ins.retire(instance);
+            self.signs_in(effects).await?;
+        }
+        Ok(())
+    }
+
+    fn remove_instance(
+        &mut self,
+        instance: InstanceId,
+        id: CommandId,
+        reply: Reply,
+    ) -> Vec<Effect> {
+        match self.store.removal(id) {
+            Some(instances) => {
+                vec![Effect::Reply(reply, CommandResult::Instances(instances))]
+            }
+            None => self.core.remove_instance(instance, reply),
+        }
     }
 
     /// Performs the effects in order, each effect's own effects before the
@@ -830,6 +979,7 @@ impl RegistryActor {
     }
 
     fn publish_offers(&mut self) {
+        self.publish_configuration();
         let current = self.core.instances();
         if *self.offers.borrow() != current {
             self.offers.send_replace(current);
@@ -841,10 +991,19 @@ impl RegistryActor {
         }
     }
 
+    fn publish_configuration(&self) {
+        let configuration = self.core.application();
+        if *self.configuration.borrow() != configuration {
+            self.configuration.send_replace(configuration);
+        }
+    }
+
     fn effect(&mut self, effect: Effect) -> Vec<Effect> {
         match effect {
             Effect::Reply(reply, result) => {
-                let _ = reply.channel.send(result);
+                if let Some(channel) = reply.channel {
+                    let _ = channel.send(result);
+                }
                 Vec::new()
             }
             Effect::MoveAside { instance, reply } => {
@@ -865,22 +1024,89 @@ impl RegistryActor {
             Effect::Refresh(job) => {
                 let generation = (job.id, job.instance_id.clone());
                 let task = self.refreshes.spawn(refresh(job));
-                self.refresh_jobs.insert(task.id(), generation);
+                self.refresh_jobs.insert(task.id(), generation.clone());
+                self.refresh_controls.insert(generation.1, task);
                 Vec::new()
             }
             Effect::Start(starting) => {
                 let providers = self.providers.clone();
                 let generation = (starting.id, starting.instance.clone());
-                let task = self
-                    .starts
-                    .spawn(async move { start(&providers, starting).await });
-                self.start_jobs.insert(task.id(), generation);
+                let control = crate::start::Control::default();
+                let observed = control.clone();
+                let task = self.starts.spawn(async move {
+                    start(&providers, starting, &control).await
+                });
+                self.start_jobs.insert(task.id(), generation.clone());
+                self.start_controls
+                    .insert(generation.1, (generation.0, observed, task));
+                Vec::new()
+            }
+            Effect::Retire {
+                instance,
+                id,
+                adapter,
+                stage,
+            } => {
+                self.retire(instance, id, adapter, stage);
                 Vec::new()
             }
             Effect::Log(note) => {
                 crate::log_note(&note);
                 Vec::new()
             }
+        }
+    }
+
+    fn cancel_jobs(&mut self, instance: &InstanceId) -> Option<Instance> {
+        if let Some(task) = self.refresh_controls.remove(instance) {
+            task.abort();
+        }
+        self.start_controls
+            .remove(instance)
+            .and_then(|(_, control, task)| {
+                let adapter = control.cancel();
+                task.abort();
+                adapter
+            })
+    }
+
+    fn retire(
+        &mut self,
+        instance: InstanceId,
+        id: u64,
+        adapter: Option<Instance>,
+        stage: agents::Retirement,
+    ) {
+        let starting = if self.core.retirement_is_current(&instance, id) {
+            self.cancel_jobs(&instance)
+        } else {
+            None
+        };
+        let retiring = adapter.or(starting);
+        if let Some(adapter) = &retiring {
+            self.core.retiring_adapter(&instance, id, adapter.clone());
+        }
+        self.retirements.spawn(async move {
+            let success = terminate(retiring, stage).await;
+            (instance, id, stage, success)
+        });
+    }
+
+    fn adopt_saved(
+        &mut self,
+        current: Roster,
+        change: Change,
+        mut reply: Reply,
+    ) -> Vec<Effect> {
+        if reply.application {
+            if let Some(channel) = reply.channel.take() {
+                let _ = channel.send(CommandResult::Instances(
+                    self.core.instances_of(&current),
+                ));
+            }
+            self.core.adopted_change(current, change, reply)
+        } else {
+            self.core.saved(current, change, reply, Ok(()))
         }
     }
 
@@ -908,7 +1134,7 @@ impl RegistryActor {
             }
         };
         match saved {
-            Ok(current) => self.core.saved(current, change, reply, Ok(())),
+            Ok(current) => self.adopt_saved(current, change, reply),
             Err(err) => {
                 self.core
                     .saved(roster, change, reply, Err(format!("{err:#}")))
@@ -1179,14 +1405,18 @@ async fn refresh(job: Job<Instance>) -> Refreshed {
     }
 }
 
-async fn start(providers: &Providers, starting: Starting) -> Started<Instance> {
+async fn start(
+    providers: &Providers,
+    starting: Starting,
+    control: &crate::start::Control,
+) -> Started<Instance> {
     let Starting {
         mode,
         id,
         instance,
         settings,
     } = starting;
-    let launcher = providers.launch(&instance, settings, mode).await;
+    let launcher = providers.launch(&instance, settings, mode, control).await;
     Started {
         id,
         instance,
@@ -1241,3 +1471,18 @@ async fn recover(
 
 #[cfg(test)]
 mod tests;
+
+async fn terminate(
+    retiring: Option<Instance>,
+    stage: agents::Retirement,
+) -> bool {
+    match retiring {
+        Some(adapter) => tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            adapter.retire(stage),
+        )
+        .await
+        .is_ok_and(|result| result.is_ok()),
+        None => true,
+    }
+}

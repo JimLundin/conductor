@@ -93,8 +93,8 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
         .await
         .err()
         .ok_or("expected a credential refusal")?;
-    assert!(reason.contains("config.toml"));
-    assert!(!reason.contains("private-value"));
+    assert!(reason.to_string().contains("config.toml"));
+    assert!(!reason.to_string().contains("private-value"));
     std::fs::write(
         work.join("home/gateway/config.toml"),
         "model_providers = 1",
@@ -104,7 +104,7 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
         .await
         .err()
         .ok_or("expected a conflicting provider table to be refused")?;
-    assert!(conflict.contains("model_providers"));
+    assert!(conflict.to_string().contains("model_providers"));
     Ok(())
 }
 

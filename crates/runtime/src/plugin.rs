@@ -34,15 +34,25 @@ pub struct Launch {
     pub fleet_flags: Option<proto::fleet::Flags>,
 }
 
-/// The outer error is a credential refusal. A configured instance reports
-/// model discovery separately in its configuration.
-pub type Configuring<'a> =
-    Pin<Box<dyn Future<Output = Result<Configuration, String>> + Send + 'a>>;
+/// Adapters distinguish temporary application failures from credential
+/// refusals. Model discovery remains separate from applying the credential.
+pub type Configuring<'a> = Pin<
+    Box<
+        dyn Future<Output = Result<Configuration, agents::ConfigurationFailure>>
+            + Send
+            + 'a,
+    >,
+>;
 
 pub type CredentialSigningIn<'a> =
     Pin<Box<dyn Future<Output = Result<Credential, String>> + Send + 'a>>;
 
+pub type Terminating<'a> =
+    Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'a>>;
+
 pub trait ProviderInstance: Send + Sync + Debug {
+    fn retire(&self, stage: agents::Retirement) -> Terminating<'_>;
+
     fn configure(&self, credential: Option<Credential>) -> Configuring<'_>;
     fn start(self: Arc<Self>) -> Runtime;
 

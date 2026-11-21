@@ -130,8 +130,33 @@ fn link_new(original: &Path, link: &Path) -> std::io::Result<bool> {
 }
 
 fn write_private(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    replace_private(path, contents).map_err(|error| error.source)
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("{source}")]
+struct PrivateWriteError {
+    source: std::io::Error,
+    replaced: bool,
+}
+
+fn replace_private(
+    path: &Path,
+    contents: &[u8],
+) -> Result<(), PrivateWriteError> {
+    let mut replaced = false;
+    publish_private(path, contents, &mut replaced)
+        .map_err(|source| PrivateWriteError { source, replaced })
+}
+
+fn publish_private(
+    path: &Path,
+    contents: &[u8],
+    replaced: &mut bool,
+) -> std::io::Result<()> {
     let dir = path.parent().ok_or(ErrorKind::InvalidInput)?;
     with_private_file(dir, contents, |next| std::fs::rename(next, path))?;
+    *replaced = true;
     sync_dir(dir)
 }
 

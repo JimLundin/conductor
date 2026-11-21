@@ -30,6 +30,21 @@ pub use step::{
     NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ConfigurationFailure {
+    #[error("{0}")]
+    Temporary(alloc::string::String),
+    #[error("{0}")]
+    Refused(alloc::string::String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retirement {
+    Drain,
+    Interrupt,
+    Kill,
+}
+
 /// The credential took. Discovery may still fail, in which case the host
 /// decides whether the credential's named model can be offered.
 #[derive(Debug, Clone, PartialEq, Eq)]

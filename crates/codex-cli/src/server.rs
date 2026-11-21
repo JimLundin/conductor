@@ -27,6 +27,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone)]
 pub struct ServerOptions {
+    pub processes: install::process::Processes,
     pub codex_path: PathBuf,
     pub home: Home,
     /// A private home's model provider; `None` leaves the home's own
@@ -377,6 +378,7 @@ fn start(
     Ok(line_json::start(
         command(opts),
         Options {
+            processes: opts.processes.clone(),
             stdout_log: None,
             stderr: StderrPolicy::LastNonempty(STDERR_TIMEOUT),
             log_stderr: |line| tracing::debug!(target: "codex::stderr", "{line}"),
@@ -497,6 +499,7 @@ mod tests {
     #[test]
     fn app_server_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(&ServerOptions {
+            processes: install::process::Processes::default(),
             analytics: None,
             codex_path: "/opt/codex".into(),
             home: Home::User,

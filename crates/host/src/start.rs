@@ -215,15 +215,27 @@ impl<S> Configuring<S> {
     #[must_use]
     pub fn configured<P>(
         self,
-        result: Result<Configuration, String>,
+        result: Result<Configuration, agents::ConfigurationFailure>,
         mode: Mode,
     ) -> Next<P, S> {
         let Self { cli, own } = self;
+        if let Err(agents::ConfigurationFailure::Refused(reason)) = &result {
+            return Next::Done(
+                Launcher::Refused(format!(
+                    "{} refused the stored credential: {reason}",
+                    cli.path
+                )),
+                Vec::new(),
+            );
+        }
         let chosen = cli.chosen.map(ModelId);
         let mut notes = Vec::new();
         let models = result
             .map_err(|reason| {
-                format!("{} refused the stored credential: {reason}", cli.path)
+                format!(
+                    "{} could not apply the stored credential: {reason}",
+                    cli.path
+                )
             })
             .and_then(|mut config| {
                 if mode == Mode::Boot
@@ -357,12 +369,14 @@ mod tests {
                 Next::Configure(listing) => {
                     seen.push(listing.instance());
                     listing.configured(
-                        probes.named.clone().map(|named| {
-                            agents::Configuration {
+                        probes
+                            .named
+                            .clone()
+                            .map_err(agents::ConfigurationFailure::Refused)
+                            .map(|named| agents::Configuration {
                                 named,
                                 models: probes.models.clone(),
-                            }
-                        }),
+                            }),
                         Mode::Boot,
                     )
                 }
@@ -432,14 +446,9 @@ mod tests {
         );
         assert_eq!(
             launcher,
-            Launcher::Running {
-                start: "start",
-                own: OwnSignIn::Unmanaged,
-                chosen: Some(ModelId(String::from("haiku"))),
-                models: Err(String::from(
-                    "/given refused the stored credential: bad key"
-                )),
-            }
+            Launcher::Refused(String::from(
+                "/given refused the stored credential: bad key"
+            ))
         );
     }
 

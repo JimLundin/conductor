@@ -50,6 +50,9 @@ struct Pending {
 }
 
 impl ProviderInstance for Pending {
+    fn retire(&self, _: agents::Retirement) -> runtime::Terminating<'_> {
+        Box::pin(async { Ok(()) })
+    }
     fn configure(&self, _: Option<Credential>) -> Configuring<'_> {
         Box::pin(std::future::pending())
     }
@@ -202,6 +205,7 @@ impl Fixture {
         let (reply, answer) = oneshot::channel();
         self.actor
             .on(RegistryMsg::Configure {
+                application: false,
                 configure: Configure::Remove(self.source.clone()),
                 id,
                 reply,
@@ -238,24 +242,21 @@ impl Fixture {
 }
 
 #[tokio::test]
-async fn a_pending_relaunch_blocks_removal_then_removal_blocks_relaunch()
+async fn removal_blocks_a_pending_relaunch_and_retires_the_instance()
 -> anyhow::Result<()> {
     let mut fx = Fixture::new()?;
     let launch = fx.launch().await?;
-    assert_eq!(
-        fx.remove(CommandId(1)).await?,
-        CommandResult::Rejected(Rejection::InstanceInUse { sessions: 1 }),
+    assert!(
+        matches!(fx.remove(CommandId(1)).await?, CommandResult::Instances(instances) if instances.of(&fx.source).is_none())
     );
-    fx.release.send_replace(true);
-    let _ = tokio::time::timeout(DEADLINE, launch).await???;
-    assert!(matches!(
-        fx.remove(CommandId(2)).await?,
-        CommandResult::Instances(instances) if instances.of(&fx.source).is_none()
-    ));
     assert!(matches!(
         fx.adapter().await?,
         Err(Rejection::InstanceUnavailable { .. })
     ));
+    let effects = fx.actor.core.tick(10);
+    fx.actor.perform(effects);
+    fx.release.send_replace(true);
+    let _ = tokio::time::timeout(DEADLINE, launch).await???;
     Ok(())
 }
 
@@ -301,7 +302,8 @@ async fn a_cancelled_refresh_settles_its_availability_and_waiter()
         Reply {
             removal: None,
             credential: None,
-            channel,
+            application: false,
+            channel: Some(channel),
         },
     );
     fx.actor.perform(effects);

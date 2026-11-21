@@ -106,7 +106,9 @@ pub(super) fn unseal<T: DeserializeOwned>(
     file: &[u8],
 ) -> anyhow::Result<T> {
     let bytes = Zeroizing::new(decrypt(key, STORE, file)?);
-    Ok(postcard::from_bytes(&bytes)?)
+    let (value, remaining) = postcard::take_from_bytes(&bytes)?;
+    ensure!(remaining.is_empty(), "trailing fleet state data");
+    Ok(value)
 }
 
 pub(super) fn backup<T: Serialize>(

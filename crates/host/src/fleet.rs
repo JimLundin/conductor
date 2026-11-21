@@ -1,6 +1,17 @@
 //! Fleet credential policy and configuration ordering.
 
 use alloc::collections::BTreeSet;
+use serde::{Deserialize, Serialize};
+
+pub mod acceptance;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Desired {
+    pub version: u64,
+    pub revision: proto::fleet::Revision,
+    pub credentials: Roster,
+    pub owned: BTreeSet<InstanceId>,
+}
 
 use proto::fleet::{NodeId, Snapshot};
 use proto::{
@@ -9,7 +20,7 @@ use proto::{
 
 use crate::serve::Configure;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Sharing {
     Local,
     Shared,
@@ -38,22 +49,6 @@ pub fn store(
             ..Instance::default()
         },
     );
-}
-
-pub fn removal_plan<'a>(
-    known: &'a BTreeSet<InstanceId>,
-    current: &'a Roster,
-) -> impl Iterator<Item = &'a InstanceId> {
-    known.iter().filter(|id| !current.0.contains_key(*id))
-}
-
-#[must_use]
-pub fn wants_update(
-    applied: &Roster,
-    id: &InstanceId,
-    instance: &Instance,
-) -> bool {
-    applied.of(id) != Some(instance)
 }
 
 #[must_use]
@@ -87,4 +82,35 @@ pub fn retains_revocations(previous: &Snapshot, next: &Snapshot) -> bool {
 #[must_use]
 pub fn revision_order(current: u64, incoming: u64) -> core::cmp::Ordering {
     incoming.cmp(&current)
+}
+
+#[must_use]
+pub fn changed_providers(
+    previous: Option<&proto::fleet::Revision>,
+    next: &proto::fleet::Revision,
+) -> BTreeSet<proto::Provider> {
+    next.pins
+        .0
+        .keys()
+        .chain(next.settings.models.keys())
+        .chain(next.settings.flags.keys())
+        .chain(previous.into_iter().flat_map(|before| {
+            before
+                .pins
+                .0
+                .keys()
+                .chain(before.settings.models.keys())
+                .chain(before.settings.flags.keys())
+        }))
+        .copied()
+        .filter(|provider| {
+            previous.is_none_or(|before| {
+                before.pins.get(*provider) != next.pins.get(*provider)
+                    || before.settings.models.get(provider)
+                        != next.settings.models.get(provider)
+                    || before.settings.flags.get(provider)
+                        != next.settings.flags.get(provider)
+            })
+        })
+        .collect()
 }

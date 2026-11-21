@@ -23,6 +23,7 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone)]
 pub struct ClaudeOptions {
+    pub processes: install::process::Processes,
     pub claude_path: PathBuf,
     pub home: Home,
     /// Passed in the environment; `None` leaves the home's own sign-in.
@@ -229,6 +230,7 @@ fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
     let started = line_json::start(
         command(opts, &id, sandbox(&opts.cwd)),
         Options {
+            processes: opts.processes.clone(),
             stdout_log,
             stderr: StderrPolicy::Last,
             log_stderr: |line| tracing::warn!(target: "claude::stderr", "{line}"),
@@ -395,6 +397,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
             &ClaudeOptions {
+                processes: install::process::Processes::default(),
                 instructions: None,
                 claude_path: "/opt/claude".into(),
                 home: Home::User,
@@ -486,6 +489,7 @@ mod tests {
     fn resumed_session_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(
             &ClaudeOptions {
+                processes: install::process::Processes::default(),
                 instructions: None,
                 claude_path: "/opt/claude".into(),
                 home: Home::Private(PathBuf::from(

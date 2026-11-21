@@ -44,7 +44,7 @@ fn each_field_takes_its_kind_of_input_and_an_empty_form_doesnt_save() {
 }
 
 #[test]
-fn only_a_sign_in_takes_accepted_for_an_answer() {
+fn shared_removal_acknowledges_acceptance_before_the_instance_disappears() {
     let (removing, effects) = run(
         paired(),
         Vec::from([
@@ -67,7 +67,9 @@ fn only_a_sign_in_takes_accepted_for_an_answer() {
             .into_iter()
             .find(|instance| instance.instance == id("https://gw.example"))
             .map(|instance| instance.outcome.map(|hint| hint.text))),
-        Some(Some(text("desk gave an unexpected answer.")))
+        Some(Some(text(
+            "Removal saved for the fleet. Hosts are stopping the instance."
+        )))
     );
 }
 

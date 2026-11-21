@@ -18,14 +18,28 @@ use super::hub::{Hub, Thread};
 use super::server::Error;
 
 impl ProviderInstance for Hub {
+    fn retire(&self, stage: agents::Retirement) -> runtime::Terminating<'_> {
+        Box::pin(async move {
+            match stage {
+                agents::Retirement::Drain => self.processes.retire(),
+                agents::Retirement::Interrupt => self.processes.interrupt(),
+                agents::Retirement::Kill => self.processes.terminate().await,
+            }
+            .map_err(|error| error.to_string())
+        })
+    }
+
     fn configure(&self, given: Option<Credential>) -> Configuring<'_> {
         Box::pin(async move {
-            let credential =
-                given.as_ref().map(codex::credential).transpose()?;
+            let credential = given
+                .as_ref()
+                .map(codex::credential)
+                .transpose()
+                .map_err(agents::ConfigurationFailure::Refused)?;
             let named = credential.as_ref().and_then(codex::default_model);
-            self.set_credential(credential)
-                .await
-                .map_err(|error| error.to_string())?;
+            self.set_credential(credential).await.map_err(|error| {
+                agents::ConfigurationFailure::Temporary(error.to_string())
+            })?;
             Ok(Configuration {
                 named,
                 models: self.models().await.map_err(|error| error.to_string()),

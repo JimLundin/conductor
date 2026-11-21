@@ -9,6 +9,7 @@ publish = false
 layer = "shell"
 
 [dependencies]
+sha2 = { version = "0.11.0", default-features = false }
 uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
 argon2 = "0.5.3"

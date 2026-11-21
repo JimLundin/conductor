@@ -16,10 +16,15 @@ use tokio::sync::{RwLock, watch};
 use zeroize::Zeroizing;
 
 use super::crypto;
+use host::fleet::acceptance::{Acceptance, Acceptances, Mutation};
+use sha2::{Digest, Sha256};
 
 const STORE: &str = "fleet.sealed";
 const INVITE_LIMIT: usize = 64;
 const INVITE_SECONDS: u64 = 3600;
+
+#[cfg(test)]
+mod tests;
 
 #[derive(Clone)]
 pub struct Membership {
@@ -38,6 +43,35 @@ struct State {
     invites: Vec<Invitation>,
     revoked: Option<SignedSnapshot>,
     applied: BTreeSet<proto::InstanceId>,
+    #[serde(skip)]
+    acceptances: Acceptances,
+    #[serde(skip)]
+    pending: Option<Box<Self>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StateRecord {
+    state: State,
+    acceptances: Acceptances,
+}
+
+impl StateRecord {
+    fn of(state: &State) -> Self {
+        Self {
+            state: state.clone(),
+            acceptances: state.acceptances.clone(),
+        }
+    }
+
+    fn open(key: &[u8; 32], file: &[u8]) -> anyhow::Result<State> {
+        if let Ok(record) = crypto::unseal::<Self>(key, file) {
+            let mut state = record.state;
+            state.acceptances = record.acceptances;
+            Ok(state)
+        } else {
+            crypto::unseal(key, file)
+        }
+    }
 }
 
 impl State {
@@ -94,7 +128,7 @@ impl Membership {
             Err(error) => return Err(error.into()),
         };
         let key = store_key(data)?;
-        let state: State = crypto::unseal(&key, &file)?;
+        let state = StateRecord::open(&key, &file)?;
         verify_local(&state, local)?;
         Ok(Some(Self::new(path, key, state)))
     }
@@ -230,6 +264,7 @@ impl Membership {
         revoked: SignedSnapshot,
     ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         let current = &state.current.config.snapshot;
         let snapshot = &revoked.snapshot;
         ensure!(
@@ -249,8 +284,7 @@ impl Membership {
         )?;
         let mut updated = state.clone();
         updated.revoked = Some(revoked);
-        self.persist(&updated)?;
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(())
     }
@@ -272,20 +306,21 @@ impl Membership {
         candidate: SignedConfiguration,
     ) -> anyhow::Result<bool> {
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         if !new_configuration(&state, &candidate)? {
             return Ok(false);
         }
         let mut updated = state.clone();
         updated.current = candidate;
         updated.reserve_credentials();
-        self.persist(&updated)?;
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(true)
     }
 
     pub(super) async fn invite(&self, now: u64) -> anyhow::Result<Invite> {
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         ensure!(
             state.root_key.is_some(),
             "fleet changes require the root host"
@@ -308,14 +343,13 @@ impl Membership {
             expires: now.saturating_add(INVITE_SECONDS),
             admitted: None,
         });
-        self.persist(&updated)?;
         let invite = Invite {
             fleet: snapshot.fleet,
             root: snapshot.root,
             relay: root.relay.clone(),
             secret,
         };
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(invite)
     }
@@ -332,6 +366,7 @@ impl Membership {
             "host entry does not name the peer"
         );
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         let key = root(&state)?;
         let invite = find_invite(&state, secret, now)?;
         let snapshot = &state.current.config.snapshot;
@@ -377,9 +412,8 @@ impl Membership {
             .get_mut(invite)
             .context("invitation disappeared")?
             .admitted = Some(certificate.clone());
-        self.persist(&updated)?;
         let result = (certificate, updated.current.clone());
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(result)
     }
@@ -389,6 +423,7 @@ impl Membership {
         mut host: HostEntry,
     ) -> anyhow::Result<(Certificate, SignedConfiguration)> {
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         let key = root(&state)?;
         let snapshot = &state.current.config.snapshot;
         ensure!(
@@ -424,9 +459,8 @@ impl Membership {
             .retain(|entry| entry.node != host.node);
         config.snapshot.hosts.push(host);
         updated.current = crypto::sign_config(&key, config)?;
-        self.persist(&updated)?;
         let result = (certificate, updated.current.clone());
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(result)
     }
@@ -461,12 +495,15 @@ impl Membership {
                 invites: Vec::new(),
                 revoked: None,
                 applied: BTreeSet::new(),
+                acceptances: Acceptances::new(),
+                pending: None,
             },
         )
     }
 
     pub(super) async fn revoke(&self, device: NodeId) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         let key = root(&state)?;
         let mut config = next_config(&state)?;
         ensure!(
@@ -480,26 +517,24 @@ impl Membership {
         config.snapshot.revoked.push(device);
         let mut updated = state.clone();
         updated.current = crypto::sign_config(&key, config)?;
-        self.persist(&updated)?;
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(())
     }
 
-    pub(super) async fn applied(&self) -> BTreeSet<proto::InstanceId> {
-        self.state.read().await.applied.clone()
-    }
-
     pub(super) async fn record_applied(
         &self,
+        version: u64,
         applied: &BTreeSet<proto::InstanceId>,
     ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
-        if &state.applied != applied {
+        self.settle(&mut state)?;
+        if state.current.config.snapshot.version == version
+            && &state.applied != applied
+        {
             let mut updated = state.clone();
             updated.applied.clone_from(applied);
-            self.persist(&updated)?;
-            self.replace(&mut state, updated);
+            self.commit(&mut state, updated)?;
         }
         drop(state);
         Ok(())
@@ -522,6 +557,7 @@ impl Membership {
             "the revision needs a valid pin and SHA-256 for every supported platform"
         );
         let mut state = self.state.write().await;
+        self.settle(&mut state)?;
         let key = root(&state)?;
         let mut config = next_config(&state)?;
         if config.pins == revision.pins && config.settings == revision.settings
@@ -532,34 +568,71 @@ impl Membership {
         config.settings = revision.settings;
         let mut updated = state.clone();
         updated.current = crypto::sign_config(&key, config)?;
-        self.persist(&updated)?;
-        self.replace(&mut state, updated);
+        self.commit(&mut state, updated)?;
         drop(state);
         Ok(())
     }
 
-    pub(super) async fn credentials(&self) -> proto::Roster {
+    pub(crate) async fn credentials(&self) -> proto::Roster {
         self.state.read().await.current.config.instances.clone()
     }
 
-    pub(super) async fn change_credentials(
+    pub(crate) async fn desired(
         &self,
-        change: impl FnOnce(&mut proto::Roster),
-    ) -> anyhow::Result<()> {
+    ) -> Result<host::fleet::Desired, crate::Stopped> {
         let mut state = self.state.write().await;
-        let key = root(&state)?;
-        let mut config = next_config(&state)?;
-        change(&mut config.instances);
-        if config.instances == state.current.config.instances {
-            return Ok(());
+        self.settle(&mut state).map_err(|_| crate::Stopped {})?;
+        let config = &state.current.config;
+        let active = state.revoked.is_none()
+            && admit(&config.snapshot, &state.certificate, Role::Host).is_ok();
+        Ok(host::fleet::Desired {
+            version: config.snapshot.version,
+            revision: proto::fleet::Revision {
+                pins: config.pins.clone(),
+                settings: config.settings.clone(),
+            },
+            credentials: if active {
+                config.instances.clone()
+            } else {
+                proto::Roster::default()
+            },
+            owned: state.applied.clone(),
+        })
+    }
+
+    pub(super) async fn accept(
+        &self,
+        id: proto::CommandId,
+        mutation: &Mutation,
+    ) -> Result<proto::CommandResult, crate::Stopped> {
+        let mut state = self.state.write().await;
+        self.settle(&mut state).map_err(|_| crate::Stopped {})?;
+        let fingerprint = postcard::to_stdvec(mutation)
+            .map(|bytes| Sha256::digest(bytes).into())
+            .map_err(|_| crate::Stopped {})?;
+        if let Some(result) =
+            host::fleet::acceptance::replay(&state.acceptances, id, fingerprint)
+                .result()
+        {
+            return Ok(result);
         }
-        let mut updated = state.clone();
-        updated.current = crypto::sign_config(&key, config)?;
-        updated.reserve_credentials();
-        self.persist(&updated)?;
-        self.replace(&mut state, updated);
-        drop(state);
-        Ok(())
+        let updated = accepted_state(&state, id, mutation, fingerprint);
+        let result =
+            updated.and_then(|candidate| self.commit(&mut state, candidate));
+        host::fleet::acceptance::written(
+            result.is_ok(),
+            state.pending.is_some(),
+        )
+        .ok_or(crate::Stopped {})
+    }
+
+    pub(super) async fn accepted(
+        &self,
+        id: proto::CommandId,
+    ) -> Result<bool, crate::Stopped> {
+        let mut state = self.state.write().await;
+        self.settle(&mut state).map_err(|_| crate::Stopped {})?;
+        Ok(state.acceptances.contains_key(&id))
     }
 
     pub(crate) async fn is_active(&self) -> bool {
@@ -638,6 +711,8 @@ impl Membership {
             invites: Vec::new(),
             revoked: None,
             applied: BTreeSet::new(),
+            acceptances: Acceptances::new(),
+            pending: None,
         };
         let recovery = Recovery {
             host_key: host_key.to_bytes(),
@@ -675,6 +750,8 @@ impl Membership {
                 invites: Vec::new(),
                 revoked: None,
                 applied: BTreeSet::new(),
+                acceptances: Acceptances::new(),
+                pending: None,
             },
         )
     }
@@ -726,6 +803,8 @@ impl Membership {
                 invites: Vec::new(),
                 revoked: None,
                 applied: BTreeSet::new(),
+                acceptances: Acceptances::new(),
+                pending: None,
             },
         )
     }
@@ -734,7 +813,10 @@ impl Membership {
         state.reserve_credentials();
         let key = store_key(data)?;
         let path = data.join(STORE);
-        crypto::create_file(&path, &crypto::seal(&key, &state)?)?;
+        crypto::create_file(
+            &path,
+            &crypto::seal(&key, &StateRecord::of(&state))?,
+        )?;
         let installed = Self::new(path, key, state);
         installed.mark_fresh();
         Ok(installed)
@@ -788,11 +870,38 @@ impl Membership {
         });
     }
 
-    fn persist(&self, state: &State) -> anyhow::Result<()> {
-        crate::write_private(
-            &self.path,
-            &crypto::seal(&self.store_key, state)?,
-        )?;
+    fn settle(&self, state: &mut State) -> anyhow::Result<()> {
+        if state.pending.is_some() {
+            crate::sync_dir(
+                self.path.parent().context("membership has no parent")?,
+            )?;
+            if let Some(pending) = state.pending.take() {
+                self.replace(state, *pending);
+            }
+        }
+        Ok(())
+    }
+
+    fn commit(&self, state: &mut State, updated: State) -> anyhow::Result<()> {
+        self.commit_with(state, updated, crate::replace_private)
+    }
+
+    fn commit_with(
+        &self,
+        state: &mut State,
+        updated: State,
+        write: impl FnOnce(&Path, &[u8]) -> Result<(), crate::PrivateWriteError>,
+    ) -> anyhow::Result<()> {
+        let bytes = crypto::seal(&self.store_key, &StateRecord::of(&updated))?;
+        if let Err(error) = write(&self.path, &bytes) {
+            // A failed directory sync follows replacement. Keep competing writes
+            // behind the same pending state until its durability is resolved.
+            if error.replaced {
+                state.pending = Some(Box::new(updated));
+            }
+            return Err(error.into());
+        }
+        self.replace(state, updated);
         Ok(())
     }
 }
@@ -959,4 +1068,31 @@ fn next_config(state: &State) -> anyhow::Result<Configuration> {
 
 pub(super) fn clock() -> anyhow::Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
+}
+
+fn accepted_state(
+    state: &State,
+    id: proto::CommandId,
+    mutation: &Mutation,
+    fingerprint: [u8; 32],
+) -> anyhow::Result<State> {
+    let key = root(state)?;
+    ensure!(
+        state.acceptances.len() < 65_536,
+        "acceptance ledger is full"
+    );
+    let mut config = next_config(state)?;
+    config.instances = mutation.apply(&config.instances);
+    let version = config.snapshot.version;
+    let mut updated = state.clone();
+    updated.current = crypto::sign_config(&key, config)?;
+    updated.reserve_credentials();
+    updated.acceptances.insert(
+        id,
+        Acceptance {
+            fingerprint,
+            version,
+        },
+    );
+    Ok(updated)
 }

@@ -25,13 +25,18 @@ const TOKEN: &str = "fake-minted-host-only-value";
 struct Setup(runtime::Launch);
 
 impl runtime::ProviderInstance for Setup {
+    fn retire(&self, _: agents::Retirement) -> runtime::Terminating<'_> {
+        Box::pin(async { Ok(()) })
+    }
     fn configure(&self, given: Option<Credential>) -> runtime::Configuring<'_> {
         Box::pin(async move {
             if given
                 .as_ref()
                 .is_some_and(|credential| credential.value("token") != TOKEN)
             {
-                return Err(String::from("unexpected test credential"));
+                return Err(agents::ConfigurationFailure::Refused(
+                    String::from("unexpected test credential"),
+                ));
             }
             Ok(agents::Configuration {
                 named: None,

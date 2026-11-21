@@ -28,8 +28,18 @@ released only after an iroh peer presents a valid Host certificate.
 
 Enter the shareable API keys or selected Claude setup token on the root
 host's Credentials screen. Provider sign-ins that write their own login
-files remain local. The app can show updated instances when the new host
-applies the signed configuration. The real CLI sign-in assumptions and
+files remain local. A successful shared save confirms that the root has
+durably accepted the change. Hosts apply it independently; an accepted
+configuration can leave an instance unavailable. Configuration progress and
+instance availability are separate live feeds for the app. Temporary failures
+retry with a delay capped at 30 seconds; credential refusals wait for a corrected
+credential or an explicit instance retry.
+
+Removing or replacing shared credentials stops affected instances on reachable
+hosts, including busy sessions. Each host blocks new work on receipt, interrupts
+after five seconds and forces termination after ten if needed. The propagation
+target is roughly a minute; offline hosts apply the latest change on reconnect.
+The real CLI sign-in assumptions and
 the second-host Home Screen walkthrough are still to be verified.
 
 ## Availability and revocation
@@ -86,5 +96,5 @@ After verifying a new release's digests against the vendor's published
 artifacts, stop the root and run `conductord fleet publish <revision.json>`.
 Restart the root. Members verify the configuration signature before
 applying it. Each uses the signed native digest to install only the
-corresponding version from the vendor's release URLs. Previous installs
-remain available to sessions that started before the update.
+corresponding version from the vendor's release URLs. A changed provider
+revision retires that provider's existing instances before launching replacements.

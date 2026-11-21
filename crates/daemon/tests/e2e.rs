@@ -2947,23 +2947,19 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
         OTHER,
         &dir_of(&data, "home", &other),
     );
-    assert_eq!(
-        (
-            send(
-                &link,
-                CommandBody::RemoveInstance {
-                    instance: claude_api.clone()
-                }
-            )
-            .await?,
-            dir_of(&data, "home", &claude_api)
-                .join("settings.json")
-                .exists(),
-        ),
-        (
-            CommandResult::Rejected(Rejection::InstanceInUse { sessions: 1 }),
-            true,
-        )
+    let removed = send(
+        &link,
+        CommandBody::RemoveInstance {
+            instance: claude_api.clone(),
+        },
+    )
+    .await?;
+    assert!(matches!(&removed, CommandResult::Instances(_)));
+    assert_eq!(status_of(&removed, &claude_api), None);
+    assert!(
+        dir_of(&data, "home", &claude_api)
+            .join("settings.json")
+            .exists()
     );
     fx.shutdown_with_client(link).await
 }
@@ -4572,18 +4568,16 @@ fn hold_codex_listing(server: &Path) -> Fallible {
     Ok(())
 }
 
-/// The Codex account's instance can't be removed while its session runs.
-async fn assert_running_codex_is_not_removed(phone: &HostLink) -> Fallible {
-    assert_eq!(
-        send(
-            phone,
-            CommandBody::RemoveInstance {
-                instance: api(Provider::Codex),
-            },
-        )
-        .await?,
-        CommandResult::Rejected(Rejection::InstanceInUse { sessions: 1 })
-    );
+async fn assert_running_codex_is_removed(phone: &HostLink) -> Fallible {
+    let result = send(
+        phone,
+        CommandBody::RemoveInstance {
+            instance: api(Provider::Codex),
+        },
+    )
+    .await?;
+    assert!(matches!(&result, CommandResult::Instances(_)));
+    assert_eq!(status_of(&result, &api(Provider::Codex)), None);
     Ok(())
 }
 
@@ -4656,7 +4650,7 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     );
     let _ = launch(&phone, start_on(codex_api, &server)).await?;
     events_until(&mut updates, Until::Ready).await?;
-    assert_running_codex_is_not_removed(&phone).await?;
+    assert_running_codex_is_removed(&phone).await?;
     assert_eq!(read(&server.join("runs.txt"))?, "3");
     phone.stop().await?;
     desktop.close().await;

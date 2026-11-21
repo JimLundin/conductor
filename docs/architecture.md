@@ -554,7 +554,7 @@ until someone re-records them by hand (§6.2).
   crash before the database commit can leave a CLI action sent without a
   receipt. Restart withdraws its requests and interrupts its turn; it does
   not promise exactly-once execution inside a CLI.
-- **Credential receipts:** the instance commands (`SetCredential` and
+- **Local credential receipts:** standalone instance commands (`SetCredential` and
   `RemoveInstance`) reserve their command id without holding
   the global event transaction during an instance's refresh or start.
   Other commands and live events can proceed. Duplicate ids wait for the
@@ -564,6 +564,12 @@ until someone re-records them by hand (§6.2).
   The credential file remains outside redb: a crash after saving it but
   before the final receipt can cause a retry to reapply that change. No
   atomic credential-file/receipt guarantee is implied.
+- **Shared acceptance:** the root commits the signed configuration and its
+  command identity together in its sealed state before returning `Accepted`.
+  A replay recovers that acceptance even if the outer redb receipt was never
+  written. A failed replacement leaves the desired configuration unchanged;
+  an uncertain directory sync must settle before a definitive answer or a
+  competing write. Provider configuration happens afterward on each host.
 - **Restart (built):** the host reconstructs each session closed, withdraws
   requests that were still open and marks in-flight turns interrupted.
   `Continue` resumes the stored native conversation with the current
@@ -1091,9 +1097,10 @@ The owner reaches both models through gateways, so their forms remain first in t
   secret. The live canary in `tools/live-host.sh` has the agent count the
   token in a command's environment: 0 with the sandbox, and 1 without it,
   reported as `leak=unprotected` (observed both). A change applies to the
-  next session. Clearing a Claude credential
-  doesn't stop the sessions already running on it, unlike Codex below; to
-  cut off a leaked token, revoke it at the gateway.
+  next session for a standalone credential update. A shared credential change
+  retires affected instances on every reachable host, including their existing
+  sessions; removing an instance also retires it. Revoking a leaked token at
+  the gateway remains necessary for copies outside those processes.
 - **Codex:** the form `provider`, with a `Provider name`, a `Base URL`, a
   `Model` and a `Key` (a secret), read into `CodexCredential::Provider {
   name, base_url, key, model }`, whose model is the provider's default.
@@ -1408,6 +1415,30 @@ SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root k
   is nothing to merge. A change from the app (a new credential, a pin bump, a
   new host) is a command to the root host, which applies it, bumps the
   version, signs and stores it.
+- **Acceptance and application.** Shared credential changes return
+  `Accepted` after the root durably records the intent, independently of
+  provider work. `host::fleet::acceptance` owns generic admission and
+  mutation policy. `host::registry::reconciliation` plans adoption and
+  retries from desired state and observed outcomes. The daemon performs
+  signing, private replacement and adapter calls. Credential forms and the
+  sharing policy come from plugins; these cores interpret no provider secrets.
+- **Host progress.** `Feed::Configuration` reports the desired and locally
+  adopted versions, plus each affected instance's pending, applying, retiring,
+  retrying, refused or applied state. `Feed::Instances` remains the source of
+  availability. An adopted configuration can have no available instances.
+  Temporary failures retry after 1, 2, 4, 8, 16, then at most 30 seconds.
+  Credential refusals wait for correction or `RetryInstance`. An unrelated
+  roster version does not restart unchanged instances.
+- **Bounded retirement.** Observing a superseded credential or removal
+  blocks new work and starts retirement even if local storage is failing.
+  The registry core supplies deadlines: drain immediately, interrupt after
+  five seconds, then force termination after ten. It retries force termination
+  until acknowledged, and launches only the latest adopted configuration.
+  The adapter's retirement path is independent of its ordinary call queue.
+  Instance process scopes use Unix process groups or Windows Job Objects.
+  With ten-second peer polling and RPC deadlines, the target is roughly a
+  minute from acceptance to stopping on reachable hosts; unreachable hosts
+  catch up when connected. Reopening blocks outdated credentials before boot.
 - **Any host serves it.** Every host keeps the newest valid config it has
   seen in its store. When two hosts connect on `conductor-fleet`, each sends
   its version; the one behind asks for the document and checks the signature

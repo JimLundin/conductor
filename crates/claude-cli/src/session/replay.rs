@@ -28,6 +28,7 @@ use support::{TestResult, fake_claude, fake_cli_path, fixture, test_dir};
 
 fn options(dir: &Path) -> ClaudeOptions {
     ClaudeOptions {
+        processes: install::process::Processes::default(),
         claude_path: fake_cli_path(),
         home: Home::User,
         credential: None,

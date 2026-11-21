@@ -70,6 +70,7 @@ type Msg = Command<Asked, Listed, Configured>;
 #[derive(Debug, Clone)]
 pub struct Hub {
     inbox: mpsc::Sender<Msg>,
+    pub(crate) processes: install::process::Processes,
 }
 
 impl Hub {
@@ -78,8 +79,9 @@ impl Hub {
     #[must_use]
     pub fn spawn(options: ServerOptions) -> Self {
         let (inbox, commands) = mpsc::channel(16);
+        let processes = options.processes.clone();
         tokio::spawn(Task::new(options).run(commands));
-        Self { inbox }
+        Self { inbox, processes }
     }
 
     /// Starts a thread, or resumes `resume` from Codex's own history.
@@ -491,6 +493,7 @@ mod tests {
 
     fn task() -> Task {
         let mut task = Task::new(ServerOptions {
+            processes: install::process::Processes::default(),
             analytics: None,
             codex_path: "codex".into(),
             home: Home::User,
@@ -687,6 +690,7 @@ mod backpressure_tests {
             .push_str(&"{\"method\":\"conductor/testUnknown\"}\n".repeat(4097));
         std::fs::write(cwd.join("stdout.jsonl"), frames)?;
         let options = ServerOptions {
+            processes: install::process::Processes::default(),
             analytics: None,
             codex_path: fake_cli_path(),
             home: Home::User,

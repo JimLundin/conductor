@@ -9,7 +9,7 @@ pub mod transcript;
 
 pub use plugin::{
     Configuring, CredentialSigningIn, Instance, Launch, Plugin,
-    ProviderInstance, Settings, TranscriptFiles,
+    ProviderInstance, Settings, Terminating, TranscriptFiles,
 };
 
 pub use transcript::{MAX_TRANSCRIPT_BYTES, Transcript, TranscriptFile};

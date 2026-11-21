@@ -368,20 +368,22 @@ impl SignIns {
         {
             return (CommandResult::Accepted, Vec::new());
         }
-        let effects =
-            self.running
-                .remove(&instance)
-                .map_or_else(Vec::new, |running| {
-                    let key = Key {
-                        instance: instance.clone(),
-                        run: running.run,
-                    };
-                    Vec::from([
-                        Effect::Kill(key),
-                        publish(instance, SignInStep::Cancelled),
-                    ])
-                });
-        (CommandResult::Accepted, effects)
+        (CommandResult::Accepted, self.retire(instance))
+    }
+
+    pub fn retire(&mut self, instance: InstanceId) -> Vec<Effect> {
+        self.running
+            .remove(&instance)
+            .map_or_else(Vec::new, |running| {
+                let key = Key {
+                    instance: instance.clone(),
+                    run: running.run,
+                };
+                Vec::from([
+                    Effect::Kill(key),
+                    publish(instance, SignInStep::Cancelled),
+                ])
+            })
     }
 
     pub fn write_failed(&mut self, key: &Key, reason: String) -> Vec<Effect> {
@@ -488,6 +490,7 @@ impl SignIns {
         let credential = running.credential.take();
         self.running.remove(&key.instance);
         let step = match (credential, result) {
+            (Some(_), CommandResult::Accepted) => SignInStep::ConfigurationAccepted,
             (expected, CommandResult::Instances(instances))
                 if expected.as_ref().is_none_or(|target| {
                     matches!(
@@ -570,7 +573,8 @@ impl Running {
 #[must_use]
 pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
     match sign_in.step {
-        SignInStep::SignedIn { .. }
+        SignInStep::ConfigurationAccepted
+        | SignInStep::SignedIn { .. }
         | SignInStep::Failed { .. }
         | SignInStep::Cancelled => Some(&sign_in.instance),
         SignInStep::Starting
@@ -584,6 +588,9 @@ pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
 #[must_use]
 pub fn note(sign_in: &SignIn) -> Note {
     let step = match &sign_in.step {
+        SignInStep::ConfigurationAccepted => {
+            String::from("configuration accepted")
+        }
         SignInStep::Starting => String::from("starting"),
         SignInStep::Open { .. } => String::from("open"),
         SignInStep::Finishing => String::from("finishing"),

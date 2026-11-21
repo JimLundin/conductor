@@ -11,10 +11,11 @@ use agents::driver::{Command as DriverCommand, Effect, Failure, Input};
 use agents::{Exit, Note};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt, BufReader, Lines};
-use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command};
+use tokio::process::{ChildStderr, ChildStdin, ChildStdout, Command};
 use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use crate::process;
+use crate::process::Child;
 use crate::runner::{self, End};
 
 pub type Reply<E> = oneshot::Sender<Result<Value, E>>;
@@ -50,6 +51,7 @@ impl Stderr {
 }
 
 pub struct Options {
+    pub processes: process::Processes,
     pub stdout_log: Option<File>,
     pub stderr: StderrPolicy,
     pub log_stderr: fn(&str),
@@ -155,7 +157,8 @@ where
     A: Send + 'static,
     P: Send + 'static,
 {
-    let (child, stdin, stdout, stderr) = process::piped(command)?;
+    let (child, stdin, stdout, stderr) =
+        process::piped_owned(command, &options.processes)?;
     let pid = child.id();
     let (last_tx, last_rx) = watch::channel(None);
     tokio::spawn(log_stderr(

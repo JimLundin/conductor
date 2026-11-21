@@ -80,6 +80,7 @@ version = "0.1.0"
 dependencies = [
  "proto",
  "serde_json",
+ "thiserror 2.0.21",
  "url",
 ]
 
@@ -1146,6 +1147,7 @@ dependencies = [
  "security-framework",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
@@ -2767,6 +2769,7 @@ dependencies = [
  "claude",
  "data-encoding",
  "n0-future",
+ "process-wrap",
  "proto",
  "reqwest 0.13.5",
  "rustls",
@@ -2775,6 +2778,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "windows",
 ]
 
 [[package]]
@@ -3699,6 +3703,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nix"
+version = "0.31.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bc81ce8148d3b4f3274da811f11cdd824ae661ee4ef732cdb229825cf5be7f7"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if",
+ "cfg_aliases 0.2.2",
+ "libc",
+]
+
+[[package]]
 name = "noq"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4242,7 +4258,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "nix",
+ "nix 0.28.0",
  "serial2",
  "shared_library",
  "shell-words",
@@ -4353,6 +4369,20 @@ dependencies = [
  "quote",
  "syn 2.0.119",
  "version_check",
+]
+
+[[package]]
+name = "process-wrap"
+version = "10.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f21b97672d2dc848e7b25701ab4535618b92f4861c13cc3f7f7bed52ad3c8da"
+dependencies = [
+ "futures",
+ "indexmap",
+ "nix 0.31.4",
+ "tokio",
+ "tracing",
+ "windows",
 ]
 
 [[package]]

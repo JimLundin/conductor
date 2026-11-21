@@ -18,7 +18,7 @@ use super::{Membership, Slot};
 const MAX_FRAME: usize = 256 * 1024;
 const RPC_LIMIT: usize = 16;
 const RPC_DEADLINE: Duration = Duration::from_secs(10);
-const POLL: Duration = Duration::from_secs(30);
+const POLL: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub struct Protocol {

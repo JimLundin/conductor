@@ -40,6 +40,7 @@ fn fixture(
     start(
         child,
         Options {
+            processes: crate::process::Processes::default(),
             stdout_log: None,
             stderr,
             log_stderr,
