@@ -247,8 +247,8 @@ Each item ends in something to try. The fleet design is
    separately. The host supports macOS Keychain, Windows Credential
    Manager and Linux Secret Service. See [credential store migration and
    recovery](credential-store.md). Acquiring a setup token from the phone
-   depends on E1. Its revocation procedure and the native sign-in and
-   keystore checks remain open in the [manual walkthrough](manual-acceptance.md).
+   depends on E1. Token revocation and native keystore verification are
+   tracked in #12. The [hands-on checks](manual-acceptance.md) cover phone sign-in.
    *Try:* on a fresh host, sign in to Claude and Codex from the
    iPhone without touching the host's keyboard.
 4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard
