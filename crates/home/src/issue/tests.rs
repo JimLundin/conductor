@@ -467,6 +467,7 @@ fn home(checkouts: Vec<Checkout>, issues: Vec<Issue>) -> Home {
             title: text("Conductor"),
             remote: None,
             profiles: Vec::new(),
+            provides: Vec::new(),
             checkouts,
             cloning: Cloning::Idle,
             issues,

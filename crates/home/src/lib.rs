@@ -107,6 +107,7 @@ pub fn view(
                 title: project.title.clone(),
                 remote: project.remote.as_deref().map(checkout::display),
                 profiles: project.profiles.clone(),
+                provides: project.provides.clone(),
                 checkouts: checkouts
                     .get(&project.id)
                     .cloned()

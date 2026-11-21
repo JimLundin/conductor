@@ -54,6 +54,9 @@ pub struct Project {
     /// `None` for a project that is local only, which can't be cloned.
     pub remote: Option<String>,
     pub profiles: Vec<String>,
+    /// The profiles whose checks and configs it holds, for any project
+    /// that names them.
+    pub provides: Vec<String>,
     /// Every checkout of it on this host, the one a session starts in
     /// first. None: it isn't checked out here.
     pub checkouts: Vec<Checkout>,

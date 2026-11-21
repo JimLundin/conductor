@@ -119,8 +119,9 @@ a clone in `<data>/home-repo`.
   only its file. The home never records where a node keeps a copy; a node
   finds its copy by root commit and remote.
 - **`projects/<id>/issues/<issue>.md`**: one file per issue.
-- **`standards/`** holds the profiles' check configs, and the shared
-  `AGENTS.md` the rules for every session.
+- **The shared `AGENTS.md`** holds the rules for every session. The
+  profiles' checks and configs are a project of their own, `standards`,
+  whose `project.toml` lists the profiles it `provides`.
 - **One file per thing.** Two nodes editing different issues never touch
   the same file.
 - **Append-only where several write.** An issue's notes are a list that
@@ -209,8 +210,9 @@ and wasn't noted yet, is not noted.
 
 ## 5. Standards and instructions
 
-`standards/<profile>/` holds a profile's check configs, and the shared
-`AGENTS.md` the rules for every session. A project names its profiles in
+A profile's checks and configs are in `<profile>/` of the project that
+`provides` it, the standards project, and the shared `AGENTS.md` holds
+the rules for every session. A project names its profiles in
 `project.toml`. When a session starts, the node composes its instructions
 from the shared rules, the project's profiles and the project's own
 `AGENTS.md`. The harness plugin says how its CLI takes them, for example an
@@ -219,7 +221,8 @@ appended system prompt or a generated instructions file in the workspace.
 Built (`home::instructions`). The shared rules are the home's root
 `AGENTS.md`, and the composed text says where the node's clone is, so the
 rules' paths into the home resolve. Each profile is named with the path of
-its `standards/<profile>/` and its `check.sh`. The session's project is the
+`<profile>/` and its `check.sh` in the node's first checkout of the
+project that provides it, or as provided by no checkout here. The session's project is the
 one with a checkout at or around the directory it was created in, through
 any symlink; a session elsewhere, or one whose agent starts before the
 node first reads its home, gets the shared rules only. The project's

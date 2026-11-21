@@ -5,22 +5,24 @@
 # own tree, and the gate fails if either does. `tools/check.sh
 # [commit|step|release] [--base <ref>|--all] [--no-cache]`.
 #
-# The standards come from a clone of the home repository on the Linux
-# filesystem (`STANDARDS_HOME`, default ~/projects/tools/home), which runs
-# the checker several times faster than the Windows checkout through /mnt/c.
+# The standards come from a clone of the standards project on the Linux
+# filesystem (`STANDARDS_CLONE`, default ~/projects/tools/standards), which
+# runs the checker several times faster than the Windows checkout through
+# /mnt/c.
 # The clone fast-forwards at most every ten minutes, so pushed standards
 # reach the gate without a fetch on every run. `STANDARDS` overrides it,
 # e.g. to try unpushed standards from the Windows checkout.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$HOME/.cargo/bin:$PATH"
-home=${STANDARDS_HOME:-$HOME/projects/tools/home}
+clone=${STANDARDS_CLONE:-$HOME/projects/tools/standards}
 if [ -z "${STANDARDS:-}" ]; then
-	[ -d "$home/.git" ] || git clone -q https://github.com/JimLundin/home.git "$home"
-	[ -n "$(find "$home/.git/FETCH_HEAD" -mmin -10 2>/dev/null)" ] ||
-		git -C "$home" pull -q --ff-only || echo "warning: $home not updated" >&2
+	[ -d "$clone/.git" ] ||
+		git clone -q https://github.com/JimLundin/standards.git "$clone"
+	[ -n "$(find "$clone/.git/FETCH_HEAD" -mmin -10 2>/dev/null)" ] ||
+		git -C "$clone" pull -q --ff-only || echo "warning: $clone not updated" >&2
 fi
-standards=${STANDARDS:-$home/standards}
+standards=${STANDARDS:-$clone}
 status=0
 "$standards/rust/check.sh" "$@" || status=1
 source tools/e2e-common.sh

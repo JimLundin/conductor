@@ -1,7 +1,8 @@
 //! A project's `projects/<project>/project.toml` in the home.
 //!
 //! It gives (docs/home.md §3) its name, its title, its remote, the root
-//! commit that identifies its checkouts and its standards profiles. Its
+//! commit that identifies its checkouts, the standards profiles it follows
+//! and those it provides. Its
 //! default branch is Git's, not the home's.
 
 use proto::ProjectId;
@@ -19,6 +20,7 @@ pub struct Project {
     /// The first commit of its first-parent history.
     pub root: String,
     pub profiles: Vec<String>,
+    pub provides: Vec<String>,
 }
 
 /// The file's fields. Others are left for later steps to read.
@@ -30,6 +32,8 @@ struct File {
     root: String,
     #[serde(default)]
     profiles: Vec<String>,
+    #[serde(default)]
+    provides: Vec<String>,
 }
 
 /// The projects a home lists, by id, and why any of its folders isn't one.
@@ -94,6 +98,7 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
         remote: file.remote,
         root: commit(file.root)?,
         profiles: file.profiles,
+        provides: file.provides,
     })
 }
 

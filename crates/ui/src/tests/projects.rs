@@ -41,6 +41,7 @@ fn project(
         title: format!("Project {name}"),
         remote: remote.map(text),
         profiles: Vec::from([text("rust")]),
+        provides: Vec::new(),
         checkouts,
         cloning,
         issues: Vec::new(),

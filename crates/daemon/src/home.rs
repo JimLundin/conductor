@@ -195,6 +195,7 @@ impl HomeClone {
             home: self.clone.display().to_string(),
             shared: read(&self.clone.join(home::instructions::RULES)),
             own,
+            projects: &projects,
         })
     }
 

@@ -1,7 +1,7 @@
 //! What a session is told when it starts (docs/home.md §5).
 //!
-//! That is the home's shared rules, where its project's profiles keep their
-//! standards on this host, and the project's own rules when the session's
+//! That is the home's shared rules, where the projects providing its
+//! project's profiles are checked out on this host, and the project's own rules when the session's
 //! CLI doesn't read them itself.
 
 use proto::{Checkout, Project};
@@ -21,6 +21,9 @@ pub struct Sources<'a> {
     pub shared: Option<String>,
     /// The project the session is in, if it is in one.
     pub own: Option<Own<'a>>,
+    /// Every project, for the checkouts that provide the session's
+    /// profiles.
+    pub projects: &'a [Project],
 }
 
 /// The project a session is in, as its directory has it.
@@ -69,21 +72,24 @@ pub fn compose(sources: &Sources<'_>) -> Option<String> {
         .as_deref()
         .filter(|text| !text.trim().is_empty())
         .map(|text| section("Rules for every session", text));
-    let own = sources.own.as_ref().map(|own| project(home, own));
+    let own = sources
+        .own
+        .as_ref()
+        .map(|own| project(own, sources.projects));
     if shared.is_none() && own.is_none() {
         return None;
     }
     let mut text = format!(
         "# Instructions from the home\n\nThe owner's home repository is \
          cloned at `{home}`. Paths in these rules that name the home's \
-         files, such as `standards/`, are in it.\n"
+         files, such as `docs/agents/`, are in it.\n"
     );
     text.extend(shared);
     text.extend(own);
     Some(text)
 }
 
-fn project(home: &str, own: &Own<'_>) -> String {
+fn project(own: &Own<'_>, projects: &[Project]) -> String {
     let title = &own.project.title;
     let profiles = if own.project.profiles.is_empty() {
         String::from("It names no profile.\n")
@@ -91,14 +97,7 @@ fn project(home: &str, own: &Own<'_>) -> String {
         own.project
             .profiles
             .iter()
-            .map(|profile| {
-                let standards = format!("{home}/standards/{profile}/");
-                format!(
-                    "- `{profile}`: its checks and configs are in \
-                     `{standards}`. Run `{standards}check.sh <tier>` in the \
-                     session's directory.\n"
-                )
-            })
+            .map(|profile| profile_line(profile, projects))
             .collect::<Vec<String>>()
             .concat()
     };
@@ -112,6 +111,27 @@ fn project(home: &str, own: &Own<'_>) -> String {
     let mut text = section(&format!("Standards of {title}"), &profiles);
     text.extend(rules);
     text
+}
+
+/// Where `profile`'s checks are on this host: in the first checkout of the
+/// project that provides it.
+fn profile_line(profile: &str, projects: &[Project]) -> String {
+    let provider = projects
+        .iter()
+        .filter(|project| project.provides.iter().any(|name| name == profile))
+        .find_map(|project| project.checkouts.first());
+    provider.map_or_else(
+        || format!("- `{profile}`: no project checked out here provides it.\n"),
+        |checkout| {
+            let standards =
+                format!("{}/{profile}/", checkout.path.0.trim_end_matches('/'));
+            format!(
+                "- `{profile}`: its checks and configs are in \
+                 `{standards}`. Run `{standards}check.sh <tier>` in the \
+                 session's directory.\n"
+            )
+        },
+    )
 }
 
 fn section(heading: &str, body: &str) -> String {

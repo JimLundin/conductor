@@ -9,6 +9,7 @@ Home Screen. The design is in
 ## Writing code
 
 - **The shared Rust standard.** Code follows the Rust standard in
+  the standards project, checked out at
   `C:\Users\Jim.Lundin\Projects\standards` (`README.md` there): pedantic
   clippy with no suppressions, libraries as a pure `no_std` core with a
   data-only API, and binaries and shell crates as a thin shell. A crate that
@@ -31,8 +32,8 @@ Home Screen. The design is in
   `release` adds mutation testing and the slow checks, only in CI or when
   asked. It checks only what changed since the merge base with `main`
   (`--all` checks everything) and reports `cached` for a tree that already
-  passed. The standards come from a WSL clone of the home repository,
-  `~/projects/tools/home`, kept fresh by the script; set `STANDARDS` to try
+  passed. The standards come from a WSL clone of the standards project,
+  `~/projects/tools/standards`, kept fresh by the script; set `STANDARDS` to try
   unpushed standards from another checkout.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own

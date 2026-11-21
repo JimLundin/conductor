@@ -26,6 +26,7 @@ fn project(name: &str, remote: Option<&str>) -> Project {
         remote: remote.map(String::from),
         root: String::from(ROOT),
         profiles: Vec::from([String::from("rust")]),
+        provides: Vec::new(),
     }
 }
 
@@ -66,6 +67,7 @@ fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
         parse("sop", &local),
         Ok(Project {
             profiles: Vec::new(),
+            provides: Vec::new(),
             ..project("sop", None)
         })
     );
@@ -467,6 +469,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
                 title: String::from("The conductor"),
                 remote: Some(String::from(REMOTE)),
                 profiles: Vec::from([String::from("rust")]),
+                provides: Vec::new(),
                 checkouts: Vec::from([
                     checkout("/a", Origin::Found),
                     checkout("/b", Origin::Found),
@@ -480,6 +483,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
                 title: String::from("The sop"),
                 remote: None,
                 profiles: Vec::from([String::from("rust")]),
+                provides: Vec::new(),
                 checkouts: Vec::new(),
                 cloning: Cloning::Failed {
                     reason: String::from("no"),
