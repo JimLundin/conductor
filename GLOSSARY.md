@@ -22,3 +22,9 @@
 - **Host fold** is the client’s read model for one host. It takes link
   updates and keeps the host’s latest welcome, sign-ins, home, instance
   roster, and folded sessions.
+- **Shared configuration acceptance** is the root host’s durable agreement
+  to a change in the fleet’s intended configuration. It does not promise
+  that any host can use the change yet.
+- **Shared configuration application** is one host’s adoption of an
+  accepted shared configuration change. Its progress and outcome are
+  separate from acceptance.
