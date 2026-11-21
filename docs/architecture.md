@@ -1706,10 +1706,10 @@ crate. `ui::State` holds every paired host, keyed by its endpoint id
 (`ui::HostId`), each with its ticket, its saved name and its host fold.
 Beside the hosts it holds what the person has open: the place shown, which
 names its host when it is a session, and that place's drafts, forms and
-open diffs, dropped when another place shows. `ui::update` turns each
+open diffs, dropped when another place shows. `ui::State::update` applies each
 `Intent` (what a person does, a host's link update, a command's answer)
-into the next state and `Effect`s as data: send a command to a host, save
-the hosts, move the focus. A link update, a credential change and each
+and returns the `Effect`s for sending commands, saving hosts and moving
+focus. A link update, a credential change and each
 `Effect::Send` name their host, and an answer comes back to the host and
 the visit that asked. Returning to the same place starts another visit.
 For example, a newly opened checkpoint diff may use the same request

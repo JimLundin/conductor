@@ -223,17 +223,6 @@ impl RequestState {
     }
 }
 
-/// An in-place change to an earlier item. Asking, resolving and finishing
-/// are the same shape, so they are one `map` over the items.
-enum Change {
-    Ask(ToolCallId, Approval),
-    Resolve(RequestId, Resolution),
-    Finish(ToolCallId, ToolOutcome),
-    /// The host ended the turn or the session: nothing still running will
-    /// finish, and nothing still open will be answered.
-    End,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusLabel {
     Starting,
@@ -319,50 +308,50 @@ impl HostView {
 
     /// An event for a session this view never saw created is dropped, and
     /// a removed session is gone.
-    #[must_use]
-    pub fn apply(self, event: Event) -> Self {
-        let delta = is_delta(&event.kind);
-        let mut sessions = self.sessions;
-        let session = match (sessions.remove(&event.session), event.kind) {
-            (
-                _,
-                EventKind::SessionCreated {
-                    instance,
-                    provider,
-                    directory,
-                    model,
-                    effort,
-                    ..
-                },
-            ) => Some(SessionView {
+    pub fn apply(&mut self, event: Event) {
+        match event.kind {
+            EventKind::SessionCreated {
                 instance,
                 provider,
                 directory,
                 model,
                 effort,
-                status: SessionStatus::Starting,
-                issue: None,
-                finish: FinishState::Ready,
-                tasks: Vec::new(),
-                workspace: None,
-                checkpoints: Vec::new(),
-                undo: UndoState::Ready,
-                turn_starts: BTreeMap::new(),
-                items: Vec::new(),
-                subagents: Vec::new(),
-                activity: event.seq,
-            }),
-            (_, EventKind::SessionRemoved { .. }) | (None, _) => None,
-            (Some(view), kind) => {
-                let mut next = view.apply(kind, event.seq);
-                if !delta {
-                    next.activity = event.seq;
-                }
-                Some(next)
+                ..
+            } => {
+                self.sessions.insert(
+                    event.session,
+                    SessionView {
+                        instance,
+                        provider,
+                        directory,
+                        model,
+                        effort,
+                        status: SessionStatus::Starting,
+                        issue: None,
+                        finish: FinishState::Ready,
+                        tasks: Vec::new(),
+                        workspace: None,
+                        checkpoints: Vec::new(),
+                        undo: UndoState::Ready,
+                        turn_starts: BTreeMap::new(),
+                        items: Vec::new(),
+                        subagents: Vec::new(),
+                        activity: event.seq,
+                    },
+                );
             }
-        };
-        sessions.extend(session.map(|view| (event.session, view)));
-        Self { sessions }
+            EventKind::SessionRemoved { .. } => {
+                self.sessions.remove(&event.session);
+            }
+            kind => {
+                if let Some(view) = self.sessions.get_mut(&event.session) {
+                    if !is_delta(&kind) {
+                        view.activity = event.seq;
+                    }
+                    view.apply(kind, event.seq);
+                }
+            }
+        }
     }
 
     /// The sessions' ids, the most recently active first.
@@ -589,281 +578,155 @@ impl SessionView {
         })
     }
 
-    fn apply(self, kind: EventKind, seq: HostSeq) -> Self {
+    fn apply(&mut self, kind: EventKind, seq: HostSeq) {
+        self.finish = self.finish.after(&kind);
         match kind {
-            EventKind::SessionReady => self.ready(),
+            EventKind::SessionReady => {
+                if let SessionStatus::Closed(reason) =
+                    core::mem::replace(&mut self.status, SessionStatus::Idle)
+                {
+                    self.push(Item::Continued(reason));
+                }
+            }
             EventKind::ModelChanged {
                 model,
                 effort,
                 reason,
-            } => self.model_changed(model, effort, reason),
-            EventKind::SessionClosed { reason } => self.closed(reason),
+            } => {
+                self.model = model;
+                self.effort = effort;
+                self.push(Item::ModelChanged(reason));
+            }
+            EventKind::SessionClosed { reason } => self.close(reason),
             EventKind::UserMessage { text, by } => {
-                self.user_message(Item::User { text, by }, seq)
+                self.turn_starts.insert(seq, self.items.len());
+                self.undo = UndoState::Ready;
+                self.status = SessionStatus::Running;
+                self.push(Item::User { text, by });
             }
-            EventKind::AssistantDelta { text } => {
-                self.reply(text, ReplyState::Streaming)
-            }
-            EventKind::AssistantMessage { text } => {
-                self.reply(text, ReplyState::Done)
-            }
-            EventKind::ReasoningDelta { text } => {
-                self.reasoning(text, ReplyState::Streaming)
-            }
-            EventKind::Reasoning { text } => {
-                self.reasoning(text, ReplyState::Done)
-            }
-            EventKind::ToolCall {
-                call,
-                phase: ToolPhase::Started { tool },
-            } => self.push(Item::Tool {
-                call,
-                tool,
-                state: ToolState::Running,
-                approval: Approval::NotAsked,
+            EventKind::AssistantDelta { text } => self.push(Item::Reply {
+                text,
+                state: ReplyState::Streaming,
             }),
-            EventKind::ToolCall {
-                call,
-                phase: ToolPhase::Finished { outcome },
-            } => self.change(&Change::Finish(call, outcome)),
+            EventKind::AssistantMessage { text } => self.push(Item::Reply {
+                text,
+                state: ReplyState::Done,
+            }),
+            EventKind::ReasoningDelta { text } => self.push(Item::Reasoning {
+                text,
+                state: ReplyState::Streaming,
+            }),
+            EventKind::Reasoning { text } => self.push(Item::Reasoning {
+                text,
+                state: ReplyState::Done,
+            }),
+            EventKind::ToolCall { call, phase } => {
+                tool(&mut self.items, call, phase);
+            }
             EventKind::RequestOpened {
                 request,
                 call,
                 tool,
                 reason,
                 for_session,
-            } => self.ask(
-                call,
-                tool,
-                Approval::open(request, reason, for_session),
-            ),
+            } => self.ask(call, tool, request, reason, for_session),
             EventKind::QuestionAsked { request, questions } => {
                 self.push(Item::Question {
                     request,
                     questions,
                     state: RequestState::Open,
-                })
+                });
             }
             EventKind::RequestResolved {
                 request,
                 resolution,
-            } => self.change(&Change::Resolve(request, resolution)),
-            EventKind::TurnCompleted { outcome } => self
-                .change(&Change::End)
-                .status(SessionStatus::Idle)
-                .push(Item::TurnCompleted(outcome)),
-            EventKind::WorkspaceCreated { workspace } => Self {
-                workspace: Some(workspace),
-                ..self
-            },
-            EventKind::TasksChanged { tasks } => Self { tasks, ..self },
-            issue_event @ (EventKind::OnIssue { .. }
-            | EventKind::FinishStarted
-            | EventKind::SessionFinished { .. }) => {
-                self.issue_event(issue_event)
+            } => {
+                self.resolve(request, &resolution);
             }
-            EventKind::EffortChanged { effort } => Self {
-                effort: Some(effort),
-                ..self
-            },
+            EventKind::TurnCompleted { outcome } => {
+                end(&mut self.items);
+                self.status = SessionStatus::Idle;
+                self.push(Item::TurnCompleted(outcome));
+            }
+            EventKind::WorkspaceCreated { workspace } => {
+                self.workspace = Some(workspace);
+            }
+            EventKind::TasksChanged { tasks } => self.tasks = tasks,
+            EventKind::OnIssue { issue } => self.issue = Some(issue),
+            EventKind::FinishStarted => self.push(Item::Finishing),
+            EventKind::SessionFinished { finished } => {
+                self.push(Item::Finished(finished));
+            }
+            EventKind::EffortChanged { effort } => self.effort = Some(effort),
             EventKind::CheckpointCreated { checkpoint } => {
-                self.checkpoint_created(checkpoint)
+                self.checkpoint_created(checkpoint);
             }
+            EventKind::UndoStarted { checkpoint, .. } => {
+                self.undo = UndoState::Undoing(checkpoint);
+            }
+            EventKind::UndoFailed { checkpoint, reason } => {
+                self.undo = UndoState::Failed { checkpoint, reason }
+            }
+            EventKind::TurnsUndone { checkpoint, .. } => {
+                self.turns_undone(checkpoint);
+            }
+            EventKind::Error { message } => self.push(Item::Error(message)),
+            EventKind::Subagent { agent, event } => self.subagent(agent, event),
             EventKind::SessionCreated { .. }
             | EventKind::SessionRemoved { .. }
             | EventKind::UndoHistoryRestored { .. }
             | EventKind::CheckpointReserved { .. }
             | EventKind::HistoryMaterialized { .. }
-            | EventKind::NativeTurnStarted { .. } => self,
-            undo @ (EventKind::UndoStarted { .. }
-            | EventKind::UndoFailed { .. }
-            | EventKind::TurnsUndone { .. }) => self.undo_event(undo),
-            EventKind::Error { message } => self.push(Item::Error(message)),
-            EventKind::Subagent { agent, event } => {
-                self.subagent_event(agent, event)
+            | EventKind::NativeTurnStarted { .. } => {}
+        }
+    }
+
+    fn close(&mut self, reason: CloseReason) {
+        end(&mut self.items);
+        for agent in &mut self.subagents {
+            if agent.status == SubagentStatus::Running {
+                agent.end(SubagentStatus::Stopped, None);
             }
         }
+        self.status = SessionStatus::Closed(reason);
     }
 
-    fn model_changed(
-        self,
-        model: Option<ModelId>,
-        effort: Option<Effort>,
-        reason: String,
-    ) -> Self {
-        Self {
-            model,
-            effort,
-            ..self
+    fn subagent(&mut self, id: SubagentId, event: SubagentEvent) {
+        // A child's finished tool may also have an approval card in the parent's transcript.
+        if let SubagentEvent::Activity(SubagentActivity::ToolCall {
+            call,
+            phase: ToolPhase::Finished { outcome },
+        }) = &event
+        {
+            finish_tool(&mut self.items, call, *outcome);
         }
-        .push(Item::ModelChanged(reason))
-    }
-
-    /// An undo's phases.
-    fn undo_event(self, kind: EventKind) -> Self {
-        match kind {
-            EventKind::UndoStarted { checkpoint, .. } => Self {
-                undo: UndoState::Undoing(checkpoint),
-                ..self
-            },
-            EventKind::UndoFailed { checkpoint, reason } => Self {
-                undo: UndoState::Failed { checkpoint, reason },
-                ..self
-            },
-            EventKind::TurnsUndone { checkpoint, .. } => {
-                self.turns_undone(checkpoint)
+        let known = self.subagents.iter_mut().find(|agent| agent.id == id);
+        match (known, event) {
+            (Some(agent), SubagentEvent::Started { .. }) => {
+                agent.status = SubagentStatus::Running;
             }
-            _ => self,
-        }
-    }
-
-    /// The issue the session works on, and finishing the session on it.
-    fn issue_event(self, kind: EventKind) -> Self {
-        match kind {
-            EventKind::OnIssue { issue } => Self {
-                issue: Some(issue),
-                ..self
-            },
-            EventKind::FinishStarted => Self {
-                finish: self.finish.after(&EventKind::FinishStarted),
-                ..self
+            (None, SubagentEvent::Started { call, description }) => {
+                self.subagents.push(Subagent {
+                    id,
+                    call,
+                    description,
+                    status: SubagentStatus::Running,
+                    items: Vec::new(),
+                });
             }
-            .push(Item::Finishing),
-            EventKind::SessionFinished { finished } => Self {
-                finish: FinishState::Done,
-                ..self
+            (Some(agent), SubagentEvent::Activity(activity)) => {
+                agent.did(activity);
             }
-            .push(Item::Finished(finished)),
-            _ => self,
-        }
-    }
-
-    /// A sub-agent's finished call also finishes the card its request got
-    /// in the session.
-    fn subagent_event(self, agent: SubagentId, event: SubagentEvent) -> Self {
-        match event {
-            SubagentEvent::Started { call, description } => {
-                self.subagent_started(agent, call, description)
+            (Some(agent), SubagentEvent::Ended { outcome, summary }) => {
+                agent.end(SubagentStatus::Ended(outcome), summary);
             }
-            SubagentEvent::Activity(SubagentActivity::ToolCall {
-                call,
-                phase: ToolPhase::Finished { outcome },
-            }) => {
-                let finish = Change::Finish(call, outcome);
-                self.change(&finish)
-                    .subagent(&agent, |subagent| subagent.change(&finish))
-            }
-            SubagentEvent::Activity(activity) => {
-                self.subagent(&agent, |subagent| subagent.did(activity))
-            }
-            SubagentEvent::Ended { outcome, summary } => {
-                self.subagent(&agent, |subagent| {
-                    subagent.ended(SubagentStatus::Ended(outcome), summary)
-                })
-            }
+            (None, _) => {}
         }
-    }
-
-    /// A sub-agent the agent resumes runs again under its id, after what
-    /// it did before.
-    fn subagent_started(
-        self,
-        agent: SubagentId,
-        call: ToolCallId,
-        description: String,
-    ) -> Self {
-        let mut subagents = self.subagents;
-        match subagents.iter_mut().find(|known| known.id == agent) {
-            Some(known) => known.status = SubagentStatus::Running,
-            None => subagents.push(Subagent {
-                id: agent,
-                call,
-                description,
-                status: SubagentStatus::Running,
-                items: Vec::new(),
-            }),
-        }
-        Self { subagents, ..self }
-    }
-
-    /// Activity of a sub-agent this view never saw start is dropped.
-    fn subagent(
-        self,
-        agent: &SubagentId,
-        apply: impl FnOnce(Subagent) -> Subagent,
-    ) -> Self {
-        let mut subagents = self.subagents;
-        let position = subagents.iter().position(|known| &known.id == agent);
-        if let Some(index) = position {
-            let found = subagents.remove(index);
-            subagents.insert(index, apply(found));
-        }
-        Self { subagents, ..self }
-    }
-
-    fn subagents_stopped(self) -> Self {
-        Self {
-            subagents: self
-                .subagents
-                .into_iter()
-                .map(|subagent| match subagent.status {
-                    SubagentStatus::Running => {
-                        subagent.ended(SubagentStatus::Stopped, None)
-                    }
-                    SubagentStatus::Ended(_) | SubagentStatus::Stopped => {
-                        subagent
-                    }
-                })
-                .collect(),
-            ..self
-        }
-    }
-
-    /// Nothing still running will finish, and nothing still open will be
-    /// answered.
-    fn closed(self, reason: CloseReason) -> Self {
-        self.change(&Change::End)
-            .settle()
-            .subagents_stopped()
-            .status(SessionStatus::Closed(reason))
-    }
-
-    fn status(self, status: SessionStatus) -> Self {
-        Self { status, ..self }
-    }
-
-    /// A session that closed and is ready again was continued.
-    fn ready(self) -> Self {
-        match self.status.clone() {
-            SessionStatus::Closed(reason) => self
-                .status(SessionStatus::Idle)
-                .push(Item::Continued(reason)),
-            SessionStatus::Starting
-            | SessionStatus::Idle
-            | SessionStatus::Running => self.status(SessionStatus::Idle),
-        }
-    }
-
-    /// A user message starts a turn at `seq`.
-    fn user_message(self, message: Item, seq: HostSeq) -> Self {
-        let mut turn_starts = self.turn_starts;
-        turn_starts.insert(seq, self.items.len());
-        Self {
-            turn_starts,
-            undo: UndoState::Ready,
-            finish: self.finish.after(&EventKind::UserMessage {
-                text: String::new(),
-                by: ClientName(String::new()),
-            }),
-            ..self
-        }
-        .status(SessionStatus::Running)
-        .push(message)
     }
 
     /// A checkpoint covers the items since its turn started, or since the
     /// last checkpoint when the host names no turn start.
-    fn checkpoint_created(self, checkpoint: proto::Checkpoint) -> Self {
+    fn checkpoint_created(&mut self, checkpoint: proto::Checkpoint) {
         let start = checkpoint
             .turn_start
             .and_then(|seq| self.turn_starts.get(&seq).copied())
@@ -875,356 +738,216 @@ impl SessionView {
                 })
             });
         let Some(first) = start else {
-            return self;
+            return;
         };
-        let mut checkpoints = self.checkpoints;
-        checkpoints.push(TurnCheckpoint {
+        self.checkpoints.push(TurnCheckpoint {
             checkpoint: checkpoint.id,
             undo: checkpoint.undo,
             start: first,
             end: self.items.len().saturating_sub(1),
         });
-        Self {
-            checkpoints,
-            ..self
-        }
     }
 
-    fn turns_undone(self, checkpoint: CheckpointId) -> Self {
-        match self
+    fn turns_undone(&mut self, checkpoint: CheckpointId) {
+        self.undo = UndoState::Undone;
+        if let Some(turn) = self
             .checkpoints
             .iter()
             .find(|turn| turn.checkpoint == checkpoint)
-            .map(|turn| turn.start)
         {
-            Some(start) => Self {
-                subagents: self
-                    .subagents
-                    .into_iter()
-                    .filter(|subagent| {
-                        self.items
-                            .iter()
-                            .take(start)
-                            .filter_map(Item::call)
-                            .any(|call| call == &subagent.call)
-                    })
-                    .collect(),
-                items: self.items.into_iter().take(start).collect(),
-                checkpoints: self
-                    .checkpoints
-                    .into_iter()
-                    .filter(|turn| turn.start < start)
-                    .collect(),
-                turn_starts: self
-                    .turn_starts
-                    .into_iter()
-                    .filter(|(_, index)| index < &start)
-                    .collect(),
-                undo: UndoState::Undone,
-                status: SessionStatus::Idle,
-                ..self
-            },
-            None => Self {
-                undo: UndoState::Undone,
-                ..self
-            },
+            let start = turn.start;
+            self.items.truncate(start);
+            self.subagents.retain(|agent| {
+                self.items
+                    .iter()
+                    .filter_map(Item::call)
+                    .any(|call| call == &agent.call)
+            });
+            self.checkpoints.retain(|turn| turn.start < start);
+            self.turn_starts.retain(|_, index| *index < start);
+            self.status = SessionStatus::Idle;
         }
     }
 
-    /// A delta joins the reply that is still streaming; the final text
-    /// replaces it, so a client that missed the deltas shows the same reply.
-    fn reply(self, text: String, state: ReplyState) -> Self {
-        let mut items = self.items;
-        let open = match items.pop() {
-            Some(Item::Reply {
-                text: streamed,
-                state: ReplyState::Streaming,
-            }) => Some(streamed),
-            last => {
-                items.extend(last.map(Item::settled));
-                None
+    // Consecutive deltas extend the same text buffer. The final message replaces
+    // them so live and replayed transcripts agree even after missed deltas.
+    fn push(&mut self, item: Item) {
+        match (self.items.last_mut(), item) {
+            (
+                Some(Item::Reply {
+                    text,
+                    state: previous @ ReplyState::Streaming,
+                }),
+                Item::Reply { text: piece, state },
+            )
+            | (
+                Some(Item::Reasoning {
+                    text,
+                    state: previous @ ReplyState::Streaming,
+                }),
+                Item::Reasoning { text: piece, state },
+            ) => {
+                match state {
+                    ReplyState::Streaming => text.push_str(&piece),
+                    ReplyState::Done => *text = piece,
+                }
+                *previous = state;
             }
-        };
-        let joined = match state {
-            ReplyState::Streaming => {
-                format!("{}{text}", open.unwrap_or_default())
+            (_, next) => {
+                settle(&mut self.items);
+                self.items.push(next);
             }
-            ReplyState::Done => text,
-        };
-        items.push(Item::Reply {
-            text: joined,
-            state,
-        });
-        Self { items, ..self }
+        }
     }
 
-    /// Reasoning folds as a reply does, into an item of its own.
-    fn reasoning(self, text: String, state: ReplyState) -> Self {
-        let mut items = self.items;
-        let open = match items.pop() {
-            Some(Item::Reasoning {
-                text: streamed,
-                state: ReplyState::Streaming,
-            }) => Some(streamed),
-            last => {
-                items.extend(last.map(Item::settled));
-                None
+    fn resolve(&mut self, request: RequestId, resolution: &Resolution) {
+        for (id, state) in self.items.iter_mut().filter_map(Item::request_mut) {
+            if id == request {
+                *state = RequestState::Resolved(resolution.clone());
             }
+        }
+    }
+
+    fn ask(
+        &mut self,
+        call: ToolCallId,
+        tool: ToolKind,
+        request: RequestId,
+        reason: Option<String>,
+        for_session: Option<String>,
+    ) {
+        let approval = Approval::Asked {
+            request,
+            reason,
+            for_session,
+            state: RequestState::Open,
         };
-        let joined = match state {
-            ReplyState::Streaming => {
-                format!("{}{text}", open.unwrap_or_default())
+        let mut found = false;
+        for item in &mut self.items {
+            if let Item::Tool {
+                call: id,
+                approval: card,
+                ..
+            } = item
+                && *id == call
+            {
+                card.clone_from(&approval);
+                found = true;
             }
-            ReplyState::Done => text,
-        };
-        items.push(Item::Reasoning {
-            text: joined,
-            state,
-        });
-        Self { items, ..self }
-    }
-
-    /// Closes a reply or reasoning that was still streaming.
-    fn settle(self) -> Self {
-        let mut items = self.items;
-        let last = items.pop().map(Item::settled);
-        items.extend(last);
-        Self { items, ..self }
-    }
-
-    fn push(self, item: Item) -> Self {
-        let view = self.settle();
-        let mut items = view.items;
-        items.push(item);
-        Self { items, ..view }
-    }
-
-    /// A request joins its tool call's card. A request for a call this view
-    /// never saw started gets a card of its own.
-    fn ask(self, call: ToolCallId, tool: ToolKind, approval: Approval) -> Self {
-        match self
-            .items
-            .iter()
-            .filter_map(Item::call)
-            .find(|seen| seen.0 == call.0)
-        {
-            Some(_) => self.change(&Change::Ask(call, approval)),
-            None => self.push(Item::Tool {
+        }
+        if !found {
+            self.push(Item::Tool {
                 call,
                 tool,
                 state: ToolState::Running,
                 approval,
-            }),
-        }
-    }
-
-    fn change(self, change: &Change) -> Self {
-        Self {
-            items: self
-                .items
-                .into_iter()
-                .map(|item| item.changed(change))
-                .collect(),
-            ..self
+            });
         }
     }
 }
 
 impl Subagent {
-    /// Its transcript holds only finished items: a sub-agent's text
-    /// arrives whole.
-    fn did(self, activity: SubagentActivity) -> Self {
+    fn did(&mut self, activity: SubagentActivity) {
         match activity {
-            SubagentActivity::Message { text } => self.pushed(Item::Reply {
-                text,
-                state: ReplyState::Done,
-            }),
-            SubagentActivity::Reasoning { text } => {
-                self.pushed(Item::Reasoning {
+            SubagentActivity::Message { text } => {
+                self.items.push(Item::Reply {
                     text,
                     state: ReplyState::Done,
-                })
+                });
             }
-            SubagentActivity::ToolCall {
-                call,
-                phase: ToolPhase::Started { tool },
-            } => self.pushed(Item::Tool {
+            SubagentActivity::Reasoning { text } => {
+                self.items.push(Item::Reasoning {
+                    text,
+                    state: ReplyState::Done,
+                });
+            }
+            SubagentActivity::ToolCall { call, phase } => {
+                tool(&mut self.items, call, phase);
+            }
+        }
+    }
+
+    fn end(&mut self, status: SubagentStatus, summary: Option<String>) {
+        self.status = status;
+        end(&mut self.items);
+        if let Some(text) = summary {
+            self.items.push(Item::Reply {
+                text,
+                state: ReplyState::Done,
+            });
+        }
+    }
+}
+
+fn tool(items: &mut Vec<Item>, call: ToolCallId, phase: ToolPhase) {
+    match phase {
+        ToolPhase::Started { tool } => {
+            settle(items);
+            items.push(Item::Tool {
                 call,
                 tool,
                 state: ToolState::Running,
                 approval: Approval::NotAsked,
-            }),
-            SubagentActivity::ToolCall {
-                call,
-                phase: ToolPhase::Finished { outcome },
-            } => self.change(&Change::Finish(call, outcome)),
+            });
+        }
+        ToolPhase::Finished { outcome } => finish_tool(items, &call, outcome),
+    }
+}
+
+fn finish_tool(items: &mut [Item], call: &ToolCallId, outcome: ToolOutcome) {
+    for item in items {
+        if let Item::Tool {
+            call: id, state, ..
+        } = item
+            && id == call
+        {
+            *state = ToolState::Finished(outcome);
         }
     }
+}
 
-    /// Its tool calls still running stop with it, and its report ends its
-    /// transcript.
-    fn ended(self, status: SubagentStatus, summary: Option<String>) -> Self {
-        let ended = Self {
-            status,
-            ..self.change(&Change::End)
-        };
-        match summary {
-            Some(text) => ended.pushed(Item::Reply {
-                text,
-                state: ReplyState::Done,
-            }),
-            None => ended,
+const fn settle(items: &mut [Item]) {
+    if let Some(Item::Reply { state, .. } | Item::Reasoning { state, .. }) =
+        items.last_mut()
+    {
+        *state = ReplyState::Done;
+    }
+}
+
+fn end(items: &mut [Item]) {
+    settle(items);
+    for item in items {
+        if let Item::Tool {
+            state: state @ ToolState::Running,
+            ..
+        } = item
+        {
+            *state = ToolState::Stopped;
         }
-    }
-
-    fn pushed(self, item: Item) -> Self {
-        let mut items = self.items;
-        items.push(item);
-        Self { items, ..self }
-    }
-
-    fn change(self, change: &Change) -> Self {
-        Self {
-            items: self
-                .items
-                .into_iter()
-                .map(|item| item.changed(change))
-                .collect(),
-            ..self
+        if let Some((_, state @ RequestState::Open)) = item.request_mut() {
+            *state = RequestState::Resolved(Resolution::Withdrawn);
         }
     }
 }
 
 impl Item {
-    /// The item, done streaming: something else follows it.
-    fn settled(self) -> Self {
-        match self {
-            Self::Reply { text, .. } => Self::Reply {
-                text,
-                state: ReplyState::Done,
-            },
-            Self::Reasoning { text, .. } => Self::Reasoning {
-                text,
-                state: ReplyState::Done,
-            },
-            other => other,
-        }
-    }
-
-    /// The tool call the item shows, if it shows one.
     #[must_use]
     pub const fn call(&self) -> Option<&ToolCallId> {
-        match self {
-            Self::Tool { call, .. } => Some(call),
-            Self::User { .. }
-            | Self::Reply { .. }
-            | Self::Reasoning { .. }
-            | Self::Question { .. }
-            | Self::TurnCompleted(_)
-            | Self::Continued(_)
-            | Self::ModelChanged(_)
-            | Self::Finishing
-            | Self::Finished(_)
-            | Self::Error(_) => None,
+        if let Self::Tool { call, .. } = self {
+            Some(call)
+        } else {
+            None
         }
     }
 
-    fn changed(self, change: &Change) -> Self {
+    const fn request_mut(&mut self) -> Option<(RequestId, &mut RequestState)> {
         match self {
             Self::Tool {
-                call,
-                tool,
-                state,
-                approval,
-            } => Self::Tool {
-                state: state.changed(&call, change),
-                approval: approval.changed(&call, change),
-                call,
-                tool,
-            },
-            Self::Question {
-                request,
-                questions,
-                state,
-            } => Self::Question {
-                state: state.changed(request, change),
-                request,
-                questions,
-            },
-            item => item,
-        }
-    }
-}
-
-impl ToolState {
-    fn changed(self, call: &ToolCallId, change: &Change) -> Self {
-        match (self, change) {
-            (_, Change::Finish(id, outcome)) if call == id => {
-                Self::Finished(outcome.to_owned())
+                approval: Approval::Asked { request, state, .. },
+                ..
             }
-            (Self::Running, Change::End) => Self::Stopped,
-            (
-                state,
-                Change::Ask(_, _)
-                | Change::Resolve(_, _)
-                | Change::Finish(_, _)
-                | Change::End,
-            ) => state,
-        }
-    }
-}
-
-impl Approval {
-    const fn open(
-        request: RequestId,
-        reason: Option<String>,
-        for_session: Option<String>,
-    ) -> Self {
-        Self::Asked {
-            request,
-            reason,
-            for_session,
-            state: RequestState::Open,
-        }
-    }
-
-    fn changed(self, call: &ToolCallId, change: &Change) -> Self {
-        match (self, change) {
-            (_, Change::Ask(id, approval)) if call == id => approval.clone(),
-            (current, _) => match current {
-                Self::Asked {
-                    request,
-                    reason,
-                    for_session,
-                    state,
-                } => Self::Asked {
-                    state: state.changed(request, change),
-                    request,
-                    reason,
-                    for_session,
-                },
-                Self::NotAsked => Self::NotAsked,
-            },
-        }
-    }
-}
-
-impl RequestState {
-    /// A request's answer, or its withdrawal when the turn or session ends
-    /// with it still open.
-    fn changed(self, request: RequestId, change: &Change) -> Self {
-        match (self, change) {
-            (_, Change::Resolve(id, resolution)) if request == *id => {
-                Self::Resolved(resolution.clone())
-            }
-            (Self::Open, Change::End) => Self::Resolved(Resolution::Withdrawn),
-            (
-                state,
-                Change::Ask(_, _)
-                | Change::Resolve(_, _)
-                | Change::Finish(_, _)
-                | Change::End,
-            ) => state,
+            | Self::Question { request, state, .. } => Some((*request, state)),
+            _ => None,
         }
     }
 }
@@ -1247,6 +970,11 @@ mod tests {
         ReplyState, RequestState, Resume, SessionStatus, SessionView,
         StatusLabel, Subagent, SubagentStatus, ToolState, UndoState, Working,
     };
+
+    fn applied(mut view: HostView, event: Event) -> HostView {
+        view.apply(event);
+        view
+    }
 
     fn text(text: &str) -> String {
         String::from(text)
@@ -1509,7 +1237,7 @@ mod tests {
                     session: SessionId(u128::from(session)),
                     kind,
                 };
-                (view.apply(event), seq)
+                (applied(view, event), seq)
             },
         );
         view
@@ -2393,7 +2121,7 @@ mod tests {
         let suffix = events.split_off(8);
         let prefix = numbered(events)
             .into_iter()
-            .fold(HostView::empty(), HostView::apply);
+            .fold(HostView::empty(), applied);
         let [completion, checkpoint] = suffix.as_slice() else {
             return Err("expected completion and checkpoint".into());
         };
@@ -2405,7 +2133,7 @@ mod tests {
                 session: SessionId(1),
                 kind: kind.clone(),
             };
-            let partial = prefix.clone().apply(event(first, 9));
+            let partial = applied(prefix.clone(), event(first, 9));
             let partial_view = partial
                 .sessions
                 .get(&SessionId(1))
@@ -2416,7 +2144,7 @@ mod tests {
                     .and_then(|turn| turn.checkpoint),
                 None
             );
-            let complete = partial.apply(event(last, 10));
+            let complete = applied(partial, event(last, 10));
             let view = complete
                 .sessions
                 .get(&SessionId(1))
@@ -2444,7 +2172,7 @@ mod tests {
             .collect();
         let host = numbered(events)
             .into_iter()
-            .fold(HostView::empty(), HostView::apply);
+            .fold(HostView::empty(), applied);
         let view = host
             .sessions
             .get(&SessionId(1))
@@ -2488,19 +2216,14 @@ mod tests {
                 ])
                 .collect(),
         );
-        let live = events
-            .clone()
-            .into_iter()
-            .fold(HostView::empty(), HostView::apply);
+        let live = events.clone().into_iter().fold(HostView::empty(), applied);
         let before_reconnect = events
             .iter()
             .take(15)
             .cloned()
-            .fold(HostView::empty(), HostView::apply);
-        let reconnect = events
-            .into_iter()
-            .skip(15)
-            .fold(before_reconnect, HostView::apply);
+            .fold(HostView::empty(), applied);
+        let reconnect =
+            events.into_iter().skip(15).fold(before_reconnect, applied);
         assert_eq!(live, reconnect);
         let session =
             live.sessions.get(&SessionId(1)).ok_or("expected a value")?;
@@ -2522,30 +2245,33 @@ mod tests {
     #[test]
     fn in_progress_and_failed_undo_preserve_transcript_and_block_controls()
     -> Result<(), Box<dyn std::error::Error>> {
-        let original = numbered(checkpoint_events())
+        let mut original = numbered(checkpoint_events())
             .into_iter()
-            .fold(HostView::empty(), HostView::apply)
-            .apply(Event {
-                seq: HostSeq(15),
-                session: SessionId(1),
-                kind: EventKind::OnIssue {
-                    issue: proto::IssueId(7),
-                },
-            });
+            .fold(HostView::empty(), applied);
+        original.apply(Event {
+            seq: HostSeq(15),
+            session: SessionId(1),
+            kind: EventKind::OnIssue {
+                issue: proto::IssueId(7),
+            },
+        });
         let session = original
             .sessions
             .get(&SessionId(1))
             .ok_or("expected a value")?;
         assert!(session.controls().finish);
-        let pending = original.clone().apply(Event {
-            seq: HostSeq(16),
-            session: SessionId(1),
-            kind: EventKind::UndoStarted {
-                checkpoint: proto::CheckpointId(2),
-                restore: proto::CheckpointId(1),
-                history: proto::HistoryAnchor::Fresh,
+        let pending = applied(
+            original.clone(),
+            Event {
+                seq: HostSeq(16),
+                session: SessionId(1),
+                kind: EventKind::UndoStarted {
+                    checkpoint: proto::CheckpointId(2),
+                    restore: proto::CheckpointId(1),
+                    history: proto::HistoryAnchor::Fresh,
+                },
             },
-        });
+        );
         let session = pending
             .sessions
             .get(&SessionId(1))
@@ -2565,14 +2291,17 @@ mod tests {
                 finish: false,
             }
         );
-        let failed = pending.apply(Event {
-            seq: HostSeq(17),
-            session: SessionId(1),
-            kind: EventKind::UndoFailed {
-                checkpoint: proto::CheckpointId(2),
-                reason: text("restore failed"),
+        let failed = applied(
+            pending,
+            Event {
+                seq: HostSeq(17),
+                session: SessionId(1),
+                kind: EventKind::UndoFailed {
+                    checkpoint: proto::CheckpointId(2),
+                    reason: text("restore failed"),
+                },
             },
-        });
+        );
         let session = failed
             .sessions
             .get(&SessionId(1))
@@ -2652,7 +2381,7 @@ mod tests {
             },
             autonomous,
         ]));
-        let view = events.into_iter().fold(HostView::empty(), HostView::apply);
+        let view = events.into_iter().fold(HostView::empty(), applied);
         let session =
             view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
         assert_eq!(session.checkpoints.len(), 1);
@@ -2771,7 +2500,7 @@ mod tests {
         ];
         let mut view = HostView::empty();
         for (index, (kind, status, finish)) in cases.into_iter().enumerate() {
-            view = view.apply(Event {
+            view.apply(Event {
                 seq: HostSeq(u64::try_from(index)? + 1),
                 session: SessionId(1),
                 kind,
@@ -2898,7 +2627,7 @@ mod tests {
             },
         ]))
         .into_iter()
-        .fold(HostView::empty(), HostView::apply);
+        .fold(HostView::empty(), applied);
         let session = undone
             .sessions
             .get(&SessionId(1))
@@ -2944,7 +2673,7 @@ mod tests {
                 .collect(),
         )
         .into_iter()
-        .fold(HostView::empty(), HostView::apply);
+        .fold(HostView::empty(), applied);
         let session =
             view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
         assert_eq!(

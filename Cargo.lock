@@ -127,7 +127,6 @@ dependencies = [
  "net",
  "proto",
  "tokio",
- "tracing",
  "ui",
  "web-sys",
 ]

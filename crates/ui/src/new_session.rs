@@ -143,78 +143,49 @@ impl Form {
     }
 
     pub fn update(
-        self,
+        &mut self,
         intent: FormIntent,
         hosts: &BTreeMap<HostId, Host>,
         visit: u64,
-    ) -> (Self, Vec<Effect>) {
-        let chosen = self.host(hosts);
-        let instances =
-            chosen.and_then(|(_, host)| host.fold.instances.as_ref());
+    ) -> Vec<Effect> {
         match intent {
             FormIntent::PickHost(key) => {
-                let Some(picked) = data_encoding::HEXLOWER
+                if let Some(picked) = data_encoding::HEXLOWER
                     .decode(key.as_bytes())
                     .ok()
                     .and_then(|bytes| bytes.try_into().ok())
                     .map(HostId)
-                else {
-                    return (self, Vec::new());
-                };
-                (
-                    Self {
-                        host: Some(picked),
-                        instance: None,
-                        model: None,
-                        effort: None,
-                        ..self
-                    },
-                    Vec::new(),
-                )
+                {
+                    self.host = Some(picked);
+                    self.instance = None;
+                    self.model = None;
+                    self.effort = None;
+                }
             }
-            FormIntent::PickInstance(instance) => (
-                Self {
-                    instance: Some(instance),
-                    model: None,
-                    effort: None,
-                    ..self
-                },
-                Vec::new(),
-            ),
+            FormIntent::PickInstance(instance) => {
+                self.instance = Some(instance);
+                self.model = None;
+                self.effort = None;
+            }
             FormIntent::PickModel(id) => {
+                let instances = self
+                    .host(hosts)
+                    .and_then(|(_, host)| host.fold.instances.as_ref());
                 let offered = availability(instances, self.chosen(instances))
                     .map_or_else(Models::none, Availability::models);
-                let picked = (!id.is_empty()).then_some(ModelId(id));
-                (
-                    Self {
-                        effort: offered
-                            .kept_effort(picked.as_ref(), self.effort),
-                        model: picked,
-                        ..self
-                    },
-                    Vec::new(),
-                )
+                self.model = (!id.is_empty()).then_some(ModelId(id));
+                self.effort =
+                    offered.kept_effort(self.model.as_ref(), self.effort);
             }
-            FormIntent::PickEffort(word) => (
-                Self {
-                    effort: Effort::parse(&word),
-                    ..self
-                },
-                Vec::new(),
-            ),
-            FormIntent::PickProject(id) => (
-                Self {
-                    project: (!id.is_empty()).then_some(ProjectId(id)),
-                    ..self
-                },
-                Vec::new(),
-            ),
-            FormIntent::TypeDirectory(directory) => {
-                (Self { directory, ..self }, Vec::new())
+            FormIntent::PickEffort(word) => self.effort = Effort::parse(&word),
+            FormIntent::PickProject(id) => {
+                self.project = (!id.is_empty()).then_some(ProjectId(id));
             }
+            FormIntent::TypeDirectory(directory) => self.directory = directory,
             FormIntent::Start => {
-                let Ok((host, instance, place)) = self.start(chosen) else {
-                    return (self, Vec::new());
+                let Ok((host, instance, place)) = self.start(self.host(hosts))
+                else {
+                    return Vec::new();
                 };
                 let submitted = Submission {
                     host,
@@ -230,15 +201,13 @@ impl Form {
                     model: self.model.clone(),
                     effort: self.effort,
                 };
-                (
-                    Self {
-                        attempt: Attempt::Starting(submitted),
-                        ..self
-                    },
-                    Vec::from([At { host, visit }.send(body, ReplyTo::Start)]),
-                )
+                self.attempt = Attempt::Starting(submitted);
+                return Vec::from([
+                    At { host, visit }.send(body, ReplyTo::Start)
+                ]);
             }
         }
+        Vec::new()
     }
 
     fn start<'a>(

@@ -197,60 +197,30 @@ impl<R> Session<R> {
     /// Tracks the turn's last message, which its result carries, the
     /// requests the CLI withdraws, and the sub-agents. The end of a task that
     /// is no sub-agent, such as a background command, is `Unknown`.
-    fn event(&mut self, received: ClaudeEvent) -> ClaudeEvent {
-        match received {
-            ClaudeEvent::Message {
-                role,
-                content,
-                uuid,
-            } => {
-                self.last_message.clone_from(&uuid);
-                ClaudeEvent::Message {
-                    role,
-                    content,
-                    uuid,
-                }
+    fn event(&mut self, mut received: ClaudeEvent) -> ClaudeEvent {
+        match &mut received {
+            ClaudeEvent::Message { uuid, .. } => {
+                self.last_message.clone_from(uuid);
             }
-            ClaudeEvent::TurnFinished {
-                subtype,
-                outcome,
-                terminal_reason,
-                session_id,
-                errors,
-                last_message: _,
-            } => ClaudeEvent::TurnFinished {
-                subtype,
-                outcome,
-                terminal_reason,
-                session_id,
-                errors,
-                last_message: self.last_message.clone(),
-            },
+            ClaudeEvent::TurnFinished { last_message, .. } => {
+                last_message.clone_from(&self.last_message);
+            }
             ClaudeEvent::PermissionCancelled { id } => {
-                self.open.remove(&id);
-                ClaudeEvent::PermissionCancelled { id }
+                self.open.remove(id);
             }
-            ClaudeEvent::SubagentStarted {
-                agent,
-                tool_use_id,
-                description,
-            } => {
+            ClaudeEvent::SubagentStarted { agent, .. } => {
                 self.subagents.insert(agent.clone());
-                ClaudeEvent::SubagentStarted {
-                    agent,
-                    tool_use_id,
-                    description,
-                }
             }
             ClaudeEvent::SubagentEnded { agent, .. }
-                if !self.subagents.contains(&agent) =>
+                if !self.subagents.contains(agent) =>
             {
-                ClaudeEvent::Unknown(Value::String(format!(
+                return ClaudeEvent::Unknown(Value::String(format!(
                     "task_notification for task {agent}, which is no sub-agent"
-                )))
+                )));
             }
-            other => other,
+            _ => {}
         }
+        received
     }
 
     fn answered<S, E>(

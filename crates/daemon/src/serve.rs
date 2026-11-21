@@ -3,7 +3,7 @@
 //! and calls the log and the registry.
 
 use host::log::Completion;
-use host::serve::{self, Admission, Ledger, Order, Relaunch, Route, Stream};
+use host::serve::{self, Admission, Order, Relaunch, Route, Stream};
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
@@ -210,17 +210,13 @@ impl Conductor {
         client: ClientName,
     ) -> Result<CommandResult, Stopped> {
         let route = serve::route(command.body, client);
-        let begun = match route.ledger() {
-            Ledger::Unrecorded => {
-                return self
-                    .command(route, command.id)
-                    .await
-                    .map(Completion::into_result);
-            }
-            Ledger::Session => self.log.begin(command.id).await?,
-            Ledger::Receipt => self.log.begin_receipt(command.id).await?,
+        let Some(kind) = route.ledger() else {
+            return self
+                .command(route, command.id)
+                .await
+                .map(Completion::into_result);
         };
-        match begun {
+        match self.log.begin(command.id, kind).await? {
             BeginCommand::Cached(result) => Ok(result),
             BeginCommand::Execute(lease) => {
                 let completion = self.command(route, command.id).await?;

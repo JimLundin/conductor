@@ -284,10 +284,7 @@ pub fn row(item: &Item, drafts: &BTreeMap<RequestId, Draft>) -> Row {
                 RequestState::Open => QuestionBody::Form(form(
                     *request,
                     questions,
-                    &drafts
-                        .get(request)
-                        .cloned()
-                        .unwrap_or_else(|| Draft::new(questions)),
+                    drafts.get(request),
                 )),
                 RequestState::Resolved(resolution) => {
                     answered(questions, resolution)
@@ -344,7 +341,7 @@ const fn verb(change: Change) -> &'static str {
 fn form(
     request: RequestId,
     questions: &[Question],
-    draft: &Draft,
+    draft: Option<&Draft>,
 ) -> QuestionForm {
     QuestionForm {
         request,
@@ -352,7 +349,7 @@ fn form(
             .iter()
             .enumerate()
             .map(|(index, question)| {
-                let chosen = draft.chosen(index);
+                let chosen = draft.map_or(&[][..], |kept| kept.chosen(index));
                 QuestionField {
                     index,
                     header: question.header.clone(),
@@ -370,11 +367,14 @@ fn form(
                             pressed: chosen.contains(&option.label),
                         })
                         .collect(),
-                    typed: draft.typed(index),
+                    typed: draft
+                        .map_or("", |kept| kept.typed(index))
+                        .to_owned(),
                 }
             })
             .collect(),
-        send_disabled: draft.answers().is_none(),
+        send_disabled: draft
+            .map_or(!questions.is_empty(), |kept| kept.answers().is_none()),
     }
 }
 

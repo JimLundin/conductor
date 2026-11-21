@@ -143,19 +143,19 @@ fn rejected(rejection: Rejection) -> Effect {
     Effect::Reply(CommandResult::Rejected(rejection))
 }
 
+fn conversation_ready() -> (Input, Vec<Effect>) {
+    (
+        started("conv", Anchoring::Messages),
+        Vec::from([saved(), Effect::Emit(EventKind::SessionReady), accepted()]),
+    )
+}
+
 fn ready() -> Session {
     expect(
         restored(&[], None),
         Vec::from([
             (start(), Vec::from([launching("/work", None, None)])),
-            (
-                started("conv", Anchoring::Messages),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::SessionReady),
-                    accepted(),
-                ]),
-            ),
+            conversation_ready(),
         ]),
     )
 }
@@ -174,15 +174,34 @@ fn running() -> Session {
 }
 
 fn open() -> Input {
-    Input::Step(Step::Open {
-        native: NativeRequest(text("perm-1")),
-        call: ToolCallId(text("toolu_1")),
-        tool: ToolKind::Command {
-            command: text("ls"),
-        },
-        reason: None,
-        for_session: None,
-    })
+    asking("perm-1", "toolu_1")
+}
+
+fn deny(request: u64, native: &str) -> (Input, Vec<Effect>) {
+    (
+        reply(request, Reply::Decide(Decision::Deny), "phone"),
+        Vec::from([
+            Effect::Emit(EventKind::RequestResolved {
+                request: RequestId(request),
+                resolution: Resolution::Decided {
+                    decision: Decision::Deny,
+                    by: phone(),
+                },
+            }),
+            agent(Command::Reply {
+                native: NativeRequest(text(native)),
+                reply: Reply::Decide(Decision::Deny),
+                by: phone(),
+            }),
+        ]),
+    )
+}
+
+fn replied() -> (Input, Vec<Effect>) {
+    (
+        Input::Agent(Outcome::Replied(Ok(()))),
+        Vec::from([accepted()]),
+    )
 }
 
 fn reply(request: u64, reply: Reply, by: &str) -> Input {
@@ -239,7 +258,6 @@ fn a_message_the_agent_never_got_fails_the_turn() {
 /// fails was declined.
 #[test]
 fn a_subagent_is_logged_and_its_denied_call_declined() {
-    let deny = || Reply::Decide(Decision::Deny);
     let agent_id = || SubagentId(text("a1"));
     let finished = |outcome| SubagentActivity::ToolCall {
         call: ToolCallId(text("toolu_1")),
@@ -263,39 +281,9 @@ fn a_subagent_is_logged_and_its_denied_call_declined() {
                     },
                 })]),
             ),
-            (
-                open(),
-                Vec::from([Effect::Emit(EventKind::RequestOpened {
-                    request: RequestId(1),
-                    call: ToolCallId(text("toolu_1")),
-                    tool: ToolKind::Command {
-                        command: text("ls"),
-                    },
-                    reason: None,
-                    for_session: None,
-                })]),
-            ),
-            (
-                reply(1, deny(), "phone"),
-                Vec::from([
-                    Effect::Emit(EventKind::RequestResolved {
-                        request: RequestId(1),
-                        resolution: Resolution::Decided {
-                            decision: Decision::Deny,
-                            by: phone(),
-                        },
-                    }),
-                    agent(Command::Reply {
-                        native: NativeRequest(text("perm-1")),
-                        reply: deny(),
-                        by: phone(),
-                    }),
-                ]),
-            ),
-            (
-                Input::Agent(Outcome::Replied(Ok(()))),
-                Vec::from([accepted()]),
-            ),
+            (open(), Vec::from([opened(1, "toolu_1")])),
+            deny(1, "perm-1"),
+            replied(),
             (
                 Input::Step(Step::SubagentActivity {
                     agent: agent_id(),
@@ -328,45 +316,14 @@ fn a_subagent_is_logged_and_its_denied_call_declined() {
 
 #[test]
 fn a_request_is_opened_answered_once_and_withdrawn_when_the_turn_ends() {
-    let deny = || Reply::Decide(Decision::Deny);
     let _ = expect(
         running(),
         Vec::from([
+            (open(), Vec::from([opened(1, "toolu_1")])),
+            deny(1, "perm-1"),
+            replied(),
             (
-                open(),
-                Vec::from([Effect::Emit(EventKind::RequestOpened {
-                    request: RequestId(1),
-                    call: ToolCallId(text("toolu_1")),
-                    tool: ToolKind::Command {
-                        command: text("ls"),
-                    },
-                    reason: None,
-                    for_session: None,
-                })]),
-            ),
-            (
-                reply(1, deny(), "phone"),
-                Vec::from([
-                    Effect::Emit(EventKind::RequestResolved {
-                        request: RequestId(1),
-                        resolution: Resolution::Decided {
-                            decision: Decision::Deny,
-                            by: phone(),
-                        },
-                    }),
-                    agent(Command::Reply {
-                        native: NativeRequest(text("perm-1")),
-                        reply: deny(),
-                        by: phone(),
-                    }),
-                ]),
-            ),
-            (
-                Input::Agent(Outcome::Replied(Ok(()))),
-                Vec::from([accepted()]),
-            ),
-            (
-                reply(1, deny(), "laptop"),
+                reply(1, Reply::Decide(Decision::Deny), "laptop"),
                 Vec::from([rejected(Rejection::AlreadyResolved {
                     by: phone(),
                 })]),
@@ -562,18 +519,7 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
     let _ = expect(
         running(),
         Vec::from([
-            (
-                open(),
-                Vec::from([Effect::Emit(EventKind::RequestOpened {
-                    request: RequestId(1),
-                    call: ToolCallId(text("toolu_1")),
-                    tool: ToolKind::Command {
-                        command: text("ls"),
-                    },
-                    reason: None,
-                    for_session: None,
-                })]),
-            ),
+            (open(), Vec::from([opened(1, "toolu_1")])),
             (
                 Input::Step(Step::Closed(CloseReason::Exited {
                     status: text("exit status: 1"),
@@ -586,14 +532,7 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
             ),
             (send("hi"), Vec::from([rejected(Rejection::SessionClosed)])),
             (start(), Vec::from([launching("/work", None, Some("conv"))])),
-            (
-                started("conv", Anchoring::Messages),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::SessionReady),
-                    accepted(),
-                ]),
-            ),
+            conversation_ready(),
             (
                 reply(1, Reply::Decide(Decision::Approve), "phone"),
                 Vec::from([rejected(Rejection::UnknownRequest)]),
@@ -1103,25 +1042,6 @@ fn an_agent_withdraws_only_the_request_it_names() {
 
 #[test]
 fn each_denied_call_is_declined_when_it_fails() {
-    let deny = |request, native: &str| {
-        (
-            reply(request, Reply::Decide(Decision::Deny), "phone"),
-            Vec::from([
-                Effect::Emit(EventKind::RequestResolved {
-                    request: RequestId(request),
-                    resolution: Resolution::Decided {
-                        decision: Decision::Deny,
-                        by: phone(),
-                    },
-                }),
-                agent(Command::Reply {
-                    native: NativeRequest(text(native)),
-                    reply: Reply::Decide(Decision::Deny),
-                    by: phone(),
-                }),
-            ]),
-        )
-    };
     let failed = |call: &str| {
         (
             Input::Step(Step::ToolFinished {
@@ -1134,12 +1054,6 @@ fn each_denied_call_is_declined_when_it_fails() {
                     outcome: ToolOutcome::Declined,
                 },
             })]),
-        )
-    };
-    let replied = || {
-        (
-            Input::Agent(Outcome::Replied(Ok(()))),
-            Vec::from([accepted()]),
         )
     };
     let _ = expect(
@@ -1193,14 +1107,7 @@ fn a_restored_session_keeps_its_request_ids_and_who_answered_them() {
         restored(&history, None),
         Vec::from([
             (start(), Vec::from([launching("/work", None, None)])),
-            (
-                started("conv", Anchoring::Messages),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::SessionReady),
-                    accepted(),
-                ]),
-            ),
+            conversation_ready(),
             (
                 reply(1, Reply::Decide(Decision::Approve), "laptop"),
                 Vec::from([rejected(Rejection::AlreadyResolved {
@@ -1289,14 +1196,7 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
         restored(&in_workspace(), None),
         Vec::from([
             (start(), Vec::from([launching("/work", None, None)])),
-            (
-                started("conv", Anchoring::Messages),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::SessionReady),
-                    accepted(),
-                ]),
-            ),
+            conversation_ready(),
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (sent(), Vec::from([saved(), accepted()])),
@@ -1467,14 +1367,7 @@ fn removing_stops_the_agent_between_turns_then_removes_the_workspace() {
         restored(&in_workspace(), None),
         Vec::from([
             (start(), Vec::from([launching("/work", None, None)])),
-            (
-                started("conv", Anchoring::Messages),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::SessionReady),
-                    accepted(),
-                ]),
-            ),
+            conversation_ready(),
         ]),
     );
     let removed = expect(

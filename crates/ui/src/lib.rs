@@ -1,6 +1,6 @@
 //! The app's screen as data (architecture §8). [`State`] is what the app
-//! holds, over every paired host; [`update`] takes what a person or a
-//! host's link does, as an [`Intent`], and returns the next state and the
+//! holds, over every paired host; [`State::update`] takes what a person or a
+//! host's link does, as an [`Intent`], and returns the
 //! [`Effect`]s the shell performs; [`view`] describes the whole
 //! [`Screen`], so the app's markup only draws it. It is pure and `no_std`.
 
@@ -131,7 +131,7 @@ pub enum Intent {
     Replied(Reply, Result<CommandResult, String>),
 }
 
-/// What the shell does for an [`update`].
+/// What the shell does for an [`State::update`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Send `body` to `host` and return its answer as
@@ -238,11 +238,6 @@ pub struct Pair {
     pub text: String,
     pub connect_disabled: bool,
     pub error: Option<String>,
-}
-
-#[must_use]
-pub fn update(state: State, intent: Intent) -> (State, Vec<Effect>) {
-    state.update(intent)
 }
 
 #[must_use]

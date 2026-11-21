@@ -172,9 +172,9 @@ fn starting_a_directory_sends_only_once_until_the_host_replies() {
         ]),
     );
     let (pending, first) =
-        crate::update(ready.clone(), Intent::Form(FormIntent::Start));
+        super::update(ready.clone(), Intent::Form(FormIntent::Start));
     let (_, second) =
-        crate::update(pending.clone(), Intent::Form(FormIntent::Start));
+        super::update(pending.clone(), Intent::Form(FormIntent::Start));
     assert_eq!(form(&ready).map(|shown| shown.start_disabled), Some(false));
     assert_eq!(form(&pending).map(|shown| shown.start_disabled), Some(true));
     assert!(matches!(
@@ -213,7 +213,7 @@ fn a_blank_directory_blocks_start_until_a_path_is_entered() {
         Some((true, Some(text("Enter a directory path."))))
     );
     assert_eq!(effects, []);
-    let (ready, _) = crate::update(
+    let (ready, _) = super::update(
         blank,
         Intent::Form(FormIntent::TypeDirectory(text("/src/test"))),
     );
@@ -233,9 +233,9 @@ fn going_offline_blocks_start_until_the_chosen_host_returns() {
         ]),
     );
     let (offline, _) =
-        crate::update(ready, connection(HOST, LinkState::Disconnected, None));
+        super::update(ready, connection(HOST, LinkState::Disconnected, None));
     let (blocked, effects) =
-        crate::update(offline, Intent::Form(FormIntent::Start));
+        super::update(offline, Intent::Form(FormIntent::Start));
     assert_eq!(
         form(&blocked).map(|shown| (
             shown.start_disabled,
@@ -245,9 +245,9 @@ fn going_offline_blocks_start_until_the_chosen_host_returns() {
     );
     assert_eq!(effects, []);
     let (online, _) =
-        crate::update(blocked, connection(HOST, LinkState::Live, None));
+        super::update(blocked, connection(HOST, LinkState::Live, None));
     assert_eq!(form(&online).map(|shown| shown.start_disabled), Some(false));
-    let (_, effects) = crate::update(online, Intent::Form(FormIntent::Start));
+    let (_, effects) = super::update(online, Intent::Form(FormIntent::Start));
     assert!(matches!(
         effects.as_slice(),
         [crate::Effect::Send { host: HOST, .. }]
@@ -300,13 +300,13 @@ fn start_waits_for_the_selected_instance_to_be_available_again() {
     assert_eq!(form(&missing).map(|shown| shown.start_disabled), Some(true));
     assert_eq!(blocked, []);
 
-    let (recovered, _) = crate::update(missing, super::roster(two_claudes()));
+    let (recovered, _) = super::update(missing, super::roster(two_claudes()));
     assert_eq!(
         form(&recovered).map(|shown| shown.start_disabled),
         Some(false)
     );
     let (_, started) =
-        crate::update(recovered, Intent::Form(FormIntent::Start));
+        super::update(recovered, Intent::Form(FormIntent::Start));
     assert_eq!(
         super::sent(&started),
         [proto::CommandBody::StartSession {
@@ -359,7 +359,7 @@ fn start_waits_when_the_selected_model_or_effort_is_no_longer_offered() {
         );
         assert_eq!(effects, []);
         let (restored, _) =
-            crate::update(blocked, changed_offer(super::models()));
+            super::update(blocked, changed_offer(super::models()));
         assert_eq!(
             form(&restored).map(|shown| shown.start_disabled),
             Some(false)

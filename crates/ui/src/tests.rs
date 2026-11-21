@@ -27,8 +27,7 @@ use crate::{
     DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
     HostsScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
     Patch, Place, QuestionBody, Row, Saved, Screen, SessionIntent, SessionPane,
-    State, Stored, ToolDetail, ToolLine, TurnChanges, UndoNote, sends, update,
-    view,
+    State, Stored, ToolDetail, ToolLine, TurnChanges, UndoNote, sends, view,
 };
 
 const SESSION: SessionId = SessionId(7);
@@ -36,6 +35,11 @@ const HOST: HostId = HostId([9; 32]);
 
 fn text(text: &str) -> String {
     String::from(text)
+}
+
+fn update(mut state: State, intent: Intent) -> (State, Vec<Effect>) {
+    let effects = state.update(intent);
+    (state, effects)
 }
 
 fn ticket() -> Ticket {

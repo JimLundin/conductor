@@ -24,11 +24,21 @@ use host::Note;
 use host::secret::Secret;
 use iroh::SecretKey;
 use proto::{AuthToken, Epoch};
+use tokio::sync::{mpsc, oneshot};
 
 /// The actor stopped: nobody can reach it any more.
 #[derive(Debug, thiserror::Error)]
 #[error("the actor has stopped")]
 pub(crate) struct Stopped {}
+
+async fn ask<M, T>(
+    inbox: &mpsc::Sender<M>,
+    message: impl FnOnce(oneshot::Sender<T>) -> M,
+) -> Result<T, Stopped> {
+    let (reply, answer) = oneshot::channel();
+    inbox.send(message(reply)).await.map_err(|_| Stopped {})?;
+    answer.await.map_err(|_| Stopped {})
+}
 
 /// Loads the host's iroh key from `<data_dir>/host.key`, creating it on first
 /// run. The key's public half is the host's address, so it must persist.

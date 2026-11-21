@@ -4,7 +4,6 @@
 //! another place is shown.
 
 use alloc::collections::BTreeMap;
-use core::mem;
 
 use crate::prelude::*;
 use client::link::Update;
@@ -18,10 +17,7 @@ use crate::projects::{self, ProjectsScreen};
 use crate::saved::{Saved, decode};
 use crate::session::{Pane, SessionPane};
 use crate::sessions::{self, SessionList};
-use crate::{
-    At, Effect, Intent, IssueIntent, Opening, Pair, Place, Reply, ReplyTo,
-    Screen, SessionIntent,
-};
+use crate::{At, Effect, Intent, Opening, Pair, Place, Reply, ReplyTo, Screen};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct State {
@@ -130,7 +126,7 @@ impl State {
         } else {
             ShownPlace::Sessions
         };
-        let opened = Self {
+        let mut opened = Self {
             hosts,
             shown,
             recent: None,
@@ -138,10 +134,10 @@ impl State {
             visit: 0,
             first_error,
         };
-        match opening.joined {
-            Some(Ok(ticket)) => opened.paired(ticket),
-            Some(Err(_)) | None => opened,
+        if let Some(Ok(ticket)) = opening.joined {
+            opened.pair(ticket);
         }
+        opened
     }
 
     /// The hosts to keep in local storage.
@@ -156,79 +152,119 @@ impl State {
             .collect()
     }
 
-    pub(crate) fn update(mut self, intent: Intent) -> (Self, Vec<Effect>) {
-        match intent {
-            Intent::TypeJoin(text) => {
-                if let ShownPlace::AddHost(pairing) = &mut self.shown {
-                    pairing.text = text;
-                }
-                (self, Vec::new())
+    #[must_use]
+    pub fn update(&mut self, intent: Intent) -> Vec<Effect> {
+        let at = |host| At {
+            host,
+            visit: self.visit,
+        };
+        match (intent, &mut self.shown) {
+            (Intent::TypeJoin(text), ShownPlace::AddHost(pairing)) => {
+                pairing.text = text;
             }
-            Intent::Join(Ok(ticket))
-                if matches!(self.shown, ShownPlace::AddHost(_)) =>
+            (Intent::Join(Ok(ticket)), ShownPlace::AddHost(_)) => {
+                self.pair(ticket);
+                return Vec::from([Effect::SaveHosts(self.saved())]);
+            }
+            (Intent::Join(Err(error)), ShownPlace::AddHost(pairing)) => {
+                pairing.error = Some(invalid(&error));
+            }
+            (Intent::Forget(host), _) => return self.forget(host),
+            (Intent::Link(host, update), _) => {
+                return self.linked(host, update);
+            }
+            (Intent::Show(place), _) => self.show(place),
+            (Intent::DismissNotice, _) => self.notice = None,
+            (Intent::Form(change), ShownPlace::NewSession(form)) => {
+                return form.update(change, &self.hosts, self.visit);
+            }
+            (
+                Intent::Credential(host, change),
+                ShownPlace::Credentials(forms),
+            ) => {
+                if let Some(known) = self.hosts.get(&host) {
+                    return forms.entry(host).or_default().update(
+                        change,
+                        at(host),
+                        &known.fold.catalog,
+                    );
+                }
+            }
+            (Intent::Project(host, change), ShownPlace::Projects(_))
+                if self.hosts.contains_key(&host) =>
             {
-                let next = self.paired(ticket);
-                let saved = next.saved();
-                (next, Vec::from([Effect::SaveHosts(saved)]))
+                return change.send(at(host));
             }
-            Intent::Join(Ok(_)) => (self, Vec::new()),
-            Intent::Join(Err(error)) => {
-                if let ShownPlace::AddHost(pairing) = &mut self.shown {
-                    pairing.error = Some(invalid(&error));
-                }
-                (self, Vec::new())
-            }
-            Intent::Forget(host) => self.forget(host),
-            Intent::Link(host, update) => self.linked(host, update),
-            Intent::Show(place) => (self.show(place), Vec::new()),
-            Intent::DismissNotice => {
-                self.notice = None;
-                (self, Vec::new())
-            }
-            Intent::Form(change) => self.form(change),
-            Intent::Credential(host, change) => self.credential(host, change),
-            Intent::Project(host, change) => {
-                let effects = if matches!(self.shown, ShownPlace::Projects(_))
-                    && self.hosts.contains_key(&host)
+            (
+                Intent::Session(change),
+                ShownPlace::Session(host, id, Some(pane)),
+            ) => {
+                if let Some(session) = self
+                    .hosts
+                    .get(host)
+                    .and_then(|known| known.fold.view.sessions.get(id))
                 {
-                    change.send(At {
-                        host,
-                        visit: self.visit,
-                    })
-                } else {
-                    Vec::new()
-                };
-                (self, effects)
-            }
-            Intent::Session(change) => self.session(change),
-            Intent::NewIssue(change) => self.new_issue(change),
-            Intent::Issue(change) => self.issue(change),
-            Intent::StartOn(host, issue) => {
-                if !self.hosts.is_empty() {
-                    self.replace(ShownPlace::NewSession(Form::on_issue(
-                        host, issue,
-                    )));
+                    return pane.update(change, *id, session, at(*host));
                 }
-                (self, Vec::new())
             }
-            Intent::Replied(reply, answer) => self.replied(reply, answer),
+            (Intent::NewIssue(change), ShownPlace::Projects(titles)) => {
+                return titles.new_issue(change, self.visit);
+            }
+            (
+                Intent::Issue(change),
+                ShownPlace::Issue(host, id, Some(draft)),
+            ) => {
+                if let Some((_, issue)) = self
+                    .hosts
+                    .get(host)
+                    .and_then(|known| issues::find(known, *id))
+                {
+                    let shown = Shown {
+                        at: at(*host),
+                        issue,
+                    };
+                    return draft.update(change, &shown);
+                }
+            }
+            (Intent::StartOn(host, issue), _) if !self.hosts.is_empty() => {
+                self.replace(ShownPlace::NewSession(Form::on_issue(
+                    host, issue,
+                )));
+            }
+            (Intent::Replied(reply, answer), _) => {
+                return self.replied(reply, answer);
+            }
+            (
+                Intent::TypeJoin(_)
+                | Intent::Join(_)
+                | Intent::Form(_)
+                | Intent::Credential(..)
+                | Intent::Project(..)
+                | Intent::Session(_)
+                | Intent::NewIssue(_)
+                | Intent::Issue(_)
+                | Intent::StartOn(..),
+                _,
+            ) => {}
         }
+        Vec::new()
     }
 
-    fn paired(mut self, ticket: Ticket) -> Self {
-        let id = HostId::of(&ticket);
-        let host = match self.hosts.remove(&id) {
-            Some(known) => Host { ticket, ..known },
-            None => Host::new(ticket, None),
-        };
-        self.hosts.insert(id, host);
+    fn pair(&mut self, ticket: Ticket) {
+        match self.hosts.entry(HostId::of(&ticket)) {
+            alloc::collections::btree_map::Entry::Occupied(mut entry) => {
+                entry.get_mut().ticket = ticket;
+            }
+            alloc::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(Host::new(ticket, None));
+            }
+        }
         if matches!(self.shown, ShownPlace::AddHost(_)) {
             self.replace(ShownPlace::Sessions);
         }
-        self
     }
 
-    fn forget(mut self, host: HostId) -> (Self, Vec<Effect>) {
+    fn forget(&mut self, host: HostId) -> Vec<Effect> {
         self.hosts.remove(&host);
         self.recent = self.recent.filter(|recent| *recent != host);
         if self.hosts.is_empty() || matches!(self.shown, ShownPlace::AddHost(_))
@@ -251,33 +287,30 @@ impl State {
                 _ => {}
             }
         }
-        let saved = self.saved();
-        (self, Vec::from([Effect::SaveHosts(saved)]))
+        Vec::from([Effect::SaveHosts(self.saved())])
     }
 
-    fn linked(mut self, host: HostId, update: Update) -> (Self, Vec<Effect>) {
-        let Some(known) = self.hosts.remove(&host) else {
-            return (self, Vec::new());
+    fn linked(&mut self, host: HostId, update: Update) -> Vec<Effect> {
+        let Some(known) = self.hosts.get_mut(&host) else {
+            return Vec::new();
         };
-        let (next, renamed) = known.linked(update);
+        let renamed = known.linked(update);
         let left = match &mut self.shown {
             ShownPlace::Session(selected, id, draft) if *selected == host => {
-                sync_draft(draft, next.fold.view.sessions.contains_key(id))
+                sync_draft(draft, known.fold.view.sessions.contains_key(id))
             }
             ShownPlace::Issue(selected, id, draft) if *selected == host => {
-                sync_draft(draft, issues::find(&next, *id).is_some())
+                sync_draft(draft, issues::find(known, *id).is_some())
             }
             _ => false,
         };
         if left {
             self.visit = self.visit.wrapping_add(1);
         }
-        self.hosts.insert(host, next);
-        let effects = renamed
+        renamed
             .then(|| Effect::SaveHosts(self.saved()))
             .into_iter()
-            .collect();
-        (self, effects)
+            .collect()
     }
 
     fn replace(&mut self, shown: ShownPlace) {
@@ -285,9 +318,9 @@ impl State {
         self.visit = self.visit.wrapping_add(1);
     }
 
-    fn show(mut self, place: Place) -> Self {
+    fn show(&mut self, place: Place) {
         if self.hosts.is_empty() || place == self.shown.place() {
-            return self;
+            return;
         }
         self.recent = place.host().or(self.recent);
         let shown = match place {
@@ -318,107 +351,18 @@ impl State {
             }
         };
         self.replace(shown);
-        self
-    }
-
-    fn form(mut self, intent: crate::FormIntent) -> (Self, Vec<Effect>) {
-        let ShownPlace::NewSession(form) = &mut self.shown else {
-            return (self, Vec::new());
-        };
-        let (next, effects) =
-            mem::take(form).update(intent, &self.hosts, self.visit);
-        *form = next;
-        (self, effects)
-    }
-
-    fn credential(
-        mut self,
-        host: HostId,
-        intent: crate::CredentialIntent,
-    ) -> (Self, Vec<Effect>) {
-        let (ShownPlace::Credentials(forms), Some(known)) =
-            (&mut self.shown, self.hosts.get(&host))
-        else {
-            return (self, Vec::new());
-        };
-        let kept = forms.entry(host).or_default();
-        let (next, effects) = mem::take(kept).update(
-            intent,
-            At {
-                host,
-                visit: self.visit,
-            },
-            &known.fold.catalog,
-        );
-        *kept = next;
-        (self, effects)
-    }
-
-    fn session(mut self, intent: SessionIntent) -> (Self, Vec<Effect>) {
-        let ShownPlace::Session(host, id, Some(pane)) = &mut self.shown else {
-            return (self, Vec::new());
-        };
-        let Some(session) = self
-            .hosts
-            .get(host)
-            .and_then(|known| known.fold.view.sessions.get(id))
-        else {
-            return (self, Vec::new());
-        };
-        let at = At {
-            host: *host,
-            visit: self.visit,
-        };
-        let (next, effects) = mem::take(pane).update(intent, *id, session, at);
-        *pane = next;
-        (self, effects)
-    }
-
-    fn new_issue(
-        mut self,
-        intent: crate::NewIssueIntent,
-    ) -> (Self, Vec<Effect>) {
-        let ShownPlace::Projects(titles) = &mut self.shown else {
-            return (self, Vec::new());
-        };
-        let (next, effects) = mem::take(titles).new_issue(intent, self.visit);
-        *titles = next;
-        (self, effects)
-    }
-
-    fn issue(mut self, intent: IssueIntent) -> (Self, Vec<Effect>) {
-        let ShownPlace::Issue(host, id, Some(draft)) = &mut self.shown else {
-            return (self, Vec::new());
-        };
-        let Some((_, issue)) = self
-            .hosts
-            .get(host)
-            .and_then(|known| issues::find(known, *id))
-        else {
-            return (self, Vec::new());
-        };
-        let shown = Shown {
-            at: At {
-                host: *host,
-                visit: self.visit,
-            },
-            issue,
-        };
-        let (next, effects) = mem::take(draft).update(intent, &shown);
-        *draft = next;
-        (self, effects)
     }
 
     fn replied(
-        mut self,
+        &mut self,
         reply: Reply,
         answer: Result<CommandResult, String>,
-    ) -> (Self, Vec<Effect>) {
+    ) -> Vec<Effect> {
         if reply.visit != self.visit {
-            return (self, Vec::new());
+            return Vec::new();
         }
         let Some(known) = self.hosts.get(&reply.host) else {
-            return (self, Vec::new());
+            return Vec::new();
         };
         match (&mut self.shown, reply.to) {
             (_, ReplyTo::Notice) => self.notice = refusal(answer),
@@ -427,14 +371,14 @@ impl State {
             }
             (ShownPlace::NewSession(form), ReplyTo::Start) => {
                 if let Ok(CommandResult::Started { session }) = answer {
-                    self = self.show(Place::Session(reply.host, session));
+                    self.show(Place::Session(reply.host, session));
                 } else {
                     form.answered(known, answer);
                 }
             }
             (ShownPlace::Projects(_), ReplyTo::Created) => {
                 if let Ok(CommandResult::IssueCreated { issue }) = answer {
-                    self = self.show(Place::Issue(reply.host, issue));
+                    self.show(Place::Issue(reply.host, issue));
                 } else {
                     self.notice = refusal(answer);
                 }
@@ -444,12 +388,7 @@ impl State {
                 ReplyTo::Instance(subject, done),
             ) => {
                 if let Some(host_forms) = forms.get_mut(&reply.host) {
-                    *host_forms = mem::take(host_forms).replied(
-                        subject,
-                        done,
-                        answer,
-                        &known.name(),
-                    );
+                    host_forms.replied(subject, done, answer, &known.name());
                 }
             }
             (
@@ -459,39 +398,27 @@ impl State {
                     request,
                 },
             ) => {
-                *pane = mem::take(pane).diffed(
-                    checkpoint,
-                    request,
-                    answer,
-                    &known.name(),
-                );
+                pane.diffed(checkpoint, request, answer, &known.name());
             }
             _ => {}
         }
-        (self, Vec::new())
+        Vec::new()
     }
 
     /// A refused effort change goes to the notice, and the picker back to
     /// the effort the session still has.
     fn effort_refused(
-        self,
+        &mut self,
         shown: Option<Effort>,
         answer: Result<CommandResult, String>,
-    ) -> (Self, Vec<Effect>) {
-        match refusal(answer) {
-            Some(reason) => (
-                Self {
-                    notice: Some(reason),
-                    ..self
-                },
-                Vec::from([Effect::ShowEffort(
-                    shown.map_or_else(String::new, |kept| {
-                        kept.wire().to_owned()
-                    }),
-                )]),
-            ),
-            None => (self, Vec::new()),
-        }
+    ) -> Vec<Effect> {
+        let Some(reason) = refusal(answer) else {
+            return Vec::new();
+        };
+        self.notice = Some(reason);
+        Vec::from([Effect::ShowEffort(
+            shown.map_or_else(String::new, |kept| kept.wire().to_owned()),
+        )])
     }
 
     pub(crate) fn screen(&self) -> Screen {

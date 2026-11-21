@@ -525,7 +525,7 @@ fn forgetting_a_selected_host_cannot_start_on_another_host() {
         ]),
     );
     let (blocked, effects) =
-        crate::update(forgotten, Intent::Form(FormIntent::Start));
+        super::update(forgotten, Intent::Form(FormIntent::Start));
     assert_eq!(
         form(&blocked).map(|shown| (
             shown.start_disabled,
@@ -569,7 +569,7 @@ fn forgetting_a_host_releases_its_pending_start() {
         ]),
     );
     assert_eq!(form(&picked).map(|shown| shown.start_disabled), Some(false));
-    let (_, started) = crate::update(picked, start);
+    let (_, started) = super::update(picked, start);
     assert!(matches!(
         started.as_slice(),
         [Effect::Send { host: OTHER, .. }]

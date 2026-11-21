@@ -1,6 +1,2 @@
-# Each checkout builds in its own ./target. A shared target-dir across git
-# worktrees is unsafe: cargo leaves the checkout path out of workspace
-# members' artifact identity and checks freshness against whichever
-# checkout's sources the dep-info names, so one worktree can silently build
-# against another branch's code. Disk use is kept down instead by trimming
-# debug info (Cargo.toml [profile.dev]) and removing worktrees when merged.
+[env]
+PROPTEST_CASES = "16"

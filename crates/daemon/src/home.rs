@@ -42,8 +42,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
 
-use crate::Stopped;
 use crate::workspace::{blob, text};
+use crate::{Stopped, ask};
 
 /// How often the host pulls the home on its own.
 const EVERY: Duration = Duration::from_secs(300);
@@ -204,7 +204,7 @@ impl HomeClone {
         order: HomeOrder,
         id: CommandId,
     ) -> Result<Completion, Stopped> {
-        self.ask(|reply| Msg::Order { order, id, reply }).await
+        ask(&self.inbox, |reply| Msg::Order { order, id, reply }).await
     }
 
     /// Where a session starts: a directory as it is, or a project's or an
@@ -219,7 +219,9 @@ impl HomeClone {
                 directory,
                 on: None,
             })),
-            home => self.ask(|reply| Msg::Place { at: home, reply }).await,
+            home => {
+                ask(&self.inbox, |reply| Msg::Place { at: home, reply }).await
+            }
         }
     }
 
@@ -233,7 +235,7 @@ impl HomeClone {
         &self,
         start: home::issue::Start,
     ) -> Result<Result<(), Rejection>, Stopped> {
-        self.ask(|reply| Msg::Ready { start, reply }).await
+        ask(&self.inbox, |reply| Msg::Ready { start, reply }).await
     }
 
     /// A session on the issue started: work on it is in progress, if it
@@ -247,7 +249,7 @@ impl HomeClone {
         issue: IssueId,
         client: ClientName,
     ) -> Result<(), Stopped> {
-        self.ask(|reply| Msg::Started {
+        ask(&self.inbox, |reply| Msg::Started {
             issue,
             client,
             reply,
@@ -269,7 +271,7 @@ impl HomeClone {
         client: ClientName,
         landed: u64,
     ) -> Result<(), Stopped> {
-        self.ask(|reply| Msg::Finished {
+        ask(&self.inbox, |reply| Msg::Finished {
             issue,
             summary,
             client,
@@ -277,18 +279,6 @@ impl HomeClone {
             reply,
         })
         .await
-    }
-
-    async fn ask<T>(
-        &self,
-        build: impl FnOnce(oneshot::Sender<T>) -> Msg,
-    ) -> Result<T, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(build(reply))
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
     }
 }
 

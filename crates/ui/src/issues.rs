@@ -73,19 +73,17 @@ pub struct Shown<'issue> {
 
 impl Titles {
     pub fn new_issue(
-        self,
+        &mut self,
         intent: NewIssueIntent,
         visit: u64,
-    ) -> (Self, Vec<Effect>) {
+    ) -> Vec<Effect> {
         match intent {
             NewIssueIntent::TypeTitle(project, title) => {
-                let mut titles = self.0;
-                titles.insert(project, title);
-                (Self(titles), Vec::new())
+                self.0.insert(project, title);
+                Vec::new()
             }
             NewIssueIntent::Create(host, project) => {
-                let effects = self.create(At { host, visit }, project);
-                (self, effects)
+                self.create(At { host, visit }, project)
             }
         }
     }
@@ -110,119 +108,82 @@ impl Titles {
 
 impl IssueDraft {
     pub fn update(
-        self,
+        &mut self,
         intent: IssueIntent,
         shown: &Shown<'_>,
-    ) -> (Self, Vec<Effect>) {
+    ) -> Vec<Effect> {
         let issue = shown.issue;
-        let change = |change| send(shown, change);
-        match intent {
-            IssueIntent::SetStatus(word) => (
-                self,
-                IssueStatus::named(&word)
-                    .filter(|status| *status != issue.status)
-                    .map_or_else(Vec::new, |status| {
-                        change(IssueChange::Status(status))
-                    }),
-            ),
-            IssueIntent::SetPriority(word) => (
-                self,
-                Priority::named(&word)
-                    .filter(|priority| *priority != issue.priority)
-                    .map_or_else(Vec::new, |priority| {
-                        change(IssueChange::Priority(priority))
-                    }),
-            ),
-            IssueIntent::Toggle(index) => (
-                self,
-                issue.checklist.get(index).map_or_else(Vec::new, |item| {
-                    change(IssueChange::Check {
-                        item: item.text.clone(),
-                        done: !item.done,
-                    })
-                }),
-            ),
-            IssueIntent::RemoveItem(index) => (
-                self,
-                issue.checklist.get(index).map_or_else(Vec::new, |item| {
-                    change(IssueChange::RemoveItem(item.text.clone()))
-                }),
-            ),
-            IssueIntent::TypeItem(item) => (Self { item, ..self }, Vec::new()),
-            IssueIntent::AddItem => self.add_item(shown),
-            IssueIntent::TypeNote(note) => (Self { note, ..self }, Vec::new()),
-            IssueIntent::AddNote => self.add_note(shown),
-            IssueIntent::Edit => (
-                Self {
-                    editing: Some(Editing {
-                        title: issue.title.clone(),
-                        body: issue.body.clone(),
-                        labels: issue.labels.join(", "),
-                    }),
-                    ..self
-                },
-                Vec::new(),
-            ),
+        let change = match intent {
+            IssueIntent::SetStatus(word) => IssueStatus::named(&word)
+                .filter(|status| *status != issue.status)
+                .map(IssueChange::Status),
+            IssueIntent::SetPriority(word) => Priority::named(&word)
+                .filter(|priority| *priority != issue.priority)
+                .map(IssueChange::Priority),
+            IssueIntent::Toggle(index) => {
+                issue.checklist.get(index).map(|item| IssueChange::Check {
+                    item: item.text.clone(),
+                    done: !item.done,
+                })
+            }
+            IssueIntent::RemoveItem(index) => issue
+                .checklist
+                .get(index)
+                .map(|item| IssueChange::RemoveItem(item.text.clone())),
+            IssueIntent::AddItem => {
+                take_trimmed(&mut self.item).map(IssueChange::AddItem)
+            }
+            IssueIntent::AddNote => {
+                take_trimmed(&mut self.note).map(IssueChange::Note)
+            }
+            IssueIntent::Save => return self.save(shown),
+            IssueIntent::TypeItem(item) => {
+                self.item = item;
+                None
+            }
+            IssueIntent::TypeNote(note) => {
+                self.note = note;
+                None
+            }
+            IssueIntent::Edit => {
+                self.editing = Some(Editing {
+                    title: issue.title.clone(),
+                    body: issue.body.clone(),
+                    labels: issue.labels.join(", "),
+                });
+                None
+            }
+            IssueIntent::Cancel => {
+                self.editing = None;
+                None
+            }
             IssueIntent::TypeTitle(title) => {
-                (self.edited(|editing| editing.title = title), Vec::new())
+                if let Some(form) = &mut self.editing {
+                    form.title = title;
+                }
+                None
             }
             IssueIntent::TypeBody(body) => {
-                (self.edited(|editing| editing.body = body), Vec::new())
+                if let Some(form) = &mut self.editing {
+                    form.body = body;
+                }
+                None
             }
             IssueIntent::TypeLabels(labels) => {
-                (self.edited(|editing| editing.labels = labels), Vec::new())
+                if let Some(form) = &mut self.editing {
+                    form.labels = labels;
+                }
+                None
             }
-            IssueIntent::Save => self.save(shown),
-            IssueIntent::Cancel => (
-                Self {
-                    editing: None,
-                    ..self
-                },
-                Vec::new(),
-            ),
-        }
-    }
-
-    fn add_item(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let text = String::from(self.item.trim());
-        if text.is_empty() {
-            return (self, Vec::new());
-        }
-        (
-            Self {
-                item: String::new(),
-                ..self
-            },
-            send(shown, IssueChange::AddItem(text)),
-        )
-    }
-
-    fn add_note(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let text = String::from(self.note.trim());
-        if text.is_empty() {
-            return (self, Vec::new());
-        }
-        (
-            Self {
-                note: String::new(),
-                ..self
-            },
-            send(shown, IssueChange::Note(text)),
-        )
-    }
-
-    fn edited(self, change: impl FnOnce(&mut Editing)) -> Self {
-        let mut editing = self.editing;
-        if let Some(open) = editing.as_mut() {
-            change(open);
-        }
-        Self { editing, ..self }
+        };
+        change.into_iter().map(|edit| send(shown, edit)).collect()
     }
 
     /// Sends each field the form changed, its own change.
-    fn save(self, shown: &Shown<'_>) -> (Self, Vec<Effect>) {
-        let Some(editing) = self.editing.clone().filter(Editing::saves) else {
-            return (self, Vec::new());
+    fn save(&mut self, shown: &Shown<'_>) -> Vec<Effect> {
+        let Some(editing) = self.editing.take_if(|editing| editing.saves())
+        else {
+            return Vec::new();
         };
         let issue = shown.issue;
         let labels = editing
@@ -233,23 +194,27 @@ impl IssueDraft {
             .collect::<Vec<String>>();
         let changes = [
             (editing.title.trim() != issue.title)
-                .then(|| IssueChange::Title(editing.title.clone())),
+                .then_some(IssueChange::Title(editing.title)),
             (editing.body.trim() != issue.body)
-                .then(|| IssueChange::Body(editing.body.clone())),
+                .then_some(IssueChange::Body(editing.body)),
             (labels != issue.labels).then_some(IssueChange::Labels(labels)),
         ];
-        (
-            Self {
-                editing: None,
-                ..self
-            },
-            changes
-                .into_iter()
-                .flatten()
-                .flat_map(|change| send(shown, change))
-                .collect(),
-        )
+        changes
+            .into_iter()
+            .flatten()
+            .map(|change| send(shown, change))
+            .collect()
     }
+}
+
+fn take_trimmed(draft: &mut String) -> Option<String> {
+    let text = draft.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let value = String::from(text);
+    draft.clear();
+    Some(value)
 }
 
 impl Editing {
@@ -259,14 +224,14 @@ impl Editing {
     }
 }
 
-fn send(shown: &Shown<'_>, change: IssueChange) -> Vec<Effect> {
-    Vec::from([shown.at.send(
+const fn send(shown: &Shown<'_>, change: IssueChange) -> Effect {
+    shown.at.send(
         CommandBody::ChangeIssue {
             issue: shown.issue.id,
             change,
         },
         ReplyTo::Notice,
-    )])
+    )
 }
 
 /// A project's issues, as the projects view lists them.

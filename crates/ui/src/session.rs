@@ -174,129 +174,97 @@ pub struct Pane {
 
 impl Pane {
     pub fn update(
-        self,
+        &mut self,
         intent: SessionIntent,
-        id: SessionId,
-        session: &SessionView,
+        session: SessionId,
+        view: &SessionView,
         at: At,
-    ) -> (Self, Vec<Effect>) {
-        match intent {
+    ) -> Vec<Effect> {
+        let command = match intent {
             SessionIntent::TypeMessage(draft) => {
-                (Self { draft, ..self }, Vec::new())
+                self.draft = draft;
+                return Vec::new();
             }
-            SessionIntent::SendMessage => self.send_message(id, session, at),
-            SessionIntent::Interrupt => (
-                self,
-                Vec::from([notify(CommandBody::Interrupt { session: id }, at)]),
-            ),
-            SessionIntent::Continue => (
-                Self {
-                    focus_composer: true,
-                    ..self
-                },
-                Vec::from([notify(CommandBody::Continue { session: id }, at)]),
-            ),
-            SessionIntent::Remove => (
-                self,
-                Vec::from([notify(
-                    CommandBody::RemoveSession { session: id },
-                    at,
-                )]),
-            ),
-            SessionIntent::Finish => (
-                self,
-                Vec::from([notify(
-                    CommandBody::FinishSession { session: id },
-                    at,
-                )]),
-            ),
+            SessionIntent::SendMessage => {
+                let text = self.draft.trim();
+                if view.controls().composer != host_view::Composer::Open
+                    || text.is_empty()
+                {
+                    return Vec::new();
+                }
+                let command = CommandBody::SendMessage {
+                    session,
+                    text: text.to_owned(),
+                };
+                self.draft.clear();
+                command
+            }
+            SessionIntent::Interrupt => CommandBody::Interrupt { session },
+            SessionIntent::Continue => {
+                self.focus_composer = true;
+                CommandBody::Continue { session }
+            }
+            SessionIntent::Remove => CommandBody::RemoveSession { session },
+            SessionIntent::Finish => CommandBody::FinishSession { session },
+            SessionIntent::Undo(checkpoint) => CommandBody::UndoTurn {
+                session,
+                checkpoint,
+            },
             SessionIntent::PickEffort(word) => {
-                (self, set_effort(&word, id, session.effort, at))
+                return set_effort(&word, session, view.effort, at);
             }
-            SessionIntent::Decide(request, decision) => (
-                self,
-                Vec::from([
+            SessionIntent::Decide(request, decision) => {
+                return Vec::from([
                     notify(
                         CommandBody::Resolve {
-                            session: id,
+                            session,
                             request,
                             decision,
                         },
                         at,
                     ),
                     focus_card(request),
-                ]),
-            ),
+                ]);
+            }
             SessionIntent::Choose {
                 request,
                 question,
                 label,
-            } => (
-                self.drafted(session, request, question, |draft, selection| {
-                    draft.pick(question, label, selection)
-                }),
-                Vec::new(),
-            ),
+            } => {
+                if let Some((field, selection)) =
+                    self.question(view, request, question)
+                {
+                    field.pick(label, selection);
+                }
+                return Vec::new();
+            }
             SessionIntent::TypeAnswer {
                 request,
                 question,
                 text,
-            } => (
-                self.drafted(session, request, question, |draft, selection| {
-                    draft.r#type(question, &text, selection)
-                }),
-                Vec::new(),
-            ),
+            } => {
+                if let Some((field, selection)) =
+                    self.question(view, request, question)
+                {
+                    field.r#type(text, selection);
+                }
+                return Vec::new();
+            }
             SessionIntent::SendAnswer(request) => {
-                let effects = self.send_answer(request, id, session, at);
-                (self, effects)
+                return self.send_answer(request, session, view, at);
             }
             SessionIntent::ShowChanges(checkpoint) => {
-                self.load_diff(id, checkpoint, at)
+                return self.load_diff(session, checkpoint, at);
             }
             SessionIntent::CloseChanges(checkpoint) => {
-                self.close_diff(checkpoint)
+                self.diffs.insert(checkpoint, DiffState::Hidden);
+                return Vec::from([Effect::Focus(Focus::NextFrame(
+                    checkpoints::changes_id(checkpoint),
+                ))]);
             }
-            SessionIntent::Undo(checkpoint) => (
-                self,
-                Vec::from([notify(
-                    CommandBody::UndoTurn {
-                        session: id,
-                        checkpoint,
-                    },
-                    at,
-                )]),
-            ),
-            SessionIntent::Mounted(mount) => self.mounted(mount),
-        }
-    }
-
-    /// Sends the draft, once there is one and the agent takes messages.
-    fn send_message(
-        self,
-        id: SessionId,
-        session: &SessionView,
-        at: At,
-    ) -> (Self, Vec<Effect>) {
-        match (session.controls().composer, self.draft.trim()) {
-            (host_view::Composer::Open, "")
-            | (host_view::Composer::Busy | host_view::Composer::Closed, _) => {
-                (self, Vec::new())
-            }
-            (host_view::Composer::Open, text) => {
-                let body = CommandBody::SendMessage {
-                    session: id,
-                    text: text.to_owned(),
-                };
-                (
-                    Self {
-                        draft: String::new(),
-                        ..self
-                    },
-                    Vec::from([notify(body, at)]),
-                )
-            }
-        }
+            SessionIntent::Mounted(mount) => return self.mounted(mount),
+        };
+        Vec::from([notify(command, at)])
     }
 
     /// Sends the answers once every question has one.
@@ -307,8 +275,12 @@ impl Pane {
         session: &SessionView,
         at: At,
     ) -> Vec<Effect> {
-        self.draft_for(session, request)
-            .and_then(|draft| draft.answers())
+        let Some(asked) = questions(session, request) else {
+            return Vec::new();
+        };
+        self.answers
+            .get(&request)
+            .map_or_else(|| Draft::new(asked).answers(), Draft::answers)
             .map_or_else(Vec::new, |answers| {
                 Vec::from([
                     notify(
@@ -324,113 +296,66 @@ impl Pane {
             })
     }
 
-    fn close_diff(self, checkpoint: CheckpointId) -> (Self, Vec<Effect>) {
-        let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::Hidden);
-        (
-            Self { diffs, ..self },
-            Vec::from([Effect::Focus(Focus::NextFrame(
-                checkpoints::changes_id(checkpoint),
-            ))]),
-        )
-    }
-
-    fn mounted(self, mount: Mount) -> (Self, Vec<Effect>) {
+    fn mounted(&mut self, mount: Mount) -> Vec<Effect> {
         match mount {
-            Mount::Composer if self.focus_composer => (
-                Self {
-                    focus_composer: false,
-                    ..self
-                },
-                Vec::from([Effect::Focus(Focus::Composer)]),
-            ),
-            Mount::Composer => (self, Vec::new()),
-            Mount::Undone => {
-                (self, Vec::from([Effect::Focus(Focus::AfterUndo)]))
+            Mount::Composer if core::mem::take(&mut self.focus_composer) => {
+                Vec::from([Effect::Focus(Focus::Composer)])
             }
+            Mount::Composer => Vec::new(),
+            Mount::Undone => Vec::from([Effect::Focus(Focus::AfterUndo)]),
         }
     }
 
-    /// The draft of a question card, a fresh one until the person starts
-    /// answering. `None` when the session asked no such question.
-    fn draft_for(
-        &self,
-        session: &SessionView,
+    fn question(
+        &mut self,
+        view: &SessionView,
         request: RequestId,
-    ) -> Option<Draft> {
-        questions(session, request).map(|asked| {
-            self.answers
-                .get(&request)
-                .cloned()
-                .unwrap_or_else(|| Draft::new(asked))
-        })
-    }
-
-    fn drafted(
-        self,
-        session: &SessionView,
-        request: RequestId,
-        question: usize,
-        change: impl FnOnce(Draft, proto::Selection) -> Draft,
-    ) -> Self {
-        let selection = questions(session, request)
-            .and_then(|asked| asked.get(question))
-            .map(|asked| asked.selection);
-        match (self.draft_for(session, request), selection) {
-            (Some(draft), Some(kind)) => {
-                let mut answers = self.answers;
-                answers.insert(request, change(draft, kind));
-                Self { answers, ..self }
-            }
-            (None, _) | (_, None) => self,
-        }
+        index: usize,
+    ) -> Option<(&mut QuestionDraft, Selection)> {
+        let asked = questions(view, request)?;
+        let selection = asked.get(index)?.selection;
+        let draft = self
+            .answers
+            .entry(request)
+            .or_insert_with(|| Draft::new(asked));
+        Some((draft.0.get_mut(index)?, selection))
     }
 
     fn load_diff(
-        self,
+        &mut self,
         session: SessionId,
         checkpoint: CheckpointId,
         at: At,
-    ) -> (Self, Vec<Effect>) {
-        if let Some(DiffState::Loading(_)) = self.diffs.get(&checkpoint) {
-            return (self, Vec::new());
+    ) -> Vec<Effect> {
+        if matches!(self.diffs.get(&checkpoint), Some(DiffState::Loading(_))) {
+            return Vec::new();
         }
-        let request = self.requests.wrapping_add(1);
-        let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::Loading(request));
-        (
-            Self {
-                diffs,
-                requests: request,
-                ..self
+        self.requests = self.requests.wrapping_add(1);
+        let request = self.requests;
+        self.diffs.insert(checkpoint, DiffState::Loading(request));
+        Vec::from([at.send(
+            CommandBody::GetDiff {
+                session,
+                checkpoint,
             },
-            Vec::from([at.send(
-                CommandBody::GetDiff {
-                    session,
-                    checkpoint,
-                },
-                ReplyTo::Diff {
-                    checkpoint,
-                    request,
-                },
-            )]),
-        )
+            ReplyTo::Diff {
+                checkpoint,
+                request,
+            },
+        )])
     }
 
-    /// A diff's answer, unless a later request or a close replaced it.
     pub fn diffed(
-        self,
+        &mut self,
         checkpoint: CheckpointId,
         request: u64,
         answer: Result<CommandResult, String>,
         host: &str,
-    ) -> Self {
-        if self.diffs.get(&checkpoint) != Some(&DiffState::Loading(request)) {
-            return self;
+    ) {
+        if self.diffs.get(&checkpoint) == Some(&DiffState::Loading(request)) {
+            self.diffs
+                .insert(checkpoint, DiffState::answered(answer, host));
         }
-        let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::answered(answer, host));
-        Self { diffs, ..self }
     }
 
     pub fn screen(
@@ -692,103 +617,67 @@ fn set_effort(
 
 /// For each question, the options chosen and the text typed so far.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Draft {
-    chosen: Vec<Vec<String>>,
-    typed: Vec<String>,
+pub struct Draft(Vec<QuestionDraft>);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct QuestionDraft {
+    chosen: Vec<String>,
+    typed: String,
+}
+
+impl QuestionDraft {
+    fn pick(&mut self, label: String, selection: Selection) {
+        match selection {
+            Selection::One => {
+                self.chosen.clear();
+                self.typed.clear();
+            }
+            Selection::Many => {
+                if let Some(index) =
+                    self.chosen.iter().position(|old| *old == label)
+                {
+                    self.chosen.remove(index);
+                    return;
+                }
+            }
+        }
+        self.chosen.push(label);
+    }
+
+    fn r#type(&mut self, text: String, selection: Selection) {
+        self.typed = text;
+        if selection == Selection::One {
+            self.chosen.clear();
+        }
+    }
+
+    fn answer(&self) -> Option<Answer> {
+        let mut labels = self.chosen.clone();
+        let text = self.typed.trim();
+        if !text.is_empty() {
+            labels.push(text.to_owned());
+        }
+        (!labels.is_empty()).then_some(Answer(labels))
+    }
 }
 
 impl Draft {
     pub(crate) fn new(questions: &[Question]) -> Self {
-        Self {
-            chosen: questions.iter().map(|_| Vec::new()).collect(),
-            typed: questions.iter().map(|_| String::new()).collect(),
-        }
+        Self(alloc::vec![QuestionDraft::default(); questions.len()])
     }
 
-    /// The labels chosen for `question`.
-    #[must_use]
-    pub(crate) fn chosen(&self, question: usize) -> Vec<String> {
-        self.chosen.get(question).cloned().unwrap_or_default()
+    pub(crate) fn chosen(&self, index: usize) -> &[String] {
+        self.0
+            .get(index)
+            .map_or(&[], |field| field.chosen.as_slice())
     }
 
-    #[must_use]
-    pub(crate) fn typed(&self, question: usize) -> String {
-        self.typed.get(question).cloned().unwrap_or_default()
+    pub(crate) fn typed(&self, index: usize) -> &str {
+        self.0.get(index).map_or("", |field| field.typed.as_str())
     }
 
-    /// Taps `label`. One choice replaces the last and clears the typed
-    /// text; with many, a tap toggles the option.
-    fn pick(
-        self,
-        question: usize,
-        label: String,
-        selection: Selection,
-    ) -> Self {
-        let Self {
-            mut chosen,
-            mut typed,
-        } = self;
-        if let Some(labels) = chosen.get_mut(question) {
-            match (selection, labels.iter().position(|seen| seen == &label)) {
-                (Selection::One, _) => {
-                    labels.clear();
-                    labels.push(label);
-                }
-                (Selection::Many, Some(at)) => {
-                    labels.remove(at);
-                }
-                (Selection::Many, None) => labels.push(label),
-            }
-        }
-        if let (Selection::One, Some(text)) =
-            (selection, typed.get_mut(question))
-        {
-            text.clear();
-        }
-        Self { chosen, typed }
-    }
-
-    /// Types `text` as the answer. With one choice it replaces the option
-    /// chosen; with many it is one more answer.
-    fn r#type(self, question: usize, text: &str, selection: Selection) -> Self {
-        let Self {
-            mut chosen,
-            mut typed,
-        } = self;
-        if let Some(answer) = typed.get_mut(question) {
-            answer.clear();
-            answer.push_str(text);
-        }
-        if let (Selection::One, Some(labels)) =
-            (selection, chosen.get_mut(question))
-        {
-            labels.clear();
-        }
-        Self { chosen, typed }
-    }
-
-    /// Every question's answer, once every question has one.
     pub(crate) fn answers(&self) -> Option<Vec<Answer>> {
-        let answers = self
-            .chosen
-            .iter()
-            .zip(&self.typed)
-            .map(|(chosen, typed)| {
-                Answer(
-                    chosen
-                        .iter()
-                        .cloned()
-                        .chain(
-                            Some(typed.trim())
-                                .filter(|trimmed| !trimmed.is_empty())
-                                .map(String::from),
-                        )
-                        .collect(),
-                )
-            })
-            .collect::<Vec<Answer>>();
-        Some(answers)
-            .filter(|all| all.iter().all(|answer| !answer.0.is_empty()))
+        self.0.iter().map(QuestionDraft::answer).collect()
     }
 }
 
@@ -813,51 +702,40 @@ mod tests {
 
     #[test]
     fn every_question_needs_an_answer_before_the_draft_is_sent() {
-        let fresh =
+        let mut draft =
             Draft::new(&[question(Selection::One), question(Selection::Many)]);
-        let empty = fresh.answers();
-        let first_only = fresh.pick(0, String::from("Red"), Selection::One);
-        let one = first_only.answers();
-        let complete = first_only
-            .pick(0, String::from("Blue"), Selection::One)
-            .pick(1, String::from("Apple"), Selection::Many)
-            .pick(1, String::from("Pear"), Selection::Many)
-            .pick(1, String::from("Apple"), Selection::Many)
-            .r#type(1, " Plum ", Selection::Many);
-        let both = complete.answers();
-        let retyped = complete.r#type(0, "Green", Selection::One);
-        let typed = retyped.answers();
-        let repicked = retyped.pick(0, String::from("Red"), Selection::One);
+        assert_eq!(draft.answers(), None);
+        draft.0[0].pick(String::from("Red"), Selection::One);
+        assert_eq!(draft.answers(), None);
+        draft.0[0].pick(String::from("Blue"), Selection::One);
+        for label in ["Apple", "Pear", "Apple"] {
+            draft.0[1].pick(String::from(label), Selection::Many);
+        }
+        draft.0[1].r#type(String::from(" Plum "), Selection::Many);
         assert_eq!(
-            (
-                empty,
-                one,
-                both,
-                typed,
-                repicked.answers(),
-                repicked.typed(0)
-            ),
-            (
-                None,
-                None,
-                Some(Vec::from([answer(&["Blue"]), answer(&["Pear", "Plum"])])),
-                Some(Vec::from([
-                    answer(&["Green"]),
-                    answer(&["Pear", "Plum"])
-                ])),
-                Some(Vec::from([answer(&["Red"]), answer(&["Pear", "Plum"])])),
-                String::new(),
-            )
+            draft.answers(),
+            Some(Vec::from([answer(&["Blue"]), answer(&["Pear", "Plum"])]))
         );
+        draft.0[0].r#type(String::from("Green"), Selection::One);
+        assert_eq!(
+            draft.answers(),
+            Some(Vec::from([answer(&["Green"]), answer(&["Pear", "Plum"])]))
+        );
+        draft.0[0].pick(String::from("Red"), Selection::One);
+        assert_eq!(
+            draft.answers(),
+            Some(Vec::from([answer(&["Red"]), answer(&["Pear", "Plum"])]))
+        );
+        assert_eq!(draft.typed(0), "");
     }
     #[test]
     fn the_typed_text_is_kept_per_question() {
-        let draft =
-            Draft::new(&[question(Selection::One), question(Selection::One)])
-                .r#type(1, "Green", Selection::One);
+        let mut draft =
+            Draft::new(&[question(Selection::One), question(Selection::One)]);
+        draft.0[1].r#type(String::from("Green"), Selection::One);
         assert_eq!(
             [draft.typed(0), draft.typed(1), draft.typed(2)],
-            [String::new(), String::from("Green"), String::new()]
+            ["", "Green", ""]
         );
     }
 }

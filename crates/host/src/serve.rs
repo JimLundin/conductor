@@ -10,6 +10,7 @@ use proto::{
     SignInCode, StartAt, Subscribe,
 };
 
+use crate::log::Kind;
 use crate::prelude::*;
 use crate::session;
 
@@ -194,37 +195,20 @@ pub enum Configure {
     Remove(InstanceId),
 }
 
-/// How the command log keeps a command's receipt, so a retry with the same
-/// id answers the first result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Ledger {
-    /// A read, a sign-in command, whose code must reach no store, or a
-    /// sync or clone of the home, which brings it up to date whenever it
-    /// runs: run it every time.
-    Unrecorded,
-    /// Runs alone, with its events in one transaction with its receipt.
-    Session,
-    /// An instance or issue command, which a retry must not repeat: runs
-    /// beside session commands; a retry waits for the first.
-    Receipt,
-}
-
 impl Route {
     #[must_use]
-    pub const fn ledger(&self) -> Ledger {
+    pub const fn ledger(&self) -> Option<Kind> {
         match self {
             Self::Order(_, Order::Diff(_))
             | Self::SignIn(_)
-            | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => {
-                Ledger::Unrecorded
-            }
+            | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => None,
             Self::Configure(_)
             | Self::Finish(..)
             | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {
-                Ledger::Receipt
+                Some(Kind::Receipt)
             }
             Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
-                Ledger::Session
+                Some(Kind::Session)
             }
         }
     }

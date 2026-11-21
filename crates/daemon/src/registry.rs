@@ -28,13 +28,13 @@ use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 
-use crate::Stopped;
 use crate::credentials::{RecoveredAdoption, SigningLease, Store, Stored};
 use crate::home::{HomeClone, Placement};
 use crate::log::Log;
 use crate::session::{Order, Session, Told};
 use crate::sign_in::{Report, Runs};
 use crate::start::Providers;
+use crate::{Stopped, ask};
 
 /// A subscriber this far behind the sign-ins is dropped and resubscribes.
 const SIGN_IN_BUFFER: usize = 64;
@@ -155,13 +155,12 @@ impl Registry {
             effort,
             by,
         };
-        let started = self
-            .ask(|reply| RegistryMsg::Start {
-                request,
-                placed: Box::new(placed),
-                reply,
-            })
-            .await?;
+        let started = ask(&self.inbox, |reply| RegistryMsg::Start {
+            request,
+            placed: Box::new(placed),
+            reply,
+        })
+        .await?;
         if let Some((issue, by)) = started.progress {
             self.home.started(issue, by).await?;
         }
@@ -181,8 +180,11 @@ impl Registry {
         &self,
         session: SessionId,
     ) -> Result<Result<(Session, Instance, Models), Rejection>, Stopped> {
-        self.ask(|reply| RegistryMsg::Continue { session, reply })
-            .await
+        ask(&self.inbox, |reply| RegistryMsg::Continue {
+            session,
+            reply,
+        })
+        .await
     }
 
     /// The session with this id, if the registry has it.
@@ -194,7 +196,7 @@ impl Registry {
         &self,
         session: SessionId,
     ) -> Result<Option<Session>, Stopped> {
-        self.ask(|reply| RegistryMsg::Find { session, reply }).await
+        ask(&self.inbox, |reply| RegistryMsg::Find { session, reply }).await
     }
 
     /// What `Welcome` tells a client the host can run.
@@ -203,7 +205,7 @@ impl Registry {
     ///
     /// Fails if the registry has stopped.
     pub async fn instances(&self) -> Result<(Instances, Catalog), Stopped> {
-        self.ask(|reply| RegistryMsg::Instances { reply }).await
+        ask(&self.inbox, |reply| RegistryMsg::Instances { reply }).await
     }
 
     /// Changes the host's instances and answers with what it runs then:
@@ -217,8 +219,11 @@ impl Registry {
         &self,
         configure: Configure,
     ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| RegistryMsg::Configure { configure, reply })
-            .await
+        ask(&self.inbox, |reply| RegistryMsg::Configure {
+            configure,
+            reply,
+        })
+        .await
     }
 
     /// Starts, answers or cancels an instance's sign-in.
@@ -230,7 +235,7 @@ impl Registry {
         &self,
         order: SignInOrder,
     ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| RegistryMsg::SignIn { order, reply }).await
+        ask(&self.inbox, |reply| RegistryMsg::SignIn { order, reply }).await
     }
 
     /// Captures the sign-ins, offers and their live updates in one registry turn.
@@ -239,19 +244,7 @@ impl Registry {
     ///
     /// Fails if the registry has stopped.
     pub async fn watch(&self) -> Result<Watch, Stopped> {
-        self.ask(|reply| RegistryMsg::Watch { reply }).await
-    }
-
-    async fn ask<T>(
-        &self,
-        build: impl FnOnce(oneshot::Sender<T>) -> RegistryMsg,
-    ) -> Result<T, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(build(reply))
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
+        ask(&self.inbox, |reply| RegistryMsg::Watch { reply }).await
     }
 }
 

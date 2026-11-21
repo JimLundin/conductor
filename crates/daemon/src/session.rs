@@ -170,12 +170,7 @@ impl Session {
         &self,
         request: Request,
     ) -> Result<CommandResult, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(SessionMsg { request, reply })
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
+        crate::ask(&self.inbox, |reply| SessionMsg { request, reply }).await
     }
 }
 

@@ -3,19 +3,10 @@
 
 #![expect(
     clippy::disallowed_types,
-    reason = "rsx! caches each template in a OnceLock static"
-)]
-#![expect(
     clippy::empty_enums,
-    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
-)]
-#![expect(
     clippy::shadow_reuse,
-    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
-)]
-#![expect(
     clippy::useless_format,
-    reason = "rsx! expands each \"{text}\" node to format!"
+    reason = "Dioxus generates template caches and props builders and formats text nodes"
 )]
 
 use dioxus::prelude::*;

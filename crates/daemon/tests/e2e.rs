@@ -421,7 +421,11 @@ fn seqs(events: &[Event]) -> Vec<HostSeq> {
 }
 
 fn fold(events: Vec<Event>) -> HostView {
-    events.into_iter().fold(HostView::empty(), HostView::apply)
+    let mut view = HostView::empty();
+    for event in events {
+        view.apply(event);
+    }
+    view
 }
 
 /// One command and the host's literal answer.
@@ -1529,6 +1533,46 @@ async fn a_codex_question_is_answered_by_its_question_id() -> Fallible {
     fx.shutdown().await
 }
 
+async fn assert_session_approval(
+    link: &HostLink,
+    updates: &mut Updates,
+    session: SessionId,
+    first: &str,
+    again: &str,
+    touch: &ToolKind,
+) -> Fallible {
+    accepted(link, resolve(session, 1, Decision::ApproveForSession)).await?;
+    let first_turn = kinds_until(updates, Until::TurnEnd).await?;
+    let _ = send(link, message(session, "again")).await?;
+    let second_turn = kinds_until(updates, Until::TurnEnd).await?;
+    assert_eq!(
+        (
+            calls_and_requests(first_turn),
+            calls_and_requests(second_turn)
+        ),
+        (
+            Vec::from([
+                EventKind::RequestResolved {
+                    request: RequestId(1),
+                    resolution: Resolution::Decided {
+                        decision: Decision::ApproveForSession,
+                        by: test_client(),
+                    },
+                },
+                finished(first, ToolOutcome::Succeeded),
+                turn_end(TurnOutcome::Completed),
+            ]),
+            Vec::from([
+                user("again"),
+                started(again, touch),
+                finished(again, ToolOutcome::Succeeded),
+                turn_end(TurnOutcome::Completed),
+            ]),
+        )
+    );
+    Ok(())
+}
+
 /// Approving for the session adds the CLI's suggested rule for the session
 /// only, so the same command runs again without a request.
 #[tokio::test]
@@ -1564,35 +1608,8 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
         ]
         .concat()
     );
-    accepted(&link, resolve(session, 1, Decision::ApproveForSession)).await?;
-    let first_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
-    let _ = send(&link, message(session, "again")).await?;
-    let second_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
-    assert_eq!(
-        (
-            calls_and_requests(first_turn),
-            calls_and_requests(second_turn)
-        ),
-        (
-            Vec::from([
-                EventKind::RequestResolved {
-                    request: RequestId(1),
-                    resolution: Resolution::Decided {
-                        decision: Decision::ApproveForSession,
-                        by: test_client(),
-                    },
-                },
-                finished(first, ToolOutcome::Succeeded),
-                turn_end(TurnOutcome::Completed),
-            ]),
-            Vec::from([
-                user("again"),
-                started(again, &touch),
-                finished(again, ToolOutcome::Succeeded),
-                turn_end(TurnOutcome::Completed),
-            ]),
-        )
-    );
+    assert_session_approval(&link, &mut updates, session, first, again, &touch)
+        .await?;
     assert_eq!(
         sent_to_agent(&dir)?
             .matches(r#""updatedPermissions":[{"behavior":"allow","destination":"session","rules":[{"ruleContent":"touch t1.txt","toolName":"Bash"}],"type":"addRules"}]"#)
@@ -1622,51 +1639,26 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
     };
     let asked =
         calls_and_requests(kinds_until(&mut updates, Until::Request).await?);
-    accepted(&link, resolve(session, 1, Decision::ApproveForSession)).await?;
-    let first_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
-    let _ = send(&link, message(session, "again")).await?;
-    let second_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
-        (
-            asked,
-            calls_and_requests(first_turn),
-            calls_and_requests(second_turn)
-        ),
-        (
-            [
-                opening(Provider::Codex, &dir),
-                Vec::from([
-                    user("touch t1.txt"),
-                    started(first, &touch),
-                    EventKind::RequestOpened {
-                        request: RequestId(1),
-                        call: ToolCallId(String::from(first)),
-                        tool: touch.clone(),
-                        reason: None,
-                        for_session: Some(String::from(command)),
-                    },
-                ]),
-            ]
-            .concat(),
+        asked,
+        [
+            opening(Provider::Codex, &dir),
             Vec::from([
-                EventKind::RequestResolved {
+                user("touch t1.txt"),
+                started(first, &touch),
+                EventKind::RequestOpened {
                     request: RequestId(1),
-                    resolution: Resolution::Decided {
-                        decision: Decision::ApproveForSession,
-                        by: test_client(),
-                    },
+                    call: ToolCallId(String::from(first)),
+                    tool: touch.clone(),
+                    reason: None,
+                    for_session: Some(String::from(command)),
                 },
-                finished(first, ToolOutcome::Succeeded),
-                turn_end(TurnOutcome::Completed),
             ]),
-            Vec::from([
-                user("again"),
-                started(again, &touch),
-                finished(again, ToolOutcome::Succeeded),
-                turn_end(TurnOutcome::Completed),
-            ]),
-        )
+        ]
+        .concat()
     );
+    assert_session_approval(&link, &mut updates, session, first, again, &touch)
+        .await?;
     link.stop().await?;
     fx.shutdown().await
 }

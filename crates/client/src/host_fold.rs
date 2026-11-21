@@ -1,5 +1,4 @@
 use alloc::collections::BTreeMap;
-use core::mem;
 
 use crate::host_view::HostView;
 use crate::link::{LinkState, Status, Update};
@@ -38,7 +37,7 @@ impl HostFold {
                 self.sign_ins.clear();
             }
             Update::Feed(Feed::Event(event)) => {
-                self.view = mem::take(&mut self.view).apply(event);
+                self.view.apply(event);
             }
             Update::Feed(Feed::Home(home)) => self.home = Some(home),
             Update::Feed(Feed::SignIn(sign_in)) => self.sign_in(sign_in),

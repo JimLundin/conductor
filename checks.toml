@@ -13,10 +13,10 @@ paths = ["docs/**/*.txt", "docs/**/*.log", "docs/**/NOTES.md", "tools/scrub-ips.
 
 [[suite]]
 name = "wasm-clippy"
-command = "tools/wasm-clippy.sh"
+command = "cargo clippy --target wasm32-unknown-unknown -p proto -p client -p ui -p net -p app --features app/web"
 [[suite.when]]
 tier = "commit"
-packages = ["proto", "client", "net", "app"]
+packages = ["proto", "client", "ui", "net", "app"]
 
 [[suite]]
 name = "browser"

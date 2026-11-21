@@ -62,9 +62,8 @@ impl Host {
         }
     }
 
-    /// The host after `update`, and whether it gave a name the app hasn't
-    /// saved.
-    pub fn linked(mut self, update: Update) -> (Self, bool) {
+    /// Returns whether the host gave a new name to save.
+    pub fn linked(&mut self, update: Update) -> bool {
         self.fold.apply(update);
         let renamed = self
             .fold
@@ -74,7 +73,7 @@ impl Host {
         if renamed {
             self.saved.clone_from(&self.fold.name);
         }
-        (self, renamed)
+        renamed
     }
 
     /// What the app calls the host: the name it gave, else a short form of

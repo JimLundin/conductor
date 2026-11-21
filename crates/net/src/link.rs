@@ -6,13 +6,13 @@
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
-use std::future::{pending, ready};
+use std::future::{Future, pending, ready};
+use std::pin::Pin;
 use std::time::Duration;
 
 use crate::wire::{self, WireError};
 use iroh::endpoint::{BindError, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr};
-use n0_future::boxed::BoxFuture;
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{FuturesUnordered, StreamExt, join_all, task};
 
@@ -261,6 +261,7 @@ struct Stopped {
     reply: Option<oneshot::Sender<()>>,
 }
 
+type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
 type Halves = (SendStream, RecvStream);
 
 /// How the operation in flight ended.

@@ -18,7 +18,7 @@ use proto::{
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::Stopped;
+use crate::{Stopped, ask};
 
 /// A subscriber this far behind the live feed is dropped and resubscribes
 /// from its cursor (architecture §8).
@@ -212,7 +212,7 @@ impl Log {
         session: SessionId,
         kind: EventKind,
     ) -> Result<Event, Stopped> {
-        self.ask(|reply| LogMsg::Append {
+        ask(&self.inbox, |reply| LogMsg::Append {
             session,
             kind,
             reply,
@@ -223,33 +223,16 @@ impl Log {
     /// Undo's durable intent/phase boundary before external Git/provider effects.
     /// Keeps the command active, but commits its explicit recovery state now.
     pub(crate) async fn barrier(&self) -> Result<(), Stopped> {
-        self.ask(|reply| LogMsg::Barrier { reply }).await
+        ask(&self.inbox, |reply| LogMsg::Barrier { reply }).await
     }
 
     pub(crate) async fn begin(
         &self,
         key: CommandId,
+        kind: Kind,
     ) -> Result<BeginCommand, Stopped> {
-        self.ask(|reply| {
-            LogMsg::Begin(CommandStart {
-                key,
-                kind: Kind::Session,
-                reply,
-            })
-        })
-        .await
-    }
-
-    pub(crate) async fn begin_receipt(
-        &self,
-        key: CommandId,
-    ) -> Result<BeginCommand, Stopped> {
-        self.ask(|reply| {
-            LogMsg::Begin(CommandStart {
-                key,
-                kind: Kind::Receipt,
-                reply,
-            })
+        ask(&self.inbox, |reply| {
+            LogMsg::Begin(CommandStart { key, kind, reply })
         })
         .await
     }
@@ -259,28 +242,38 @@ impl Log {
         session: SessionId,
         id: String,
     ) -> Result<(), Stopped> {
-        self.ask(|reply| LogMsg::Conversation { session, id, reply })
-            .await
+        ask(&self.inbox, |reply| LogMsg::Conversation {
+            session,
+            id,
+            reply,
+        })
+        .await
     }
 
     pub(crate) async fn history(&self) -> Result<Vec<Event>, Stopped> {
-        self.ask(|reply| LogMsg::History { reply }).await
+        ask(&self.inbox, |reply| LogMsg::History { reply }).await
     }
 
     pub(crate) async fn finish_history(
         &self,
         session: SessionId,
     ) -> Result<Vec<Event>, Stopped> {
-        self.ask(|reply| LogMsg::CurrentHistory { session, reply })
-            .await
+        ask(&self.inbox, |reply| LogMsg::CurrentHistory {
+            session,
+            reply,
+        })
+        .await
     }
 
     pub(crate) async fn saved_conversation(
         &self,
         session: SessionId,
     ) -> Result<Option<String>, Stopped> {
-        self.ask(|reply| LogMsg::SavedConversation { session, reply })
-            .await
+        ask(&self.inbox, |reply| LogMsg::SavedConversation {
+            session,
+            reply,
+        })
+        .await
     }
 
     /// Resolves when the log fails or shuts down, so the host stops its
@@ -296,7 +289,7 @@ impl Log {
     ///
     /// Fails if the log has already stopped.
     pub async fn shutdown(&self) -> Result<(), Stopped> {
-        self.ask(|reply| LogMsg::Shutdown { reply }).await
+        ask(&self.inbox, |reply| LogMsg::Shutdown { reply }).await
     }
 
     /// The log's head as of now, for a client the registry says can run
@@ -311,7 +304,7 @@ impl Log {
         catalog: Catalog,
         home: Option<Home>,
     ) -> Result<Welcome, Stopped> {
-        self.ask(|reply| LogMsg::Welcome {
+        ask(&self.inbox, |reply| LogMsg::Welcome {
             instances,
             catalog,
             home,
@@ -329,7 +322,7 @@ impl Log {
         &self,
         after: HostSeq,
     ) -> Result<Subscription, Stopped> {
-        self.ask(|reply| LogMsg::Subscribe { after, reply }).await
+        ask(&self.inbox, |reply| LogMsg::Subscribe { after, reply }).await
     }
 
     /// A client's subscription, or `None` if its cursor is from another
@@ -342,19 +335,7 @@ impl Log {
         &self,
         subscribe: Subscribe,
     ) -> Result<Option<Subscription>, Stopped> {
-        self.ask(|reply| LogMsg::Resume { subscribe, reply }).await
-    }
-
-    async fn ask<T>(
-        &self,
-        build: impl FnOnce(oneshot::Sender<T>) -> LogMsg,
-    ) -> Result<T, Stopped> {
-        let (reply, answer) = oneshot::channel();
-        self.inbox
-            .send(build(reply))
-            .await
-            .map_err(|_| Stopped {})?;
-        answer.await.map_err(|_| Stopped {})
+        ask(&self.inbox, |reply| LogMsg::Resume { subscribe, reply }).await
     }
 }
 
@@ -634,14 +615,14 @@ mod durability_tests {
 
     use proto::{CommandId, CommandResult, EventKind, HostSeq, SessionId};
 
-    use super::{BeginCommand, CommandLease, CommandStart, Log, LogMsg};
+    use super::{BeginCommand, CommandLease, CommandStart, Kind, Log, LogMsg};
     use tokio::sync::oneshot;
 
     async fn lease(
         log: &Log,
         key: u128,
     ) -> Result<CommandLease, crate::Stopped> {
-        match log.begin(CommandId(key)).await? {
+        match log.begin(CommandId(key), Kind::Session).await? {
             BeginCommand::Execute(lease) => Ok(lease),
             BeginCommand::Cached(_) => Err(crate::Stopped {}),
         }
@@ -657,7 +638,7 @@ mod durability_tests {
             directory.join(format!("receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path)?;
-        let receipt = match log.begin_receipt(CommandId(23)).await? {
+        let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -677,7 +658,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(23),
-                kind: host::log::Kind::Session,
+                kind: Kind::Session,
                 reply: retry_reply,
             }))
             .await?;
@@ -699,7 +680,7 @@ mod durability_tests {
         assert_eq!(retried, Some(CommandResult::Accepted));
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
-        let cached = match reopened.begin_receipt(CommandId(23)).await? {
+        let cached = match reopened.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
@@ -712,7 +693,7 @@ mod durability_tests {
     async fn receipt_lease_drop_fails_closed()
     -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), proto::Epoch(1));
-        let receipt = match log.begin_receipt(CommandId(23)).await? {
+        let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -752,7 +733,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(1),
-                kind: host::log::Kind::Session,
+                kind: Kind::Session,
                 reply: duplicate_reply,
             }))
             .await?;
@@ -760,7 +741,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(2),
-                kind: host::log::Kind::Session,
+                kind: Kind::Session,
                 reply: next_reply,
             }))
             .await?;
@@ -781,7 +762,7 @@ mod durability_tests {
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(reopened.subscribe(HostSeq(0)).await?.replay.len(), 1);
-        let cached = match reopened.begin(CommandId(1)).await? {
+        let cached = match reopened.begin(CommandId(1), Kind::Session).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };

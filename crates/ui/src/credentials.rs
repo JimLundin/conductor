@@ -219,11 +219,11 @@ pub struct Forms {
 
 impl Forms {
     pub fn update(
-        mut self,
+        &mut self,
         intent: CredentialIntent,
         at: At,
         catalog: &Catalog,
-    ) -> (Self, Vec<Effect>) {
+    ) -> Vec<Effect> {
         match intent {
             CredentialIntent::Type {
                 provider,
@@ -235,18 +235,12 @@ impl Forms {
                     .entry((provider, kind))
                     .or_default()
                     .insert(field, text);
-                (self, Vec::new())
+                Vec::new()
             }
-            CredentialIntent::Save { provider, kind } => {
-                let described = catalog
-                    .of(provider)
-                    .and_then(|info| info.form(&kind))
-                    .cloned();
-                match described {
-                    Some(form) => self.save(provider, &form, at),
-                    None => (self, Vec::new()),
-                }
-            }
+            CredentialIntent::Save { provider, kind } => catalog
+                .of(provider)
+                .and_then(|info| info.form(&kind))
+                .map_or_else(Vec::new, |form| self.save(provider, form, at)),
             CredentialIntent::Remove(instance) => {
                 let body = CommandBody::RemoveInstance {
                     instance: instance.clone(),
@@ -259,36 +253,18 @@ impl Forms {
                 );
                 effects
                     .push(Effect::Focus(Focus::Element(add_heading(at.host))));
-                (self, effects)
+                effects
             }
-            signing @ (CredentialIntent::StartSignIn(_)
-            | CredentialIntent::TypeSignInCode(..)
-            | CredentialIntent::SubmitSignInCode(_)
-            | CredentialIntent::CancelSignIn(_)
-            | CredentialIntent::CopySignInCode(..)) => {
-                self.signing(signing, at)
-            }
-        }
-    }
-
-    /// What a sign-in's controls do.
-    fn signing(
-        mut self,
-        intent: CredentialIntent,
-        at: At,
-    ) -> (Self, Vec<Effect>) {
-        match intent {
             CredentialIntent::StartSignIn(instance) => {
                 self.forget_sign_in(&instance);
                 let body = CommandBody::StartSignIn {
                     instance: instance.clone(),
                 };
-                let effects = self.sign_in(instance, body, at);
-                (self, effects)
+                self.sign_in(instance, body, at)
             }
             CredentialIntent::TypeSignInCode(instance, text) => {
                 self.codes.insert(instance, text);
-                (self, Vec::new())
+                Vec::new()
             }
             CredentialIntent::SubmitSignInCode(instance) => {
                 let typed = self.codes.remove(&instance).unwrap_or_default();
@@ -296,24 +272,19 @@ impl Forms {
                     instance: instance.clone(),
                     code: SignInCode(String::from(typed.trim())),
                 };
-                let effects = self.sign_in(instance, body, at);
-                (self, effects)
+                self.sign_in(instance, body, at)
             }
             CredentialIntent::CancelSignIn(instance) => {
                 self.forget_sign_in(&instance);
                 let body = CommandBody::CancelSignIn {
                     instance: instance.clone(),
                 };
-                let effects = self.sign_in(instance, body, at);
-                (self, effects)
+                self.sign_in(instance, body, at)
             }
             CredentialIntent::CopySignInCode(instance, code) => {
                 self.copied.insert(instance);
-                (self, Vec::from([Effect::Copy(code)]))
+                Vec::from([Effect::Copy(code)])
             }
-            CredentialIntent::Type { .. }
-            | CredentialIntent::Save { .. }
-            | CredentialIntent::Remove(_) => (self, Vec::new()),
         }
     }
 
@@ -349,23 +320,19 @@ impl Forms {
     /// Sends the form's values, the text ones trimmed, and empties its
     /// secrets.
     fn save(
-        mut self,
+        &mut self,
         provider: Provider,
         form: &CredentialForm,
         at: At,
-    ) -> (Self, Vec<Effect>) {
+    ) -> Vec<Effect> {
         let key = (provider, form.kind.clone());
-        let draft = self.drafts.remove(&key).unwrap_or_default();
+        let draft = self.drafts.entry(key).or_default();
         let values = form
             .fields
             .iter()
-            .map(|field| (field.id.clone(), sent_value(field, &draft)))
+            .map(|field| (field.id.clone(), sent_value(field, draft)))
             .collect::<BTreeMap<String, String>>();
-        let kept = draft
-            .into_iter()
-            .filter(|(id, _)| !secret(form, id))
-            .collect::<BTreeMap<String, String>>();
-        self.drafts.insert(key, kept);
+        draft.retain(|id, _| !secret(form, id));
         let credential = Credential {
             kind: form.kind.clone(),
             values,
@@ -374,18 +341,17 @@ impl Forms {
             provider,
             credential,
         };
-        let effects = self.send(Subject::Add(provider), Done::Stored, body, at);
-        (self, effects)
+        self.send(Subject::Add(provider), Done::Stored, body, at)
     }
 
     /// The host's answer to what `subject`'s forms sent.
     pub fn replied(
-        mut self,
+        &mut self,
         subject: Subject,
         done: Done,
         answer: Result<CommandResult, String>,
         host: &str,
-    ) -> Self {
+    ) {
         let sent = match answer {
             Ok(CommandResult::Instances(_)) => Sent::Done(done),
             Ok(CommandResult::Accepted) if done == Done::SignIn => {
@@ -403,7 +369,6 @@ impl Forms {
             Err(error) => Sent::Failed(error),
         };
         self.sent.insert(subject, sent);
-        self
     }
 
     /// A section for each instance the host has, with where its sign-in

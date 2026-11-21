@@ -1,22 +1,13 @@
 //! The app shell: it holds the state, feeds it every intent and each
-//! host's link updates through `ui::update`, and performs the effects that
+//! host's link updates through `State::update`, and performs the effects that
 //! come back. It keeps one live link per paired host.
 
 #![expect(
     clippy::disallowed_types,
-    reason = "rsx! caches each template in a OnceLock static"
-)]
-#![expect(
     clippy::empty_enums,
-    reason = "derive(Props) on each component's props struct declares empty error enums for missing and repeated props"
-)]
-#![expect(
     clippy::shadow_reuse,
-    reason = "derive(Props) on each component's props struct rebinds every prop in its builder"
-)]
-#![expect(
     clippy::useless_format,
-    reason = "rsx! expands each \"{text}\" node to format!"
+    reason = "Dioxus generates template caches and props builders and formats text nodes"
 )]
 
 use std::collections::BTreeMap;
@@ -47,11 +38,8 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn dispatch(self, intent: Intent) {
-        let mut state = self.state;
-        let (next, effects) =
-            ui::update(state.replace(State::default()), intent);
-        state.set(next);
+    pub fn dispatch(mut self, intent: Intent) {
+        let effects = self.state.write().update(intent);
         for effect in effects {
             self.perform(effect);
         }
