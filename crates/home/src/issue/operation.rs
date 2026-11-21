@@ -117,6 +117,119 @@ impl Recorded {
     }
 }
 
+/// Kept edits and whether the current branch covers each of them.
+#[derive(Debug, Default)]
+pub struct PendingEdits(Vec<Pending>);
+
+#[derive(Debug)]
+struct Pending {
+    edit: Edit,
+    covered: bool,
+}
+
+impl PendingEdits {
+    #[must_use]
+    pub fn loaded(edits: Vec<Edit>) -> Self {
+        let mut pending = Self::default();
+        for edit in edits {
+            pending.installed(edit);
+        }
+        pending
+    }
+
+    #[must_use]
+    pub const fn count(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
+        self.0.iter().find_map(|pending| pending.edit.issue_for(id))
+    }
+
+    pub fn stored(&self) -> impl Iterator<Item = &Edit> {
+        self.0.iter().map(|pending| &pending.edit)
+    }
+
+    pub fn with_recording<'a>(
+        &'a self,
+        edit: &'a Edit,
+    ) -> impl Iterator<Item = &'a Edit> {
+        self.stored().chain(core::iter::once(edit))
+    }
+
+    pub fn installed(&mut self, edit: Edit) {
+        self.0.push(Pending {
+            edit,
+            covered: false,
+        });
+    }
+
+    fn can_commit(&self, issue: IssueId) -> bool {
+        self.0
+            .iter()
+            .all(|pending| pending.covered || pending.edit.data.issue != issue)
+    }
+
+    pub fn committed(&mut self, written: Option<CommandId>) {
+        let Some(id) = written else { return };
+        if let Some(pending) = self
+            .0
+            .iter_mut()
+            .find(|pending| pending.edit.issue_for(id).is_some())
+        {
+            pending.covered = true;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        for pending in &mut self.0 {
+            pending.covered = false;
+        }
+    }
+
+    #[must_use]
+    pub fn replay_target(&self, index: usize) -> Option<Read> {
+        let (earlier, remaining) = self.0.split_at_checked(index)?;
+        let target = remaining.first()?.edit.read();
+        earlier
+            .iter()
+            .all(|pending| {
+                pending.covered || pending.edit.data.issue != target.issue
+            })
+            .then_some(target)
+    }
+
+    #[must_use]
+    pub fn replay(
+        &self,
+        index: usize,
+        current: Result<Option<&str>, String>,
+        upstream_changed: Option<u64>,
+    ) -> Write {
+        self.0[index].edit.replay(current, upstream_changed)
+    }
+
+    pub fn replayed(&mut self, index: usize, covered: bool) {
+        self.0[index].covered = covered;
+    }
+
+    /// Save this queue before replacing the current one.
+    #[must_use]
+    pub fn after_push(&self) -> Option<Self> {
+        if self.0.iter().all(|pending| !pending.covered) {
+            return None;
+        }
+        Some(Self::loaded(
+            self.0
+                .iter()
+                .filter(|pending| !pending.covered)
+                .map(|pending| pending.edit.clone())
+                .collect(),
+        ))
+    }
+}
+
 /// A step in delivering the pending edits to the home remote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
@@ -124,7 +237,6 @@ pub enum Delivery {
     Fetch,
     Reset,
     Rewrite,
-    Persist,
     Landed,
     Done,
 }
@@ -145,8 +257,7 @@ impl Delivery {
             (Self::Push { retry: true }, false) => Self::Fetch,
             (Self::Fetch, true) => Self::Reset,
             (Self::Reset, true) => Self::Rewrite,
-            (Self::Rewrite, true) => Self::Persist,
-            (Self::Persist, true) => Self::Push { retry: false },
+            (Self::Rewrite, true) => Self::Push { retry: false },
             _ => Self::Done,
         }
     }
@@ -229,6 +340,7 @@ impl Record {
     pub fn decide(
         mut self,
         current: Option<&str>,
+        pending: &PendingEdits,
     ) -> Result<Recorded, Rejection> {
         self.data.was = was(current, self.data.issue, &self.data.change);
         let edit = Edit {
@@ -244,9 +356,10 @@ impl Record {
                 return Err(Rejection::IssueNotSaved { reason });
             }
         };
+        let next = commit.filter(|_| pending.can_commit(edit.data.issue));
         Ok(Recorded(Recording::Keep(
             Box::new(edit),
-            commit,
+            next,
             self.command,
         )))
     }
@@ -277,12 +390,16 @@ impl Edit {
     pub fn replay(
         &self,
         current: Result<Option<&str>, String>,
-        changed: u64,
+        upstream_changed: Option<u64>,
     ) -> Write {
         let contents = match current {
             Ok(contents) => contents,
             Err(reason) => return Write::Waiting(reason),
         };
+        if contents.is_none() && upstream_changed.is_some() {
+            return Write::Dropped;
+        }
+        let changed = upstream_changed.unwrap_or(0);
         match apply(contents, self, Mode::Replay { changed }) {
             Applied::Write(text) => Write::Commit(self.commit(text)),
             Applied::Unchanged | Applied::AlreadyRecorded => Write::Unchanged,

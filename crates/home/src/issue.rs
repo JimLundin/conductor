@@ -660,8 +660,18 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
                     {
                         return Applied::AlreadyRecorded;
                     }
-                    changed(lines, &issue, change, (edit, mode))
-                        .map_or(Applied::Unchanged, |next| marked(next, marker))
+                    match changed(lines, &issue, change, (edit, mode)) {
+                        Some(next) => marked(next, marker),
+                        None if marker.is_some()
+                            && matches!(mode, Mode::Replay { .. }) =>
+                        {
+                            Lines::of(text)
+                                .map_or_else(Applied::Unreadable, |lines| {
+                                    marked(lines, marker)
+                                })
+                        }
+                        None => Applied::Unchanged,
+                    }
                 }
             }
         }

@@ -708,24 +708,30 @@ standards and issues, cloned on every host. Built so far are home steps
   retry doesn't repeat them, and are refused with `NoHome`,
   `UnknownProject`, `UnknownIssue` or `IssueNotSaved`. A host that dies
   between writing a new issue and committing the receipt opens it again
-  on the retry. The host writes the file and commits it in the clone as
-  Conductor, one commit per change, keeps the change (`home::issue::Edit`,
-  with the value the field had) in `<data>/home-edits.state` and pushes.
-  A push the remote refuses, and a sync while changes are kept
-  (`home::sync::Git::Replay`), fetch, reset the clone to the remote and
-  apply the kept changes again on top (`Mode::Replay`), then push, so the
-  host never merges its own commits. The issue decision returns the file
-  and commit to write, the edit to keep in `home-edits.state`, and an
-  ordered delivery through the clone and its upstream. The daemon
-  performs those effects and feeds their outcomes back to the core. A replayed field someone else
-  changed since stays theirs unless the change is newer than the file's
-  last commit on the remote; a note or an item the file has already
-  isn't added twice; a change whose issue is gone is dropped, and one
-  whose file no longer reads waits. A push clears only the changes the
-  clone holds. Offline, changes stay kept and committed locally,
-  `Home.unpushed` counts them, the sync is `Behind` while a push fails,
-  and the next sync lands them. A store of them that no longer decodes is
-  moved aside to `home-edits.unreadable`.
+  on the retry. Before acknowledging a change, the host saves its stable
+  command identity and the previous field value in
+  `<data>/home-edits.state`. The host writes and commits the issue file
+  locally, then attempts to push. If the queue cannot be saved, the
+  command returns `IssueNotSaved`; if a later commit or push fails,
+  the saved edit can be replayed. When an earlier edit to the same
+  issue is still waiting, the host saves the later edit for replay too.
+  A refused push or a sync with pending edits fetches and resets the
+  clone to upstream, replays the pending edits in order, then pushes.
+  Replay uses the fetched upstream file's last commit time to resolve
+  conflicting fields. The issue file records which logical edits have
+  been resolved, including edits whose value was already present and
+  those superseded by a newer value. Those outcomes can produce a commit
+  that adds only an identity marker.
+  An unreadable or malformed issue holds its edit and later edits to
+  the same issue. An absent issue can be created if its path has no
+  upstream history. Confirmed deletion lets the host retire its edits.
+  After a successful push the home core keeps any edits that still
+  wait, and the daemon saves that shortened queue before adopting it.
+  If saving fails, the host can replay the older queue without repeating
+  a resolved edit. `Home.unpushed` counts the kept edits.
+  The host retries reading a temporarily unreadable queue before saving
+  new edits and moves an undecodable queue aside to
+  `home-edits.unreadable`.
 - **Sessions on issues** (home step 7, started). `StartSession { at:
   StartAt::Issue(issue) }` starts in the issue's project's first
   checkout (`NotCheckedOut` without one). An instance has one session on

@@ -7,9 +7,9 @@ use proto::{
 };
 
 use super::{
-    Applied, Branch, Change, Edit, LegacyEdit, Mode, Move, Remote, apply,
-    branch, changing, fields, file, finished, listed, message, name, opening,
-    parse, render, start, started, was,
+    Applied, Branch, Change, Edit, LegacyEdit, Mode, Move, PendingEdits,
+    Remote, apply, branch, changing, fields, file, finished, listed, message,
+    name, opening, parse, render, start, started, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -812,7 +812,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     let request = context.open(&[project()], project(), ID, &wanted())?;
     let target = request.read();
     assert_eq!(target.path, file(&project(), ID));
-    let mut recorded = request.decide(None)?;
+    let mut recorded = request.decide(None, &PendingEdits::default())?;
     let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
         return Err(unexpected_effect());
     };
@@ -833,7 +833,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         Some(RecordEffect::Scan)
     );
     assert_eq!(kept.next(Ok(()))?, None);
-    assert_eq!(edit.replay(Ok(None), OPENED), Write::Commit(commit.clone()));
+    assert_eq!(edit.replay(Ok(None), None), Write::Commit(commit.clone()));
     assert_eq!(commit.target, target);
     assert!(
         commit
@@ -856,7 +856,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     );
     assert_eq!(recorded.next(Ok(()))?, None);
     assert_eq!(
-        edit.replay(Ok(Some(&commit.text)), OPENED),
+        edit.replay(Ok(Some(&commit.text)), Some(OPENED)),
         Write::Unchanged
     );
     assert_eq!(
@@ -867,7 +867,12 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         Some(ID)
     );
     let existing = context.open(&[project()], project(), ID, &wanted())?;
-    assert_eq!(existing.decide(Some(&commit.text))?.next(Ok(()))?, None);
+    assert_eq!(
+        existing
+            .decide(Some(&commit.text), &PendingEdits::default())?
+            .next(Ok(()))?,
+        None
+    );
     Ok(())
 }
 
@@ -911,7 +916,8 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
             ..context
         };
         let request = each.edit(ID, change, "laptop")?;
-        let mut recorded = request.decide(Some(&current))?;
+        let mut recorded =
+            request.decide(Some(&current), &PendingEdits::default())?;
         let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
             return Err(unexpected_effect());
         };
@@ -920,16 +926,16 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
         };
         assert!(commit.message.starts_with(message));
         assert_eq!(
-            edit.replay(Ok(Some(&current)), OPENED),
+            edit.replay(Ok(Some(&current)), Some(OPENED)),
             Write::Commit(commit.clone())
         );
         assert_eq!(
-            edit.replay(Ok(Some(&commit.text)), OPENED),
+            edit.replay(Ok(Some(&commit.text)), Some(OPENED)),
             Write::Unchanged
         );
-        assert_eq!(edit.replay(Ok(None), OPENED), Write::Dropped);
+        assert_eq!(edit.replay(Ok(None), None), Write::Dropped);
         assert!(matches!(
-            edit.replay(Ok(Some("malformed")), OPENED),
+            edit.replay(Ok(Some("malformed")), Some(OPENED)),
             Write::Waiting(_)
         ));
         current = commit.text;
@@ -941,16 +947,25 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     };
     let request =
         fresh.edit(ID, IssueChange::Title(text("Older edit")), "laptop")?;
-    let mut recorded = request.decide(Some(&written()))?;
+    let mut recorded =
+        request.decide(Some(&written()), &PendingEdits::default())?;
     let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
         return Err(unexpected_effect());
     };
+    let Write::Commit(resolved) =
+        edit.replay(Ok(Some(&current)), Some(OPENED + 1))
+    else {
+        return Err(unexpected_effect());
+    };
+    assert!(resolved.text.contains("title = \"New title\""));
+    assert!(!resolved.text.contains("Older edit"));
+    let reverted = resolved.text.replace("New title", &issue().title);
     assert_eq!(
-        edit.replay(Ok(Some(&current)), OPENED + 1),
+        edit.replay(Ok(Some(&reverted)), Some(OPENED + 2)),
         Write::Unchanged
     );
     assert!(matches!(
-        edit.replay(Ok(Some(&current)), OPENED),
+        edit.replay(Ok(Some(&current)), Some(OPENED)),
         Write::Commit(_)
     ));
     Ok(())
@@ -974,7 +989,7 @@ fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection
         let request_context = Context { command, ..context };
         let mut recorded = request_context
             .edit(ID, note(), "laptop")?
-            .decide(Some(current))?;
+            .decide(Some(current), &PendingEdits::default())?;
         while let Some(effect) = recorded.next(Ok(()))? {
             if let RecordEffect::Persist(edit) = effect {
                 return Ok(edit);
@@ -984,30 +999,31 @@ fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection
     };
     let original = written();
     let first = record(CommandId(1), &original)?;
-    let Write::Commit(first_commit) = first.replay(Ok(Some(&original)), OPENED)
+    let Write::Commit(first_commit) =
+        first.replay(Ok(Some(&original)), Some(OPENED))
     else {
         return Err(unexpected_effect());
     };
     assert_eq!(
         context
             .edit(ID, note(), "laptop")?
-            .decide(Some(&first_commit.text))?
+            .decide(Some(&first_commit.text), &PendingEdits::default())?
             .next(Ok(()))?,
         None
     );
     let second = record(CommandId(2), &first_commit.text)?;
     let Write::Commit(second_commit) =
-        second.replay(Ok(Some(&first_commit.text)), OPENED)
+        second.replay(Ok(Some(&first_commit.text)), Some(OPENED))
     else {
         return Err(unexpected_effect());
     };
     assert_eq!(second_commit.text.matches(": Same note").count(), 2);
     assert_eq!(
-        first.replay(Ok(Some(&second_commit.text)), OPENED),
+        first.replay(Ok(Some(&second_commit.text)), Some(OPENED)),
         Write::Unchanged
     );
     assert_eq!(
-        second.replay(Ok(Some(&second_commit.text)), OPENED),
+        second.replay(Ok(Some(&second_commit.text)), Some(OPENED)),
         Write::Unchanged
     );
     Ok(())
@@ -1048,29 +1064,6 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
         Some(IssueChange::Status(IssueStatus::Review))
     );
     assert_eq!(finish.next(&open, ID), None);
-}
-
-#[test]
-fn a_failed_push_fetches_and_replays_before_acknowledging_edits() {
-    use super::Delivery::{
-        self, Done, Fetch, Landed, Persist, Push, Reset, Rewrite,
-    };
-
-    let push = Push { retry: true };
-    let retry = Push { retry: false };
-    assert_eq!(push.after(true), Landed);
-    assert_eq!(push.after(false), Fetch);
-    assert_eq!(Fetch.after(false), Done);
-    assert_eq!(Fetch.after(true), Reset);
-    assert_eq!(Delivery::replay(true), Reset);
-    assert_eq!(Delivery::replay(false), Done);
-    assert_eq!(Reset.after(false), Done);
-    assert_eq!(Reset.after(true), Rewrite);
-    assert_eq!(Rewrite.after(true), Persist);
-    assert_eq!(Persist.after(true), retry);
-    assert_eq!(retry.after(false), Done);
-    assert_eq!(retry.after(true), Landed);
-    assert_eq!(Landed.after(true), Done);
 }
 
 #[test]

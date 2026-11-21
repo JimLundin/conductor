@@ -26,8 +26,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use home::checkout::{Probe, Root};
 use home::instructions::{Own, Sources};
 use home::issue::{
-    Commit, Context, Delivery, Edit, LegacyEdit, Listing, Record, RecordEffect,
-    RemoteProbe, SessionUpdate, Write,
+    Commit, Context, Delivery, Edit, LegacyEdit, Listing, PendingEdits, Record,
+    RecordEffect, RemoteProbe, SessionUpdate, Write,
 };
 use home::project::Project;
 use home::sync::{Git, Sync};
@@ -259,13 +259,6 @@ impl HomeClone {
     }
 }
 
-/// An issue change the remote doesn't have yet, and whether the clone's
-/// branch holds it now, so a push lands it.
-struct Pending {
-    edit: Edit,
-    written: bool,
-}
-
 struct Actor {
     host: String,
     data_dir: PathBuf,
@@ -282,7 +275,8 @@ struct Actor {
     cloning: BTreeMap<ProjectId, Cloning>,
     issues: BTreeMap<ProjectId, Vec<Issue>>,
     /// The issue changes the remote doesn't have yet, oldest first.
-    edits: Vec<Pending>,
+    edits: PendingEdits,
+    edits_loaded: bool,
     edits_at: PathBuf,
     known: Vec<String>,
     shown: watch::Sender<Option<Home>>,
@@ -318,19 +312,15 @@ impl Actor {
             found: BTreeMap::new(),
             cloning: BTreeMap::new(),
             issues: BTreeMap::new(),
-            edits: load_edits(&edits_at)
-                .into_iter()
-                .map(|edit| Pending {
-                    edit,
-                    written: false,
-                })
-                .collect(),
+            edits: PendingEdits::default(),
+            edits_loaded: false,
             edits_at,
             shown,
         }
     }
 
     async fn run(mut self, mut inbox: mpsc::Receiver<Msg>) {
+        let _ = self.load_edits();
         self.scan().await;
         let mut ticks = tokio::time::interval(EVERY);
         while let Some(msg) = next(&mut inbox, &mut ticks).await {
@@ -458,7 +448,8 @@ impl Actor {
 
     /// Runs what brings the clone up to date with the remote.
     async fn bring_up(&mut self, remote: &str) -> Result<(), String> {
-        match home::sync::next(cloned(&self.clone), !self.edits.is_empty()) {
+        self.load_edits()?;
+        match home::sync::next(cloned(&self.clone), self.edits.count() != 0) {
             Git::Clone => {
                 let cloned = clone(&self.data_dir, remote, &self.clone).await;
                 self.replay_after(cloned).await
@@ -478,7 +469,8 @@ impl Actor {
         read: Result<(), String>,
     ) -> Result<(), String> {
         read?;
-        self.deliver(Delivery::replay(!self.edits.is_empty())).await
+        self.deliver(Delivery::replay(self.edits.count() != 0))
+            .await
     }
 
     async fn create(
@@ -487,6 +479,7 @@ impl Actor {
         wanted: IssueFields,
         command: CommandId,
     ) -> Result<IssueId, Rejection> {
+        self.load_edits().map_err(not_saved)?;
         if let Some(kept) = self.kept_issue(command) {
             return kept;
         }
@@ -517,6 +510,9 @@ impl Actor {
         client: &ClientName,
         command: CommandId,
     ) -> CommandResult {
+        if let Err(reason) = self.load_edits() {
+            return CommandResult::Rejected(not_saved(reason));
+        }
         if let Some(kept) = self.kept_issue(command) {
             return home::answer(kept.map(drop));
         }
@@ -527,10 +523,7 @@ impl Actor {
     }
 
     fn kept_issue(&self, id: CommandId) -> Option<Result<IssueId, Rejection>> {
-        let issue = self
-            .edits
-            .iter()
-            .find_map(|pending| pending.edit.issue_for(id))?;
+        let issue = self.edits.issue_for(id)?;
         Some(
             self.sync_edits()
                 .map(|()| issue)
@@ -559,14 +552,14 @@ impl Actor {
                 reason: format!("could not read {}: {err}", path.display()),
             }
         })?;
-        let mut recorded = request.decide(current.as_deref())?;
+        let mut recorded = request.decide(current.as_deref(), &self.edits)?;
         let mut outcome = Ok(());
         while let Some(effect) = recorded.next(outcome)? {
             outcome = match effect {
                 RecordEffect::Persist(edit) => self.persist(edit),
                 RecordEffect::Commit(commit) => self.commit(commit).await,
                 RecordEffect::Deliver { delivery, id } => {
-                    self.mark_written(id);
+                    self.edits.committed(id);
                     self.deliver(delivery).await
                 }
                 RecordEffect::Scan => {
@@ -576,17 +569,6 @@ impl Actor {
             };
         }
         Ok(())
-    }
-
-    fn mark_written(&mut self, written: Option<CommandId>) {
-        let Some(id) = written else { return };
-        if let Some(pending) = self
-            .edits
-            .last_mut()
-            .filter(|pending| pending.edit.issue_for(id).is_some())
-        {
-            pending.written = true;
-        }
     }
 
     async fn deliver(&mut self, mut step: Delivery) -> Result<(), String> {
@@ -599,11 +581,7 @@ impl Actor {
                     self.rewrite_all().await;
                     Ok(())
                 }
-                Delivery::Persist => self.keep(),
-                Delivery::Landed => {
-                    self.landed();
-                    Ok(())
-                }
+                Delivery::Landed => self.landed(),
                 Delivery::Done => return Ok(()),
             };
             step = step.after(outcome.is_ok());
@@ -614,60 +592,55 @@ impl Actor {
     }
 
     async fn rewrite_all(&mut self) {
-        let mut kept = Vec::new();
-        for pending in core::mem::take(&mut self.edits) {
-            kept.extend(self.rewrite(pending.edit).await);
+        self.edits.reset();
+        for index in 0..self.edits.count() {
+            if let Some(read) = self.edits.replay_target(index) {
+                let outcome = self.rewrite(index, &read.path).await.inspect_err(|reason| {
+                    tracing::warn!(target: "home", issue = ?read.issue, %reason, "an issue change waits");
+                });
+                self.edits.replayed(index, outcome.is_ok());
+            }
         }
-        self.edits = kept;
     }
 
-    /// Applies a kept change again on top of the remote, and keeps it
-    /// unless its issue is gone; one that can't be written waits.
-    async fn rewrite(&self, edit: Edit) -> Option<Pending> {
-        let read = edit.read();
-        let changed = changed_at(&self.clone, &read.path).await;
-        let current = committed_issue(&self.clone, &read.path).await;
-        let outcome = match edit.replay(
+    async fn rewrite(&self, index: usize, path: &str) -> Result<(), String> {
+        let changed = changed_at(&self.clone, path).await?;
+        let current = committed_issue(&self.clone, path).await;
+        match self.edits.replay(
+            index,
             current
                 .as_ref()
                 .map(Option::as_deref)
                 .map_err(String::clone),
             changed,
         ) {
-            Write::Unchanged => Ok(()),
-            Write::Dropped => {
-                tracing::warn!(target: "home", issue = ?read.issue, "dropped a change to an issue the home no longer has");
-                return None;
-            }
+            Write::Unchanged | Write::Dropped => Ok(()),
             Write::Waiting(reason) => Err(reason),
             Write::Commit(commit) => self.commit(commit).await,
-        };
-        if let Err(reason) = &outcome {
-            tracing::warn!(target: "home", %reason, "an issue change waits");
         }
-        Some(Pending {
-            edit,
-            written: outcome.is_ok(),
-        })
     }
 
-    /// The remote has every change written in the clone.
-    fn landed(&mut self) {
-        self.edits.retain(|pending| !pending.written);
-        let _ = self.keep();
+    fn landed(&mut self) -> Result<(), String> {
+        if let Some(remaining) = self.edits.after_push() {
+            self.save_edits(remaining.stored())?;
+            self.sync_edits()?;
+            self.edits = remaining;
+        }
+        Ok(())
     }
 
     fn persist(&mut self, edit: Edit) -> Result<(), String> {
-        self.edits.push(Pending {
-            edit,
-            written: false,
-        });
-        let installed = self.save_edits();
-        if installed.is_err() {
-            self.edits.pop();
-        }
-        installed?;
+        self.save_edits(self.edits.with_recording(&edit))?;
+        self.edits.installed(edit);
         self.sync_edits()
+    }
+
+    fn load_edits(&mut self) -> Result<(), String> {
+        if !self.edits_loaded {
+            self.edits = PendingEdits::loaded(load_edits(&self.edits_at)?);
+            self.edits_loaded = true;
+        }
+        Ok(())
     }
 
     fn sync_edits(&self) -> Result<(), String> {
@@ -675,21 +648,14 @@ impl Actor {
             .map_err(|err| format!("could not sync the issue queue: {err}"))
     }
 
-    fn keep(&self) -> Result<(), String> {
-        self.save_edits()?;
-        self.sync_edits()
-    }
-
-    fn save_edits(&self) -> Result<(), String> {
-        let edits = self
-            .edits
-            .iter()
-            .map(|pending| pending.edit.clone())
-            .collect::<Vec<Edit>>();
+    fn save_edits<'a>(
+        &self,
+        edits: impl Iterator<Item = &'a Edit>,
+    ) -> Result<(), String> {
         save(
             &self.edits_at,
             EDITS_VERSION,
-            &edits,
+            &edits.collect::<Vec<_>>(),
             "the unpushed issue changes",
         )
     }
@@ -770,7 +736,7 @@ impl Actor {
                         checkouts: &self.found,
                         cloning: &self.cloning,
                         issues: &self.issues,
-                        unpushed: u64::try_from(self.edits.len())
+                        unpushed: u64::try_from(self.edits.count())
                             .unwrap_or(u64::MAX),
                     },
                 )
@@ -946,14 +912,32 @@ async fn run(clone: &Path, args: &[&str]) -> Result<(), String> {
         .map_err(|err| err.to_string())
 }
 
-/// When the clone's branch last changed the file, in seconds since the
-/// Unix epoch; 0 when it never did.
-async fn changed_at(clone: &Path, relative: &str) -> u64 {
-    text(clone, &["log", "-1", "--format=%ct", "--", relative])
-        .await
-        .ok()
-        .and_then(|seconds| seconds.trim().parse().ok())
-        .unwrap_or(0)
+async fn changed_at(
+    clone: &Path,
+    relative: &str,
+) -> Result<Option<u64>, String> {
+    let seconds = text(
+        clone,
+        &[
+            "log",
+            "--full-history",
+            "-1",
+            "--format=%ct",
+            "@{upstream}",
+            "--",
+            relative,
+        ],
+    )
+    .await
+    .map_err(|err| err.to_string())?;
+    if seconds.is_empty() {
+        return Ok(None);
+    }
+    seconds
+        .trim()
+        .parse()
+        .map(Some)
+        .map_err(|err: std::num::ParseIntError| err.to_string())
 }
 
 /// Commits the file at `relative` alone, as Conductor.
@@ -1107,16 +1091,27 @@ const EDITS_VERSION: &[u8] = b"\x80\x00\x01";
 
 /// The unpushed issue changes the host kept. A store that no longer reads
 /// is moved aside, so its changes are not lost unseen.
-fn load_edits(path: &Path) -> Vec<Edit> {
-    let Ok(bytes) = std::fs::read(path) else {
-        return Vec::new();
+fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Vec::new());
+        }
+        Err(err) => {
+            return Err(format!("could not read the issue queue: {err}"));
+        }
     };
-    decode_edits(&bytes).unwrap_or_else(|err| {
+    decode_edits(&bytes).or_else(|err| {
         let aside = path.with_extension("unreadable");
-        let moved = std::fs::rename(path, &aside);
-        tracing::warn!(target: "home", %err, aside = %aside.display(), ?moved, "could not read the unpushed issue changes");
-        Vec::new()
+        tracing::warn!(target: "home", %err, aside = %aside.display(), "could not decode the unpushed issue changes");
+        std::fs::rename(path, aside)
+            .map(|()| Vec::new())
+            .map_err(|err| format!("could not move the unreadable issue queue: {err}"))
     })
+}
+
+const fn not_saved(reason: String) -> Rejection {
+    Rejection::IssueNotSaved { reason }
 }
 
 fn decode_edits(bytes: &[u8]) -> Result<Vec<Edit>, postcard::Error> {
