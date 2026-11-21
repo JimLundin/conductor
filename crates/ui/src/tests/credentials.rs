@@ -44,7 +44,7 @@ fn each_field_takes_its_kind_of_input_and_an_empty_form_doesnt_save() {
 }
 
 #[test]
-fn only_a_sign_in_takes_accepted_for_an_answer() {
+fn a_removal_takes_accepted_without_changing_the_roster() {
     let (removing, effects) = run(
         paired(),
         Vec::from([
@@ -67,7 +67,7 @@ fn only_a_sign_in_takes_accepted_for_an_answer() {
             .into_iter()
             .find(|instance| instance.instance == id("https://gw.example"))
             .map(|instance| instance.outcome.map(|hint| hint.text))),
-        Some(Some(text("desk gave an unexpected answer.")))
+        Some(None)
     );
 }
 
@@ -83,22 +83,34 @@ fn a_removal_says_so_once_the_instance_has_left_the_list() {
         ]),
     );
     let (answered, _) = run(
-        removing,
-        Vec::from([answer(
-            &effects,
-            Ok(CommandResult::Instances(claude(signed_in()))),
-        )]),
+        removing.clone(),
+        Vec::from([answer(&effects, Ok(CommandResult::Accepted))]),
     );
     let (gone, _) =
         run(answered.clone(), Vec::from([roster(claude(signed_in()))]));
+    let (updated, _) = run(removing, Vec::from([roster(claude(signed_in()))]));
+    let (completed, _) = run(
+        updated.clone(),
+        Vec::from([answer(&effects, Ok(CommandResult::Accepted))]),
+    );
     let removed = |state: &State| {
         pane_of(state)
             .and_then(|pane| pane.removed)
             .map(|hint| hint.text)
     };
     assert_eq!(
-        (removed(&answered), removed(&gone)),
-        (None, Some(text("Removed from desk.")))
+        [
+            removed(&answered),
+            removed(&gone),
+            removed(&updated),
+            removed(&completed),
+        ],
+        [
+            None,
+            Some(text("Removed from desk.")),
+            None,
+            Some(text("Removed from desk.")),
+        ]
     );
 }
 

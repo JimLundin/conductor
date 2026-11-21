@@ -387,16 +387,12 @@ impl Forms {
         host: &str,
     ) -> Self {
         let sent = match answer {
-            Ok(CommandResult::Instances(_)) => Sent::Done(done),
-            Ok(CommandResult::Accepted) if done == Done::SignIn => {
-                Sent::Done(done)
-            }
+            Ok(CommandResult::Accepted) => Sent::Done(done),
             Ok(CommandResult::Rejected(rejection)) => {
                 Sent::Failed(rejection.label())
             }
             Ok(
-                CommandResult::Accepted
-                | CommandResult::Started { .. }
+                CommandResult::Started { .. }
                 | CommandResult::Diff(_)
                 | CommandResult::IssueCreated { .. },
             ) => Sent::Failed(format!("{host} gave an unexpected answer.")),
@@ -622,7 +618,7 @@ impl Forms {
                 cancel,
                 ..idle
             },
-            Some(SignInStep::SignedIn { .. }) => SignInView {
+            Some(SignInStep::SignedIn) => SignInView {
                 start: Some(start("Sign in again")),
                 progress: Some(status(format!("Signed in on {host}."))),
                 ..idle

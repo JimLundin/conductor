@@ -320,17 +320,18 @@ impl SignIns {
         }
     }
 
-    /// The instance refreshed, and the host answered `result`, what it
-    /// runs now.
-    pub fn listed(&mut self, key: &Key, result: CommandResult) -> Vec<Effect> {
+    /// The instance refresh completed, or stopped without an answer.
+    pub fn listed(
+        &mut self,
+        key: &Key,
+        result: Option<CommandResult>,
+    ) -> Vec<Effect> {
         if self.current(key).is_none() {
             return Vec::new();
         }
         self.running.remove(&key.instance);
         let step = match result {
-            CommandResult::Instances(instances) => {
-                SignInStep::SignedIn { instances }
-            }
+            Some(CommandResult::Accepted) => SignInStep::SignedIn,
             other => SignInStep::Failed {
                 reason: format!(
                     "the host could not refresh the instance: {other:?}"
@@ -399,7 +400,7 @@ impl Running {
 #[must_use]
 pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
     match sign_in.step {
-        SignInStep::SignedIn { .. }
+        SignInStep::SignedIn
         | SignInStep::Failed { .. }
         | SignInStep::Cancelled => Some(&sign_in.instance),
         SignInStep::Starting
@@ -416,7 +417,7 @@ pub fn note(sign_in: &SignIn) -> Note {
         SignInStep::Starting => String::from("starting"),
         SignInStep::Open { .. } => String::from("open"),
         SignInStep::Finishing => String::from("finishing"),
-        SignInStep::SignedIn { .. } => String::from("signed in"),
+        SignInStep::SignedIn => String::from("signed in"),
         SignInStep::Failed { reason } => format!("failed: {reason}"),
         SignInStep::Cancelled => String::from("cancelled"),
     };

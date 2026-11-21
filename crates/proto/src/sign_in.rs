@@ -9,7 +9,7 @@ use alloc::string::String;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{InstanceId, Instances};
+use crate::InstanceId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignIn {
@@ -32,10 +32,7 @@ pub enum SignInStep {
     /// The CLI has what it needs: it finishes, and the host checks the
     /// home and lists the instance's models.
     Finishing,
-    /// The home is signed in, and the host runs these instances now.
-    SignedIn {
-        instances: Instances,
-    },
+    SignedIn,
     Failed {
         reason: String,
     },

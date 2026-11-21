@@ -227,7 +227,7 @@ mod tests {
             encode(&CommandResult::Rejected(Rejection::InstanceUnavailable {
                 reason: String::from("no codex"),
             }))?,
-            frame(b"\x03\x01\x08no codex")
+            frame(b"\x02\x01\x08no codex")
         );
         assert_eq!(
             encode(&CommandResult::Started {

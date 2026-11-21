@@ -307,7 +307,7 @@ fn a_restored_log_continues_from_its_head() {
 fn a_new_database_takes_the_format_and_another_format_does_not_open() {
     let refused = |found: u32| {
         Err(format!(
-            "the log is format {found}, and this host reads format 3; move the database aside to start over"
+            "the log is format {found}, and this host reads format {FORMAT}; move the database aside to start over"
         ))
     };
     assert_eq!(
@@ -316,8 +316,9 @@ fn a_new_database_takes_the_format_and_another_format_does_not_open() {
             opens(false, Some(FORMAT)),
             opens(false, None),
             opens(false, Some(2)),
+            opens(false, Some(3)),
         ],
-        [Ok(true), Ok(false), refused(1), refused(2)]
+        [Ok(true), Ok(false), refused(1), refused(2), refused(3)]
     );
 }
 

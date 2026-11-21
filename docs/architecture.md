@@ -385,7 +385,7 @@ describes stays keyed by `Provider`: the catalog's label, note and
 credential forms. The app shows an instance by its account, and the own
 instance by its provider's label. `SetCredential { provider, credential }`
 and `RemoveInstance { instance }` change the instances from the app; each
-answers `CommandResult::Instances`, once a credential change has refreshed
+answers `CommandResult::Accepted`, once a credential change has refreshed
 the instance and once an added instance's CLI has started.
 `RemoveInstance` is refused with `InstanceInUse { sessions }` while a
 session runs on the instance (created or ready, and not closed since):
@@ -522,9 +522,8 @@ until someone re-records them by hand (§6.2).
 
 - **Store (built):** `<data>/conductor.redb`, with typed redb table constants
   and postcard values (storage option C). Its `metadata` records the log
-  format, 3 since `SessionCreated` names its instance by its provider and
-  account; a database of
-  another format doesn't open, and is moved aside to start over. The
+  format, 4 since command receipts no longer carry instance snapshots. A
+  database of another format doesn't open and is moved aside to start over. The
   tables are `events`,
   `command_receipts`, `pending_requests`, `conversations` and `metadata`.
   Sessions, their model choices and resolved requests are reconstructed from
@@ -553,9 +552,9 @@ until someone re-records them by hand (§6.2).
   `RemoveInstance`) reserve their command id without holding
   the global event transaction during an instance's refresh or start.
   Other commands and live events can proceed. Duplicate ids wait for the
-  original result; superseded saves wait for the newest refresh and return
-  its snapshot. The final `Instances` result is committed as the
-  receipt before any reply, after an active ordinary transaction finishes.
+  original result; superseded saves wait for the newest refresh. The final
+  `Accepted` result is committed as the receipt before any reply, after an
+  active ordinary transaction finishes.
   The credential file remains outside redb: a crash after saving it but
   before the final receipt can cause a retry to reapply that change. No
   atomic credential-file/receipt guarantee is implied.
@@ -1107,9 +1106,11 @@ first one built. The others in the table become more forms.
   and discovery starts a server with the new key after the private config
   has been updated.
 - **Protocol:** `SetCredential { provider, credential }` and
-  `RemoveInstance { instance }` answer `Instances`, what the host runs
-  when the command completes. A retry returns its original receipt even after
-  the offer has changed. Clients follow the live roster in `Feed::Instances`.
+  `RemoveInstance { instance }` answer `Accepted` when the command completes.
+  A retry returns its original receipt even after the offer has changed.
+  Clients follow the current roster through `Welcome` and `Feed::Instances`;
+  neither command results nor sign-in completion carry snapshots. Completion
+  and roster updates can reach the client in either order.
   These commands require a client admitted by the ticket's token, which
   the device certificates of §6.1 replace.
 - **Write-only:** `Availability::Available { auth }` reports `Stored {
@@ -1218,9 +1219,9 @@ Built: the per-host subscription sign-in of each provider, on one host.
 5. **After it.** A sign-in that exits 0 runs the CLI's sign-in check against
    the home; one that passes makes the instance sign in on its own
    (`OwnSignIn::SignedIn`) and refreshes it, which lists its models. The
-   last step, `SignedIn { instances }`, records what the host ran at completion.
-   Subscribers receive the current availability through `Feed::Instances`. A CLI the host was given (`--cli`) is checked the same way
-   after a sign-in from the app, though it isn't at start.
+   last step, `SignedIn`, reports completion. Subscribers receive the current
+   availability through `Feed::Instances`. A CLI the host was given (`--cli`)
+   is checked the same way after a sign-in from the app, though it isn't at start.
 6. **Claude, shared token (planned).** The same flow with `claude
    setup-token`, which prints the token instead of storing it; the host
    sends the token to the root host, which puts it in the fleet config
@@ -1232,7 +1233,7 @@ Built: the per-host subscription sign-in of each provider, on one host.
    host, which puts it in the fleet config, so every host gets it.
 
 **Live only, stored nowhere.** The steps, `Starting`, `Open { url, code,
-paste }`, `Finishing`, `SignedIn { instances }`, `Failed { reason }` and
+paste }`, `Finishing`, `SignedIn`, `Failed { reason }` and
 `Cancelled`, reach clients as `Feed::SignIn` frames on the subscription
 beside its events. They are not events: the log neither stores nor replays
 them, and a new subscription starts with the sign-ins running then, taken
@@ -1678,13 +1679,13 @@ The owner settled these on 2026-11-12.
   cursor, so every reconnect resubscribes after the last applied seq, with
   no duplicate stored events and no gaps. A fresh cursor or an epoch change
   emits a reset before the welcome and subscription updates. The link
-  forwards the welcome, feed frames and command results from its current
-  connection.
+  forwards the welcome and feed frames from its current connection. Each
+  command returns its result directly to its caller.
 - `HostFold` (in `client`) keeps the connection status, the host's name,
   catalog, instance roster, sign-ins, and home. Each welcome replaces the
-  advertised facts and starts a new set of sign-ins. The feed and command
-  answers update those facts, while event frames go to `HostView`. A reset
-  clears the event history before the link replays the new epoch.
+  advertised facts and starts a new set of sign-ins. The feed updates those
+  facts, while event frames go to `HostView`. A reset clears the event history
+  before the link replays the new epoch.
 - `HostView` (in `client`, the pure `no_std` core) folds a host's events
   into what the UI renders: sessions,
   transcripts, tool cards and open requests. Its `SessionView` decides

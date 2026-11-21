@@ -18,9 +18,9 @@ use client::host_view::{
 };
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    Answer, Auth, Availability, Change, CheckpointId, ClientName, CommandBody,
-    CommandResult, Credential, Decision, Event, EventKind, Feed, HostPath,
-    InstanceId, Provider, RequestId, SessionId, StartAt, Ticket, TurnOutcome,
+    Answer, Change, CheckpointId, ClientName, CommandBody, CommandResult,
+    Credential, Decision, Event, EventKind, Feed, HostPath, InstanceId,
+    Provider, RequestId, SessionId, StartAt, Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -271,23 +271,13 @@ impl Session {
                 credential: chosen,
             })
             .await?;
-        let instances = match result {
-            CommandResult::Instances(instances) => instances,
+        match result {
+            CommandResult::Accepted => {}
             CommandResult::Rejected(rejection) => {
                 anyhow::bail!("{}", rejection.label())
             }
             _ => anyhow::bail!("the host gave an unexpected answer"),
-        };
-        anyhow::ensure!(
-            matches!(
-                instances.availability(&instance),
-                Some(Availability::Available {
-                    auth: Auth::Stored { .. },
-                    ..
-                })
-            ),
-            "the host does not report the gateway"
-        );
+        }
         self.log("registered the credential -> gateway")?;
         Ok(instance)
     }

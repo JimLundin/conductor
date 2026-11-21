@@ -42,7 +42,7 @@ What is built and what comes next. Update it in the commit that changes it.
   new-session picker lists instances. `--cli` and `--model` are each
   provider's defaults, and `conductord login <provider> [--account
   <account>]` signs one in on the host (ALPN `conductor/18`, credential
-  store format 5, log format 3); the app signs one in too (item 3). Next:
+  store format 5, log format 4); the app signs one in too (item 3). Next:
   per-instance model and CLI settings from the app; the store already
   keeps both. *Try:* save a gateway in *Credentials* and see its URL listed
   as an instance beside the provider's own.
@@ -72,8 +72,10 @@ What is built and what comes next. Update it in the commit that changes it.
   Pending and failed instances report unavailability; unrelated sessions
   and connections remain usable. At boot the stored instances start
   independently. Subscribers receive `Feed::Instances` whenever offers change
-  (ALPN `conductor/23`). Credential retries retain their final durable
-  `Instances` receipt.
+  (ALPN `conductor/24`). Instance commands keep their final durable
+  `Accepted` receipt. Current instance state comes only from `Welcome` and
+  the live feed; sign-in completion carries no snapshot, and command
+  answers return directly to their caller without a duplicate link update.
 
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per

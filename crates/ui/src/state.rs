@@ -634,7 +634,6 @@ fn refusal(answer: Result<CommandResult, String>) -> Option<String> {
         Ok(
             CommandResult::Accepted
             | CommandResult::Started { .. }
-            | CommandResult::Instances(_)
             | CommandResult::Diff(_)
             | CommandResult::IssueCreated { .. },
         ) => None,

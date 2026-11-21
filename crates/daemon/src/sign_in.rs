@@ -75,7 +75,7 @@ pub enum Report {
     Exited(Option<i32>, String),
     Expired,
     Checked(Result<Option<Account>, String>),
-    Listed(CommandResult),
+    Listed(Option<CommandResult>),
 }
 
 /// The sign-ins' tasks, each running sign-in's stdin and check, and what
@@ -197,7 +197,7 @@ impl Runs {
     ) {
         let sender = self.sender.clone();
         self.tasks.spawn(async move {
-            let result = answer.await.unwrap_or(CommandResult::Accepted);
+            let result = answer.await.ok();
             let _ = sender.send((key, Report::Listed(result)));
         });
     }
@@ -244,4 +244,44 @@ fn exited(status: io::Result<ExitStatus>) -> Report {
         |err| Report::Exited(None, err.to_string()),
         |ran| Report::Exited(ran.code(), ran.to_string()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use host::sign_in::{Effect, SignIns};
+    use proto::{Instance, InstanceId, Provider, SignInStep};
+    use tokio::sync::oneshot;
+
+    use super::{Report, Runs};
+
+    #[tokio::test]
+    async fn a_dropped_refresh_reply_fails_the_sign_in()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut sign_ins = SignIns::default();
+        let (_, effects) = sign_ins.start(
+            InstanceId::own(Provider::Claude),
+            Some(Instance::default()),
+        );
+        let key = effects
+            .into_iter()
+            .find_map(|effect| match effect {
+                Effect::Spawn { key, .. } => Some(key),
+                _ => None,
+            })
+            .ok_or("sign-in did not start")?;
+        let mut runs = Runs::default();
+        let (sender, answer) = oneshot::channel();
+        runs.listen(key.clone(), answer);
+        drop(sender);
+        let (reported, Report::Listed(result)) =
+            runs.next().await.ok_or("no refresh outcome")?
+        else {
+            return Err("unexpected sign-in report".into());
+        };
+        assert_eq!(reported, key);
+        assert!(
+            matches!(sign_ins.listed(&key, result).as_slice(), [Effect::Publish(sign_in)] if matches!(sign_in.step, SignInStep::Failed { .. }))
+        );
+        Ok(())
+    }
 }

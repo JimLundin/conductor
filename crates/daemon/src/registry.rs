@@ -206,7 +206,7 @@ impl Registry {
         self.ask(|reply| RegistryMsg::Instances { reply }).await
     }
 
-    /// Changes the host's instances and answers with what it runs then:
+    /// Changes the host's instances and acknowledges completion:
     /// once a changed credential has refreshed its instance, and once an
     /// added instance's CLI has started.
     ///

@@ -17,8 +17,7 @@ use core::time::Duration;
 use crate::host_view::is_delta;
 use crate::prelude::*;
 use proto::{
-    CommandResult, Epoch, Event, Feed as Frame, Hello, HelloReply, HostSeq,
-    Subscribe, Welcome,
+    Epoch, Event, Feed as Frame, Hello, HelloReply, HostSeq, Subscribe, Welcome,
 };
 
 const BACKOFF_FLOOR: Duration = Duration::from_millis(250);
@@ -60,7 +59,6 @@ pub enum Update {
     Reset(Epoch),
     Welcome(Welcome),
     Feed(Frame),
-    Answer(CommandResult),
 }
 
 /// A stream the host may close.
@@ -144,7 +142,6 @@ pub enum Input {
     /// The subscription is open and its events will follow.
     Subscribed,
     Frame(Frame),
-    Answered(CommandResult),
     Lost(Lost),
     /// The random number [`Operation::Draw`] asked for.
     Drawn(u64),
@@ -340,9 +337,6 @@ impl Link {
             }
             (Phase::Connected(_), Input::Frame(frame)) => {
                 Vec::from([Effect::Forward(Update::Feed(frame))])
-            }
-            (Phase::Connected(_), Input::Answered(answer)) => {
-                Vec::from([Effect::Forward(Update::Answer(answer))])
             }
             (
                 Phase::Greeting | Phase::Subscribing(_) | Phase::Connected(_),
@@ -608,9 +602,9 @@ mod tests {
     use core::time::Duration;
 
     use proto::{
-        AuthToken, Availability, Catalog, ClientName, CommandResult, Epoch,
-        Event, EventKind, Feed, Hello, HelloReply, HostSeq, InstanceId,
-        InstanceStatus, Instances, Provider, SessionId, Subscribe, Welcome,
+        AuthToken, Availability, Catalog, ClientName, Epoch, Event, EventKind,
+        Feed, Hello, HelloReply, HostSeq, InstanceId, InstanceStatus,
+        Instances, Provider, SessionId, Subscribe, Welcome,
     };
 
     use super::{
@@ -1167,22 +1161,6 @@ mod tests {
                 }),
                 Effect::Start(Operation::Draw),
             ]))
-        );
-    }
-
-    #[test]
-    fn answers_are_forwarded_while_connected() {
-        let answer = CommandResult::Instances(instances("signed out"));
-        let (link, effects) = live().step(Input::Answered(answer.clone()));
-        let (down, _) =
-            link.step(Input::Lost(Lost::HostClosed(Stream::Subscription)));
-        let (_, stale) = down.step(Input::Answered(answer.clone()));
-        assert_eq!(
-            (effects, stale),
-            (
-                Vec::from([Effect::Forward(Update::Answer(answer))]),
-                Vec::new(),
-            )
         );
     }
 

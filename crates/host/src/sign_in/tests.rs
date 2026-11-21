@@ -1,7 +1,7 @@
 use agents::{Failure, Invocation, Pick, SignIn as Flow, Word};
 use proto::{
-    Account, CommandResult, Instance, InstanceId, Instances, Provider,
-    Rejection, SignIn, SignInCode, SignInStep,
+    Account, CommandResult, Instance, InstanceId, Provider, Rejection, SignIn,
+    SignInCode, SignInStep,
 };
 
 use super::{Effect, Key, Login, Run, SignIns, release};
@@ -112,15 +112,12 @@ fn only_a_matching_retry_waits_for_the_recovered_account() {
         }),
         None,
     );
-    let instances = Instances::default();
     let done = SignIn {
         instance: id(),
-        step: SignInStep::SignedIn {
-            instances: instances.clone(),
-        },
+        step: SignInStep::SignedIn,
     };
     assert_eq!(
-        sign_ins.listed(&key, CommandResult::Instances(instances)),
+        sign_ins.listed(&key, Some(CommandResult::Accepted)),
         Vec::from([Effect::Publish(done.clone())]),
     );
     assert_eq!(release(&done), Some(&adoption.from));
@@ -146,8 +143,7 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
         &key(1),
         Ok(Some(Account::Named(String::from("me@example.com")))),
     );
-    let listed = sign_ins
-        .listed(&key(1), CommandResult::Instances(Instances::default()));
+    let listed = sign_ins.listed(&key(1), Some(CommandResult::Accepted));
     assert_eq!(
         (started, again, before, link, later, snapshot),
         (
@@ -200,9 +196,7 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
                 key(1),
                 Some(Account::Named(String::from("me@example.com")))
             )]),
-            Vec::from([step(SignInStep::SignedIn {
-                instances: Instances::default(),
-            })]),
+            Vec::from([step(SignInStep::SignedIn)]),
             Vec::new(),
         )
     );
@@ -290,10 +284,7 @@ fn a_cancelled_run_is_killed_and_its_later_reports_are_dropped() {
                 &key(1),
                 Ok(Some(Account::Named(String::from("me@example.com")))),
             ),
-            sign_ins.listed(
-                &key(1),
-                CommandResult::Instances(Instances::default())
-            ),
+            sign_ins.listed(&key(1), Some(CommandResult::Accepted)),
             sign_ins.expired(&key(1)),
             sign_ins.spawned(&key(1), Err(String::from("gone"))),
             sign_ins.running(),
@@ -337,7 +328,7 @@ fn a_run_that_doesnt_start_runs_too_long_or_leaves_the_home_signed_out_fails() {
                     "the sign-in ended, but the CLI's sign-in check still fails",
                 )),
             ),
-            unlisted.listed(&key(1), CommandResult::Accepted),
+            unlisted.listed(&key(1), None),
         ],
         [
             Vec::from([failed("no such file")]),
@@ -349,7 +340,7 @@ fn a_run_that_doesnt_start_runs_too_long_or_leaves_the_home_signed_out_fails() {
                 "the sign-in ended, but the CLI's sign-in check still fails"
             )]),
             Vec::from([failed(
-                "the host could not refresh the instance: Accepted"
+                "the host could not refresh the instance: None"
             )]),
         ]
     );
@@ -361,9 +352,7 @@ fn a_step_is_logged_without_its_link_or_code() {
         SignInStep::Starting,
         open(Some("WXYZ-1234"), true),
         SignInStep::Finishing,
-        SignInStep::SignedIn {
-            instances: Instances::default(),
-        },
+        SignInStep::SignedIn,
         SignInStep::Failed {
             reason: String::from("refused"),
         },
