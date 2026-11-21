@@ -4,6 +4,12 @@ Status: design, decisions in §9; §8 says what is built. `docs/model.html`
 draws §2. It extends the fleet plan (architecture §6) with what the fleet
 works *on*.
 
+The issue model below is being replaced by the home's flow: kinds,
+statuses, stages and rules declared as data in the home's
+`docs/agents/flow.toml`, which the `home` crate interprets. The home's
+`docs/adr/0001` and `0002` record why, and its `GLOSSARY.md` defines the
+terms.
+
 ## 1. What it adds
 
 Conductor runs agent sessions on nodes, each on one of a node's instances
