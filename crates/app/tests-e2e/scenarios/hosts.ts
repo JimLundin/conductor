@@ -205,10 +205,18 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 	const url = new URL(run.joinUrl);
 	const ticket = url.hash.slice("#join=".length);
 	url.searchParams.set("storage-test", "preserve");
-	await page.addInitScript(() => {
+	await page.addInitScript((legacy) => {
+		// Set up the failure before the app can read the hash or storage.
+		// sessionStorage keeps this a one-time setup across localStorage clears.
+		if (sessionStorage.getItem("test.storage-seeded") !== "1") {
+			localStorage.clear();
+			localStorage.setItem("conductor.ticket", legacy);
+			localStorage.setItem("test.deny-writes", "1");
+			sessionStorage.setItem("test.storage-seeded", "1");
+		}
 		const write = Storage.prototype.setItem;
 		Object.defineProperty(Storage.prototype, "setItem", {
-			value: function (this: Storage, key: string, value: string): void {
+			value(this: Storage, key: string, value: string): void {
 				if (
 					this.getItem("test.deny-writes") === "1" &&
 					key.startsWith("conductor.")
@@ -218,22 +226,22 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 				write.call(this, key, value);
 			},
 		});
-	});
-	await page.goto(url.href.replace(JOIN_FRAGMENT, ""));
-	await page.evaluate((legacy) => {
-		localStorage.clear();
-		localStorage.setItem("conductor.ticket", legacy);
-		localStorage.setItem("test.deny-writes", "1");
 	}, ticket);
 	await page.goto(url.href);
+	const storageError = page.locator(".storage-error");
+	await storageError.waitFor({ timeout: run.patience });
 	await page.reload();
-	await page.locator(".storage-error").waitFor({ timeout: run.patience });
+	await storageError.waitFor({ timeout: run.patience });
 	check(
-		new URL(page.url()).hash.startsWith("#join=") &&
-			(await page.evaluate(
-				() => localStorage.getItem("conductor.ticket") !== null,
-			)),
-		"failed join persistence and legacy migration keep their original tickets",
+		new URL(page.url()).hash === url.hash,
+		"failed join persistence keeps the original join fragment",
+	);
+	check(
+		await page.evaluate(
+			(legacy) => localStorage.getItem("conductor.ticket") === legacy,
+			ticket,
+		),
+		"failed legacy migration keeps the original saved ticket",
 	);
 	await page.evaluate(() => localStorage.removeItem("test.deny-writes"));
 	await page.reload();
