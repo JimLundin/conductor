@@ -80,6 +80,9 @@ What is built and what comes next. Update it in the commit that changes it.
   retried after the host restarts. These wire changes use ALPN
   `conductor/24`.
 
+- **Notifications, subagent supervision and task handoffs**. These
+  features share wire protocol ALPN `conductor/25`.
+
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
   actual turn. The phone shows bounded immutable diffs and can undo files
@@ -226,7 +229,7 @@ Each item ends in something to try. The fleet design is
 3. **Sign in from the app** (#12) (§6.3), on one host. Built first, on
    `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
    `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
-   app's credentials screen and stored encrypted under `<data>/store.key`;
+   app's credentials screen and encrypted in the host's credential store;
    `tools/live-host.sh --register` runs the pinned CLIs on them. Built on
    `app-login`: an instance's subscription sign-in from the app, by the
    CLI's own sign-in in the instance's home (`claude auth login
@@ -239,11 +242,14 @@ Each item ends in something to try. The fleet design is
    account. A different account takes ownership of the private home and
    work directory through a journaled roster update that can resume after
    interruption. The app refreshes the resulting instance and lists its
-   models without a restart (ALPN `conductor/15`). Next: API keys, the
-   Claude `setup-token` token and the platform keystores for the host key;
-   a real sign-in of each pinned CLI from the iPhone (the fake's flow and
-   both CLIs' recorded output are tested, a completed real sign-in is
-   not). *Try:* on a fresh host, sign in to Claude and Codex from the
+   models without a restart. The credentials screen also accepts direct
+   Anthropic and OpenAI API keys and a Claude setup token obtained
+   separately. The host supports macOS Keychain, Windows Credential
+   Manager and Linux Secret Service. See [credential store migration and
+   recovery](credential-store.md). Acquiring a setup token from the phone
+   depends on E1. Its revocation procedure and the native sign-in and
+   keystore checks remain open in the [manual walkthrough](manual-acceptance.md).
+   *Try:* on a fresh host, sign in to Claude and Codex from the
    iPhone without touching the host's keyboard.
 4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard
    store the event log, command receipts, open requests and conversation ids.
@@ -268,26 +274,23 @@ Each item ends in something to try. The fleet design is
    the branch, copy the transcript and the events, resume on the target.
    *Try:* move a session from WSL to the Mac between turns and continue it
    from the phone.
-9. **Hand tasks between sessions** (#30). It builds on the task model of
-   item 2: tasks are the host's own, with a `TaskId` that survives every
-   checklist update, `Continue` and a host restart, and a `holder` that
-   names the session working on each. Next: how an agent receives or
-   claims a task, and how a task leaves one session or agent for another.
-   *Try:* hand a task from a Claude session to a Codex session and watch it
-   leave one checklist and join the other.
+9. **Hand tasks between sessions** (#30). From a session's checklist, the
+   owner can choose an unfinished task and send it to an idle session on
+   the same host. The receiving agent starts a turn with the task and its
+   checklist label. The task moves after the provider accepts the turn,
+   keeps its ID across the handoff, and follows the receiving agent's
+   checklist updates. *Try:* hand a task from a Claude session to a Codex
+   session and watch it move to Codex's checklist and reach Done.
 10. **Monitor the subagents** (#31) each session runs (home step 1,
-    `docs/home.md` §6). Built on `subagents`, for Claude: a session's
-    sub-agents are child sessions in the model (`EventKind::Subagent`, its
-    start, activity and end, in the session's own log, ALPN
-    `conductor/16`), from the CLI's `task_started`, its frames with
-    `parent_tool_use_id` and `agent_id`, and `task_notification` (Claude
-    `PROTOCOL.md`). `HostView` folds them under their session, and the app
-    shows each under the `Agent` call that started it, folded to its
-    description and status and opening to its transcript. A sub-agent's
-    checklist stays out of its session's tasks. Next: Codex's collab agents,
-    which the pinned 0.166's schema has but no run has recorded (Codex
-    `PROTOCOL.md`). *Try:* ask a Claude session to delegate to a sub-agent
-    and open it on the phone as it works and when it finishes.
+    `docs/home.md` §6). Child session events record each subagent's
+    lifecycle, type, result, transcript, requests, and checklist.
+    The phone shows the child next to the tool call that started it when
+    that call is in the session transcript. The host assigns stable IDs to
+    child checklist tasks. The Claude probe and synthetic Codex replay cover
+    these paths. Live Codex events and child approvals still need validation.
+    *Try:* ask a Claude and a Codex session to delegate two pieces of work
+    and watch each child's progress, approvals, and result on the phone.
+
 
 ## Known bugs
 

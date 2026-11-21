@@ -171,6 +171,31 @@ const freshInstall = async (run: Run): Promise<void> => {
 	await fresh.close();
 };
 
+const deniedNotifications = async (run: Run): Promise<void> => {
+	const { page } = run;
+	const { check, back } = tools(run);
+	await page.evaluate(() => {
+		if ("Notification" in window) {
+			Object.defineProperty(Notification, "requestPermission", {
+				configurable: true,
+				value: () => Promise.resolve("denied"),
+			});
+		}
+	});
+	await page.getByRole("button", { name: "Credentials" }).click();
+	await page.getByRole("button", { name: "Enable notifications" }).click();
+	const result = page.locator(".push-settings [role=status]");
+	await result.waitFor();
+	check(
+		[
+			"Notification permission was not granted.",
+			"Push notifications are unavailable in this browser.",
+		].includes(await result.innerText()),
+		"denied or unsupported notification permission leaves the app usable",
+	);
+	await back();
+};
+
 export const turn = async (run: Run): Promise<void> => {
 	const { page, joinUrl, out, dir, patience, log, now } = run;
 	const { check, pane, openRow, waitFor, text } = tools(run);
@@ -184,6 +209,7 @@ export const turn = async (run: Run): Promise<void> => {
 			saved[0]?.ticket === joinUrl.replace(BEFORE_TICKET, ""),
 		"the host and its ticket are in local storage, keyed by its id",
 	);
+	await deniedNotifications(run);
 	// This host runs no Codex CLI.
 	await page.getByRole("button", { name: "New session" }).click();
 	await page.locator(".segment", { hasText: "Codex" }).click();

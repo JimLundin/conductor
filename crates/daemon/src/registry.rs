@@ -86,8 +86,23 @@ enum RegistryMsg {
         session: SessionId,
         reply: oneshot::Sender<Option<Session>>,
     },
+    MoveInstance {
+        source: InstanceId,
+        incoming: bool,
+        reply: oneshot::Sender<
+            Result<(InstanceId, proto::Instance, Providers), String>,
+        >,
+    },
+    Arrive {
+        session: SessionId,
+        id: proto::movement::MoveId,
+        reply: oneshot::Sender<()>,
+    },
     Instances {
         reply: oneshot::Sender<(Instances, Catalog)>,
+    },
+    ReconfigureFleet {
+        reply: oneshot::Sender<bool>,
     },
     Configure {
         configure: Configure,
@@ -115,6 +130,7 @@ struct RegistryActor {
     refresh_jobs: BTreeMap<Id, (u64, InstanceId)>,
     start_jobs: BTreeMap<Id, (u64, InstanceId)>,
     relaunching: BTreeMap<SessionId, Weak<()>>,
+    arrivals: BTreeMap<SessionId, proto::movement::MoveId>,
     branches: JoinSet<BranchReady>,
     sign_ins: SignIns,
     leases: BTreeMap<InstanceId, SigningLease>,
@@ -211,6 +227,29 @@ impl Registry {
     /// # Errors
     ///
     /// Fails if the registry has stopped.
+    pub(crate) async fn move_instance(
+        &self,
+        source: InstanceId,
+        incoming: bool,
+    ) -> Result<(InstanceId, proto::Instance, Providers), String> {
+        self.ask(|reply| RegistryMsg::MoveInstance {
+            source,
+            incoming,
+            reply,
+        })
+        .await
+        .map_err(|err| err.to_string())?
+    }
+
+    pub(crate) async fn arrived(
+        &self,
+        session: SessionId,
+        id: proto::movement::MoveId,
+    ) -> Result<(), Stopped> {
+        self.ask(|reply| RegistryMsg::Arrive { session, id, reply })
+            .await
+    }
+
     pub async fn instances(&self) -> Result<(Instances, Catalog), Stopped> {
         self.ask(|reply| RegistryMsg::Instances { reply }).await
     }
@@ -233,6 +272,11 @@ impl Registry {
             reply,
         })
         .await
+    }
+
+    pub(crate) async fn reconfigure_fleet(&self) -> Result<bool, Stopped> {
+        self.ask(|reply| RegistryMsg::ReconfigureFleet { reply })
+            .await
     }
 
     /// Starts, answers or cancels an instance's sign-in.
@@ -285,6 +329,7 @@ impl RegistryActor {
             refresh_jobs: BTreeMap::new(),
             start_jobs: BTreeMap::new(),
             relaunching: BTreeMap::new(),
+            arrivals: BTreeMap::new(),
             branches: JoinSet::new(),
             sign_ins: SignIns::default(),
             leases: BTreeMap::new(),
@@ -372,9 +417,30 @@ impl RegistryActor {
             RegistryMsg::Find { session, reply } => {
                 let _ = reply.send(self.core.find(session));
             }
+            RegistryMsg::MoveInstance {
+                source,
+                incoming,
+                reply,
+            } => {
+                let _ = reply.send(self.move_instance(source, incoming));
+            }
+            RegistryMsg::Arrive { session, id, reply } => {
+                self.register_arrival(session, id).await?;
+                let _ = reply.send(());
+            }
             RegistryMsg::Instances { reply } => {
                 let _ = reply
                     .send((self.core.instances(), self.core.catalog().clone()));
+            }
+            RegistryMsg::ReconfigureFleet { reply } => {
+                let settled = self.core.offers_settled();
+                if settled {
+                    let starts = self.core.boot();
+                    self.perform(
+                        starts.into_iter().map(Effect::Start).collect(),
+                    );
+                }
+                let _ = reply.send(settled);
             }
             RegistryMsg::Configure {
                 configure,
@@ -706,6 +772,39 @@ impl RegistryActor {
         }
     }
 
+    fn move_instance(
+        &self,
+        source: InstanceId,
+        incoming: bool,
+    ) -> Result<(InstanceId, proto::Instance, Providers), String> {
+        let id = if incoming {
+            self.core.move_instance(&source)?
+        } else {
+            source
+        };
+        let settings = self.core.settings(&id).ok_or_else(|| {
+            String::from("the source provider account is absent")
+        })?;
+        Ok((id, settings, self.providers.clone()))
+    }
+
+    async fn register_arrival(
+        &mut self,
+        session: SessionId,
+        id: proto::movement::MoveId,
+    ) -> Result<(), Stopped> {
+        if self.arrivals.get(&session) == Some(&id) {
+            return Ok(());
+        }
+        let history = self.log.finish_history(session).await?;
+        if let Some(created) =
+            host::restore::created(&history).into_iter().next()
+        {
+            self.restore_session(created, &history).await?;
+        }
+        Ok(())
+    }
+
     async fn restore(&mut self) -> Result<(), Stopped> {
         let history = self.log.history().await?;
         for created in host::restore::created(&history) {
@@ -746,6 +845,9 @@ impl RegistryActor {
             &recovered,
             self.log.clone(),
         );
+        if let Some(arrived) = host::movement::arrival_id(&recovered) {
+            self.arrivals.insert(id, arrived);
+        }
         self.core.admit(id, instance, session);
         Ok(())
     }

@@ -116,6 +116,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
   color: var(--band-ink);
   font-size: 0.8125rem;
 }
+.fleet-pair { display: grid; gap: 0.5rem; justify-items: start; }
+.fleet-pair code { overflow-wrap: anywhere; }
 .band-title { font-weight: 600; }
 .band button {
   padding: 0 0.6rem;
@@ -186,6 +188,13 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .on-issue strong { color: var(--ink); }
 .finished { color: var(--muted); font-size: 0.8125rem; text-align: center; }
 .finished[data-outcome="failed"] { color: var(--red); }
+.push-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+}
 .host-credentials + .host-credentials { margin-top: 2rem; }
 .host-credentials > .credential-head h2 { font-size: 1.2rem; }
 
@@ -376,6 +385,9 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .tasks-count { color: var(--muted); }
 .tasks ol { max-height: 30dvh; margin: 0; padding: 0 0 0 1.5em; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
 .task { display: flex; align-items: baseline; gap: 0.55rem; padding: 0.2rem 0; overflow-wrap: anywhere; }
+.task .handoff-task { margin-inline-start: auto; }
+.task:has(.task-handoff) { flex-wrap: wrap; }
+.task-handoff { flex-basis: 100%; display: grid; gap: 0.25rem; }
 .task-mark { flex-shrink: 0; width: 0.75rem; height: 0.75rem; border: 2px solid var(--faint); border-radius: 50%; transform: translateY(0.1rem); }
 .task[data-status="in-progress"] .task-mark { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 35%, transparent 40%); }
 .task[data-status="in-progress"] .task-text { color: var(--ink); font-weight: 600; }
@@ -450,11 +462,12 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 /* A sub-agent hangs under the tool call that started it, folded to its
    description and status. */
 .subagent { margin-left: 1.65rem; padding-left: 0.75rem; border-left: 2px solid var(--line); font-size: 0.875rem; }
-.subagent summary { min-height: 44px; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; list-style: none; touch-action: manipulation; }
-.subagent summary::-webkit-details-marker { display: none; }
-.subagent summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); }
-.subagent[open] summary::before { content: "▾"; }
+.subagent > summary { min-height: 44px; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; list-style: none; touch-action: manipulation; }
+.subagent > summary::-webkit-details-marker { display: none; }
+.subagent > summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); }
+.subagent[open] > summary::before { content: "▾"; }
 .subagent-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.subagent-kind { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: 0.75rem; }
 .subagent-status { flex-shrink: 0; color: var(--muted); font-size: 0.75rem; }
 .subagent[data-status="running"] .subagent-status { color: var(--accent); }
 .subagent[data-status="failed"] .subagent-status { color: var(--red); }
@@ -872,3 +885,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .diff-note, .undo-scope, .undo-hint { padding: 0.6rem 0.75rem; color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
 .undo-turn { margin: 0.25rem 0.75rem; background: var(--red); color: var(--surface); }
 .row-branch { display: block; font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.move-session { padding: 0.35rem 1rem; border-bottom: 1px solid var(--line); }
+.move-session summary { min-height: 44px; align-content: center; cursor: pointer; }
+.move-session button { margin: 0.25rem 0.5rem 0.25rem 0; }

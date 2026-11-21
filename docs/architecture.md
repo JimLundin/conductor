@@ -108,9 +108,9 @@ so one UI and one set of commands work for both agents.
   Codex's plan) as tasks of its own: `Task { id, text, status, holder }`,
   with a host-assigned ULID `TaskId`, a status of pending, in progress or
   completed, and the session that holds it. Each update from the agent is
-  the whole list. The session syncs it into the tasks it holds and logs
-  `TasksChanged { tasks }`, the whole list in the agent's order, when
-  anything changed. A step keeps the id of the first held task with its
+  the whole list. The session assigns host task IDs to its native
+  checklist and logs `TasksChanged { tasks }`, the whole list in the
+  agent's order, when anything changed. A step keeps the id of the first held task with its
   text that no earlier step took; failing that, if the list kept its
   length, of the held task at its position, unless a step took that one by
   its text; otherwise it is a new task. So a step reworded in place keeps
@@ -123,9 +123,14 @@ so one UI and one set of commands work for both agents.
   `UndoHistoryRestored`. Only the main agent's checklist counts: a Claude
   sub-agent's `TodoWrite` is left out of the session's tasks, and of the
   sub-agent's transcript too.
-  Codex's plan `explanation` is not kept, since Claude has none. Handing a
-  task to another session is next (`docs/roadmap.md`); `holder` is what it
-  will change.
+  Codex's plan `explanation` is not kept, since Claude has none. An owner
+  can hand off an unfinished task to an idle session on the same host.
+  The receiving agent gets a turn with the task and an ID-bearing checklist
+  label. Once the provider accepts the turn, `TaskHandedOff` moves the task
+  with its original ID and a pending status. Checklist updates with that
+  label update the same task. Omission from a checklist leaves the task
+  with its current holder, and replay of the source's older checklist
+  cannot bring the task back.
 - **Sub-agents:** an agent's tool call may start a sub-agent, a child
   session in the model with no session of its own: its events are its
   parent's, in the parent's log and in seq order. Each is `Subagent {
@@ -1062,8 +1067,7 @@ app don't change.
 
 #### Built first: gateway credentials
 
-The owner reaches both models through a gateway today, so that kind is the
-first one built. The others in the table become more forms.
+The owner reaches both models through gateways, so their forms remain first in the credentials screen.
 
 - **Claude:** the form `gateway`, with a `Gateway URL` (`base_url`, a URL)
   and a `Token` (`token`, a secret), read into
@@ -1081,7 +1085,7 @@ first one built. The others in the table become more forms.
   the scrub on macOS always, on Linux and WSL2 when `bwrap` and `socat`
   are on `PATH`, and never on native Windows, where Claude runs commands
   unsandboxed ([sandboxing], verified). Without it, a stored gateway makes
-  the host log "the CLI's commands can read the gateway token; install
+  the host log "the CLI's commands can read the provider credential; install
   bubblewrap and socat to sandbox them" with `provider=Claude`
   at start and when the gateway is set. The base URL reaches commands either way; it is an address, not a
   secret. The live canary in `tools/live-host.sh` has the agent count the
@@ -1130,6 +1134,22 @@ first one built. The others in the table become more forms.
   with a user, a password, a query or a fragment is refused, since it is
   shown to every client and written into Codex's config.
 
+#### Direct API keys
+
+Each provider offers an API key form beside its gateway form. A public account
+label names the instance, and the API key is a write-only field. Entering the
+same label again updates that instance. The key follows the existing encrypted
+credential store and can be carried by the fleet configuration when #14 lands.
+
+- Claude passes the key to the session in `ANTHROPIC_API_KEY` with the
+  Anthropic endpoint. The same sandbox-dependent subprocess scrub used for
+  gateway tokens applies.
+- Codex selects the existing custom Responses provider with the fixed OpenAI
+  endpoint `https://api.openai.com/v1`. It passes the key through
+  `CONDUCTOR_CODEX_KEY` and keeps the shell environment exclusion. The
+  direct form leaves model selection to Codex's catalog and session options.
+  The key does not become a saved Codex login.
+
 #### Claude: one subscription token for the fleet, by owner decision
 
 Anthropic's legal page says, verbatim: "developers may not collect, store,
@@ -1164,6 +1184,13 @@ so the fleet setting `claude_auth: ApiKey | Subscription` decides which of
 the two a host sets, and a host never sets both. The fleet config records
 when the token was issued, and the app warns 30 days before the year is
 up; renewing is the same sign-in again.
+
+A token minted by the pinned CLI can be entered using the app's **Claude
+setup token** form. Its public account label identifies the instance. The
+credential store encrypts the token using the same path as API keys. It
+reaches the CLI as `CLAUDE_CODE_OAUTH_TOKEN` at session startup. The
+credential kind and values fit the instance roster carried by #14. Fleet
+distribution and the issue-time and renewal metadata are separate work.
 
 **The fallback stays.** If the owner turns sharing off, or Anthropic acts
 on it, each host signs in with Claude Code's own `claude auth login`, which
@@ -1218,7 +1245,12 @@ Built: the per-host subscription sign-in of each provider, on one host.
    link and the code with a copy button. Codex writes `auth.json` in the
    instance's `CODEX_HOME`. Its failure texts, a device code login that is
    not enabled and the code timing out, are from the pinned binary's strings
-   and not observed. The app-server's `account/login/start { type:
+   and not observed. If device code authorization is off, the app points to
+   ChatGPT Settings ? Security. Where that setting is unavailable, the
+   OpenAI API key form is available from the phone. For a terminal
+   fallback without device authorization on a headless host, use Codex's
+   browser login in the instance's private `CODEX_HOME` with an SSH
+   tunnel to port 1455 (?6.6). The app-server's `account/login/start { type:
    "chatgptDeviceCode" }` would do the same; the CLI keeps one mechanism for
    both providers.
 5. **After it.** A sign-in that exits 0 runs the CLI's sign-in check against
@@ -1227,15 +1259,19 @@ Built: the per-host subscription sign-in of each provider, on one host.
    last step, `SignedIn { instances }`, records what the host ran at completion.
    Subscribers receive the current availability through `Feed::Instances`. A CLI the host was given (`--cli`) is checked the same way
    after a sign-in from the app, though it isn't at start.
-6. **Claude, shared token (planned).** The same flow with `claude
-   setup-token`, which prints the token instead of storing it; the host
-   sends the token to the root host, which puts it in the fleet config
-   (§6.5). Relaying the code through the app is an owner decision (F5,
-   §6.10). Experiment E1 checks that it works on pipes as `auth login`
-   does.
-7. **API keys.** The app has a form per kind of credential on each
-   instance. `SetCredential { instance, credential }` goes to the root
-   host, which puts it in the fleet config, so every host gets it.
+6. **Claude, app-assisted token minting (pending E1).** The pinned CLI's
+   `setup-token --help` confirms the command. The browser steps, stdin
+   protocol and token output format on pipes still need an E1 walkthrough
+   in an isolated `CLAUDE_CONFIG_DIR`. With the pinned managed CLI, verify
+   that the URL can open on the phone, that one code sent to stdin completes
+   the run, and that successful stdout has a reliable token boundary the host
+   can recognize. Check whether a terminal is required. Confirm the process
+   status, cancellation and refusal paths, and that the link, short-lived
+   code, and raw CLI output never reach logs, receipts, or app storage.
+   Complete a turn with the token supplied through the app and an
+   independent turn after the per-host sign-in fallback. Verify the default
+   CLI homes stay untouched. Use E2 to verify shared use. Early revocation
+   remains unverified.
 
 **Live only, stored nowhere.** The steps, `Starting`, `Open { url, code,
 paste }`, `Finishing`, `SignedIn { instances }`, `Failed { reason }` and
@@ -1281,16 +1317,16 @@ token) and its own keys (the host's iroh key and, on the root host, the
 fleet root key). They are encrypted in the store with
 XChaCha20-Poly1305 under a 32-byte **host key**.
 
-- On macOS the host key lives in the login Keychain, on Windows it is
-  sealed with DPAPI for the user, and on Linux it goes in the Secret Service
-  when a session bus offers one. Otherwise it is `<data>/store.key`, with
-  mode 0600 on Unix. On Windows the file gets the data dir's ACL, which is
-  the user's own under the default profile directory and may be wider
-  under a `--data-dir` elsewhere. (`<data>/host.key` holds the iroh key
-  until the store holds it.) Built so far: the file variant on every
-  platform; the platform keystores are follow-up work. A new key is
-  written whole and then linked to its name, so two first starts agree on
-  one key.
+- On macOS the host key lives in the user's default Keychain, typically
+  the login Keychain. On Windows it is a user-private generic credential
+  in Credential Manager with local-machine persistence. On Linux it
+  goes in the user's unlocked default Secret Service collection over an
+  encrypted D-Bus session. If Linux has no usable service, new and
+  existing file-backed stores use `<data>/store.key` (mode 0600 on
+  Unix). An existing native-backed store requires its original native
+  key, even if the keyring is temporarily unavailable. The separate
+  `<data>/host.key` and `<data>/auth.key` still hold the iroh and pairing
+  keys. See [credential store backup and recovery](credential-store.md).
 - The credentials are one value, `proto::Roster`, the host's instances
   each with its optional `Credential`, in `<data>/credentials`: a format
   byte (4, since the store holds instances; an older store reads as one
@@ -1305,9 +1341,11 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   `SetCredential` is refused then, so nothing overwrites it. A
   `RemoveInstance` for any of them moves it to
   `<data>/credentials.unreadable` and starts a store of the own
-  instances, which is the recovery from the phone. Only a `store.key` that
-  can't be read stops the host.
-- A Claude gateway token is kept from Claude's commands only where
+  instances, which is the recovery from the phone. A missing, changed or
+  inaccessible active native key stops the host before it opens the
+  encrypted store. An existing encrypted store without its file key
+  also requires recovery before startup.
+- A Claude environment credential is kept from Claude's commands only where
   Claude's sandbox runs, which on Linux and WSL2 is the optional
   `sudo apt install bubblewrap socat` of §6.2. The Codex key is kept from
   Codex's commands everywhere.
@@ -1318,15 +1356,11 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   the CLIs' own `~/.claude/.credentials.json` and `~/.codex/auth.json`
   ([authentication], [codex-auth], verified). The design says this
   plainly instead of promising more.
-- Credentials reach the CLIs only at spawn. Claude gets `ANTHROPIC_API_KEY`
-  or `CLAUDE_CODE_OAUTH_TOKEN` in its environment, so Conductor never writes
-  either into the CLI's home. The Codex app-server gets `account/login/start { type:
-  "apiKey" }` after `initialize`, with `cli_auth_credentials_store =
-  "ephemeral"` in its config when the host uses a key, so Codex keeps it in
-  memory only (the store options in `config/src/types.rs`, [codex-src],
-  verified; that `ephemeral` writes nothing to disk is inferred from its
-  name). A host signed in with ChatGPT uses the `file` store, because Codex
-  must keep its refreshed tokens across restarts.
+- API keys reach the CLIs in their environment at spawn. Claude uses
+  `ANTHROPIC_API_KEY`, and Codex uses the shell-filtered
+  `CONDUCTOR_CODEX_KEY` with its configured Responses provider. The private
+  CLI homes contain config and conversation state. Codex's per-host ChatGPT
+  login keeps its own refreshed tokens in the private home.
 
 ### 6.4 Join a host to the fleet
 
@@ -1510,7 +1544,10 @@ under a `MoveId`, and every step is safe to repeat.
 3. **Send the branch.** The source snapshots the worktree, uncommitted
    changes included, as one more checkpoint (§5.3), then streams
    `git bundle create - conductor/<ulid> refs/conductor/<ulid>/*` excluding
-   the commits the target says it already has. The target runs `git bundle
+   the commits reachable from a verified target commit. A full bundle of
+   the same refs handles a checkout without a usable common commit. An
+   omitted checkpoint still gets its exact ref once the target verifies
+   the already present object. The target runs `git bundle
    verify` and `git fetch` from it. A bundle over the iroh stream is the
    default rather than a push, because a push to the user's remote has side
    effects the user didn't ask for (CI runs, a visible branch) and fails
@@ -1586,8 +1623,11 @@ can't be made the same. Each CLI handles that differently.
   the whole history; a divider says where the move happened.
 - **If the target is offline** to this client, the app shows the source's
   copy read-only, marked *Moved to laptop-mac (offline)*.
-- **If the move fails**, the session returns to idle on the source with the
-  reason, and nothing changed on the target that a retry won't reuse.
+- **If the move fails before sending files**, the source can resume the
+  session. Once sending starts, the source stays read-only until a retry
+  confirms the target's receipt. A return to a previous host replaces its
+  read-only view only after the new arrival commits with the prior history
+  intact.
 
 Diffs and revert for turns before the move still work on the target,
 because the checkpoint refs moved with the branch and the events moved with
@@ -1773,12 +1813,22 @@ We port T3 Code's designs, not its code (`apps/web/src/components/`):
 The phone layout follows T3 Code's `docs/internals/mobile-layout.md`: the
 sidebar becomes a stack and approvals get one-tap actions.
 
-**Push (planned):** iOS supports Web Push for Home Screen apps. Each host
-keeps a VAPID key, stores each device's subscription, and sends a
-content-free push ("desk-wsl: approval needed") when a request opens. The
-service worker that shows it is the one handwritten JavaScript file. iOS
-suspends a backgrounded web app, which drops its connections; on return the
-client catches up from its cursors.
+**Web Push.** With one paired host, the app offers **Enable notifications**
+in Credentials. That action requests browser permission and registers its
+service worker. The host persists its VAPID signing key and browser
+subscriptions in private files. It sends encrypted routing metadata when
+a new approval or question opens. The worker displays a fixed message and
+uses only host, session, event sequence and expiry to route and deduplicate
+notifications. It never receives the pairing credential, transcript,
+prompt, question text or tool arguments. The host removes subscriptions
+that the browser's push service reports as expired.
+
+Tapping opens the paired host's session. An existing window reconnects with
+its current link cursor. A cold launch rebuilds the session from the event
+log. A request already resolved on another device displays as resolved
+after catch-up. The worker registration holds a single subscription bound
+to one VAPID key. Supporting more than one host per installation follows
+fleet pairing (#14).
 
 ## 9. Testing
 

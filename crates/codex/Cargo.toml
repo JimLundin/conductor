@@ -11,6 +11,8 @@ data-encoding.workspace = true
 proto = { path = "../proto" }
 serde.workspace = true
 serde_json.workspace = true
+time = { version = "0.3.55", default-features = false, features = ["macros", "parsing"] }
+uuid = { version = "1.29.2", default-features = false }
 
 [lints]
 workspace = true

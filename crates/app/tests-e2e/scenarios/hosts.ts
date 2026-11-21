@@ -152,12 +152,6 @@ export const hosts = async (run: Run): Promise<void> => {
 	await pairingPersistence(run);
 };
 
-const enterTicket = async (page: Page, ticket: string): Promise<void> => {
-	const input = page.locator("form.pair input");
-	await input.fill(ticket);
-	await input.press("Enter");
-};
-
 const concurrentPairings = async (
 	run: Run,
 	first: Page,
@@ -170,16 +164,20 @@ const concurrentPairings = async (
 	}
 	const root = joinUrl.replace(JOIN_FRAGMENT, "");
 	await Promise.all([first.goto(root), second.goto(root)]);
-	await enterTicket(first, "bad ticket");
+	const firstTicket = first.locator("form.pair input");
+	const secondTicket = second.locator("form.pair input");
+	await firstTicket.fill("bad ticket");
+	await firstTicket.press("Enter");
 	await first
 		.getByText("That join link is not valid", { exact: false })
 		.waitFor({
 			timeout: patience,
 		});
 	await Promise.all([
-		enterTicket(first, new URL(joinUrl).hash.slice("#join=".length)),
-		enterTicket(second, secondJoin),
+		firstTicket.fill(new URL(joinUrl).hash.slice("#join=".length)),
+		secondTicket.fill(secondJoin),
 	]);
+	await Promise.all([firstTicket.press("Enter"), secondTicket.press("Enter")]);
 	await Promise.all([
 		first.locator(LIVE).waitFor({ timeout: patience }),
 		second.locator(LIVE).waitFor({ timeout: patience }),

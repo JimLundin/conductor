@@ -5,17 +5,21 @@ use crate::prelude::*;
 use alloc::collections::BTreeMap;
 use core::cmp::Reverse;
 
+use proto::fleet::NodeId;
+use proto::movement::{MoveId, Phase};
 use proto::{
-    CheckpointId, ClientName, CloseReason, Effort, Event, EventKind,
+    CheckpointId, ClientName, CloseReason, Effort, Epoch, Event, EventKind,
     FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId, ModelId,
     Provider, Question, RequestId, Resolution, SessionId, SubagentActivity,
-    SubagentEvent, SubagentId, SubagentOutcome, Task, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    SubagentEvent, SubagentId, SubagentOutcome, Task, TaskBoard, ToolCallId,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostView {
     pub sessions: BTreeMap<SessionId, SessionView>,
+    task_board: TaskBoard,
+    arrivals: BTreeMap<SessionId, Arrival>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +46,62 @@ pub struct SessionView {
     pub subagents: Vec<Subagent>,
     /// The last event that touched this session.
     pub activity: HostSeq,
+    pub movement: Movement,
+    pub arrival: Option<Arrival>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Arrival {
+    pub from: NodeId,
+    pub move_id: MoveId,
+    pub source_epoch: Epoch,
+    pub source_last_seq: HostSeq,
+    pub ready: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Movement {
+    #[default]
+    Owned,
+    Moving {
+        to: NodeId,
+        id: MoveId,
+        phase: Phase,
+    },
+    Failed {
+        to: NodeId,
+        id: MoveId,
+        reason: String,
+        resumable: bool,
+    },
+    Moved {
+        to: NodeId,
+        id: MoveId,
+    },
+}
+
+impl Movement {
+    #[must_use]
+    pub const fn locked(&self) -> bool {
+        !matches!(
+            self,
+            Self::Owned
+                | Self::Failed {
+                    resumable: true,
+                    ..
+                }
+        )
+    }
+
+    #[must_use]
+    pub const fn transfer(&self) -> Option<(NodeId, MoveId)> {
+        match self {
+            Self::Owned => None,
+            Self::Moving { to, id, .. }
+            | Self::Failed { to, id, .. }
+            | Self::Moved { to, id } => Some((*to, *id)),
+        }
+    }
 }
 
 /// A sub-agent: a child of its session, shown under the tool call that
@@ -51,6 +111,8 @@ pub struct Subagent {
     pub id: SubagentId,
     pub call: ToolCallId,
     pub description: String,
+    pub kind: Option<String>,
+    pub tasks: Vec<Task>,
     pub status: SubagentStatus,
     /// Its own transcript: replies, reasoning and tool calls, and its final
     /// report as its last reply.
@@ -243,6 +305,9 @@ pub enum StatusLabel {
     Closed,
     Undoing,
     RecoveryNeeded,
+    Moving,
+    MoveFailed,
+    Moved,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,6 +380,8 @@ impl HostView {
     pub const fn empty() -> Self {
         Self {
             sessions: BTreeMap::new(),
+            task_board: TaskBoard::new(),
+            arrivals: BTreeMap::new(),
         }
     }
 
@@ -322,8 +389,43 @@ impl HostView {
     /// a removed session is gone.
     #[must_use]
     pub fn apply(self, event: Event) -> Self {
+        if let EventKind::SessionArrived {
+            from,
+            move_id,
+            source_epoch,
+            source_last_seq,
+        } = event.kind
+        {
+            return self.arrived(
+                event.session,
+                Arrival {
+                    from,
+                    move_id,
+                    source_epoch,
+                    source_last_seq,
+                    ready: false,
+                },
+            );
+        }
         let delta = is_delta(&event.kind);
         let mut sessions = self.sessions;
+        let mut task_board = self.task_board;
+        let task_change = matches!(
+            event.kind,
+            EventKind::TasksChanged { .. } | EventKind::TaskHandedOff { .. }
+        );
+        if (task_change
+            || matches!(event.kind, EventKind::SessionRemoved { .. }))
+            && sessions.contains_key(&event.session)
+        {
+            task_board.apply(&event);
+        }
+        if let EventKind::TaskHandedOff { task } = &event.kind
+            && let Some(source) = sessions.get_mut(&task.holder)
+        {
+            source.tasks = task_board.held(task.holder).to_vec();
+        }
+        let mut arrivals = self.arrivals;
         let session = match (sessions.remove(&event.session), event.kind) {
             (
                 _,
@@ -353,10 +455,15 @@ impl HostView {
                 items: Vec::new(),
                 subagents: Vec::new(),
                 activity: event.seq,
+                movement: Movement::Owned,
+                arrival: arrivals.remove(&event.session),
             }),
             (_, EventKind::SessionRemoved { .. }) | (None, _) => None,
             (Some(view), kind) => {
                 let mut next = view.apply(kind, event.seq);
+                if task_change {
+                    next.tasks = task_board.held(event.session).to_vec();
+                }
                 if !delta {
                     next.activity = event.seq;
                 }
@@ -364,7 +471,21 @@ impl HostView {
             }
         };
         sessions.extend(session.map(|view| (event.session, view)));
-        Self { sessions }
+        Self {
+            sessions,
+            task_board,
+            arrivals,
+        }
+    }
+
+    fn arrived(mut self, id: SessionId, arrival: Arrival) -> Self {
+        let existing =
+            self.sessions.get(&id).and_then(|session| session.arrival);
+        if existing.is_none_or(|known| known.move_id != arrival.move_id) {
+            self.sessions.remove(&id);
+            self.arrivals.insert(id, arrival);
+        }
+        self
     }
 
     /// The sessions' ids, the most recently active first.
@@ -400,7 +521,29 @@ impl HostView {
 
 impl SessionView {
     #[must_use]
+    pub const fn takes_handoff(&self) -> bool {
+        matches!(self.controls().composer, Composer::Open)
+            && !matches!(self.finish, FinishState::Finishing)
+    }
+
+    #[must_use]
+    pub const fn history_available(&self) -> bool {
+        match self.arrival {
+            Some(arrival) => arrival.ready,
+            None => true,
+        }
+    }
+
+    #[must_use]
     pub const fn controls(&self) -> Controls {
+        if !self.history_available() || self.movement.locked() {
+            return Controls {
+                composer: Composer::Busy,
+                interrupt: Interrupt::Hidden,
+                resume: Resume::Hidden,
+                finish: false,
+            };
+        }
         let (composer, interrupt, resume) = match (&self.undo, &self.status) {
             (UndoState::Undoing(_) | UndoState::Failed { .. }, _)
             | (_, SessionStatus::Starting) => {
@@ -435,6 +578,12 @@ impl SessionView {
 
     #[must_use]
     pub const fn status_label(&self) -> StatusLabel {
+        match self.movement {
+            Movement::Moving { .. } => return StatusLabel::Moving,
+            Movement::Failed { .. } => return StatusLabel::MoveFailed,
+            Movement::Moved { .. } => return StatusLabel::Moved,
+            Movement::Owned => {}
+        }
         match (&self.undo, &self.status) {
             (UndoState::Undoing(_), _) => StatusLabel::Undoing,
             (UndoState::Failed { .. }, _) => StatusLabel::RecoveryNeeded,
@@ -446,19 +595,33 @@ impl SessionView {
     }
 
     #[must_use]
+    pub fn can_start_move(&self) -> bool {
+        self.history_available()
+            && self.workspace.is_some()
+            && !self.movement.locked()
+            && matches!(
+                self.status,
+                SessionStatus::Idle | SessionStatus::Closed(_)
+            )
+            && matches!(self.undo, UndoState::Ready | UndoState::Undone)
+            && !matches!(self.finish, FinishState::Finishing)
+            && self.attention() == Attention::Quiet
+    }
+
+    #[must_use]
     pub fn list_status(&self) -> ListStatus {
         let label = self.status_label();
-        match label {
-            StatusLabel::Undoing | StatusLabel::RecoveryNeeded => {
-                ListStatus::Session(label)
-            }
-            StatusLabel::Starting
-            | StatusLabel::Idle
-            | StatusLabel::Running
-            | StatusLabel::Closed => match self.attention() {
-                Attention::Quiet => ListStatus::Session(label),
-                Attention::Requests(open) => ListStatus::Requests(open),
-            },
+        if self.movement.locked()
+            || matches!(
+                label,
+                StatusLabel::Undoing | StatusLabel::RecoveryNeeded
+            )
+        {
+            return ListStatus::Session(label);
+        }
+        match self.attention() {
+            Attention::Quiet => ListStatus::Session(label),
+            Attention::Requests(open) => ListStatus::Requests(open),
         }
     }
 
@@ -488,7 +651,7 @@ impl SessionView {
 
     #[must_use]
     pub const fn can_view_changes(&self) -> bool {
-        !matches!(self.undo, UndoState::Undoing(_))
+        !self.movement.locked() && !matches!(self.undo, UndoState::Undoing(_))
     }
 
     /// A running turn shows it is working, unless it waits on a person or
@@ -496,6 +659,9 @@ impl SessionView {
     /// a tool call running.
     #[must_use]
     pub fn working(&self) -> Working {
+        if self.movement.locked() {
+            return Working::Hidden;
+        }
         match self.undo {
             UndoState::Undoing(_) | UndoState::Failed { .. } => Working::Hidden,
             UndoState::Ready | UndoState::Undone => self.turn_working(),
@@ -537,28 +703,19 @@ impl SessionView {
     #[must_use]
     pub fn attention(&self) -> Attention {
         let open = self
-            .items
-            .iter()
-            .filter(|item| {
-                matches!(
-                    item,
-                    Item::Tool {
-                        approval: Approval::Asked {
-                            state: RequestState::Open,
-                            ..
-                        },
-                        ..
-                    } | Item::Question {
-                        state: RequestState::Open,
-                        ..
-                    }
-                )
-            })
+            .request_items()
+            .filter(|item| item.requests_attention())
             .count();
         match open {
             0 => Attention::Quiet,
             count => Attention::Requests(count),
         }
+    }
+
+    pub fn request_items(&self) -> impl Iterator<Item = &Item> {
+        self.items
+            .iter()
+            .chain(self.subagents.iter().flat_map(|agent| &agent.items))
     }
 
     #[must_use]
@@ -618,26 +775,14 @@ impl SessionView {
             EventKind::Reasoning { text } => {
                 self.reasoning(text, ReplyState::Done)
             }
-            EventKind::ToolCall {
-                call,
-                phase: ToolPhase::Started { tool },
-            } => self.push(Item::Tool {
-                call,
-                tool,
-                state: ToolState::Running,
-                approval: Approval::NotAsked,
-            }),
-            EventKind::ToolCall {
-                call,
-                phase: ToolPhase::Finished { outcome },
-            } => self.change(&Change::Finish(call, outcome)),
+            EventKind::ToolCall { call, phase } => self.tool(call, phase),
             EventKind::RequestOpened {
                 request,
                 call,
                 tool,
                 reason,
                 for_session,
-            } => self.ask(
+            } => self.ask_unscoped(
                 call,
                 tool,
                 Approval::open(request, reason, for_session),
@@ -652,7 +797,7 @@ impl SessionView {
             EventKind::RequestResolved {
                 request,
                 resolution,
-            } => self.change(&Change::Resolve(request, resolution)),
+            } => self.resolve_request(request, resolution),
             EventKind::TurnCompleted { outcome } => self
                 .change(&Change::End)
                 .status(SessionStatus::Idle)
@@ -661,7 +806,6 @@ impl SessionView {
                 workspace: Some(workspace),
                 ..self
             },
-            EventKind::TasksChanged { tasks } => Self { tasks, ..self },
             issue_event @ (EventKind::OnIssue { .. }
             | EventKind::FinishStarted
             | EventKind::FinishInterrupted
@@ -675,7 +819,17 @@ impl SessionView {
             EventKind::CheckpointCreated { checkpoint } => {
                 self.checkpoint_created(checkpoint)
             }
-            EventKind::SessionCreated { .. }
+            movement @ (EventKind::SessionMoving { .. }
+            | EventKind::SessionMoveFailed { .. }
+            | EventKind::SessionMoved { .. }) => self.movement_event(movement),
+            EventKind::SessionArrivalReady { move_id } => {
+                self.arrival_ready(move_id)
+            }
+            EventKind::SessionArrived { .. }
+            | EventKind::SessionMoveNoticeSent
+            | EventKind::SessionCreated { .. }
+            | EventKind::TasksChanged { .. }
+            | EventKind::TaskHandedOff { .. }
             | EventKind::SessionRemoved { .. }
             | EventKind::UndoHistoryRestored { .. }
             | EventKind::UndoRevertDispatched { .. }
@@ -690,6 +844,68 @@ impl SessionView {
                 self.subagent_event(agent, event)
             }
         }
+    }
+
+    fn tool(self, call: ToolCallId, phase: ToolPhase) -> Self {
+        match phase {
+            ToolPhase::Started { tool } => self.push(Item::Tool {
+                call,
+                tool,
+                state: ToolState::Running,
+                approval: Approval::NotAsked,
+            }),
+            ToolPhase::Finished { outcome } => {
+                self.change(&Change::Finish(call, outcome))
+            }
+        }
+    }
+
+    fn arrival_ready(mut self, move_id: MoveId) -> Self {
+        if let Some(arrival) = &mut self.arrival
+            && arrival.move_id == move_id
+        {
+            arrival.ready = true;
+        }
+        self
+    }
+
+    fn movement_event(self, event: EventKind) -> Self {
+        let transfer = self.movement.transfer();
+        let movement = match event {
+            EventKind::SessionMoving { to, move_id, phase }
+                if !matches!(self.movement, Movement::Moved { .. })
+                    && transfer
+                        .is_none_or(|current| current == (to, move_id)) =>
+            {
+                Movement::Moving {
+                    to,
+                    id: move_id,
+                    phase,
+                }
+            }
+            EventKind::SessionMoveFailed {
+                move_id,
+                reason,
+                resumable,
+            } if matches!(self.movement, Movement::Moving { .. }) => {
+                match transfer {
+                    Some((to, id)) if id == move_id => Movement::Failed {
+                        to,
+                        id,
+                        reason,
+                        resumable,
+                    },
+                    _ => return self,
+                }
+            }
+            EventKind::SessionMoved { to, move_id }
+                if transfer == Some((to, move_id)) =>
+            {
+                Movement::Moved { to, id: move_id }
+            }
+            _ => return self,
+        };
+        Self { movement, ..self }
     }
 
     fn model_changed(
@@ -750,20 +966,27 @@ impl SessionView {
         }
     }
 
-    /// A sub-agent's finished call also finishes the card its request got
-    /// in the session.
+    fn resolve_request(
+        self,
+        request: RequestId,
+        resolution: Resolution,
+    ) -> Self {
+        let change = Change::Resolve(request, resolution);
+        let session = self.change(&change);
+        Self {
+            subagents: session
+                .subagents
+                .into_iter()
+                .map(|agent| agent.change(&change))
+                .collect(),
+            ..session
+        }
+    }
+
     fn subagent_event(self, agent: SubagentId, event: SubagentEvent) -> Self {
         match event {
             SubagentEvent::Started { call, description } => {
                 self.subagent_started(agent, call, description)
-            }
-            SubagentEvent::Activity(SubagentActivity::ToolCall {
-                call,
-                phase: ToolPhase::Finished { outcome },
-            }) => {
-                let finish = Change::Finish(call, outcome);
-                self.change(&finish)
-                    .subagent(&agent, |subagent| subagent.change(&finish))
             }
             SubagentEvent::Activity(activity) => {
                 self.subagent(&agent, |subagent| subagent.did(activity))
@@ -773,6 +996,36 @@ impl SessionView {
                     subagent.ended(SubagentStatus::Ended(outcome), summary)
                 })
             }
+            SubagentEvent::Kind { kind } => {
+                self.subagent(&agent, |subagent| Subagent {
+                    kind: Some(kind),
+                    ..subagent
+                })
+            }
+            SubagentEvent::TasksChanged { tasks } => {
+                self.subagent(&agent, |subagent| Subagent { tasks, ..subagent })
+            }
+            SubagentEvent::RequestOpened {
+                request,
+                call,
+                tool,
+                reason,
+                for_session,
+            } => self.subagent(&agent, |subagent| {
+                subagent.ask(
+                    call,
+                    tool,
+                    Approval::open(request, reason, for_session),
+                )
+            }),
+            SubagentEvent::QuestionAsked { request, questions } => self
+                .subagent(&agent, |subagent| {
+                    subagent.pushed(Item::Question {
+                        request,
+                        questions,
+                        state: RequestState::Open,
+                    })
+                }),
         }
     }
 
@@ -791,6 +1044,8 @@ impl SessionView {
                 id: agent,
                 call,
                 description,
+                kind: None,
+                tasks: Vec::new(),
                 status: SubagentStatus::Running,
                 items: Vec::new(),
             }),
@@ -1021,6 +1276,42 @@ impl SessionView {
 
     /// A request joins its tool call's card. A request for a call this view
     /// never saw started gets a card of its own.
+    fn ask_unscoped(
+        self,
+        call: ToolCallId,
+        tool: ToolKind,
+        approval: Approval,
+    ) -> Self {
+        match self.legacy_request_agent(&call) {
+            Some(agent) => {
+                self.subagent(&agent, |child| child.ask(call, tool, approval))
+            }
+            None => self.ask(call, tool, approval),
+        }
+    }
+
+    // Older logs opened child approvals as session-level events. Recover the
+    // child only when its recorded call has an unambiguous owner.
+    fn legacy_request_agent(&self, call: &ToolCallId) -> Option<SubagentId> {
+        if self
+            .items
+            .iter()
+            .filter_map(Item::call)
+            .any(|seen| seen == call)
+        {
+            return None;
+        }
+        let mut owners = self.subagents.iter().filter(|agent| {
+            agent
+                .items
+                .iter()
+                .filter_map(Item::call)
+                .any(|seen| seen == call)
+        });
+        let owner = owners.next()?;
+        owners.next().is_none().then(|| owner.id.clone())
+    }
+
     fn ask(self, call: ToolCallId, tool: ToolKind, approval: Approval) -> Self {
         match self
             .items
@@ -1068,12 +1359,7 @@ impl Subagent {
             SubagentActivity::ToolCall {
                 call,
                 phase: ToolPhase::Started { tool },
-            } => self.pushed(Item::Tool {
-                call,
-                tool,
-                state: ToolState::Running,
-                approval: Approval::NotAsked,
-            }),
+            } => self.tool_started(call, tool),
             SubagentActivity::ToolCall {
                 call,
                 phase: ToolPhase::Finished { outcome },
@@ -1089,11 +1375,49 @@ impl Subagent {
             ..self.change(&Change::End)
         };
         match summary {
-            Some(text) => ended.pushed(Item::Reply {
-                text,
-                state: ReplyState::Done,
-            }),
-            None => ended,
+            Some(text) if !matches!(ended.items.last(), Some(Item::Reply { text: previous, .. }) if previous == &text) => {
+                ended.pushed(Item::Reply {
+                    text,
+                    state: ReplyState::Done,
+                })
+            }
+            _ => ended,
+        }
+    }
+
+    fn tool_started(mut self, call: ToolCallId, tool: ToolKind) -> Self {
+        let previous = self.items.iter_mut().find_map(|item| match item {
+            Item::Tool { call: id, tool, .. } if id == &call => Some(tool),
+            _ => None,
+        });
+        if let Some(known) = previous {
+            *known = tool;
+            self
+        } else {
+            self.pushed(Item::Tool {
+                call,
+                tool,
+                state: ToolState::Running,
+                approval: Approval::NotAsked,
+            })
+        }
+    }
+
+    fn ask(self, call: ToolCallId, tool: ToolKind, approval: Approval) -> Self {
+        if self
+            .items
+            .iter()
+            .filter_map(Item::call)
+            .any(|seen| seen == &call)
+        {
+            self.change(&Change::Ask(call, approval))
+        } else {
+            self.pushed(Item::Tool {
+                call,
+                tool,
+                state: ToolState::Running,
+                approval,
+            })
         }
     }
 
@@ -1129,6 +1453,23 @@ impl Item {
             },
             other => other,
         }
+    }
+
+    #[must_use]
+    pub const fn requests_attention(&self) -> bool {
+        matches!(
+            self,
+            Self::Tool {
+                approval: Approval::Asked {
+                    state: RequestState::Open,
+                    ..
+                },
+                ..
+            } | Self::Question {
+                state: RequestState::Open,
+                ..
+            }
+        )
     }
 
     /// The tool call the item shows, if it shows one.
@@ -1481,6 +1822,8 @@ mod tests {
                     turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
                     subagents_at: BTreeMap::new(),
                     activity: HostSeq(13),
+                    movement: super::Movement::Owned,
+                    arrival: None,
                 },
             ),
             (
@@ -1505,6 +1848,8 @@ mod tests {
                     turn_starts: BTreeMap::new(),
                     subagents_at: BTreeMap::new(),
                     activity: HostSeq(15),
+                    movement: super::Movement::Owned,
+                    arrival: None,
                 },
             ),
         ])
@@ -1920,8 +2265,7 @@ mod tests {
                 ),
             ),
             (1, subagent_ls("a", "toolu_a1", ls_phase())),
-            // The request for the sub-agent's call has a card of its own in
-            // the session, which the sub-agent's result finishes.
+            // Older logs published child approvals as session events.
             (
                 1,
                 EventKind::RequestOpened {
@@ -1968,6 +2312,8 @@ mod tests {
     fn expected_subagents() -> Vec<Subagent> {
         Vec::from([
             Subagent {
+                kind: None,
+                tasks: Vec::new(),
                 id: SubagentId(text("a")),
                 call: ToolCallId(text("toolu_agent_a")),
                 description: text("look for a"),
@@ -1977,12 +2323,31 @@ mod tests {
                         text: text("where?"),
                         state: ReplyState::Done,
                     },
-                    ls("toolu_a1", ToolState::Finished(ToolOutcome::Succeeded)),
+                    Item::Tool {
+                        call: ToolCallId(text("toolu_a1")),
+                        tool: ToolKind::Command {
+                            command: text("ls"),
+                        },
+                        state: ToolState::Finished(ToolOutcome::Succeeded),
+                        approval: Approval::Asked {
+                            request: RequestId(1),
+                            reason: None,
+                            for_session: None,
+                            state: RequestState::Resolved(
+                                Resolution::Decided {
+                                    decision: Decision::Approve,
+                                    by: ClientName(text("phone")),
+                                },
+                            ),
+                        },
+                    },
                     done_reply("found it"),
                     done_reply("it is in /a"),
                 ]),
             },
             Subagent {
+                kind: None,
+                tasks: Vec::new(),
                 id: SubagentId(text("b")),
                 call: ToolCallId(text("toolu_agent_b")),
                 description: text("look for b"),
@@ -2016,12 +2381,49 @@ mod tests {
                 Vec::from([
                     Some((text("toolu_agent_a"), ToolState::Stopped)),
                     Some((text("toolu_agent_b"), ToolState::Stopped)),
-                    Some((
-                        text("toolu_a1"),
-                        ToolState::Finished(ToolOutcome::Succeeded)
-                    )),
                 ]),
             ))
+        );
+    }
+
+    #[test]
+    fn a_childs_tool_result_does_not_complete_a_main_tool_with_the_same_id() {
+        let call = "shared";
+        let view = fold(Vec::from([
+            (1, created("/a")),
+            (1, EventKind::SessionReady),
+            (
+                1,
+                EventKind::ToolCall {
+                    call: ToolCallId(text(call)),
+                    phase: ls_phase(),
+                },
+            ),
+            (1, subagent_started("a", "spawn")),
+            (1, subagent_ls("a", call, ls_phase())),
+            (
+                1,
+                subagent_ls(
+                    "a",
+                    call,
+                    ToolPhase::Finished {
+                        outcome: ToolOutcome::Succeeded,
+                    },
+                ),
+            ),
+        ]));
+        assert_eq!(
+            view.sessions
+                .get(&SessionId(1))
+                .and_then(|session| session.items.last()),
+            Some(&ls(call, ToolState::Running))
+        );
+        assert_eq!(
+            view.sessions
+                .get(&SessionId(1))
+                .and_then(|session| session.subagents.first())
+                .and_then(|child| child.items.last()),
+            Some(&ls(call, ToolState::Finished(ToolOutcome::Succeeded)))
         );
     }
 

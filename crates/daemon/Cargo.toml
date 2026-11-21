@@ -11,6 +11,8 @@ layer = "shell"
 [dependencies]
 uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
+argon2 = "0.5.3"
+blake3 = { version = "1.8", default-features = false }
 cap-fs-ext = "4.0.2"
 cap-std = "4.0.2"
 # The credential store's cipher (§6.3), XChaCha20-Poly1305.
@@ -29,11 +31,15 @@ install = { path = "../install" }
 proto = { path = "../proto" }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 runtime = { path = "../runtime" }
+sad-web-push = "0.12.0"
 serde.workspace = true
+serde_json = { workspace = true, features = ["std"] }
 redb = "3.1"
 ulid = "1.2"
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net", "signal"] }
+subtle = "2.6.1"
+zeroize = "1.8.2"
+tokio = { workspace = true, features = ["fs", "net", "signal"] }
 tracing = { workspace = true, features = ["std"] }
 
 [target.'cfg(unix)'.dependencies]
@@ -41,6 +47,15 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 winx = "0.36.4"
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+keyring-core = "1"
+windows-native-keyring-store = { version = "1.1", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service = { version = "4.2", default-features = false, features = ["crypto-rust", "vendored"] }
 
 [dev-dependencies]
 # The end-to-end tests run the providers' agents on their fake CLIs.
@@ -48,7 +63,6 @@ claude-cli = { path = "../claude-cli" }
 # Exercise the actual client projection for daemon events.
 client = { path = "../client" }
 codex-cli = { path = "../codex-cli" }
-serde_json = { workspace = true, features = ["std"] }
 tracing-subscriber.workspace = true
 
 [lints]

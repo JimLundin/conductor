@@ -7,12 +7,14 @@ use alloc::collections::BTreeMap;
 use core::mem;
 
 use crate::prelude::*;
+use client::host_view::SessionView;
 use client::link::Update;
 use proto::{CommandResult, Effort, IssueId, SessionId, Ticket, TicketError};
 
 use crate::credentials::{CredentialsScreen, Forms};
 use crate::host::{Host, HostId, by_name};
 use crate::issues::{self, IssueDraft, IssueScreen, Shown, Titles};
+use crate::movement;
 use crate::new_session::{Form, NewSessionForm};
 use crate::projects::{self, ProjectsScreen};
 use crate::saved::{Saved, decode};
@@ -164,6 +166,28 @@ impl State {
                 }
                 (self, Vec::new())
             }
+            Intent::FleetHosts { hosts, removed } => {
+                for host in removed {
+                    self = self.forget(host).0;
+                }
+                for saved in hosts {
+                    let id = HostId::of(&saved.ticket);
+                    let next = match self.hosts.remove(&id) {
+                        Some(known) => Host {
+                            ticket: saved.ticket,
+                            ..known
+                        },
+                        None => Host::new(saved.ticket, saved.name),
+                    };
+                    self.hosts.insert(id, next);
+                }
+                if !self.hosts.is_empty()
+                    && matches!(self.shown, ShownPlace::AddHost(_))
+                {
+                    self.replace(ShownPlace::Sessions);
+                }
+                (self, Vec::new())
+            }
             Intent::Join(Ok(ticket))
                 if matches!(self.shown, ShownPlace::AddHost(_)) =>
             {
@@ -207,6 +231,7 @@ impl State {
                 (self, effects)
             }
             Intent::Session(change) => self.session(change),
+            Intent::Move(change) => self.move_session(change),
             Intent::NewIssue(change) => self.new_issue(change),
             Intent::Issue(change) => self.issue(change),
             Intent::StartOn(host, issue) => {
@@ -264,10 +289,45 @@ impl State {
         let Some(known) = self.hosts.remove(&host) else {
             return (self, Vec::new());
         };
+        let moved = match &update {
+            Update::Feed(proto::Feed::Event(event))
+                if matches!(
+                    event.kind,
+                    proto::EventKind::SessionMoving { .. }
+                        | proto::EventKind::SessionMoveFailed { .. }
+                        | proto::EventKind::SessionMoved { .. }
+                ) =>
+            {
+                Some(event.session)
+            }
+            _ => None,
+        };
+        let might_redirect = moved.is_some()
+            || matches!(
+                update,
+                Update::Welcome(_)
+                    | Update::Reset(_)
+                    | Update::Feed(proto::Feed::Event(proto::Event {
+                        kind: proto::EventKind::SessionArrivalReady { .. },
+                        ..
+                    }))
+            );
         let (next, renamed) = known.linked(update);
         let left = match &mut self.shown {
             ShownPlace::Session(selected, id, draft) if *selected == host => {
-                sync_draft(draft, next.fold.view.sessions.contains_key(id))
+                if moved == Some(*id)
+                    && let Some(pane) = draft
+                {
+                    pane.movement.pending = false;
+                }
+                sync_draft(
+                    draft,
+                    next.fold
+                        .view
+                        .sessions
+                        .get(id)
+                        .is_some_and(SessionView::history_available),
+                )
             }
             ShownPlace::Issue(selected, id, draft) if *selected == host => {
                 sync_draft(draft, issues::find(&next, *id).is_some())
@@ -287,6 +347,10 @@ impl State {
             .into_iter()
             .collect();
         self.hosts.insert(host, next);
+        if might_redirect && matches!(self.shown, ShownPlace::Session(..)) {
+            let place = self.shown.place();
+            self = self.show(place);
+        }
         (self, effects)
     }
 
@@ -295,7 +359,13 @@ impl State {
         self.visit = self.visit.wrapping_add(1);
     }
 
-    fn show(mut self, place: Place) -> Self {
+    fn show(mut self, requested: Place) -> Self {
+        let place = match requested {
+            Place::Session(host, id) => {
+                Place::Session(movement::owner(&self.hosts, host, id), id)
+            }
+            other => other,
+        };
         if self.hosts.is_empty() || place == self.shown.place() {
             return self;
         }
@@ -313,7 +383,12 @@ impl State {
                     .hosts
                     .get(&host)
                     .is_some_and(|known| {
-                        known.fold.view.sessions.contains_key(&id)
+                        known
+                            .fold
+                            .view
+                            .sessions
+                            .get(&id)
+                            .is_some_and(SessionView::history_available)
                     })
                     .then(Pane::default);
                 ShownPlace::Session(host, id, draft)
@@ -368,7 +443,34 @@ impl State {
         let ShownPlace::Session(host, id, Some(pane)) = &mut self.shown else {
             return (self, Vec::new());
         };
-        let Some(session) = self
+        let Some(known) = self.hosts.get(host) else {
+            return (self, Vec::new());
+        };
+        let sessions = &known.fold.view.sessions;
+        let Some(session) = sessions.get(id) else {
+            return (self, Vec::new());
+        };
+        if pane.movement.pending || session.movement.locked() {
+            return (self, Vec::new());
+        }
+        let at = At {
+            host: *host,
+            visit: self.visit,
+        };
+        let (next, effects) =
+            mem::take(pane).update(intent, *id, session, sessions, at);
+        *pane = next;
+        (self, effects)
+    }
+
+    fn move_session(
+        mut self,
+        intent: crate::MoveIntent,
+    ) -> (Self, Vec<Effect>) {
+        let ShownPlace::Session(host, id, Some(pane)) = &mut self.shown else {
+            return (self, Vec::new());
+        };
+        let Some(view) = self
             .hosts
             .get(host)
             .and_then(|known| known.fold.view.sessions.get(id))
@@ -379,9 +481,8 @@ impl State {
             host: *host,
             visit: self.visit,
         };
-        let (next, effects) = mem::take(pane).update(intent, *id, session, at);
-        *pane = next;
-        (self, effects)
+        let effect = pane.movement.command(intent, *id, view, &self.hosts, at);
+        (self, effect.into_iter().collect())
     }
 
     fn new_issue(
@@ -434,6 +535,18 @@ impl State {
             (_, ReplyTo::Notice) => self.notice = refusal(answer),
             (ShownPlace::Issue(_, _, Some(draft)), ReplyTo::Issue(field)) => {
                 draft.answered(field, refusal(answer));
+            }
+            (ShownPlace::Session(_, _, Some(pane)), ReplyTo::Handoff) => {
+                if let Some(target) = pane.handoff_answered() {
+                    self.notice = refusal(answer);
+                    if self.notice.is_none() {
+                        self = self.show(Place::Session(reply.host, target));
+                    }
+                }
+            }
+            (ShownPlace::Session(_, _, Some(pane)), ReplyTo::Move) => {
+                pane.movement.replied(&answer);
+                self.notice = refusal(answer);
             }
             (ShownPlace::Session(_, _, Some(_)), ReplyTo::Effort(shown)) => {
                 return self.effort_refused(shown, answer);
@@ -598,7 +711,18 @@ impl State {
                         *id,
                         session,
                         (known.fold.instances.as_ref(), &known.fold.catalog),
-                        (self.notice.clone(), known.name()),
+                        &known.fold.view.sessions,
+                        (
+                            self.notice.clone(),
+                            known.name(),
+                            movement::panel(
+                                &self.hosts,
+                                *host,
+                                known,
+                                session,
+                                &pane.movement,
+                            ),
+                        ),
                     ))))
                 })
                 .unwrap_or_else(session_placeholder),
@@ -656,6 +780,14 @@ fn refusal(answer: Result<CommandResult, String>) -> Option<String> {
             | CommandResult::IssueCreated { .. },
         ) => None,
         Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
+        Ok(
+            CommandResult::PushPublicKey(_) | CommandResult::PushUnavailable,
+        ) => Some(String::from("the host returned a notification answer")),
+        Ok(
+            CommandResult::FleetStatus(_)
+            | CommandResult::FleetInvite(_)
+            | CommandResult::FleetPairing(_),
+        ) => Some(String::from("The host gave an unexpected answer.")),
         Err(error) => Some(error),
     }
 }

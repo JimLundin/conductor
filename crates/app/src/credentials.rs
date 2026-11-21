@@ -24,13 +24,54 @@ use crate::{PaneHeader, Shell};
 
 #[component]
 pub fn CredentialsScreen(screen: ui::CredentialsScreen) -> Element {
+    let push_host = match screen.hosts.as_slice() {
+        [pane] => Some(pane.host),
+        _ => None,
+    };
     rsx! {
         section { class: "pane new-pane",
             PaneHeader { title: "Credentials", subtitle: "Each host's instances, and how each reaches its agent's model." }
             div { class: "new-session",
+                if let Some(host) = push_host {
+                    PushSettings { host }
+                }
                 for pane in screen.hosts {
                     CredentialsPane { key: "{pane.heading}", pane }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn PushSettings(host: HostId) -> Element {
+    let shell = use_context::<Shell>();
+    let mut pending = use_signal(|| false);
+    let mut status = use_signal(String::new);
+    rsx! {
+        div {
+            class: "push-settings",
+            button {
+                r#type: "button",
+                disabled: pending(),
+                onclick: move |_| {
+                    let Some(link) = shell.host_link(host) else {
+                        status.set(String::from("Connect to the host before enabling notifications."));
+                        return;
+                    };
+                    pending.set(true);
+                    crate::push::enable(link, move |result| {
+                        status.set(result.map_or_else(
+                            |error| error,
+                            |()| String::from("Notifications enabled."),
+                        ));
+                        pending.set(false);
+                    });
+                },
+                "Enable notifications"
+            }
+            if !status.read().is_empty() {
+                span { role: "status", "{status}" }
             }
         }
     }

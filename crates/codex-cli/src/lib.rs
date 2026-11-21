@@ -11,6 +11,7 @@ mod config;
 mod hub;
 mod plugin;
 mod server;
+mod transcript;
 
 #[cfg(test)]
 #[cfg(unix)]

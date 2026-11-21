@@ -207,22 +207,18 @@ stdout.
   to `error`; and a later `task_notification` may follow for the same
   `task_id` when the agent is resumed, which registers it in the
   background again.
-- The adapter maps them as the session's sub-agent (architecture §3):
-  `task_started` of a `local_agent` with a `tool_use_id` starts one
-  (`ClaudeEvent::SubagentStarted`), a frame with both `parent_tool_use_id`
-  and `agent_id` is its message (`SubagentMessage`), and `task_notification`
-  ends it (`SubagentEnded`; an empty `summary` is none). The driver keeps
-  the ids of the subagents it saw start and passes the end of any other
-  task on as `Unknown`. Any other task, a frame with a `parent_tool_use_id`
-  but no `agent_id`, a subagent's `stream_event`, `task_progress` and
-  `task_updated` stay `Unknown`. A subagent's text, reasoning and tool calls
-  are its own transcript; its `TodoWrite` and `AskUserQuestion` calls are
-  left out of it, so its checklist never becomes the session's tasks, and
-  its prompt is left out too, since the `Agent` call shows its
-  `description`. Its frames have no transcript UUID the session anchors
-  undo on. Not recorded yet: a subagent that asks permission (its
-  `can_use_tool` names its own call, which then gets a card of its own in
-  the session), one that fails or is stopped, and a background one.
+- The adapter starts a child from a `local_agent` task with a
+  `tool_use_id`, using `subagent_type` when given. Entries use
+  `agent_id` or the known `parent_tool_use_id`. A permission uses its
+  parent call when given, or a child tool-use ID previously seen on the
+  stream. Unidentified entries stay out of the main transcript.
+- The child has its own text, reasoning, calls, approvals, questions and
+  checklist. The recorded `TodoWrite` updates change the child's checklist
+  from pending to completed while preserving task IDs. Its
+  `task_notification` supplies the outcome and report.
+- The recording contains no child approval. The permission attribution
+  test uses sanitized frames with parent and tool identifiers. Live
+  delivery of child approval prompts still needs a probe.
 
 ## Reasoning
 

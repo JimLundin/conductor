@@ -151,7 +151,7 @@ fn worktree(session: SessionId) -> String {
 
 /// The branch Conductor owns for the session.
 #[must_use]
-fn branch(session: SessionId) -> String {
+pub(crate) fn branch(session: SessionId) -> String {
     format!("{BRANCHES}{}", worktree(session))
 }
 

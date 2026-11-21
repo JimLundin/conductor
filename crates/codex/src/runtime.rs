@@ -39,6 +39,7 @@ pub enum Call {
     },
     Interrupt(TurnId),
     Respond {
+        thread: Option<ThreadId>,
         id: ApprovalId,
         decision: Decision,
     },
@@ -147,13 +148,17 @@ impl Runtime {
             Command::Interrupt(turn) => {
                 call(Call::Interrupt(TurnId(turn.0)), Then::Interrupted)
             }
-            Command::Reply { native, reply, .. } => call(
-                Call::Respond {
-                    id: ApprovalId(native.0),
-                    decision: codex_answer(reply),
-                },
-                Then::Replied,
-            ),
+            Command::Reply { native, reply, .. } => {
+                let (thread, id) = crate::children::request(native);
+                call(
+                    Call::Respond {
+                        thread,
+                        id,
+                        decision: codex_answer(reply),
+                    },
+                    Then::Replied,
+                )
+            }
             Command::Turns => Vec::from([Effect::Turns]),
             Command::Revert(turn) => {
                 call(Call::Revert(TurnId(turn)), Then::Reverted)
@@ -167,6 +172,7 @@ impl Runtime {
                 let note = codex_note(&event);
                 self.lifecycle.steps(codex_steps(event), note)
             }
+            Routed::Subagent(steps) => self.lifecycle.steps(steps, None),
             Routed::Stopped { reason } => self.lifecycle.steps(
                 Vec::from([Step::Closed(CloseReason::Stopped { reason })]),
                 None,
@@ -368,6 +374,7 @@ mod tests {
                 }]),
                 Vec::from([Effect::Call {
                     call: Call::Respond {
+                        thread: None,
                         id: ApprovalId(text("integer:7")),
                         decision: Decision::Decline,
                     },

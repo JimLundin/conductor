@@ -30,7 +30,12 @@ impl DiffState {
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Instances(_)
-                | CommandResult::IssueCreated { .. },
+                | CommandResult::IssueCreated { .. }
+                | CommandResult::PushPublicKey(_)
+                | CommandResult::PushUnavailable
+                | CommandResult::FleetStatus(_)
+                | CommandResult::FleetInvite(_)
+                | CommandResult::FleetPairing(_),
             ) => Self::Failed(format!("{host} did not return changes.")),
             Err(reason) => Self::Failed(reason),
         }

@@ -5,8 +5,8 @@ use agents::{
     NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
 };
 use proto::{
-    ClientName, CloseReason, Decision, EventKind, SubagentActivity, SubagentId,
-    ToolCallId, ToolPhase,
+    ClientName, CloseReason, Decision, EventKind, SubagentId, ToolCallId,
+    ToolPhase,
 };
 
 use crate::prelude::*;
@@ -29,24 +29,30 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             reasoning_delta(text).into_iter().collect()
         }
         ClaudeEvent::PermissionRequested {
+            agent,
             id,
             tool,
             tool_name: _,
             tool_use_id,
             for_session,
         } => Vec::from([Step::Open {
+            agent: agent.map(SubagentId),
             native: NativeRequest(id.0),
             call: ToolCallId(tool_use_id),
             tool,
             reason: None,
             for_session,
         }]),
-        ClaudeEvent::QuestionAsked { id, questions, .. } => {
-            Vec::from([Step::Ask {
-                native: NativeRequest(id.0),
-                questions,
-            }])
-        }
+        ClaudeEvent::QuestionAsked {
+            agent,
+            id,
+            questions,
+            ..
+        } => Vec::from([Step::Ask {
+            agent: agent.map(SubagentId),
+            native: NativeRequest(id.0),
+            questions,
+        }]),
         ClaudeEvent::PermissionCancelled { id } => {
             Vec::from([Step::Withdraw(NativeRequest(id.0))])
         }
@@ -62,10 +68,12 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             agent,
             tool_use_id,
             description,
+            kind,
         } => Vec::from([Step::SubagentStarted {
             agent: SubagentId(agent),
             call: ToolCallId(tool_use_id),
             description,
+            kind,
         }]),
         ClaudeEvent::SubagentMessage {
             agent,
@@ -73,11 +81,8 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             content,
         } => content
             .into_iter()
-            .filter_map(|block| subagent_block(role, block))
-            .map(|activity| Step::SubagentActivity {
-                agent: SubagentId(agent.clone()),
-                activity,
-            })
+            .filter_map(|block| claude_block(role, block))
+            .filter_map(|step| step.for_subagent(SubagentId(agent.clone())))
             .collect(),
         ClaudeEvent::SubagentEnded {
             agent,
@@ -93,49 +98,8 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
                 status: status.describe(),
             })])
         }
-        ClaudeEvent::Unknown(_) => Vec::new(),
-    }
-}
-
-/// A sub-agent's blocks map as the main agent's do, except its checklist,
-/// which is not the session's tasks and is left out.
-fn subagent_block(role: Role, block: Block) -> Option<SubagentActivity> {
-    match (role, block) {
-        (Role::Assistant, Block::Text(text)) => {
-            Some(SubagentActivity::Message { text })
-        }
-        (Role::Assistant, Block::Thinking(text)) => Some(text)
-            .filter(|piece| !piece.is_empty())
-            .map(|piece| SubagentActivity::Reasoning { text: piece }),
-        (Role::Assistant, Block::ToolUse { id, name, tool }) => {
-            match name.as_str() {
-                ASK_USER_QUESTION => None,
-                _ => Some(SubagentActivity::ToolCall {
-                    call: ToolCallId(id),
-                    phase: ToolPhase::Started { tool },
-                }),
-            }
-        }
-        (
-            Role::User,
-            Block::ToolResult {
-                tool_use_id,
-                outcome,
-                ..
-            },
-        ) => Some(SubagentActivity::ToolCall {
-            call: ToolCallId(tool_use_id),
-            phase: ToolPhase::Finished { outcome },
-        }),
-        (
-            Role::User,
-            Block::Text(_)
-            | Block::ToolUse { .. }
-            | Block::Thinking(_)
-            | Block::Checklist(_),
-        )
-        | (Role::Assistant, Block::ToolResult { .. } | Block::Checklist(_))
-        | (_, Block::Other(_)) => None,
+        ClaudeEvent::Unknown(_)
+        | ClaudeEvent::UnidentifiedSubagentMessage { .. } => Vec::new(),
     }
 }
 
@@ -239,6 +203,16 @@ mod tests {
         })
     }
 
+    fn checklist(status: TaskStatus) -> Vec<agents::PlanStep> {
+        ["alpha", "beta"]
+            .into_iter()
+            .map(|text| agents::PlanStep {
+                text: String::from(text),
+                status,
+            })
+            .collect()
+    }
+
     #[test]
     fn a_recorded_subagent_maps_to_its_start_its_calls_and_its_end()
     -> Result<(), serde_json::Error> {
@@ -260,6 +234,7 @@ mod tests {
                     Step::SubagentStarted { .. }
                         | Step::SubagentActivity { .. }
                         | Step::SubagentEnded { .. }
+                        | Step::SubagentChecklist { .. }
                         | Step::Checklist(_)
                 )
             })
@@ -268,13 +243,22 @@ mod tests {
             steps,
             Vec::from([
                 Step::SubagentStarted {
+                    kind: Some(String::from("general-purpose")),
                     agent: agent(),
                     call: ToolCallId(String::from(
                         "toolu_015av4j2jHs5CwVCv76qxYf2"
                     )),
                     description: String::from("Run TodoWrite checklist task"),
                 },
+                Step::SubagentChecklist {
+                    agent: agent(),
+                    steps: checklist(TaskStatus::Pending),
+                },
                 subagent_finished("toolu_01WSCsnAQWyaEonxDVnmncap"),
+                Step::SubagentChecklist {
+                    agent: agent(),
+                    steps: checklist(TaskStatus::Completed),
+                },
                 subagent_finished("toolu_01H4nEBx6jVuR4PwHBWBgvPw"),
                 Step::SubagentEnded {
                     agent: agent(),
@@ -321,6 +305,10 @@ mod tests {
                     call: ToolCallId(String::from("toolu_1")),
                     phase: ToolPhase::Started { tool: bash },
                 }),
+                Step::SubagentChecklist {
+                    agent: agent(),
+                    steps: Vec::from([step()]),
+                },
             ])
         );
     }
@@ -460,17 +448,20 @@ mod tests {
             },
             Case {
                 got: claude_steps(ClaudeEvent::QuestionAsked {
+                    agent: None,
                     id: PermissionRequestId(String::from("p2")),
                     questions: Vec::from([color()]),
                     tool_use_id: String::from("toolu_2"),
                 }),
                 want: Vec::from([Step::Ask {
+                    agent: None,
                     native: NativeRequest(String::from("p2")),
                     questions: Vec::from([color()]),
                 }]),
             },
             Case {
                 got: claude_steps(ClaudeEvent::PermissionRequested {
+                    agent: None,
                     id: PermissionRequestId(String::from("p3")),
                     tool_name: String::from("Bash"),
                     tool: ToolKind::Command {
@@ -480,6 +471,7 @@ mod tests {
                     for_session: Some(String::from("Bash(touch t1.txt)")),
                 }),
                 want: Vec::from([Step::Open {
+                    agent: None,
                     native: NativeRequest(String::from("p3")),
                     call: ToolCallId(String::from("toolu_3")),
                     tool: ToolKind::Command {

@@ -29,20 +29,45 @@ use tracing::Instrument;
 
 /// The providers a host runs, each by its plugin.
 #[derive(Debug, Clone, Default)]
-pub struct Plugins(Arc<BTreeMap<Provider, Plugin>>);
+pub struct Plugins(
+    Arc<BTreeMap<Provider, Plugin>>,
+    Option<fn(Provider, &proto::Credential) -> crate::fleet::Sharing>,
+);
 
 impl FromIterator<Plugin> for Plugins {
     fn from_iter<I: IntoIterator<Item = Plugin>>(plugins: I) -> Self {
-        Self(Arc::new(
-            plugins
-                .into_iter()
-                .map(|plugin| (plugin.profile.provider, plugin))
-                .collect(),
-        ))
+        Self(
+            Arc::new(
+                plugins
+                    .into_iter()
+                    .map(|plugin| (plugin.profile.provider, plugin))
+                    .collect(),
+            ),
+            None,
+        )
     }
 }
 
 impl Plugins {
+    #[must_use]
+    pub fn with_fleet_credentials(
+        mut self,
+        policy: fn(Provider, &proto::Credential) -> crate::fleet::Sharing,
+    ) -> Self {
+        self.1 = Some(policy);
+        self
+    }
+
+    pub(crate) fn sharing(
+        &self,
+        provider: Provider,
+        credential: &proto::Credential,
+    ) -> crate::fleet::Sharing {
+        self.1.map_or(crate::fleet::Sharing::Local, |policy| {
+            policy(provider, credential)
+        })
+    }
+
     /// How each provider presents itself, as its plugin says.
     #[must_use]
     fn catalog(&self) -> Catalog {
@@ -61,11 +86,20 @@ impl Plugins {
 pub struct Providers {
     plugins: Plugins,
     data_dir: PathBuf,
+    fleet: crate::fleet::Slot,
 }
 
 impl Providers {
-    pub const fn new(plugins: Plugins, data_dir: PathBuf) -> Self {
-        Self { plugins, data_dir }
+    pub(crate) const fn new(
+        plugins: Plugins,
+        data_dir: PathBuf,
+        fleet: crate::fleet::Slot,
+    ) -> Self {
+        Self {
+            plugins,
+            data_dir,
+            fleet,
+        }
     }
 
     pub fn catalog(&self) -> Catalog {
@@ -86,7 +120,12 @@ impl Providers {
         mode: Mode,
     ) -> Launcher {
         let span = tracing::info_span!("instance", id = %id);
-        match prepare(&self.plugins, &self.data_dir, id, &instance) {
+        let membership = self.fleet.borrow().clone();
+        let revision = match membership {
+            Some(fleet) => Some(fleet.revision().await),
+            None => None,
+        };
+        match prepare(&self.plugins, &self.data_dir, id, &instance, revision) {
             Ok(prepared) => {
                 run(prepared, &self.data_dir, instance, mode)
                     .instrument(span)
@@ -96,24 +135,81 @@ impl Providers {
         }
     }
 
+    pub(crate) async fn move_files(
+        &self,
+        id: &InstanceId,
+        instance: &Instance,
+    ) -> Result<crate::movement::ProviderFiles, String> {
+        let member = self.fleet.borrow().clone().ok_or_else(|| {
+            String::from("session moves require fleet membership")
+        })?;
+        let revision = member.revision().await;
+        let Prepared {
+            plugin,
+            settings,
+            home,
+            ..
+        } = prepare(
+            &self.plugins,
+            &self.data_dir,
+            id,
+            instance,
+            Some(revision.clone()),
+        )?;
+        let profile = plugin.profile;
+        let program = provider_program(
+            settings.path,
+            profile.pin,
+            &self.data_dir,
+            Some(&revision),
+        )
+        .await?;
+        let observed =
+            version(command(&program, &home, profile.version)).await?;
+        let pin = revision.pins.version(id.provider).ok_or_else(|| {
+            String::from(
+                "the provider has no pin in the signed fleet configuration",
+            )
+        })?;
+        let version =
+            host::movement::verified_pin(pin, observed.code, &observed.stdout)?;
+        let Home::Private(private_home) = home else {
+            return Err(String::from(
+                "session moves require a private provider home",
+            ));
+        };
+        Ok(crate::movement::ProviderFiles {
+            home: private_home,
+            version,
+            io: plugin.transcripts,
+        })
+    }
+
     pub async fn signing(
         &self,
         id: &InstanceId,
         instance: &Instance,
     ) -> Result<Signing, String> {
+        let member = self.fleet.borrow().clone();
+        let preferences = match member {
+            Some(fleet) => Some(fleet.revision().await),
+            None => None,
+        };
         let Prepared {
             plugin,
             settings,
             home,
             work: _,
-        } = prepare(&self.plugins, &self.data_dir, id, instance)?;
+            revision,
+        } = prepare(&self.plugins, &self.data_dir, id, instance, preferences)?;
         let profile = plugin.profile;
-        let program = match settings.path {
-            Some(given) => given,
-            None => install(profile.pin, &self.data_dir)
-                .await
-                .map_err(|err| err.to_string())?,
-        };
+        let program = provider_program(
+            settings.path,
+            profile.pin,
+            &self.data_dir,
+            revision.as_ref(),
+        )
+        .await?;
         Ok(Signing {
             program,
             home,
@@ -186,7 +282,16 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         relay: relay.to_string(),
         token: target.token,
     };
-    let ended = match announce(&data_dir, &web_url, &ticket) {
+    let announced = if hosted.has_fleet {
+        writeln!(
+            std::io::stdout().lock(),
+            "Fleet member. Use conductord fleet status to inspect membership."
+        )
+        .map_err(anyhow::Error::from)
+    } else {
+        announce(&data_dir, &web_url, &ticket)
+    };
+    let ended = match announced {
         Ok(()) => tokio::select! {
             result = tokio::signal::ctrl_c() => result.map_err(anyhow::Error::from),
             () = hosted.log.stopped() => Err(anyhow::Error::from(crate::Stopped {})),
@@ -216,6 +321,8 @@ pub struct Hosted {
     log: Log,
     token: proto::AuthToken,
     initialized: tokio::sync::watch::Receiver<bool>,
+    fleet_lock: std::fs::File,
+    has_fleet: bool,
 }
 
 impl Hosted {
@@ -248,7 +355,12 @@ impl Hosted {
     ///
     /// The router or event log failed to shut down.
     pub async fn shutdown(self) -> anyhow::Result<()> {
-        let Self { router, log, .. } = self;
+        let Self {
+            router,
+            log,
+            fleet_lock: _fleet_lock,
+            ..
+        } = self;
         let stopped = router.shutdown().await;
         drop(router);
         log.shutdown().await?;
@@ -268,17 +380,41 @@ pub async fn start(
     plugins: Plugins,
     options: HostOptions,
 ) -> anyhow::Result<Hosted> {
-    let started = assemble(plugins, options).await;
+    let (lock, fleet) = open_fleet(&endpoint, &options.data_dir).await?;
+    let has_fleet = fleet.is_some();
+    let data = options.data_dir.clone();
+    let (fleet_slot, _) = tokio::sync::watch::channel(fleet);
+    let started =
+        assemble(plugins, options, fleet_slot.clone(), endpoint.clone()).await;
     match started {
-        Ok((conductor, log, token, initialized)) => {
-            let router = Router::builder(endpoint)
+        Ok((mut conductor, log, token, initialized)) => {
+            let mover = conductor.enable_moves(
+                endpoint.clone(),
+                fleet_slot.clone(),
+                data.clone(),
+            );
+            let protocol = crate::fleet::Protocol::new(
+                fleet_slot.clone(),
+                data,
+                endpoint.id(),
+                token,
+            );
+            let router = Router::builder(endpoint.clone())
                 .accept(proto::ALPN, conductor)
+                .accept(proto::fleet::ALPN, protocol)
+                .accept(crate::movement::ALPN, mover.clone())
                 .spawn();
+            tokio::spawn(mover.recover_when_enrolled());
+            tokio::spawn(crate::fleet::follow_when_enrolled(
+                endpoint, fleet_slot,
+            ));
             Ok(Hosted {
                 router,
                 log,
                 token,
                 initialized,
+                fleet_lock: lock,
+                has_fleet,
             })
         }
         Err(error) => {
@@ -288,9 +424,36 @@ pub async fn start(
     }
 }
 
+async fn open_fleet(
+    endpoint: &Endpoint,
+    data_dir: &Path,
+) -> anyhow::Result<(std::fs::File, Option<crate::fleet::Membership>)> {
+    let opened = crate::fleet::exclusive(data_dir).and_then(|lock| {
+        crate::fleet::Membership::open(data_dir, endpoint.id())
+            .map(|fleet| (lock, fleet))
+    });
+    let (lock, fleet) = match opened {
+        Ok(membership) => membership,
+        Err(error) => {
+            endpoint.close().await;
+            return Err(error);
+        }
+    };
+    if let Some(membership) = &fleet {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            crate::fleet::refresh(endpoint, membership),
+        )
+        .await;
+    }
+    Ok((lock, fleet))
+}
+
 async fn assemble(
     plugins: Plugins,
     options: HostOptions,
+    fleet: crate::fleet::Slot,
+    endpoint: Endpoint,
 ) -> anyhow::Result<(
     Conductor,
     Log,
@@ -306,6 +469,11 @@ async fn assemble(
     let token = crate::load_or_create_token(&data_dir)?;
     let (store, stored) = Store::open(&data_dir, plugins.catalog())?;
     let log = Log::open(name.clone(), &data_dir.join("conductor.redb"))?;
+    let push =
+        crate::push::Push::open(&data_dir, endpoint.id().as_bytes(), &log)
+            .await
+            .inspect_err(|_| tracing::warn!("could not initialize Web Push"))
+            .ok();
     let home = HomeClone::spawn(Homing {
         host: name,
         data_dir: data_dir.clone(),
@@ -316,11 +484,28 @@ async fn assemble(
         log.clone(),
         store,
         &stored,
-        Providers::new(plugins, data_dir),
+        Providers::new(plugins.clone(), data_dir, fleet.clone()),
         home.clone(),
     )
     .await?;
-    let conductor = Conductor::new(log.clone(), registry, home, token);
+    crate::fleet::follow_credentials(
+        registry.clone(),
+        fleet.clone(),
+        plugins.clone(),
+        log.clone(),
+    );
+    let conductor = Conductor::new(
+        log.clone(),
+        registry,
+        home,
+        crate::serve::ConnectionOptions {
+            token,
+            push,
+            fleet,
+            endpoint,
+            plugins,
+        },
+    );
     Ok((conductor, log, token, initialized))
 }
 
@@ -331,6 +516,7 @@ struct Prepared {
     settings: Settings,
     home: Home,
     work: PathBuf,
+    revision: Option<proto::fleet::Revision>,
 }
 
 fn prepare(
@@ -338,6 +524,7 @@ fn prepare(
     data_dir: &Path,
     id: &InstanceId,
     instance: &Instance,
+    revision: Option<proto::fleet::Revision>,
 ) -> Result<Prepared, String> {
     let plugin = plugins
         .0
@@ -358,6 +545,12 @@ fn prepare(
             .model
             .as_ref()
             .map(|model| model.0.clone())
+            .or_else(|| {
+                revision
+                    .as_ref()
+                    .and_then(|fleet| fleet.settings.models.get(&id.provider))
+                    .map(|model| model.0.clone())
+            })
             .or_else(|| plugin.settings.model.clone()),
     };
     Ok(Prepared {
@@ -365,7 +558,32 @@ fn prepare(
         settings,
         home,
         work,
+        revision,
     })
+}
+
+async fn provider_program(
+    configured: Option<PathBuf>,
+    pin: agents::pin::Cli,
+    data_dir: &Path,
+    revision: Option<&proto::fleet::Revision>,
+) -> Result<PathBuf, String> {
+    match configured {
+        Some(path) => Ok(path),
+        None => installed_program(pin, data_dir, revision).await,
+    }
+}
+
+async fn installed_program(
+    pin: agents::pin::Cli,
+    data_dir: &Path,
+    revision: Option<&proto::fleet::Revision>,
+) -> Result<PathBuf, String> {
+    match revision {
+        Some(fleet) => install::install_fleet(pin, data_dir, &fleet.pins).await,
+        None => install(pin, data_dir).await,
+    }
+    .map_err(|err| err.to_string())
 }
 
 /// Runs each step of `host::start` for the instance's CLI: the one its
@@ -381,6 +599,7 @@ async fn run(
         settings,
         home,
         work,
+        revision,
     } = prepared;
     let profile = plugin.profile;
     let mut next = host::start::start(
@@ -391,15 +610,17 @@ async fn run(
     loop {
         next = match next {
             Next::Install(installing) => installing.installed(
-                install(profile.pin, data_dir)
-                    .await
-                    .map_err(|err| err.to_string()),
+                installed_program(profile.pin, data_dir, revision.as_ref())
+                    .await,
             ),
             Next::Probe(path, probing) => {
                 let start = (plugin.instance)(Launch {
                     path: path.clone(),
                     home: home.clone(),
                     work: work.clone(),
+                    fleet_flags: revision.as_ref().map(|fleet| {
+                        fleet.settings.provider_flags(profile.provider)
+                    }),
                 });
                 let program = path.display().to_string();
                 let ran =
@@ -459,7 +680,10 @@ pub async fn login(
         host::registry::picked(&roster, provider, account.as_deref())
             .map_err(anyhow::Error::msg)?;
     let lease = store.signing(&instance)?;
-    let providers = Providers::new(plugins, data_dir);
+    let key = crate::load_or_create_key(&data_dir)?;
+    let membership = crate::fleet::Membership::open(&data_dir, key.public())?;
+    let (fleet, _) = tokio::sync::watch::channel(membership);
+    let providers = Providers::new(plugins, data_dir, fleet);
     let signing = providers
         .signing(&instance, &lease.settings)
         .await
@@ -490,7 +714,9 @@ fn private_home(
         .map_err(|err| format!("creating the private home for {id}: {err}"))
 }
 
-fn data_dir_or_default(data_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+pub fn data_dir_or_default(
+    data_dir: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
     match data_dir {
         Some(dir) => Ok(dir),
         None => Ok(directories::ProjectDirs::from("", "", "conductor")

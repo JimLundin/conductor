@@ -237,6 +237,26 @@ impl Book {
         })
     }
 
+    /// A settled move keeps the final working files in the transferred branch.
+    #[must_use]
+    pub fn plan_move(&self) -> Option<SnapshotPlan> {
+        let workspace = self.workspace.as_ref()?;
+        let previous = self.active_checkpoint();
+        Some(SnapshotPlan {
+            workspace: workspace.clone(),
+            reserved: self.next_reservation(),
+            base: previous.map(|parent| parent.commit.clone()),
+            parent: previous.map(|parent| parent.id),
+            turn_start: None,
+            history: HistoryAnchor::Unknown,
+            undo: UndoAvailability::Unavailable {
+                reason: String::from(
+                    "this checkpoint records the working files before a move",
+                ),
+            },
+        })
+    }
+
     #[must_use]
     pub fn diff(&self, id: CheckpointId) -> Option<Compared> {
         let workspace = self.workspace.as_ref()?;

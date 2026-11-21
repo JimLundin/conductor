@@ -75,6 +75,7 @@ fn summary(event: &ClaudeEvent) -> String {
             agent,
             tool_use_id,
             description,
+            ..
         } => {
             format!("subagent {agent} started by {tool_use_id}: {description}")
         }
@@ -122,6 +123,9 @@ fn summary(event: &ClaudeEvent) -> String {
             format!("exited {}", status.describe())
         }
         ClaudeEvent::Unknown(v) => format!("unknown {}", frame(v)),
+        ClaudeEvent::UnidentifiedSubagentMessage { .. } => {
+            String::from("unidentified subagent message")
+        }
     }
 }
 

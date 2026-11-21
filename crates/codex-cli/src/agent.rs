@@ -22,7 +22,7 @@ impl ProviderInstance for Hub {
         Box::pin(async move {
             let credential =
                 given.as_ref().map(codex::credential).transpose()?;
-            let named = credential.as_ref().map(codex::default_model);
+            let named = credential.as_ref().and_then(codex::default_model);
             self.set_credential(credential)
                 .await
                 .map_err(|error| error.to_string())?;
@@ -102,8 +102,14 @@ impl Task {
                 thread.send_turn(text, effort).await.map(drop)
             }
             Call::Interrupt(turn) => thread.interrupt(turn).await,
-            Call::Respond { id, decision } => {
-                thread.respond(id, decision).await
+            Call::Respond {
+                thread: child,
+                id,
+                decision,
+            } => {
+                let mut target = thread.clone();
+                target.id = child.unwrap_or(target.id);
+                target.respond(id, decision).await
             }
             Call::Revert(turn) => thread.revert(turn).await,
         }

@@ -5,10 +5,14 @@
 
 pub mod agent;
 mod plugin;
+pub mod transcript;
 
 pub use plugin::{
     Configuring, Instance, Launch, Plugin, ProviderInstance, Settings,
+    TranscriptFiles,
 };
+
+pub use transcript::{MAX_TRANSCRIPT_BYTES, Transcript, TranscriptFile};
 
 use agents::Note;
 use agents::runtime::{Command, Event};
@@ -103,8 +107,8 @@ pub fn log(note: &Note) {
         Note::Unversioned { provider } => {
             tracing::warn!(target: "agent", ?provider, "running a CLI that did not report its version");
         }
-        Note::GatewayExposed { provider } => {
-            tracing::warn!(target: "agent", ?provider, "the CLI's commands can read the gateway token; install bubblewrap and socat to sandbox them");
+        Note::CredentialExposed { provider } => {
+            tracing::warn!(target: "agent", ?provider, "the CLI's commands can read the provider credential; install bubblewrap and socat to sandbox them");
         }
     }
 }

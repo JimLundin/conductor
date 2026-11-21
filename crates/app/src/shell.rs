@@ -19,10 +19,11 @@
     reason = "rsx! expands each \"{text}\" node to format!"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::time::Duration;
 
+use crate::fleet::Fleet;
 use crate::sessions::SessionList;
 use crate::ticket;
 use dioxus::prelude::*;
@@ -46,9 +47,101 @@ pub struct Shell {
     state: Signal<State>,
     links: Signal<Links>,
     storage_failed: Signal<bool>,
+    fleet: Signal<Option<Fleet>>,
+    fleet_versions: Signal<BTreeMap<HostId, u64>>,
 }
 
 impl Shell {
+    pub(crate) fn is_paired(self, host: HostId) -> bool {
+        self.state
+            .read()
+            .saved()
+            .iter()
+            .any(|saved| saved.ticket.host == host.0)
+    }
+
+    pub(crate) fn host_link(self, host: HostId) -> Option<Rc<HostLink>> {
+        self.links
+            .read()
+            .get(&host)
+            .map(|(_, link)| Rc::clone(link))
+    }
+
+    fn set_fleet(self, next: Fleet) {
+        let mut removed = self.retired_members(&next);
+        let stale = self
+            .state
+            .read()
+            .saved()
+            .iter()
+            .map(|saved| HostId::of(&saved.ticket))
+            .filter(|&host| next.revoked(host))
+            .collect::<Vec<_>>();
+        let mut saved = next.save();
+        for host in stale {
+            removed.insert(host);
+            saved &= ticket::forget(host);
+        }
+        let hosts = next.saved();
+        if !saved {
+            let mut failed = self.storage_failed;
+            failed.set(true);
+        }
+        let mut fleet = self.fleet;
+        fleet.set(Some(next));
+        self.dispatch(Intent::FleetHosts {
+            hosts,
+            removed: removed.into_iter().collect(),
+        });
+    }
+
+    fn retired_members(self, next: &Fleet) -> BTreeSet<HostId> {
+        self.fleet
+            .read()
+            .iter()
+            .flat_map(Fleet::hosts)
+            .map(|host| HostId(host.node))
+            .filter(|&id| next.host(id).is_none())
+            .collect()
+    }
+
+    pub(crate) fn outdated_fleet_version(self, host_key: &str) -> Option<u64> {
+        let newest = self.fleet.read().as_ref()?.snapshot.as_ref()?.version;
+        self.fleet_versions
+            .read()
+            .iter()
+            .find_map(|(host, version)| {
+                (*version < newest && host.key() == host_key)
+                    .then_some(*version)
+            })
+    }
+
+    fn refresh_fleet(
+        self,
+        host: HostId,
+        snapshot: proto::fleet::SignedSnapshot,
+    ) {
+        if net::fleet::verify_snapshot(&snapshot).is_err() {
+            return;
+        }
+        self.note_fleet_version(host, snapshot.snapshot.version);
+        let next = self
+            .fleet
+            .read()
+            .as_ref()
+            .and_then(|fleet| fleet.updated(snapshot));
+        if let Some(next) = next {
+            self.set_fleet(next);
+        }
+    }
+
+    fn note_fleet_version(self, host: HostId, version: u64) {
+        let mut versions = self.fleet_versions;
+        if versions.read().get(&host) != Some(&version) {
+            versions.write().insert(host, version);
+        }
+    }
+
     pub fn dispatch(self, intent: Intent) {
         let mut state = self.state;
         let (next, effects) =
@@ -62,11 +155,7 @@ impl Shell {
     fn perform(self, effect: Effect) {
         match effect {
             Effect::Send { host, body, reply } => {
-                let link = self
-                    .links
-                    .read()
-                    .get(&host)
-                    .map(|(_, link)| Rc::clone(link));
+                let link = self.host_link(host);
                 // Not tied to the component that sent it: a host update can
                 // take that component away before the answer comes (a failed
                 // sign-in drops its code form), and the answer still has to
@@ -132,11 +221,17 @@ pub fn App() -> Element {
         (Signal::new(opened), Signal::new(failed))
     });
     let links = use_signal(Links::new);
-    use_context_provider(|| Shell {
+    let fleet = use_signal(Fleet::load);
+    let fleet_versions = use_signal(BTreeMap::new);
+    let shell = Shell {
         state,
         links,
         storage_failed,
-    });
+        fleet,
+        fleet_versions,
+    };
+    use_context_provider(|| shell);
+    crate::push::follow_activations(shell);
     let screen = ui::view(&state.read());
     rsx! {
         document::Stylesheet { href: CSS }
@@ -149,6 +244,7 @@ pub fn App() -> Element {
                     h1 { "Connect to a host" }
                     p { "Paste the join link or ticket your host printed when it started." }
                     Pair { pair }
+                    FleetPair {}
                 }
             },
             Screen::Hosts(hosts) => rsx! { Hosts { hosts: *hosts } },
@@ -185,6 +281,239 @@ fn Pair(pair: ui::Pair) -> Element {
     }
 }
 
+#[component]
+fn FleetPair() -> Element {
+    let shell = use_context::<Shell>();
+    let mut request = use_signal(String::new);
+    let mut image = use_signal(String::new);
+    let mut signed = use_signal(String::new);
+    let mut note = use_signal(String::new);
+    rsx! {
+        section { class: "fleet-pair",
+            button {
+                onclick: move |_| {
+                    spawn(async move {
+                        match owner_request().await {
+                            Ok(text) => {
+                                image.set(crate::fleet::pairing_image(&text));
+                                request.set(format!("conductord pair {text}"));
+                            }
+                            Err(error) => note.set(error),
+                        }
+                    });
+                },
+                "Pair with a fleet"
+            }
+            if !request.read().is_empty() {
+                p { "Run this command on the fleet root host and paste its reply." }
+                code { "{request}" }
+                if !image.read().is_empty() {
+                    div { role: "img", "aria-label": "Public fleet pairing request", dangerous_inner_html: "{image}" }
+                }
+                input {
+                    r#type: "text",
+                    "aria-label": "Signed fleet pairing reply",
+                    autocomplete: "off",
+                    value: "{signed}",
+                    oninput: move |event| signed.set(event.value()),
+                }
+                button {
+                    onclick: move |_| {
+                        let text = signed.read().clone();
+                        spawn(async move {
+                            match owner_pairing(&text).await {
+                                Ok(pairing) => shell.set_fleet(Fleet::new(pairing)),
+                                Err(error) => note.set(error),
+                            }
+                        });
+                    },
+                    "Finish fleet pairing"
+                }
+            }
+            if !note.read().is_empty() {
+                p { role: "status", "{note}" }
+            }
+        }
+    }
+}
+
+async fn owner_request() -> Result<String, String> {
+    let device = net::fleet::owner_public_key()
+        .await
+        .map_err(|error| error.to_string())?;
+    let name = net::platform::client_name().0;
+    (proto::fleet::PairRequest { device, name })
+        .to_text()
+        .map_err(|error| error.to_string())
+}
+
+async fn owner_pairing(text: &str) -> Result<proto::fleet::Pairing, String> {
+    let key = net::fleet::owner_public_key()
+        .await
+        .map_err(|error| error.to_string())?;
+    crate::fleet::pairing(text, key).ok_or_else(|| {
+        String::from("This pairing reply does not match this device.")
+    })
+}
+
+#[component]
+fn FleetAdd() -> Element {
+    let shell = use_context::<Shell>();
+    let mut invite = use_signal(String::new);
+    let mut failure = use_signal(String::new);
+    let root = shell
+        .fleet
+        .read()
+        .as_ref()
+        .map(|fleet| HostId(fleet.pairing.root.node));
+    root.map_or_else(|| rsx! { FleetPair {} }, |host| rsx! {
+            section { class: "fleet-pair",
+                button {
+                    onclick: move |_| {
+                        let link = shell.host_link(host);
+                        spawn(async move {
+                            match fleet_invite(send(link, CommandBody::FleetInvite).await) {
+                                Ok(text) => {
+                                    failure.set(String::new());
+                                    invite.set(format!("conductord join {text}"));
+                                }
+                                Err(error) => failure.set(error),
+                            }
+                        });
+                    },
+                    "Create fleet host invitation"
+                }
+                if !invite.read().is_empty() {
+                    p { "Run this command on the host to join. The invitation expires after one hour." }
+                    code { "{invite}" }
+                }
+                FleetEnroll { host }
+                if !failure.read().is_empty() {
+                    p { role: "status", "{failure}" }
+                }
+            }
+        })
+}
+
+fn fleet_invite(
+    response: Result<CommandResult, String>,
+) -> Result<String, String> {
+    let Ok(CommandResult::FleetInvite(ticket)) = response else {
+        return Err(String::from("Fleet changes need the root host online."));
+    };
+    ticket.to_text().map_err(|error| error.to_string())
+}
+
+#[component]
+fn FleetEnroll(host: HostId) -> Element {
+    rsx! {
+        FleetAdmit { host }
+        FleetApprove { host }
+    }
+}
+
+#[component]
+fn FleetAdmit(host: HostId) -> Element {
+    let shell = use_context::<Shell>();
+    let mut standalone = use_signal(String::new);
+    let mut name = use_signal(String::new);
+    let mut result = use_signal(String::new);
+    rsx! {
+        section { class: "fleet-pair",
+            label {
+                "Standalone host join link"
+                input { value: "{standalone}", autocomplete: "off", oninput: move |event| standalone.set(event.value()) }
+            }
+            label {
+                "Host name"
+                input { value: "{name}", oninput: move |event| name.set(event.value()) }
+            }
+            button {
+                onclick: move |_| {
+                    let Ok(ticket) = ticket::parse_join(&standalone.read()) else {
+                        result.set(String::from("Enter the standalone host's join link."));
+                        return;
+                    };
+                    let host_name = name.read().trim().to_owned();
+                    let link = shell.host_link(host);
+                    spawn(async move {
+                        match send(link, CommandBody::FleetAdmit { ticket, name: host_name }).await {
+                            Ok(CommandResult::Accepted) => {
+                                standalone.set(String::new());
+                                result.set(String::from("The host joined the fleet."));
+                            }
+                            _ => result.set(String::from("The root could not admit the host. Check that both hosts are online and the join link is current.")),
+                        }
+                    });
+                },
+                "Admit standalone host"
+            }
+            FleetNote { text: result() }
+        }
+    }
+}
+
+#[component]
+fn FleetApprove(host: HostId) -> Element {
+    let shell = use_context::<Shell>();
+    let mut device = use_signal(String::new);
+    let mut result = use_signal(String::new);
+    let mut reply = use_signal(String::new);
+    rsx! {
+        section { class: "fleet-pair",
+            label {
+                "New browser pairing request"
+                input { value: "{device}", autocomplete: "off", oninput: move |event| device.set(event.value()) }
+            }
+            button {
+                onclick: move |_| {
+                    let text = device.read().clone();
+                    let raw = text.trim().strip_prefix("conductord pair ").unwrap_or_else(|| text.trim());
+                    let Ok(request) = proto::fleet::PairRequest::parse_text(raw) else {
+                        result.set(String::from("Enter the pairing request shown by the new browser."));
+                        return;
+                    };
+                    let link = shell.host_link(host);
+                    spawn(async move {
+                        match approve_browser(send(link, CommandBody::FleetApprove(request)).await) {
+                            Ok(text) => {
+                                result.set(String::from("Paste the signed reply into the new browser."));
+                                reply.set(text);
+                            }
+                            Err(error) => result.set(error),
+                        }
+                    });
+                },
+                "Approve new browser"
+            }
+            if !reply.read().is_empty() {
+                code { "{reply}" }
+            }
+            FleetNote { text: result() }
+        }
+    }
+}
+
+#[component]
+fn FleetNote(text: String) -> Element {
+    rsx! {
+        if !text.is_empty() {
+            p { role: "status", "{text}" }
+        }
+    }
+}
+
+fn approve_browser(
+    response: Result<CommandResult, String>,
+) -> Result<String, String> {
+    let Ok(CommandResult::FleetPairing(pairing)) = response else {
+        return Err(String::from(
+            "Approving a browser requires the root host online.",
+        ));
+    };
+    pairing.to_text().map_err(|error| error.to_string())
+}
+
 /// The screens over every paired host, and a link to each while they show.
 #[component]
 fn Hosts(hosts: ui::HostsScreen) -> Element {
@@ -206,7 +535,10 @@ fn Hosts(hosts: ui::HostsScreen) -> Element {
                         Detail::Pair(pair) => rsx! {
                             section { class: "pane new-pane",
                                 PaneHeader { title: "Add a host", subtitle: "Paste the join link or ticket it printed when it started." }
-                                div { class: "new-session", Pair { pair } }
+                                div { class: "new-session",
+                                    FleetAdd {}
+                                    Pair { pair }
+                                }
                             }
                         },
                         Detail::NewSession(form) => rsx! {
@@ -311,8 +643,25 @@ async fn run_link(dial: Dial, shell: Shell) {
     let started = retry_start(
         async || {
             let options = LinkOptions::new(net::platform::client_name());
-            HostLink::start(ticket, options).await.map_err(|error| {
-                (!matches!(error, StartError::Ticket(_)), error.to_string())
+            let identity = shell.fleet.read().as_ref().and_then(|fleet| {
+                fleet.host(host).map(|entry| {
+                    (entry.clone(), fleet.pairing.certificate.clone())
+                })
+            });
+            let started = match identity {
+                Some((entry, certificate)) => {
+                    HostLink::spawn_fleet(&entry, certificate, options).await
+                }
+                None => HostLink::start(ticket, options).await,
+            };
+            started.map_err(|error| {
+                (
+                    !matches!(
+                        error,
+                        StartError::Ticket(_) | StartError::Fleet(_)
+                    ),
+                    error.to_string(),
+                )
             })
         },
         |update| shell.dispatch(Intent::Link(host, update)),
@@ -361,9 +710,42 @@ async fn follow(
     shell: Shell,
 ) {
     let mut links = shell.links;
-    links.write().insert(dial.host, (dial.key, Rc::new(handle)));
+    let handle = Rc::new(handle);
+    links
+        .write()
+        .insert(dial.host, (dial.key, Rc::clone(&handle)));
+    let fleet = shell
+        .fleet
+        .read()
+        .as_ref()
+        .is_some_and(|fleet| fleet.host(dial.host).is_some());
+    if fleet {
+        watch_fleet(dial.host, Rc::clone(&handle), shell);
+    }
     while let Some(update) = updates.recv().await {
         shell.dispatch(Intent::Link(dial.host, update));
+    }
+}
+
+fn watch_fleet(host: HostId, member: Rc<HostLink>, shell: Shell) {
+    spawn(async move {
+        loop {
+            if member.status().state == LinkState::Live {
+                let snapshot = member.send(CommandBody::FleetStatus).await.ok();
+                report_fleet_status(host, snapshot, shell);
+            }
+            n0_future::time::sleep(Duration::from_secs(10)).await;
+        }
+    });
+}
+
+fn report_fleet_status(
+    host: HostId,
+    reply: Option<CommandResult>,
+    shell: Shell,
+) {
+    if let Some(CommandResult::FleetStatus(snapshot)) = reply {
+        shell.refresh_fleet(host, snapshot);
     }
 }
 

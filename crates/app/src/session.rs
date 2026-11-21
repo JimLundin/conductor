@@ -20,8 +20,9 @@
 use dioxus::prelude::*;
 use proto::{Decision, RequestId};
 use ui::{
-    Ask, EffortControl, Footer, Intent, Keystroke, Mount, QuestionBody, Row,
-    SessionIntent, ToolDetail, UndoNote, WorkspaceContext,
+    Ask, EffortControl, Footer, Intent, Keystroke, Mount, MoveIntent,
+    MovePanel, QuestionBody, Row, SessionIntent, ToolDetail, UndoNote,
+    WorkspaceContext,
 };
 
 use crate::checkpoints::TurnChanges;
@@ -53,6 +54,7 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                 }
             }
             Workspace { context: pane.workspace }
+            MovementPanel { panel: pane.movement }
             Undo { note: pane.undo }
             if let Some(tasks) = pane.tasks {
                 Tasks { tasks }
@@ -69,6 +71,7 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                             TurnChanges { key: "{changes.key}", changes }
                         }
                     }
+                    Subagents { groups: pane.other_agents }
                     if pane.working {
                         p { class: "working", role: "status", "Thinking…" }
                     }
@@ -80,6 +83,67 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                 }
             }
             Ending { footer: pane.footer }
+        }
+    }
+}
+
+#[component]
+fn MovementPanel(panel: MovePanel) -> Element {
+    match panel {
+        MovePanel::Hidden => rsx! {},
+        MovePanel::Offer(targets) => rsx! { MoveTargets { targets } },
+        MovePanel::Starting => rsx! {
+            p { class: "move-session", role: "status", "Starting the move…" }
+        },
+        MovePanel::Moving { text, can_retry } => rsx! {
+            div { class: "move-session", role: "status",
+                p { "{text}" }
+                if can_retry { Retry {} }
+            }
+        },
+        MovePanel::Failed {
+            text,
+            can_retry,
+            targets,
+        } => rsx! {
+            div { class: "move-session error", role: "alert",
+                p { "{text}" }
+                if can_retry { Retry {} }
+                if !targets.is_empty() { MoveTargets { targets } }
+            }
+        },
+        MovePanel::Moved(text) => rsx! {
+            p { class: "move-session", role: "status", "{text}" }
+        },
+    }
+}
+
+#[component]
+fn MoveTargets(targets: Vec<ui::MoveTarget>) -> Element {
+    let shell = use_context::<Shell>();
+    rsx! {
+        details { class: "move-session",
+            summary { "Move session" }
+            for target in targets {
+                button {
+                    key: "{target.id.key()}",
+                    r#type: "button",
+                    onclick: move |_| shell.dispatch(Intent::Move(MoveIntent::To(target.id))),
+                    "Move to {target.name}"
+                }
+            }
+        }
+    }
+}
+
+#[component]
+fn Retry() -> Element {
+    let shell = use_context::<Shell>();
+    rsx! {
+        button {
+            r#type: "button",
+            onclick: move |_| shell.dispatch(Intent::Move(MoveIntent::Retry)),
+            "Retry move"
         }
     }
 }
@@ -158,6 +222,7 @@ fn Undo(note: UndoNote) -> Element {
 /// keeps room for the transcript.
 #[component]
 fn Tasks(tasks: ui::Tasks) -> Element {
+    let shell = use_context::<Shell>();
     rsx! {
         details { class: "tasks", open: true,
             summary {
@@ -169,8 +234,51 @@ fn Tasks(tasks: ui::Tasks) -> Element {
                     li { key: "{task.key}", class: "task", "data-status": task.status,
                         span { class: "task-mark", role: "img", "aria-label": task.label }
                         span { class: "task-text", "{task.text}" }
+                        if task.choosing {
+                            Handoff { choices: tasks.targets.clone(), pending: tasks.handoff_pending }
+                        } else if let Some(id) = task.handoff {
+                            button {
+                                r#type: "button",
+                                class: "clear handoff-task",
+                                "aria-label": "Hand off task: {task.text}",
+                                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::ChooseHandoff(id))),
+                                "Hand off"
+                            }
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+#[component]
+fn Handoff(choices: Vec<ui::HandoffChoice>, pending: bool) -> Element {
+    let shell = use_context::<Shell>();
+    rsx! {
+        div { class: "task-handoff",
+            if pending {
+                p { role: "status", "Handing off the task?" }
+            } else if choices.is_empty() {
+                p { role: "status", "No other session is idle." }
+            } else {
+                p { "Choose a session to start work on this task." }
+            }
+            for choice in choices {
+                button {
+                    key: "{choice.session.0}",
+                    r#type: "button",
+                    disabled: pending,
+                    onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::HandoffTo(choice.session))),
+                    "{choice.label}"
+                }
+            }
+            button {
+                r#type: "button",
+                class: "clear",
+                disabled: pending,
+                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::CancelHandoff)),
+                "Cancel"
             }
         }
     }
@@ -190,12 +298,18 @@ fn Subagents(groups: Vec<ui::AgentGroup>) -> Element {
 #[component]
 fn Subagent(group: ui::AgentGroup) -> Element {
     rsx! {
-        details { class: "subagent", "data-status": group.status,
+        details { class: "subagent", "data-status": group.status, open: group.needs_attention,
             summary {
                 span { class: "subagent-title", "{group.description}" }
+                if let Some(kind) = group.kind {
+                    span { class: "subagent-kind", "{kind}" }
+                }
                 span { class: "subagent-status", "{group.label}" }
             }
             div { class: "subagent-items",
+                if let Some(tasks) = group.tasks {
+                    Tasks { tasks }
+                }
                 if let Some(text) = group.empty {
                     p { class: "subagent-empty", "{text}" }
                 }
@@ -432,6 +546,7 @@ fn Ending(footer: Footer) -> Element {
                 }
             }
         },
+        Footer::Moving => rsx! {},
         Footer::Composer(composer) => rsx! { Composer { composer } },
     }
 }

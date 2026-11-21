@@ -239,7 +239,7 @@ pub fn session(launch: &Launch) -> Invocation {
             .iter()
             .map(|name| Var::set("CLAUDE_CODE_PROJECT_DIR_NAME", name))
             .collect(),
-        gateway(launch.credential.as_ref()),
+        credential_env(launch.credential.as_ref()),
         tasks,
         scrub(launch.credential.as_ref(), launch.sandbox),
     ]
@@ -250,8 +250,16 @@ pub fn session(launch: &Launch) -> Invocation {
     }
 }
 
-fn gateway(credential: Option<&ClaudeCredential>) -> Vec<Var> {
+fn credential_env(credential: Option<&ClaudeCredential>) -> Vec<Var> {
     match credential {
+        Some(ClaudeCredential::ApiKey { key }) => Vec::from([
+            Var::set("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+            Var::set("ANTHROPIC_API_KEY", key),
+        ]),
+        Some(ClaudeCredential::SetupToken { token }) => Vec::from([
+            Var::set("ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+            Var::set("CLAUDE_CODE_OAUTH_TOKEN", token),
+        ]),
         Some(ClaudeCredential::Gateway { base_url, token }) => Vec::from([
             Var::set("ANTHROPIC_BASE_URL", base_url),
             Var::set("ANTHROPIC_AUTH_TOKEN", token),
@@ -265,11 +273,10 @@ fn gateway(credential: Option<&ClaudeCredential>) -> Vec<Var> {
 /// command in Claude's sandbox, so it is set only where that runs.
 fn scrub(credential: Option<&ClaudeCredential>, sandbox: Sandbox) -> Vec<Var> {
     match (credential, sandbox) {
-        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Available) => {
+        (Some(_), Sandbox::Available) => {
             Vec::from([Var::set("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")])
         }
-        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing)
-        | (None, _) => Vec::new(),
+        (Some(_), Sandbox::Missing) | (None, _) => Vec::new(),
     }
 }
 
@@ -391,19 +398,16 @@ pub fn admit(
     }
 }
 
-/// The warning a gateway credential gets when Claude's commands run
-/// unsandboxed, since they then inherit its token.
+/// Environment credentials can reach Claude's commands without its sandbox.
 #[must_use]
 pub const fn unprotected(
     credential: Option<&ClaudeCredential>,
     sandbox: Sandbox,
 ) -> Option<Note> {
     match (credential, sandbox) {
-        (Some(ClaudeCredential::Gateway { .. }), Sandbox::Missing) => {
-            Some(Note::GatewayExposed {
-                provider: Provider::Claude,
-            })
-        }
+        (Some(_), Sandbox::Missing) => Some(Note::CredentialExposed {
+            provider: Provider::Claude,
+        }),
         _ => None,
     }
 }
@@ -555,6 +559,70 @@ mod tests {
     }
 
     #[test]
+    fn a_direct_key_uses_the_anthropic_endpoint_and_scrubs_subprocesses() {
+        let launch = Launch {
+            home: HomeKind::Private,
+            credential: Some(ClaudeCredential::ApiKey {
+                key: String::from("synthetic-api-key"),
+            }),
+            sandbox: Sandbox::Available,
+            ..launch(Resume::Fresh)
+        };
+        let invoked = session(&launch);
+        assert!(
+            invoked
+                .env
+                .contains(&set("ANTHROPIC_API_KEY", "synthetic-api-key"))
+        );
+        assert!(
+            invoked.env.contains(&set(
+                "ANTHROPIC_BASE_URL",
+                "https://api.anthropic.com"
+            ))
+        );
+        assert!(
+            invoked
+                .env
+                .contains(&set("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1"))
+        );
+        assert!(
+            invoked
+                .args
+                .iter()
+                .all(|arg| !arg.contains("synthetic-api-key"))
+        );
+    }
+
+    #[test]
+    fn a_setup_token_is_supplied_only_in_the_environment() {
+        let launch = Launch {
+            home: HomeKind::Private,
+            credential: Some(ClaudeCredential::SetupToken {
+                token: String::from("synthetic-setup-token"),
+            }),
+            sandbox: Sandbox::Available,
+            ..launch(Resume::Fresh)
+        };
+        let invocation = session(&launch);
+        assert!(invocation.env.contains(&set(
+            "CLAUDE_CODE_OAUTH_TOKEN",
+            "synthetic-setup-token"
+        )));
+        assert!(invocation.env.contains(&Var::remove("ANTHROPIC_API_KEY")));
+        assert!(
+            invocation
+                .env
+                .contains(&set("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1"))
+        );
+        assert!(
+            invocation
+                .args
+                .iter()
+                .all(|arg| !arg.contains("synthetic-setup-token"))
+        );
+    }
+
+    #[test]
     fn a_private_home_drops_inherited_sign_ins_and_a_gateway_scrubs_where_sandboxed()
      {
         let gateway = Launch {
@@ -698,7 +766,7 @@ mod tests {
                 unprotected(None, Sandbox::Missing),
             ],
             [
-                Some(Note::GatewayExposed {
+                Some(Note::CredentialExposed {
                     provider: Provider::Claude
                 }),
                 None,

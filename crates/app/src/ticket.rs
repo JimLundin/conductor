@@ -98,9 +98,13 @@ pub fn open() -> (State, bool) {
         .and_then(|shown| shown.location().hash().ok())
         .unwrap_or_default();
     let joined = hash.strip_prefix("#join=").map(net::parse);
-    let (hosts, migration_failed) = local()
+    let (standalone, migration_failed) = local()
         .as_ref()
         .map_or_else(|| (Vec::new(), false), load_hosts);
+    let hosts = match crate::fleet::Fleet::load() {
+        Some(fleet) => fleet.restored(standalone),
+        None => standalone,
+    };
     let pairing_failed = joined
         .as_ref()
         .and_then(|result| result.as_ref().ok())
@@ -114,7 +118,24 @@ pub fn open() -> (State, bool) {
         },
         joined,
     });
-    (state, migration_failed || pairing_failed)
+    (
+        open_push_target(state, &hash, window.as_ref()),
+        migration_failed || pairing_failed,
+    )
+}
+
+fn open_push_target(
+    state: State,
+    hash: &str,
+    window: Option<&web_sys::Window>,
+) -> State {
+    let Some((host, session)) = crate::push::activation(hash) else {
+        return state;
+    };
+    if let Some(shown) = window {
+        clear_hash(shown);
+    }
+    ui::show_paired_session(state, host, session)
 }
 
 fn clear_hash(window: &web_sys::Window) {

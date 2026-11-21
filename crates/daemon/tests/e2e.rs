@@ -180,11 +180,19 @@ async fn codex_host_on(
     recording: &str,
     id: InstanceId,
 ) -> Fallible<(Fixture, PathBuf)> {
+    codex_host_from(recording, id, &recording_file(recording)).await
+}
+
+async fn codex_host_from(
+    recording: &str,
+    id: InstanceId,
+    source: &Path,
+) -> Fallible<(Fixture, PathBuf)> {
     let data = data_dir(recording)?;
     if id == api(Provider::Codex) {
         seed(&data, std::slice::from_ref(&id), &[Provider::Codex])?;
     }
-    let server = codex_server(&data, &id, recording)?;
+    let server = codex_server_from(&data, &id, recording, source)?;
     let fx = serve(
         endpoint().await?,
         plugins(Some(PathBuf::from(REFUSING_CLI)), Some(fake_codex())),
@@ -199,9 +207,18 @@ fn codex_server(
     instance: &InstanceId,
     name: &str,
 ) -> Fallible<PathBuf> {
+    codex_server_from(data, instance, name, &recording_file(name))
+}
+
+fn codex_server_from(
+    data: &Path,
+    instance: &InstanceId,
+    name: &str,
+    source: &Path,
+) -> Fallible<PathBuf> {
     let server = dir_of(data, "work", instance);
     std::fs::create_dir_all(&server)?;
-    let wire = read(&recording_file(name))?;
+    let wire = read(source)?;
     let played = if name.ends_with("-listed.jsonl") {
         wire
     } else {
@@ -259,6 +276,7 @@ fn data_dir(name: &str) -> Fallible<PathBuf> {
         .join(format!("conductor-test-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
+    std::fs::write(dir.join("store.key.file"), "")?;
     Ok(dir)
 }
 
@@ -841,7 +859,14 @@ const fn reached(until: &Until, kind: &EventKind) -> bool {
     matches!(
         (until, kind),
         (Until::Ready, EventKind::SessionReady)
-            | (Until::Request, EventKind::RequestOpened { .. })
+            | (
+                Until::Request,
+                EventKind::RequestOpened { .. }
+                    | EventKind::Subagent {
+                        event: SubagentEvent::RequestOpened { .. },
+                        ..
+                    }
+            )
             | (Until::Question, EventKind::QuestionAsked { .. })
             | (Until::Resolved, EventKind::RequestResolved { .. })
             | (Until::Delta, EventKind::AssistantDelta { .. })
@@ -2289,7 +2314,7 @@ fn captured(path: &Path) -> Fallible<String> {
 const GATEWAY: &str = "https://conductor-test.invalid/gateway";
 const CLAUDE_TOKEN: &str = "conductor-test-claude-token";
 const NO_CREDENTIAL: &str = "no credential configured";
-const UNPROTECTED: &str = "the CLI's commands can read the gateway token; install bubblewrap and socat to sandbox them provider=Claude";
+const UNPROTECTED: &str = "the CLI's commands can read the provider credential; install bubblewrap and socat to sandbox them provider=Claude";
 
 fn read(path: &Path) -> Fallible<String> {
     Ok(std::fs::read_to_string(path)?)
@@ -2708,6 +2733,7 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() -> Fallible
 async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
 -> Fallible {
     let data = data_dir("unreadable")?;
+    std::fs::write(data.join("store.key"), "00".repeat(32))?;
     std::fs::write(data.join("credentials"), b"not a sealed store")?;
     let fx = claude_host_in(&data).await?;
     let (link, _updates, welcomed) = live(&fx).await?;
@@ -3179,7 +3205,14 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
     assert_eq!(
         of(session, &events)
             .into_iter()
-            .filter(|kind| !matches!(kind, EventKind::AssistantDelta { .. }))
+            .filter(|kind| !matches!(
+                kind,
+                EventKind::AssistantDelta { .. }
+                    | EventKind::Subagent {
+                        event: SubagentEvent::TasksChanged { .. },
+                        ..
+                    }
+            ))
             .collect::<Vec<EventKind>>(),
         [
             opening(Provider::Claude, &dir),
@@ -3201,6 +3234,12 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
                         description: description()
                     }
                 },
+                EventKind::Subagent {
+                    agent: agent(),
+                    event: SubagentEvent::Kind {
+                        kind: String::from("general-purpose"),
+                    },
+                },
                 todo_done("toolu_01WSCsnAQWyaEonxDVnmncap"),
                 todo_done("toolu_01H4nEBx6jVuR4PwHBWBgvPw"),
                 EventKind::Subagent {
@@ -3220,6 +3259,7 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
         ]
         .concat()
     );
+    let final_tasks = assert_child_checklists(&events, &agent());
     let view = fold(events);
     assert_eq!(
         view.sessions
@@ -3231,12 +3271,110 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
                 id: agent(),
                 call: call(),
                 description: description(),
+                kind: Some(String::from("general-purpose")),
+                tasks: final_tasks,
                 status: SubagentStatus::Ended(SubagentOutcome::Finished),
                 items: Vec::from([done("ok")]),
             }])
         ))
     );
     fx.shutdown_with_client(phone).await
+}
+
+fn assert_child_checklists(events: &[Event], child: &SubagentId) -> Vec<Task> {
+    let checklists: Vec<&[Task]> = events
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            EventKind::Subagent {
+                agent: id,
+                event: SubagentEvent::TasksChanged { tasks },
+            } if id == child => Some(tasks.as_slice()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        checklists
+            .iter()
+            .map(|tasks| steps(tasks))
+            .collect::<Vec<_>>(),
+        [
+            vec![
+                ("alpha", TaskStatus::Pending),
+                ("beta", TaskStatus::Pending)
+            ],
+            vec![
+                ("alpha", TaskStatus::Completed),
+                ("beta", TaskStatus::Completed)
+            ],
+        ],
+    );
+    assert_eq!(
+        checklists[0].iter().map(|task| task.id).collect::<Vec<_>>(),
+        checklists[1].iter().map(|task| task.id).collect::<Vec<_>>(),
+    );
+    checklists[1].to_vec()
+}
+
+/// Synthetic against the pinned 0.166 app-server schema.
+#[tokio::test]
+async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned_them()
+-> Fallible {
+    let recording = "codex-subagents.jsonl";
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(recording);
+    let (fx, dir) =
+        codex_host_from(recording, instance(Provider::Codex), &source).await?;
+    let (phone, mut updates) = fx.connect().await?;
+    let session = launch(&phone, start(Provider::Codex, &dir)).await?;
+    let _ = send(&phone, message(session, "delegate")).await?;
+    let events = legacy_events_until(&mut updates, Until::Request).await?;
+    let request = events
+        .last()
+        .and_then(|event| match &event.kind {
+            EventKind::Subagent {
+                agent,
+                event: SubagentEvent::RequestOpened { request, .. },
+            } if agent.0 == "child-alpha" => Some(*request),
+            _ => None,
+        })
+        .ok_or("expected the child approval")?;
+    accepted(&phone, resolve(session, request.0, Decision::Approve)).await?;
+    let _ = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let view = fold(fx.history().await?);
+    let shown = view.sessions.get(&session).ok_or("missing session")?;
+    let [alpha, beta] = shown.subagents.as_slice() else {
+        return Err("expected both Codex agents".into());
+    };
+    assert_eq!(alpha.description, "Inspect alpha");
+    assert_eq!(alpha.kind.as_deref(), Some("explorer"));
+    assert_eq!(steps(&alpha.tasks), [("Read alpha", TaskStatus::Completed)]);
+    assert_eq!(
+        alpha.status,
+        SubagentStatus::Ended(SubagentOutcome::Finished)
+    );
+    assert_eq!(beta.status, SubagentStatus::Ended(SubagentOutcome::Failed));
+    assert!(alpha.items.contains(&done("Alpha checked.")));
+    assert!(beta.items.contains(&done("Beta failed.")));
+    assert!(alpha.items.iter().any(|item| matches!(
+        item,
+        Item::Tool {
+            state: ToolState::Finished(ToolOutcome::Succeeded),
+            approval: Approval::Asked {
+                state: RequestState::Resolved(Resolution::Decided {
+                    decision: Decision::Approve,
+                    ..
+                }),
+                ..
+            },
+            ..
+        }
+    )));
+    assert!(shown.items.contains(&done("Delegation done.")));
+    assert!(!shown.items.contains(&done("Alpha checked.")));
+    assert_eq!(shown.tasks, [] as [Task; 0]);
+    phone.stop().await?;
+    fx.shutdown().await
 }
 
 /// Through the owner's gateway, with betas off, the CLI streams an empty
@@ -7943,4 +8081,93 @@ async fn assert_finish_recovery(
     );
     link.stop().await?;
     reopened.shutdown().await
+}
+
+#[tokio::test]
+async fn an_unfinished_claude_task_can_be_completed_by_codex() -> Fallible {
+    let data = data_dir("checklist-handoff")?;
+    let directory =
+        scratch("checklist-handoff", "claude-checklist-effort.jsonl")?;
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
+    let first = durable_host(&data, address).await?;
+    let (phone, mut updates) = first.connect().await?;
+    let source = launch(&phone, start(Provider::Claude, &directory)).await?;
+    let _ = legacy_events_until(&mut updates, Until::Ready).await?;
+    accepted(&phone, message(source, "make a checklist")).await?;
+    let _ = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let before = fold(first.history().await?);
+    let task = before
+        .sessions
+        .get(&source)
+        .and_then(|session| {
+            session
+                .tasks
+                .iter()
+                .find(|task| task.status == TaskStatus::Pending)
+        })
+        .cloned()
+        .ok_or("Claude did not leave an unfinished task")?;
+    phone.stop().await?;
+    first.shutdown().await?;
+
+    let server = codex_server(
+        &data,
+        &instance(Provider::Codex),
+        "codex-plan-effort.jsonl",
+    )?;
+    let stdout = server.join("stdout.jsonl");
+    let label = task.handoff_label();
+    let frames = read(&stdout)?.replace(
+        r#""step":"write a.txt""#,
+        &format!(r#""step":{}"#, serde_json::to_string(&label)?),
+    );
+    std::fs::write(stdout, frames)?;
+    let second = serve(
+        durable_endpoint(&data, address).await?,
+        plugins(Some(fake_claude()), Some(fake_codex())),
+        &data,
+    )
+    .await?;
+    let (client, mut events) = second.connect().await?;
+    let target = launch(&client, start(Provider::Codex, &server)).await?;
+    let _ = legacy_events_until(&mut events, Until::Ready).await?;
+    let handoff = CommandBody::HandoffTask {
+        from: source,
+        to: target,
+        task: task.id,
+    };
+    accepted(&client, handoff.clone()).await?;
+    let _ = legacy_events_until(&mut events, Until::TurnEnd).await?;
+    assert_eq!(
+        send(&client, handoff).await?,
+        CommandResult::Rejected(Rejection::TaskUnavailable)
+    );
+    let turns = requests(&server, "stdin.jsonl", "turn/start")?;
+    assert_eq!(turns.len(), 1);
+    assert!(
+        turns
+            .iter()
+            .any(|params| params.to_string().contains(&label))
+    );
+    let after = fold(second.history().await?);
+    client.stop().await?;
+    second.shutdown().await?;
+
+    let restarted = durable_host(&data, address).await?;
+    let replayed = fold(restarted.history().await?);
+    let received = Task {
+        holder: target,
+        status: TaskStatus::Completed,
+        ..task
+    };
+    for view in [after, replayed] {
+        let held = |session| {
+            view.sessions.get(&session).and_then(|shown| {
+                shown.tasks.iter().find(|row| row.id == received.id)
+            })
+        };
+        assert_eq!(held(source), None);
+        assert_eq!(held(target), Some(&received));
+    }
+    restarted.shutdown().await
 }

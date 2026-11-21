@@ -668,7 +668,12 @@ fn sessions(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> Vec<IssueSession> {
                         .get(&session)
                         .map(|view| (session, view))
                 })
-                .filter(|(_, view)| view.issue == Some(id))
+                .filter(|(session, view)| {
+                    view.issue == Some(id)
+                        && crate::movement::visible(
+                            hosts, host_id, *session, view,
+                        )
+                })
                 .map(|(session, view)| IssueSession {
                     key: format!("{}-{:032x}", host_id.key(), session.0),
                     label: format!(

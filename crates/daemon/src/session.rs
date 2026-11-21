@@ -15,8 +15,11 @@ use std::time::Duration;
 use agents::Step;
 use agents::runtime::{Command, Event, Outcome, Start};
 use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
+use host::movement::{Ownership, Settle};
 pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
+use proto::fleet::NodeId;
+use proto::movement::{MoveId, Phase};
 use proto::{
     CheckpointId, ClientName, CommandId, CommandResult, EventKind, HostPath,
     HostSeq, Models, SessionId, TaskId, Workspace,
@@ -57,6 +60,8 @@ enum Request {
     Order(Order),
     Relaunch(Order, Instance, std::sync::Arc<()>),
     Finish(ClientName),
+    Move { to: NodeId, id: MoveId },
+    AbortMove { id: MoveId, reason: String },
 }
 
 #[derive(Default)]
@@ -87,6 +92,8 @@ struct Actor {
     log: Log,
     /// Where the order being performed is answered.
     reply: Option<oneshot::Sender<CommandResult>>,
+    ownership: Ownership,
+    move_notice: Option<HostPath>,
 }
 
 impl Session {
@@ -129,6 +136,7 @@ impl Session {
         let (inbox, messages) = mpsc::channel(16);
         let created = directory.clone();
         let core = Core::restore(id, directory, choice, conversation, history);
+        let move_notice = core.pending_move_notice(history);
         let actor = Actor {
             id,
             inbox: messages,
@@ -138,6 +146,8 @@ impl Session {
             held: VecDeque::new(),
             log,
             reply: None,
+            ownership: Ownership::replay(history),
+            move_notice,
         };
         tokio::spawn(actor.run(core));
         Self { inbox }
@@ -169,6 +179,22 @@ impl Session {
         self.request(Request::Finish(by)).await
     }
 
+    pub(crate) async fn prepare_move(
+        &self,
+        to: NodeId,
+        id: MoveId,
+    ) -> Result<CommandResult, Stopped> {
+        self.request(Request::Move { to, id }).await
+    }
+
+    pub(crate) async fn abort_move(
+        &self,
+        id: MoveId,
+        reason: String,
+    ) -> Result<CommandResult, Stopped> {
+        self.request(Request::AbortMove { id, reason }).await
+    }
+
     async fn request(
         &self,
         request: Request,
@@ -192,20 +218,208 @@ impl Actor {
                 event = next_event(&mut self.runtime) => event.map_or(Happening::Closed, Happening::Agent),
             };
             now = match happening {
-                Happening::Request(SessionMsg {
-                    request: Request::Finish(by),
-                    reply,
-                }) => {
-                    self.reply = Some(reply);
-                    let result = self.finish(now, by).await;
-                    if result.is_err() {
-                        tracing::warn!(session = ?self.id, "finishing stopped with the host");
-                    }
-                    result?
+                Happening::Request(msg) => {
+                    self.handle_request(now, msg).await?
                 }
                 other => self.on(now, other).await?,
             };
         }
+    }
+
+    async fn handle_request(
+        &mut self,
+        core: Core,
+        msg: SessionMsg,
+    ) -> Result<Core, Stopped> {
+        match msg {
+            SessionMsg {
+                request: Request::Move { to, id },
+                reply,
+            } => {
+                let (settled, result) = self.prepare_move(core, to, id).await?;
+                let _ = reply.send(result);
+                Ok(settled)
+            }
+            SessionMsg {
+                request: Request::AbortMove { id, reason },
+                reply,
+            } => {
+                let result = self.abort_move(id, reason).await?;
+                let _ = reply.send(result);
+                Ok(core)
+            }
+            blocked if !self.owns_for(&blocked.request) => {
+                let _ = blocked.reply.send(move_refused(
+                    "the session is moving to another host",
+                ));
+                Ok(core)
+            }
+            SessionMsg {
+                request: Request::Finish(by),
+                reply,
+            } => {
+                self.reply = Some(reply);
+                self.finish(core, by).await.inspect_err(|_| {
+                    tracing::warn!(session = ?self.id, "finishing stopped with the host");
+                })
+            }
+            other => self.on(core, Happening::Request(other)).await,
+        }
+    }
+
+    fn owns_for(&self, request: &Request) -> bool {
+        self.ownership == Ownership::Local
+            || matches!(request, Request::Order(Order::Diff(_)))
+    }
+
+    async fn prepare_move(
+        &mut self,
+        core: Core,
+        to: NodeId,
+        id: MoveId,
+    ) -> Result<(Core, CommandResult), Stopped> {
+        match self.ownership.settle(to, id) {
+            Settle::Snapshot => {}
+            Settle::AlreadySettled => {
+                return Ok((core, CommandResult::Accepted));
+            }
+            Settle::OtherMove => {
+                return Ok((
+                    core,
+                    move_refused("another move already owns this session"),
+                ));
+            }
+        }
+        match core.plan_move() {
+            Ok(plan) => self.capture_move(core, plan, to, id).await,
+            Err(reason) => Ok((core, CommandResult::Rejected(reason))),
+        }
+    }
+
+    async fn capture_move(
+        &mut self,
+        core: Core,
+        plan: host::session::SnapshotPlan,
+        to: NodeId,
+        id: MoveId,
+    ) -> Result<(Core, CommandResult), Stopped> {
+        self.move_phase(to, id, Phase::Settling).await?;
+        let (mut stopped, answer) = self.stop_for_move(core).await?;
+        if answer != CommandResult::Accepted {
+            return Ok((stopped, answer));
+        }
+        let result = self.move_snapshot(&mut stopped, plan).await?;
+        if result == CommandResult::Accepted {
+            self.move_phase(to, id, Phase::CheckingTarget).await?;
+        }
+        Ok((stopped, result))
+    }
+
+    async fn abort_move(
+        &mut self,
+        id: MoveId,
+        reason: String,
+    ) -> Result<CommandResult, Stopped> {
+        if !matches!(self.ownership, Ownership::Moving { id: known, .. } if known == id)
+        {
+            return Ok(move_refused("that move no longer owns the session"));
+        }
+        self.log
+            .append(
+                self.id,
+                EventKind::SessionMoveFailed {
+                    move_id: id,
+                    reason,
+                    resumable: true,
+                },
+            )
+            .await?;
+        self.log.barrier().await?;
+        self.ownership = Ownership::Local;
+        Ok(CommandResult::Accepted)
+    }
+
+    async fn stop_for_move(
+        &mut self,
+        core: Core,
+    ) -> Result<(Core, CommandResult), Stopped> {
+        let (reply, mut answer) = oneshot::channel();
+        self.reply = Some(reply);
+        let stopped = self
+            .react(
+                core,
+                Input::Order(host::session::Order::Stop(String::from(
+                    "the session is moving to another host",
+                ))),
+            )
+            .await?;
+        let result = answer.try_recv().map_err(|_| Stopped {})?;
+        if result == CommandResult::Accepted {
+            self.runtime = None;
+        }
+        Ok((stopped, result))
+    }
+
+    async fn move_snapshot(
+        &self,
+        core: &mut Core,
+        plan: host::session::SnapshotPlan,
+    ) -> Result<CommandResult, Stopped> {
+        let reserved = self
+            .log
+            .record(
+                self.id,
+                EventKind::CheckpointReserved {
+                    checkpoint: plan.reserved,
+                },
+            )
+            .await?;
+        self.log.barrier().await?;
+        core.moved_checkpoint(&reserved);
+        match workspace::snapshot(
+            &plan.workspace,
+            self.id,
+            plan.reserved,
+            plan.base.as_deref(),
+        )
+        .await
+        {
+            Ok(commit) => {
+                let saved = self
+                    .log
+                    .record(
+                        self.id,
+                        EventKind::CheckpointCreated {
+                            checkpoint: plan.checkpoint(commit),
+                        },
+                    )
+                    .await?;
+                core.moved_checkpoint(&saved);
+                Ok(CommandResult::Accepted)
+            }
+            Err(reason) => Ok(move_refused(reason.to_string())),
+        }
+    }
+
+    async fn move_phase(
+        &mut self,
+        to: NodeId,
+        id: MoveId,
+        phase: Phase,
+    ) -> Result<(), Stopped> {
+        self.log
+            .append(
+                self.id,
+                EventKind::SessionMoving {
+                    to,
+                    move_id: id,
+                    phase,
+                },
+            )
+            .await?;
+        self.log.barrier().await?;
+        self.ownership = Ownership::Moving { to, id, phase };
+        Ok(())
     }
 
     /// Steps the session with what happened, then with each step the agent
@@ -229,7 +443,11 @@ impl Actor {
                         drop(reservation);
                         return result;
                     }
-                    Request::Finish(_) => return Err(Stopped {}),
+                    Request::Finish(_)
+                    | Request::Move { .. }
+                    | Request::AbortMove { .. } => {
+                        return Err(Stopped {});
+                    }
                 };
                 self.reply = Some(reply);
                 Input::Order(order.session(uuid::Uuid::new_v4().to_string()))
@@ -505,9 +723,39 @@ impl Actor {
                     .await
                     .map_err(|err| err.to_string()),
             ),
+            Call::Agent(Command::Send { text, effort }) => {
+                Input::Agent(self.send(text, effort).await?)
+            }
             Call::Agent(command) => Input::Agent(self.ask(command).await),
         };
         Ok(Some(input))
+    }
+
+    async fn send(
+        &mut self,
+        text: String,
+        effort: Option<proto::Effort>,
+    ) -> Result<Outcome, Stopped> {
+        let Some(directory) = &self.move_notice else {
+            return Ok(self.ask(Command::Send { text, effort }).await);
+        };
+        let with_notice = format!(
+            "This session moved to another machine. The working directory is now `{}`.\n\n{text}",
+            directory.0
+        );
+        let sent = self
+            .ask(Command::Send {
+                text: with_notice,
+                effort,
+            })
+            .await;
+        if matches!(sent, Outcome::Sent(Ok(()))) {
+            self.log
+                .append(self.id, EventKind::SessionMoveNoticeSent)
+                .await?;
+            self.move_notice = None;
+        }
+        Ok(sent)
     }
 
     /// Sends the agent `command` and waits for its outcome. A start takes
@@ -550,6 +798,12 @@ impl Actor {
             }
         }
     }
+}
+
+fn move_refused(reason: impl Into<String>) -> CommandResult {
+    CommandResult::Rejected(proto::Rejection::MoveRefused {
+        reason: reason.into(),
+    })
 }
 
 async fn next_event(runtime: &mut Option<Runtime>) -> Option<Event> {

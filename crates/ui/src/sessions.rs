@@ -53,12 +53,17 @@ pub fn list(hosts: &BTreeMap<HostId, Host>, place: Place) -> SessionList {
         new_current: place == Place::NewSession,
         groups: by_name(hosts)
             .into_iter()
-            .map(|(id, host)| group(id, host, place))
+            .map(|(id, host)| group(id, host, hosts, place))
             .collect(),
     }
 }
 
-fn group(id: HostId, host: &Host, place: Place) -> HostGroup {
+fn group(
+    id: HostId,
+    host: &Host,
+    hosts: &BTreeMap<HostId, Host>,
+    place: Place,
+) -> HostGroup {
     let catalog = &host.fold.catalog;
     let known = (host.fold.instances.as_ref(), catalog);
     let rows = host
@@ -67,7 +72,8 @@ fn group(id: HostId, host: &Host, place: Place) -> HostGroup {
         .recent()
         .into_iter()
         .filter_map(|session| {
-            host.fold.view.sessions.get(&session).map(|shown| {
+            let shown = host.fold.view.sessions.get(&session)?;
+            crate::movement::visible(hosts, id, session, shown).then(|| {
                 row(
                     (id, session),
                     shown,
@@ -102,6 +108,7 @@ fn row(
             let text = crate::session::status_text(label);
             let status = match label {
                 StatusLabel::RecoveryNeeded => "recovering",
+                StatusLabel::MoveFailed => "move-failed",
                 _ => text,
             };
             (String::from(status), String::from(text), String::new())

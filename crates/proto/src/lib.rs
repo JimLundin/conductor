@@ -20,18 +20,26 @@
 
 extern crate alloc;
 
+pub mod transcript;
+
 mod calendar;
 mod credential;
+pub mod fleet;
 mod frame;
 mod home;
 mod instance;
 mod issue;
+pub mod movement;
 mod sign_in;
+mod task_board;
 mod ticket;
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+
+use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -51,12 +59,13 @@ pub use issue::{
     IssueStatus, Priority,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
+pub use task_board::TaskBoard;
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/24";
+pub const ALPN: &[u8] = b"conductor/25";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,6 +75,7 @@ pub enum Feed {
     Home(Home),
     /// The current instance offers, replacing the previous snapshot.
     Instances(Instances),
+    MoveTargets(Vec<fleet::NodeId>),
 }
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
@@ -139,6 +149,7 @@ pub enum Open {
     Hello(Hello),
     Subscribe(Subscribe),
     Command(Command),
+    FleetHello(fleet::DeviceHello),
 }
 
 /// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`
@@ -555,6 +566,40 @@ pub enum CommandBody {
     FinishSession {
         session: SessionId,
     },
+    HandoffTask {
+        from: SessionId,
+        to: SessionId,
+        task: TaskId,
+    },
+    PushPublicKey,
+    RegisterPush(PushSubscription),
+    /// Move a settled session to another host in the same fleet.
+    MoveSession {
+        session: SessionId,
+        to: fleet::NodeId,
+        retry: Option<movement::MoveId>,
+    },
+    FleetStatus,
+    FleetInvite,
+    FleetRevoke(fleet::NodeId),
+    FleetApprove(fleet::PairRequest),
+    FleetAdmit {
+        ticket: Ticket,
+        name: String,
+    },
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PushSubscription {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+}
+
+impl fmt::Debug for PushSubscription {
+    fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
+        output.write_str("PushSubscription")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -586,6 +631,11 @@ pub enum CommandResult {
     IssueCreated {
         issue: IssueId,
     },
+    PushPublicKey(String),
+    PushUnavailable,
+    FleetStatus(fleet::SignedSnapshot),
+    FleetInvite(fleet::Invite),
+    FleetPairing(Box<fleet::Pairing>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -657,6 +707,15 @@ pub enum Rejection {
     NotOnIssue,
     /// The session is finishing, or has done nothing since it finished.
     AlreadyFinished,
+    TaskUnavailable,
+    HandoffToSameSession,
+    HandoffDeliveryFailed {
+        reason: String,
+    },
+    MoveRefused {
+        reason: String,
+    },
+    FleetUnavailable,
 }
 
 impl Rejection {
@@ -664,6 +723,9 @@ impl Rejection {
     #[must_use]
     pub fn label(&self) -> String {
         match self {
+            Self::FleetUnavailable => {
+                String::from("fleet changes need the root host")
+            }
             Self::NoSuchDirectory => {
                 String::from("no directory at that path on the host")
             }
@@ -736,9 +798,19 @@ impl Rejection {
             Self::IssueTaken { .. } => String::from(
                 "that instance has a session on the issue already; continue it, or remove it first",
             ),
+            Self::TaskUnavailable => String::from(
+                "the source session no longer holds that unfinished task",
+            ),
+            Self::HandoffToSameSession => {
+                String::from("choose a different session for the task")
+            }
+            Self::HandoffDeliveryFailed { reason } => format!(
+                "the receiving agent could not start the handoff: {reason}"
+            ),
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }
+            | Self::MoveRefused { reason }
             | Self::WorkspaceFailure { reason } => reason.clone(),
         }
     }
@@ -880,8 +952,8 @@ pub enum EventKind {
         history: HistoryAnchor,
         turn_start: Option<HostSeq>,
     },
-    /// Every task the session holds now, in the agent's order. It replaces
-    /// the list before it.
+    /// The latest native checklist, in the agent's order. Handoffs track
+    /// ownership independently of this snapshot.
     TasksChanged {
         tasks: Vec<Task>,
     },
@@ -918,6 +990,35 @@ pub enum EventKind {
     UndoRevertDispatched {
         checkpoint: CheckpointId,
     },
+    /// The destination's turn accepted the handoff. The task still names
+    /// its previous holder. The event's session is its new holder.
+    TaskHandedOff {
+        task: Task,
+    },
+    SessionMoving {
+        to: fleet::NodeId,
+        move_id: movement::MoveId,
+        phase: movement::Phase,
+    },
+    SessionMoveFailed {
+        move_id: movement::MoveId,
+        reason: String,
+        resumable: bool,
+    },
+    SessionMoved {
+        to: fleet::NodeId,
+        move_id: movement::MoveId,
+    },
+    SessionArrived {
+        from: fleet::NodeId,
+        move_id: movement::MoveId,
+        source_epoch: Epoch,
+        source_last_seq: HostSeq,
+    },
+    SessionArrivalReady {
+        move_id: movement::MoveId,
+    },
+    SessionMoveNoticeSent,
 }
 
 /// Where a session on an issue stands with finishing, as its events say:
@@ -956,6 +1057,24 @@ pub enum Finished {
     Failed { reason: String },
 }
 
+impl EventKind {
+    /// The request created by this event, whether from the session or a subagent.
+    #[must_use]
+    pub const fn opened_request(&self) -> Option<RequestId> {
+        match self {
+            Self::RequestOpened { request, .. }
+            | Self::QuestionAsked { request, .. }
+            | Self::Subagent {
+                event:
+                    SubagentEvent::RequestOpened { request, .. }
+                    | SubagentEvent::QuestionAsked { request, .. },
+                ..
+            } => Some(*request),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SubagentEvent {
     /// The agent's tool call `call` started it. A sub-agent the agent
@@ -969,6 +1088,23 @@ pub enum SubagentEvent {
     Ended {
         outcome: SubagentOutcome,
         summary: Option<String>,
+    },
+    Kind {
+        kind: String,
+    },
+    TasksChanged {
+        tasks: Vec<Task>,
+    },
+    RequestOpened {
+        request: RequestId,
+        call: ToolCallId,
+        tool: ToolKind,
+        reason: Option<String>,
+        for_session: Option<String>,
+    },
+    QuestionAsked {
+        request: RequestId,
+        questions: Vec<Question>,
     },
 }
 
@@ -995,7 +1131,18 @@ pub enum SubagentOutcome {
 
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits.
 /// A task keeps it while the agent rewrites its checklist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+)]
 pub struct TaskId(pub u128);
 
 /// A step of an agent's checklist (Claude's `TodoWrite`, Codex's plan), as
@@ -1007,6 +1154,13 @@ pub struct Task {
     pub status: TaskStatus,
     /// The session whose agent works on it.
     pub holder: SessionId,
+}
+
+impl Task {
+    #[must_use]
+    pub fn handoff_label(&self) -> String {
+        format!("[Conductor task {:032x}] {}", self.id.0, self.text)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

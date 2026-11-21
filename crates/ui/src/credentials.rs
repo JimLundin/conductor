@@ -426,7 +426,12 @@ impl Forms {
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
                 | CommandResult::Diff(_)
-                | CommandResult::IssueCreated { .. },
+                | CommandResult::IssueCreated { .. }
+                | CommandResult::PushPublicKey(_)
+                | CommandResult::PushUnavailable
+                | CommandResult::FleetStatus(_)
+                | CommandResult::FleetInvite(_)
+                | CommandResult::FleetPairing(_),
             ) => Sent::Failed(format!("{host} gave an unexpected answer.")),
             Err(error) => Sent::Failed(error),
         };

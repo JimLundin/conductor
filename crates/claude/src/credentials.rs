@@ -9,17 +9,33 @@ const GATEWAY: &str = "gateway";
 const BASE_URL: &str = "base_url";
 const TOKEN: &str = "token";
 
+const API_KEY: &str = "api_key";
+const SETUP_TOKEN: &str = "setup_token";
+const ACCOUNT_LABEL: &str = "account_label";
+const KEY: &str = "key";
+
 /// Claude's credential, read from its form's values. Its `Debug` shows
 /// only the kind, so no value reaches a log.
 #[derive(Clone, PartialEq, Eq)]
 pub enum ClaudeCredential {
+    ApiKey {
+        key: String,
+    },
+    SetupToken {
+        token: String,
+    },
     /// Claude Code's `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
-    Gateway { base_url: String, token: String },
+    Gateway {
+        base_url: String,
+        token: String,
+    },
 }
 
 impl core::fmt::Debug for ClaudeCredential {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            Self::ApiKey { .. } => f.write_str("ApiKey"),
+            Self::SetupToken { .. } => f.write_str("SetupToken"),
             Self::Gateway { .. } => write!(f, "Gateway"),
         }
     }
@@ -31,20 +47,55 @@ pub fn info() -> ProviderInfo {
     ProviderInfo {
         label: String::from("Claude Code"),
         note: None,
-        credentials: Vec::from([CredentialForm {
-            kind: String::from(GATEWAY),
-            label: String::from("Gateway"),
-            fields: Vec::from([
-                field(
-                    BASE_URL,
-                    "Gateway URL",
-                    FieldKind::Url,
-                    "https://gateway.example.com",
-                ),
-                field(TOKEN, "Token", FieldKind::Secret, ""),
-            ]),
-            account: String::from(BASE_URL),
-        }]),
+        credentials: Vec::from([
+            CredentialForm {
+                kind: String::from(GATEWAY),
+                label: String::from("Gateway"),
+                fields: Vec::from([
+                    field(
+                        BASE_URL,
+                        "Gateway URL",
+                        FieldKind::Url,
+                        "https://gateway.example.com",
+                    ),
+                    field(TOKEN, "Token", FieldKind::Secret, ""),
+                ]),
+                account: String::from(BASE_URL),
+            },
+            CredentialForm {
+                kind: String::from(API_KEY),
+                label: String::from("Anthropic API key"),
+                fields: Vec::from([
+                    field(
+                        ACCOUNT_LABEL,
+                        "Public account label",
+                        FieldKind::Text,
+                        "Work",
+                    ),
+                    field(KEY, "API key", FieldKind::Secret, ""),
+                ]),
+                account: String::from(ACCOUNT_LABEL),
+            },
+            CredentialForm {
+                kind: String::from(SETUP_TOKEN),
+                label: String::from("Claude setup token"),
+                fields: Vec::from([
+                    field(
+                        ACCOUNT_LABEL,
+                        "Public account label",
+                        FieldKind::Text,
+                        "Work",
+                    ),
+                    field(
+                        TOKEN,
+                        "Token from claude setup-token",
+                        FieldKind::Secret,
+                        "",
+                    ),
+                ]),
+                account: String::from(ACCOUNT_LABEL),
+            },
+        ]),
     }
 }
 
@@ -77,6 +128,16 @@ pub fn account(status: &str) -> Option<String> {
 /// The form is unknown or its values are invalid.
 pub fn credential(credential: &Credential) -> Result<ClaudeCredential, String> {
     info().check(credential)?;
+    if credential.kind == API_KEY {
+        return Ok(ClaudeCredential::ApiKey {
+            key: String::from(credential.value(KEY)),
+        });
+    }
+    if credential.kind == SETUP_TOKEN {
+        return Ok(ClaudeCredential::SetupToken {
+            token: String::from(credential.value(TOKEN)),
+        });
+    }
     Ok(ClaudeCredential::Gateway {
         base_url: String::from(credential.value(BASE_URL)),
         token: String::from(credential.value(TOKEN)),
@@ -133,6 +194,58 @@ mod tests {
             )
         );
     }
+    #[test]
+    fn a_direct_key_names_the_public_label_and_keeps_the_key_private() {
+        let stored = Credential {
+            kind: String::from("api_key"),
+            values: [("account_label", "Work"), ("key", "synthetic-api-key")]
+                .map(|(id, value)| (String::from(id), String::from(value)))
+                .into(),
+        };
+        assert_eq!(
+            credential(&stored),
+            Ok(ClaudeCredential::ApiKey {
+                key: String::from("synthetic-api-key")
+            })
+        );
+        assert_eq!(
+            info().account(&stored),
+            Ok(proto::Account::Named(String::from("Work")))
+        );
+        assert_eq!(
+            info().auth(&stored),
+            proto::Auth::Stored {
+                kind: String::from("api_key"),
+                url: None
+            }
+        );
+        assert_eq!(format!("{:?}", credential(&stored)), "Ok(ApiKey)");
+    }
+
+    #[test]
+    fn a_setup_token_is_a_write_only_credential_with_a_public_label() {
+        let stored = Credential {
+            kind: String::from("setup_token"),
+            values: [
+                ("account_label", "Work"),
+                ("token", "synthetic-setup-token"),
+            ]
+            .map(|(id, value)| (String::from(id), String::from(value)))
+            .into(),
+        };
+        assert_eq!(
+            credential(&stored),
+            Ok(ClaudeCredential::SetupToken {
+                token: String::from("synthetic-setup-token"),
+            })
+        );
+        assert_eq!(
+            info().account(&stored),
+            Ok(proto::Account::Named(String::from("Work")))
+        );
+        assert_eq!(format!("{:?}", credential(&stored)), "Ok(SetupToken)");
+    }
+
     #[test]
     fn a_credential_shows_only_its_kind_when_logged() {
         let gateway = ClaudeCredential::Gateway {

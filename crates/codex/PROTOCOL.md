@@ -187,10 +187,11 @@ From a run on 2026-11-16 and probes the same day.
 ## Subagents
 
 No run started a Codex subagent: no scripted step or probe asked for one,
-and a live run needs a sign-in, so their frames are not recorded and the
-adapter maps none (they stay `Unknown`). What the pinned 0.166.0 says of
-them, from `codex app-server generate-json-schema` and `codex features
-list` in a scratch `CODEX_HOME`, unsigned, on 2026-11-18:
+and a live run needs a sign-in, so their frames are unrecorded. The
+adapter and the [synthetic daemon replay](../daemon/tests/fixtures/codex-subagents.jsonl)
+use the shapes described by the pinned 0.166.0, from
+`codex app-server generate-json-schema` and `codex features list` in a
+scratch `CODEX_HOME`, unsigned, on 2026-11-18:
 
 - `multi_agent` is a stable feature, on by default (`multi_agent_v2` is
   stable and off). Every recorded `thread/start` and `thread/resume`
@@ -212,11 +213,15 @@ list` in a scratch `CODEX_HOME`, unsigned, on 2026-11-18:
   `agent_nickname`, `agent_role`). Its turns and items would come as the
   ordinary notifications under its own `threadId`, on the same app-server.
 
-So the session model fits as it is (architecture §3): the sub-agent's id
-is its thread id, the call that started it the `spawnAgent` item, and its
-activity its thread's items. Until a run records one, how the spawned
-thread's notifications reach a client, and whether its approvals do, is
-unverified.
+The hub associates a child thread with its owning session from a
+`spawnAgent` result, `subAgentActivity` start, or the child thread's
+`subAgent.thread_spawn` source. It routes that thread's plans, tool calls
+and approvals to the owner and keeps the child's wire request identity for
+the reply. A terminal collab status supplies the outcome and a report
+when given. Child turns do not drive the owning session's turn state.
+The synthetic replay exercises two children, a checklist and a scoped
+approval. Actual child notification and approval delivery on an authenticated
+app-server remains unverified.
 
 ## Interrupt
 

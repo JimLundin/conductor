@@ -88,7 +88,11 @@ impl Fixture {
         let data = Data::new()?;
         let source = InstanceId::named(Provider::Claude, "source");
         let destination = InstanceId::named(Provider::Claude, "destination");
-        let providers = Providers::new(Plugins::default(), data.0.clone());
+        let providers = Providers::new(
+            Plugins::default(),
+            data.0.clone(),
+            watch::channel(None).0,
+        );
         let catalog = providers.catalog();
         let (store, _) = Store::open(&data.0, catalog.clone())?;
         let mut roster = Roster::default();

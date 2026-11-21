@@ -9,8 +9,6 @@ use agents::{Exit, Note};
 use proto::Provider;
 use serde_json::Value;
 
-use alloc::collections::BTreeSet;
-
 use crate::prelude::*;
 use crate::{
     ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
@@ -98,7 +96,8 @@ pub struct Session<R> {
     last_message: Option<MessageId>,
     /// Every task the CLI reported as a sub-agent. A task's end doesn't
     /// say what the task was.
-    subagents: BTreeSet<String>,
+    subagents: BTreeMap<String, String>,
+    subagent_tools: BTreeMap<String, String>,
 }
 
 impl<R> Default for Session<R> {
@@ -109,7 +108,8 @@ impl<R> Default for Session<R> {
             open: BTreeMap::new(),
             next_request: 0,
             last_message: None,
-            subagents: BTreeSet::new(),
+            subagents: BTreeMap::new(),
+            subagent_tools: BTreeMap::new(),
         }
     }
 }
@@ -158,8 +158,28 @@ impl<R> Session<R> {
             Inbound::Event(received) => {
                 Vec::from([Effect::Emit(self.event(received))])
             }
-            Inbound::Permission { id, open, event } => {
+            Inbound::Permission {
+                id,
+                open,
+                parent_tool_use_id,
+                mut event,
+            } => {
                 self.open.insert(id, open);
+                if let ClaudeEvent::PermissionRequested {
+                    agent,
+                    tool_use_id,
+                    ..
+                }
+                | ClaudeEvent::QuestionAsked {
+                    agent, tool_use_id, ..
+                } = &mut event
+                {
+                    *agent = parent_tool_use_id
+                        .as_ref()
+                        .and_then(|call| self.subagents.get(call))
+                        .or_else(|| self.subagent_tools.get(tool_use_id))
+                        .cloned();
+                }
                 Vec::from([Effect::Emit(event)])
             }
             Inbound::ControlResponse {
@@ -228,22 +248,64 @@ impl<R> Session<R> {
                 agent,
                 tool_use_id,
                 description,
+                kind,
             } => {
-                self.subagents.insert(agent.clone());
+                self.subagents.insert(tool_use_id.clone(), agent.clone());
                 ClaudeEvent::SubagentStarted {
                     agent,
                     tool_use_id,
                     description,
+                    kind,
                 }
             }
+            ClaudeEvent::UnidentifiedSubagentMessage {
+                parent,
+                role,
+                content,
+            } => self
+                .subagents
+                .get(&parent)
+                .cloned()
+                .map_or(ClaudeEvent::Unknown(Value::Null), |agent| {
+                    self.child_message(agent, role, content)
+                }),
+            ClaudeEvent::SubagentMessage {
+                agent,
+                role,
+                content,
+            } => self.child_message(agent, role, content),
             ClaudeEvent::SubagentEnded { agent, .. }
-                if !self.subagents.contains(&agent) =>
+                if !self.subagents.values().any(|known| known == &agent) =>
             {
                 ClaudeEvent::Unknown(Value::String(format!(
                     "task_notification for task {agent}, which is no sub-agent"
                 )))
             }
             other => other,
+        }
+    }
+
+    fn child_message(
+        &mut self,
+        agent: String,
+        role: crate::Role,
+        content: Vec<crate::Block>,
+    ) -> ClaudeEvent {
+        for block in &content {
+            match block {
+                crate::Block::ToolUse { id, .. } => {
+                    self.subagent_tools.insert(id.clone(), agent.clone());
+                }
+                crate::Block::ToolResult { tool_use_id, .. } => {
+                    self.subagent_tools.remove(tool_use_id);
+                }
+                _ => {}
+            }
+        }
+        ClaudeEvent::SubagentMessage {
+            agent,
+            role,
+            content,
         }
     }
 
@@ -487,6 +549,37 @@ mod tests {
                 .collect::<Vec<String>>(),
             ["started a1", "unknown", "unknown", "ended a1"].map(String::from)
         );
+    }
+
+    #[test]
+    fn child_permissions_follow_the_parent_call_or_the_childs_tool_call() {
+        let mut session = Session::default();
+        let mut from_parent = permission("perm-parent");
+        from_parent["parent_tool_use_id"] = json!("toolu_1");
+        let mut from_tool = permission("perm-tool");
+        from_tool["request"]["tool_use_id"] = json!("child-shell");
+        let seen = walk(
+            &mut session,
+            vec![
+                line(&task("task_started", "child", "local_agent")),
+                line(&from_parent),
+                line(&json!({
+                    "type": "assistant",
+                    "parent_tool_use_id": "toolu_1",
+                    "message": {"content": [
+                        {"type":"tool_use","id":"child-shell","name":"Bash","input":{"command":"ls"}}
+                    ]},
+                })),
+                line(&from_tool),
+            ],
+        );
+        for reply in [&seen[1], &seen[3]] {
+            assert!(
+                matches!(reply.as_slice(), [Effect::Emit(ClaudeEvent::PermissionRequested {
+                agent: Some(agent), ..
+            })] if agent == "child")
+            );
+        }
     }
 
     fn written(msg: Outbound, then: Then<u8>) -> Step {

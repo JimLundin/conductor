@@ -16,6 +16,8 @@ use n0_future::boxed::BoxFuture;
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{FuturesUnordered, StreamExt, join_all, task};
 
+use proto::fleet::Certificate;
+
 use client::link::{
     Attempt, Cursor, Effect, Input, Link as Core, Lost, Operation, Unreached,
 };
@@ -77,6 +79,8 @@ pub enum StartError {
     Ticket(#[from] TicketError),
     #[error("could not start iroh: {0}")]
     Bind(#[from] BindError),
+    #[error("{0}")]
+    Fleet(crate::fleet::IdentityError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -153,6 +157,35 @@ impl HostLink {
         target: Target,
         options: LinkOptions,
     ) -> Result<(Self, mpsc::Receiver<Update>), BindError> {
+        Self::spawn_with(target.addr, target.token, None, options).await
+    }
+
+    /// Connects using this browser's fleet identity.
+    ///
+    /// # Errors
+    ///
+    /// If the host address or local endpoint cannot be opened.
+    pub async fn spawn_fleet(
+        host: &proto::fleet::HostEntry,
+        certificate: Certificate,
+        options: LinkOptions,
+    ) -> Result<(Self, mpsc::Receiver<Update>), StartError> {
+        let address = crate::fleet::address(host).map_err(StartError::Fleet)?;
+        Ok(Self::spawn_with(
+            address,
+            AuthToken::from_bytes([0; 16]),
+            Some(certificate),
+            options,
+        )
+        .await?)
+    }
+
+    async fn spawn_with(
+        address: EndpointAddr,
+        token: AuthToken,
+        fleet: Option<Certificate>,
+        options: LinkOptions,
+    ) -> Result<(Self, mpsc::Receiver<Update>), BindError> {
         let endpoint = platform::bind_endpoint(options.network).await?;
         let (requests_tx, requests_rx) = mpsc::channel(16);
         // A caller draining updates may be waiting for its RPC to return.
@@ -161,14 +194,15 @@ impl HostLink {
         let (status_tx, status_rx) = watch::channel(Status::default());
         let hello = Hello {
             client: options.client,
-            token: target.token,
+            token,
         };
         let (core, first) = Core::start(hello, options.resume);
         let link = Link {
             endpoint,
             retiring: Vec::new(),
             network: options.network,
-            addr: target.addr,
+            addr: address,
+            fleet,
             conn: None,
             attempts: BTreeMap::new(),
             reached: BTreeMap::new(),
@@ -274,7 +308,7 @@ enum Happening {
     /// A dial ended; the operation in flight runs on.
     Dialed(Box<Dialed>),
     Request(Option<Request>),
-    Answer(Answer),
+    Answer(Box<Answer>),
 }
 
 struct Link {
@@ -283,6 +317,7 @@ struct Link {
     retiring: Vec<Endpoint>,
     network: Network,
     addr: EndpointAddr,
+    fleet: Option<Certificate>,
     conn: Option<Connection>,
     /// Each dial's endpoint, until the core adopts or retires the dial.
     attempts: BTreeMap<Attempt, Endpoint>,
@@ -346,7 +381,7 @@ impl Link {
             done = &mut self.pending => Happening::Done(Box::new(done)),
             Some(dialed) = self.dials.next() => Happening::Dialed(Box::new(dialed)),
             request = self.requests.recv(), if takes_requests => Happening::Request(request),
-            Some(answer) = self.answers.recv() => Happening::Answer(answer),
+            Some(answer) = self.answers.recv() => Happening::Answer(Box::new(answer)),
         }
     }
 
@@ -462,7 +497,11 @@ impl Link {
     fn start(&self, operation: Operation) -> BoxFuture<Done> {
         match operation {
             Operation::Hello { hello, within } => {
-                self.on_connection(|conn| Box::pin(greet(conn, hello, within)))
+                let fleet = self.fleet.clone();
+                let local = self.endpoint.id();
+                self.on_connection(|conn| {
+                    Box::pin(greet(conn, hello, within, fleet, local))
+                })
             }
             Operation::Subscribe(subscribe) => {
                 self.on_connection(|conn| Box::pin(subscribed(conn, subscribe)))
@@ -584,8 +623,29 @@ fn broken(err: &WireError) -> Input {
     Input::Lost(Lost::Wire(err.to_string()))
 }
 
-async fn greet(conn: Connection, hello: Hello, within: Duration) -> Done {
-    let answered = timeout(within, hello_reply(&conn, hello)).await;
+async fn greet(
+    conn: Connection,
+    hello: Hello,
+    within: Duration,
+    fleet: Option<Certificate>,
+    local: iroh::EndpointId,
+) -> Done {
+    let opening = match fleet {
+        Some(certificate) => {
+            match crate::fleet::hello(certificate, conn.remote_id(), local)
+                .await
+            {
+                Ok(hello) => Open::FleetHello(hello),
+                Err(error) => {
+                    return Done::Input(Input::Lost(Lost::Wire(
+                        error.to_string(),
+                    )));
+                }
+            }
+        }
+        None => Open::Hello(hello),
+    };
+    let answered = timeout(within, hello_reply(&conn, &opening)).await;
     Done::Input(answered.map_or_else(
         |_| {
             tracing::warn!(
@@ -602,14 +662,14 @@ async fn greet(conn: Connection, hello: Hello, within: Duration) -> Done {
 
 async fn hello_reply(
     conn: &Connection,
-    hello: Hello,
+    opening: &Open,
 ) -> Result<Option<HelloReply>, WireError> {
     let started = Instant::now();
     let peer = conn.remote_id();
     let connection = conn.stable_id();
     tracing::debug!(%peer, connection, "hello opening");
     let (mut send, mut recv) = conn.open_bi().await?;
-    wire::write(&mut send, &Open::Hello(hello)).await?;
+    wire::write(&mut send, opening).await?;
     let elapsed_ms = || started.elapsed().as_millis();
     tracing::debug!(%peer, connection, elapsed_ms = elapsed_ms(), "hello sent");
     let reply = wire::read::<HelloReply>(&mut recv).await?;

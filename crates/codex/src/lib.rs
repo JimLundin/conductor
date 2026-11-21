@@ -9,6 +9,7 @@
 
 extern crate alloc;
 
+mod children;
 mod credentials;
 mod driver;
 pub mod hub;
@@ -18,6 +19,7 @@ mod prelude;
 mod protocol;
 pub mod runtime;
 mod sign_in;
+pub mod transcript;
 
 pub use credentials::{
     CodexCredential, account, credential, default_model, info,
@@ -30,9 +32,10 @@ pub use launch::{
 pub use mapping::{codex_answer, codex_steps};
 pub use protocol::{
     AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy, Call,
-    CodexEvent, Decision, INITIALIZE, Inbound, Outbound, PermissionAsk,
-    RequestId, ResponseError, Sandbox, ThreadEvent, ThreadId, ThreadOptions,
-    ThreadSettings, TurnId, answer, encode, history_page, models, parse_line,
-    thread_started, turn_id, user_agent,
+    ChildActivity, ChildEvent, ChildState, ChildStatus, CodexEvent, Decision,
+    INITIALIZE, Inbound, Outbound, PermissionAsk, RequestId, ResponseError,
+    Sandbox, SpawnCall, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings,
+    TurnId, answer, encode, history_page, models, parse_line, thread_started,
+    turn_id, user_agent,
 };
 pub use sign_in::sign_in;

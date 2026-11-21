@@ -12,6 +12,7 @@
 //! blob under the same key opens as credentials.
 
 mod adoption;
+mod key;
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -80,7 +81,9 @@ impl Store {
         data_dir: &Path,
         catalog: Catalog,
     ) -> anyhow::Result<(Self, Stored)> {
-        let key = crate::load_or_create_secret(data_dir, "store.key")?;
+        std::fs::create_dir_all(data_dir)?;
+        let lock = credential_lock(data_dir)?;
+        let key = key::open(data_dir)?;
         let mut store = Self {
             dir: data_dir.to_path_buf(),
             path: data_dir.join("credentials"),
@@ -88,7 +91,6 @@ impl Store {
             recovered: None,
             cipher: XChaCha20Poly1305::new(&Key::from(key)),
         };
-        let lock = store.lock()?;
         store.recovered =
             store.recover(|_| true)?.map(|adoption| adoption.account);
         let stored = store.read();
@@ -185,11 +187,7 @@ impl Store {
     }
 
     fn lock(&self) -> anyhow::Result<File> {
-        let path = self.dir.join("credentials.lock");
-        let file = lock_file(&path)?;
-        file.lock()
-            .with_context(|| format!("locking {}", path.display()))?;
-        Ok(file)
+        credential_lock(&self.dir)
     }
 
     pub fn recovered_account(
@@ -356,6 +354,14 @@ impl Store {
             _ => None,
         }
     }
+}
+
+fn credential_lock(dir: &Path) -> anyhow::Result<File> {
+    let path = dir.join("credentials.lock");
+    let file = lock_file(&path)?;
+    file.lock()
+        .with_context(|| format!("locking {}", path.display()))?;
+    Ok(file)
 }
 
 fn lock_file(path: &Path) -> anyhow::Result<File> {

@@ -121,7 +121,13 @@ pub fn event(write: &WriteTransaction, event: &Event) -> anyhow::Result<()> {
     let _ = write.open_table(EVENTS)?.insert(event.seq.0, &encoded)?;
     match &event.kind {
         EventKind::RequestOpened { request, .. }
-        | EventKind::QuestionAsked { request, .. } => {
+        | EventKind::QuestionAsked { request, .. }
+        | EventKind::Subagent {
+            event:
+                proto::SubagentEvent::RequestOpened { request, .. }
+                | proto::SubagentEvent::QuestionAsked { request, .. },
+            ..
+        } => {
             let key = format!("{}:{}", event.session.0, request.0);
             let _ =
                 write.open_table(REQUESTS)?.insert(key.as_str(), &encoded)?;

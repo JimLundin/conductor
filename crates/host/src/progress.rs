@@ -10,8 +10,8 @@
 use alloc::format;
 
 use proto::{
-    CommandId, Epoch, Event, EventKind, FinishState, HostSeq, Task, TaskStatus,
-    TurnOutcome,
+    CommandId, Epoch, Event, EventKind, FinishState, HostSeq, Task, TaskBoard,
+    TaskStatus, TurnOutcome,
 };
 
 use sha2::{Digest, Sha256};
@@ -56,19 +56,22 @@ pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
     if !ends_turn(ended) {
         return None;
     }
-    let mine = history
-        .iter()
-        .take_while(|event| event.seq <= ended.seq)
-        .filter(|event| event.session == ended.session)
-        .collect::<Vec<&Event>>();
+    let mut board = TaskBoard::new();
+    let mut session = Session::default();
+    for event in history.iter().take_while(|event| event.seq <= ended.seq) {
+        board.apply(event);
+        if event.session == ended.session {
+            session =
+                session.after(event, ended.seq, board.held(ended.session));
+        }
+    }
     let Session {
         assigned,
         before,
-        now,
         finish,
-    } = mine.iter().fold(Session::default(), |session, event| {
-        session.after(event, ended.seq)
-    });
+        importing,
+    } = session;
+    let now = board.held(ended.session);
     let finished = now
         .iter()
         .filter(|task| {
@@ -77,7 +80,7 @@ pub fn progress(history: &[Event], ended: &Event) -> Option<Progress> {
         })
         .map(|task| task.text.as_str())
         .collect::<Vec<&str>>();
-    if finished.is_empty() || finish == FinishState::Finishing {
+    if importing || finished.is_empty() || finish == FinishState::Finishing {
         return None;
     }
     Some(Progress {
@@ -97,32 +100,32 @@ fn done(task: &Task) -> bool {
 struct Session {
     assigned: Assigned,
     before: Vec<Task>,
-    now: Vec<Task>,
     finish: FinishState,
+    importing: bool,
 }
 
 impl Session {
-    fn after(self, event: &Event, ended: HostSeq) -> Self {
+    fn after(self, event: &Event, ended: HostSeq, tasks: &[Task]) -> Self {
         let finish = self.finish.after(&event.kind);
-        let next = Self { finish, ..self };
-        if ends_turn(event) && event.seq < ended {
+        if matches!(event.kind, EventKind::SessionArrived { .. }) {
             return Self {
-                before: next.now.clone(),
-                ..next
+                importing: true,
+                ..Self::default()
             };
         }
-        next.with(&event.kind)
-    }
-
-    fn with(self, kind: &EventKind) -> Self {
-        let assigned = self.assigned.after(kind);
-        let next = Self { assigned, ..self };
-        match kind {
-            EventKind::TasksChanged { tasks } => Self {
-                now: tasks.clone(),
-                ..next
-            },
-            _ => next,
+        let importing = self.importing
+            && !matches!(event.kind, EventKind::SessionArrivalReady { .. });
+        let assigned = self.assigned.after(&event.kind);
+        let before = if ends_turn(event) && event.seq < ended {
+            tasks.to_vec()
+        } else {
+            self.before
+        };
+        Self {
+            assigned,
+            before,
+            finish,
+            importing,
         }
     }
 }

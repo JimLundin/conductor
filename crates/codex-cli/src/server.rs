@@ -35,6 +35,7 @@ pub struct ServerOptions {
     pub credential: Option<CodexCredential>,
     /// The app-server's own working directory; each thread sets its `cwd`.
     pub cwd: PathBuf,
+    pub analytics: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -355,11 +356,16 @@ async fn mutation(
 }
 
 fn command(opts: &ServerOptions) -> Command {
-    let mut cmd = install::process::command(
-        &opts.codex_path,
-        &opts.home,
-        codex::app_server(opts.home.kind(), opts.credential.as_ref()),
-    );
+    let mut invocation =
+        codex::app_server(opts.home.kind(), opts.credential.as_ref());
+    if let Some(enabled) = opts.analytics {
+        drop(invocation.args.splice(
+            ..0,
+            [String::from("-c"), format!("analytics.enabled={enabled}")],
+        ));
+    }
+    let mut cmd =
+        install::process::command(&opts.codex_path, &opts.home, invocation);
     cmd.current_dir(&opts.cwd);
     cmd
 }
@@ -491,6 +497,7 @@ mod tests {
     #[test]
     fn app_server_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(&ServerOptions {
+            analytics: None,
             codex_path: "/opt/codex".into(),
             home: Home::User,
             credential: None,

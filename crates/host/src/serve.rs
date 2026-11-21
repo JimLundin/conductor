@@ -7,7 +7,7 @@ use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
     Credential, Effort, InstanceId, IssueChange, IssueFields, IssueId, ModelId,
     Models, Open, ProjectId, Provider, Rejection, RequestId, SessionId,
-    SignInCode, StartAt, Subscribe,
+    SignInCode, StartAt, Subscribe, Task, TaskId,
 };
 
 use crate::prelude::*;
@@ -32,9 +32,8 @@ pub fn admit(first: Option<Open>, token: &AuthToken) -> Admission {
             |_| refused("wrong token"),
             |()| Admission::Admitted(hello.client),
         ),
-        Some(Open::Subscribe(_) | Open::Command(_)) | None => {
-            refused("the first stream must be a hello")
-        }
+        Some(Open::Subscribe(_) | Open::Command(_) | Open::FleetHello(_))
+        | None => refused("the first stream must be a hello"),
     }
 }
 
@@ -61,7 +60,7 @@ pub fn stream(open: Option<Open>) -> Stream {
     match open {
         Some(Open::Command(command)) => Stream::Command(command),
         Some(Open::Subscribe(subscribe)) => Stream::Subscribe(subscribe),
-        Some(Open::Hello(_)) | None => Stream::Finish,
+        Some(Open::Hello(_) | Open::FleetHello(_)) | None => Stream::Finish,
     }
 }
 
@@ -70,6 +69,10 @@ pub fn stream(open: Option<Open>) -> Stream {
 pub enum Order {
     Send {
         text: String,
+        by: ClientName,
+    },
+    Handoff {
+        task: Task,
         by: ClientName,
     },
     Interrupt,
@@ -99,6 +102,7 @@ impl Order {
         use session::Order as Core;
         match self {
             Self::Send { text, by } => Core::Send { text, by },
+            Self::Handoff { task, by } => Core::Handoff { task, by },
             Self::Interrupt => Core::Interrupt,
             Self::Diff(checkpoint) => Core::Diff(checkpoint),
             Self::Undo(checkpoint) => Core::Undo { checkpoint, fork },
@@ -163,6 +167,34 @@ pub enum Route {
     Home(HomeOrder),
     /// Finishes the session on its issue, in the background.
     Finish(SessionId, ClientName),
+    Handoff {
+        from: SessionId,
+        to: SessionId,
+        task: TaskId,
+        by: ClientName,
+    },
+    Push(PushOrder),
+    Move {
+        session: SessionId,
+        to: proto::fleet::NodeId,
+        retry: Option<proto::movement::MoveId>,
+    },
+    Fleet(FleetAction),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetAction {
+    Status,
+    Invite,
+    Revoke(proto::fleet::NodeId),
+    Approve(proto::fleet::PairRequest),
+    Admit { ticket: proto::Ticket, name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PushOrder {
+    PublicKey,
+    Register(proto::PushSubscription),
 }
 
 /// A command about the host's clone of the home.
@@ -215,6 +247,9 @@ impl Route {
         match self {
             Self::Order(_, Order::Diff(_))
             | Self::SignIn(_)
+            | Self::Push(_)
+            | Self::Move { .. }
+            | Self::Fleet(_)
             | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => {
                 Ledger::Unrecorded
             }
@@ -223,9 +258,10 @@ impl Route {
             | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {
                 Ledger::Receipt
             }
-            Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
-                Ledger::Session
-            }
+            Self::Order(..)
+            | Self::Relaunch(..)
+            | Self::Start { .. }
+            | Self::Handoff { .. } => Ledger::Session,
         }
     }
 }
@@ -233,6 +269,24 @@ impl Route {
 #[must_use]
 pub fn route(body: CommandBody, by: ClientName) -> Route {
     match body {
+        CommandBody::PushPublicKey => Route::Push(PushOrder::PublicKey),
+        CommandBody::RegisterPush(subscription) => {
+            Route::Push(PushOrder::Register(subscription))
+        }
+        CommandBody::HandoffTask { from, to, task } => {
+            Route::Handoff { from, to, task, by }
+        }
+        CommandBody::FleetApprove(request) => {
+            Route::Fleet(FleetAction::Approve(request))
+        }
+        CommandBody::FleetAdmit { ticket, name } => {
+            Route::Fleet(FleetAction::Admit { ticket, name })
+        }
+        CommandBody::FleetStatus => Route::Fleet(FleetAction::Status),
+        CommandBody::FleetInvite => Route::Fleet(FleetAction::Invite),
+        CommandBody::FleetRevoke(node) => {
+            Route::Fleet(FleetAction::Revoke(node))
+        }
         CommandBody::GetDiff {
             session,
             checkpoint,
@@ -266,6 +320,9 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             Route::Home(HomeOrder::Change(issue, change, by))
         }
         CommandBody::FinishSession { session } => Route::Finish(session, by),
+        CommandBody::MoveSession { session, to, retry } => {
+            Route::Move { session, to, retry }
+        }
         CommandBody::RemoveSession { session } => {
             Route::Order(session, Order::Remove)
         }
@@ -282,26 +339,12 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             session,
             request,
             decision,
-        } => Route::Order(
-            session,
-            Order::Reply {
-                request,
-                reply: Reply::Decide(decision),
-                by,
-            },
-        ),
+        } => reply(session, request, Reply::Decide(decision), by),
         CommandBody::Answer {
             session,
             request,
             answers,
-        } => Route::Order(
-            session,
-            Order::Reply {
-                request,
-                reply: Reply::Answer(answers),
-                by,
-            },
-        ),
+        } => reply(session, request, Reply::Answer(answers), by),
         CommandBody::SetCredential {
             provider,
             credential,
@@ -322,6 +365,15 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             Route::SignIn(SignInOrder::Cancel(instance))
         }
     }
+}
+
+const fn reply(
+    session: SessionId,
+    request: RequestId,
+    reply: Reply,
+    by: ClientName,
+) -> Route {
+    Route::Order(session, Order::Reply { request, reply, by })
 }
 
 #[cfg(test)]

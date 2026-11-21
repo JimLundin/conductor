@@ -175,6 +175,7 @@ fn running() -> Session {
 
 fn open() -> Input {
     Input::Step(Step::Open {
+        agent: None,
         native: NativeRequest(text("perm-1")),
         call: ToolCallId(text("toolu_1")),
         tool: ToolKind::Command {
@@ -317,6 +318,7 @@ fn a_subagent_is_logged_and_its_denied_call_declined() {
         Vec::from([
             (
                 Input::Step(Step::SubagentStarted {
+                    kind: None,
                     agent: agent_id(),
                     call: call(),
                     description: text("look around"),
@@ -330,15 +332,27 @@ fn a_subagent_is_logged_and_its_denied_call_declined() {
                 })]),
             ),
             (
-                open(),
-                Vec::from([Effect::Emit(EventKind::RequestOpened {
-                    request: RequestId(1),
+                Input::Step(Step::Open {
+                    agent: Some(agent_id()),
+                    native: NativeRequest(text("perm-1")),
                     call: ToolCallId(text("toolu_1")),
                     tool: ToolKind::Command {
                         command: text("ls"),
                     },
                     reason: None,
                     for_session: None,
+                }),
+                Vec::from([Effect::Emit(EventKind::Subagent {
+                    agent: agent_id(),
+                    event: SubagentEvent::RequestOpened {
+                        request: RequestId(1),
+                        call: ToolCallId(text("toolu_1")),
+                        tool: ToolKind::Command {
+                            command: text("ls"),
+                        },
+                        reason: None,
+                        for_session: None,
+                    },
                 })]),
             ),
             (
@@ -451,6 +465,7 @@ fn a_request_is_opened_answered_once_and_withdrawn_when_the_turn_ends() {
             ),
             (
                 Input::Step(Step::Ask {
+                    agent: None,
                     native: NativeRequest(text("ask-1")),
                     questions: Vec::new(),
                 }),
@@ -490,6 +505,7 @@ fn a_reply_that_does_not_fit_the_request_is_rejected() {
         Vec::from([
             (
                 Input::Step(Step::Ask {
+                    agent: None,
                     native: NativeRequest(text("ask-1")),
                     questions: questions.clone(),
                 }),
@@ -1230,6 +1246,7 @@ fn a_restored_session_keeps_its_tasks_and_their_ids() {
 
 fn asking(native: &str, call: &str) -> Input {
     Input::Step(Step::Open {
+        agent: None,
         native: NativeRequest(text(native)),
         call: ToolCallId(text(call)),
         tool: ToolKind::Command {
@@ -1599,6 +1616,7 @@ fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
 
 fn approval(for_session: Option<&str>) -> Asked {
     Asked::Approval {
+        agent: None,
         call: ToolCallId(text("toolu_1")),
         for_session: for_session.map(String::from),
     }
@@ -1615,8 +1633,20 @@ fn a_reply_must_fit_what_the_request_asked() {
                 &Reply::Decide(Decision::ApproveForSession)
             ),
             fits(&approval(None), &Reply::Answer(one.clone())),
-            fits(&Asked::Question { count: 1 }, &Reply::Answer(one)),
-            fits(&Asked::Question { count: 2 }, &Reply::Answer(Vec::new())),
+            fits(
+                &Asked::Question {
+                    count: 1,
+                    agent: None
+                },
+                &Reply::Answer(one)
+            ),
+            fits(
+                &Asked::Question {
+                    count: 2,
+                    agent: None
+                },
+                &Reply::Answer(Vec::new())
+            ),
         ],
         [
             Err(text("the agent offers no approval for the session here")),
@@ -1804,5 +1834,57 @@ fn a_stop_closes_the_session_between_turns() {
     let _ = expect(
         running(),
         Vec::from([(stop(), Vec::from([rejected(Rejection::TurnInProgress)]))]),
+    );
+}
+
+#[test]
+fn ownership_moves_only_when_the_receiving_agent_accepts_the_task_message() {
+    let task = Task {
+        id: TaskId(42),
+        holder: SessionId(2),
+        text: text("write tests"),
+        status: TaskStatus::InProgress,
+    };
+    let order = Input::Order(Order::Handoff {
+        task: task.clone(),
+        by: phone(),
+    });
+    let (starting, recorded) = ready().step(order.clone());
+    let drafted = recorded.first().and_then(|effect| match effect {
+        Effect::Call(Call::Record(EventKind::UserMessage { text, .. })) => {
+            Some(text.as_str())
+        }
+        _ => None,
+    });
+    assert!(
+        drafted.is_some_and(|message| message.ends_with(&task.handoff_label()))
+    );
+    let (accepted_delivery, _) = starting.step(Input::Recorded(HostSeq(7)));
+    let (_, delivered) = accepted_delivery.step(sent());
+    assert_eq!(
+        delivered,
+        [
+            saved(),
+            Effect::Emit(EventKind::TaskHandedOff { task }),
+            accepted()
+        ]
+    );
+
+    let (failed, _) = ready().step(order);
+    let (sending, _) = failed.step(Input::Recorded(HostSeq(7)));
+    let (_, rejected_delivery) =
+        sending.step(Input::Agent(Outcome::Sent(Err(text("offline")))));
+    assert_eq!(
+        rejected_delivery,
+        [
+            Effect::Emit(EventKind::TurnCompleted {
+                outcome: TurnOutcome::Failed {
+                    message: text("offline")
+                }
+            }),
+            rejected(Rejection::HandoffDeliveryFailed {
+                reason: text("offline")
+            }),
+        ]
     );
 }

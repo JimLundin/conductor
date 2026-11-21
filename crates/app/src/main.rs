@@ -6,8 +6,10 @@
 
 mod checkpoints;
 mod credentials;
+mod fleet;
 mod issue;
 mod projects;
+mod push;
 mod session;
 mod sessions;
 mod shell;

@@ -12,5 +12,6 @@ pub fn plugin(settings: Settings) -> Plugin {
         settings,
         instance,
         account: claude::account,
+        transcripts: crate::transcript::FILES,
     }
 }

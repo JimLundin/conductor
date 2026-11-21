@@ -65,6 +65,8 @@ fn the_agents_tasks_count_those_done() {
         status,
         label,
         text: text(words),
+        handoff: None,
+        choosing: false,
     };
     assert_eq!(
         (
@@ -79,6 +81,8 @@ fn the_agents_tasks_count_those_done() {
                     row("2", "in-progress", "In progress", "write"),
                     row("3", "pending", "To do", "test"),
                 ]),
+                targets: Vec::new(),
+                handoff_pending: false,
             })),
             Some(None),
         )
@@ -333,4 +337,61 @@ fn a_transcript_rebuild_reuses_the_open_preview() {
                 && !before.undo_disabled
                 && after.undo_disabled
     ));
+}
+
+#[test]
+fn picking_a_destination_sends_the_selected_task_and_opens_the_receiving_session()
+ {
+    let target = proto::SessionId(8);
+    let task = Task {
+        id: TaskId(6),
+        text: text("Write the new tests"),
+        status: TaskStatus::Pending,
+        holder: SESSION,
+    };
+    let on_target = |seq, kind| {
+        Intent::Link(
+            HOST,
+            client::link::Update::Feed(proto::Feed::Event(proto::Event {
+                seq: proto::HostSeq(seq),
+                session: target,
+                kind,
+            })),
+        )
+    };
+    let (shown, effects) = opened(Vec::from([
+        event(
+            3,
+            EventKind::TasksChanged {
+                tasks: Vec::from([task.clone()]),
+            },
+        ),
+        on_target(4, created()),
+        on_target(5, EventKind::SessionReady),
+        Intent::Session(SessionIntent::ChooseHandoff(task.id)),
+        Intent::Session(SessionIntent::HandoffTo(target)),
+        Intent::Session(SessionIntent::HandoffTo(target)),
+    ]));
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::HandoffTask {
+            from: SESSION,
+            to: target,
+            task: task.id,
+        }]
+    );
+    let (received, _) = run(
+        shown,
+        Vec::from([
+            on_target(6, EventKind::TaskHandedOff { task }),
+            answer(&effects, Ok(CommandResult::Accepted)),
+        ]),
+    );
+    assert_eq!(pane(&received).map(|shown| shown.key), Some(text("8")));
+    assert_eq!(
+        pane(&received)
+            .and_then(|shown| shown.tasks)
+            .map(|tasks| tasks.count),
+        Some(text("0 of 1 done")),
+    );
 }

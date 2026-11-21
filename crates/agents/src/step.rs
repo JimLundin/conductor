@@ -3,7 +3,7 @@
 
 use proto::{
     Answer, CloseReason, Decision, EventKind, Question, SubagentActivity,
-    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome,
+    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
     TurnOutcome,
 };
 
@@ -27,6 +27,7 @@ pub enum Step {
     /// The session assigns the `RequestId`, stores it open and logs
     /// `RequestOpened`.
     Open {
+        agent: Option<SubagentId>,
         native: NativeRequest,
         /// The tool call the request asks about.
         call: ToolCallId,
@@ -38,6 +39,7 @@ pub enum Step {
     /// The session assigns the `RequestId`, stores the question open and
     /// logs `QuestionAsked`.
     Ask {
+        agent: Option<SubagentId>,
         native: NativeRequest,
         questions: Vec<Question>,
     },
@@ -65,6 +67,15 @@ pub enum Step {
         agent: SubagentId,
         call: ToolCallId,
         description: String,
+        kind: Option<String>,
+    },
+    SubagentKind {
+        agent: SubagentId,
+        kind: String,
+    },
+    SubagentChecklist {
+        agent: SubagentId,
+        steps: Vec<PlanStep>,
     },
     /// The session logs what the sub-agent did, a tool call of its that
     /// failed after the user denied it as `Declined`.
@@ -77,6 +88,61 @@ pub enum Step {
         outcome: SubagentOutcome,
         summary: Option<String>,
     },
+}
+
+impl Step {
+    #[must_use]
+    pub fn for_subagent(self, agent: SubagentId) -> Option<Self> {
+        let activity = match self {
+            Self::Emit(EventKind::AssistantMessage { text }) => {
+                SubagentActivity::Message { text }
+            }
+            Self::Emit(EventKind::Reasoning { text }) => {
+                SubagentActivity::Reasoning { text }
+            }
+            Self::Emit(EventKind::ToolCall { call, phase }) => {
+                SubagentActivity::ToolCall { call, phase }
+            }
+            Self::ToolFinished { call, outcome } => {
+                SubagentActivity::ToolCall {
+                    call,
+                    phase: ToolPhase::Finished { outcome },
+                }
+            }
+            Self::Checklist(steps) => {
+                return Some(Self::SubagentChecklist { agent, steps });
+            }
+            Self::Open {
+                native,
+                call,
+                tool,
+                reason,
+                for_session,
+                ..
+            } => {
+                return Some(Self::Open {
+                    agent: Some(agent),
+                    native,
+                    call,
+                    tool,
+                    reason,
+                    for_session,
+                });
+            }
+            Self::Ask {
+                native, questions, ..
+            } => {
+                return Some(Self::Ask {
+                    agent: Some(agent),
+                    native,
+                    questions,
+                });
+            }
+            Self::Withdraw(_) => return Some(self),
+            _ => return None,
+        };
+        Some(Self::SubagentActivity { agent, activity })
+    }
 }
 
 /// A reply to an open request: a decision for an approval, answers for a

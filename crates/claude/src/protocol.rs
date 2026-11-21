@@ -151,6 +151,7 @@ pub enum ClaudeEvent {
         text: String,
     },
     PermissionRequested {
+        agent: Option<String>,
         id: PermissionRequestId,
         tool_name: String,
         tool: ToolKind,
@@ -164,6 +165,7 @@ pub enum ClaudeEvent {
     /// [`PermissionDecision::Answer`]; the CLI's `PermissionCancelled`
     /// withdraws it like any request.
     QuestionAsked {
+        agent: Option<String>,
         id: PermissionRequestId,
         questions: Vec<Question>,
         tool_use_id: String,
@@ -192,10 +194,17 @@ pub enum ClaudeEvent {
         agent: String,
         tool_use_id: String,
         description: String,
+        kind: Option<String>,
     },
     /// A sub-agent's own message, which its `agent_id` names.
     SubagentMessage {
         agent: String,
+        role: Role,
+        content: Vec<Block>,
+    },
+    /// A child entry without `agent_id` can be attributed by its parent call.
+    UnidentifiedSubagentMessage {
+        parent: String,
         role: Role,
         content: Vec<Block>,
     },
@@ -221,6 +230,7 @@ pub enum Inbound {
     Permission {
         id: PermissionRequestId,
         open: Open,
+        parent_tool_use_id: Option<String>,
         event: ClaudeEvent,
     },
     /// Answer to a control request we sent.
@@ -259,6 +269,7 @@ enum Frame {
     ControlRequest {
         request_id: String,
         request: Value,
+        parent_tool_use_id: Option<String>,
     },
     ControlResponse {
         response: ControlResponse,
@@ -283,6 +294,7 @@ enum System {
         tool_use_id: Option<String>,
         description: String,
         task_type: Option<String>,
+        subagent_type: Option<String>,
     },
     /// Any task's end, which doesn't say the task's type.
     TaskNotification {
@@ -561,8 +573,8 @@ pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
 fn inbound(frame: Frame, raw: Value) -> Inbound {
     match frame {
         Frame::System(system) => Inbound::Event(system_event(system, raw)),
-        Frame::Assistant(entry) => entry_event(Role::Assistant, entry, raw),
-        Frame::User(entry) => entry_event(Role::User, entry, raw),
+        Frame::Assistant(entry) => entry_event(Role::Assistant, entry),
+        Frame::User(entry) => entry_event(Role::User, entry),
         // A sub-agent's stream, whose finished message follows.
         Frame::StreamEvent {
             event: StreamEvent { delta: None },
@@ -614,7 +626,8 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
         Frame::ControlRequest {
             request_id,
             request,
-        } => control_request(request_id, &request),
+            parent_tool_use_id,
+        } => control_request(request_id, &request, parent_tool_use_id),
         Frame::ControlResponse {
             response:
                 ControlResponse::Success {
@@ -649,7 +662,11 @@ fn tool_outcome(is_error: Option<bool>) -> ToolOutcome {
 
 /// A request we can't parse, unknown or malformed, still yields its
 /// `request_id`, so it gets an error reply.
-fn control_request(request_id: String, request: &Value) -> Inbound {
+fn control_request(
+    request_id: String,
+    request: &Value,
+    parent_tool_use_id: Option<String>,
+) -> Inbound {
     match serde_json::from_value::<ControlRequest>(request.clone()) {
         Ok(ControlRequest::CanUseTool {
             tool_name,
@@ -667,6 +684,7 @@ fn control_request(request_id: String, request: &Value) -> Inbound {
                 };
                 (
                     ClaudeEvent::QuestionAsked {
+                        agent: None,
                         id: id.clone(),
                         questions: asked
                             .into_iter()
@@ -690,6 +708,7 @@ fn control_request(request_id: String, request: &Value) -> Inbound {
                 let offered = grant(permission_suggestions);
                 (
                     ClaudeEvent::PermissionRequested {
+                        agent: None,
                         id: id.clone(),
                         tool: tool_kind(&tool_name, &input),
                         tool_name,
@@ -704,6 +723,12 @@ fn control_request(request_id: String, request: &Value) -> Inbound {
             Inbound::Permission {
                 id,
                 open: Open { input, grant },
+                parent_tool_use_id: parent_tool_use_id.or_else(|| {
+                    request
+                        .get("parent_tool_use_id")
+                        .and_then(Value::as_str)
+                        .map(String::from)
+                }),
                 event,
             }
         }
@@ -738,10 +763,12 @@ fn system_event(system: System, raw: Value) -> ClaudeEvent {
             tool_use_id: Some(tool_use_id),
             description,
             task_type: Some(task_type),
+            subagent_type,
         } if task_type == LOCAL_AGENT => ClaudeEvent::SubagentStarted {
             agent: task_id,
             tool_use_id,
             description,
+            kind: subagent_type,
         },
         System::TaskStarted { .. } => ClaudeEvent::Unknown(raw),
         System::TaskNotification {
@@ -761,7 +788,7 @@ fn system_event(system: System, raw: Value) -> ClaudeEvent {
 }
 
 /// A sub-agent's entry that names no sub-agent is `Unknown`.
-fn entry_event(role: Role, entry: Entry, raw: Value) -> Inbound {
+fn entry_event(role: Role, entry: Entry) -> Inbound {
     match (entry.parent_tool_use_id, entry.agent_id) {
         (None, _) => message_event(role, entry.message, entry.uuid),
         (Some(_), Some(agent)) => {
@@ -771,7 +798,13 @@ fn entry_event(role: Role, entry: Entry, raw: Value) -> Inbound {
                 content: entry.message.content.into_iter().map(block).collect(),
             })
         }
-        (Some(_), None) => Inbound::Event(ClaudeEvent::Unknown(raw)),
+        (Some(parent), None) => {
+            Inbound::Event(ClaudeEvent::UnidentifiedSubagentMessage {
+                parent,
+                role,
+                content: entry.message.content.into_iter().map(block).collect(),
+            })
+        }
     }
 }
 
@@ -1231,7 +1264,10 @@ mod tests {
                         Inbound::Event(ClaudeEvent::Message {
                             uuid, ..
                         }) => uuid,
-                        Inbound::Event(ClaudeEvent::Unknown(_)) => None,
+                        Inbound::Event(
+                            ClaudeEvent::Unknown(_)
+                            | ClaudeEvent::UnidentifiedSubagentMessage { .. },
+                        ) => None,
                         frame => {
                             assert_eq!(
                                 format!("{frame:?}"),
@@ -1343,6 +1379,7 @@ mod tests {
         assert_eq!(
             event,
             ClaudeEvent::PermissionRequested {
+                agent: None,
                 id: PermissionRequestId(String::from("r1")),
                 tool_name: String::from("Bash"),
                 tool: ToolKind::Command {
@@ -1391,6 +1428,7 @@ mod tests {
             (event, response.get("updatedPermissions")),
             (
                 ClaudeEvent::PermissionRequested {
+                    agent: None,
                     id: PermissionRequestId(String::from("r1")),
                     tool_name: String::from("Write"),
                     tool: ToolKind::FileChange {
@@ -1431,6 +1469,7 @@ mod tests {
         assert_eq!(
             event,
             ClaudeEvent::QuestionAsked {
+                agent: None,
                 id: PermissionRequestId(String::from("r1")),
                 questions: Vec::from([
                     Question {

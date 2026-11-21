@@ -25,6 +25,9 @@ pub fn cli(home: HomeKind) -> Invocation {
         HomeKind::Private => Vec::from([
             Var::remove("CODEX_HOME"),
             Var::remove(KEY_VAR),
+            Var::remove("OPENAI_API_KEY"),
+            Var::remove("CODEX_API_KEY"),
+            Var::remove("OPENAI_BASE_URL"),
             Var::Home(String::from("CODEX_HOME")),
         ]),
     };
@@ -71,8 +74,10 @@ pub fn app_server(
     home: HomeKind,
     credential: Option<&CodexCredential>,
 ) -> Invocation {
-    let key = credential
-        .map(|CodexCredential::Provider { key, .. }| Var::set(KEY_VAR, key));
+    let key = credential.map(|stored| match stored {
+        CodexCredential::ApiKey { key }
+        | CodexCredential::Provider { key, .. } => Var::set(KEY_VAR, key),
+    });
     Invocation::of(
         cli(home).env.into_iter().chain(key).collect(),
         &["app-server", "--listen", "stdio://"],
@@ -131,37 +136,27 @@ const FILTERS: [&str; 2] = ["shell_environment_policy", "filters"];
 /// wrote there stays. The key stays out of the file.
 #[must_use]
 pub fn config_edits(credential: Option<&CodexCredential>) -> Vec<Edit> {
+    let base = Vec::from([
+        Edit::Remove(path(&["model_provider"])),
+        Edit::Remove(path(&["model"])),
+    ]);
     let ours = match credential {
         Some(CodexCredential::Provider {
             name,
             base_url,
-            key: _,
             model,
-        }) => Vec::from([
-            Edit::Table {
-                path: path(&["model_providers", PROVIDER_ID]),
-                entries: [
-                    ("name", name.as_str()),
-                    ("base_url", base_url.as_str()),
-                    ("env_key", KEY_VAR),
-                    ("wire_api", "responses"),
-                ]
-                .map(|(key, value)| (String::from(key), String::from(value)))
-                .into(),
-            },
-            Edit::Set {
-                path: path(&[FILTERS[0], FILTERS[1], KEY_VAR]),
-                value: String::from("exclude"),
-            },
-            Edit::Set {
-                path: path(&["model_provider"]),
-                value: String::from(PROVIDER_ID),
-            },
-            Edit::Set {
+            ..
+        }) => {
+            let mut edits = provider_edits(name, base_url);
+            edits.push(Edit::Set {
                 path: path(&["model"]),
                 value: model.clone(),
-            },
-        ]),
+            });
+            edits
+        }
+        Some(CodexCredential::ApiKey { .. }) => {
+            provider_edits("OpenAI", "https://api.openai.com/v1")
+        }
         None => Vec::from([
             Edit::Remove(path(&["model_providers", PROVIDER_ID])),
             Edit::Remove(path(&[FILTERS[0], FILTERS[1], KEY_VAR])),
@@ -169,14 +164,31 @@ pub fn config_edits(credential: Option<&CodexCredential>) -> Vec<Edit> {
             Edit::RemoveIfEmpty(path(&FILTERS)),
         ]),
     };
-    [
-        Vec::from([
-            Edit::Remove(path(&["model_provider"])),
-            Edit::Remove(path(&["model"])),
-        ]),
-        ours,
-    ]
-    .concat()
+    [base, ours].concat()
+}
+
+fn provider_edits(name: &str, base_url: &str) -> Vec<Edit> {
+    Vec::from([
+        Edit::Table {
+            path: path(&["model_providers", PROVIDER_ID]),
+            entries: [
+                ("name", name),
+                ("base_url", base_url),
+                ("env_key", KEY_VAR),
+                ("wire_api", "responses"),
+            ]
+            .map(|(key, value)| (String::from(key), String::from(value)))
+            .into(),
+        },
+        Edit::Set {
+            path: path(&[FILTERS[0], FILTERS[1], KEY_VAR]),
+            value: String::from("exclude"),
+        },
+        Edit::Set {
+            path: path(&["model_provider"]),
+            value: String::from(PROVIDER_ID),
+        },
+    ])
 }
 
 /// The pages of a thread's history a check reads at most.
@@ -288,6 +300,9 @@ mod tests {
                     env: Vec::from([
                         Var::remove("CODEX_HOME"),
                         Var::remove("CONDUCTOR_CODEX_KEY"),
+                        Var::remove("OPENAI_API_KEY"),
+                        Var::remove("CODEX_API_KEY"),
+                        Var::remove("OPENAI_BASE_URL"),
                         Var::Home(String::from("CODEX_HOME")),
                         Var::set("CONDUCTOR_CODEX_KEY", "sk-1"),
                     ]),
@@ -300,6 +315,25 @@ mod tests {
                 path(&["login", "--device-auth"]),
             )
         );
+    }
+
+    #[test]
+    fn a_direct_key_uses_the_filtered_provider_environment() {
+        let credential = CodexCredential::ApiKey {
+            key: String::from("synthetic-api-key"),
+        };
+        let invocation = app_server(HomeKind::Private, Some(&credential));
+        assert_eq!(
+            invocation.env.last(),
+            Some(&Var::set("CONDUCTOR_CODEX_KEY", "synthetic-api-key"))
+        );
+        assert!(
+            invocation
+                .args
+                .iter()
+                .all(|arg| !arg.contains("synthetic-api-key"))
+        );
+        assert_eq!(crate::default_model(&credential), None);
     }
 
     #[test]

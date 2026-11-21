@@ -34,10 +34,22 @@ pub struct Conductor {
     log: Log,
     registry: Registry,
     home: HomeClone,
-    /// A placeholder for architecture §4's device certificates: every client
-    /// must present the token from the ticket.
+    /// Standalone clients present the token from the host ticket.
     token: AuthToken,
     handshakes: Arc<Semaphore>,
+    push: Option<crate::push::Push>,
+    mover: Option<crate::movement::Mover>,
+    fleet: crate::fleet::Slot,
+    endpoint: iroh::Endpoint,
+    plugins: crate::Plugins,
+}
+
+pub struct ConnectionOptions {
+    pub token: AuthToken,
+    pub push: Option<crate::push::Push>,
+    pub fleet: crate::fleet::Slot,
+    pub endpoint: iroh::Endpoint,
+    pub plugins: crate::Plugins,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -52,9 +64,15 @@ enum StreamError {
     Connection(#[from] ConnectionError),
 }
 
+struct Authenticated {
+    name: ClientName,
+    certificate: Option<proto::fleet::Certificate>,
+}
+
 /// What a subscription does next.
 enum Upcoming {
     Frame(Frame),
+    MoveTargets(crate::movement::Mover),
     /// Nothing to send: the home changed to none.
     Quiet,
     /// The client fell behind or the log or the registry stopped: end the
@@ -76,6 +94,22 @@ struct Feed {
     sign_ins: broadcast::Receiver<SignIn>,
     home: watch::Receiver<Option<Home>>,
     offers: watch::Receiver<Instances>,
+    movement: Option<MovementFeed>,
+}
+
+struct MovementFeed {
+    versions: tokio::sync::watch::Receiver<u64>,
+    mover: crate::movement::Mover,
+}
+
+async fn next_move_targets(movement: &mut Option<MovementFeed>) -> Upcoming {
+    let Some(feed) = movement else {
+        return core::future::pending().await;
+    };
+    if feed.versions.changed().await.is_err() {
+        return Upcoming::Resubscribe;
+    }
+    Upcoming::MoveTargets(feed.mover.clone())
 }
 
 impl ProtocolHandler for Conductor {
@@ -110,17 +144,73 @@ impl Conductor {
     async fn serve_client(
         &self,
         conn: &Connection,
-        admitted: Option<ClientName>,
+        authenticated: Option<Authenticated>,
     ) {
         let peer = conn.remote_id();
-        if let Some(client) = admitted {
-            tracing::info!(%peer, client = client.0, "client connected");
-            let err = self.streams(conn, &client).await;
-            tracing::info!(%peer, client = client.0, %err, "client disconnected");
+        if let Some(client) = authenticated {
+            tracing::info!(%peer, client = client.name.0, "client connected");
+            let membership = self.fleet.borrow().clone();
+            if let (Some(fleet), Some(certificate)) =
+                (membership.as_ref(), &client.certificate)
+            {
+                tokio::select! {
+                    err = self.streams(conn, &client.name) => tracing::info!(%peer, %err, "client disconnected"),
+                    () = wait_revoked(fleet, certificate) => conn.close(1u32.into(), b"fleet device revoked"),
+                }
+            } else {
+                let mut modes = self.fleet.subscribe();
+                tokio::select! {
+                    err = self.streams(conn, &client.name) => tracing::info!(%peer, %err, "client disconnected"),
+                    _ = modes.wait_for(Option::is_some) => conn.close(1u32.into(), b"host joined a fleet"),
+                }
+            }
         } else {
             tracing::info!(%peer, "refused a client");
             conn.close(1u32.into(), b"refused");
         }
+    }
+}
+
+async fn wait_revoked(
+    fleet: &crate::fleet::Membership,
+    certificate: &proto::fleet::Certificate,
+) {
+    let mut versions = fleet.versions();
+    while admitted_owner(fleet, certificate).await {
+        if versions.changed().await.is_err() {
+            break;
+        }
+    }
+}
+
+async fn admitted_owner(
+    fleet: &crate::fleet::Membership,
+    certificate: &proto::fleet::Certificate,
+) -> bool {
+    fleet.is_active().await && fleet.admit_owner(certificate).await.is_ok()
+}
+
+async fn admit_fleet(
+    fleet: &crate::fleet::Membership,
+    peer: iroh::EndpointId,
+    first: Option<Open>,
+) -> (Admission, Option<proto::fleet::Certificate>) {
+    match first {
+        Some(Open::FleetHello(hello))
+            if fleet.admit_device(peer, &hello).await.is_ok() =>
+        {
+            let certificate = hello.certificate;
+            let name = ClientName(certificate.identity.name.clone());
+            (Admission::Admitted(name), Some(certificate))
+        }
+        _ => (
+            Admission::Refused {
+                reason: String::from(
+                    "a current fleet device certificate is required",
+                ),
+            },
+            None,
+        ),
     }
 }
 
@@ -146,6 +236,15 @@ fn trace_command(command: &Command) {
         CommandBody::CreateIssue { .. } => "create_issue",
         CommandBody::ChangeIssue { .. } => "change_issue",
         CommandBody::FinishSession { .. } => "finish_session",
+        CommandBody::PushPublicKey => "push_public_key",
+        CommandBody::RegisterPush(_) => "register_push",
+        CommandBody::HandoffTask { .. } => "handoff_task",
+        CommandBody::MoveSession { .. } => "move_session",
+        CommandBody::FleetStatus => "fleet_status",
+        CommandBody::FleetInvite => "fleet_invite",
+        CommandBody::FleetRevoke(_) => "fleet_revoke",
+        CommandBody::FleetApprove(_) => "fleet_approve",
+        CommandBody::FleetAdmit { .. } => "fleet_admit",
     };
     tracing::info!(command = command.id.0, operation, "command received");
 }
@@ -158,6 +257,11 @@ const fn command_outcome(result: &CommandResult) -> &'static str {
         CommandResult::Rejected(_) => "rejected",
         CommandResult::Diff(_) => "diff",
         CommandResult::IssueCreated { .. } => "issue_created",
+        CommandResult::PushPublicKey(_) => "push_public_key",
+        CommandResult::PushUnavailable => "push_unavailable",
+        CommandResult::FleetStatus(_) => "fleet_status",
+        CommandResult::FleetInvite(_) => "fleet_invite",
+        CommandResult::FleetPairing(_) => "fleet_pairing",
     }
 }
 
@@ -165,12 +269,19 @@ impl Conductor {
     /// The host's protocol handler, which also notes the progress of its
     /// sessions on issues from now on.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         log: Log,
         registry: Registry,
         home: HomeClone,
-        token: AuthToken,
+        options: ConnectionOptions,
     ) -> Self {
+        let ConnectionOptions {
+            token,
+            push,
+            fleet,
+            endpoint,
+            plugins,
+        } = options;
         crate::progress::spawn(log.clone(), home.clone());
         Self {
             log,
@@ -178,6 +289,62 @@ impl Conductor {
             home,
             token,
             handshakes: Arc::new(Semaphore::new(HANDSHAKE_LIMIT)),
+            push,
+            mover: None,
+            fleet,
+            endpoint,
+            plugins,
+        }
+    }
+
+    pub(crate) fn enable_moves(
+        &mut self,
+        endpoint: iroh::Endpoint,
+        member: crate::fleet::Slot,
+        data: std::path::PathBuf,
+    ) -> crate::movement::Mover {
+        let mover = crate::movement::Mover::new(
+            endpoint,
+            member,
+            self.log.clone(),
+            self.registry.clone(),
+            self.home.clone(),
+            data,
+        );
+        self.mover = Some(mover.clone());
+        mover
+    }
+
+    async fn move_session(
+        &self,
+        session: SessionId,
+        to: proto::fleet::NodeId,
+        id: proto::movement::MoveId,
+    ) -> CommandResult {
+        match &self.mover {
+            Some(mover) => mover.order(session, to, id).await,
+            None => CommandResult::Rejected(Rejection::MoveRefused {
+                reason: String::from("session moves require fleet membership"),
+            }),
+        }
+    }
+
+    async fn move_targets(&self) -> Vec<proto::fleet::NodeId> {
+        match &self.mover {
+            Some(mover) => mover.targets().await,
+            None => Vec::new(),
+        }
+    }
+
+    async fn admission(
+        &self,
+        peer: iroh::EndpointId,
+        first: Option<Open>,
+    ) -> (Admission, Option<proto::fleet::Certificate>) {
+        let membership = self.fleet.borrow().clone();
+        match membership {
+            Some(fleet) => admit_fleet(&fleet, peer, first).await,
+            None => (serve::admit(first, &self.token), None),
         }
     }
 
@@ -186,7 +353,7 @@ impl Conductor {
     async fn authenticate(
         &self,
         conn: &Connection,
-    ) -> Result<Option<ClientName>, StreamError> {
+    ) -> Result<Option<Authenticated>, StreamError> {
         let started = Instant::now();
         let peer = conn.remote_id();
         let connection = conn.stable_id();
@@ -194,7 +361,8 @@ impl Conductor {
         let (mut send, mut recv) = conn.accept_bi().await?;
         let first =
             wire::read_bounded::<Open>(&mut recv, HELLO_BODY_LIMIT).await?;
-        match serve::admit(first, &self.token) {
+        let (admission, certificate) = self.admission(peer, first).await;
+        match admission {
             Admission::Admitted(client) => {
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello received");
                 wire::write(
@@ -204,7 +372,10 @@ impl Conductor {
                 .await?;
                 send.finish()?;
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "welcome sent");
-                Ok(Some(client))
+                Ok(Some(Authenticated {
+                    name: client,
+                    certificate,
+                }))
             }
             Admission::Refused { reason } => {
                 wire::write(&mut send, &HelloReply::Refused { reason }).await?;
@@ -316,8 +487,12 @@ impl Conductor {
         route: Route,
         id: proto::CommandId,
     ) -> Result<Completion, Stopped> {
+        let membership = self.fleet.borrow().clone();
         let result = match route {
             Route::Order(session, order) => self.order(session, order).await,
+            Route::Handoff { from, to, task, by } => {
+                self.handoff(from, to, task, by).await
+            }
             Route::Relaunch(session, relaunch) => {
                 self.relaunch(session, relaunch).await
             }
@@ -328,10 +503,28 @@ impl Conductor {
                 by,
             } => self.registry.start(instance, at, choice, by).await,
             Route::Configure(configure) => {
-                self.registry.configure(configure, id).await
+                crate::fleet::configure(
+                    &self.registry,
+                    membership.as_ref(),
+                    &self.plugins,
+                    configure,
+                    id,
+                )
+                .await
             }
+            Route::Push(order) => Ok(self.push_order(order).await),
+            Route::Fleet(action) => Ok(crate::fleet::command(
+                membership.as_ref(),
+                &self.endpoint,
+                action,
+            )
+            .await),
             Route::SignIn(order) => self.registry.sign_in(order).await,
             Route::Home(order) => return self.home.order(order, id).await,
+            Route::Move { session, to, retry } => {
+                let move_id = retry.unwrap_or(proto::movement::MoveId(id.0));
+                Ok(self.move_session(session, to, move_id).await)
+            }
             Route::Finish(session, by) => {
                 match self.registry.find(session).await? {
                     Some(handle) => handle.finish(by).await,
@@ -344,11 +537,39 @@ impl Conductor {
         Ok(result.into())
     }
 
+    async fn push_order(&self, order: host::serve::PushOrder) -> CommandResult {
+        match &self.push {
+            Some(push) => push.command(order).await,
+            None => CommandResult::PushUnavailable,
+        }
+    }
+
+    async fn handoff(
+        &self,
+        from: SessionId,
+        to: SessionId,
+        id: proto::TaskId,
+        by: ClientName,
+    ) -> Result<CommandResult, Stopped> {
+        if from == to {
+            return Ok(CommandResult::Rejected(
+                Rejection::HandoffToSameSession,
+            ));
+        }
+        let Some(task) = self.log.handoff_task(from, id).await? else {
+            return Ok(CommandResult::Rejected(Rejection::TaskUnavailable));
+        };
+        self.order(to, Order::Handoff { task, by }).await
+    }
+
     async fn order(
         &self,
         session: SessionId,
         order: Order,
     ) -> Result<CommandResult, Stopped> {
+        if let Some(result) = self.resume_arrival(session, &order).await? {
+            return Ok(result);
+        }
         match self.registry.find(session).await? {
             None => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
             Some(handle) => Ok(handle
@@ -356,6 +577,22 @@ impl Conductor {
                 .await
                 .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
         }
+    }
+
+    async fn resume_arrival(
+        &self,
+        session: SessionId,
+        order: &Order,
+    ) -> Result<Option<CommandResult>, Stopped> {
+        if !matches!(order, Order::Send { .. }) {
+            return Ok(None);
+        }
+        let history = self.log.finish_history(session).await?;
+        if !host::movement::resume_for_message(&history) {
+            return Ok(None);
+        }
+        let resumed = self.relaunch(session, Relaunch::Continue).await?;
+        Ok((resumed != CommandResult::Accepted).then_some(resumed))
     }
 
     async fn relaunch(
@@ -393,11 +630,21 @@ impl Conductor {
                 let snapshot = offers.borrow_and_update().clone();
                 let mut home = self.home.watch();
                 let current = home.borrow_and_update().clone();
+                let membership = self.fleet.borrow().clone();
+                let movement = self.mover.clone().zip(membership).map(
+                    |(mover, member)| MovementFeed {
+                        versions: member.versions(),
+                        mover,
+                    },
+                );
                 let first = subscription
                     .replay
                     .into_iter()
                     .map(Frame::Event)
-                    .chain([Frame::Instances(snapshot)])
+                    .chain([
+                        Frame::Instances(snapshot),
+                        Frame::MoveTargets(self.move_targets().await),
+                    ])
                     .chain(running.into_iter().map(Frame::SignIn))
                     .chain(current.into_iter().map(Frame::Home))
                     .collect::<Vec<Frame>>();
@@ -408,6 +655,7 @@ impl Conductor {
                     sign_ins,
                     home,
                     offers,
+                    movement,
                 };
                 let result = feed.run(conn).await;
                 tracing::info!(?result, "subscription ended");
@@ -426,6 +674,10 @@ impl Feed {
                 Upcoming::Frame(frame) => {
                     wire::write(&mut self.send, &frame).await?;
                 }
+                Upcoming::MoveTargets(mover) => {
+                    let frame = Frame::MoveTargets(mover.targets().await);
+                    wire::write(&mut self.send, &frame).await?;
+                }
                 Upcoming::Quiet => {}
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
                 Upcoming::Gone => break Ok(()),
@@ -440,6 +692,7 @@ impl Feed {
             tokio::select! {
                 next = self.live.recv() => upcoming(next.map(Frame::Event)),
                 next = self.sign_ins.recv() => upcoming(next.map(Frame::SignIn)),
+                next = next_move_targets(&mut self.movement) => next,
                 changed = self.offers.changed() => changed.map_or(Upcoming::Resubscribe, |()| Upcoming::Frame(Frame::Instances(self.offers.borrow_and_update().clone()))),
                 changed = self.home.changed() => changed.map_or(
                     Upcoming::Resubscribe,

@@ -9,10 +9,13 @@ publish = false
 layer = "shell"
 
 [dependencies]
+data-encoding.workspace = true
 net = { path = "../net" }
 n0-future.workspace = true
 dioxus = { version = "0.7.10", default-features = false, features = ["launch", "lib", "logger"] }
 proto = { path = "../proto" }
+serde.workspace = true
+qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
 tracing = { workspace = true, features = ["std"] }
 ui = { path = "../ui" }

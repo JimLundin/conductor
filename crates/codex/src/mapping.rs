@@ -61,7 +61,7 @@ pub fn codex_note(event: &CodexEvent) -> Option<Note> {
     }
 }
 
-fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
+pub fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
     match event {
         ThreadEvent::TurnStarted { turn } => {
             Vec::from([Step::TurnStarted(NativeTurn(turn.0))])
@@ -113,6 +113,7 @@ fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             Vec::from([Step::Checklist(steps)])
         }
         ThreadEvent::Started
+        | ThreadEvent::Child(_)
         | ThreadEvent::SettingsChanged(_)
         | ThreadEvent::Unknown(_) => Vec::new(),
     }
@@ -135,6 +136,7 @@ fn approval_step(
         } => {
             let command = asked.unwrap_or_default();
             Step::Open {
+                agent: None,
                 native,
                 call,
                 tool: ToolKind::Command {
@@ -146,6 +148,7 @@ fn approval_step(
         }
         // The request names no paths; the tool card the item started has them.
         ApprovalKind::FileChange { reason } => Step::Open {
+            agent: None,
             native,
             call,
             tool: ToolKind::FileChange { files: Vec::new() },
@@ -168,6 +171,7 @@ fn approval_step(
                 .collect::<Vec<String>>()
                 .join("; ");
             Step::Open {
+                agent: None,
                 native,
                 call,
                 tool: ToolKind::Other {
@@ -178,9 +182,11 @@ fn approval_step(
                 for_session: Some(detail),
             }
         }
-        ApprovalKind::UserInput { questions } => {
-            Step::Ask { native, questions }
-        }
+        ApprovalKind::UserInput { questions } => Step::Ask {
+            agent: None,
+            native,
+            questions,
+        },
     }
 }
 
@@ -322,6 +328,7 @@ mod tests {
                     },
                 }),
                 want: Vec::from([Step::Open {
+                    agent: None,
                     native: NativeRequest(String::from("integer:1")),
                     call: ToolCallId(String::from("exec-2")),
                     tool: ToolKind::Command {
@@ -350,6 +357,7 @@ mod tests {
                     },
                 }),
                 want: Vec::from([Step::Open {
+                    agent: None,
                     native: NativeRequest(String::from("integer:2")),
                     call: ToolCallId(String::from("exec-3")),
                     tool: ToolKind::Other {
@@ -374,6 +382,7 @@ mod tests {
                     },
                 }),
                 want: Vec::from([Step::Ask {
+                    agent: None,
                     native: NativeRequest(String::from("integer:0")),
                     questions: Vec::from([color()]),
                 }]),

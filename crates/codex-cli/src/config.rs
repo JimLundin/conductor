@@ -163,6 +163,46 @@ mod tests {
     }
 
     #[test]
+    fn an_openai_key_replaces_the_gateway_endpoint_without_writing_the_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let gateway = CodexCredential::Provider {
+            name: String::from("Gateway"),
+            base_url: String::from("https://gateway.example/v1"),
+            key: String::from("synthetic-gateway-key"),
+            model: String::from("gateway-model"),
+        };
+        let openai = CodexCredential::ApiKey {
+            key: String::from("synthetic-api-key"),
+        };
+        let before = with_provider(CODEX_WROTE, Some(&gateway))?;
+        let direct = with_provider(&before, Some(&openai))?;
+        let doc = direct.parse::<DocumentMut>()?;
+        let provider = &doc["model_providers"]["conductor"];
+        assert_eq!(
+            provider["base_url"].as_str(),
+            Some("https://api.openai.com/v1")
+        );
+        assert_eq!(provider["env_key"].as_str(), Some("CONDUCTOR_CODEX_KEY"));
+        assert_eq!(doc["model_provider"].as_str(), Some("conductor"));
+        assert!(!doc.contains_key("model"));
+        assert_eq!(
+            doc["shell_environment_policy"]["filters"]["CONDUCTOR_CODEX_KEY"]
+                .as_str(),
+            Some("exclude"),
+        );
+        assert!(!direct.contains("synthetic-api-key"));
+        let back =
+            with_provider(&direct, Some(&gateway))?.parse::<DocumentMut>()?;
+        assert_eq!(
+            back["model_providers"]["conductor"]["base_url"].as_str(),
+            Some("https://gateway.example/v1")
+        );
+        assert_eq!(back["model"].as_str(), Some("gateway-model"));
+        assert_eq!(with_provider(&direct, None)?, CODEX_WROTE);
+        Ok(())
+    }
+
+    #[test]
     fn inline_and_ordinary_sections_preserve_other_settings()
     -> Result<(), Box<dyn std::error::Error>> {
         let inline = "model_providers = { other = { name = 'Other' } }\nshell_environment_policy = { inherit = 'all', filters = { OTHER = 'include' } }\n";

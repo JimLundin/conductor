@@ -42,6 +42,7 @@ async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_def
         path: fake_cli_path(),
         home: Home::private(&work, "gateway", &plugin.profile.config)?,
         work: work.clone(),
+        fleet_flags: None,
     });
     let configured = instance.configure(Some(stored_gateway())).await?;
     assert_eq!(
@@ -85,6 +86,7 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
         path: fake_cli_path(),
         home,
         work: work.clone(),
+        fleet_flags: None,
     });
     let reason = instance
         .configure(Some(stored_gateway()))
@@ -112,6 +114,7 @@ fn instance(work: PathBuf) -> Instance {
         path: fake_cli_path(),
         home: Home::User,
         work,
+        fleet_flags: None,
     })
 }
 

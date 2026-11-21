@@ -159,6 +159,9 @@ pub struct AnsweredQuestion {
 pub struct AgentGroup {
     pub key: String,
     pub description: String,
+    pub kind: Option<String>,
+    pub needs_attention: bool,
+    pub tasks: Option<crate::session::Tasks>,
     /// The status in a word, also its `data-status`.
     pub status: &'static str,
     pub label: &'static str,
@@ -174,6 +177,9 @@ pub fn agent_group(
     AgentGroup {
         key: subagent.id.0.clone(),
         description: subagent.description.clone(),
+        kind: subagent.kind.clone(),
+        needs_attention: subagent.items.iter().any(Item::requests_attention),
+        tasks: crate::session::tasks(&subagent.tasks),
         status: subagent.status.word(),
         label: match subagent.status {
             SubagentStatus::Running => "Running",
@@ -187,7 +193,8 @@ pub fn agent_group(
             .iter()
             .map(|item| row(item, drafts))
             .collect(),
-        empty: subagent.items.is_empty().then_some("Nothing yet"),
+        empty: (subagent.items.is_empty() && subagent.tasks.is_empty())
+            .then_some("Nothing yet"),
     }
 }
 

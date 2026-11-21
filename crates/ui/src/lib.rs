@@ -12,6 +12,7 @@ mod checkpoints;
 mod credentials;
 mod host;
 mod issues;
+mod movement;
 mod new_session;
 mod prelude;
 mod projects;
@@ -42,6 +43,7 @@ pub use issues::{
     EditForm, IssueIntent, IssueList, IssueRow, IssueScreen, IssueSession,
     ItemRow, NewIssueIntent, Pick, StatusGroup,
 };
+pub use movement::{MoveIntent, MovePanel, MoveTarget};
 pub use new_session::{
     Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,
 };
@@ -54,8 +56,8 @@ pub use saved::{
     joined_host, legacy_to_migrate, restored,
 };
 pub use session::{
-    Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
-    TaskRow, Tasks, UndoNote, WorkspaceContext,
+    Composer, EffortControl, Entry, Footer, HandoffChoice, Mount,
+    SessionIntent, SessionPane, TaskRow, Tasks, UndoNote, WorkspaceContext,
 };
 pub use sessions::{HostGroup, Listing, SessionList, SessionRow};
 pub use state::{Detail, Dial, HostsScreen, State};
@@ -114,6 +116,10 @@ pub enum Intent {
     Join(Result<Ticket, TicketError>),
     /// Forget this host; the last one gone, pair again.
     Forget(HostId),
+    FleetHosts {
+        hosts: Vec<Saved>,
+        removed: Vec<HostId>,
+    },
     Link(HostId, Update),
     Show(Place),
     DismissNotice,
@@ -123,6 +129,7 @@ pub enum Intent {
     Project(HostId, ProjectIntent),
     /// Acts on the session shown.
     Session(SessionIntent),
+    Move(MoveIntent),
     /// Opens an issue from the projects view.
     NewIssue(NewIssueIntent),
     /// Opens the new-session form on this issue, on this host.
@@ -182,6 +189,8 @@ enum ReplyTo {
     Effort(Option<Effort>),
     Start(u64),
     Message,
+    Handoff,
+    Move,
     /// A new issue in this project: it opens once the host has it.
     Created,
     Issue(issues::Submission),
@@ -252,4 +261,22 @@ pub fn update(state: State, intent: Intent) -> (State, Vec<Effect>) {
 #[must_use]
 pub fn view(state: &State) -> Screen {
     state.screen()
+}
+
+/// Opens a notification target if this browser has paired its host.
+#[must_use]
+pub fn show_paired_session(
+    state: State,
+    host: HostId,
+    session: proto::SessionId,
+) -> State {
+    if state
+        .saved()
+        .iter()
+        .any(|saved| saved.ticket.host == host.0)
+    {
+        update(state, Intent::Show(Place::Session(host, session))).0
+    } else {
+        state
+    }
 }

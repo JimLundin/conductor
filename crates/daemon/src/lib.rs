@@ -3,9 +3,12 @@
 //! [`runtime::Plugin`], knowing no provider by name.
 
 mod credentials;
+pub mod fleet;
 mod home;
 mod log;
+mod movement;
 mod progress;
+mod push;
 mod registry;
 mod serve;
 mod session;

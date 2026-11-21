@@ -189,3 +189,27 @@ Wi-Fi as the host.
    message; the owner accepts that as the design.
 6. **Step 7, Codex shows "unavailable" with no reason.** The host sends the
    reason in `Welcome`; the New Session form doesn't render it.
+
+## Web Push on an iPhone
+
+Use an iPhone on iOS 16.4 or later with Conductor added to the Home Screen.
+Deploy the web app over HTTPS with `push.js` at the web app's URL and run a
+host built against the same Conductor protocol generation. The host needs
+outbound HTTPS to the browser's push service, which is `*.push.apple.com`
+for an iPhone. In the Home Screen app, pair exactly one host and wait for
+it to reach Live.
+
+1. Open Credentials, tap **Enable notifications**, and allow notifications
+   in the iOS prompt. Confirm the app reports **Notifications enabled**.
+2. Lock the phone. From a second client, open an approval and leave it
+   pending. Confirm the lock-screen notification says only that a session
+   needs attention. Tap it and check that the right session shows the open
+   request.
+3. Repeat with a question. Answer it from the second client before tapping
+   the notification, then confirm that the app opens the session and shows
+   the answer after it catches up.
+4. On a fresh test installation, deny the prompt and check that Conductor
+   reports the denial and still opens sessions.
+
+The worker fixtures run with `node --test tools/test-push.mjs` and send no
+network notifications.

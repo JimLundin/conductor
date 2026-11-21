@@ -268,10 +268,29 @@ impl<'a> Plan<'a, Workspace> {
         session: SessionId,
         base: Option<&'a str>,
     ) -> Self {
-        Self::new(
-            |steps| async move { steps.create(original, session, base).await },
-        )
+        Self::new(|steps| async move {
+            steps.create(original, session, Start::New(base)).await
+        })
     }
+
+    /// Attach a branch reserved by a durable incoming move. The caller has
+    /// already checked that an existing directory belongs to this intent.
+    #[must_use]
+    pub fn attach_moved(
+        original: &'a HostPath,
+        session: SessionId,
+        tip: &'a str,
+    ) -> Self {
+        Self::new(|steps| async move {
+            steps.create(original, session, Start::Moved(tip)).await
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Start<'a> {
+    New(Option<&'a str>),
+    Moved(&'a str),
 }
 
 impl Steps {
@@ -279,7 +298,7 @@ impl Steps {
         &self,
         original: &HostPath,
         session: SessionId,
-        base: Option<&str>,
+        mode: Start<'_>,
     ) -> Result<Workspace, GitError> {
         let original_path = self.canonical(&original.0).await?;
         let probe = self
@@ -287,7 +306,10 @@ impl Steps {
             .await?;
         let root = probed(probe, "repository root")?;
         let repository = self.canonical(root.trim_end_matches('\n')).await?;
-        let start = self.start_commit(&repository, base).await?;
+        let start = match mode {
+            Start::New(base) => self.start_commit(&repository, base).await?,
+            Start::Moved(tip) => String::from(tip),
+        };
         let relative = self
             .relative(&original_path, &repository, "selected subdirectory")
             .await?;
@@ -310,11 +332,21 @@ impl Steps {
             worktree: HostPath(path),
             branch: branch(session),
         };
-        if !self
+        let present = self
             .found(Step::Exists(workspace.worktree.0.clone()))
-            .await?
-        {
-            self.add_worktree(&workspace, start.trim()).await?;
+            .await?;
+        match (mode, present) {
+            (Start::New(_), false) => {
+                self.add_worktree(&workspace, start.trim()).await?;
+            }
+            (Start::Moved(_), false) => {
+                self.checkout_moved(&workspace).await?;
+                self.mark_moved(&workspace, &start).await?;
+            }
+            (Start::Moved(_), true) => {
+                self.mark_moved(&workspace, &start).await?;
+            }
+            (Start::New(_), true) => {}
         }
         let _ = self.validate(&workspace).await?;
         Ok(workspace)
@@ -364,6 +396,53 @@ impl Steps {
         .await
     }
 
+    async fn checkout_moved(
+        &self,
+        workspace: &Workspace,
+    ) -> Result<(), GitError> {
+        self.text(
+            &workspace.repository.0,
+            &[
+                "worktree",
+                "add",
+                "--",
+                &workspace.worktree.0,
+                &workspace.branch,
+            ],
+        )
+        .await
+        .map(drop)
+    }
+
+    async fn mark_moved(
+        &self,
+        workspace: &Workspace,
+        tip: &str,
+    ) -> Result<(), GitError> {
+        let directory = self
+            .validate_git_paths(workspace, &workspace.repository.0)
+            .await?;
+        let actual = self
+            .text(&workspace.worktree.0, &["rev-parse", "--verify", "HEAD"])
+            .await?;
+        same(&actual, tip, "moved worktree tip")?;
+        let ownership = self.join(&directory, "conductor-workspace").await?;
+        if !self.found(Step::Exists(ownership)).await? {
+            let _ = self
+                .text(
+                    &workspace.worktree.0,
+                    &["reset", "--quiet", "--hard", tip],
+                )
+                .await?;
+            self.done(Step::WriteOwner {
+                directory,
+                marker: marker(workspace),
+            })
+            .await?;
+        }
+        Ok(())
+    }
+
     async fn validate(
         &self,
         workspace: &Workspace,
@@ -396,21 +475,30 @@ impl Steps {
         workspace: &Workspace,
         repository: &str,
     ) -> Result<String, GitError> {
+        let directory = self.validate_git_paths(workspace, repository).await?;
+        let Answer::Text(recorded) =
+            self.perform(Step::ReadOwner(directory.clone())).await?
+        else {
+            return Err(wrong_answer());
+        };
+        same(&recorded, &marker(workspace), "ownership metadata")?;
+        Ok(directory)
+    }
+
+    async fn validate_git_paths(
+        &self,
+        workspace: &Workspace,
+        repository: &str,
+    ) -> Result<String, GitError> {
         let path = &workspace.worktree.0;
         let top = self.text(path, &["rev-parse", "--show-toplevel"]).await?;
         let branch = self.text(path, &["symbolic-ref", "HEAD"]).await?;
         let common = self.common_dir(path).await?;
         let source_common = self.common_dir(repository).await?;
         let directory = self.git_dir(path).await?;
-        let Answer::Text(recorded) =
-            self.perform(Step::ReadOwner(directory.clone())).await?
-        else {
-            return Err(wrong_answer());
-        };
         same(&top, path, "worktree root")?;
         same(&branch, &head(workspace), "owned branch")?;
         same(&common, &source_common, "common repository")?;
-        same(&recorded, &marker(workspace), "ownership metadata")?;
         if self
             .found(Step::Within {
                 path: directory.clone(),

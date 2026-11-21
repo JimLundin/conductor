@@ -30,8 +30,7 @@ impl Assignment {
     }
 }
 
-/// A session's issue and instance so far: its issue from `OnIssue` until
-/// `SessionRemoved`, its instance from `SessionCreated`.
+/// The issue and provider instance a session owns on this host.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Assigned {
     pub(crate) issue: Option<IssueId>,
@@ -51,7 +50,8 @@ impl Assigned {
                 issue: Some(*issue),
                 ..self
             },
-            EventKind::SessionRemoved { .. } => Self {
+            EventKind::SessionRemoved { .. }
+            | EventKind::SessionMoved { .. } => Self {
                 issue: None,
                 ..self
             },

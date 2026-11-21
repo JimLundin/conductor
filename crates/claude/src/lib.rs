@@ -17,6 +17,7 @@ mod prelude;
 mod protocol;
 pub mod runtime;
 mod sign_in;
+pub mod transcript;
 
 pub use credentials::{ClaudeCredential, account, credential, info};
 pub use driver::{CallRequest, Effect, Failure, Input, Problem, Session, Then};

@@ -9,6 +9,7 @@
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
+use alloc::string::ToString;
 use core::mem;
 
 use proto::{
@@ -90,6 +91,13 @@ pub enum Begun {
     Execute(CommandId),
 }
 
+/// Routing metadata for a newly opened approval or question.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreshRequest {
+    pub session: SessionId,
+    pub seq: HostSeq,
+}
+
 /// What the shell does next. Without a database, `Open`, `Store` and
 /// `Commit` do nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,8 +108,10 @@ pub enum Effect {
     Store(Write),
     /// Commit the open transaction, if there is one.
     Commit,
-    /// Send the event to live subscribers.
+    /// Send the event to live clients.
     Publish(Event),
+    /// Announce a newly opened request outside the client event stream.
+    RequestOpened(FreshRequest),
     /// Read the command's stored receipt and hand it to [`Log::receipt`].
     Lookup(CommandId),
     Begun(Ticket, Begun),
@@ -193,16 +203,39 @@ impl Log {
         running
     }
 
+    #[must_use]
+    pub fn handoff_task(
+        &self,
+        session: SessionId,
+        id: proto::TaskId,
+    ) -> Option<proto::Task> {
+        let mut board = proto::TaskBoard::new();
+        for event in self.events.iter().chain(&self.staged) {
+            board.apply(event);
+        }
+        board
+            .held(session)
+            .iter()
+            .find(|task| {
+                task.id == id && task.status != proto::TaskStatus::Completed
+            })
+            .cloned()
+    }
+
     /// Admission in the session actor also sees the changes it just staged
     /// for a command whose receipt has yet to commit them.
     #[must_use]
     pub fn current_history(&self, session: SessionId) -> Vec<Event> {
-        self.events
-            .iter()
-            .chain(self.staged.iter().filter(|event| !live_only(&event.kind)))
-            .filter(|event| event.session == session)
-            .cloned()
-            .collect()
+        let mut history = crate::restore::events_of(session, &self.events);
+        history.extend(
+            self.staged
+                .iter()
+                .filter(|event| {
+                    event.session == session && !live_only(&event.kind)
+                })
+                .cloned(),
+        );
+        history
     }
 
     #[must_use]
@@ -263,14 +296,70 @@ impl Log {
                 self.staged.push(event.clone());
                 Vec::from([Effect::Store(Write::Event(event.clone()))])
             }
-            (None, true) => Vec::from([self.publish(event.clone())]),
-            (None, false) => {
-                let mut effects = alone(Write::Event(event.clone()));
-                effects.push(self.publish(event.clone()));
+            (None, _) => {
+                let mut effects = if live {
+                    Vec::new()
+                } else {
+                    alone(Write::Event(event.clone()))
+                };
+                self.publish_fresh(event.clone(), &mut effects);
                 effects
             }
         };
         (event, effects)
+    }
+
+    /// Applies a move receipt and its imported history in one transaction.
+    ///
+    /// # Errors
+    /// Another command is committing, this session already exists, or
+    /// transferred history is incomplete.
+    pub fn arrive(
+        &mut self,
+        arrival: crate::movement::Arrival,
+    ) -> Result<Vec<Effect>, String> {
+        if arrival.incoming.receipt(&self.events) {
+            return Ok(Vec::new());
+        }
+        if self.active.is_some() {
+            return Err(String::from(
+                "the target is committing another command; retry this move",
+            ));
+        }
+        let session = arrival.incoming.session;
+        let prior = self.current_history(session);
+        match crate::movement::Reception::after(&prior) {
+            crate::movement::Reception::Vacant => {}
+            crate::movement::Reception::Returning => {
+                arrival
+                    .confirm_successor(&prior)
+                    .map_err(|err| err.to_string())?;
+            }
+            crate::movement::Reception::Owned => {
+                return Err(String::from(
+                    "the target already has this session",
+                ));
+            }
+        }
+        let events =
+            arrival.events(self.head()).map_err(|err| err.to_string())?;
+        let mut effects = Vec::with_capacity(2 * events.len() + 3);
+        effects.push(Effect::Open);
+        if let Some(conversation) = arrival.conversation {
+            effects.push(Effect::Store(Write::Conversation(
+                session,
+                conversation,
+            )));
+        }
+        effects.extend(
+            events
+                .iter()
+                .cloned()
+                .map(|event| Effect::Store(Write::Event(event))),
+        );
+        effects.push(Effect::Commit);
+        effects.extend(events.into_iter().map(|event| self.publish(event)));
+        Ok(effects)
     }
 
     /// Saves the session's conversation id, in the active command's
@@ -463,9 +552,18 @@ impl Log {
     fn commit(&mut self) -> Vec<Effect> {
         let mut effects = Vec::from([Effect::Commit]);
         for event in mem::take(&mut self.staged) {
-            effects.push(self.publish(event));
+            self.publish_fresh(event, &mut effects);
         }
         effects
+    }
+
+    fn publish_fresh(&mut self, event: Event, effects: &mut Vec<Effect>) {
+        let request = event.kind.opened_request().map(|_| FreshRequest {
+            session: event.session,
+            seq: event.seq,
+        });
+        effects.push(self.publish(event));
+        effects.extend(request.map(Effect::RequestOpened));
     }
 
     fn publish(&mut self, event: Event) -> Effect {

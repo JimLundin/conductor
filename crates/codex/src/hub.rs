@@ -16,7 +16,9 @@
 //! a thread's route to its session `R`; `E` is why the server didn't start.
 
 use crate::CodexCredential;
-use agents::Exit;
+use agents::{Exit, Step};
+
+use crate::children::Children;
 
 use crate::prelude::*;
 use crate::{CodexEvent, ThreadEvent, ThreadId};
@@ -26,8 +28,11 @@ use crate::{CodexEvent, ThreadEvent, ThreadId};
 pub enum Routed {
     /// One of the thread's events, or the server's exit.
     Codex(CodexEvent),
+    Subagent(Vec<Step>),
     /// The hub stopped the server on purpose, for this reason.
-    Stopped { reason: String },
+    Stopped {
+        reason: String,
+    },
 }
 
 /// Unrouted thread events received while open requests are pending. After a
@@ -180,6 +185,7 @@ pub struct Hub<T, M, R> {
     home_configured: bool,
     state: State<T, M>,
     routes: BTreeMap<ThreadId, (u64, R)>,
+    children: Children,
 }
 
 impl<T, M, R: Clone> Hub<T, M, R> {
@@ -191,6 +197,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             home_configured: false,
             state: State::Down,
             routes: BTreeMap::new(),
+            children: Children::new(),
         }
     }
 
@@ -243,6 +250,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
                     .is_some_and(|(current, _)| *current == generation)
                 {
                     self.routes.remove(&thread);
+                    self.children.forget(&thread);
                 }
                 Vec::new()
             }
@@ -365,24 +373,62 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    /// An event for a thread whose session has ended goes nowhere.
     fn route<C, E>(
+        &mut self,
+        thread: ThreadId,
+        notice: ThreadEvent,
+    ) -> Vec<Effect<T, M, C, R, E>> {
+        match notice {
+            ThreadEvent::Child(child) => self
+                .children
+                .notice(&thread, child, |id| self.routes.contains_key(id))
+                .map_or_else(Vec::new, |(root, steps)| {
+                    self.route_child(root, steps)
+                }),
+            event if !self.routes.contains_key(&thread) => {
+                if let Some(root) = self.children.root(&thread).cloned() {
+                    let steps = self.children.event(&thread, event);
+                    self.route_child(root, steps)
+                } else {
+                    Vec::from([Effect::Unrouted(CodexEvent::Thread {
+                        thread,
+                        event,
+                    })])
+                }
+            }
+            event => self.deliver(
+                thread.clone(),
+                Routed::Codex(CodexEvent::Thread { thread, event }),
+            ),
+        }
+    }
+
+    fn route_child<C, E>(
+        &self,
+        root: ThreadId,
+        steps: Vec<Step>,
+    ) -> Vec<Effect<T, M, C, R, E>> {
+        if steps.is_empty() {
+            Vec::new()
+        } else {
+            self.deliver(root, Routed::Subagent(steps))
+        }
+    }
+
+    fn deliver<C, E>(
         &self,
         thread: ThreadId,
-        event: ThreadEvent,
+        routed: Routed,
     ) -> Vec<Effect<T, M, C, R, E>> {
-        let codex = CodexEvent::Thread {
-            thread: thread.clone(),
-            event,
-        };
-        match self.routes.get(&thread) {
-            Some((_, route)) => Vec::from([Effect::Route {
-                thread,
-                route: route.clone(),
-                routed: Routed::Codex(codex),
-            }]),
-            None => Vec::from([Effect::Unrouted(codex)]),
-        }
+        self.routes
+            .get(&thread)
+            .map_or_else(Vec::new, |(_, route)| {
+                Vec::from([Effect::Route {
+                    thread,
+                    route: route.clone(),
+                    routed,
+                }])
+            })
     }
 
     /// Forgets the server and tells every thread it has gone.
@@ -402,6 +448,7 @@ impl<T, M, R: Clone> Hub<T, M, R> {
     }
 
     fn close_all<C, E>(&mut self, last: &Routed) -> Vec<Effect<T, M, C, R, E>> {
+        self.children = Children::new();
         core::mem::take(&mut self.routes)
             .into_values()
             .map(|(_, route)| Effect::Close {

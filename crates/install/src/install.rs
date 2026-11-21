@@ -93,6 +93,33 @@ pub async fn install(
     .await
 }
 
+/// Installs the verified fleet pin alongside any version still used by a session.
+///
+/// # Errors
+///
+/// If the pin does not cover this platform or cannot be verified or installed.
+pub async fn install_fleet(
+    cli: Cli,
+    data_dir: &Path,
+    pins: &proto::fleet::Pins,
+) -> Result<PathBuf, InstallError> {
+    let pin = agents::pin::fleet_pin(
+        cli,
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        std::env::consts::EXE_SUFFIX,
+        cfg!(target_env = "musl"),
+        pins,
+    )
+    .ok_or_else(unpinned)?;
+    let parent = data_dir
+        .join("fleet-cli")
+        .join(cli.name())
+        .join(&pin.sha256);
+    let guard = lock(&parent).await?;
+    ensure(cli.name(), pin, &parent, guard).await
+}
+
 /// Installs `pin` in `parent`, holding `parent`'s lock throughout. An
 /// installed binary was verified when it was put there.
 async fn put(

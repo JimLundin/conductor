@@ -109,6 +109,29 @@ mod tests {
     }
 
     #[test]
+    fn a_pre_handoff_log_keeps_its_task_and_subagent_postcard_tags()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let task = decode::<Event>(&[1, 7, 24, 0])?;
+        assert_eq!(task.kind, EventKind::TasksChanged { tasks: Vec::new() });
+        let child = decode::<Event>(&[1, 7, 26, 1, b'a', 0, 1, b'c', 1, b'd'])?;
+        assert_eq!(
+            child,
+            Event {
+                seq: HostSeq(1),
+                session: SessionId(7),
+                kind: EventKind::Subagent {
+                    agent: crate::SubagentId(String::from("a")),
+                    event: crate::SubagentEvent::Started {
+                        call: crate::ToolCallId(String::from("c")),
+                        description: String::from("d"),
+                    },
+                },
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_credential_goes_out_whole_and_debugs_as_its_kind()
     -> Result<(), Box<dyn std::error::Error>> {
         let open = Open::Command(Command {

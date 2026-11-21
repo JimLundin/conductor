@@ -11,7 +11,7 @@ use client::host_view::{
 use proto::{
     Answer, Availability, Catalog, CheckpointId, CloseReason, CommandBody,
     CommandResult, Decision, Effort, Instances, Models, Question, RequestId,
-    Selection, SessionId, Task, TaskStatus,
+    Selection, SessionId, Task, TaskId, TaskStatus,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
@@ -25,6 +25,9 @@ pub enum SessionIntent {
     TypeMessage(String),
     SendMessage,
     RetryMessage,
+    ChooseHandoff(TaskId),
+    CancelHandoff,
+    HandoffTo(SessionId),
     Interrupt,
     /// Start a closed session's agent again.
     Continue,
@@ -78,10 +81,12 @@ pub struct SessionPane {
     pub finish: bool,
     pub workspace: WorkspaceContext,
     pub undo: UndoNote,
+    pub movement: crate::MovePanel,
     pub tasks: Option<Tasks>,
     /// What an empty transcript says.
     pub empty: Option<String>,
     pub entries: Vec<Entry>,
+    pub other_agents: Vec<AgentGroup>,
     /// The transcript ends with a sign that the agent is working.
     pub working: bool,
     pub notice: Option<String>,
@@ -123,6 +128,14 @@ pub enum UndoNote {
 pub struct Tasks {
     pub count: String,
     pub items: Vec<TaskRow>,
+    pub targets: Vec<HandoffChoice>,
+    pub handoff_pending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HandoffChoice {
+    pub session: SessionId,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,6 +144,8 @@ pub struct TaskRow {
     pub status: &'static str,
     pub label: &'static str,
     pub text: String,
+    pub handoff: Option<TaskId>,
+    pub choosing: bool,
 }
 
 /// A transcript item, the sub-agents its tool call started, and the
@@ -151,6 +166,7 @@ pub enum Footer {
         resume: bool,
     },
     Composer(Composer),
+    Moving,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,6 +184,9 @@ pub struct Pane {
     draft: String,
     pending_message: Option<String>,
     refused_messages: Vec<String>,
+    handoff: Option<TaskId>,
+    handoff_pending: Option<SessionId>,
+    pub(crate) movement: crate::movement::Draft,
     answers: BTreeMap<RequestId, Draft>,
     diffs: BTreeMap<CheckpointId, DiffState>,
     /// Numbers each diff request, so only the latest one's answer shows.
@@ -183,17 +202,25 @@ impl Pane {
         intent: SessionIntent,
         id: SessionId,
         session: &SessionView,
+        sessions: &BTreeMap<SessionId, SessionView>,
         at: At,
     ) -> (Self, Vec<Effect>) {
         match intent {
             SessionIntent::TypeMessage(draft) => {
                 (Self { draft, ..self }, Vec::new())
             }
-            SessionIntent::SendMessage => {
-                self.send_message(id, session, at, false)
-            }
-            SessionIntent::RetryMessage => {
-                self.send_message(id, session, at, true)
+            action @ (SessionIntent::SendMessage
+            | SessionIntent::RetryMessage) => self.send_message(
+                id,
+                session,
+                at,
+                action == SessionIntent::RetryMessage,
+            ),
+            SessionIntent::ChooseHandoff(task) => self
+                .select_handoff(movable(&session.tasks, task).then_some(task)),
+            SessionIntent::CancelHandoff => self.select_handoff(None),
+            SessionIntent::HandoffTo(to) => {
+                self.handoff_to(id, to, session, sessions, at)
             }
             SessionIntent::Interrupt => (
                 self,
@@ -223,20 +250,9 @@ impl Pane {
             SessionIntent::PickEffort(word) => {
                 (self, set_effort(&word, id, session.effort, at))
             }
-            SessionIntent::Decide(request, decision) => (
-                self,
-                Vec::from([
-                    notify(
-                        CommandBody::Resolve {
-                            session: id,
-                            request,
-                            decision,
-                        },
-                        at,
-                    ),
-                    focus_card(request),
-                ]),
-            ),
+            SessionIntent::Decide(request, decision) => {
+                self.decide(id, request, decision, at)
+            }
             SessionIntent::Choose {
                 request,
                 question,
@@ -281,6 +297,70 @@ impl Pane {
         }
     }
 
+    fn decide(
+        self,
+        id: SessionId,
+        request: RequestId,
+        decision: Decision,
+        at: At,
+    ) -> (Self, Vec<Effect>) {
+        (
+            self,
+            Vec::from([
+                notify(
+                    CommandBody::Resolve {
+                        session: id,
+                        request,
+                        decision,
+                    },
+                    at,
+                ),
+                focus_card(request),
+            ]),
+        )
+    }
+
+    const fn select_handoff(
+        mut self,
+        task: Option<TaskId>,
+    ) -> (Self, Vec<Effect>) {
+        if self.handoff_pending.is_none() {
+            self.handoff = task;
+        }
+        (self, Vec::new())
+    }
+
+    fn handoff_to(
+        mut self,
+        from: SessionId,
+        to: SessionId,
+        source: &SessionView,
+        sessions: &BTreeMap<SessionId, SessionView>,
+        at: At,
+    ) -> (Self, Vec<Effect>) {
+        let Some(task) = self.handoff.filter(|&task| {
+            self.handoff_pending.is_none()
+                && from != to
+                && movable(&source.tasks, task)
+                && sessions.get(&to).is_some_and(SessionView::takes_handoff)
+        }) else {
+            return (self, Vec::new());
+        };
+        self.handoff_pending = Some(to);
+        (
+            self,
+            Vec::from([at.send(
+                CommandBody::HandoffTask { from, to, task },
+                ReplyTo::Handoff,
+            )]),
+        )
+    }
+
+    pub const fn handoff_answered(&mut self) -> Option<SessionId> {
+        self.handoff_pending.take()
+    }
+
+    /// Sends the draft, once there is one and the agent takes messages.
     fn send_message(
         mut self,
         id: SessionId,
@@ -464,8 +544,10 @@ impl Pane {
         id: SessionId,
         session: &SessionView,
         known: (Option<&Instances>, &Catalog),
-        (notice, host): (Option<String>, String),
+        sessions: &BTreeMap<SessionId, SessionView>,
+        (notice, host, movement): (Option<String>, String, crate::MovePanel),
     ) -> SessionPane {
+        let locked = self.movement.pending || session.movement.locked();
         let controls = session.controls();
         let provider = agent(session, known);
         let status = String::from(status_text(session.status_label()));
@@ -475,7 +557,10 @@ impl Pane {
             .map_or_else(Models::none, Availability::models)
             .efforts(session.model.as_ref());
         SessionPane {
-            key: format!("{}", id.0),
+            key: session.arrival.map_or_else(
+                || format!("{}", id.0),
+                |arrival| format!("{}-{}", id.0, arrival.move_id.0),
+            ),
             title: short(&session.directory).to_owned(),
             subtitle: format!("{} on {host}", session.directory.0),
             pill: format!("{provider}, {status}"),
@@ -483,9 +568,13 @@ impl Pane {
                 || String::from("default model"),
                 |model| model.0.clone(),
             ),
-            effort: effort_control(session.effort, &offered),
-            interrupt: controls.interrupt == Interrupt::Offered,
-            finish: controls.finish,
+            effort: if locked {
+                EffortControl::Hidden
+            } else {
+                effort_control(session.effort, &offered)
+            },
+            interrupt: !locked && controls.interrupt == Interrupt::Offered,
+            finish: !locked && controls.finish,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
                     "This session has no worktree checkpoints.",
@@ -495,15 +584,57 @@ impl Pane {
                     directory: workspace.directory.0.clone(),
                 },
             ),
-            undo: undo_note(id, &session.undo),
-            tasks: tasks(&session.tasks),
+            undo: if locked {
+                UndoNote::Hidden
+            } else {
+                undo_note(id, &session.undo)
+            },
+            movement,
+            tasks: if locked {
+                tasks(&session.tasks)
+            } else {
+                main_tasks(
+                    &session.tasks,
+                    (self.handoff, self.handoff_pending.is_some()),
+                    id,
+                    sessions,
+                    known,
+                )
+            },
             empty: session
                 .empty_transcript()
                 .map(|kind| empty(kind, &provider)),
-            entries: self.entries(session),
-            working: session.working() == Working::Shown,
+            entries: self.entries(session, locked),
+            other_agents: session
+                .subagents
+                .iter()
+                .filter(|agent| {
+                    !session
+                        .items
+                        .iter()
+                        .filter_map(Item::call)
+                        .any(|call| call == &agent.call)
+                })
+                .map(|agent| transcript::agent_group(agent, &self.answers))
+                .collect(),
+            working: !locked && session.working() == Working::Shown,
             notice,
-            footer: session.closed_reason().map_or_else(
+            footer: self.footer(session, controls, &provider, locked),
+            status,
+        }
+    }
+
+    fn footer(
+        &self,
+        session: &SessionView,
+        controls: host_view::Controls,
+        provider: &str,
+        locked: bool,
+    ) -> Footer {
+        if locked {
+            Footer::Moving
+        } else {
+            session.closed_reason().map_or_else(
                 || {
                     Footer::Composer(Composer {
                         text: self.draft.clone(),
@@ -528,12 +659,11 @@ impl Pane {
                     text: closed(reason),
                     resume: controls.resume == Resume::Offered,
                 },
-            ),
-            status,
+            )
         }
     }
 
-    fn entries(&self, session: &SessionView) -> Vec<Entry> {
+    fn entries(&self, session: &SessionView, locked: bool) -> Vec<Entry> {
         let composer = session.controls().composer;
         let mut checkpoints = BTreeMap::new();
         for turn in &session.checkpoints {
@@ -556,14 +686,16 @@ impl Pane {
                         })
                         .collect()
                 }),
-                changes: checkpoints.get(&index).map(|turn| {
-                    checkpoints::changes(
-                        turn,
-                        self.diffs.get(&turn.checkpoint),
-                        composer,
-                        session.can_view_changes(),
-                    )
-                }),
+                changes: checkpoints.get(&index).filter(|_| !locked).map(
+                    |turn| {
+                        checkpoints::changes(
+                            turn,
+                            self.diffs.get(&turn.checkpoint),
+                            composer,
+                            session.can_view_changes(),
+                        )
+                    },
+                ),
             })
             .collect()
     }
@@ -612,13 +744,56 @@ fn undo_note(id: SessionId, undo: &UndoState) -> UndoNote {
     }
 }
 
+fn movable(tasks: &[Task], id: TaskId) -> bool {
+    tasks
+        .iter()
+        .any(|task| task.id == id && task.status != TaskStatus::Completed)
+}
+
 /// The agent's checklist, as the session holds it.
-fn tasks(tasks: &[Task]) -> Option<Tasks> {
+fn main_tasks(
+    tasks: &[Task],
+    (choosing, handoff_pending): (Option<TaskId>, bool),
+    current: SessionId,
+    sessions: &BTreeMap<SessionId, SessionView>,
+    known: (Option<&Instances>, &Catalog),
+) -> Option<Tasks> {
+    if tasks.is_empty() {
+        return None;
+    }
+    let targets = sessions
+        .iter()
+        .filter(|(id, session)| **id != current && session.takes_handoff())
+        .map(|(&session, view)| HandoffChoice {
+            session,
+            label: format!(
+                "{} in {} (session {})",
+                agent(view, known),
+                view.directory.0,
+                session.0
+            ),
+        })
+        .collect::<Vec<_>>();
+    task_list(tasks, targets, (choosing, handoff_pending))
+}
+
+pub fn tasks(tasks: &[Task]) -> Option<Tasks> {
+    task_list(tasks, Vec::new(), (None, false))
+}
+
+fn task_list(
+    tasks: &[Task],
+    targets: Vec<HandoffChoice>,
+    (choosing, handoff_pending): (Option<TaskId>, bool),
+) -> Option<Tasks> {
+    if tasks.is_empty() {
+        return None;
+    }
     let done = tasks
         .iter()
         .filter(|task| task.status == TaskStatus::Completed)
         .count();
-    tasks.first().map(|_| Tasks {
+    Some(Tasks {
         count: format!("{done} of {} done", tasks.len()),
         items: tasks
             .iter()
@@ -635,8 +810,16 @@ fn tasks(tasks: &[Task]) -> Option<Tasks> {
                     TaskStatus::Completed => "Done",
                 },
                 text: task.text.clone(),
+                handoff: (!handoff_pending
+                    && !targets.is_empty()
+                    && task.status != TaskStatus::Completed)
+                    .then_some(task.id),
+                choosing: choosing == Some(task.id)
+                    && task.status != TaskStatus::Completed,
             })
             .collect(),
+        targets,
+        handoff_pending,
     })
 }
 
@@ -660,6 +843,9 @@ pub const fn status_text(label: StatusLabel) -> &'static str {
         StatusLabel::Closed => "closed",
         StatusLabel::Undoing => "undoing",
         StatusLabel::RecoveryNeeded => "recovery needed",
+        StatusLabel::Moving => "moving",
+        StatusLabel::MoveFailed => "move failed",
+        StatusLabel::Moved => "moved",
     }
 }
 
@@ -676,7 +862,7 @@ pub fn closed(close: &CloseReason) -> String {
 }
 
 fn questions(session: &SessionView, request: RequestId) -> Option<&[Question]> {
-    session.items.iter().find_map(|item| match item {
+    session.request_items().find_map(|item| match item {
         Item::Question {
             request: asked,
             questions,

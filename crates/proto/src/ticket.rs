@@ -19,7 +19,7 @@ const VERSION: u8 = 0;
 const ID_LEN: usize = 32;
 const TOKEN_LEN: usize = 16;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Ticket {
     pub host: [u8; ID_LEN],
     pub relay: String,

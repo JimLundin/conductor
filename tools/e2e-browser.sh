@@ -36,6 +36,7 @@ rm -rf "$E2E_FAILURES"
 mkdir -p "$E2E_FAILURES"
 install_browser_dependencies
 init_browser_scratch
+TMPDIR="$scratch" timeout 60s node tools/test-fleet-key.mjs | tee "$record/fleet-key.txt"
 
 # app_tree: the git tree of the files the web build reads, as they are on
 # disk: the workspace crates the app depends on, and the workspace's

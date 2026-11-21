@@ -1,5 +1,6 @@
 mod credentials;
 mod hosts;
+mod movement;
 mod new_session;
 mod panes;
 mod places;
@@ -590,6 +591,9 @@ fn each_subagent_hangs_under_the_call_that_started_it() {
         Some(Vec::from([
             Vec::new(),
             Vec::from([AgentGroup {
+                kind: None,
+                needs_attention: false,
+                tasks: None,
                 key: text("a"),
                 description: text("Find the docs"),
                 status: "failed",
@@ -604,6 +608,9 @@ fn each_subagent_hangs_under_the_call_that_started_it() {
                 empty: None,
             }]),
             Vec::from([AgentGroup {
+                kind: None,
+                needs_attention: false,
+                tasks: None,
                 key: text("b"),
                 description: text("Run the tests"),
                 status: "running",
@@ -904,6 +911,7 @@ fn composer(state: &State) -> Option<(String, String, bool)> {
             (composer.text, composer.placeholder, composer.disabled)
         }
         Footer::Closed { text, .. } => (text, String::new(), true),
+        Footer::Moving => (String::new(), String::new(), true),
     })
 }
 
@@ -971,7 +979,7 @@ fn a_failed_send_keeps_the_text_typed_while_the_message_was_pending() {
     assert_eq!(
         pane(&rejected).and_then(|shown| match shown.footer {
             Footer::Composer(composer) => Some(composer.refused),
-            Footer::Closed { .. } => None,
+            Footer::Moving | Footer::Closed { .. } => None,
         }),
         Some(Vec::from([text(" first ")]))
     );

@@ -9,5 +9,6 @@
 mod agent;
 mod plugin;
 mod session;
+mod transcript;
 
 pub use plugin::plugin;

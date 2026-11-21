@@ -11,10 +11,12 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::Path;
 
-use host::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
+use host::log::{
+    Begun, Completion, Effect, FreshRequest, Kind, Log as Core, Ticket,
+};
 use proto::{
     Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
-    Instances, SessionId, Subscribe, Welcome,
+    Instances, SessionId, Subscribe, Task, TaskId, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -93,6 +95,10 @@ enum LogMsg {
         completion: Completion,
         reply: oneshot::Sender<()>,
     },
+    Arrive {
+        arrival: Box<host::movement::Arrival>,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
     Conversation {
         session: SessionId,
         id: String,
@@ -109,6 +115,11 @@ enum LogMsg {
         reply: oneshot::Sender<Vec<Event>>,
     },
     RunningSessions(oneshot::Sender<std::collections::BTreeSet<SessionId>>),
+    HandoffTask {
+        session: SessionId,
+        task: TaskId,
+        reply: oneshot::Sender<Option<Task>>,
+    },
     CurrentHistory {
         session: SessionId,
         reply: oneshot::Sender<Vec<Event>>,
@@ -131,6 +142,11 @@ enum LogMsg {
         home: Option<Home>,
         reply: oneshot::Sender<Welcome>,
     },
+    Follow(Follow),
+}
+
+enum Follow {
+    Requests(oneshot::Sender<broadcast::Receiver<FreshRequest>>),
     Subscribe {
         after: HostSeq,
         reply: oneshot::Sender<Subscription>,
@@ -150,6 +166,7 @@ struct LogActor {
     begins: HashMap<Ticket, oneshot::Sender<BeginCommand>>,
     finishes: HashMap<Ticket, oneshot::Sender<()>>,
     live: broadcast::Sender<Event>,
+    requests: broadcast::Sender<FreshRequest>,
 }
 
 impl Log {
@@ -187,6 +204,7 @@ impl Log {
     fn start(core: Core, storage: Option<Storage>) -> Self {
         let (inbox, messages) = mpsc::channel(64);
         let (live, _) = broadcast::channel(LIVE_BUFFER);
+        let (requests, _) = broadcast::channel(LIVE_BUFFER);
         let actor = LogActor {
             inbox: inbox.downgrade(),
             core,
@@ -195,6 +213,7 @@ impl Log {
             begins: HashMap::new(),
             finishes: HashMap::new(),
             live,
+            requests,
         };
         tokio::spawn(actor.run(messages));
         Self { inbox }
@@ -262,6 +281,18 @@ impl Log {
         .await
     }
 
+    pub(crate) async fn arrive(
+        &self,
+        arrival: host::movement::Arrival,
+    ) -> Result<(), String> {
+        self.ask(|reply| LogMsg::Arrive {
+            arrival: Box::new(arrival),
+            reply,
+        })
+        .await
+        .map_err(|err| err.to_string())?
+    }
+
     pub(crate) async fn conversation(
         &self,
         session: SessionId,
@@ -293,6 +324,19 @@ impl Log {
         &self,
     ) -> Result<std::collections::BTreeSet<SessionId>, Stopped> {
         self.ask(LogMsg::RunningSessions).await
+    }
+
+    pub(crate) async fn handoff_task(
+        &self,
+        session: SessionId,
+        task: TaskId,
+    ) -> Result<Option<Task>, Stopped> {
+        self.ask(|reply| LogMsg::HandoffTask {
+            session,
+            task,
+            reply,
+        })
+        .await
     }
 
     pub(crate) async fn finish_history(
@@ -348,6 +392,14 @@ impl Log {
         .await
     }
 
+    /// New approval and question events as they commit.
+    pub(crate) async fn follow_requests(
+        &self,
+    ) -> Result<broadcast::Receiver<FreshRequest>, Stopped> {
+        self.ask(|reply| LogMsg::Follow(Follow::Requests(reply)))
+            .await
+    }
+
     /// The events after `after`, then the live feed.
     ///
     /// # Errors
@@ -357,7 +409,8 @@ impl Log {
         &self,
         after: HostSeq,
     ) -> Result<Subscription, Stopped> {
-        self.ask(|reply| LogMsg::Subscribe { after, reply }).await
+        self.ask(|reply| LogMsg::Follow(Follow::Subscribe { after, reply }))
+            .await
     }
 
     /// A client's subscription, or `None` if its cursor is from another
@@ -370,7 +423,8 @@ impl Log {
         &self,
         subscribe: Subscribe,
     ) -> Result<Option<Subscription>, Stopped> {
-        self.ask(|reply| LogMsg::Resume { subscribe, reply }).await
+        self.ask(|reply| LogMsg::Follow(Follow::Resume { subscribe, reply }))
+            .await
     }
 
     async fn ask<T>(
@@ -447,6 +501,13 @@ impl LogActor {
             LogMsg::RunningSessions(reply) => {
                 let _ = reply.send(self.core.running_sessions());
             }
+            LogMsg::HandoffTask {
+                session,
+                task,
+                reply,
+            } => {
+                let _ = reply.send(self.core.handoff_task(session, task));
+            }
             LogMsg::CurrentHistory { session, reply } => {
                 let _ = reply.send(self.core.current_history(session));
             }
@@ -458,6 +519,13 @@ impl LogActor {
                     .transpose()?
                     .flatten();
                 let _ = reply.send(value);
+            }
+            LogMsg::Arrive { arrival, reply } => {
+                let result = match self.core.arrive(*arrival) {
+                    Ok(effects) => Ok(self.perform(effects)?),
+                    Err(reason) => Err(reason),
+                };
+                let _ = reply.send(result);
             }
             LogMsg::Conversation { session, id, reply } => {
                 self.perform(self.core.conversation(session, id))?;
@@ -480,23 +548,32 @@ impl LogActor {
             } => {
                 let _ = reply.send(self.core.welcome(instances, catalog, home));
             }
-            LogMsg::Subscribe { after, reply } => {
-                let _ = reply.send(Subscription {
-                    live: self.live.subscribe(),
-                    replay: self.core.replay(after),
-                });
-            }
-            LogMsg::Resume { subscribe, reply } => {
-                let _ =
-                    reply.send(self.core.resume(&subscribe).map(|replay| {
-                        Subscription {
-                            live: self.live.subscribe(),
-                            replay,
-                        }
-                    }));
-            }
+            LogMsg::Follow(follow) => self.follow(follow),
         }
         Ok(())
+    }
+
+    fn follow(&self, follow: Follow) {
+        match follow {
+            Follow::Requests(reply) => {
+                let _ = reply.send(self.requests.subscribe());
+            }
+            Follow::Subscribe { after, reply } => {
+                let _ = reply.send(self.with_live(self.core.replay(after)));
+            }
+            Follow::Resume { subscribe, reply } => {
+                let resumed = self.core.resume(&subscribe);
+                let _ =
+                    reply.send(resumed.map(|events| self.with_live(events)));
+            }
+        }
+    }
+
+    fn with_live(&self, replay: Vec<Event>) -> Subscription {
+        Subscription {
+            live: self.live.subscribe(),
+            replay,
+        }
     }
 
     fn perform(&mut self, effects: Vec<Effect>) -> anyhow::Result<()> {
@@ -533,6 +610,9 @@ impl LogActor {
             }
             Effect::Publish(event) => {
                 let _ = self.live.send(event);
+            }
+            Effect::RequestOpened(request) => {
+                let _ = self.requests.send(request);
             }
             Effect::Lookup(key) => {
                 let found = self
@@ -996,3 +1076,6 @@ mod durability_tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod movement_tests;

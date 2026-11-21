@@ -15,6 +15,7 @@ install = { path = "../install" }
 proto = { path = "../proto" }
 runtime = { path = "../runtime" }
 serde_json = { workspace = true, features = ["std"] }
+tempfile = "3.27"
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true

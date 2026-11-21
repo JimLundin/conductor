@@ -70,7 +70,7 @@ pub enum Note {
     },
     /// The CLI's commands run unsandboxed with a gateway credential, so
     /// they can read its token.
-    GatewayExposed {
+    CredentialExposed {
         provider: Provider,
     },
 }

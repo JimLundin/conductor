@@ -6,7 +6,6 @@ import {
 	lastSegment,
 	LIVE,
 	type Run,
-	squeeze,
 	THUMB,
 	tools,
 } from "../harness.ts";
@@ -21,6 +20,7 @@ export const subagents = async (run: Run): Promise<void> => {
 	await send("delegate");
 	await pane.locator(COMPLETED).waitFor({ timeout: patience });
 	const group = pane.locator("details.subagent");
+	const heading = group.locator(":scope > summary");
 	check((await group.count()) === 1, "one sub-agent group");
 	check(
 		(await text(".tool .tool-name")) === "Agent",
@@ -37,9 +37,9 @@ export const subagents = async (run: Run): Promise<void> => {
 		"the group carries its status",
 	);
 	check(
-		squeeze(await group.locator("summary").innerText()).trim() ===
-			"Run TodoWrite checklist task Finished",
-		"the folded group names its description and status",
+		(await heading.locator(":scope > span").allInnerTexts()).join(" ") ===
+			"Run TodoWrite checklist task general-purpose Finished",
+		"the folded group names its description, type and status",
 	);
 	check(!(await isOpen(group)), "the group starts folded");
 	check(
@@ -47,20 +47,25 @@ export const subagents = async (run: Run): Promise<void> => {
 		"its transcript is hidden while folded",
 	);
 	check(
-		(await pane.locator("details.tasks").count()) === 0,
+		(await pane.locator(":scope > details.tasks").count()) === 0,
 		"the sub-agent's checklist is not the session's tasks",
 	);
 	check(
 		(await text(".items > .reply")) === "done",
 		"the session's own reply shows once, outside the group",
 	);
-	const summary = await boxOf(group.locator("summary"));
+	const summary = await boxOf(heading);
 	check(
 		summary.height >= THUMB,
 		`the group's summary is a thumb-sized target (${Math.round(summary.height)}px)`,
 	);
-	await group.locator("summary").tap();
+	await heading.tap();
 	check(await isOpen(group), "a tap opens the group");
+	check(
+		(await group.locator('.tasks .task[data-status="completed"]').count()) ===
+			2,
+		"the opened group shows both completed checklist steps",
+	);
 	check(
 		(await group.locator(".subagent-items .reply").innerText()) === "ok",
 		"the open group shows the sub-agent's report",
@@ -73,8 +78,13 @@ export const subagents = async (run: Run): Promise<void> => {
 	await openRow(lastSegment(dir));
 	await pane.locator("details.subagent").waitFor({ timeout: patience });
 	check(
-		(await pane.locator("details.subagent").getAttribute("data-status")) ===
-			"finished",
+		(await group.getAttribute("data-status")) === "finished",
 		"the sub-agent replays after a reload",
+	);
+	await heading.tap();
+	check(
+		(await group.locator('.tasks .task[data-status="completed"]').count()) ===
+			2,
+		"the checklist replays after a reload",
 	);
 };

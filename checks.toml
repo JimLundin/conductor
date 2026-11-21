@@ -37,7 +37,7 @@ name = "browser"
 # At step for a change the web app runs. Its waits are on what the page and
 # the hosts show, under a generous ceiling, so a loaded machine slows it
 # rather than fails it; it reuses the web build of an unchanged app.
-command = "python3 -I tools/check-browser-harness.py && tools/e2e-browser.sh"
+command = "node --test tools/test-push.mjs && python3 -I tools/check-browser-harness.py && tools/e2e-browser.sh"
 [[suite.when]]
 tier = "release"
 [[suite.when]]
@@ -52,6 +52,8 @@ paths = [
     "crates/claude-cli/tests/fake-claude.sh",
     "crates/codex-cli/tests/fake-codex.sh",
     "tools/e2e-browser.sh",
+    "tools/test-push.mjs",
+    "tools/test-fleet-key.mjs",
     "tools/check-browser-harness.py",
     "tools/e2e-worktrees-browser.sh",
     "tools/e2e-common.sh",

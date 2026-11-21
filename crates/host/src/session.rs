@@ -19,21 +19,21 @@
 
 use core::mem;
 
-pub use crate::checkpoints::Compared;
-use crate::checkpoints::{Book, Recovery, SnapshotPlan, Undo, UndoPlan};
+use crate::checkpoints::{Book, Recovery, Undo, UndoPlan};
+pub use crate::checkpoints::{Compared, SnapshotPlan};
 use crate::prelude::*;
 use crate::tasks;
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
 use alloc::boxed::Box;
-use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::collections::BTreeMap;
 use alloc::format;
 use proto::{
     CheckpointDiff, CheckpointId, ClientName, CloseReason, CommandResult,
     Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq, Kept,
     ModelId, Models, Rejection, RequestId, Resolution, SessionId,
     SubagentActivity, SubagentEvent, SubagentId, Task, TaskId, ToolCallId,
-    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -117,6 +117,10 @@ fn takes(
 pub enum Order {
     Send {
         text: String,
+        by: ClientName,
+    },
+    Handoff {
+        task: Task,
         by: ClientName,
     },
     Interrupt,
@@ -295,11 +299,25 @@ enum Asked {
     /// A decision on tool call `call`. `for_session` is what approving for
     /// the session allows, if the agent offers it.
     Approval {
+        agent: Option<SubagentId>,
         call: ToolCallId,
         for_session: Option<String>,
     },
     /// One answer for each of `count` questions.
-    Question { count: usize },
+    Question {
+        agent: Option<SubagentId>,
+        count: usize,
+    },
+}
+
+impl Asked {
+    const fn agent(&self) -> Option<&SubagentId> {
+        match self {
+            Self::Approval { agent, .. } | Self::Question { agent, .. } => {
+                agent.as_ref()
+            }
+        }
+    }
 }
 
 /// The call the session waits on, and what follows it.
@@ -307,12 +325,12 @@ enum Flow {
     Idle,
     Saving(Saving),
     /// The user's message is being logged; `text` goes to the agent next.
-    Recording(String),
+    Recording(String, Option<Box<Task>>),
     /// The message is being sent, changing the agent's effort to this.
-    Sending(Option<Effort>),
+    Sending(Option<Effort>, Option<Box<Task>>),
     /// An agent call whose failure is logged as an error, then the reply.
     Noting(Option<CommandResult>),
-    Minting(Vec<PlanStep>, Vec<Option<TaskId>>),
+    Minting(Option<SubagentId>, Vec<PlanStep>, Vec<Option<TaskId>>),
     Diffing,
     /// The agent is starting, for this.
     Starting(Launched),
@@ -345,7 +363,7 @@ struct Saving {
 enum Saved {
     Start(Models),
     Continue,
-    Send(String, ClientName),
+    Send(String, ClientName, Option<Box<Task>>),
     TurnEnded(TurnOutcome),
     Closed(CloseReason),
 }
@@ -386,9 +404,10 @@ pub struct Session {
     book: Book,
     turn_start: Option<HostSeq>,
     /// Tool calls the user denied, whose failed result means `Declined`.
-    declined: Vec<ToolCallId>,
-    /// The tasks the session holds, from its agent's checklist.
+    declined: Vec<(Option<SubagentId>, ToolCallId)>,
+    /// The session's native checklist, before projecting handoff ownership.
     tasks: Vec<Task>,
+    subagent_tasks: BTreeMap<SubagentId, Vec<Task>>,
     removed: bool,
     flow: Flow,
 }
@@ -419,22 +438,61 @@ impl Session {
             requests: replay_requests(history),
             last_request: history
                 .iter()
-                .filter_map(|event| match &event.kind {
-                    EventKind::RequestOpened { request, .. }
-                    | EventKind::QuestionAsked { request, .. } => {
-                        Some(request.to_owned())
-                    }
-                    _ => None,
-                })
+                .filter_map(|event| event.kind.opened_request())
                 .max()
                 .unwrap_or(RequestId(0)),
             declined: Vec::new(),
             tasks: last_tasks(history.iter()),
+            subagent_tasks: history
+                .iter()
+                .filter_map(|entry| match &entry.kind {
+                    EventKind::Subagent {
+                        agent,
+                        event: SubagentEvent::TasksChanged { tasks },
+                    } => Some((agent.clone(), tasks.clone())),
+                    _ => None,
+                })
+                .collect(),
             removed: history.iter().any(|event| {
                 matches!(event.kind, EventKind::SessionRemoved { .. })
             }),
             flow: Flow::Idle,
         }
+    }
+
+    #[must_use]
+    pub fn pending_move_notice(&self, history: &[Event]) -> Option<HostPath> {
+        self.book
+            .workspace()
+            .filter(|_| crate::movement::notice_pending(history))
+            .map(|workspace| workspace.directory.clone())
+    }
+
+    /// Checks that neither the conversation nor the workspace is changing.
+    ///
+    /// # Errors
+    /// The session was removed, is busy, or has no managed workspace.
+    pub fn plan_move(&self) -> Result<SnapshotPlan, Rejection> {
+        if self.removed {
+            return Err(Rejection::SessionRemoved);
+        }
+        if !matches!((&self.flow, &self.turn), (Flow::Idle, Turn::Idle))
+            || self
+                .requests
+                .values()
+                .any(|request| request.native().is_some())
+        {
+            return Err(Rejection::TurnInProgress);
+        }
+        if self.book.undo_pending() {
+            return Err(Rejection::UndoInProgress);
+        }
+        self.book.plan_move().ok_or(Rejection::NotGitRepository)
+    }
+
+    /// Replays a newly committed move snapshot into the running core.
+    pub fn moved_checkpoint(&mut self, event: &Event) {
+        self.book.apply(event);
     }
 
     #[must_use]
@@ -451,20 +509,21 @@ impl Session {
             (Flow::Saving(saving), Input::Snapshotted(taken)) => {
                 self.snapshotted(saving, taken)
             }
-            (Flow::Recording(text), Input::Recorded(seq)) => {
-                self.recorded(text, seq)
+            (Flow::Recording(text, task), Input::Recorded(seq)) => {
+                self.recorded(text, seq, task)
             }
-            (Flow::Sending(change), Input::Agent(Outcome::Sent(sent))) => {
-                self.sent(change, sent)
-            }
+            (
+                Flow::Sending(change, task),
+                Input::Agent(Outcome::Sent(sent)),
+            ) => self.sent(change, sent, task),
             (
                 Flow::Noting(then),
                 Input::Agent(
                     Outcome::Interrupted(called) | Outcome::Replied(called),
                 ),
             ) => noted(called, then),
-            (Flow::Minting(steps, kept), Input::Minted(ids)) => {
-                self.minted(steps, kept, ids)
+            (Flow::Minting(agent, steps, kept), Input::Minted(ids)) => {
+                self.minted(agent, steps, kept, ids)
             }
             (Flow::Diffing, Input::Diffed(diff)) => answer(diffed(diff)),
             (Flow::Starting(then), Input::Agent(Outcome::Started(started))) => {
@@ -585,11 +644,20 @@ impl Session {
             }
             (_, _, Agent::Down) => rejected(Rejection::SessionClosed),
             (Order::Send { text, by }, Turn::Idle, _) => {
-                self.save(Saved::Send(text, by))
+                self.save(Saved::Send(text, by, None))
             }
-            (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
-                rejected(Rejection::TurnInProgress)
+            (Order::Handoff { task, by }, Turn::Idle, _) => {
+                let text = format!(
+                    "Take over this unfinished task from another Conductor session. Add the exact line below to your checklist or plan. Keep the label so Conductor can track your progress and mark it completed when the work is done.\n\n{}",
+                    task.handoff_label(),
+                );
+                self.save(Saved::Send(text, by, Some(Box::new(task))))
             }
+            (
+                Order::Send { .. } | Order::Handoff { .. },
+                Turn::Starting(_) | Turn::Running(_),
+                _,
+            ) => rejected(Rejection::TurnInProgress),
             (Order::Interrupt, Turn::Idle, _) => {
                 rejected(Rejection::NoTurnRunning)
             }
@@ -668,18 +736,28 @@ impl Session {
         }
     }
 
-    fn recorded(&mut self, text: String, seq: HostSeq) -> Vec<Effect> {
+    fn recorded(
+        &mut self,
+        text: String,
+        seq: HostSeq,
+        task: Option<Box<Task>>,
+    ) -> Vec<Effect> {
         self.turn_start = Some(seq);
         self.book.accept_message(seq);
         let change = changed(self.choice.effort, self.agent.effort());
-        self.send(text, change)
+        self.send(text, change, task)
     }
 
     /// Starts a turn, at the session's effort if the agent runs another.
     /// The session takes the turn's id from `TurnStarted`, which an
     /// interrupt must wait for anyway.
-    fn send(&mut self, text: String, change: Option<Effort>) -> Vec<Effect> {
-        self.flow = Flow::Sending(change);
+    fn send(
+        &mut self,
+        text: String,
+        change: Option<Effort>,
+        task: Option<Box<Task>>,
+    ) -> Vec<Effect> {
+        self.flow = Flow::Sending(change, task);
         Vec::from([Effect::Call(Call::Agent(Command::Send {
             text,
             effort: change,
@@ -691,6 +769,7 @@ impl Session {
         &mut self,
         change: Option<Effort>,
         sent: Result<(), String>,
+        task: Option<Box<Task>>,
     ) -> Vec<Effect> {
         match sent {
             Ok(()) => {
@@ -700,17 +779,30 @@ impl Session {
                 self.conversation = self.agent.conversation();
                 self.turn = Turn::Starting(Held::Nothing);
                 join(
-                    self.conversation.clone().map(Effect::Conversation),
+                    self.conversation
+                        .clone()
+                        .map(Effect::Conversation)
+                        .into_iter()
+                        .chain(task.map(|handed_off| {
+                            Effect::Emit(EventKind::TaskHandedOff {
+                                task: *handed_off,
+                            })
+                        })),
                     [Effect::Reply(CommandResult::Accepted)],
                 )
             }
             Err(message) => {
                 self.turn_start = None;
+                let result = task.map_or(CommandResult::Accepted, |_| {
+                    CommandResult::Rejected(Rejection::HandoffDeliveryFailed {
+                        reason: message.clone(),
+                    })
+                });
                 Vec::from([
                     self.checkpoint_event(EventKind::TurnCompleted {
                         outcome: TurnOutcome::Failed { message },
                     }),
-                    Effect::Reply(CommandResult::Accepted),
+                    Effect::Reply(result),
                 ])
             }
         }
@@ -745,11 +837,15 @@ impl Session {
         reply: Reply,
         by: ClientName,
     ) -> Vec<Effect> {
-        if let (Asked::Approval { call, .. }, Reply::Decide(Decision::Deny)) =
-            (asked, &reply)
-            && !self.declined.contains(&call)
+        if let (
+            Asked::Approval { agent, call, .. },
+            Reply::Decide(Decision::Deny),
+        ) = (asked, &reply)
         {
-            self.declined.push(call);
+            let denied = (agent, call);
+            if !self.declined.contains(&denied) {
+                self.declined.push(denied);
+            }
         }
         let resolution = match reply.clone() {
             Reply::Decide(decision) => Resolution::Decided {
@@ -777,54 +873,84 @@ impl Session {
         match step {
             Step::Emit(kind) => Vec::from([Effect::Emit(kind)]),
             Step::Open {
+                agent,
                 native,
                 call,
                 tool,
                 reason,
                 for_session,
+            } => self.open_approval(
+                agent,
+                native,
+                call,
+                tool,
+                reason,
+                for_session,
+            ),
+            Step::Ask {
+                agent,
+                native,
+                questions,
             } => {
-                let asked = Asked::Approval {
-                    call: call.clone(),
-                    for_session: for_session.clone(),
-                };
-                let request = self.open(native, asked);
-                Vec::from([Effect::Emit(EventKind::RequestOpened {
-                    request,
-                    call,
-                    tool,
-                    reason,
-                    for_session,
-                })])
-            }
-            Step::Ask { native, questions } => {
                 let asked = Asked::Question {
+                    agent: agent.clone(),
                     count: questions.len(),
                 };
                 let request = self.open(native, asked);
-                Vec::from([Effect::Emit(EventKind::QuestionAsked {
-                    request,
-                    questions,
-                })])
+                match agent {
+                    Some(scope) => subagent(
+                        scope,
+                        SubagentEvent::QuestionAsked { request, questions },
+                    ),
+                    None => {
+                        Vec::from([Effect::Emit(EventKind::QuestionAsked {
+                            request,
+                            questions,
+                        })])
+                    }
+                }
             }
             Step::ToolFinished { call, outcome } => {
                 self.tool_finished(call, outcome)
             }
             Step::Withdraw(native) => self.withdraw(&native),
-            Step::Checklist(steps) => self.checklist(steps),
+            Step::Checklist(steps) => self.checklist(None, steps),
+            Step::SubagentChecklist { agent, steps } => {
+                self.checklist(Some(agent), steps)
+            }
+            Step::SubagentKind { agent, kind } => {
+                subagent(agent, SubagentEvent::Kind { kind })
+            }
             Step::SubagentStarted {
                 agent,
                 call,
                 description,
-            } => subagent(agent, SubagentEvent::Started { call, description }),
-            Step::SubagentActivity { agent, activity } => subagent(
-                agent,
-                SubagentEvent::Activity(self.subagent_activity(activity)),
-            ),
+                kind,
+            } => {
+                let mut effects = subagent(
+                    agent.clone(),
+                    SubagentEvent::Started { call, description },
+                );
+                if let Some(agent_kind) = kind {
+                    effects.extend(subagent(
+                        agent,
+                        SubagentEvent::Kind { kind: agent_kind },
+                    ));
+                }
+                effects
+            }
+            Step::SubagentActivity { agent, activity } => {
+                let recorded = self.subagent_activity(&agent, activity);
+                subagent(agent, SubagentEvent::Activity(recorded))
+            }
             Step::SubagentEnded {
                 agent,
                 outcome,
                 summary,
-            } => subagent(agent, SubagentEvent::Ended { outcome, summary }),
+            } => join(
+                self.withdraw_scope(Some(&agent)),
+                subagent(agent, SubagentEvent::Ended { outcome, summary }),
+            ),
             // A request still open when the turn ends can't be answered any
             // more: an agent may withdraw it only after `TurnCompleted`, and an
             // answer in between would log a decision for a command that
@@ -841,12 +967,48 @@ impl Session {
         }
     }
 
+    fn open_approval(
+        &mut self,
+        agent: Option<SubagentId>,
+        native: NativeRequest,
+        call: ToolCallId,
+        tool: ToolKind,
+        reason: Option<String>,
+        for_session: Option<String>,
+    ) -> Vec<Effect> {
+        let asked = Asked::Approval {
+            agent: agent.clone(),
+            call: call.clone(),
+            for_session: for_session.clone(),
+        };
+        let request = self.open(native, asked);
+        match agent {
+            Some(scope) => subagent(
+                scope,
+                SubagentEvent::RequestOpened {
+                    request,
+                    call,
+                    tool,
+                    reason,
+                    for_session,
+                },
+            ),
+            None => Vec::from([Effect::Emit(EventKind::RequestOpened {
+                request,
+                call,
+                tool,
+                reason,
+                for_session,
+            })]),
+        }
+    }
+
     fn tool_finished(
         &mut self,
         call: ToolCallId,
         outcome: ToolOutcome,
     ) -> Vec<Effect> {
-        let finished = self.finished(&call, outcome);
+        let finished = self.finished(None, &call, outcome);
         Vec::from([Effect::Emit(EventKind::ToolCall {
             call,
             phase: ToolPhase::Finished { outcome: finished },
@@ -855,6 +1017,7 @@ impl Session {
 
     fn subagent_activity(
         &mut self,
+        agent: &SubagentId,
         activity: SubagentActivity,
     ) -> SubagentActivity {
         match activity {
@@ -863,7 +1026,7 @@ impl Session {
                 phase: ToolPhase::Finished { outcome },
             } => SubagentActivity::ToolCall {
                 phase: ToolPhase::Finished {
-                    outcome: self.finished(&call, outcome),
+                    outcome: self.finished(Some(agent), &call, outcome),
                 },
                 call,
             },
@@ -874,11 +1037,15 @@ impl Session {
     /// A call that failed after the user denied it was declined.
     fn finished(
         &mut self,
+        agent: Option<&SubagentId>,
         call: &ToolCallId,
         outcome: ToolOutcome,
     ) -> ToolOutcome {
-        let denied = self.declined.iter().position(|denied| denied == call);
-        self.declined.retain(|denied| denied != call);
+        let matches = |(owner, denied): &(Option<SubagentId>, ToolCallId)| {
+            owner.as_ref() == agent && denied == call
+        };
+        let denied = self.declined.iter().position(matches);
+        self.declined.retain(|denied| !matches(denied));
         match (outcome, denied) {
             (ToolOutcome::Failed, Some(_)) => ToolOutcome::Declined,
             (reported, _) => reported,
@@ -893,12 +1060,23 @@ impl Session {
         })
     }
 
-    fn checklist(&mut self, steps: Vec<PlanStep>) -> Vec<Effect> {
-        let kept = tasks::kept(&self.tasks, &steps);
+    fn checklist(
+        &mut self,
+        agent: Option<SubagentId>,
+        steps: Vec<PlanStep>,
+    ) -> Vec<Effect> {
+        let previous = match &agent {
+            Some(scope) => self
+                .subagent_tasks
+                .get(scope)
+                .map_or(&[][..], Vec::as_slice),
+            None => &self.tasks,
+        };
+        let kept = tasks::kept(previous, &steps);
         match kept.iter().filter(|id| id.is_none()).count() {
-            0 => self.minted(steps, kept, Vec::new()),
+            0 => self.minted(agent, steps, kept, Vec::new()),
             count => {
-                self.flow = Flow::Minting(steps, kept);
+                self.flow = Flow::Minting(agent, steps, kept);
                 Vec::from([Effect::Call(Call::Mint(count))])
             }
         }
@@ -906,6 +1084,7 @@ impl Session {
 
     fn minted(
         &mut self,
+        agent: Option<SubagentId>,
         steps: Vec<PlanStep>,
         kept: Vec<Option<TaskId>>,
         minted: Vec<TaskId>,
@@ -916,7 +1095,22 @@ impl Session {
             .filter_map(|id| id.or_else(|| fresh.next()))
             .collect();
         let synced = tasks::synced(steps, ids, self.id);
-        self.retask(synced)
+        match agent {
+            Some(scope) => {
+                let previous =
+                    self.subagent_tasks.entry(scope.clone()).or_default();
+                if *previous == synced {
+                    Vec::new()
+                } else {
+                    previous.clone_from(&synced);
+                    subagent(
+                        scope,
+                        SubagentEvent::TasksChanged { tasks: synced },
+                    )
+                }
+            }
+            None => self.retask(synced),
+        }
     }
 
     fn retask(&mut self, tasks: Vec<Task>) -> Vec<Effect> {
@@ -931,21 +1125,26 @@ impl Session {
     fn turn_ended(&mut self, outcome: TurnOutcome) -> Vec<Effect> {
         self.turn = Turn::Idle;
         self.turn_start = None;
+        join(
+            [Effect::Emit(EventKind::TurnCompleted { outcome })],
+            self.withdraw_scope(None),
+        )
+    }
+
+    fn withdraw_scope(&mut self, agent: Option<&SubagentId>) -> Vec<Effect> {
         let open = self
             .requests
             .iter()
-            .filter(|(_, pending)| matches!(pending, Pending::Open { .. }))
-            .map(|(request, _)| request)
-            .copied()
-            .collect::<BTreeSet<RequestId>>();
-        let withdrawn = open
-            .into_iter()
+            .filter_map(|(request, pending)| match pending {
+                Pending::Open { asked, .. } if asked.agent() == agent => {
+                    Some(*request)
+                }
+                _ => None,
+            })
+            .collect::<Vec<RequestId>>();
+        open.into_iter()
             .flat_map(|request| self.withdrawn(request))
-            .collect::<Vec<Effect>>();
-        join(
-            [Effect::Emit(EventKind::TurnCompleted { outcome })],
-            withdrawn,
-        )
+            .collect()
     }
 
     fn turn_started(&mut self, native: NativeTurn) -> Vec<Effect> {
@@ -1118,8 +1317,8 @@ impl Session {
                 join(changed, self.start(directory, at, Launched::Ready))
             }
             (Saved::Continue, Ok(())) => answer(CommandResult::Accepted),
-            (Saved::Send(text, by), Ok(())) => {
-                self.flow = Flow::Recording(text.clone());
+            (Saved::Send(text, by, task), Ok(())) => {
+                self.flow = Flow::Recording(text.clone(), task);
                 Vec::from([Effect::Call(Call::Record(
                     EventKind::UserMessage { text, by },
                 ))])
@@ -1619,12 +1818,12 @@ fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
         (Asked::Question { .. }, Reply::Decide(_)) => {
             Err(String::from("a question takes answers, not a decision"))
         }
-        (Asked::Question { count }, Reply::Answer(answers))
+        (Asked::Question { count, .. }, Reply::Answer(answers))
             if &answers.len() == count =>
         {
             Ok(())
         }
-        (Asked::Question { count }, Reply::Answer(answers)) => {
+        (Asked::Question { count, .. }, Reply::Answer(answers)) => {
             Err(format!("{} answers for {count} questions", answers.len()))
         }
     }

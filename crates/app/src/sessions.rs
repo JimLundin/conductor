@@ -48,12 +48,17 @@ pub fn SessionList(list: ui::SessionList) -> Element {
 #[component]
 fn HostGroup(group: ui::HostGroup) -> Element {
     let status = group.status;
+    let shell = use_context::<Shell>();
+    let outdated = shell.outdated_fleet_version(&group.key);
     rsx! {
         section { class: "host-group", "aria-label": "{status.host}",
             header { class: "status", "data-state": "{status.state}",
                 span { class: "dot", "aria-hidden": "true" }
                 span { class: "host", "{status.host}" }
                 span { class: "state", "{status.state}" }
+                if let Some(version) = outdated {
+                    span { class: "error", "Fleet configuration {version} is out of date" }
+                }
                 if let Some(error) = status.error {
                     span { class: "error", "{error}" }
                 }

@@ -25,7 +25,7 @@ pub fn sign_in() -> SignIn {
             Failure {
                 says: String::from("device code login is not enabled"),
                 means: String::from(
-                    "This ChatGPT account doesn't allow device code sign-in. Turn on device code login in ChatGPT's security settings, then sign in again.",
+                    "Open ChatGPT Settings ? Security, enable device code authorization for Codex, then try again. If the setting is unavailable, you can use an OpenAI API key on this host.",
                 ),
             },
             Failure {
@@ -67,6 +67,13 @@ mod tests {
     #[test]
     fn its_failures_are_known_by_what_the_pinned_cli_says() {
         let flow = sign_in();
+        assert!(
+            flow.failure("device code login is not enabled")
+                .is_some_and(|reason| {
+                    reason.contains("ChatGPT Settings ? Security")
+                        && reason.contains("OpenAI API key")
+                })
+        );
         assert_eq!(
             [
                 "Error logging in with device code: device code login is not enabled for this Codex server. Use the browser login or verify the server URL.",

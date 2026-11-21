@@ -136,8 +136,62 @@ pub enum ApprovalKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChildEvent {
+    ThreadStarted {
+        parent: ThreadId,
+        name: Option<String>,
+        kind: Option<String>,
+    },
+    Collaboration {
+        spawn: Option<SpawnCall>,
+        states: Vec<(ThreadId, ChildState)>,
+    },
+    Activity {
+        call: ToolCallId,
+        agent: ThreadId,
+        path: String,
+        activity: ChildActivity,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawnCall {
+    pub call: ToolCallId,
+    pub description: Option<String>,
+    pub agents: Vec<ThreadId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ChildState {
+    pub status: ChildStatus,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChildStatus {
+    PendingInit,
+    Running,
+    Interrupted,
+    Completed,
+    Errored,
+    Shutdown,
+    NotFound,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChildActivity {
+    Started,
+    Interacted,
+    Interrupted,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadEvent {
     Started,
+    Child(ChildEvent),
     TurnStarted {
         turn: TurnId,
     },
@@ -219,6 +273,7 @@ impl CodexEvent {
             Self::Thread { thread, event } => (
                 match event {
                     ThreadEvent::Started => "thread_started",
+                    ThreadEvent::Child(_) => "subagent",
                     ThreadEvent::TurnStarted { .. } => "turn_started",
                     ThreadEvent::TurnCompleted { .. } => "turn_completed",
                     ThreadEvent::AgentDelta { .. } => "agent_delta",
@@ -355,7 +410,7 @@ struct Target {
 #[serde(tag = "method", content = "params")]
 enum Notification {
     #[serde(rename = "thread/started")]
-    ThreadStarted { thread: Id },
+    ThreadStarted { thread: StartedThread },
     #[serde(rename = "turn/started")]
     TurnStarted {
         #[serde(rename = "threadId")]
@@ -445,6 +500,22 @@ struct WireSettings {
 }
 
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StartedThread {
+    id: String,
+    source: Option<Value>,
+    agent_nickname: Option<String>,
+    agent_role: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ThreadSpawn {
+    parent_thread_id: String,
+    agent_nickname: Option<String>,
+    agent_role: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct Id {
     id: String,
 }
@@ -489,6 +560,22 @@ enum ThreadItem {
         id: String,
         changes: Vec<WireFileChange>,
         status: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    CollabAgentToolCall {
+        id: String,
+        tool: String,
+        sender_thread_id: String,
+        receiver_thread_ids: Vec<String>,
+        prompt: Option<String>,
+        agents_states: alloc::collections::BTreeMap<String, ChildState>,
+    },
+    #[serde(rename_all = "camelCase")]
+    SubAgentActivity {
+        id: String,
+        agent_thread_id: String,
+        agent_path: String,
+        kind: ChildActivity,
     },
 }
 
@@ -829,7 +916,22 @@ const fn on_thread(thread: String, event: ThreadEvent) -> Inbound {
 fn notification(raw: Value) -> Inbound {
     match serde_json::from_value::<Notification>(raw.clone()) {
         Ok(Notification::ThreadStarted { thread }) => {
-            on_thread(thread.id, ThreadEvent::Started)
+            let event = thread
+                .source
+                .and_then(|source| {
+                    serde_json::from_value::<ThreadSpawn>(
+                        source.pointer("/subAgent/thread_spawn")?.clone(),
+                    )
+                    .ok()
+                })
+                .map_or(ThreadEvent::Started, |spawn| {
+                    ThreadEvent::Child(ChildEvent::ThreadStarted {
+                        parent: ThreadId(spawn.parent_thread_id),
+                        name: spawn.agent_nickname.or(thread.agent_nickname),
+                        kind: spawn.agent_role.or(thread.agent_role),
+                    })
+                });
+            on_thread(thread.id, event)
         }
         Ok(Notification::TurnStarted { thread_id, turn }) => on_thread(
             thread_id,
@@ -945,52 +1047,81 @@ fn item_event(
     item: ThreadItem,
 ) -> Inbound {
     let turn = TurnId(turn_id);
-    on_thread(
-        thread,
-        match item {
-            ThreadItem::AgentMessage { text } => {
-                ThreadEvent::AgentMessage { turn, text }
-            }
-            ThreadItem::Reasoning { summary } => ThreadEvent::Reasoning {
-                turn,
-                text: summary.join("\n\n"),
-            },
-            ThreadItem::CommandExecution {
-                id,
-                command,
-                status,
-            } => tool_event(
-                turn,
-                id,
-                phase,
-                ToolKind::Command { command },
-                &status,
-            ),
-            ThreadItem::FileChange {
-                id,
-                changes,
-                status,
-            } => tool_event(
-                turn,
-                id,
-                phase,
-                ToolKind::FileChange {
-                    files: changes
-                        .into_iter()
-                        .map(|file| FileChange {
-                            path: file.path,
-                            change: match file.kind {
-                                ChangeKind::Add => Change::Write,
-                                ChangeKind::Update => Change::Edit,
-                                ChangeKind::Delete => Change::Delete,
-                            },
-                        })
-                        .collect(),
-                },
-                &status,
-            ),
+    let event = match item {
+        ThreadItem::AgentMessage { text } => {
+            ThreadEvent::AgentMessage { turn, text }
+        }
+        ThreadItem::Reasoning { summary } => ThreadEvent::Reasoning {
+            turn,
+            text: summary.join("\n\n"),
         },
-    )
+        ThreadItem::CollabAgentToolCall {
+            id,
+            tool,
+            sender_thread_id,
+            receiver_thread_ids,
+            prompt,
+            agents_states,
+        } if sender_thread_id == thread => {
+            ThreadEvent::Child(ChildEvent::Collaboration {
+                spawn: (tool == "spawnAgent").then(|| SpawnCall {
+                    call: ToolCallId(id),
+                    description: prompt.filter(|text| !text.trim().is_empty()),
+                    agents: receiver_thread_ids
+                        .into_iter()
+                        .map(ThreadId)
+                        .collect(),
+                }),
+                states: agents_states
+                    .into_iter()
+                    .map(|(id, state)| (ThreadId(id), state))
+                    .collect(),
+            })
+        }
+        ThreadItem::CollabAgentToolCall { .. } => ThreadEvent::Started,
+        ThreadItem::SubAgentActivity {
+            id,
+            agent_thread_id,
+            agent_path,
+            kind,
+        } => ThreadEvent::Child(ChildEvent::Activity {
+            call: ToolCallId(id),
+            agent: ThreadId(agent_thread_id),
+            path: agent_path,
+            activity: kind,
+        }),
+        ThreadItem::CommandExecution {
+            id,
+            command,
+            status,
+        } => {
+            tool_event(turn, id, phase, ToolKind::Command { command }, &status)
+        }
+        ThreadItem::FileChange {
+            id,
+            changes,
+            status,
+        } => tool_event(
+            turn,
+            id,
+            phase,
+            ToolKind::FileChange {
+                files: changes
+                    .into_iter()
+                    .map(|file| FileChange {
+                        path: file.path,
+                        change: match file.kind {
+                            ChangeKind::Add => Change::Write,
+                            ChangeKind::Update => Change::Edit,
+                            ChangeKind::Delete => Change::Delete,
+                        },
+                    })
+                    .collect(),
+            },
+            &status,
+        ),
+    };
+    on_thread(thread, event)
 }
 
 fn tool_event(

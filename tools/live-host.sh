@@ -158,7 +158,7 @@ leak_counts=$(sed 's/ *$//' "$leak_workspace/leak.txt" 2>/dev/null || echo missi
 case $provider:$leak:$leak_counts in
   *:pass:"1 0") ;;
   claude:pass:"1 1")
-    grep -q "agent: the CLI's commands can read the gateway token;.*provider=Claude" "$logs/host.log" && leak=unprotected || leak=fail ;;
+    grep -q "agent: the CLI's commands can read the provider credential;.*provider=Claude" "$logs/host.log" && leak=unprotected || leak=fail ;;
   *) leak=fail ;;
 esac
 
