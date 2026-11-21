@@ -2,6 +2,7 @@
 //! protocol's rules are [`host::serve`]; this reads and writes the frames
 //! and calls the log and the registry.
 
+use host::log::Completion;
 use host::serve::{self, Admission, Ledger, Order, Relaunch, Route, Stream};
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
@@ -202,7 +203,7 @@ impl Conductor {
         Ok(())
     }
 
-    /// Runs the command once: a retry answers the first run's receipt.
+    /// Runs the command or returns its receipt when it has completed.
     async fn run(
         &self,
         command: Command,
@@ -210,15 +211,21 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         let route = serve::route(command.body, client);
         let begun = match route.ledger() {
-            Ledger::Unrecorded => return self.command(route, command.id).await,
+            Ledger::Unrecorded => {
+                return self
+                    .command(route, command.id)
+                    .await
+                    .map(Completion::into_result);
+            }
             Ledger::Session => self.log.begin(command.id).await?,
             Ledger::Receipt => self.log.begin_receipt(command.id).await?,
         };
         match begun {
             BeginCommand::Cached(result) => Ok(result),
             BeginCommand::Execute(lease) => {
-                let result = self.command(route, command.id).await?;
-                lease.finish(result.clone()).await?;
+                let completion = self.command(route, command.id).await?;
+                let result = completion.clone().into_result();
+                lease.finish(completion).await?;
                 Ok(result)
             }
         }
@@ -228,8 +235,8 @@ impl Conductor {
         &self,
         route: Route,
         id: proto::CommandId,
-    ) -> Result<CommandResult, Stopped> {
-        match route {
+    ) -> Result<Completion, Stopped> {
+        let result = match route {
             Route::Order(session, order) => self.order(session, order).await,
             Route::Relaunch(session, relaunch) => {
                 self.relaunch(session, relaunch).await
@@ -244,7 +251,7 @@ impl Conductor {
                 self.registry.configure(configure).await
             }
             Route::SignIn(order) => self.registry.sign_in(order).await,
-            Route::Home(order) => self.home.order(order, id).await,
+            Route::Home(order) => return self.home.order(order, id).await,
             Route::Finish(session, by) => {
                 match self.registry.find(session).await? {
                     Some(handle) => handle.finish(by).await,
@@ -253,7 +260,8 @@ impl Conductor {
                     }
                 }
             }
-        }
+        }?;
+        Ok(result.into())
     }
 
     async fn order(

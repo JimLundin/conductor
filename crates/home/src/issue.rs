@@ -76,6 +76,10 @@ impl Lines {
         format!("+++\n{}\n+++\n{rest}", self.front.join("\n"))
     }
 
+    fn has_marker(&self, marker: &str) -> bool {
+        self.front.iter().any(|line| line == marker)
+    }
+
     fn table(&self) -> Result<Table, String> {
         toml::from_str::<Table>(&self.front.join("\n"))
             .map_err(|err| format!("front matter: {err}"))
@@ -508,7 +512,7 @@ fn needs(text: &str, what: &str) -> Result<String, String> {
 
 /// The message of the commit an edit makes in the home.
 #[must_use]
-fn message(edit: &LegacyEdit) -> String {
+fn message(edit: &EditData) -> String {
     let id = name(edit.issue);
     match &edit.change {
         Change::Create(fields) => {
@@ -550,13 +554,21 @@ fn signer(host: &str, client: &str) -> String {
 /// A change a host made to an issue, kept until the remote has it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
-    id: Option<CommandId>,
-    data: LegacyEdit,
+    identity: EditIdentity,
+    data: EditData,
 }
 
-/// The issue queue's original disk representation, without edit identities.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LegacyEdit {
+enum EditIdentity {
+    // The first two tags match the postcard Option<CommandId> encoding.
+    Legacy,
+    Command(CommandId),
+    NoteOccurrence(usize),
+}
+
+/// The contents of an issue edit, also the original queue's disk format.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditData {
     project: ProjectId,
     issue: IssueId,
     /// When the host took it, in seconds since the Unix epoch.
@@ -569,9 +581,12 @@ pub struct LegacyEdit {
     was: Option<String>,
 }
 
-impl From<LegacyEdit> for Edit {
-    fn from(data: LegacyEdit) -> Self {
-        Self { id: None, data }
+impl From<EditData> for Edit {
+    fn from(data: EditData) -> Self {
+        Self {
+            identity: EditIdentity::Legacy,
+            data,
+        }
     }
 }
 
@@ -635,7 +650,10 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
 #[must_use]
 fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     let data = &edit.data;
-    let marker = edit.id.map(edit_marker);
+    let marker = match edit.identity {
+        EditIdentity::Command(id) => Some(edit_marker(id)),
+        _ => None,
+    };
     match (&data.change, current) {
         (Change::Create(_), Some(text)) => {
             match parse(&name(data.issue), text) {
@@ -655,8 +673,8 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
                 Err(reason) => Applied::Unreadable(reason),
                 Ok((issue, lines)) => {
                     if marker
-                        .as_ref()
-                        .is_some_and(|id| lines.front.contains(id))
+                        .as_deref()
+                        .is_some_and(|expected| lines.has_marker(expected))
                     {
                         return Applied::AlreadyRecorded;
                     }
@@ -702,14 +720,21 @@ fn changed(
             if data.was != field(issue, change) && data.at < changed {
                 return None;
             }
-            edit.id.is_none()
+            !matches!(edit.identity, EditIdentity::Command(_))
         }
     };
     match change {
         IssueChange::Note(text) => {
-            let note =
-                format!("{} {}: {}", date(data.at), data.by, text.trim());
-            noting(lines, issue, &note, legacy_replay)
+            let note = data.rendered_note(text);
+            let replay_occurrence = match (&edit.identity, mode) {
+                (EditIdentity::Legacy, Mode::Replay { .. }) => Some(1),
+                (
+                    EditIdentity::NoteOccurrence(ordinal),
+                    Mode::Replay { .. },
+                ) => Some(*ordinal),
+                _ => None,
+            };
+            noting(lines, issue, &note, replay_occurrence)
         }
         IssueChange::Check { .. }
         | IssueChange::AddItem(_)
@@ -784,22 +809,27 @@ fn checking(
     Some(lines)
 }
 
-/// Adds the note, unless a replay finds it in the file already: two notes
-/// alike made on purpose both stay.
 fn noting(
     mut lines: Lines,
     issue: &Issue,
     note: &str,
-    replaying: bool,
+    occurrence: Option<usize>,
 ) -> Option<Lines> {
-    if replaying && issue.notes.iter().any(|kept| kept == note) {
+    if occurrence.is_some_and(|needed| {
+        issue
+            .notes
+            .iter()
+            .filter(|kept| kept.as_str() == note)
+            .count()
+            >= needed
+    }) {
         return None;
     }
     lines.append(NOTES, None, note_lines(note));
     Some(lines)
 }
 
-fn opened(edit: &LegacyEdit, made: IssueFields) -> Issue {
+fn opened(edit: &EditData, made: IssueFields) -> Issue {
     Issue {
         id: edit.issue,
         title: made.title,

@@ -102,12 +102,20 @@ pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
     run(Plan::git_text("", args), Some(path)).await
 }
 
-pub async fn bytes(path: &Path, args: &[&str]) -> Result<Vec<u8>, GitError> {
-    let output = execute(&mut git(path, args)).await?;
-    if output.success {
-        Ok(output.bytes)
+pub async fn blob(path: &Path, object: &str) -> Result<Vec<u8>, GitError> {
+    let mut command = git(path, &["cat-file", "blob", object]);
+    let output =
+        tokio::time::timeout(Duration::from_secs(120), command.output())
+            .await
+            .map_err(|error| failure("git timeout", &error.to_string()))?
+            .map_err(|error| failure("reading git blob", &error.to_string()))?;
+    if output.status.success() {
+        Ok(output.stdout)
     } else {
-        Err(failure("reading git output", &output.error))
+        Err(failure(
+            "reading git blob",
+            &String::from_utf8_lossy(&output.stderr),
+        ))
     }
 }
 

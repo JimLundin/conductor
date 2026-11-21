@@ -704,11 +704,11 @@ standards and issues, cloned on every host. Built so far are home steps
   or a note, which the host dates and signs `<host> · <client>`. A change
   rewrites only its own lines of the file, so comments, keys, tables and
   sections a person added stay as written (Windows line ends become
-  Unix ones). Both commands keep a receipt (`Ledger::Receipt`), so a
-  retry doesn't repeat them, and are refused with `NoHome`,
-  `UnknownProject`, `UnknownIssue` or `IssueNotSaved`. A host that dies
-  between writing a new issue and committing the receipt opens it again
-  on the retry. Before acknowledging a change, the host saves its stable
+  Unix ones). Both commands use `Ledger::Receipt`, so a retry returns
+  the saved response. A local storage failure returns `IssueNotSaved`
+  without keeping a receipt, so the same command identity can retry when
+  storage recovers. When the host dies after safely recording a new
+  issue and before committing its receipt, a retry returns the original ID. Before acknowledging a change, the host saves its stable
   command identity and the previous field value in
   `<data>/home-edits.state`. The host writes and commits the issue file
   locally, then attempts to push. If the queue cannot be saved, the
@@ -717,6 +717,12 @@ standards and issues, cloned on every host. Built so far are home steps
   issue is still waiting, the host saves the later edit for replay too.
   A refused push or a sync with pending edits fetches and resets the
   clone to upstream, replays the pending edits in order, then pushes.
+  If the fetch fails, the host replays against its local commits so
+  subsequent edits can appear immediately while offline. Original
+  queues carry no note identities. Their migration uses local committed
+  note counts to retain each queued occurrence and saves these counts
+  before replay can reset the clone. When local history lacks that
+  evidence, existing matching notes can count as already delivered.
   Replay uses the fetched upstream file's last commit time to resolve
   conflicting fields. The issue file records which logical edits have
   been resolved, including edits whose value was already present and

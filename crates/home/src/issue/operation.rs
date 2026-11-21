@@ -6,9 +6,9 @@ use proto::{
 };
 
 use super::{
-    Applied, Change, Edit, LegacyEdit, Lines, Mode, apply, changing,
-    edit_marker, file, finished, folder, listed, message, opening, parse,
-    signer, started, was,
+    Applied, Change, Edit, EditData, EditIdentity, Lines, Mode, apply,
+    changing, date, edit_marker, file, finished, folder, listed, message, name,
+    opening, parse, signer, started, was,
 };
 use crate::prelude::*;
 
@@ -23,7 +23,7 @@ pub struct Read {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     command: CommandId,
-    data: LegacyEdit,
+    data: EditData,
 }
 
 /// The files and commit a home mutation requires.
@@ -165,12 +165,6 @@ impl PendingEdits {
         });
     }
 
-    fn can_commit(&self, issue: IssueId) -> bool {
-        self.0
-            .iter()
-            .all(|pending| pending.covered || pending.edit.data.issue != issue)
-    }
-
     pub fn committed(&mut self, written: Option<CommandId>) {
         let Some(id) = written else { return };
         if let Some(pending) = self
@@ -192,12 +186,7 @@ impl PendingEdits {
     pub fn replay_target(&self, index: usize) -> Option<Read> {
         let (earlier, remaining) = self.0.split_at_checked(index)?;
         let target = remaining.first()?.edit.read();
-        earlier
-            .iter()
-            .all(|pending| {
-                pending.covered || pending.edit.data.issue != target.issue
-            })
-            .then_some(target)
+        can_commit(earlier, target.issue).then_some(target)
     }
 
     #[must_use]
@@ -288,7 +277,7 @@ impl Context<'_> {
         let fields = opening(self.remote, projects, &project, wanted)?;
         Ok(Record {
             command: self.command,
-            data: LegacyEdit {
+            data: EditData {
                 project,
                 issue,
                 at: self.at,
@@ -314,7 +303,7 @@ impl Context<'_> {
             changing(self.remote, self.issues, issue, wanted)?;
         Ok(Record {
             command: self.command,
-            data: LegacyEdit {
+            data: EditData {
                 project,
                 issue,
                 at: self.at,
@@ -344,7 +333,7 @@ impl Record {
     ) -> Result<Recorded, Rejection> {
         self.data.was = was(current, self.data.issue, &self.data.change);
         let edit = Edit {
-            id: Some(self.command),
+            identity: EditIdentity::Command(self.command),
             data: self.data,
         };
         let commit = match apply(current, &edit, Mode::Record) {
@@ -356,7 +345,7 @@ impl Record {
                 return Err(Rejection::IssueNotSaved { reason });
             }
         };
-        let next = commit.filter(|_| pending.can_commit(edit.data.issue));
+        let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue));
         Ok(Recorded(Recording::Keep(
             Box::new(edit),
             next,
@@ -365,7 +354,33 @@ impl Record {
     }
 }
 
-impl LegacyEdit {
+fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
+    earlier
+        .iter()
+        .all(|pending| pending.covered || pending.edit.data.issue != issue)
+}
+
+impl EditData {
+    #[must_use]
+    pub fn legacy_note_target(&self) -> Option<Read> {
+        matches!(self.change, Change::Issue(IssueChange::Note(_)))
+            .then(|| self.read())
+    }
+
+    fn note(&self) -> Option<String> {
+        match &self.change {
+            Change::Issue(IssueChange::Note(text)) => {
+                Some(self.rendered_note(text))
+            }
+            _ => None,
+        }
+    }
+
+    pub(super) fn rendered_note(&self, text: &str) -> String {
+        let body = text.trim().lines().collect::<Vec<_>>().join("\n");
+        format!("{} {}: {body}", date(self.at), self.by)
+    }
+
     fn read(&self) -> Read {
         Read {
             issue: self.issue,
@@ -375,9 +390,51 @@ impl LegacyEdit {
 }
 
 impl Edit {
+    /// Original queues have no identities. A committed local file normally
+    /// contains every queued note, so excess matches are older occurrences.
+    #[must_use]
+    pub fn migrate_legacy(
+        edits: Vec<EditData>,
+        local: &BTreeMap<IssueId, String>,
+    ) -> Vec<Self> {
+        let mut occurrences = BTreeMap::<_, (usize, usize)>::new();
+        for edit in &edits {
+            if let Some(note) = edit.note() {
+                occurrences.entry((edit.issue, note)).or_default().0 += 1;
+            }
+        }
+        for (&id, text) in local {
+            if let Ok(issue) = parse(&name(id), text) {
+                for note in issue.notes {
+                    if let Some((_, committed)) =
+                        occurrences.get_mut(&(id, note))
+                    {
+                        *committed += 1;
+                    }
+                }
+            }
+        }
+        for (queued, committed) in occurrences.values_mut() {
+            *committed = committed.saturating_sub(*queued);
+        }
+        edits
+            .into_iter()
+            .map(|data| {
+                let identity =
+                    data.note().map_or(EditIdentity::Legacy, |note| {
+                        let (_, next) =
+                            occurrences.entry((data.issue, note)).or_default();
+                        *next += 1;
+                        EditIdentity::NoteOccurrence(*next)
+                    });
+                Self { identity, data }
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
-        (self.id == Some(id)).then_some(self.data.issue)
+        (self.identity == EditIdentity::Command(id)).then_some(self.data.issue)
     }
 
     #[must_use]
@@ -550,7 +607,7 @@ impl<'a> Listing<'a> {
         files.into_iter().find_map(|(stem, current)| {
             let text = current.ok()?;
             let lines = Lines::of(&text).ok()?;
-            lines.front.contains(&marker).then_some(())?;
+            lines.has_marker(&marker).then_some(())?;
             parse(&stem, &text).ok().map(|issue| issue.id)
         })
     }

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::path::Path;
 
-use host::log::{Begun, Effect, Kind, Log as Core, Ticket};
+use host::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
 use proto::{
     Catalog, CommandId, CommandResult, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
@@ -51,29 +51,33 @@ pub enum BeginCommand {
 pub struct CommandLease {
     log: Log,
     key: CommandId,
+    finishing: bool,
 }
 
 impl CommandLease {
     pub(crate) async fn finish(
-        self,
-        result: CommandResult,
+        mut self,
+        completion: impl Into<Completion>,
     ) -> Result<(), Stopped> {
-        self.log.finish(self.key, result).await
+        let (reply, answer) = oneshot::channel();
+        self.log
+            .inbox
+            .send(LogMsg::Finish {
+                key: self.key,
+                completion: completion.into(),
+                reply,
+            })
+            .await
+            .map_err(|_| Stopped {})?;
+        self.finishing = true;
+        answer.await.map_err(|_| Stopped {})
     }
 }
 
 impl Drop for CommandLease {
     fn drop(&mut self) {
-        match self.log.inbox.try_send(LogMsg::Abort(self.key)) {
-            Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
-            Err(mpsc::error::TrySendError::Full(msg)) => {
-                if let Ok(_runtime) = tokio::runtime::Handle::try_current() {
-                    let inbox = self.log.inbox.clone();
-                    tokio::spawn(async move {
-                        let _ = inbox.send(msg).await;
-                    });
-                }
-            }
+        if !self.finishing {
+            self.log.abort(self.key);
         }
     }
 }
@@ -86,7 +90,7 @@ enum LogMsg {
     Begin(CommandStart),
     Finish {
         key: CommandId,
-        result: CommandResult,
+        completion: Completion,
         reply: oneshot::Sender<()>,
     },
     Conversation {
@@ -141,6 +145,20 @@ struct LogActor {
 }
 
 impl Log {
+    fn abort(&self, key: CommandId) {
+        match self.inbox.try_send(LogMsg::Abort(key)) {
+            Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {}
+            Err(mpsc::error::TrySendError::Full(msg)) => {
+                if let Ok(_runtime) = tokio::runtime::Handle::try_current() {
+                    let inbox = self.inbox.clone();
+                    tokio::spawn(async move {
+                        let _ = inbox.send(msg).await;
+                    });
+                }
+            }
+        }
+    }
+
     #[cfg(test)]
     #[must_use]
     pub fn spawn(name: String, epoch: proto::Epoch) -> Self {
@@ -234,15 +252,6 @@ impl Log {
             })
         })
         .await
-    }
-
-    pub(crate) async fn finish(
-        &self,
-        key: CommandId,
-        result: CommandResult,
-    ) -> Result<(), Stopped> {
-        self.ask(|reply| LogMsg::Finish { key, result, reply })
-            .await
     }
 
     pub(crate) async fn conversation(
@@ -385,8 +394,12 @@ impl LogActor {
                 self.begins.insert(ticket, start.reply);
                 self.perform(effects)?;
             }
-            LogMsg::Finish { key, result, reply } => {
-                let (ticket, effects) = self.core.finish(key, result);
+            LogMsg::Finish {
+                key,
+                completion,
+                reply,
+            } => {
+                let (ticket, effects) = self.core.finish(key, completion);
                 self.finishes.insert(ticket, reply);
                 self.perform(effects)?;
             }
@@ -501,6 +514,7 @@ impl LogActor {
             Begun::Execute(key) => {
                 let inbox = self.inbox.upgrade().ok_or(Stopped {})?;
                 BeginCommand::Execute(CommandLease {
+                    finishing: false,
                     log: Log { inbox },
                     key,
                 })
@@ -655,7 +669,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Finish {
                 key: CommandId(23),
-                result: CommandResult::Accepted,
+                completion: CommandResult::Accepted.into(),
                 reply: finished_reply,
             })
             .await?;

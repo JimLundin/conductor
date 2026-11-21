@@ -7,9 +7,9 @@ use proto::{
 };
 
 use super::{
-    Applied, Branch, Change, Edit, LegacyEdit, Mode, Move, PendingEdits,
-    Remote, apply, branch, changing, fields, file, finished, listed, message,
-    name, opening, parse, render, start, started, was,
+    Applied, Branch, Change, Edit, EditData, Mode, Move, PendingEdits, Remote,
+    apply, branch, changing, fields, file, finished, listed, message, name,
+    opening, parse, render, start, started, was,
 };
 
 /// 01JD0000000000000000000001 as its bits.
@@ -107,7 +107,7 @@ fn hand_edited() -> String {
 }
 
 fn edit(change: Change) -> Edit {
-    LegacyEdit {
+    EditData {
         project: project(),
         issue: ID,
         at: OPENED,
@@ -325,7 +325,7 @@ fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
 
 #[test]
 fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
-    let done: Edit = LegacyEdit {
+    let done: Edit = EditData {
         was: was(
             Some(&written()),
             ID,
@@ -687,7 +687,7 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
 #[test]
 fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
 -> Result<(), String> {
-    let done: Edit = LegacyEdit {
+    let done: Edit = EditData {
         was: Some(text("in-progress")),
         ..changing_to(IssueChange::Status(IssueStatus::Done)).data
     }
