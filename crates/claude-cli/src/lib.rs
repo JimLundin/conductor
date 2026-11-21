@@ -9,6 +9,7 @@
 mod agent;
 mod plugin;
 mod session;
+mod setup_token;
 mod transcript;
 
 pub use plugin::plugin;

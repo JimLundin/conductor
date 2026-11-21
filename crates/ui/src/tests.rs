@@ -79,6 +79,7 @@ fn catalog() -> Catalog {
         label: text(label),
         fields,
         account: text("base_url"),
+        setup_sign_in: None,
     };
     Catalog(BTreeMap::from([
         (
@@ -1888,7 +1889,7 @@ fn a_sign_in_starts_from_the_instance_and_takes_the_pasted_code_once() {
                     class: "hint muted",
                     role: Some("status"),
                     text: text(
-                        "Open the sign-in page and sign in. Then paste the code it shows here."
+                        "Copy the code from the sign-in page. Return to Conductor on this device and paste it here."
                     ),
                 })
             )),

@@ -311,6 +311,7 @@ fn KindForm(form: ui::KindForm) -> Element {
     let host = use_context::<HostId>();
     let provider = form.provider;
     let kind = form.kind.clone();
+    let setup_kind = form.kind.clone();
     rsx! {
         form {
             class: "credential-kind",
@@ -326,6 +327,19 @@ fn KindForm(form: ui::KindForm) -> Element {
                 Field { key: "{field.field}", field }
             }
             button { r#type: "submit", class: "start", disabled: form.save_disabled, "{form.save_label}" }
+            if let Some(button) = form.setup_sign_in {
+                button {
+                    r#type: "button",
+                    class: "start",
+                    "aria-label": "{button.label}",
+                    disabled: button.disabled,
+                    onclick: move |_| shell.dispatch(Intent::Credential(host, CredentialIntent::StartCredentialSignIn {
+                        provider,
+                        kind: setup_kind.clone(),
+                    })),
+                    "{button.text}"
+                }
+            }
         }
     }
 }

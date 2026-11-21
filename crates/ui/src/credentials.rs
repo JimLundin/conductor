@@ -34,6 +34,10 @@ pub enum CredentialIntent {
         provider: Provider,
         kind: String,
     },
+    StartCredentialSignIn {
+        provider: Provider,
+        kind: String,
+    },
     Remove(InstanceId),
     /// Runs the instance's CLI's own sign-in on the host.
     StartSignIn(InstanceId),
@@ -196,6 +200,7 @@ pub struct KindForm {
     pub fields: Vec<FieldView>,
     pub save_label: String,
     pub save_disabled: bool,
+    pub setup_sign_in: Option<SignInButton>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +288,9 @@ impl Forms {
                     None => (self, Vec::new()),
                 }
             }
+            CredentialIntent::StartCredentialSignIn { provider, kind } => {
+                self.setup_sign_in(provider, kind, catalog, at)
+            }
             CredentialIntent::Remove(instance) => {
                 let body = CommandBody::RemoveInstance {
                     instance: instance.clone(),
@@ -342,8 +350,41 @@ impl Forms {
             }
             CredentialIntent::Type { .. }
             | CredentialIntent::Save { .. }
+            | CredentialIntent::StartCredentialSignIn { .. }
             | CredentialIntent::Remove(_) => (self, Vec::new()),
         }
+    }
+
+    fn setup_sign_in(
+        mut self,
+        provider: Provider,
+        kind: String,
+        catalog: &Catalog,
+        at: At,
+    ) -> (Self, Vec<Effect>) {
+        let requested_label = catalog
+            .of(provider)
+            .and_then(|info| info.form(&kind))
+            .filter(|form| form.setup_sign_in.is_some())
+            .and_then(|form| {
+                self.drafts
+                    .get(&(provider, kind.clone()))
+                    .and_then(|draft| setup_label(form, draft))
+            });
+        let Some(label) = requested_label else {
+            return (self, Vec::new());
+        };
+        let instance = InstanceId::own(provider);
+        let target = heading(at.host, &instance);
+        let body = CommandBody::StartCredentialSignIn {
+            instance: instance.clone(),
+            kind,
+            label,
+        };
+        self.forget_sign_in(&instance);
+        let mut effects = self.sign_in(instance, body, at);
+        effects.push(Effect::Focus(Focus::Element(target)));
+        (self, effects)
     }
 
     fn sign_in(
@@ -478,7 +519,20 @@ impl Forms {
             add: catalog
                 .0
                 .iter()
-                .map(|(&provider, info)| self.forms(provider, info, host))
+                .map(|(&provider, info)| {
+                    let own = InstanceId::own(provider);
+                    let busy = self.sent.get(&Subject::Instance(own.clone()))
+                        == Some(&Sent::Sending)
+                        || matches!(
+                            sign_ins.get(&own),
+                            Some(
+                                SignInStep::Starting
+                                    | SignInStep::Open { .. }
+                                    | SignInStep::Finishing
+                            )
+                        );
+                    self.forms(provider, info, host, busy)
+                })
                 .collect(),
             removed: self.removed(instances, host),
             name,
@@ -529,6 +583,7 @@ impl Forms {
         provider: Provider,
         info: &ProviderInfo,
         host: &str,
+        busy: bool,
     ) -> ProviderForms {
         let sent = self.sent.get(&Subject::Add(provider));
         ProviderForms {
@@ -537,7 +592,7 @@ impl Forms {
             forms: info
                 .credentials
                 .iter()
-                .map(|form| self.form(provider, form, sent))
+                .map(|form| self.form(provider, form, sent, busy))
                 .collect(),
             outcome: sent.and_then(|last| outcome(last, host)),
         }
@@ -565,6 +620,7 @@ impl Forms {
         provider: Provider,
         form: &CredentialForm,
         sent: Option<&Sent>,
+        busy: bool,
     ) -> KindForm {
         let empty = BTreeMap::new();
         let draft = self
@@ -589,6 +645,13 @@ impl Forms {
                     value: draft.get(&field.id).cloned().unwrap_or_default(),
                 })
                 .collect(),
+            setup_sign_in: form.setup_sign_in.as_ref().map(|text| {
+                SignInButton {
+                    text: text.clone(),
+                    label: format!("{text}: {}", form.label),
+                    disabled: busy || setup_label(form, draft).is_none(),
+                }
+            }),
             save_label: format!("Save {}", form.label.to_lowercase()),
             save_disabled: sent == Some(&Sent::Sending)
                 || form.fields.iter().any(|field| {
@@ -701,12 +764,26 @@ const fn open_says(code: bool, paste: bool) -> &'static str {
             "Open the sign-in page, sign in, and enter this code there. This page follows along."
         }
         (false, true) => {
-            "Open the sign-in page and sign in. Then paste the code it shows here."
+            "Copy the code from the sign-in page. Return to Conductor on this device and paste it here."
         }
         (false, false) => {
             "Open the sign-in page and sign in there. This page follows along."
         }
     }
+}
+
+fn setup_label(
+    form: &CredentialForm,
+    draft: &BTreeMap<String, String>,
+) -> Option<String> {
+    let mut fields =
+        form.fields.iter().filter(|field| field.id == form.account);
+    let field = fields.next()?;
+    if field.kind != FieldKind::Text || fields.next().is_some() {
+        return None;
+    }
+    let label = sent_value(field, draft);
+    (!label.is_empty()).then_some(label)
 }
 
 /// What a field sends: a secret as typed, anything else trimmed.

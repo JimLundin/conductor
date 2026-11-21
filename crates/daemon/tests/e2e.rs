@@ -19,6 +19,7 @@ use client::host_view::{
 };
 use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
+mod credential_sign_in;
 mod disk;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode};

@@ -371,6 +371,15 @@ host's sign-in variables scrubbed. No sign-in was completed.
   That code wasn't accepted. It may be incomplete, expired, already used,
   or from an earlier sign-in attempt. Sign in again to get a new code.`
   (`fixtures/claude/sign-in-refused.txt`) and exits 1.
-- What it prints on success, `Login successful.`, is from the binary's
-  strings, not observed; the host goes by the exit code and the sign-in
-  check after it.
+On 2026-11-21 the same pin completed `auth login --claudeai` on pipes on
+WSL2. After the operator returned the browser code, the CLI exited zero
+and `auth status` reported `loggedIn: true` in the isolated home.
+
+In the same experiment, the pipe probe for `claude setup-token` timed out
+before it recognized an authorization URL. A private pseudo-terminal
+rendered the manual authorization link. After the operator scanned it
+from the phone and supplied the return code, the CLI displayed
+`Long-lived authentication token created successfully!` and a colored
+token. The probe verified both in memory and closed the CLI. The app uses
+this terminal flow for setup tokens and its existing paired connection
+for the one-time return code.

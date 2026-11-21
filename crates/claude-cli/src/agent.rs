@@ -12,10 +12,13 @@ use claude::runtime::{Call, Effect, Input, Refusal, Spawn};
 use claude::{
     ClaudeEvent, PermissionMode, Resume, SettingSource, VersionPolicy,
 };
-use proto::{Credential, Models};
+use proto::{Credential, Models, SignInCode};
 use runtime::agent::{self, Agent, Performed};
-use runtime::{Configuring, Instance, Launch, ProviderInstance, Runtime};
-use tokio::sync::{mpsc, watch};
+use runtime::{
+    Configuring, CredentialSigningIn, Instance, Launch, ProviderInstance,
+    Runtime,
+};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::session::{ClaudeOptions, ClaudeSession, Error, sandbox};
 
@@ -48,6 +51,25 @@ impl ProviderInstance for ClaudeInstance {
                 named: None,
                 models: probe(&self.launch, credential).await,
             })
+        })
+    }
+
+    fn credential_sign_in(
+        &self,
+        kind: &str,
+        account_label: String,
+        link: oneshot::Sender<String>,
+        code: oneshot::Receiver<SignInCode>,
+    ) -> Option<CredentialSigningIn<'_>> {
+        (kind == claude::SETUP_TOKEN).then(|| {
+            let signing_in: CredentialSigningIn<'_> =
+                Box::pin(crate::setup_token::sign_in(
+                    &self.launch,
+                    account_label,
+                    link,
+                    code,
+                ));
+            signing_in
         })
     }
 

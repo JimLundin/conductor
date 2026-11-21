@@ -274,13 +274,15 @@ subagents() {
   expect_commands subagents 1 send_message accepted
 }
 
+seed_claude_account_models() {
+  local host=$1 label=$2 account_dir
+  account_dir=claude-$(printf '%s' "$label" | sha256sum | cut -c1-16)
+  mkdir -p "$scratch/$host/work/$account_dir"
+  head -2 "$recordings/claude-killed.jsonl" >"$scratch/$host/work/$account_dir/stdout.jsonl"
+}
+
 credentials() {
-  # The instance of the gateway's account lists its models in its own work
-  # dir, named by a hash of the account (host::registry::dir).
-  local api
-  api=claude-$(printf '%s' https://gateway.conductor-test.invalid | sha256sum | cut -c1-16)
-  mkdir -p "$scratch/credentials/work/$api"
-  head -2 "$recordings/claude-killed.jsonl" >"$scratch/credentials/work/$api/stdout.jsonl"
+  seed_claude_account_models credentials https://gateway.conductor-test.invalid
   start_host credentials
   echo
   echo "## Credentials, webkit"
@@ -295,6 +297,7 @@ credentials() {
 }
 
 sign_in() {
+  seed_claude_account_models sign-in "Phone setup"
   codex=$PWD/crates/codex-cli/tests/fake-codex.sh start_host sign-in
   echo
   echo "## Sign-in from the app, webkit"
@@ -304,11 +307,12 @@ sign_in() {
   host_log sign-in
   echo
   expect_commands sign-in 3 start_sign_in accepted
-  expect_commands sign-in 2 submit_sign_in_code accepted
+  expect_commands sign-in 1 start_credential_sign_in accepted
+  expect_commands sign-in 3 submit_sign_in_code accepted
   expect sign-in 1 'sign-in instance=claude step=failed: Claude' 'the refused code failed the first sign-in'
-  expect sign-in 1 'sign-in instance=claude step=signed in' 'the second signed the instance in'
+  expect sign-in 2 'sign-in instance=claude step=signed in' 'the per-host and setup-token sign-ins both completed'
   expect sign-in 1 'added an instance instance=claude conductor-test@example.invalid' 'the account the CLI named became an instance'
-  expect sign-in 0 'conductor-test-sign-in-code\|conductor-test-wrong-code' 'no code is in a log line'
+  expect sign-in 0 'conductor-test-sign-in-code\|conductor-test-wrong-code\|sk-ant-oat01-conductor-synthetic' 'no code or setup token is in a log line'
   if grep -rlq 'conductor-test-sign-in-code\|conductor-test-wrong-code' "$scratch/sign-in"; then
     echo "FAILED: host sign-in: a code is in the data dir"
     return 1

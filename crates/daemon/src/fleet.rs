@@ -6,7 +6,7 @@ mod peer;
 pub(crate) use peer::{Protocol, follow_when_enrolled, refresh};
 
 pub use credentials::Sharing;
-pub(crate) use credentials::{configure, follow_credentials};
+pub(crate) use credentials::{configure, follow_credentials, share_credential};
 pub use member::Membership;
 pub(crate) type Slot = tokio::sync::watch::Sender<Option<Membership>>;
 

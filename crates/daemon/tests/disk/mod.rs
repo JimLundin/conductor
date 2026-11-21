@@ -68,6 +68,17 @@ pub fn roster(data: &Path) -> Fallible<Roster> {
     }
 }
 
+pub fn receipt_count(data: &Path) -> Fallible<u64> {
+    use redb::ReadableDatabase as _;
+
+    let database = Database::open(data.join("conductor.redb"))?;
+    let read = database.begin_read()?;
+    let receipts = read.open_table(TableDefinition::<u128, Vec<u8>>::new(
+        "command_receipts",
+    ))?;
+    Ok(receipts.len()?)
+}
+
 pub fn remove_receipt(data: &Path, id: CommandId) -> Fallible<CommandResult> {
     let database = Database::open(data.join("conductor.redb"))?;
     let write = database.begin_write()?;

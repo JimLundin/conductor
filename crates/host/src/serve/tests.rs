@@ -236,11 +236,16 @@ fn sign_in_commands_keep_no_receipt() {
             code: code(),
         },
         CommandBody::CancelSignIn { instance: work() },
+        CommandBody::StartCredentialSignIn {
+            instance: work(),
+            kind: String::from("setup"),
+            label: String::from("Work"),
+        },
     ]
     .map(|body| route(body, phone()));
     assert_eq!(
         routed.each_ref().map(Route::ledger),
-        [Ledger::Unrecorded; 3]
+        [Ledger::Unrecorded; 4]
     );
     assert_eq!(
         routed,
@@ -248,6 +253,11 @@ fn sign_in_commands_keep_no_receipt() {
             Route::SignIn(SignInOrder::Start(work())),
             Route::SignIn(SignInOrder::Submit(work(), code())),
             Route::SignIn(SignInOrder::Cancel(work())),
+            Route::SignIn(SignInOrder::Credential {
+                instance: work(),
+                kind: String::from("setup"),
+                label: String::from("Work"),
+            }),
         ]
     );
     assert_eq!(

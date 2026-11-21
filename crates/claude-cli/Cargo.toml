@@ -12,6 +12,7 @@ layer = "shell"
 agents = { path = "../agents" }
 claude = { path = "../claude" }
 install = { path = "../install" }
+portable-pty = "0.9.0"
 proto = { path = "../proto" }
 runtime = { path = "../runtime" }
 serde_json = { workspace = true, features = ["std"] }

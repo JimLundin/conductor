@@ -34,7 +34,7 @@ const refusedCode = async (
 	);
 	check(
 		(await claude.locator('.sign-in [role="status"]').innerText()) ===
-			"Open the sign-in page and sign in. Then paste the code it shows here.",
+			"Copy the code from the sign-in page. Return to Conductor on this device and paste it here.",
 		"the page says to paste the code the sign-in page shows",
 	);
 	const field = claude.getByLabel("Code from the sign-in page");
@@ -90,6 +90,60 @@ const deniedClipboard = async (run: Run): Promise<void> => {
 	await page
 		.getByRole("button", { name: "Sign in: Codex", exact: true })
 		.waitFor({ timeout: patience });
+};
+
+const createSetupToken = async (run: Run): Promise<void> => {
+	const { page, patience } = run;
+	const { check, waitFor } = tools(run);
+	const form = page.getByRole("form", { name: "Claude setup token" });
+	const label = "Phone setup";
+	await form.getByLabel("Public account label").fill(label);
+	await form
+		.getByRole("button", {
+			name: "Sign in to create a token: Claude setup token",
+		})
+		.click();
+	const claude = claudeRegion(page);
+	const link = claude.getByRole("link", { name: "Open the sign-in page" });
+	await link.waitFor({ timeout: patience });
+	const context = page.context();
+	const authorize = AUTHORIZE + "**";
+	await context.route(authorize, async (route) => {
+		await route.fulfill({
+			contentType: "text/html",
+			body: `<code>${CODE}</code>`,
+		});
+	});
+	try {
+		const [provider] = await Promise.all([
+			context.waitForEvent("page"),
+			link.click(),
+		]);
+		const code = await provider.locator("code").innerText();
+		await provider.close();
+		await page.reload();
+		await waitFor(LIVE);
+		await page.getByRole("button", { name: "Credentials" }).click();
+		await claude.getByLabel("Code from the sign-in page").fill(code);
+		await claude.getByRole("button", { name: "Send code" }).click();
+	} finally {
+		await context.unroute(authorize);
+	}
+	await page
+		.getByRole("region", { name: label, exact: true })
+		.locator(".credential-state")
+		.filter({ hasText: /^Claude setup token$/u })
+		.waitFor({ timeout: patience });
+	await claude
+		.locator('.sign-in [role="status"]')
+		.filter({ hasText: "Signed in on conductor." })
+		.waitFor({ timeout: patience });
+	const kept = await pageKeeps(page);
+	check(
+		!kept.includes(CODE) &&
+			!kept.includes("sk-ant-oat01-conductor-synthetic-setup-token"),
+		"the paired client completes setup without keeping the return code or the minted credential",
+	);
 };
 
 export const signIn = async (run: Run): Promise<void> => {
@@ -151,4 +205,5 @@ export const signIn = async (run: Run): Promise<void> => {
 		"a reload finds the account's instance signed in",
 	);
 	await deniedClipboard(run);
+	await createSetupToken(run);
 };

@@ -228,6 +228,7 @@ fn trace_command(command: &Command) {
         CommandBody::SetEffort { .. } => "set_effort",
         CommandBody::RemoveInstance { .. } => "remove_instance",
         CommandBody::StartSignIn { .. } => "start_sign_in",
+        CommandBody::StartCredentialSignIn { .. } => "start_credential_sign_in",
         CommandBody::SubmitSignInCode { .. } => "submit_sign_in_code",
         CommandBody::CancelSignIn { .. } => "cancel_sign_in",
         CommandBody::SyncHome => "sync_home",

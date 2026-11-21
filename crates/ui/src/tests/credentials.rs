@@ -1,11 +1,11 @@
 //! The credentials screen: what each field takes, what a sign-in forgets
 //! when it runs again, and what the host's answers say.
 
-use proto::{CommandResult, SignInStep};
+use proto::{CommandBody, CommandResult, FieldKind, Provider, SignInStep};
 
 use super::{
-    HOST, answer, claude, claude_forms, id, paired, pane_of, roster, run,
-    sign_in, sign_in_of, signed_in, signing, text, two_claudes,
+    HOST, answer, claude, claude_forms, id, paired, pane_of, roster, run, sent,
+    sign_in, sign_in_of, signed_in, signing, text, two_claudes, welcomed,
 };
 use crate::{CredentialIntent, Intent, Place, State};
 
@@ -161,4 +161,68 @@ fn a_credential_reply_cannot_fill_the_outcome_of_a_new_visit() {
     );
     assert_eq!(pane_of(&late), pane_of(&returned));
     assert_eq!(ignored, []);
+}
+
+#[test]
+fn credential_setup_uses_only_the_public_label_and_runs_on_the_own_instance() {
+    let mut linked = welcomed(HOST, "desk", claude(signed_in()), None);
+    if let Intent::Link(_, client::link::Update::Welcome(welcome)) = &mut linked
+        && let Some(form) = welcome
+            .catalog
+            .0
+            .get_mut(&Provider::Claude)
+            .and_then(|info| info.credentials.first_mut())
+        && let Some(account) = form.fields.first_mut()
+    {
+        form.setup_sign_in = Some(text("Get a token"));
+        account.kind = FieldKind::Text;
+    }
+    let start = sign_in(CredentialIntent::StartCredentialSignIn {
+        provider: Provider::Claude,
+        kind: text("gateway"),
+    });
+    let typed = |field, value| {
+        sign_in(CredentialIntent::Type {
+            provider: Provider::Claude,
+            kind: text("gateway"),
+            field: text(field),
+            text: text(value),
+        })
+    };
+    let (idle, too_soon) = run(
+        paired(),
+        Vec::from([linked, Intent::Show(Place::Credentials), start.clone()]),
+    );
+    let (ready, _) = run(
+        idle.clone(),
+        Vec::from([
+            typed("base_url", " Work "),
+            typed("token", "synthetic-private"),
+        ]),
+    );
+    let (starting, effects) = run(ready.clone(), Vec::from([start]));
+    let setup_disabled = |state: &State| {
+        pane_of(state)
+            .and_then(|pane| pane.add.into_iter().next())
+            .and_then(|provider| provider.forms.into_iter().next())
+            .and_then(|form| form.setup_sign_in)
+            .map(|button| button.disabled)
+    };
+    assert_eq!(sent(&too_soon), []);
+    assert_eq!(
+        [
+            setup_disabled(&idle),
+            setup_disabled(&ready),
+            setup_disabled(&starting)
+        ],
+        [Some(true), Some(false), Some(true)]
+    );
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::StartCredentialSignIn {
+            instance: id("claude"),
+            kind: text("gateway"),
+            label: text("Work"),
+        }]
+    );
 }

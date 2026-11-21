@@ -1259,19 +1259,16 @@ Built: the per-host subscription sign-in of each provider, on one host.
    last step, `SignedIn { instances }`, records what the host ran at completion.
    Subscribers receive the current availability through `Feed::Instances`. A CLI the host was given (`--cli`) is checked the same way
    after a sign-in from the app, though it isn't at start.
-6. **Claude, app-assisted token minting (pending E1).** The pinned CLI's
-   `setup-token --help` confirms the command. The browser steps, stdin
-   protocol and token output format on pipes still need an E1 walkthrough
-   in an isolated `CLAUDE_CONFIG_DIR`. With the pinned managed CLI, verify
-   that the URL can open on the phone, that one code sent to stdin completes
-   the run, and that successful stdout has a reliable token boundary the host
-   can recognize. Check whether a terminal is required. Confirm the process
-   status, cancellation and refusal paths, and that the link, short-lived
-   code, and raw CLI output never reach logs, receipts, or app storage.
-   Complete a turn with the token supplied through the app and an
-   independent turn after the per-host sign-in fallback. Verify the default
-   CLI homes stay untouched. Use E2 to verify shared use. Early revocation
-   remains unverified.
+6. **Claude setup token from the app.** The owner gives the credential a
+   public account label and chooses **Sign in to create a token**. The host
+   runs the pinned CLI's `setup-token` in a private pseudo-terminal. On the
+   paired phone the owner opens Claude's link, then pastes Claude's one-time
+   return code into Conductor on that same phone. The host sends it to the
+   waiting CLI. After Claude reports success and prints the long-lived
+   token, the host saves it through the credential store and refreshes the
+   named instance. The phone receives the instance status. The per-host
+   login still runs on pipes. Multi-host token use awaits E2 (§6.9), and
+   early revocation remains unverified.
 
 **Live only, stored nowhere.** The steps, `Starting`, `Open { url, code,
 paste }`, `Finishing`, `SignedIn { instances }`, `Failed { reason }` and
@@ -1635,7 +1632,20 @@ the log.
 
 ### 6.9 Experiments
 
-None of these has been run. Each touches a real Claude or ChatGPT account.
+**E1, 2026-11-21.** With pinned Claude Code 2.1.316 on Ubuntu 26.04.1
+x86-64 under WSL2, `claude auth login --claudeai` printed a link on
+pipes and accepted the returned code on stdin. In the isolated profile,
+`claude auth status` reported signed in. After logout it reported signed
+out. For `claude setup-token`, the pipe probe timed out after 120 seconds
+without recognizing a link. A fresh pseudo-terminal produced a sign-in
+link. On the first terminal attempt, the verifier received a return code but
+could not establish issuance. On the second, the owner scanned a QR for the
+manual authorization link and entered the return code. The runner observed
+both the CLI's success message and the printed token after stripping terminal
+colors, then closed the CLI and discarded the token. This was a CLI probe;
+the code was entered on the test computer.
+
+E2–E5 still need live observations.
 
 **Owner consent (2026-11-12).** Each experiment may run in the phase that
 needs it, in scratch `CLAUDE_CONFIG_DIR` and `CODEX_HOME` directories only,
@@ -1651,7 +1661,7 @@ better where one exists.
 | E4 | Does a Claude session resume on another machine with a different working directory? | On A, start a session with a scratch `CLAUDE_CONFIG_DIR` and `CLAUDE_CODE_PROJECT_DIR_NAME`, do two turns that read and edit files. Copy the project directory and the git branch to B under a different path, run `claude --resume <id>` from the new worktree with the stream-json flags, and ask what it did before. Check that it answers from history and edits the new path. | Uses the account's quota; an API key works and avoids the subscription. |
 | E5 | Does Codex `thread/resume` find a copied rollout by id and honour `cwd`? | The same as E4 with a scratch `CODEX_HOME`: copy the rollout to the same relative path on B, call `thread/resume { threadId, cwd }`, run a turn, and check the command's working directory. | Uses quota; an API key works. |
 
-E1 decides whether the Claude sign-in needs a pseudo-terminal. E2 confirms
+E1 establishes the two Claude input modes. E2 tests
 the shared token and settles the fallback. E3 decides whether Codex by
 ChatGPT can run on several hosts at once. E4 and E5 decide whether moving
 sessions is buildable as designed. Run each before the phase that needs it:

@@ -143,6 +143,7 @@ fn catalog() -> Catalog {
                 field("token", FieldKind::Secret),
             ]),
             account: text("base_url"),
+            setup_sign_in: None,
         }]),
     };
     Catalog(BTreeMap::from([

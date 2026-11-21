@@ -4,7 +4,7 @@
 # `--version` answers as the real CLI does, so a host finds it available.
 [ "$1" = --version ] && { echo "fake-claude"; exit 0; }
 # `auth login` and `auth status` sign the private home in (fixtures/fake-login.py).
-[ "$1" = auth ] && exec /usr/bin/python3 -I "${0%/*}/../../../fixtures/fake-login.py" claude "$@"
+{ [ "$1" = auth ] || [ "$1" = setup-token ]; } && exec /usr/bin/python3 -I "${0%/*}/../../../fixtures/fake-login.py" claude "$@"
 # Each run appends its arguments to argv.txt, one per line, after a `run`
 # line, for tests of what a host passes its CLI.
 # The arguments name the variables it records (fixtures/fake-cli.py).

@@ -1,10 +1,10 @@
 use agents::{Failure, Invocation, Pick, SignIn as Flow, Word};
 use proto::{
-    Account, CommandResult, Instance, InstanceId, Instances, Provider,
-    Rejection, SignIn, SignInCode, SignInStep,
+    Account, CommandResult, Credential, Instance, InstanceId, Instances,
+    Provider, Rejection, SignIn, SignInCode, SignInStep,
 };
 
-use super::{Effect, Key, Login, Run, SignIns, release};
+use super::{CredentialTarget, Effect, Key, Login, Run, SignIns, release};
 use crate::registry::AccountAdoption;
 
 fn id() -> InstanceId {
@@ -442,4 +442,42 @@ fn a_failed_input_write_stops_only_the_matching_run() {
         ],
     );
     assert_eq!(sign_ins.running(), []);
+}
+
+#[test]
+fn cancelled_credential_runs_cannot_publish_or_save_and_refresh_must_succeed() {
+    let mut sign_ins = SignIns::default();
+    let target = CredentialTarget {
+        destination: InstanceId::named(id().provider, "work"),
+        kind: String::from("setup"),
+    };
+    let credential = Credential {
+        kind: target.kind.clone(),
+        values: alloc::collections::BTreeMap::new(),
+    };
+    let url = || String::from("https://sign.example/in?state=1");
+
+    let _ = sign_ins.start_credential(id(), target.clone());
+    let _ = sign_ins.cancel(id());
+    let _ = sign_ins.start_credential(id(), target.clone());
+    assert_eq!(sign_ins.credential_link(&key(1), url()), []);
+    assert_eq!(
+        sign_ins.credential_created(&key(1), Some(credential.clone())),
+        []
+    );
+    assert_eq!(
+        sign_ins.credential_link(&key(2), url()),
+        [step(open(None, true))]
+    );
+
+    let _ = sign_ins.submit(id(), code());
+    assert_eq!(
+        sign_ins.credential_created(&key(2), Some(credential.clone())),
+        [Effect::StoreCredential(key(2), target, credential)]
+    );
+    assert_eq!(
+        sign_ins
+            .listed(&key(2), CommandResult::Instances(Instances::default())),
+        [failed("the host could not save and refresh the credential")]
+    );
 }

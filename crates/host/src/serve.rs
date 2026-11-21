@@ -211,6 +211,11 @@ pub enum HomeOrder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SignInOrder {
     Start(InstanceId),
+    Credential {
+        instance: InstanceId,
+        kind: String,
+        label: String,
+    },
     Submit(InstanceId, SignInCode),
     Cancel(InstanceId),
 }
@@ -348,13 +353,15 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         CommandBody::SetCredential {
             provider,
             credential,
-        } => Route::Configure(Configure::SetCredential {
-            provider,
-            credential,
-        }),
+        } => set_credential(provider, credential),
         CommandBody::RemoveInstance { instance } => {
             Route::Configure(Configure::Remove(instance))
         }
+        CommandBody::StartCredentialSignIn {
+            instance,
+            kind,
+            label,
+        } => credential_sign_in(instance, kind, label),
         CommandBody::StartSignIn { instance } => {
             Route::SignIn(SignInOrder::Start(instance))
         }
@@ -365,6 +372,25 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             Route::SignIn(SignInOrder::Cancel(instance))
         }
     }
+}
+
+const fn set_credential(provider: Provider, credential: Credential) -> Route {
+    Route::Configure(Configure::SetCredential {
+        provider,
+        credential,
+    })
+}
+
+const fn credential_sign_in(
+    instance: InstanceId,
+    kind: String,
+    label: String,
+) -> Route {
+    Route::SignIn(SignInOrder::Credential {
+        instance,
+        kind,
+        label,
+    })
 }
 
 const fn reply(

@@ -19,7 +19,10 @@ pub mod runtime;
 mod sign_in;
 pub mod transcript;
 
-pub use credentials::{ClaudeCredential, account, credential, info};
+pub use credentials::{
+    ClaudeCredential, SETUP_TOKEN, account, credential, info,
+    setup_token_credential,
+};
 pub use driver::{CallRequest, Effect, Failure, Input, Problem, Session, Then};
 pub use launch::{
     Launch, Resume, SANDBOX_TOOLS, Sandbox, SettingSource, VersionPolicy,
@@ -33,4 +36,7 @@ pub use protocol::{
     PermissionRequestId, Role, SessionId, UnsupportedVersion, applied,
     check_version, encode, models, parse_line,
 };
-pub use sign_in::sign_in;
+pub use sign_in::{
+    SetupTokenOutput, setup_token_code, setup_token_link, setup_token_run,
+    sign_in,
+};

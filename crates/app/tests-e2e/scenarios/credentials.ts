@@ -146,10 +146,10 @@ export const credentials = async (run: Run): Promise<void> => {
 		(await token.inputValue()) === "",
 		"the token field is empty once sent",
 	);
-	check(
-		(await add.getByRole("status").innerText()) === NOTHING_KEPT,
-		"the form says the app keeps nothing",
-	);
+	await add
+		.getByRole("status")
+		.and(add.getByText(NOTHING_KEPT, { exact: true }))
+		.waitFor({ timeout: patience });
 	check(
 		(await gatewayRegion.locator(".credential-provider").innerText()) ===
 			"Claude Code",
@@ -173,11 +173,10 @@ export const credentials = async (run: Run): Promise<void> => {
 		.getByRole("button", { name: `Remove ${GATEWAY}` })
 		.click();
 	await gatewayRegion.waitFor({ state: "detached", timeout: patience });
-	check(
-		(await add.getByRole("status").first().innerText()) ===
-			"Removed from conductor.",
-		"the removal is confirmed",
-	);
+	await add
+		.getByRole("status")
+		.and(add.getByText("Removed from conductor.", { exact: true }))
+		.waitFor({ timeout: patience });
 	check(
 		(await page.evaluate(() => document.activeElement?.id))?.endsWith(
 			"-add-instance",

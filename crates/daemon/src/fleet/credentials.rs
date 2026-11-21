@@ -65,20 +65,35 @@ async fn share(
                 .map_err(|reason| Rejection::InvalidCredential { reason })
         });
     let result = match resolved_account {
-        Ok(account) => fleet
-            .change_credentials(|roster| {
-                host::fleet::store(
-                    roster,
-                    InstanceId { provider, account },
-                    credential,
-                    sharing,
-                );
-            })
+        Ok(account) => {
+            share_credential(
+                fleet,
+                InstanceId { provider, account },
+                credential,
+                sharing,
+            )
             .await
-            .map_err(|_| Rejection::FleetUnavailable),
+        }
         Err(rejection) => Err(rejection),
     };
     Ok(result)
+}
+
+pub async fn share_credential(
+    fleet: &Membership,
+    id: InstanceId,
+    credential: &proto::Credential,
+    sharing: Sharing,
+) -> Result<(), Rejection> {
+    if sharing == Sharing::Local {
+        return Ok(());
+    }
+    fleet
+        .change_credentials(|roster| {
+            host::fleet::store(roster, id, credential, sharing);
+        })
+        .await
+        .map_err(|_| Rejection::FleetUnavailable)
 }
 
 async fn remove(

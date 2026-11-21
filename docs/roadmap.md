@@ -81,7 +81,8 @@ What is built and what comes next. Update it in the commit that changes it.
   `conductor/24`.
 
 - **Notifications, subagent supervision and task handoffs**. These
-  features share wire protocol ALPN `conductor/25`.
+  features introduced wire protocol ALPN `conductor/25`. Credential sign-in
+  from the paired app uses `conductor/26`.
 
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
   worktree from committed HEAD, an initial checkpoint and a snapshot per
@@ -246,9 +247,10 @@ Each item ends in something to try. The fleet design is
    Anthropic and OpenAI API keys and a Claude setup token obtained
    separately. The host supports macOS Keychain, Windows Credential
    Manager and Linux Secret Service. See [credential store migration and
-   recovery](credential-store.md). Acquiring a setup token from the phone
-   depends on E1. Token revocation and native keystore verification are
-   tracked in #12. The [hands-on checks](manual-acceptance.md) cover phone sign-in.
+   recovery](credential-store.md). The Claude setup-token form can also run
+   the CLI on the host. Open the provider page and submit its return code
+   on the same paired phone. Token revocation and native keystore verification
+   are tracked in #12.
    *Try:* on a fresh host, sign in to Claude and Codex from the
    iPhone without touching the host's keyboard.
 4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard

@@ -413,6 +413,7 @@ fn competing_adoptions_and_a_stale_credential_update_keep_each_account()
     store.save_change(
         &roster,
         &Change::Added(credential_id.clone()),
+        None,
         None::<(_, fn(&Roster) -> proto::Instances)>,
     )?;
 
@@ -524,6 +525,7 @@ fn removal_result_survives_reopening_before_the_command_receipt()
     store.save_change(
         &Roster::default(),
         &Change::Removed(instance.clone()),
+        None,
         Some((id, |_: &Roster| expected.clone())),
     )?;
     drop(store);

@@ -103,6 +103,7 @@ impl Fixture {
             store.save_change(
                 &roster,
                 &super::Change::Added(instance.clone()),
+                None,
                 None::<(_, fn(&Roster) -> Instances)>,
             )?;
         }
@@ -299,6 +300,7 @@ async fn a_cancelled_refresh_settles_its_availability_and_waiter()
         &std::collections::BTreeSet::new(),
         Reply {
             removal: None,
+            credential: None,
             channel,
         },
     );

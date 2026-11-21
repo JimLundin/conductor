@@ -58,6 +58,11 @@ pub struct SigningLease {
     _lock: Arc<File>,
 }
 
+pub struct CredentialLease {
+    instance: InstanceId,
+    _lock: File,
+}
+
 pub struct RecoveredAdoption {
     pub account: AccountAdoption,
     pub roster: Roster,
@@ -137,18 +142,40 @@ impl Store {
         self.complete(&mut adoption, AdoptionReplay::Install(next))
     }
 
+    pub fn claim_credential(
+        &self,
+        instance: InstanceId,
+    ) -> anyhow::Result<CredentialLease> {
+        let _lock = self.lock()?;
+        self.ensure_idle()?;
+        let lock = self.lease(&instance)?;
+        Ok(CredentialLease {
+            instance,
+            _lock: lock,
+        })
+    }
+
     pub fn save_change(
         &self,
         planned: &Roster,
         change: &Change,
+        claim: Option<&CredentialLease>,
         removal: Option<(CommandId, impl FnOnce(&Roster) -> Instances)>,
     ) -> anyhow::Result<Roster> {
         let _lock = self.lock()?;
         self.ensure_idle()?;
-        let _instance = match change {
-            Change::Removed(instance) => Some(self.lease(instance)?),
-            _ => None,
+        let changed = match change {
+            Change::Credential(instance)
+            | Change::Added(instance)
+            | Change::Removed(instance) => Some(instance),
+            Change::SignedIn(_) => None,
         };
+        let _instance = changed
+            .filter(|instance| {
+                claim.is_none_or(|lease| &lease.instance != *instance)
+            })
+            .map(|instance| self.lease(instance))
+            .transpose()?;
         let mut credentials = self.read_credentials()?.unwrap_or_default();
         let mut roster =
             Stored::Opened(credentials.roster).roster(&self.catalog);

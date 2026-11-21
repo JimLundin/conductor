@@ -48,6 +48,8 @@ pub struct CredentialForm {
     /// in as, since the provider's CLI names none for it. It is shown to
     /// every client, so it is never a secret.
     pub account: String,
+    /// The action label when the host can obtain this credential via sign-in.
+    pub setup_sign_in: Option<String>,
 }
 
 /// How a provider the host runs presents itself, as its plugin describes
@@ -284,6 +286,7 @@ mod tests {
                     field("label", FieldKind::Text, false),
                 ]),
                 account: String::from("url"),
+                setup_sign_in: None,
             }]),
         }
     }

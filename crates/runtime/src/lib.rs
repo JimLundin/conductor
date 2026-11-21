@@ -8,8 +8,8 @@ mod plugin;
 pub mod transcript;
 
 pub use plugin::{
-    Configuring, Instance, Launch, Plugin, ProviderInstance, Settings,
-    TranscriptFiles,
+    Configuring, CredentialSigningIn, Instance, Launch, Plugin,
+    ProviderInstance, Settings, TranscriptFiles,
 };
 
 pub use transcript::{MAX_TRANSCRIPT_BYTES, Transcript, TranscriptFile};

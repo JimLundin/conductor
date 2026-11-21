@@ -19,18 +19,20 @@ use host::registry::{
 };
 use host::restore::{Created, Recovery, Step, events_of};
 use host::serve::{Configure, SignInOrder};
-use host::sign_in::{Effect as SignInEffect, Key, SignIns};
+use host::sign_in::{CredentialTarget, Effect as SignInEffect, Key, SignIns};
 use proto::{
-    Catalog, ClientName, CommandId, CommandResult, Effort, Event, EventKind,
-    InstanceId, Instances, ModelId, Models, Provider, Rejection, Roster,
-    SessionId, SignIn, StartAt,
+    Catalog, ClientName, CommandId, CommandResult, Credential, Effort, Event,
+    EventKind, InstanceId, Instances, ModelId, Models, Provider, Rejection,
+    Roster, SessionId, SignIn, StartAt,
 };
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::{Id, JoinSet};
 
 use crate::Stopped;
-use crate::credentials::{RecoveredAdoption, SigningLease, Store, Stored};
+use crate::credentials::{
+    CredentialLease, RecoveredAdoption, SigningLease, Store, Stored,
+};
 use crate::home::{HomeClone, Placement};
 use crate::log::Log;
 use crate::session::{Order, Session, Told};
@@ -50,6 +52,7 @@ pub type Launcher = host::registry::Launcher<Instance>;
 
 struct Reply {
     removal: Option<CommandId>,
+    credential: Option<CredentialLease>,
     channel: oneshot::Sender<CommandResult>,
 }
 type Core = host::registry::Registry<Instance, Session, Reply>;
@@ -479,6 +482,23 @@ impl RegistryActor {
                 let running = self.running_sessions().await?;
                 self.start_sign_in(instance, &running)
             }
+            SignInOrder::Credential {
+                instance,
+                kind,
+                label,
+            } => {
+                let running = self.running_sessions().await?;
+                match self.prepare_credential_sign_in(
+                    &instance, kind, &label, &running,
+                ) {
+                    Ok(target) => {
+                        self.sign_ins.start_credential(instance, target)
+                    }
+                    Err(rejection) => {
+                        (CommandResult::Rejected(rejection), Vec::new())
+                    }
+                }
+            }
             SignInOrder::Submit(instance, code) => {
                 self.sign_ins.submit(instance, code)
             }
@@ -534,6 +554,102 @@ impl RegistryActor {
         Ok(Some(settings))
     }
 
+    fn prepare_credential_sign_in(
+        &mut self,
+        source: &InstanceId,
+        kind: String,
+        label: &str,
+        running: &BTreeSet<SessionId>,
+    ) -> Result<CredentialTarget, Rejection> {
+        if self.sign_ins.is_running(source) {
+            return Err(Rejection::SignInRunning);
+        }
+        let target = CredentialTarget::requested(
+            self.core.catalog(),
+            source,
+            kind,
+            label,
+        )?;
+        if let Some(reason) =
+            self.core.instance_in_use(&[&target.destination], running)
+        {
+            return Err(reason);
+        }
+        self.core
+            .settings(source)
+            .ok_or(Rejection::UnknownInstance)?;
+        let lease = self.store.signing(source).map_err(|err| {
+            Rejection::InstanceUnavailable {
+                reason: format!("{err:#}"),
+            }
+        })?;
+        self.leases.insert(source.clone(), lease);
+        Ok(target)
+    }
+
+    async fn save_credential_sign_in(
+        &mut self,
+        key: Key,
+        target: CredentialTarget,
+        credential: Credential,
+    ) -> Result<(), Stopped> {
+        let running = self.running_sessions().await?;
+        let (channel, answer) = oneshot::channel();
+        let mut reply = Reply {
+            removal: None,
+            credential: None,
+            channel,
+        };
+        let admitted = self.admit_credential(&target, &credential, &running);
+        let result = match admitted {
+            Ok(claim) => {
+                reply.credential = Some(claim);
+                self.providers
+                    .share_credential(target.destination.clone(), &credential)
+                    .await
+            }
+            Err(rejection) => Err(rejection),
+        };
+        let effects = match result {
+            Ok(()) => self.core.set_credential(
+                target.destination.provider,
+                credential,
+                reply,
+            ),
+            Err(reason) => {
+                vec![Effect::Reply(reply, CommandResult::Rejected(reason))]
+            }
+        };
+        self.perform(effects);
+        self.runs.listen(key, answer);
+        Ok(())
+    }
+
+    fn admit_credential(
+        &self,
+        target: &CredentialTarget,
+        credential: &Credential,
+        running: &BTreeSet<SessionId>,
+    ) -> Result<CredentialLease, Rejection> {
+        if !target.accepts(self.core.catalog(), credential) {
+            return Err(Rejection::InvalidCredential {
+                reason: String::from(
+                    "the provider returned an invalid credential",
+                ),
+            });
+        }
+        if let Some(reason) =
+            self.core.instance_in_use(&[&target.destination], running)
+        {
+            return Err(reason);
+        }
+        self.store
+            .claim_credential(target.destination.clone())
+            .map_err(|err| Rejection::CredentialNotSaved {
+                reason: format!("{err:#}"),
+            })
+    }
+
     fn resume_sign_in(
         &mut self,
         requested: &InstanceId,
@@ -544,6 +660,7 @@ impl RegistryActor {
         let (channel, answer) = oneshot::channel();
         let reply = Reply {
             removal: None,
+            credential: None,
             channel,
         };
         let effects =
@@ -581,6 +698,13 @@ impl RegistryActor {
                 Err(reason) => self.sign_ins.write_failed(key, reason),
             },
             Report::Listed(result) => self.sign_ins.listed(key, result),
+            Report::CredentialLink(url) => {
+                self.sign_ins.credential_link(key, url)
+            }
+            Report::CredentialCreated(result) => {
+                self.runs.kill(key);
+                self.sign_ins.credential_created(key, result)
+            }
         }
     }
 
@@ -601,6 +725,20 @@ impl RegistryActor {
                 self.runs
                     .spawn(key, self.providers.clone(), settings, lease);
             }
+            SignInEffect::SpawnCredential(key, target) => {
+                if let Some(lease) = self.leases.get(&key.instance) {
+                    self.runs.spawn_credential(
+                        key,
+                        target,
+                        self.providers.clone(),
+                        lease.settings.clone(),
+                    );
+                }
+            }
+            SignInEffect::StoreCredential(key, target, credential) => {
+                self.save_credential_sign_in(key, target, credential)
+                    .await?;
+            }
             SignInEffect::Write(key, code) => {
                 self.runs.write(key, code);
             }
@@ -613,6 +751,7 @@ impl RegistryActor {
                 let (channel, answer) = oneshot::channel();
                 let reply = Reply {
                     removal: None,
+                    credential: None,
                     channel,
                 };
                 let running = self.running_sessions().await?;
@@ -656,7 +795,11 @@ impl RegistryActor {
         channel: oneshot::Sender<CommandResult>,
     ) -> Result<Vec<Effect>, Stopped> {
         let removal = matches!(configure, Configure::Remove(_)).then_some(id);
-        let reply = Reply { removal, channel };
+        let reply = Reply {
+            removal,
+            credential: None,
+            channel,
+        };
         Ok(match configure {
             Configure::SetCredential {
                 provider,
@@ -757,6 +900,7 @@ impl RegistryActor {
                 self.store.save_change(
                     &roster,
                     &change,
+                    reply.credential.as_ref(),
                     reply.removal.map(|id| {
                         (id, |current: &Roster| self.core.instances_of(current))
                     }),

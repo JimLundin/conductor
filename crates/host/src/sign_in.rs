@@ -5,7 +5,9 @@
 //! reads what to show the person from its output as the provider's plugin
 //! describes, sends a pasted code to its stdin, and once it exits 0 checks
 //! the home, reads the account the CLI says it signed in as, and refreshes
-//! the instance, which becomes that account's (`registry`).
+//! the instance, which becomes that account's (`registry`). Credential
+//! sign-ins create a credential in an isolated CLI process and wait for
+//! the named instance to refresh after saving it.
 //!
 //! Every step goes to the clients live and is stored nowhere: the code,
 //! the output and the link are in no event, receipt or log line.
@@ -19,8 +21,8 @@ use core::time::Duration;
 
 use agents::{SignIn as Flow, plain};
 use proto::{
-    Account, CommandResult, Instance, InstanceId, Rejection, SignIn,
-    SignInCode, SignInStep,
+    Account, Auth, Availability, Catalog, CommandResult, Credential, Instance,
+    InstanceId, Rejection, SignIn, SignInCode, SignInStep,
 };
 
 use crate::Note;
@@ -79,6 +81,62 @@ impl Login {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialTarget {
+    pub destination: InstanceId,
+    pub kind: String,
+}
+
+impl CredentialTarget {
+    /// # Errors
+    ///
+    /// The request does not name an advertised sign-in form or public account.
+    pub fn requested(
+        catalog: &Catalog,
+        source: &InstanceId,
+        kind: String,
+        label: &str,
+    ) -> Result<Self, Rejection> {
+        let account = label.trim();
+        if source.account != Account::Own
+            || account.is_empty()
+            || account.len() > 256
+            || account.chars().any(char::is_control)
+        {
+            return Err(Rejection::InvalidCredential {
+                reason: String::from(
+                    "a credential sign-in needs a valid account label",
+                ),
+            });
+        }
+        if catalog
+            .of(source.provider)
+            .and_then(|info| info.form(&kind))
+            .is_none_or(|form| form.setup_sign_in.is_none())
+        {
+            return Err(Rejection::InvalidCredential {
+                reason: String::from(
+                    "this credential kind does not support sign-in",
+                ),
+            });
+        }
+        Ok(Self {
+            destination: InstanceId::named(source.provider, account),
+            kind,
+        })
+    }
+
+    #[must_use]
+    pub fn accepts(&self, catalog: &Catalog, credential: &Credential) -> bool {
+        catalog.of(self.destination.provider).is_some_and(|info| {
+            credential.kind == self.kind
+                && info
+                    .account(credential)
+                    .is_ok_and(|account| account == self.destination.account)
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
     /// Start the CLI's sign-in in the instance's home, as its `settings`
     /// say, with its output and stdin on pipes. Report [`SignIns::spawned`],
@@ -89,6 +147,8 @@ pub enum Effect {
         key: Key,
         settings: Instance,
     },
+    SpawnCredential(Key, CredentialTarget),
+    StoreCredential(Key, CredentialTarget, Credential),
     /// Write the code to the run's stdin, as one line.
     Write(Key, SignInCode),
     Kill(Key),
@@ -119,7 +179,8 @@ struct Running {
     step: SignInStep,
     /// What the output said a failure means.
     failure: Option<String>,
-    adopting: bool,
+    committing: bool,
+    credential: Option<CredentialTarget>,
 }
 
 impl SignIns {
@@ -138,7 +199,8 @@ impl SignIns {
         let Some(settings) = known else {
             return (rejected(Rejection::UnknownInstance), Vec::new());
         };
-        let Ok(key) = self.begin(instance.clone(), SignInStep::Starting) else {
+        let Ok(key) = self.begin(instance.clone(), SignInStep::Starting, None)
+        else {
             return (rejected(Rejection::SignInRunning), Vec::new());
         };
         (
@@ -148,6 +210,71 @@ impl SignIns {
                 publish(instance, SignInStep::Starting),
             ]),
         )
+    }
+
+    pub fn start_credential(
+        &mut self,
+        instance: InstanceId,
+        target: CredentialTarget,
+    ) -> (CommandResult, Vec<Effect>) {
+        let Ok(key) = self.begin(
+            instance.clone(),
+            SignInStep::Starting,
+            Some(target.clone()),
+        ) else {
+            return (rejected(Rejection::SignInRunning), Vec::new());
+        };
+        (
+            CommandResult::Accepted,
+            Vec::from([
+                Effect::SpawnCredential(key, target),
+                publish(instance, SignInStep::Starting),
+            ]),
+        )
+    }
+
+    pub fn credential_link(&mut self, key: &Key, url: String) -> Vec<Effect> {
+        let Some(running) = self.current(key).filter(|running| {
+            running.credential.is_some() && running.step == SignInStep::Starting
+        }) else {
+            return Vec::new();
+        };
+        running.step = SignInStep::Open {
+            url,
+            code: None,
+            paste: true,
+        };
+        Vec::from([publish(key.instance.clone(), running.step.clone())])
+    }
+
+    pub fn credential_created(
+        &mut self,
+        key: &Key,
+        created: Option<Credential>,
+    ) -> Vec<Effect> {
+        let Some(running) =
+            self.current(key).filter(|running| !running.committing)
+        else {
+            return Vec::new();
+        };
+        let Some(target) = running.credential.clone() else {
+            return Vec::new();
+        };
+        if let Some(credential) = created.filter(|value| {
+            running.step == SignInStep::Finishing && value.kind == target.kind
+        }) {
+            running.committing = true;
+            Vec::from([Effect::StoreCredential(
+                key.clone(),
+                target,
+                credential,
+            )])
+        } else {
+            self.fail(
+                key,
+                String::from("the provider could not create the credential"),
+            )
+        }
     }
 
     /// Waits for the refresh after recovering a confirmed sign-in.
@@ -164,9 +291,9 @@ impl SignIns {
             .destination_for(requested)
             .map(|_| {
                 let key =
-                    self.begin(requested.clone(), SignInStep::Finishing)?;
+                    self.begin(requested.clone(), SignInStep::Finishing, None)?;
                 if let Some(running) = self.current(&key) {
-                    running.adopting = true;
+                    running.committing = true;
                 }
                 Ok(key)
             })
@@ -177,6 +304,7 @@ impl SignIns {
         &mut self,
         instance: InstanceId,
         step: SignInStep,
+        credential: Option<CredentialTarget>,
     ) -> Result<Key, Rejection> {
         if self.running.contains_key(&instance) {
             return Err(Rejection::SignInRunning);
@@ -191,7 +319,8 @@ impl SignIns {
                 seen: Vec::new(),
                 step,
                 failure: None,
-                adopting: false,
+                committing: false,
+                credential,
             },
         );
         Ok(Key { instance, run })
@@ -232,7 +361,11 @@ impl SignIns {
         &mut self,
         instance: InstanceId,
     ) -> (CommandResult, Vec<Effect>) {
-        if self.running.get(&instance).is_some_and(|run| run.adopting) {
+        if self
+            .running
+            .get(&instance)
+            .is_some_and(|run| run.committing)
+        {
             return (CommandResult::Accepted, Vec::new());
         }
         let effects =
@@ -339,7 +472,7 @@ impl SignIns {
         match result {
             Ok(account) => {
                 // The registry attempts adoption in the same turn as this effect.
-                running.adopting = true;
+                running.committing = true;
                 Vec::from([Effect::Refresh(key.clone(), account)])
             }
             Err(reason) => self.fail(key, reason),
@@ -349,15 +482,27 @@ impl SignIns {
     /// The instance refreshed, and the host answered `result`, what it
     /// runs now.
     pub fn listed(&mut self, key: &Key, result: CommandResult) -> Vec<Effect> {
-        if self.current(key).is_none() {
+        let Some(running) = self.current(key) else {
             return Vec::new();
-        }
+        };
+        let credential = running.credential.take();
         self.running.remove(&key.instance);
-        let step = match result {
-            CommandResult::Instances(instances) => {
-                SignInStep::SignedIn { instances }
-            }
-            other => SignInStep::Failed {
+        let step = match (credential, result) {
+            (expected, CommandResult::Instances(instances))
+                if expected.as_ref().is_none_or(|target| {
+                    matches!(
+                        instances.availability(&target.destination),
+                        Some(Availability::Available { auth: Auth::Stored { kind, .. }, .. })
+                            if *kind == target.kind
+                    )
+                }) => SignInStep::SignedIn { instances },
+            (Some(_), CommandResult::Rejected(Rejection::FleetUnavailable)) => SignInStep::Failed {
+                reason: String::from("the fleet could not save the credential"),
+            },
+            (Some(_), _) => SignInStep::Failed {
+                reason: String::from("the host could not save and refresh the credential"),
+            },
+            (None, other) => SignInStep::Failed {
                 reason: format!(
                     "the host could not refresh the instance: {other:?}"
                 ),

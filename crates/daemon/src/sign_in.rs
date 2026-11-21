@@ -15,10 +15,10 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use agents::{Invocation, Reported, SignIn as Flow};
-use host::sign_in::{Key, LIMIT, Login};
+use host::sign_in::{CredentialTarget, Key, LIMIT, Login};
 use install::Home;
 use install::process::{SignInRun, command, sign_in, write_line};
-use proto::{Account, CommandResult, Instance, SignInCode};
+use proto::{Account, CommandResult, Credential, Instance, SignInCode};
 use tokio::process::ChildStdin;
 
 use crate::credentials::SigningLease;
@@ -77,6 +77,8 @@ pub enum Report {
     Checked(Result<Option<Account>, String>),
     Written(Result<ChildStdin, String>),
     Listed(CommandResult),
+    CredentialLink(String),
+    CredentialCreated(Option<Credential>),
 }
 
 /// The sign-ins' tasks, each running sign-in's stdin and check, and what
@@ -85,6 +87,7 @@ pub struct Runs {
     tasks: JoinSet<()>,
     aborts: BTreeMap<Key, AbortHandle>,
     stdins: BTreeMap<Key, ChildStdin>,
+    credential_codes: BTreeMap<Key, oneshot::Sender<SignInCode>>,
     writes: BTreeMap<Key, AbortHandle>,
     exits: BTreeMap<Key, (Option<i32>, String)>,
     checks: BTreeMap<Key, Signing>,
@@ -99,6 +102,7 @@ impl Default for Runs {
             tasks: JoinSet::new(),
             aborts: BTreeMap::new(),
             stdins: BTreeMap::new(),
+            credential_codes: BTreeMap::new(),
             writes: BTreeMap::new(),
             exits: BTreeMap::new(),
             checks: BTreeMap::new(),
@@ -139,6 +143,28 @@ impl Runs {
         );
     }
 
+    pub fn spawn_credential(
+        &mut self,
+        key: Key,
+        target: CredentialTarget,
+        providers: Providers,
+        mut settings: Instance,
+    ) {
+        settings.credential = None;
+        while self.tasks.try_join_next().is_some() {}
+        let (submit, code) = oneshot::channel();
+        self.credential_codes.insert(key.clone(), submit);
+        let task = run_credential(
+            key.clone(),
+            target,
+            providers,
+            settings,
+            code,
+            self.sender.clone(),
+        );
+        self.aborts.insert(key, self.tasks.spawn(task));
+    }
+
     /// Keeps what a run that started needs later, and hands back how to
     /// read its output.
     ///
@@ -162,6 +188,10 @@ impl Runs {
     }
 
     pub fn write(&mut self, key: Key, code: SignInCode) {
+        if let Some(submit) = self.credential_codes.remove(&key) {
+            let _ = submit.send(code);
+            return;
+        }
         let stdin = self.stdins.remove(&key);
         self.start_write(key, async move {
             match stdin {
@@ -222,6 +252,7 @@ impl Runs {
         self.aborts.remove(key).iter().for_each(AbortHandle::abort);
         self.close_stdin(key);
         self.checks.remove(key);
+        self.credential_codes.remove(key);
     }
 
     /// Runs the CLI's sign-in check against the run's home, and reads
@@ -292,6 +323,40 @@ async fn run(
             report(ended.await.map_or(Report::Expired, exited));
         }
     }
+}
+
+async fn run_credential(
+    key: Key,
+    target: CredentialTarget,
+    providers: Providers,
+    settings: Instance,
+    code: oneshot::Receiver<SignInCode>,
+    sender: mpsc::UnboundedSender<(Key, Report)>,
+) {
+    let (show, mut link) = oneshot::channel();
+    let run = tokio::time::timeout(
+        LIMIT,
+        providers.credential_sign_in(
+            &key.instance,
+            &target,
+            &settings,
+            show,
+            code,
+        ),
+    );
+    tokio::pin!(run);
+    let ended = tokio::select! {
+        biased;
+        received = &mut link => {
+            if let Ok(url) = received {
+                let _ = sender.send((key.clone(), Report::CredentialLink(url)));
+            }
+            run.await
+        }
+        result = &mut run => result,
+    };
+    let report = ended.map_or(Report::Expired, Report::CredentialCreated);
+    let _ = sender.send((key.clone(), report));
 }
 
 async fn started(

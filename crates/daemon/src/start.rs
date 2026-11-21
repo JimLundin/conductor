@@ -185,6 +185,64 @@ impl Providers {
         })
     }
 
+    pub(crate) async fn share_credential(
+        &self,
+        id: InstanceId,
+        credential: &proto::Credential,
+    ) -> Result<(), proto::Rejection> {
+        let membership = self.fleet.borrow().clone();
+        if let Some(fleet) = membership {
+            let sharing = self.plugins.sharing(id.provider, credential);
+            crate::fleet::share_credential(&fleet, id, credential, sharing)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn credential_sign_in(
+        &self,
+        id: &InstanceId,
+        target: &host::sign_in::CredentialTarget,
+        instance: &Instance,
+        link: tokio::sync::oneshot::Sender<String>,
+        code: tokio::sync::oneshot::Receiver<proto::SignInCode>,
+    ) -> Option<proto::Credential> {
+        let proto::Account::Named(label) = &target.destination.account else {
+            return None;
+        };
+        let member = self.fleet.borrow().clone();
+        let revision = match member {
+            Some(fleet) => Some(fleet.revision().await),
+            None => None,
+        };
+        let isolated = credential_home(&self.data_dir).ok()?;
+        let prepared =
+            prepare(&self.plugins, isolated.path(), id, instance, revision)
+                .ok()?;
+        let provider = prepared.plugin.profile.provider;
+        let path = provider_program(
+            prepared.settings.path,
+            prepared.plugin.profile.pin,
+            &self.data_dir,
+            prepared.revision.as_ref(),
+        )
+        .await
+        .ok()?;
+        let runtime = (prepared.plugin.instance)(Launch {
+            path,
+            home: prepared.home,
+            work: prepared.work,
+            fleet_flags: prepared
+                .revision
+                .as_ref()
+                .map(|fleet| fleet.settings.provider_flags(provider)),
+        });
+        runtime
+            .credential_sign_in(&target.kind, label.clone(), link, code)?
+            .await
+            .ok()
+    }
+
     pub async fn signing(
         &self,
         id: &InstanceId,
@@ -703,6 +761,17 @@ pub async fn login(
     store.adopt(&lease, adoption)?;
     tracing::info!(target: "host", instance = %to, "signed in");
     Ok(())
+}
+
+fn credential_home(data_dir: &Path) -> std::io::Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("credential-sign-in-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
+    }
+    builder.tempdir_in(data_dir)
 }
 
 fn private_home(

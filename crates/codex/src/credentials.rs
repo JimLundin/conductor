@@ -59,6 +59,7 @@ pub fn info() -> ProviderInfo {
         )),
         credentials: Vec::from([
             CredentialForm {
+                setup_sign_in: None,
                 kind: String::from(PROVIDER),
                 label: String::from("Model provider"),
                 fields: Vec::from([
@@ -75,6 +76,7 @@ pub fn info() -> ProviderInfo {
                 account: String::from(BASE_URL),
             },
             CredentialForm {
+                setup_sign_in: None,
                 kind: String::from(API_KEY),
                 label: String::from("OpenAI API key"),
                 fields: Vec::from([

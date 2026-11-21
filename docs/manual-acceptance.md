@@ -1,13 +1,12 @@
 # Conductor hands-on checks
 
-## Start with Claude sign-in
+## Claude sign-in
 
-Have your iPhone and a disposable Claude account ready. The agent starts both sign-in flows on WSL. The Mac can wait.
-
-1. When the test runner shows the **setup-token** link, open it on your phone, approve it, and enter the returned code in the private test prompt.
-2. Repeat for the **Claude login** link. If either flow gets stuck, say which one and where.
-
-That finishes the first sitting. Keep codes and tokens out of chat.
+The CLI experiment is complete. For a new setup token, open **Credentials**
+in Conductor on the paired phone, enter a **Public account label** under
+**Claude setup token**, then tap **Sign in to create a token**. Open Claude's
+page and copy its return code. Switch back to Conductor on the same phone,
+paste the code, and tap **Send code**. The host stores the setup token.
 
 ## Later, when each feature is ready
 

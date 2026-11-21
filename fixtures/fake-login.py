@@ -36,6 +36,19 @@ fixtures = Path(__file__).parent
 home = Path(os.environ.get("CLAUDE_CONFIG_DIR" if cli == "claude" else "CODEX_HOME", "."))
 signed_in = home / ".fake-signed-in"
 
+if cli == "claude" and args == ["setup-token"]:
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        sys.exit(1)
+    sys.stdout.write((fixtures / "claude" / "sign-in.txt").read_text())
+    sys.stdout.flush()
+    if sys.stdin.readline().strip() != ACCEPTED:
+        sys.exit(1)
+    print("Long-lived authentication token created successfully!")
+    print("Your OAuth token (valid for 1 year):")
+    print("\x1b[33msk-ant-oat01-conductor-synthetic-setup-token\x1b[0m")
+    print("Store this token securely.", flush=True)
+    sys.exit(0)
+
 if args and args[-1] == "status":
     if not signed_in.exists():
         sys.exit(1)

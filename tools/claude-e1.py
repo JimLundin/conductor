@@ -2,6 +2,7 @@
 """Run the Claude E1 sign-in check in a fresh local directory over pipes."""
 
 import argparse
+from contextlib import contextmanager
 import getpass
 import json
 import os
@@ -79,6 +80,33 @@ def environment(scratch):
     return env
 
 
+@contextmanager
+def phone_qr(link, terminal):
+    viewer = subprocess.Popen(
+        [sys.executable, "-I", "-B", Path(__file__).with_name("claude-e1-qr.py")],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+    try:
+        try:
+            viewer.stdin.write(link.encode("ascii") + b"\n")
+            viewer.stdin.close()
+            with selectors.DefaultSelector() as selector:
+                selector.register(viewer.stdout, selectors.EVENT_READ)
+                ready = selector.select(5) and viewer.stdout.readline() == b"ready\n"
+        except BrokenPipeError:
+            ready = False
+        if ready:
+            print("Scan the QR in the separate window, then return here for the code.", file=terminal)
+        else:
+            print("Open this sign-in link on the other device:", link, sep="\n", file=terminal)
+        yield
+    finally:
+        if viewer.poll() is None:
+            viewer.terminate()
+        viewer.wait()
+        viewer.stdout.close()
+
+
 def read_reply(child, terminal):
     output = bytearray()
     sent = False
@@ -95,8 +123,7 @@ def read_reply(child, terminal):
             if len(output) > LIMIT:
                 raise Failed("Claude produced too much output to inspect safely.")
             if not sent and (link := authorization(output[: output.rfind(b"\n") + 1])):
-                print("Open this sign-in link on the other device:", link, sep="\n", file=terminal, flush=True)
-                with warnings.catch_warnings():
+                with phone_qr(link, terminal), warnings.catch_warnings():
                     warnings.simplefilter("error", getpass.GetPassWarning)
                     code = getpass.getpass("Paste the return code (hidden): ", stream=terminal).strip()
                 if not code or len(code) > 4096 or any(ord(char) < 33 or ord(char) > 126 for char in code):

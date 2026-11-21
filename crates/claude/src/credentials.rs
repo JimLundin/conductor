@@ -10,7 +10,7 @@ const BASE_URL: &str = "base_url";
 const TOKEN: &str = "token";
 
 const API_KEY: &str = "api_key";
-const SETUP_TOKEN: &str = "setup_token";
+pub const SETUP_TOKEN: &str = "setup_token";
 const ACCOUNT_LABEL: &str = "account_label";
 const KEY: &str = "key";
 
@@ -41,6 +41,21 @@ impl core::fmt::Debug for ClaudeCredential {
     }
 }
 
+#[must_use]
+pub fn setup_token_credential(
+    account_label: String,
+    token: String,
+) -> Credential {
+    Credential {
+        kind: String::from(SETUP_TOKEN),
+        values: [
+            (String::from(ACCOUNT_LABEL), account_label),
+            (String::from(TOKEN), token),
+        ]
+        .into(),
+    }
+}
+
 /// How Claude presents itself and the credentials it takes.
 #[must_use]
 pub fn info() -> ProviderInfo {
@@ -61,9 +76,11 @@ pub fn info() -> ProviderInfo {
                     field(TOKEN, "Token", FieldKind::Secret, ""),
                 ]),
                 account: String::from(BASE_URL),
+                setup_sign_in: None,
             },
             CredentialForm {
                 kind: String::from(API_KEY),
+                setup_sign_in: None,
                 label: String::from("Anthropic API key"),
                 fields: Vec::from([
                     field(
@@ -78,6 +95,7 @@ pub fn info() -> ProviderInfo {
             },
             CredentialForm {
                 kind: String::from(SETUP_TOKEN),
+                setup_sign_in: Some(String::from("Sign in to create a token")),
                 label: String::from("Claude setup token"),
                 fields: Vec::from([
                     field(

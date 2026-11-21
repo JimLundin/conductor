@@ -9,7 +9,8 @@ use std::sync::Arc;
 
 use agents::{Configuration, Profile};
 use install::Home;
-use proto::{Credential, SessionId};
+use proto::{Credential, SessionId, SignInCode};
+use tokio::sync::oneshot;
 
 use crate::{Runtime, Transcript};
 
@@ -38,9 +39,22 @@ pub struct Launch {
 pub type Configuring<'a> =
     Pin<Box<dyn Future<Output = Result<Configuration, String>> + Send + 'a>>;
 
+pub type CredentialSigningIn<'a> =
+    Pin<Box<dyn Future<Output = Result<Credential, String>> + Send + 'a>>;
+
 pub trait ProviderInstance: Send + Sync + Debug {
     fn configure(&self, credential: Option<Credential>) -> Configuring<'_>;
     fn start(self: Arc<Self>) -> Runtime;
+
+    fn credential_sign_in(
+        &self,
+        _kind: &str,
+        _account_label: String,
+        _link: oneshot::Sender<String>,
+        _code: oneshot::Receiver<SignInCode>,
+    ) -> Option<CredentialSigningIn<'_>> {
+        None
+    }
 }
 
 pub type Instance = Arc<dyn ProviderInstance>;
