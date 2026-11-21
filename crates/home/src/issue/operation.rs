@@ -361,21 +361,6 @@ fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
 }
 
 impl EditData {
-    #[must_use]
-    pub fn legacy_note_target(&self) -> Option<Read> {
-        matches!(self.change, Change::Issue(IssueChange::Note(_)))
-            .then(|| self.read())
-    }
-
-    fn note(&self) -> Option<String> {
-        match &self.change {
-            Change::Issue(IssueChange::Note(text)) => {
-                Some(self.rendered_note(text))
-            }
-            _ => None,
-        }
-    }
-
     pub(super) fn rendered_note(&self, text: &str) -> String {
         let body = text.trim().lines().collect::<Vec<_>>().join("\n");
         format!("{} {}: {body}", date(self.at), self.by)
@@ -390,18 +375,34 @@ impl EditData {
 }
 
 impl Edit {
+    #[must_use]
+    pub fn legacy_note_target(&self) -> Option<Read> {
+        self.legacy_note().map(|_| self.read())
+    }
+
+    fn legacy_note(&self) -> Option<&str> {
+        match (&self.identity, &self.data.change) {
+            (EditIdentity::Legacy, Change::Issue(IssueChange::Note(text))) => {
+                Some(text)
+            }
+            _ => None,
+        }
+    }
+
+    fn legacy_note_key(&self) -> Option<(IssueId, String)> {
+        self.legacy_note()
+            .map(|text| (self.data.issue, self.data.rendered_note(text)))
+    }
+
     /// Original queues have no identities. A committed local file normally
     /// contains every queued note, so excess matches are older occurrences.
-    #[must_use]
-    pub fn migrate_legacy(
-        edits: Vec<EditData>,
+    pub fn migrate_legacy_notes(
+        edits: &mut [Self],
         local: &BTreeMap<IssueId, String>,
-    ) -> Vec<Self> {
+    ) {
         let mut occurrences = BTreeMap::<_, (usize, usize)>::new();
-        for edit in &edits {
-            if let Some(note) = edit.note() {
-                occurrences.entry((edit.issue, note)).or_default().0 += 1;
-            }
+        for key in edits.iter().filter_map(Self::legacy_note_key) {
+            occurrences.entry(key).or_default().0 += 1;
         }
         for (&id, text) in local {
             if let Ok(issue) = parse(&name(id), text) {
@@ -417,19 +418,13 @@ impl Edit {
         for (queued, committed) in occurrences.values_mut() {
             *committed = committed.saturating_sub(*queued);
         }
-        edits
-            .into_iter()
-            .map(|data| {
-                let identity =
-                    data.note().map_or(EditIdentity::Legacy, |note| {
-                        let (_, next) =
-                            occurrences.entry((data.issue, note)).or_default();
-                        *next += 1;
-                        EditIdentity::NoteOccurrence(*next)
-                    });
-                Self { identity, data }
-            })
-            .collect()
+        for edit in edits {
+            if let Some(key) = edit.legacy_note_key() {
+                let (_, next) = occurrences.entry(key).or_default();
+                *next += 1;
+                edit.identity = EditIdentity::NoteOccurrence(*next);
+            }
+        }
     }
 
     #[must_use]

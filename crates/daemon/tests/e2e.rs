@@ -7277,9 +7277,20 @@ async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
 }
 
 #[tokio::test]
-async fn a_legacy_queue_keeps_two_notes_identical_to_an_older_note() -> Fallible
-{
-    let land = homeland("legacy-identical-notes")?;
+async fn an_original_queue_keeps_two_notes_identical_to_an_older_note()
+-> Fallible {
+    let original = b"\x02\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
+    legacy_identical_notes("original-identical-notes", original).await
+}
+
+#[tokio::test]
+async fn a_versioned_queue_recovers_markerless_identical_notes() -> Fallible {
+    let versioned = b"\x80\x00\x01\x02\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
+    legacy_identical_notes("versioned-identical-notes", versioned).await
+}
+
+async fn legacy_identical_notes(name: &str, queue: &[u8]) -> Fallible {
+    let land = homeland(name)?;
     let issue = proto::IssueId(42);
     let stem = issue_name(issue);
     let relative = format!("projects/alpha/issues/{stem}.md");
@@ -7309,10 +7320,8 @@ async fn a_legacy_queue_keeps_two_notes_identical_to_an_older_note() -> Fallible
             &["commit", "--quiet", "-am", &format!("Note on issue {stem}")],
         )?;
     }
-    // Two old-format Issue(Note) entries from the same signer and second.
-    let original = b"\x02\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
     let state = data.join("home-edits.state");
-    std::fs::write(&state, original)?;
+    std::fs::write(&state, queue)?;
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
     let (link, mut updates) = reopened.connect().await?;
     accepted(&link, CommandBody::SyncHome).await?;
@@ -7322,7 +7331,7 @@ async fn a_legacy_queue_keeps_two_notes_identical_to_an_older_note() -> Fallible
     reopened.shutdown().await?;
 
     let before = git(&land.home_bare, &["rev-parse", "HEAD"])?;
-    std::fs::write(state, original)?;
+    std::fs::write(state, queue)?;
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
     let (link, mut updates) = reopened.connect().await?;
     accepted(&link, CommandBody::SyncHome).await?;

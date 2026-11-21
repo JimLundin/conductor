@@ -673,41 +673,38 @@ impl Actor {
         if self.edits_loaded {
             return Ok(());
         }
-        let edits = match load_edits(&self.edits_at)? {
-            StoredEdits::Current(edits) => edits,
-            StoredEdits::Original(edits) => {
-                let converted = self.migrate_edits(edits).await?;
-                self.save_edits(converted.iter())?;
-                converted
-            }
-        };
+        let mut edits = load_edits(&self.edits_at)?;
+        if self.migrate_edits(&mut edits).await? {
+            self.save_edits(edits.iter())?;
+        }
         self.sync_edits()?;
         self.edits = PendingEdits::loaded(edits);
         self.edits_loaded = true;
         Ok(())
     }
 
-    async fn migrate_edits(
-        &self,
-        edits: Vec<EditData>,
-    ) -> Result<Vec<Edit>, String> {
+    async fn migrate_edits(&self, edits: &mut [Edit]) -> Result<bool, String> {
+        let paths: BTreeMap<_, _> = edits
+            .iter()
+            .filter_map(Edit::legacy_note_target)
+            .map(|read| (read.issue, read.path))
+            .collect();
+        if paths.is_empty() {
+            return Ok(false);
+        }
         let files = if cloned(&self.clone) {
-            self.legacy_files(&edits).await?
+            self.legacy_files(paths).await?
         } else {
             BTreeMap::new()
         };
-        Ok(Edit::migrate_legacy(edits, &files))
+        Edit::migrate_legacy_notes(edits, &files);
+        Ok(true)
     }
 
     async fn legacy_files(
         &self,
-        edits: &[EditData],
+        paths: BTreeMap<IssueId, String>,
     ) -> Result<BTreeMap<IssueId, String>, String> {
-        let paths: BTreeMap<_, _> = edits
-            .iter()
-            .filter_map(EditData::legacy_note_target)
-            .map(|read| (read.issue, read.path))
-            .collect();
         let mut files = BTreeMap::new();
         for (issue, path) in paths {
             let local = committed_blob(&self.clone, &path).await?;
@@ -1167,18 +1164,13 @@ fn read(path: &Path) -> Option<String> {
 const EDITS_VERSION: &[u8] = b"\x80\x00\x02";
 const EDITS_VERSION_1: &[u8] = b"\x80\x00\x01";
 
-enum StoredEdits {
-    Original(Vec<EditData>),
-    Current(Vec<Edit>),
-}
-
 /// The unpushed issue changes the host kept. A store that no longer reads
 /// is moved aside, so its changes are not lost unseen.
-fn load_edits(path: &Path) -> Result<StoredEdits, String> {
+fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(StoredEdits::Current(Vec::new()));
+            return Ok(Vec::new());
         }
         Err(err) => {
             return Err(format!("could not read the issue queue: {err}"));
@@ -1188,24 +1180,22 @@ fn load_edits(path: &Path) -> Result<StoredEdits, String> {
         let aside = path.with_extension("unreadable");
         tracing::warn!(target: "home", %err, aside = %aside.display(), "could not decode the unpushed issue changes");
         std::fs::rename(path, aside)
-            .map(|()| StoredEdits::Current(Vec::new()))
+            .map(|()| Vec::new())
             .map_err(|err| format!("could not move the unreadable issue queue: {err}"))
     })
 }
 
-fn decode_edits(bytes: &[u8]) -> Result<StoredEdits, postcard::Error> {
+fn decode_edits(bytes: &[u8]) -> Result<Vec<Edit>, postcard::Error> {
     let versioned = bytes
         .strip_prefix(EDITS_VERSION)
         .or_else(|| bytes.strip_prefix(EDITS_VERSION_1));
     let (edits, rest) = versioned.map_or_else(
         || {
-            let (legacy, rest) = postcard::take_from_bytes(bytes)?;
-            Ok((StoredEdits::Original(legacy), rest))
+            let (legacy, rest) =
+                postcard::take_from_bytes::<Vec<EditData>>(bytes)?;
+            Ok((legacy.into_iter().map(Edit::from).collect(), rest))
         },
-        |payload| {
-            let (current, rest) = postcard::take_from_bytes(payload)?;
-            Ok((StoredEdits::Current(current), rest))
-        },
+        postcard::take_from_bytes,
     )?;
     if !rest.is_empty() {
         return Err(postcard::Error::DeserializeBadEncoding);
