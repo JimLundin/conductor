@@ -1,19 +1,18 @@
 # The landing queue. Landing pushes a branch to refs/heads/queue/<name> and
 # returns; each push queues a run here, and the runs land one at a time in
 # the order they queued: rebase the queued commit onto main, run the units
-# without a recorded pass, and fast-forward main to the rebased commit. A
-# conflict, a failing unit or a main that moved leaves main alone. Either
-# way the run deletes the queue ref, unless it moved since, and sets the
-# commit status `queue` on the queued commit: success "landed at <sha>",
-# or failure naming the cause, linking this run, whose summary holds the
-# failing units' log tails.
+# without a recorded pass, fast-forward main to the rebased commit, and
+# start pages.yml on main, which a push by GITHUB_TOKEN doesn't start.
+# GITHUB_TOKEN can't push changes to workflows, so a branch that changes
+# .github/workflows or .github/actions is refused before checking; it lands
+# by a direct push to main. A refusal, a conflict, a failing unit or a main
+# that moved leaves main alone. Either way the run deletes the queue ref,
+# unless it moved since, and sets the commit status `queue` on the queued
+# commit: success "landed at <sha>", or failure naming the cause, linking
+# this run, whose summary holds the failing units' log tails.
 #
-# Needs secret QUEUE_TOKEN: a fine-grained personal access token, owner
-# JimLundin, repository access only JimLundin/conductor, permissions
-# Contents: Read and write and Workflows: Read and write. GITHUB_TOKEN can't
-# push commits that change .github/workflows, and its pushes start no
-# workflow, so pages.yml would not deploy what lands. No ruleset may block
-# the token's owner from pushing to main.
+# Needs no secret, only the permissions granted below. No ruleset may block
+# github-actions[bot] from pushing to main or refs/notes/checks.
 name: Land queued branches on main
 
 on:
@@ -35,6 +34,7 @@ jobs:
     permissions:
       contents: write
       statuses: write
+      actions: write
     env:
       GH_TOKEN: ${{ github.token }}
       QUEUED: ${{ github.sha }}
@@ -54,21 +54,36 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/statuses/$QUEUED" -f context=queue \
             -f state=pending -f description="checking over main" -f target_url="$RUN_URL"
 
+      - id: ci
+        name: Refuse a branch that changes CI
+        run: |
+          git fetch -q origin main
+          main=$(git rev-parse FETCH_HEAD)
+          echo "main=$main" >>"$GITHUB_OUTPUT"
+          changed=$(git diff --name-only "$main...HEAD" -- .github/workflows .github/actions)
+          [ -n "$changed" ] || exit 0
+          {
+            echo "## Changes CI, so it lands by a direct push to main"
+            echo
+            echo '```text'
+            echo "$changed"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - id: rebase
         name: Rebase the queued commit onto main
         env:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          MAIN: ${{ steps.ci.outputs.main }}
         run: |
-          git fetch -q origin main
-          main=$(git rev-parse FETCH_HEAD)
-          echo "main=$main" >>"$GITHUB_OUTPUT"
-          git merge-base --is-ancestor "$main" HEAD && exit 0
-          if ! git rebase -q "$main"; then
+          git merge-base --is-ancestor "$MAIN" HEAD && exit 0
+          if ! git rebase -q "$MAIN"; then
             conflicts=$(git diff --name-only --diff-filter=U)
             git rebase --abort
             {
-              echo "## Conflicts with main at $main"
+              echo "## Conflicts with main at $MAIN"
               echo
               echo '```text'
               echo "$conflicts"
@@ -84,26 +99,28 @@ jobs:
       # rebase rejects it.
       - id: land
         name: Fast-forward main to the rebased commit
-        env:
-          QUEUE_TOKEN: ${{ secrets.QUEUE_TOKEN }}
         run: |
-          git -c http.https://github.com/.extraheader= push -q \
-            "https://x-access-token:$QUEUE_TOKEN@github.com/$GITHUB_REPOSITORY.git" \
-            HEAD:refs/heads/main
+          git push -q origin HEAD:refs/heads/main
           echo "landed=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      - name: Deploy what landed
+        run: gh workflow run pages.yml --ref main
 
       - name: Report on the queued commit and leave the queue
         if: ${{ !cancelled() }}
         env:
-          MAIN: ${{ steps.rebase.outputs.main }}
+          MAIN: ${{ steps.ci.outputs.main }}
           LANDED: ${{ steps.land.outputs.landed }}
           FAILING: ${{ steps.units.outputs.failing }}
+          CI: ${{ steps.ci.outcome }}
           REBASE: ${{ steps.rebase.outcome }}
           UNITS: ${{ steps.units.outcome }}
         run: |
           state=failure
           if [ -n "$LANDED" ]; then
             state=success description="landed at $LANDED"
+          elif [ "$CI" = failure ] && [ -n "$MAIN" ]; then
+            description="changes CI: land it by pushing to main directly"
           elif [ "$REBASE" = failure ]; then
             description="conflicts with main at $MAIN"
           elif [ -n "$FAILING" ]; then

@@ -44,17 +44,22 @@ Home Screen. The design is in
   tail of their logs. The standards come from a WSL clone of the
   standards project, `~/projects/tools/standards`, kept fresh by the
   script; set `STANDARDS` to try unpushed standards from another checkout.
-- **Landing.** Never push `main`; land a branch with
+- **Landing.** Land a branch with
   `git push origin <branch>:refs/heads/queue/<branch>`, which returns at
   once. `.github/workflows/queue.yml` takes queued branches one at a time
   in push order, rebases each onto `main`, runs `step`, and fast-forwards
-  `main` when it passes. Either way it deletes the queue ref and sets the
-  commit status `queue` on the pushed commit; read it with
+  `main` when it passes, then deploys Pages. It refuses a branch that
+  changes `.github/workflows` or `.github/actions`, which its token can't
+  push; such a branch lands by a direct push to `main` with the owner's
+  credentials after `tools/check.sh commit`. Either way it deletes the
+  queue ref and sets the commit status `queue` on the pushed commit; read
+  it with
   `gh api repos/JimLundin/conductor/commits/<sha>/status --jq '.statuses[] | select(.context == "queue") | [.state, .description, .target_url] | join(" ")'`:
   nothing while it waits, `pending` while it checks, `success` with
-  `landed at <sha>`, or `failure` naming the failing units, a conflict or a
-  moved `main`, linking the run whose summary holds the log tails. It
-  needs the `QUEUE_TOKEN` secret its header describes.
+  `landed at <sha>`, or `failure` naming the failing units, a conflict, a
+  CI change or a moved `main`, linking the run whose summary holds the
+  log tails. It needs no secret; no ruleset may block
+  `github-actions[bot]` from pushing to `main`.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo
