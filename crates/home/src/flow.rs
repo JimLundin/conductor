@@ -17,6 +17,7 @@ use toml::{Table, Value};
 use crate::prelude::*;
 
 pub mod check;
+pub mod command;
 pub mod eval;
 pub mod graph;
 

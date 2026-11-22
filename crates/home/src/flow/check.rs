@@ -8,8 +8,8 @@
 use alloc::collections::BTreeMap;
 
 use super::eval::{Failure, Move, holds};
-use super::graph::{File, read};
-use super::{Severity, load};
+use super::graph::{File, Graph, Issue, read};
+use super::{Flow, Severity, load};
 use crate::prelude::*;
 use crate::project::listed;
 
@@ -129,37 +129,50 @@ pub fn check(inputs: &Inputs) -> Report {
     }));
     for issue in &graph.issues {
         let subject = named(&format!("{}/{}", issue.project.0, issue.id));
-        let expected = flow
-            .kind(&issue.kind)
-            .map_or(&[][..], |kind| kind.sections.as_slice());
-        findings.extend(
-            expected
-                .iter()
-                .filter(|section| !issue.sections.contains(section))
-                .map(|section| Finding {
-                    severity: Severity::Warn,
-                    subject: Some(subject.clone()),
-                    message: format!("lacks the section {section:?}"),
-                }),
-        );
-        for rule in &flow.rules {
-            let applies =
-                holds(&flow, &graph, issue, Move::default(), &rule.when)
-                    .is_ok();
-            let broken = applies
-                .then(|| {
-                    holds(&flow, &graph, issue, Move::default(), &rule.require)
-                        .err()
-                })
-                .flatten();
-            findings.extend(broken.map(|failure| Finding {
-                severity: rule.severity,
-                subject: Some(subject.clone()),
-                message: format!("{}: {}", rule.message, explain(&failure)),
-            }));
-        }
+        findings.extend(of_issue(
+            &flow,
+            &graph,
+            issue,
+            Move::default(),
+            &subject,
+        ));
     }
     Report { findings }
+}
+
+/// What the flow's sections and rules say of `issue`, weighing `moving`
+/// when a move is being made.
+pub(crate) fn of_issue(
+    flow: &Flow,
+    graph: &Graph,
+    issue: &Issue,
+    moving: Move<'_>,
+    subject: &str,
+) -> Vec<Finding> {
+    let expected = flow
+        .kind(&issue.kind)
+        .map_or(&[][..], |kind| kind.sections.as_slice());
+    let mut findings: Vec<Finding> = expected
+        .iter()
+        .filter(|section| !issue.sections.contains(section))
+        .map(|section| Finding {
+            severity: Severity::Warn,
+            subject: Some(subject.to_owned()),
+            message: format!("lacks the section {section:?}"),
+        })
+        .collect();
+    for rule in &flow.rules {
+        let applies = holds(flow, graph, issue, moving, &rule.when).is_ok();
+        let broken = applies
+            .then(|| holds(flow, graph, issue, moving, &rule.require).err())
+            .flatten();
+        findings.extend(broken.map(|failure| Finding {
+            severity: rule.severity,
+            subject: Some(subject.to_owned()),
+            message: format!("{}: {}", rule.message, explain(&failure)),
+        }));
+    }
+    findings
 }
 
 /// A profile that more than one project provides, once each.

@@ -359,9 +359,14 @@ fn references(
     problems
 }
 
-/// Each issue that leads back to itself through a relation that forbids
-/// cycles, once per cycle, at the issue where it's first found.
+/// Each issue on a cycle through a relation that forbids cycles, each
+/// naming the whole cycle, so an edit to any issue on it sees the problem
+/// as its own.
 fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
+    let projects: BTreeMap<&str, &str> = issues
+        .iter()
+        .map(|issue| (issue.id.as_str(), issue.project.0.as_str()))
+        .collect();
     let mut problems = Vec::new();
     for relation in flow.relations.iter().filter(|relation| !relation.cycles) {
         let edges: BTreeMap<&str, &[String]> = issues
@@ -379,14 +384,16 @@ fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
             if let Some(cycle) =
                 walk(&edges, issue.id.as_str(), &mut path, &mut done)
             {
-                problems.push(Problem {
-                    issue: format!("{}/{}", issue.project.0, issue.id),
-                    field: Some(relation.name.clone()),
-                    message: format!(
-                        "is part of a cycle: {}",
-                        cycle.join(" → ")
-                    ),
+                let message =
+                    format!("is part of a cycle: {}", cycle.join(" → "));
+                let members = cycle.iter().skip(1).filter_map(|id| {
+                    projects.get(id.as_str()).map(|project| (*project, id))
                 });
+                problems.extend(members.map(|(project, id)| Problem {
+                    issue: format!("{project}/{id}"),
+                    field: Some(relation.name.clone()),
+                    message: message.clone(),
+                }));
             }
         }
     }
