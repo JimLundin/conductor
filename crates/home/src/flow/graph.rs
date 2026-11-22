@@ -11,7 +11,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use core::fmt;
 
-use proto::flow::{Field, FieldType, Flow, Relation};
+use proto::flow::{Field, FieldRole, FieldType, Flow, Relation};
 use proto::{Datum, Issue, IssueId, ProjectId};
 use toml::{Table, Value};
 
@@ -146,10 +146,12 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
     }
     let branch = branch_of(
         id,
-        fields.get("branch").and_then(|datum| match datum {
-            Datum::Text(declared) => Some(declared.as_str()),
-            Datum::Texts(_) | Datum::Bool(_) => None,
-        }),
+        flow.field_with(&kind, FieldRole::Branch)
+            .and_then(|field| fields.get(&field.name))
+            .and_then(|datum| match datum {
+                Datum::Text(declared) => Some(declared.as_str()),
+                Datum::Texts(_) | Datum::Bool(_) => None,
+            }),
     );
     Ok(Issue {
         id,

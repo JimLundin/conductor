@@ -5,17 +5,18 @@
 //!
 //! The home's flow says what an issue holds: the statuses it groups by and
 //! offers, in the flow's order and by its names, and the fields whose
-//! values it offers. Nothing here names a status, a kind or a field's value;
-//! the edit form's title and labels, and the time an issue was opened, are
-//! the fields it names.
+//! values it offers. Nothing here names a status, a kind or a field: the
+//! edit form's labels and the time an issue was opened are the fields with
+//! those roles, and only the title is part of every issue.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use crate::prelude::*;
-use proto::flow::{FieldType, Flow};
+use proto::flow::{FieldRole, FieldType, Flow};
 use proto::{
     ChecklistChange, CommandBody, Datum, Entry, Issue, IssueChange, IssueId,
-    Item, LogEvent, NewIssue, Part, Project, ProjectId,
+    Item, NewIssue, Part, Project, ProjectId,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -47,7 +48,8 @@ pub enum IssueIntent {
     AddItem,
     TypeNote(String),
     AddNote,
-    /// Opens the form that edits the title, the body and the labels.
+    /// Opens the form that edits the title, the body and the labels, when
+    /// the flow has a field for them.
     Edit,
     TypeTitle(String),
     TypeBody(String),
@@ -82,7 +84,8 @@ struct Editing {
 struct EditFields {
     title: String,
     body: String,
-    labels: String,
+    /// Separated by commas; `None` when the issue's kind has no labels.
+    labels: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,7 +119,25 @@ impl Submission {
 /// The issue shown, and where commands about it go.
 pub struct Shown<'issue> {
     pub at: At,
+    pub flow: &'issue Flow,
     pub issue: &'issue Issue,
+}
+
+impl Shown<'_> {
+    /// The name of the issue's field with `role`.
+    fn field(&self, role: FieldRole) -> Option<&str> {
+        field_with(self.flow, self.issue, role)
+    }
+}
+
+/// The name of `issue`'s field with `role`, as `flow` declares it.
+fn field_with<'flow>(
+    flow: &'flow Flow,
+    issue: &Issue,
+    role: FieldRole,
+) -> Option<&'flow str> {
+    flow.field_with(&issue.kind, role)
+        .map(|field| field.name.as_str())
 }
 
 impl Titles {
@@ -196,7 +217,9 @@ impl IssueDraft {
                 let fields = EditFields {
                     title: issue.title.clone(),
                     body: issue.body.clone(),
-                    labels: issue.texts(LABELS).join(", "),
+                    labels: shown
+                        .field(FieldRole::Labels)
+                        .map(|labels| issue.texts(labels).join(", ")),
                 };
                 (
                     Self {
@@ -216,7 +239,12 @@ impl IssueDraft {
                 (self.edited(|editing| editing.body = body), Vec::new())
             }
             IssueIntent::TypeLabels(labels) => {
-                (self.edited(|editing| editing.labels = labels), Vec::new())
+                let edit = |editing: &mut EditFields| {
+                    if let Some(draft) = editing.labels.as_mut() {
+                        *draft = labels;
+                    }
+                };
+                (self.edited(edit), Vec::new())
             }
             IssueIntent::Save => self.save(shown),
             IssueIntent::Cancel if self.saving.is_some() => (self, Vec::new()),
@@ -283,23 +311,7 @@ impl IssueDraft {
                 (fields.body.trim() != original.body.trim())
                     .then(|| IssueChange::Body(fields.body.clone())),
             ),
-            (
-                Submission::Labels,
-                (fields.labels.trim() != original.labels.trim()).then(|| {
-                    IssueChange::Set {
-                        field: String::from(LABELS),
-                        value: Datum::Texts(
-                            fields
-                                .labels
-                                .split(',')
-                                .map(str::trim)
-                                .filter(|label| !label.is_empty())
-                                .map(String::from)
-                                .collect(),
-                        ),
-                    }
-                }),
-            ),
+            (Submission::Labels, labelled(shown, fields, original)),
         ];
         let effects: Vec<_> = changes
             .into_iter()
@@ -371,6 +383,31 @@ impl IssueDraft {
             self.saving = None;
         }
     }
+}
+
+/// The change that sets the labels to those `fields` give, if they differ
+/// from the `original` ones and the issue's kind has a field for them.
+fn labelled(
+    shown: &Shown<'_>,
+    fields: &EditFields,
+    original: &EditFields,
+) -> Option<IssueChange> {
+    let field = shown.field(FieldRole::Labels)?;
+    let (Some(labels), Some(before)) = (&fields.labels, &original.labels)
+    else {
+        return None;
+    };
+    (labels.trim() != before.trim()).then(|| IssueChange::Set {
+        field: String::from(field),
+        value: Datum::Texts(
+            labels
+                .split(',')
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(String::from)
+                .collect(),
+        ),
+    })
 }
 
 fn settle_text(sent: &mut Option<String>, draft: &mut String, failed: bool) {
@@ -471,12 +508,10 @@ pub fn list(
 }
 
 /// The flow `host`'s home declares.
-fn flow_of(host: &Host) -> Option<&Flow> {
+pub fn flow_of(host: &Host) -> Option<&Flow> {
     host.fold.home.as_ref()?.flow.as_deref()
 }
 
-/// The field the edit form's labels are.
-const LABELS: &str = "labels";
 /// What the edit form's title sets.
 const TITLE: &str = "title";
 
@@ -542,6 +577,7 @@ pub struct IssueScreen {
     pub status: Vec<Pick>,
     /// A picker for each field of its kind that takes one of a few words.
     pub fields: Vec<FieldPicker>,
+    /// Empty when its kind has no labels.
     pub labels: String,
     pub body: String,
     /// Its kind, its branch, and when it was opened.
@@ -599,7 +635,8 @@ pub struct ItemRow {
 pub struct EditForm {
     pub title: String,
     pub body: String,
-    pub labels: String,
+    /// `None` when the issue's kind has no labels.
+    pub labels: Option<String>,
     pub save_disabled: bool,
 }
 
@@ -630,8 +667,8 @@ pub fn screen(
     let kind = flow
         .kind(&issue.kind)
         .map_or(issue.kind.as_str(), |kind| kind.label.as_str());
-    let opened = issue
-        .text("created")
+    let opened = field_with(flow, issue, FieldRole::Created)
+        .and_then(|created| issue.text(created))
         .map_or_else(String::new, |created| format!(" · opened {created}"));
     Some(IssueScreen {
         key: key_of(issue.id),
@@ -647,7 +684,8 @@ pub fn screen(
             })
             .collect(),
         fields: pickers(flow, issue),
-        labels: issue.texts(LABELS).join(" · "),
+        labels: field_with(flow, issue, FieldRole::Labels)
+            .map_or_else(String::new, |labels| issue.texts(labels).join(" · ")),
         body: issue.body.clone(),
         detail: format!("{kind} · {}{opened}", issue.branch),
         checklist: issue
@@ -668,7 +706,7 @@ pub fn screen(
             })
             .collect(),
         item: drafts.item.clone(),
-        notes: issue.log.iter().map(note).collect(),
+        notes: issue.log.iter().map(Entry::to_string).collect(),
         note: drafts.note.clone(),
         item_pending: drafts.item_sent.is_some(),
         note_pending: drafts.note_sent.is_some(),
@@ -684,22 +722,6 @@ pub fn screen(
         start: Intent::StartOn(at, id),
         sessions: sessions(hosts, id),
     })
-}
-
-/// A log entry as the issue's pane shows it: when, by whom and what
-/// happened, then its text; or the text alone when it says none of them.
-fn note(entry: &Entry) -> String {
-    match (&entry.at, &entry.by) {
-        (Some(at), Some(by)) => {
-            let event = match &entry.event {
-                LogEvent::Note => String::from("note"),
-                LogEvent::Stage { from, to } => format!("stage {from}→{to}"),
-                LogEvent::Status { from, to } => format!("status {from}→{to}"),
-            };
-            format!("{at} {by} {event}: {}", entry.text)
-        }
-        _ => entry.text.clone(),
-    }
 }
 
 /// The issue's item at `index`, as the person sees its checklist.

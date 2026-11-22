@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use client::link::{LinkState, Update};
-use proto::flow::{Field, FieldType, Flow, Kind, Role, Status};
+use proto::flow::{Field, FieldRole, FieldType, Flow, Kind, Role, Status};
 use proto::{
     AuthToken, ChecklistChange, ChecklistItem, Checkout, Cloning, CommandBody,
     CommandResult, Datum, Entry, EventKind, Feed, Home, HomeSync, HostPath,
@@ -75,6 +75,7 @@ fn enumerated(name: &str, words: &[&str], default: Option<&str>) -> Field {
         name: text(name),
         value: FieldType::Enum(words.iter().copied().map(text).collect()),
         default: default.map(text),
+        role: None,
     }
 }
 
@@ -98,10 +99,11 @@ fn flow() -> Flow {
         role,
         colour: None,
     };
-    let field = |name: &str, value| Field {
+    let field = |name: &str, role: FieldRole| Field {
         name: text(name),
-        value,
+        value: role.takes(),
         default: None,
+        role: Some(role),
     };
     Flow {
         default_kind: text("task"),
@@ -119,9 +121,9 @@ fn flow() -> Flow {
                 &["low", "normal", "high", "urgent"],
                 Some("normal"),
             ),
-            field("labels", FieldType::Texts),
-            field("branch", FieldType::Text),
-            field("created", FieldType::Time),
+            field("labels", FieldRole::Labels),
+            field("branch", FieldRole::Branch),
+            field("created", FieldRole::Created),
         ]),
         kinds: Vec::from([kind("task", "Task", Vec::new())]),
         relations: Vec::new(),
@@ -1919,5 +1921,103 @@ fn a_change_written_with_a_warning_shows_the_warning()
         issue_screen(&warned).and_then(|issue| issue.notice),
         Some(text("lacks the section \"What\""))
     );
+    Ok(())
+}
+
+/// The flow with its labels and created fields renamed, and the opened
+/// issue with its values under the new names.
+fn renamed_roles(labels: &str, created: &str) -> (Flow, Vec<Issue>) {
+    let mut renamed = flow();
+    for field in &mut renamed.fields {
+        match field.role {
+            Some(FieldRole::Labels) => field.name = text(labels),
+            Some(FieldRole::Created) => field.name = text(created),
+            _ => {}
+        }
+    }
+    let mut opened = issue(OPENED, "Sign in", "open");
+    for (from, to) in [("labels", labels), ("created", created)] {
+        if let Some(value) = opened.fields.remove(from) {
+            opened.fields.insert(text(to), value);
+        }
+    }
+    (renamed, Vec::from([opened]))
+}
+
+#[test]
+fn renamed_labels_and_created_fields_keep_the_edit_form_and_the_opened_time()
+-> Result<(), &'static str> {
+    let (renamed, issues) = renamed_roles("tags", "opened_at");
+    let (on_issue, _) = run(
+        under(renamed, issues),
+        Vec::from([Intent::Show(Place::Issue(HOST, OPENED))]),
+    );
+    let screen = issue_screen(&on_issue).ok_or("no issue screen")?;
+    assert_eq!(
+        (screen.labels, screen.detail),
+        (
+            text("app"),
+            text("Task · issue/x · opened 2026-11-18T10:12:00Z")
+        )
+    );
+    let (editing, effects) = run(
+        on_issue,
+        Vec::from([
+            Intent::Issue(IssueIntent::Edit),
+            Intent::Issue(IssueIntent::TypeLabels(text("app, ui"))),
+            Intent::Issue(IssueIntent::Save),
+        ]),
+    );
+    assert_eq!(
+        issue_screen(&editing)
+            .and_then(|issue| issue.editing)
+            .and_then(|form| form.labels),
+        Some(text("app, ui"))
+    );
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::ChangeIssue {
+            issue: OPENED,
+            change: IssueChange::Set {
+                field: text("tags"),
+                value: Datum::Texts(Vec::from([text("app"), text("ui")])),
+            },
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_flow_without_a_labels_field_has_no_labels_to_edit()
+-> Result<(), &'static str> {
+    let mut bare = flow();
+    for field in &mut bare.fields {
+        field.role = None;
+    }
+    let (on_issue, _) = run(
+        under(bare, Vec::from([issue(OPENED, "Sign in", "open")])),
+        Vec::from([Intent::Show(Place::Issue(HOST, OPENED))]),
+    );
+    let screen = issue_screen(&on_issue).ok_or("no issue screen")?;
+    assert_eq!(
+        (screen.labels, screen.detail),
+        (String::new(), text("Task · issue/x"))
+    );
+    let (editing, effects) = run(
+        on_issue,
+        Vec::from([
+            Intent::Issue(IssueIntent::Edit),
+            Intent::Issue(IssueIntent::TypeLabels(text("app, ui"))),
+            Intent::Issue(IssueIntent::Save),
+        ]),
+    );
+    assert_eq!(
+        issue_screen(&editing)
+            .and_then(|issue| issue.editing)
+            .map(|form| form.labels),
+        None,
+        "nothing changed, so the form closes and nothing is sent"
+    );
+    assert_eq!(sent(&effects), []);
     Ok(())
 }

@@ -185,12 +185,14 @@ fn Editing(form: ui::EditForm, disabled: bool) -> Element {
                     oninput: move |event| issue(IssueIntent::TypeTitle(event.value())),
                 }
             }
-            label { "Labels"
-                input {
-                    name: "labels",
-                    placeholder: "app, credentials",
-                    value: "{form.labels}",
-                    oninput: move |event| issue(IssueIntent::TypeLabels(event.value())),
+            if let Some(labels) = form.labels {
+                label { "Labels"
+                    input {
+                        name: "labels",
+                        placeholder: "app, credentials",
+                        value: "{labels}",
+                        oninput: move |event| issue(IssueIntent::TypeLabels(event.value())),
+                    }
                 }
             }
             label { "What and why"

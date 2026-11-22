@@ -84,6 +84,49 @@ pub struct Field {
     pub value: FieldType,
     /// What an issue that leaves it out has.
     pub default: Option<String>,
+    pub role: Option<FieldRole>,
+}
+
+/// What a field means to Conductor, whatever the flow calls it. At most
+/// one field has each.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub enum FieldRole {
+    /// The words the app shows on an issue and edits beside its title.
+    Labels,
+    /// The branch its sessions land on, in place of `issue/<id>`.
+    Branch,
+    /// When it was opened, which opening it writes.
+    Created,
+}
+
+impl FieldRole {
+    pub const ALL: [Self; 3] = [Self::Labels, Self::Branch, Self::Created];
+
+    #[must_use]
+    pub const fn word(self) -> &'static str {
+        match self {
+            Self::Labels => "labels",
+            Self::Branch => "branch",
+            Self::Created => "created",
+        }
+    }
+
+    #[must_use]
+    pub fn named(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|role| role.word() == word)
+    }
+
+    /// The type its field has.
+    #[must_use]
+    pub const fn takes(self) -> FieldType {
+        match self {
+            Self::Labels => FieldType::Texts,
+            Self::Branch => FieldType::Text,
+            Self::Created => FieldType::Time,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,5 +287,11 @@ impl Flow {
     #[must_use]
     pub fn field(&self, kind: &str, name: &str) -> Option<&Field> {
         self.fields_of(kind).find(|field| field.name == name)
+    }
+
+    /// The field of an issue of `kind` that has `role`.
+    #[must_use]
+    pub fn field_with(&self, kind: &str, role: FieldRole) -> Option<&Field> {
+        self.fields_of(kind).find(|field| field.role == Some(role))
     }
 }

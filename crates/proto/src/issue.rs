@@ -122,6 +122,30 @@ pub enum LogEvent {
     Status { from: String, to: String },
 }
 
+impl fmt::Display for Entry {
+    /// `<time> <who> <event>: <text>`, or the text alone when it names no
+    /// time and no one.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match (&self.at, &self.by) {
+            (Some(at), Some(by)) => {
+                write!(out, "{at} {by} {}: {}", self.event, self.text)
+            }
+            _ => out.write_str(&self.text),
+        }
+    }
+}
+
+impl fmt::Display for LogEvent {
+    /// `note`, `stage <from>→<to>` or `status <from>→<to>`.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Note => out.write_str("note"),
+            Self::Stage { from, to } => write!(out, "stage {from}→{to}"),
+            Self::Status { from, to } => write!(out, "status {from}→{to}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChecklistItem {
     pub done: bool,

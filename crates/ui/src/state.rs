@@ -422,11 +422,9 @@ impl State {
         let ShownPlace::Issue(host, id, Some(draft)) = &mut self.shown else {
             return (self, Vec::new());
         };
-        let Some((_, issue)) = self
-            .hosts
-            .get(host)
-            .and_then(|known| issues::find(known, *id))
-        else {
+        let Some((flow, (_, issue))) = self.hosts.get(host).and_then(|known| {
+            Some((issues::flow_of(known)?, issues::find(known, *id)?))
+        }) else {
             return (self, Vec::new());
         };
         let shown = Shown {
@@ -434,6 +432,7 @@ impl State {
                 host: *host,
                 visit: self.visit,
             },
+            flow,
             issue,
         };
         let (next, effects) = mem::take(draft).update(intent, &shown);

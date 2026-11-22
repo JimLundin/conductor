@@ -411,3 +411,36 @@ fn an_id_is_its_file_s_name() {
         )])
     );
 }
+
+/// The tests' flow with each edit's first text replaced by its second.
+fn flow_with(edits: &[(&str, &str)]) -> Result<Flow, String> {
+    let text = edits.iter().fold(
+        String::from(include_str!("../test-flow.toml")),
+        |text, (from, to)| {
+            assert!(text.contains(from), "the flow has no {from:?}");
+            text.replace(from, to)
+        },
+    );
+    load(&text)
+}
+
+#[test]
+fn an_issue_lands_on_the_branch_its_branch_field_names_whatever_it_is_called()
+-> Result<(), String> {
+    let renamed = flow_with(&[
+        ("name = \"branch\"", "name = \"lands_on\""),
+        ("\"branch\"]", "\"lands_on\"]"),
+    ])?;
+    let graph = read(&renamed, &[task("home", "lands_on = \"feature/x\"\n")]);
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.branch.as_str()),
+        Some("feature/x")
+    );
+    let roleless = flow_with(&[("role = \"branch\"\n", "")])?;
+    let graph = read(&roleless, &[task("home", "branch = \"feature/x\"\n")]);
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.branch.clone()),
+        Some(format!("issue/{TASK}"))
+    );
+    Ok(())
+}

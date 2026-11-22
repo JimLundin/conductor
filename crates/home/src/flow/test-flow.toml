@@ -40,7 +40,9 @@ colour = "grey"
 
 # Fields every kind has, beyond id, title, kind, status, stage and the log.
 # A type is enum (with values), ref or refs (with the kinds they point to),
-# text, texts, time or bool.
+# text, texts, time or bool. Conductor keys on a field's role, never its
+# name: labels (texts) are shown and edited beside the title, branch (text)
+# is where sessions land, created (time) is written when an issue opens.
 [[field]]
 name = "priority"
 type = "enum"
@@ -50,14 +52,17 @@ default = "normal"
 [[field]]
 name = "labels"
 type = "texts"
+role = "labels"
 
 [[field]]
 name = "branch"
 type = "text"
+role = "branch"
 
 [[field]]
 name = "created"
 type = "time"
+role = "created"
 
 # Kinds. `sections` are the headings a body is expected to have; a missing
 # one warns. `order` is what the app shows first.

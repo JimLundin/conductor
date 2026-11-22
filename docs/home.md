@@ -173,6 +173,12 @@ What to build and why, as written by whoever opened it.
   left; landed on the issue branch.
 ```
 
+Beyond the id, the title, the kind, the status and the stage, an issue has
+the fields its flow declares. Conductor finds the labels, the branch and the
+time it was created by the role the flow gives a field (`role = "labels"`,
+`"branch"`, `"created"`), never by its name; a flow without a field of a
+role has none, and the branch is then `issue/<id>`.
+
 ## 4. Flows
 
 **Start a session on an issue.** In the app: pick an issue, then a node,

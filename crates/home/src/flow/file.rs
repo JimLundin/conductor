@@ -10,6 +10,7 @@
 //! is written without them.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use proto::{ChecklistItem, Entry, LogEvent, Section};
 use toml::{Spanned, Value};
@@ -385,27 +386,17 @@ pub fn checklist_line(item: &ChecklistItem) -> String {
     format!("- [{mark}] {}", item.text)
 }
 
-/// An entry as the log has it: `- <time> <who> <event>: <text>`, or `-`
-/// and the text alone when it names no time and no one, with each further
-/// line of the text indented under it by two spaces.
+/// An entry as the log has it: `-` and its text, with each further line of
+/// the text indented under it by two spaces.
 #[must_use]
 pub fn log_line(entry: &Entry) -> String {
     log_lines(entry).join("\n")
 }
 
 fn log_lines(entry: &Entry) -> Vec<String> {
-    let text = match (&entry.at, &entry.by) {
-        (Some(at), Some(by)) => {
-            let event = match &entry.event {
-                LogEvent::Note => String::from("note"),
-                LogEvent::Stage { from, to } => format!("stage {from}→{to}"),
-                LogEvent::Status { from, to } => format!("status {from}→{to}"),
-            };
-            format!("{at} {by} {event}: {}", entry.text)
-        }
-        _ => entry.text.clone(),
-    };
-    text.split('\n')
+    entry
+        .to_string()
+        .split('\n')
         .enumerate()
         .map(|(at, line)| {
             if at == 0 {

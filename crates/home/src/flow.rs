@@ -25,8 +25,8 @@ pub mod role;
 pub mod snapshot;
 
 use proto::flow::{
-    Field, FieldType, Flow, Kind, Literal, Predicate, Quantifier, Relation,
-    Role, Rule, Severity, Shape, Stage, Status,
+    Field, FieldRole, FieldType, Flow, Kind, Literal, Predicate, Quantifier,
+    Relation, Role, Rule, Severity, Shape, Stage, Status,
 };
 
 /// Where the flow is, from the home's root.
@@ -37,8 +37,9 @@ pub const PATH: &str = "docs/agents/flow.toml";
 /// # Errors
 ///
 /// The first thing it gets wrong, at its path in the file: a key, a value,
-/// a duplicate name, a reference to something it doesn't declare, or a
-/// role no status has.
+/// a duplicate name, a reference to something it doesn't declare, a role
+/// no status has, or a field role on two fields or on a field of the wrong
+/// type.
 pub fn load(text: &str) -> Result<Flow, String> {
     let table =
         toml::from_str::<Table>(text).map_err(|err| format!("flow: {err}"))?;
@@ -235,7 +236,11 @@ fn status(at: &At, table: &Table) -> Result<Status, String> {
 }
 
 fn field(at: &At, table: &Table) -> Result<Field, String> {
-    known(at, table, &["name", "type", "values", "to", "default"])?;
+    known(
+        at,
+        table,
+        &["name", "type", "values", "to", "default", "role"],
+    )?;
     let word = text_of(at, table, "type")?;
     let value = match word.as_str() {
         "enum" => FieldType::Enum(texts(at, table, "values")?),
@@ -266,11 +271,49 @@ fn field(at: &At, table: &Table) -> Result<Field, String> {
                 .fail(format!("{missing:?} is not one of its values"));
         }
     }
+    let role = field_role(at, table)?;
+    if let Some(held) = role
+        && value != held.takes()
+    {
+        return at.key("role").fail(format!(
+            "a field with the role {:?} has type {}",
+            held.word(),
+            type_word(&held.takes())
+        ));
+    }
     Ok(Field {
         name,
         value,
         default,
+        role,
     })
+}
+
+fn field_role(at: &At, table: &Table) -> Result<Option<FieldRole>, String> {
+    let Some(word) = optional_text(at, table, "role")? else {
+        return Ok(None);
+    };
+    FieldRole::named(&word).map_or_else(
+        || {
+            at.key("role").fail(format!(
+                "{word:?} is not a field role; the field roles are {}",
+                FieldRole::ALL.map(FieldRole::word).join(", ")
+            ))
+        },
+        |role| Ok(Some(role)),
+    )
+}
+
+const fn type_word(value: &FieldType) -> &'static str {
+    match value {
+        FieldType::Enum(_) => "enum",
+        FieldType::Ref(_) => "ref",
+        FieldType::Refs(_) => "refs",
+        FieldType::Text => "text",
+        FieldType::Texts => "texts",
+        FieldType::Time => "time",
+        FieldType::Bool => "bool",
+    }
 }
 
 fn kind(at: &At, table: &Table) -> Result<Kind, String> {
@@ -360,13 +403,18 @@ fn declarations(flow: &Flow) -> Result<(), String> {
             ));
         }
     }
+    let mut roles = Vec::new();
     for (index, field) in flow.fields.iter().enumerate() {
-        field_refers(flow, &top.key("field").index(index), field)?;
+        let at = top.key("field").index(index);
+        field_refers(flow, &at, field)?;
+        role_once(&mut roles, at, field)?;
     }
     for (index, kind) in flow.kinds.iter().enumerate() {
         let at = top.key("kind").index(index);
         for (place, field) in kind.fields.iter().enumerate() {
-            field_refers(flow, &at.key("fields").index(place), field)?;
+            let field_at = at.key("fields").index(place);
+            field_refers(flow, &field_at, field)?;
+            role_once(&mut roles, field_at, field)?;
         }
         for (place, name) in kind.order.iter().enumerate() {
             if !shown(flow, kind, name) {
@@ -398,6 +446,26 @@ fn kinds_exist(flow: &Flow, at: &At, kinds: &[String]) -> Result<(), String> {
         .map_or(Ok(()), |(index, name)| {
             at.index(index).fail(format!("no kind is called {name:?}"))
         })
+}
+
+/// No field at an earlier place in `seen` has `field`'s role.
+fn role_once(
+    seen: &mut Vec<(FieldRole, At)>,
+    at: At,
+    field: &Field,
+) -> Result<(), String> {
+    let Some(role) = field.role else {
+        return Ok(());
+    };
+    if let Some((_, first)) = seen.iter().find(|(other, _)| *other == role) {
+        return at.key("role").fail(format!(
+            "{} also has the role {:?}",
+            first.0,
+            role.word()
+        ));
+    }
+    seen.push((role, at));
+    Ok(())
 }
 
 fn field_refers(flow: &Flow, at: &At, field: &Field) -> Result<(), String> {

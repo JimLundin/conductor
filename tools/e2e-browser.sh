@@ -368,7 +368,7 @@ projects_scenario() {
   listed "$at/sources/home" beta "file://$at/beta-remote.git" "$at/sources/beta"
   # The flow Conductor's own home declares, which the issues follow.
   mkdir -p "$at/sources/home/docs/agents"
-  cp crates/home/src/flow/flow.toml "$at/sources/home/docs/agents/flow.toml"
+  cp crates/home/src/flow/test-flow.toml "$at/sources/home/docs/agents/flow.toml"
   git -C "$at/sources/home" add .
   git -C "$at/sources/home" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm 'list alpha and beta' -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
   git clone -q --bare "$at/sources/home" "$at/home-remote.git"

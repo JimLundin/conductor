@@ -9,7 +9,7 @@
 
 use alloc::string::ToString;
 
-use proto::flow::{FieldType, Flow, Severity};
+use proto::flow::{FieldRole, FieldType, Flow, Severity};
 use proto::{
     ChecklistChange, Datum, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
     NewIssue, Part, ProjectId,
@@ -571,11 +571,8 @@ fn opened(
             .iter()
             .map(|(key, value)| (key.clone(), toml_of(value))),
     );
-    if flow
-        .field(kind, "created")
-        .is_some_and(|field| field.value == FieldType::Time)
-    {
-        front.push((String::from("created"), at.clone()));
+    if let Some(created) = flow.field_with(kind, FieldRole::Created) {
+        front.push((created.name.clone(), at.clone()));
     }
     let document = Document::new(
         &front,

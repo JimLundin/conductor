@@ -651,3 +651,37 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
     }
     Ok(())
 }
+
+/// The tests' home with `from` in its flow replaced by `to`.
+fn home_with(from: &str, to: &str) -> Inputs {
+    assert!(FLOW.contains(from), "the flow has no {from:?}");
+    Inputs {
+        flow: Ok(FLOW.replacen(from, to, 1)),
+        ..home()
+    }
+}
+
+#[test]
+fn a_new_issue_writes_when_it_opened_in_its_created_field_whatever_it_is_called()
+ {
+    let renamed = ran(
+        &home_with("name = \"created\"", "name = \"opened_at\""),
+        "issue new home task Wire-it",
+    );
+    assert!(!renamed.failed, "{}", renamed.output);
+    assert!(
+        text(&renamed).contains("\nopened_at = 2026-11-22T12:00:00Z\n"),
+        "{}",
+        text(&renamed)
+    );
+    let roleless = ran(
+        &home_with("role = \"created\"\n", ""),
+        "issue new home task Wire-it",
+    );
+    assert!(!roleless.failed, "{}", roleless.output);
+    assert!(
+        !text(&roleless).contains("created ="),
+        "{}",
+        text(&roleless)
+    );
+}
