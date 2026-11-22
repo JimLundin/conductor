@@ -6031,7 +6031,7 @@ fn rooted(dir: &Path) -> Fallible<String> {
 
 /// The flow Conductor's own home declares, which a test home's issues
 /// follow.
-const FLOW: &str = include_str!("../../home/src/flow/flow.toml");
+const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
 
 /// A project's `project.toml` in the home at `home`.
 fn listed_project(home: &Path, id: &str, fields: (&str, &str)) -> Fallible {

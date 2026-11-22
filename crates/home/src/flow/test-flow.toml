@@ -1,5 +1,6 @@
-# The flow every project's issues follow. Conductor's `home` crate
-# interprets it (docs/adr/0001); change the flow here, never in code.
+# A flow for the home crate's tests. It began as the home's
+# docs/agents/flow.toml and is kept apart on purpose: the tests pin its
+# names, and the home changes its own flow without changing these.
 # Lists are arrays of tables, so their order is the order shown.
 
 # Issues written before kinds existed read as this kind.

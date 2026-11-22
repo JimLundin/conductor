@@ -45,7 +45,7 @@ fn projects() -> Vec<Project> {
 
 /// The flow Conductor's own home declares.
 fn flow() -> Flow {
-    load(include_str!("../flow/flow.toml")).unwrap_or_else(|_| Flow {
+    load(include_str!("../flow/test-flow.toml")).unwrap_or_else(|_| Flow {
         default_kind: String::new(),
         statuses: Vec::new(),
         fields: Vec::new(),
@@ -1491,7 +1491,7 @@ mod as_the_command_line {
     use crate::flow::load;
     use crate::project;
 
-    const FLOW: &str = include_str!("../flow/flow.toml");
+    const FLOW: &str = include_str!("../flow/test-flow.toml");
     const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
     const SPEC: &str = "01m7ztr3ha005c92e0ykb9q429";
     const TASK: &str = "01m7zxfbp2qygtekcr6b6ndg28";

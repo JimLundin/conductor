@@ -1,7 +1,7 @@
 use super::{Literal, Predicate, Quantifier, Role, Severity, Shape, load};
 
 /// A copy of the home's `docs/agents/flow.toml`.
-const FLOW: &str = include_str!("flow.toml");
+const FLOW: &str = include_str!("test-flow.toml");
 
 /// The flow with `from` replaced by `to`, which it must contain.
 fn edited(from: &str, to: &str) -> Result<super::Flow, String> {

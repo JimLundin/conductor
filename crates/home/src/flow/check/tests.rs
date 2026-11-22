@@ -4,7 +4,7 @@ use super::{Finding, Inputs, check};
 use crate::flow::Severity;
 use crate::flow::graph::File;
 
-const FLOW: &str = include_str!("../flow.toml");
+const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
 const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
 const REVIEW: &str = "01m7zxfbp14y19v9kwp1sjc862";

@@ -10,7 +10,7 @@ const TASK: &str = "01m7zxfbnt3hsv50a6078gek37";
 const DECISION: &str = "01m7zxfbnrxa7106qn4dx9f0jx";
 
 fn flow() -> Flow {
-    load(include_str!("../flow.toml")).unwrap_or_else(|_| Flow {
+    load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
         default_kind: String::new(),
         statuses: Vec::new(),
         fields: Vec::new(),

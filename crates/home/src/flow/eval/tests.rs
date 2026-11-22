@@ -9,7 +9,7 @@ use crate::flow::graph::Graph;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Role, load};
 
 fn flow() -> Flow {
-    load(include_str!("../flow.toml")).unwrap_or_else(|_| Flow {
+    load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
         default_kind: String::new(),
         statuses: Vec::new(),
         fields: Vec::new(),

@@ -4,7 +4,7 @@ use super::{Command, Context, Outcome, command, fresh, run, stamp};
 use crate::flow::check::{Inputs, check};
 use crate::flow::graph::File;
 
-const FLOW: &str = include_str!("../flow.toml");
+const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
 const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
 const SPEC: &str = "01m7ztr3ha005c92e0ykb9q429";
