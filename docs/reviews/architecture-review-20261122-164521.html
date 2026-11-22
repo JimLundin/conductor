@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conductor — fewer responsibilities</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({ startOnLoad: true, theme: "neutral", securityLevel: "strict" });
+  </script>
+  <style>
+    :root{color-scheme:light;--ink:#182f2a;--paper:#f6f5ef;--green:#24735c;--muted:#586861;--line:#d9ddd3}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:16px/1.55 system-ui,sans-serif}main{max-width:1140px;margin:auto;padding:64px 28px 90px}h1,h2,h3,p{margin:0}h1,h2,h3{font-family:Georgia,serif;font-weight:400;line-height:1.08}h1{font-size:clamp(48px,7vw,86px);letter-spacing:-.055em;margin:16px 0 24px}h2{font-size:35px;letter-spacing:-.025em}h3{font-size:27px}a{color:var(--green);text-underline-offset:3px}code,.files{font-family:ui-monospace,Consolas,monospace;font-size:13px}code{overflow-wrap:anywhere}.eyebrow,figcaption,.label{font-size:11px;text-transform:uppercase;letter-spacing:.15em;font-weight:700}.meta,.legend,.evidence{font-size:13px;color:var(--muted)}.meta{margin:10px 0}.legend{display:flex;flex-wrap:wrap;gap:18px;margin:20px 0}.legend span:before{content:"";display:inline-block;width:15px;height:11px;margin-right:6px;border:1px solid var(--ink)}.legend .deep-key:before{background:var(--ink);border:3px solid var(--ink)}.legend .seam-key:before{height:0;border:0;border-top:2px dashed var(--green)}.legend .cut-key:before{border-color:#b8574a;background:#faeeeb}.completed{border-left:3px solid var(--green);padding:12px 18px;background:#ebefe6;margin:20px 0}.surface{display:grid;grid-template-columns:7fr 6fr 5fr 4fr 3fr 2fr;margin:25px 0 10px;gap:4px}.surface div{background:#dce5db;padding:13px 8px;font-size:11px;line-height:1.3}.surface b{font-size:24px;display:block;margin-bottom:5px}.surface div:nth-child(even){background:#e6e9dd}nav{display:flex;flex-wrap:wrap;gap:8px;margin:26px 0 40px}nav a{padding:6px 10px;border:1px solid var(--line);border-radius:5px;text-decoration:none;font-size:13px}article{background:#fffefa;border:1px solid var(--line);padding:32px;margin:26px 0 38px;scroll-margin-top:20px}.cardhead{display:flex;gap:18px;align-items:flex-start}.number{font:italic 38px Georgia,serif;color:#9cac9b}.badges{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}.badge,.tag{font-size:11px;padding:4px 8px;border-radius:4px;font-weight:650}.strong{background:#dcefe3;color:#185137}.explore{background:#f7ebc9;color:#6d4b05}.tag{background:#eeeee6;color:var(--muted)}.files{margin:20px 0;color:var(--muted);line-height:1.9;overflow-wrap:anywhere}.diagrams{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0}figure{margin:0;background:#f2f3ec;border:1px solid #e3e6da;padding:16px;min-height:318px}figcaption{color:var(--muted);margin-bottom:15px}.drawing{min-height:265px;display:flex;flex-direction:column;gap:8px;justify-content:center}.module{border:1px solid #aeb9a9;background:#fffefa;padding:12px;text-align:center;font-size:14px;line-height:1.35}.module b{display:block;font-weight:600}.module small{display:block;font-size:12px;color:var(--muted);margin-top:4px}.deep{background:var(--ink);color:#fff;border:4px solid var(--ink);padding:22px 14px}.deep small{color:#d3e0d6}.cut{border:1px dashed #b8574a;background:#fff5f1;color:#995349}.cut b{text-decoration:line-through}.row{display:flex;gap:8px}.row>*{flex:1}.arrow{text-align:center;line-height:1;color:#738770}.seam{text-align:center;border-top:2px dashed var(--green);padding-top:4px;font-size:11px;color:var(--green);letter-spacing:.05em}.band{padding:8px 12px;border-left:3px solid #b8574a;background:#f7eae4;font-size:13px}.facts{display:grid;grid-template-columns:120px 1fr;gap:10px 20px;font-size:14px;margin:22px 0}.facts dt{font-weight:650}.facts dd{margin:0}.wins{display:flex;flex-wrap:wrap;gap:8px 24px;color:var(--green);font-size:13px;padding-left:18px;margin:16px 0}.decision{padding:13px 16px;border-left:3px solid #b88b35;background:#f8f0de;font-size:13px;margin-top:18px}.evidence{margin-top:14px}.mermaid{font-size:12px;white-space:pre-wrap;min-height:260px;margin:0}.mermaid svg{max-width:100%;height:auto}.retained{padding:26px 0;border-top:1px solid var(--line)}.retained ul{margin:18px 0;padding-left:22px}.retained li{margin:10px 0}.top{background:var(--ink);color:#fff;padding:34px;margin-top:30px}.top a{color:#b9e0c1}.top p{margin-top:15px}.top h2{margin-top:12px}footer{font-size:12px;color:var(--muted);padding-top:24px}details{margin-top:16px;font-size:13px}summary{cursor:pointer;font-weight:650}.scope-table{border-collapse:collapse;width:100%;font-size:13px;margin:12px 0}.scope-table td,.scope-table th{text-align:left;padding:9px;border-bottom:1px solid var(--line);vertical-align:top}.scope-table th{font-weight:650}
+    main h1{font-size:clamp(48px,7vw,86px)}main h2{font-size:35px}main h3{font-size:27px}main a{color:var(--green);text-decoration:underline}main nav a{text-decoration:none}main .top a{color:#b9e0c1}
+    @media(max-width:740px){main{padding:30px 15px}article{padding:20px}.diagrams{grid-template-columns:1fr}.facts{grid-template-columns:1fr;gap:3px}.facts dd{margin-bottom:12px}.surface{grid-template-columns:repeat(3,1fr)}main h2{font-size:29px}.number{font-size:29px}}
+    @media print{body{background:white}main{padding:0}article{break-inside:avoid;margin:16px 0;padding:20px}nav{display:none}.top{background:#eee;color:#182f2a}.top a{color:#24735c}figure{min-height:240px}.drawing{min-height:205px}}
+  </style>
+</head>
+<body>
+<main class="mx-auto">
+  <header>
+    <p class="eyebrow">Architecture review · 22 November 2026</p>
+    <h1>Conductor.<br>Fewer responsibilities.</h1>
+    <p class="meta">Reviewed main at <a href="https://github.com/JimLundin/conductor/commit/217946a68e51b7033d2da283ec1270f465cd23f1">217946a</a> · Six feature cuts · Decisions before interface design</p>
+    <div class="legend"><span>Module</span><span class="deep-key">Deep module</span><span class="seam-key">Seam</span><span class="cut-key">Removed responsibility</span></div>
+    <div class="completed"><strong>Already removed:</strong> task ownership and handoff, automatic checklist notes, cross-host session migration, and historical undo. Commit snapshots and ordinary Continue remain.</div>
+    <div class="surface" aria-label="27 existing command variants grouped by responsibility">
+      <div><b>7</b>Conversation</div><div><b>6</b>Accounts</div><div><b>5</b>Fleet</div><div><b>4</b>Home / projects</div><div><b>3</b>Workspace / finish</div><div><b>2</b>Push</div>
+    </div>
+    <p class="meta">27 variants in <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/lib.rs#L441">CommandBody</a>. Counts describe the current interface, not usage or complexity. CLI commands add another interface.</p>
+    <nav aria-label="Candidates"><a href="#revisions">01 · Fleet revisions</a><a href="#enrollment">02 · Host enrollment</a><a href="#cloning">03 · Project cloning</a><a href="#finish">04 · Automatic Finish</a><a href="#issues">05 · Issue editing</a><a href="#effort">06 · Effort changes</a></nav>
+  </header>
+
+  <article id="revisions">
+    <div class="cardhead"><span class="number">01</span><div><div class="badges"><span class="badge strong">Strong</span><span class="tag">local-substitutable</span></div><h2>Ship CLI pins with Conductor</h2></div></div>
+    <p class="files"><a href="https://github.com/JimLundin/conductor/blob/217946a/crates/conductord/src/main.rs#L56">conductord/main.rs:56</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/fleet.rs#L49">proto/fleet.rs:49</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/agents/src/pin.rs#L112">agents/pin.rs:112</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/install/src/install.rs#L101">install/install.rs:101</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/fleet/credentials.rs#L135">daemon/fleet/credentials.rs:135</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/start.rs#L577">daemon/start.rs:577</a></p>
+    <div class="diagrams">
+      <figure><figcaption>Before · two sources of launch policy</figcaption><div class="drawing"><div class="row"><div class="module"><b>Compiled pins</b><small>Protocol + recorded fixtures</small></div><div class="module"><b>Fleet revision</b><small>Versions + digests + settings</small></div></div><div class="arrow">↓</div><div class="module"><b>Launch module</b><small>Choose pin, model and flags</small></div><div class="arrow">↓</div><div class="row"><div class="module"><b>Managed install</b></div><div class="module"><b>Fleet install</b><small>Separate location</small></div></div><div class="band">Revision watch → reconfigure instances</div></div></figure>
+      <figure><figcaption>After · one tested release</figcaption><div class="drawing"><div class="module deep"><b>Provider launch module</b><small>Compiled pins · protocol · fixtures<br>Existing model choice and host defaults</small></div><div class="seam">existing install seam</div><div class="module"><b>Verified install adapter</b><small>Both providers retain managed binaries</small></div><div class="module cut"><b>Fleet revision / publish</b><small>Fleet trust and shared credentials stay</small></div></div></figure>
+    </div>
+    <dl class="facts">
+      <dt>Problem</dt><dd>Fleet membership also distributes executable versions and launch settings, spreading launch policy through signing, installation and registry refresh.</dd>
+      <dt>Cut</dt><dd>Remove <code>fleet revision</code> / <code>fleet publish</code>, fleet pin/settings data, the alternate install path and revision-driven reconfiguration; use compiled pins and existing host defaults.</dd>
+      <dt>Give up</dt><dd>Changing CLI versions, model defaults or provider flags fleet-wide without a Conductor release or per-host configuration change.</dd>
+      <dt>Deletion test</dt><dd>The second pin selection path and its runtime reconciliation disappear; release deployment remains the owner's work.</dd>
+      <dt>Depth / seam</dt><dd>The launch module gains depth from one source of tested behavior; the existing install adapter keeps its seam and hash verification.</dd>
+      <dt>Tests</dt><dd>Retire revision publication and replacement tests; retain compiled-pin/fixture checks, failed-install behavior, credential refresh and fleet trust tests.</dd>
+    </dl>
+    <ul class="wins"><li>Locality: launch policy stays together</li><li>Leverage: one tested release</li><li>Interface loses fleet revision controls</li></ul>
+    <div class="decision">Revises <a href="https://github.com/JimLundin/conductor/blob/217946a/docs/fleet.md#L80">fleet pin/settings publishing</a>. <a href="https://github.com/JimLundin/conductor/blob/217946a/docs/architecture.md#L892">Architecture §6.2</a> already requires pins, protocol support and fixtures to move together. Preserve Codex's analytics-off default; removing its fleet override also revisits F9.</div>
+    <p class="evidence">Concrete fork: <code>installed_program</code> chooses <code>install_fleet</code> or <code>install</code>; <code>update_revision</code> asks the registry to reconfigure. Publishing validates pin syntax/digests, not a new protocol fixture set. The entire credential follower is not removable.</p>
+  </article>
+
+  <article id="enrollment">
+    <div class="cardhead"><span class="number">02</span><div><div class="badges"><span class="badge strong">Strong</span><span class="tag">ports &amp; adapters</span></div><h2>Keep one way to enroll a host</h2></div></div>
+    <p class="files"><a href="https://github.com/JimLundin/conductor/blob/217946a/crates/app/src/shell.rs#L413">app/shell.rs:413</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/fleet.rs#L141">proto/fleet.rs:141</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/fleet/peer.rs#L89">daemon/fleet/peer.rs:89</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/fleet/member.rs#L387">daemon/fleet/member.rs:387</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/serve.rs#L129">daemon/serve.rs:129</a></p>
+    <div class="diagrams">
+      <figure><figcaption>Before · two admission protocols</figcaption><pre class="mermaid">flowchart TB
+        A[Invite + conductord join] --> C[Persist membership]
+        B[App admits standalone ticket] --> D[Probe then enroll running host]
+        D --> C
+        C --> E[Certificate authentication]
+        D --> F[Close old ticket connections]
+        classDef added fill:#faeeeb,stroke:#b8574a
+        class B,D,F added</pre></figure>
+      <figure><figcaption>After · membership before serving</figcaption><pre class="mermaid">flowchart TB
+        A[Invite + conductord join] --> B[Persist membership]
+        B --> C[Start host]
+        C --> D[Certificate authentication]
+        D --> E[Existing session supervision]
+        classDef deep fill:#182f2a,color:#fff,stroke:#182f2a,stroke-width:3px
+        class B,D deep</pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Problem</dt><dd>A second enrollment path converts a running standalone host and changes authentication while existing clients are connected.</dd>
+      <dt>Cut</dt><dd>Remove <code>FleetAdmit</code>, <code>EnrollmentReady</code> / <code>Enroll</code> exchanges and live enrollment cutover; retain invitation-based <code>conductord join</code>.</dd>
+      <dt>Give up</dt><dd>Enrolling a running standalone host entirely from the app; joining requires a host-side command before restarting the daemon.</dd>
+      <dt>Deletion test</dt><dd>One enrollment workflow disappears; certificates, revocation and signed synchronization still earn their implementation.</dd>
+      <dt>Depth / seam</dt><dd>The membership module has a narrower lifecycle interface; its authenticated transport adapter and seam remain.</dd>
+      <dt>Tests</dt><dd>Retire live-enrollment and ticket-cutover tests; retain invitation expiry/retry, certificate identity, revocation, restore and standalone authentication.</dd>
+    </dl>
+    <ul class="wins"><li>Locality: membership settled at startup</li><li>Leverage: one enrollment workflow</li><li>Interface loses FleetAdmit</li></ul>
+    <div class="decision">Revises <a href="https://github.com/JimLundin/conductor/blob/217946a/docs/fleet.md#L66">“Enroll from a standalone host”</a>. Existing fleet decisions about trust and root ownership survive. Browser approval is a different capability and stays.</div>
+    <p class="evidence">The current peer probes a ticket, signs membership, sends enrollment, then swaps the live membership slot. Do not remove revocation monitoring along with the enrollment-specific watcher.</p>
+  </article>
+
+  <article id="cloning">
+    <div class="cardhead"><span class="number">03</span><div><div class="badges"><span class="badge explore">Worth exploring</span><span class="tag">local-substitutable</span></div><h2>Require an existing project checkout</h2></div></div>
+    <p class="files"><a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/lib.rs#L527">proto/lib.rs:527</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/home.rs#L63">proto/home.rs:63</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/home/src/checkout.rs#L26">home/checkout.rs:26</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/home.rs#L887">daemon/home.rs:887</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/ui/src/projects.rs#L199">ui/projects.rs:199</a></p>
+    <div class="diagrams">
+      <figure><figcaption>Before · discover and provision</figcaption><div class="drawing"><div class="row"><div class="module"><b>Search roots</b><small>Existing checkouts</small></div><div class="module"><b>Clone here</b><small>Managed project copies</small></div></div><div class="arrow">↓</div><div class="module"><b>Checkout module</b><small>Found / Cloned · Idle / Running / Failed</small></div><div class="arrow">↓</div><div class="module"><b>Session workspace</b></div></div></figure>
+      <figure><figcaption>After · discover, then start</figcaption><div class="drawing"><div class="module"><b>Owner provisions checkout</b><small>Once, under a configured search root</small></div><div class="seam">existing Git adapter</div><div class="module deep"><b>Checkout module</b><small>Discover and validate project identity</small></div><div class="arrow">↓</div><div class="module"><b>Session workspace</b></div></div></figure>
+    </div>
+    <dl class="facts">
+      <dt>Problem</dt><dd>The project interface carries both checkout discovery and the lifecycle of creating managed project copies.</dd>
+      <dt>Cut</dt><dd>Remove “Clone here,” <code>CloneProject</code>, <code>Cloning</code> and checkout-origin distinctions; retain search roots, identity matching, home synchronization and workspace creation.</dd>
+      <dt>Give up</dt><dd>Preparing a missing project checkout from the phone; the owner clones it on the host first.</dd>
+      <dt>Deletion test</dt><dd>The project's provisioning states disappear rather than moving into session startup; cloning the home repository still remains.</dd>
+      <dt>Depth / seam</dt><dd>The checkout module gains a smaller interface at its existing Git seam; the adapter only supplies discovery evidence for this responsibility.</dd>
+      <dt>Tests</dt><dd>Remove clone-control and clone-lifecycle scenarios; keep discovery, remote/root matching, missing-checkout refusals and starting in a discovered checkout.</dd>
+    </dl>
+    <ul class="wins"><li>Locality: checkout discovery owns readiness</li><li>Leverage: existing checkouts suffice</li><li>Interface loses provisioning states</li></ul>
+    <div class="decision">Revises the built <a href="https://github.com/JimLundin/conductor/blob/217946a/docs/architecture.md#L669">project cloning workflow</a>. This is a small, bounded cut; its value depends on how often the phone must provision a host.</div>
+  </article>
+
+  <article id="finish">
+    <div class="cardhead"><span class="number">04</span><div><div class="badges"><span class="badge explore">Worth exploring</span><span class="tag">local-substitutable</span></div><h2>Cut automatic finishing and landing</h2></div></div>
+    <p class="files"><a href="https://github.com/JimLundin/conductor/blob/217946a/crates/host/src/finish.rs#L178">host/finish.rs:178</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/session.rs#L266">daemon/session.rs:266</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/host/src/workspace/plan.rs#L667">host/workspace/plan.rs:667</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/daemon/src/home.rs#L282">daemon/home.rs:282</a></p>
+    <div class="diagrams">
+      <figure><figcaption>Before · an automatic delivery workflow</figcaption><div class="drawing"><div class="module"><b>FinishSession</b></div><div class="band">Ask for Summary turn · watch · timeout</div><div class="band">Stop agent · read issue · ready branch</div><div class="band">Land · recover receipt · push</div><div class="band">Write issue note · change status</div><div class="module"><b>11 finish stages</b></div></div></figure>
+      <figure><figcaption>After · supervise the work</figcaption><div class="drawing"><div class="module deep"><b>Session module</b><small>Conversation · approvals · Continue<br>Workspace · snapshots · diffs</small></div><div class="seam">existing provider adapter seam</div><div class="module"><b>Owner / agent workflow</b><small>Explicit summary, Git and home CLI actions</small></div><div class="module cut"><b>Automatic Finish workflow</b></div></div></figure>
+    </div>
+    <dl class="facts">
+      <dt>Problem</dt><dd>One convenience command coordinates a Summary turn, agent lifetime, recoverable landing, remote pushes and issue status.</dd>
+      <dt>Cut</dt><dd>Remove <code>FinishSession</code> and its automatic summary/landing/issue updates; preserve snapshots, diffs, issue starts and safe session removal.</dd>
+      <dt>Give up</dt><dd>One-click delivery of work to the issue branch. The owner or agent explicitly performs and checks the summary, merge, push and issue update.</dd>
+      <dt>Deletion test</dt><dd>The dedicated finish module and finish-only coordination disappear. Git integration work moves to the owner; it has not vanished.</dd>
+      <dt>Depth / seam</dt><dd>The session interface narrows; the workspace module retains depth and its Git adapter, while finish-only operations leave that seam.</dd>
+      <dt>Tests</dt><dd>Retire summary deadlines and landing-receipt recovery tests; retain safe removal, snapshot recovery, issue-branch preparation and ordinary session lifecycle tests.</dd>
+    </dl>
+    <ul class="wins"><li>Locality: session lifetime becomes simpler</li><li>Leverage: ordinary turns carry summaries</li><li>Interface loses FinishSession</li></ul>
+    <div class="decision">Reopens the owner-signed <a href="https://github.com/JimLundin/home/blob/main/projects/01m7r5n23kp17wyfj138e0bcnf/issues/01m814rybxdhcht1hv5h7b2zmb.md">issue-model spec</a>, which explicitly retains automatic status changes on finishing. Its replacement status-role task is in review; the earlier dropped task was superseded, not rejected.</div>
+    <p class="evidence">The dedicated core has 479 lines before its trailing test declaration and eleven <code>Stage</code> variants. This is a footprint, not a deletion estimate. <code>RemoveSession</code> still preserves and pushes a session branch; this cut does not remove every push or Pending issue edit.</p>
+  </article>
+
+  <article id="issues">
+    <div class="cardhead"><span class="number">05</span><div><div class="badges"><span class="badge explore">Worth exploring</span><span class="tag">local-substitutable</span></div><h2>Make the app an issue reader</h2></div></div>
+    <p class="files"><a href="https://github.com/JimLundin/conductor/blob/217946a/crates/ui/src/issues.rs#L19">ui/issues.rs:19</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/app/src/issue.rs#L28">app/issue.rs:28</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/lib.rs#L542">proto/lib.rs:542</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/home/src/issue/operation.rs#L123">home/issue/operation.rs:123</a> · <a href="https://github.com/JimLundin/conductor/tree/217946a/crates/home-cli">home-cli</a></p>
+    <div class="diagrams">
+      <figure><figcaption>Before · another issue editor</figcaption><div class="drawing"><div class="row"><div class="module"><b>App editor</b><small>Drafts · validation · replies</small></div><div class="module"><b>Home CLI</b><small>Issue commands</small></div></div><div class="arrow">↓</div><div class="row"><div class="module"><b>Issue edits</b><small>Pending delivery</small></div><div class="module"><b>Flow commands</b><small>Direct file writes</small></div></div><div class="arrow">↓</div><div class="module"><b>Issue files</b><small>Consolidation is active work</small></div></div></figure>
+      <figure><figcaption>After · read and start work</figcaption><div class="drawing"><div class="module deep"><b>App issue module</b><small>Read issues · choose a session start</small></div><div class="seam">existing home feed seam</div><div class="row"><div class="module"><b>Home CLI adapter</b><small>Owner / agent edits</small></div><div class="module"><b>Session automation</b><small>Retained unless cut separately</small></div></div><div class="module cut"><b>App editing interface</b></div></div></figure>
+    </div>
+    <dl class="facts">
+      <dt>Problem</dt><dd>The app exposes a tracker editor, including drafts, multi-field saves and stale-edit handling, alongside supervising sessions.</dd>
+      <dt>Cut</dt><dd>Remove app issue creation/editing and <code>CreateIssue</code> / <code>ChangeIssue</code>; keep reading, issue selection, the home CLI and shared issue semantics.</dd>
+      <dt>Give up</dt><dd>Direct issue editing from the phone. The current CLI covers creation, status/field changes and notes; body/checklist editing has no equivalent command on this main. CLI parity is a prerequisite if those capabilities must survive.</dd>
+      <dt>Deletion test</dt><dd>Editor state and its remote command interface disappear. Issue parsing and flow evaluation remain; Pending issue edits still serve retained session automation.</dd>
+      <dt>Depth / seam</dt><dd>The app issue module gains depth through a read/start interface. The home CLI adapter retains the flow editing module; consolidation of the two current editing seams is already active work.</dd>
+      <dt>Tests</dt><dd>Retire browser editor/draft tests; keep issue rendering and starts, CLI refusal/warning parity, file parsing, and any retained automatic edits.</dd>
+    </dl>
+    <ul class="wins"><li>Locality: editing rules stay home</li><li>Leverage: shared CLI editing</li><li>Interface loses remote editor commands</li></ul>
+    <div class="decision">Directly conflicts with the approved <a href="https://github.com/JimLundin/home/blob/main/projects/01m7r5n23kp17wyfj138e0bcnf/issues/01m814rybxdhcht1hv5h7b2zmb.md">generic issue editor work</a> and its kind-picker task. The home's ADR-0001 (“flow is data”) remains valid: this candidate cuts one editor, not the flow interpreter or tracker.</div>
+    <p class="evidence">Current main has thirteen <code>IssueIntent</code> variants plus two creation intents. Issue-model rework is active on another branch; its parser/type consolidation is already tracked and is not presented as a new removal opportunity.</p>
+  </article>
+
+  <article id="effort">
+    <div class="cardhead"><span class="number">06</span><div><div class="badges"><span class="badge explore">Worth exploring</span><span class="tag">ports &amp; adapters</span></div><h2>Choose effort once per session</h2></div></div>
+    <p class="files"><a href="https://github.com/JimLundin/conductor/blob/217946a/crates/proto/src/lib.rs#L494">proto/lib.rs:494</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/host/src/session.rs#L558">host/session.rs:558</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/agents/src/runtime.rs#L36">agents/runtime.rs:36</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/claude/src/runtime.rs#L214">claude/runtime.rs:214</a> · <a href="https://github.com/JimLundin/conductor/blob/217946a/crates/ui/src/session.rs#L204">ui/session.rs:204</a></p>
+    <div class="diagrams">
+      <figure><figcaption>Before · desired and running effort</figcaption><div class="drawing"><div class="row"><div class="module"><b>Initial selection</b></div><div class="module"><b>SetEffort</b><small>During / between turns</small></div></div><div class="arrow">↓</div><div class="module"><b>Session module</b><small>Record change · compare running effort</small></div><div class="arrow">↓</div><div class="row"><div class="module"><b>Claude adapter</b><small>Retune, then send</small></div><div class="module"><b>Codex adapter</b><small>Effort on turn start</small></div></div></div></figure>
+      <figure><figcaption>After · effort follows session launch</figcaption><div class="drawing"><div class="module"><b>Initial model / effort selection</b></div><div class="arrow">↓</div><div class="module deep"><b>Session module</b><small>Launch and Continue with chosen effort<br>Retain model-fallback rules</small></div><div class="seam">two provider adapters earn this seam</div><div class="module cut"><b>Between-turn effort mutation</b></div></div></figure>
+    </div>
+    <dl class="facts">
+      <dt>Problem</dt><dd>One adjustable setting adds a durable event and desired-versus-running state across the session, replay, app and provider adapters.</dd>
+      <dt>Cut</dt><dd>Remove <code>SetEffort</code>, <code>EffortChanged</code> and retune-before-send behavior; keep initial effort selection, discovery and Continue.</dd>
+      <dt>Give up</dt><dd>Retuning an ongoing conversation. Choosing another effort requires another session; it does not preserve that conversation's continuity.</dd>
+      <dt>Deletion test</dt><dd>Mutable effort coordination disappears; launch effort still belongs behind the provider seam.</dd>
+      <dt>Depth / seam</dt><dd>The session module gains depth by exposing fewer mutations; both provider adapters remain necessary and keep their distinct startup behavior.</dd>
+      <dt>Tests</dt><dd>Remove dynamic-retuning scenarios; retain initial effort, Continue, unavailable models, and effort fallback when a credential change changes the model.</dd>
+    </dl>
+    <ul class="wins"><li>Locality: effort chosen at launch</li><li>Leverage: narrower session controls</li><li>Interface loses SetEffort</li></ul>
+    <div class="decision">Reverses <a href="https://github.com/JimLundin/conductor/blob/217946a/docs/architecture.md#L93">“Effort between turns”</a>. Smaller than the workflow cuts; useful only if retuning the same conversation is expendable.</div>
+  </article>
+
+  <section class="retained" aria-labelledby="retain-title">
+    <p class="eyebrow">Keep the depth that earns its place</p><h3 id="retain-title">What I would retain in this round</h3>
+    <ul>
+      <li><strong>Two provider adapters, managed CLI installs and private homes.</strong> Their seam is real: two native protocols and recorded fixtures justify the implementation. Removing installation mostly transfers setup and verification to the owner.</li>
+      <li><strong>Durable sessions, reconnect/replay, approvals, questions and commit snapshots.</strong> These support supervision and recovery directly; internalizing their types alone would not remove their obligations.</li>
+      <li><strong>Web Push and sub-agent visibility.</strong> Both add code, but background attention and child requests support phone supervision. No usage evidence justifies sacrificing them ahead of the cuts above.</li>
+    </ul>
+    <details><summary>Scope, evidence and existing commitments</summary>
+      <table class="scope-table"><tbody>
+        <tr><th>Baseline</th><td>Freshly fetched main, 217946a, in an isolated task checkout. The original checkout was on the older new-session-readiness branch. No application code changed.</td></tr>
+        <tr><th>Method</th><td>Glossary and documented decisions first; current command inventory, recent changes, source/caller/test tracing, plus a fresh-context independent exploration. No usage telemetry or stress tests.</td></tr>
+        <tr><th>Active work</th><td>The home tracker was read locally on 22 November. Issue-model rework remains active; findings distinguish that commitment from current main. Linked tracker pages may advance after this report.</td></tr>
+        <tr><th>Known completed cuts</th><td>Checklist simplification dff11ad; migration removal 5179f10; commit snapshots / historical undo removal 217946a. Previous review recommendations for those features are now history.</td></tr>
+        <tr><th>Documentation drift</th><td>Some architecture/home passages still describe unmapped Codex children and old history commands. Current source implements Codex children and removes historical undo; source and latest glossary take precedence for this review.</td></tr>
+        <tr><th>Estimates</th><td>No claimed line savings. Shared modules and retained callers must be accounted for before an implementation estimate. Smaller interface is judged by obligations removed, not a line ratio.</td></tr>
+        <tr><th>Implementation policy</th><td>Any chosen cut updates callers and stored/wire formats in place, with version bumps where required. Existing project policy calls for no migration or compatibility implementation.</td></tr>
+      </tbody></table>
+    </details>
+  </section>
+  <section class="top" id="top-recommendation">
+    <p class="eyebrow">Top recommendation</p><h2>Ship CLI pins with Conductor.</h2>
+    <p>Start with <a href="#revisions">candidate 01</a>: it removes a distributed launch-policy workflow while retaining the session, account and phone workflows, and makes releases match the project's pin-and-fixture discipline.</p>
+  </section>
+  <footer>Static review artifact · All application behavior remains unchanged · Layout has embedded CSS; Tailwind and Mermaid load from CDNs. Source links are pinned to the reviewed commit.</footer>
+</main>
+</body>
+</html>
