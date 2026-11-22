@@ -239,7 +239,6 @@ fn trace_command(command: &Command) {
         CommandBody::FinishSession { .. } => "finish_session",
         CommandBody::PushPublicKey => "push_public_key",
         CommandBody::RegisterPush(_) => "register_push",
-        CommandBody::HandoffTask { .. } => "handoff_task",
         CommandBody::MoveSession { .. } => "move_session",
         CommandBody::FleetStatus => "fleet_status",
         CommandBody::FleetInvite => "fleet_invite",
@@ -282,7 +281,6 @@ impl Conductor {
             endpoint,
             plugins,
         } = options;
-        crate::progress::spawn(log.clone(), home.clone());
         Self {
             log,
             registry,
@@ -490,9 +488,6 @@ impl Conductor {
         let membership = self.fleet.borrow().clone();
         let result = match route {
             Route::Order(session, order) => self.order(session, order).await,
-            Route::Handoff { from, to, task, by } => {
-                self.handoff(from, to, task, by).await
-            }
             Route::Relaunch(session, relaunch) => {
                 self.relaunch(session, relaunch).await
             }
@@ -542,24 +537,6 @@ impl Conductor {
             Some(push) => push.command(order).await,
             None => CommandResult::PushUnavailable,
         }
-    }
-
-    async fn handoff(
-        &self,
-        from: SessionId,
-        to: SessionId,
-        id: proto::TaskId,
-        by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
-        if from == to {
-            return Ok(CommandResult::Rejected(
-                Rejection::HandoffToSameSession,
-            ));
-        }
-        let Some(task) = self.log.handoff_task(from, id).await? else {
-            return Ok(CommandResult::Rejected(Rejection::TaskUnavailable));
-        };
-        self.order(to, Order::Handoff { task, by }).await
     }
 
     async fn order(

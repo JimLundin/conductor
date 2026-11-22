@@ -4,11 +4,11 @@
 
 use alloc::collections::BTreeSet;
 
-use agents::{Exit, PlanStep};
+use agents::Exit;
 use proto::{
-    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
-    QuestionOption, Selection, SubagentOutcome, TaskStatus, ToolKind,
-    ToolOutcome, TurnOutcome,
+    Answer, Change, ChecklistEntry, ChecklistStatus, Effort, FileChange,
+    ModelChoice, ModelId, Models, Question, QuestionOption, Selection,
+    SubagentOutcome, ToolKind, ToolOutcome, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -123,7 +123,7 @@ pub enum Block {
         outcome: ToolOutcome,
     },
     /// A `TodoWrite` call: the whole checklist as the model wrote it.
-    Checklist(Vec<PlanStep>),
+    Checklist(Vec<ChecklistEntry>),
     Other(Value),
 }
 
@@ -453,17 +453,17 @@ enum TodoStatus {
     Completed,
 }
 
-fn todos(input: &Value) -> serde_json::Result<Vec<PlanStep>> {
+fn todos(input: &Value) -> serde_json::Result<Vec<ChecklistEntry>> {
     serde_json::from_value::<TodoInput>(input.clone()).map(|parsed| {
         parsed
             .todos
             .into_iter()
-            .map(|todo| PlanStep {
+            .map(|todo| ChecklistEntry {
                 text: todo.content,
                 status: match todo.status {
-                    TodoStatus::Pending => TaskStatus::Pending,
-                    TodoStatus::InProgress => TaskStatus::InProgress,
-                    TodoStatus::Completed => TaskStatus::Completed,
+                    TodoStatus::Pending => ChecklistStatus::Pending,
+                    TodoStatus::InProgress => ChecklistStatus::InProgress,
+                    TodoStatus::Completed => ChecklistStatus::Completed,
                 },
             })
             .collect()

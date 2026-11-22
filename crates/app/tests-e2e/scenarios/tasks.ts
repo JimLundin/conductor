@@ -38,7 +38,7 @@ export const tasks = async (run: Run): Promise<void> => {
 	const checklist = pane.locator("details.tasks");
 	check(
 		squeeze(await checklist.locator("summary").innerText()).trim() ===
-			"Tasks 1 of 3 done",
+			"Checklist 1 of 3 done",
 		"the checklist counts what is done",
 	);
 	check(

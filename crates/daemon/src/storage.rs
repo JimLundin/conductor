@@ -2,9 +2,7 @@
 use anyhow::Context;
 use std::path::Path;
 
-use proto::{
-    CommandId, CommandResult, Epoch, Event, EventKind, HostSeq, SessionId,
-};
+use proto::{CommandId, CommandResult, Epoch, Event, EventKind, SessionId};
 use redb::{
     Database, ReadableDatabase, ReadableTable, TableDefinition,
     WriteTransaction,
@@ -13,7 +11,6 @@ use serde::{Serialize, de::DeserializeOwned};
 
 const EVENTS: TableDefinition<u64, Vec<u8>> = TableDefinition::new("events");
 const META: TableDefinition<&str, Vec<u8>> = TableDefinition::new("metadata");
-const PROGRESS: &str = "progress_cursor";
 const RECEIPTS: TableDefinition<u128, Vec<u8>> =
     TableDefinition::new("command_receipts");
 const CONVERSATIONS: TableDefinition<u128, Vec<u8>> =
@@ -48,14 +45,6 @@ impl Storage {
                     meta.insert("epoch", &encode(&crate::random_epoch()?)?)?;
                 let _ = meta.insert("format", &encode(&host::log::FORMAT)?)?;
             }
-            if meta.get(PROGRESS)?.is_none() {
-                // Earlier databases have no way to identify already delivered notes.
-                let head = write
-                    .open_table(EVENTS)?
-                    .last()?
-                    .map_or(HostSeq(0), |(key, _)| HostSeq(key.value()));
-                let _ = meta.insert(PROGRESS, &encode(&head)?)?;
-            }
         }
         write.commit()?;
         Ok(Self { database })
@@ -65,13 +54,6 @@ impl Storage {
         let read = self.database.begin_read()?;
         let table = read.open_table(META)?;
         let value = table.get("epoch")?.context("missing database epoch")?;
-        decode(&value.value())
-    }
-
-    pub(crate) fn progress_cursor(&self) -> anyhow::Result<HostSeq> {
-        let read = self.database.begin_read()?;
-        let table = read.open_table(META)?;
-        let value = table.get(PROGRESS)?.context("missing progress cursor")?;
         decode(&value.value())
     }
 
@@ -186,10 +168,6 @@ pub fn write(
     match what {
         host::log::Write::Event(logged) => event(write, logged),
         host::log::Write::Receipt(key, result) => receipt(write, *key, result),
-        host::log::Write::Progress(seq) => {
-            let _ = write.open_table(META)?.insert(PROGRESS, &encode(seq)?)?;
-            Ok(())
-        }
         host::log::Write::Conversation(session, id) => {
             conversation(write, *session, id)
         }

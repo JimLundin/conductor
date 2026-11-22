@@ -5,11 +5,11 @@
 
 use alloc::collections::BTreeSet;
 
-use agents::{Exit, PlanStep};
+use agents::Exit;
 use proto::{
-    Answer, Change, Effort, FileChange, ModelChoice, ModelId, Models, Question,
-    QuestionOption, Selection, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
-    ToolPhase, TurnOutcome,
+    Answer, Change, ChecklistEntry, ChecklistStatus, Effort, FileChange,
+    ModelChoice, ModelId, Models, Question, QuestionOption, Selection,
+    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -245,7 +245,7 @@ pub enum ThreadEvent {
     /// The whole plan, as the model updated it (`turn/plan/updated`).
     PlanUpdated {
         turn: TurnId,
-        steps: Vec<PlanStep>,
+        steps: Vec<ChecklistEntry>,
     },
     /// What the thread runs its later turns with (`thread/settings/updated`).
     SettingsChanged(ThreadSettings),
@@ -1029,13 +1029,13 @@ fn turn_completed(turn: Turn) -> ThreadEvent {
     }
 }
 
-fn plan_step(step: WirePlanStep) -> PlanStep {
-    PlanStep {
+fn plan_step(step: WirePlanStep) -> ChecklistEntry {
+    ChecklistEntry {
         text: step.step,
         status: match step.status {
-            WirePlanStatus::Pending => TaskStatus::Pending,
-            WirePlanStatus::InProgress => TaskStatus::InProgress,
-            WirePlanStatus::Completed => TaskStatus::Completed,
+            WirePlanStatus::Pending => ChecklistStatus::Pending,
+            WirePlanStatus::InProgress => ChecklistStatus::InProgress,
+            WirePlanStatus::Completed => ChecklistStatus::Completed,
         },
     }
 }

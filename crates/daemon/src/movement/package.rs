@@ -94,7 +94,7 @@ impl Prepared {
     ) -> Result<Self> {
         let files = SessionFiles::of(&events).map_err(anyhow::Error::msg)?;
         let last = events.last().context("the source session is missing")?.seq;
-        let (epoch, _) = mover.log.progress_cursor().await?;
+        let epoch = mover.log.epoch().await?;
         let conversation = mover.log.saved_conversation(session).await?;
         let (_, provider) =
             mover.provider(files.instance.clone(), false).await?;

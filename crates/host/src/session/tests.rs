@@ -1,11 +1,11 @@
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
-use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
+use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
-    Answer, Checkpoint, CheckpointId, ClientName, CloseReason, CommandResult,
-    Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq,
-    InstanceId, Kept, ModelChoice, ModelId, Models, Provider, Question,
-    Rejection, RequestId, Resolution, Selection, SessionId, SubagentActivity,
-    SubagentEvent, SubagentId, SubagentOutcome, Task, TaskId, TaskStatus,
+    Answer, ChecklistEntry, ChecklistStatus, Checkpoint, CheckpointId,
+    ClientName, CloseReason, CommandResult, Decision, Effort, Event, EventKind,
+    HistoryAnchor, HostPath, HostSeq, InstanceId, Kept, ModelChoice, ModelId,
+    Models, Provider, Question, Rejection, RequestId, Resolution, Selection,
+    SessionId, SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome,
     ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     UndoAvailability, Workspace,
 };
@@ -1167,12 +1167,10 @@ fn an_undo_to_a_message_forks_the_conversation_through_it() {
     );
 }
 
-fn tasks(label: &str, status: TaskStatus) -> Vec<Task> {
-    Vec::from([Task {
-        id: TaskId(7),
+fn tasks(label: &str, status: ChecklistStatus) -> Vec<ChecklistEntry> {
+    Vec::from([ChecklistEntry {
         text: text(label),
         status,
-        holder: SessionId(1),
     }])
 }
 
@@ -1189,8 +1187,8 @@ fn the_tasks_before_a_checkpoint_are_the_session_s_last_before_it() {
         at(
             seq,
             session,
-            EventKind::TasksChanged {
-                tasks: tasks(label, TaskStatus::Pending),
+            EventKind::ChecklistChanged {
+                tasks: tasks(label, ChecklistStatus::Pending),
             },
         )
     };
@@ -1213,32 +1211,92 @@ fn the_tasks_before_a_checkpoint_are_the_session_s_last_before_it() {
             SessionId(1),
             id
         )),
-        [tasks("second", TaskStatus::Pending), Vec::new()]
+        [tasks("second", ChecklistStatus::Pending), Vec::new()]
     );
 }
 
 #[test]
-fn a_restored_session_keeps_its_tasks_and_their_ids() {
+fn a_restored_session_keeps_its_checklist() {
     let checklist = |status| {
-        Input::Step(Step::Checklist(Vec::from([PlanStep {
+        Input::Step(Step::Checklist(Vec::from([ChecklistEntry {
             text: text("plan"),
             status,
         }])))
     };
     let _ = expect(
         restored(
-            &[event(EventKind::TasksChanged {
-                tasks: tasks("plan", TaskStatus::Pending),
+            &[event(EventKind::ChecklistChanged {
+                tasks: tasks("plan", ChecklistStatus::Pending),
             })],
             None,
         ),
         Vec::from([
-            (checklist(TaskStatus::Pending), Vec::new()),
+            (checklist(ChecklistStatus::Pending), Vec::new()),
             (
-                checklist(TaskStatus::Completed),
-                Vec::from([Effect::Emit(EventKind::TasksChanged {
-                    tasks: tasks("plan", TaskStatus::Completed),
+                checklist(ChecklistStatus::Completed),
+                Vec::from([Effect::Emit(EventKind::ChecklistChanged {
+                    tasks: tasks("plan", ChecklistStatus::Completed),
                 })]),
+            ),
+        ]),
+    );
+}
+
+#[test]
+fn main_and_child_checklists_replace_their_own_ordered_snapshots() {
+    let first = tasks("read", ChecklistStatus::Pending);
+    let rewritten = Vec::from([
+        ChecklistEntry {
+            text: text("test"),
+            status: ChecklistStatus::Completed,
+        },
+        ChecklistEntry {
+            text: text("read"),
+            status: ChecklistStatus::InProgress,
+        },
+        ChecklistEntry {
+            text: text("test"),
+            status: ChecklistStatus::Pending,
+        },
+    ]);
+    let child = SubagentId(text("child"));
+    let child_step = |tasks| {
+        Input::Step(Step::SubagentChecklist {
+            agent: child.clone(),
+            steps: tasks,
+        })
+    };
+    let changed = |tasks| Effect::Emit(EventKind::ChecklistChanged { tasks });
+    let child_changed = |tasks| {
+        Effect::Emit(EventKind::Subagent {
+            agent: child.clone(),
+            event: SubagentEvent::ChecklistChanged { tasks },
+        })
+    };
+    let _ = expect(
+        ready(),
+        Vec::from([
+            (
+                Input::Step(Step::Checklist(first.clone())),
+                Vec::from([changed(first.clone())]),
+            ),
+            (
+                child_step(rewritten.clone()),
+                Vec::from([child_changed(rewritten.clone())]),
+            ),
+            (Input::Step(Step::Checklist(first)), Vec::new()),
+            (
+                Input::Step(Step::Checklist(rewritten.clone())),
+                Vec::from([changed(rewritten.clone())]),
+            ),
+            (
+                child_step(Vec::new()),
+                Vec::from([child_changed(Vec::new())]),
+            ),
+            (Input::Step(Step::Checklist(rewritten)), Vec::new()),
+            (
+                Input::Step(Step::Checklist(Vec::new())),
+                Vec::from([changed(Vec::new())]),
             ),
         ]),
     );
@@ -1834,57 +1892,5 @@ fn a_stop_closes_the_session_between_turns() {
     let _ = expect(
         running(),
         Vec::from([(stop(), Vec::from([rejected(Rejection::TurnInProgress)]))]),
-    );
-}
-
-#[test]
-fn ownership_moves_only_when_the_receiving_agent_accepts_the_task_message() {
-    let task = Task {
-        id: TaskId(42),
-        holder: SessionId(2),
-        text: text("write tests"),
-        status: TaskStatus::InProgress,
-    };
-    let order = Input::Order(Order::Handoff {
-        task: task.clone(),
-        by: phone(),
-    });
-    let (starting, recorded) = ready().step(order.clone());
-    let drafted = recorded.first().and_then(|effect| match effect {
-        Effect::Call(Call::Record(EventKind::UserMessage { text, .. })) => {
-            Some(text.as_str())
-        }
-        _ => None,
-    });
-    assert!(
-        drafted.is_some_and(|message| message.ends_with(&task.handoff_label()))
-    );
-    let (accepted_delivery, _) = starting.step(Input::Recorded(HostSeq(7)));
-    let (_, delivered) = accepted_delivery.step(sent());
-    assert_eq!(
-        delivered,
-        [
-            saved(),
-            Effect::Emit(EventKind::TaskHandedOff { task }),
-            accepted()
-        ]
-    );
-
-    let (failed, _) = ready().step(order);
-    let (sending, _) = failed.step(Input::Recorded(HostSeq(7)));
-    let (_, rejected_delivery) =
-        sending.step(Input::Agent(Outcome::Sent(Err(text("offline")))));
-    assert_eq!(
-        rejected_delivery,
-        [
-            Effect::Emit(EventKind::TurnCompleted {
-                outcome: TurnOutcome::Failed {
-                    message: text("offline")
-                }
-            }),
-            rejected(Rejection::HandoffDeliveryFailed {
-                reason: text("offline")
-            }),
-        ]
     );
 }

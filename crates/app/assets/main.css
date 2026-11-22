@@ -385,9 +385,6 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .tasks-count { color: var(--muted); }
 .tasks ol { max-height: 30dvh; margin: 0; padding: 0 0 0 1.5em; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
 .task { display: flex; align-items: baseline; gap: 0.55rem; padding: 0.2rem 0; overflow-wrap: anywhere; }
-.task .handoff-task { margin-inline-start: auto; }
-.task:has(.task-handoff) { flex-wrap: wrap; }
-.task-handoff { flex-basis: 100%; display: grid; gap: 0.25rem; }
 .task-mark { flex-shrink: 0; width: 0.75rem; height: 0.75rem; border: 2px solid var(--faint); border-radius: 50%; transform: translateY(0.1rem); }
 .task[data-status="in-progress"] .task-mark { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 35%, transparent 40%); }
 .task[data-status="in-progress"] .task-text { color: var(--ink); font-weight: 600; }

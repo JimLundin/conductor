@@ -15,7 +15,9 @@ use codex::{
 };
 use install::Home;
 use n0_future::StreamExt;
-use proto::{Answer, Effort, TaskStatus, ToolKind, ToolPhase, TurnOutcome};
+use proto::{
+    Answer, ChecklistStatus, Effort, ToolKind, ToolPhase, TurnOutcome,
+};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -283,7 +285,7 @@ fn summary(event: &ThreadEvent) -> String {
             steps
                 .iter()
                 .map(|step| (step.text.as_str(), step.status))
-                .collect::<Vec<(&str, TaskStatus)>>()
+                .collect::<Vec<(&str, ChecklistStatus)>>()
         ),
         ThreadEvent::SettingsChanged(settings) => {
             format!("settings {settings:?}")

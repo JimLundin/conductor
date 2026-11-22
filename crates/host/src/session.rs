@@ -22,17 +22,16 @@ use core::mem;
 use crate::checkpoints::{Book, Recovery, Undo, UndoPlan};
 pub use crate::checkpoints::{Compared, SnapshotPlan};
 use crate::prelude::*;
-use crate::tasks;
 use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
-use agents::{NativeRequest, NativeTurn, PlanStep, Reply, Step};
+use agents::{NativeRequest, NativeTurn, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use proto::{
-    CheckpointDiff, CheckpointId, ClientName, CloseReason, CommandResult,
-    Decision, Effort, Event, EventKind, HistoryAnchor, HostPath, HostSeq, Kept,
-    ModelId, Models, Rejection, RequestId, Resolution, SessionId,
-    SubagentActivity, SubagentEvent, SubagentId, Task, TaskId, ToolCallId,
+    ChecklistEntry, CheckpointDiff, CheckpointId, ClientName, CloseReason,
+    CommandResult, Decision, Effort, Event, EventKind, HistoryAnchor, HostPath,
+    HostSeq, Kept, ModelId, Models, Rejection, RequestId, Resolution,
+    SessionId, SubagentActivity, SubagentEvent, SubagentId, ToolCallId,
     ToolKind, ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
 
@@ -119,10 +118,6 @@ pub enum Order {
         text: String,
         by: ClientName,
     },
-    Handoff {
-        task: Task,
-        by: ClientName,
-    },
     Interrupt,
     Diff(CheckpointId),
     /// Undoes the turns from `checkpoint` on, restarting the agent if it
@@ -169,8 +164,6 @@ pub enum Input {
     Diffed(Result<CheckpointDiff, String>),
     /// The log's events, for [`Call::History`].
     History(Vec<Event>),
-    /// The ids [`Call::Mint`] asked for.
-    Minted(Vec<TaskId>),
     /// Whether the directory of [`Call::Exists`] can be read.
     Exists(bool),
     /// The outcome of a workspace call that answers nothing else.
@@ -217,8 +210,6 @@ pub enum Call {
     },
     Diff(Box<Compared>),
     History,
-    /// This many new task ids.
-    Mint(usize),
     Exists(HostPath),
     /// Remove the workspace by [`crate::workspace::Plan::remove`], keeping its
     /// branch.
@@ -325,12 +316,11 @@ enum Flow {
     Idle,
     Saving(Saving),
     /// The user's message is being logged; `text` goes to the agent next.
-    Recording(String, Option<Box<Task>>),
+    Recording(String),
     /// The message is being sent, changing the agent's effort to this.
-    Sending(Option<Effort>, Option<Box<Task>>),
+    Sending(Option<Effort>),
     /// An agent call whose failure is logged as an error, then the reply.
     Noting(Option<CommandResult>),
-    Minting(Option<SubagentId>, Vec<PlanStep>, Vec<Option<TaskId>>),
     Diffing,
     /// The agent is starting, for this.
     Starting(Launched),
@@ -363,7 +353,7 @@ struct Saving {
 enum Saved {
     Start(Models),
     Continue,
-    Send(String, ClientName, Option<Box<Task>>),
+    Send(String, ClientName),
     TurnEnded(TurnOutcome),
     Closed(CloseReason),
 }
@@ -405,9 +395,8 @@ pub struct Session {
     turn_start: Option<HostSeq>,
     /// Tool calls the user denied, whose failed result means `Declined`.
     declined: Vec<(Option<SubagentId>, ToolCallId)>,
-    /// The session's native checklist, before projecting handoff ownership.
-    tasks: Vec<Task>,
-    subagent_tasks: BTreeMap<SubagentId, Vec<Task>>,
+    tasks: Vec<ChecklistEntry>,
+    subagent_tasks: BTreeMap<SubagentId, Vec<ChecklistEntry>>,
     removed: bool,
     flow: Flow,
 }
@@ -448,7 +437,7 @@ impl Session {
                 .filter_map(|entry| match &entry.kind {
                     EventKind::Subagent {
                         agent,
-                        event: SubagentEvent::TasksChanged { tasks },
+                        event: SubagentEvent::ChecklistChanged { tasks },
                     } => Some((agent.clone(), tasks.clone())),
                     _ => None,
                 })
@@ -509,22 +498,18 @@ impl Session {
             (Flow::Saving(saving), Input::Snapshotted(taken)) => {
                 self.snapshotted(saving, taken)
             }
-            (Flow::Recording(text, task), Input::Recorded(seq)) => {
-                self.recorded(text, seq, task)
+            (Flow::Recording(text), Input::Recorded(seq)) => {
+                self.recorded(text, seq)
             }
-            (
-                Flow::Sending(change, task),
-                Input::Agent(Outcome::Sent(sent)),
-            ) => self.sent(change, sent, task),
+            (Flow::Sending(change), Input::Agent(Outcome::Sent(sent))) => {
+                self.sent(change, sent)
+            }
             (
                 Flow::Noting(then),
                 Input::Agent(
                     Outcome::Interrupted(called) | Outcome::Replied(called),
                 ),
             ) => noted(called, then),
-            (Flow::Minting(agent, steps, kept), Input::Minted(ids)) => {
-                self.minted(agent, steps, kept, ids)
-            }
             (Flow::Diffing, Input::Diffed(diff)) => answer(diffed(diff)),
             (Flow::Starting(then), Input::Agent(Outcome::Started(started))) => {
                 self.started(then, started)
@@ -644,20 +629,11 @@ impl Session {
             }
             (_, _, Agent::Down) => rejected(Rejection::SessionClosed),
             (Order::Send { text, by }, Turn::Idle, _) => {
-                self.save(Saved::Send(text, by, None))
+                self.save(Saved::Send(text, by))
             }
-            (Order::Handoff { task, by }, Turn::Idle, _) => {
-                let text = format!(
-                    "Take over this unfinished task from another Conductor session. Add the exact line below to your checklist or plan. Keep the label so Conductor can track your progress and mark it completed when the work is done.\n\n{}",
-                    task.handoff_label(),
-                );
-                self.save(Saved::Send(text, by, Some(Box::new(task))))
+            (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
+                rejected(Rejection::TurnInProgress)
             }
-            (
-                Order::Send { .. } | Order::Handoff { .. },
-                Turn::Starting(_) | Turn::Running(_),
-                _,
-            ) => rejected(Rejection::TurnInProgress),
             (Order::Interrupt, Turn::Idle, _) => {
                 rejected(Rejection::NoTurnRunning)
             }
@@ -736,28 +712,18 @@ impl Session {
         }
     }
 
-    fn recorded(
-        &mut self,
-        text: String,
-        seq: HostSeq,
-        task: Option<Box<Task>>,
-    ) -> Vec<Effect> {
+    fn recorded(&mut self, text: String, seq: HostSeq) -> Vec<Effect> {
         self.turn_start = Some(seq);
         self.book.accept_message(seq);
         let change = changed(self.choice.effort, self.agent.effort());
-        self.send(text, change, task)
+        self.send(text, change)
     }
 
     /// Starts a turn, at the session's effort if the agent runs another.
     /// The session takes the turn's id from `TurnStarted`, which an
     /// interrupt must wait for anyway.
-    fn send(
-        &mut self,
-        text: String,
-        change: Option<Effort>,
-        task: Option<Box<Task>>,
-    ) -> Vec<Effect> {
-        self.flow = Flow::Sending(change, task);
+    fn send(&mut self, text: String, change: Option<Effort>) -> Vec<Effect> {
+        self.flow = Flow::Sending(change);
         Vec::from([Effect::Call(Call::Agent(Command::Send {
             text,
             effort: change,
@@ -769,7 +735,6 @@ impl Session {
         &mut self,
         change: Option<Effort>,
         sent: Result<(), String>,
-        task: Option<Box<Task>>,
     ) -> Vec<Effect> {
         match sent {
             Ok(()) => {
@@ -779,30 +744,17 @@ impl Session {
                 self.conversation = self.agent.conversation();
                 self.turn = Turn::Starting(Held::Nothing);
                 join(
-                    self.conversation
-                        .clone()
-                        .map(Effect::Conversation)
-                        .into_iter()
-                        .chain(task.map(|handed_off| {
-                            Effect::Emit(EventKind::TaskHandedOff {
-                                task: *handed_off,
-                            })
-                        })),
+                    self.conversation.clone().map(Effect::Conversation),
                     [Effect::Reply(CommandResult::Accepted)],
                 )
             }
             Err(message) => {
                 self.turn_start = None;
-                let result = task.map_or(CommandResult::Accepted, |_| {
-                    CommandResult::Rejected(Rejection::HandoffDeliveryFailed {
-                        reason: message.clone(),
-                    })
-                });
                 Vec::from([
                     self.checkpoint_event(EventKind::TurnCompleted {
                         outcome: TurnOutcome::Failed { message },
                     }),
-                    Effect::Reply(result),
+                    Effect::Reply(CommandResult::Accepted),
                 ])
             }
         }
@@ -1063,62 +1015,32 @@ impl Session {
     fn checklist(
         &mut self,
         agent: Option<SubagentId>,
-        steps: Vec<PlanStep>,
+        snapshot: Vec<ChecklistEntry>,
     ) -> Vec<Effect> {
-        let previous = match &agent {
-            Some(scope) => self
-                .subagent_tasks
-                .get(scope)
-                .map_or(&[][..], Vec::as_slice),
-            None => &self.tasks,
-        };
-        let kept = tasks::kept(previous, &steps);
-        match kept.iter().filter(|id| id.is_none()).count() {
-            0 => self.minted(agent, steps, kept, Vec::new()),
-            count => {
-                self.flow = Flow::Minting(agent, steps, kept);
-                Vec::from([Effect::Call(Call::Mint(count))])
-            }
-        }
-    }
-
-    fn minted(
-        &mut self,
-        agent: Option<SubagentId>,
-        steps: Vec<PlanStep>,
-        kept: Vec<Option<TaskId>>,
-        minted: Vec<TaskId>,
-    ) -> Vec<Effect> {
-        let mut fresh = minted.into_iter();
-        let ids = kept
-            .into_iter()
-            .filter_map(|id| id.or_else(|| fresh.next()))
-            .collect();
-        let synced = tasks::synced(steps, ids, self.id);
         match agent {
             Some(scope) => {
                 let previous =
                     self.subagent_tasks.entry(scope.clone()).or_default();
-                if *previous == synced {
+                if *previous == snapshot {
                     Vec::new()
                 } else {
-                    previous.clone_from(&synced);
+                    previous.clone_from(&snapshot);
                     subagent(
                         scope,
-                        SubagentEvent::TasksChanged { tasks: synced },
+                        SubagentEvent::ChecklistChanged { tasks: snapshot },
                     )
                 }
             }
-            None => self.retask(synced),
+            None => self.retask(snapshot),
         }
     }
 
-    fn retask(&mut self, tasks: Vec<Task>) -> Vec<Effect> {
+    fn retask(&mut self, tasks: Vec<ChecklistEntry>) -> Vec<Effect> {
         if tasks == self.tasks {
             Vec::new()
         } else {
             self.tasks.clone_from(&tasks);
-            Vec::from([Effect::Emit(EventKind::TasksChanged { tasks })])
+            Vec::from([Effect::Emit(EventKind::ChecklistChanged { tasks })])
         }
     }
 
@@ -1317,8 +1239,8 @@ impl Session {
                 join(changed, self.start(directory, at, Launched::Ready))
             }
             (Saved::Continue, Ok(())) => answer(CommandResult::Accepted),
-            (Saved::Send(text, by, task), Ok(())) => {
-                self.flow = Flow::Recording(text.clone(), task);
+            (Saved::Send(text, by), Ok(())) => {
+                self.flow = Flow::Recording(text.clone());
                 Vec::from([Effect::Call(Call::Record(
                     EventKind::UserMessage { text, by },
                 ))])
@@ -1855,23 +1777,22 @@ fn replay_requests(history: &[Event]) -> BTreeMap<RequestId, Pending> {
 
 fn last_tasks<'events>(
     history: impl DoubleEndedIterator<Item = &'events Event>,
-) -> Vec<Task> {
+) -> Vec<ChecklistEntry> {
     history
         .rev()
         .find_map(|event| match &event.kind {
-            EventKind::TasksChanged { tasks } => Some(tasks.clone()),
+            EventKind::ChecklistChanged { tasks } => Some(tasks.clone()),
             _ => None,
         })
         .unwrap_or_default()
 }
 
-/// The tasks `session` held when checkpoint `restored` was taken: the last
-/// `TasksChanged` before it, or none.
+/// The last checklist before the restored checkpoint, or none.
 fn tasks_before(
     history: &[Event],
     session: SessionId,
     restored: CheckpointId,
-) -> Vec<Task> {
+) -> Vec<ChecklistEntry> {
     let taken = history
         .iter()
         .position(|event| {

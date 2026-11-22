@@ -27,7 +27,7 @@ mod package;
 
 use self::package::{Header, Prepared, Received, Scratch, Target};
 
-pub const ALPN: &[u8] = b"conductor-move/1";
+pub const ALPN: &[u8] = b"conductor-move/2";
 const DEADLINE: Duration = Duration::from_secs(600);
 const CONTROL_LIMIT: usize = 64 * 1024;
 const PEER_HELLO: Duration = Duration::from_secs(5);

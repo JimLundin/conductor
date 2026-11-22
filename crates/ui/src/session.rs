@@ -9,9 +9,9 @@ use client::host_view::{
     UndoState, Working,
 };
 use proto::{
-    Answer, Availability, Catalog, CheckpointId, CloseReason, CommandBody,
-    CommandResult, Decision, Effort, Instances, Models, Question, RequestId,
-    Selection, SessionId, Task, TaskId, TaskStatus,
+    Answer, Availability, Catalog, ChecklistEntry, ChecklistStatus,
+    CheckpointId, CloseReason, CommandBody, CommandResult, Decision, Effort,
+    Instances, Models, Question, RequestId, Selection, SessionId,
 };
 
 use crate::checkpoints::{self, DiffState, TurnChanges};
@@ -25,9 +25,6 @@ pub enum SessionIntent {
     TypeMessage(String),
     SendMessage,
     RetryMessage,
-    ChooseHandoff(TaskId),
-    CancelHandoff,
-    HandoffTo(SessionId),
     Interrupt,
     /// Start a closed session's agent again.
     Continue,
@@ -128,24 +125,13 @@ pub enum UndoNote {
 pub struct Tasks {
     pub count: String,
     pub items: Vec<TaskRow>,
-    pub targets: Vec<HandoffChoice>,
-    pub handoff_pending: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct HandoffChoice {
-    pub session: SessionId,
-    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRow {
-    pub key: String,
     pub status: &'static str,
     pub label: &'static str,
     pub text: String,
-    pub handoff: Option<TaskId>,
-    pub choosing: bool,
 }
 
 /// A transcript item, the sub-agents its tool call started, and the
@@ -184,8 +170,6 @@ pub struct Pane {
     draft: String,
     pending_message: Option<String>,
     refused_messages: Vec<String>,
-    handoff: Option<TaskId>,
-    handoff_pending: Option<SessionId>,
     pub(crate) movement: crate::movement::Draft,
     answers: BTreeMap<RequestId, Draft>,
     diffs: BTreeMap<CheckpointId, DiffState>,
@@ -202,7 +186,6 @@ impl Pane {
         intent: SessionIntent,
         id: SessionId,
         session: &SessionView,
-        sessions: &BTreeMap<SessionId, SessionView>,
         at: At,
     ) -> (Self, Vec<Effect>) {
         match intent {
@@ -216,12 +199,6 @@ impl Pane {
                 at,
                 action == SessionIntent::RetryMessage,
             ),
-            SessionIntent::ChooseHandoff(task) => self
-                .select_handoff(movable(&session.tasks, task).then_some(task)),
-            SessionIntent::CancelHandoff => self.select_handoff(None),
-            SessionIntent::HandoffTo(to) => {
-                self.handoff_to(id, to, session, sessions, at)
-            }
             SessionIntent::Interrupt => (
                 self,
                 Vec::from([notify(CommandBody::Interrupt { session: id }, at)]),
@@ -318,46 +295,6 @@ impl Pane {
                 focus_card(request),
             ]),
         )
-    }
-
-    const fn select_handoff(
-        mut self,
-        task: Option<TaskId>,
-    ) -> (Self, Vec<Effect>) {
-        if self.handoff_pending.is_none() {
-            self.handoff = task;
-        }
-        (self, Vec::new())
-    }
-
-    fn handoff_to(
-        mut self,
-        from: SessionId,
-        to: SessionId,
-        source: &SessionView,
-        sessions: &BTreeMap<SessionId, SessionView>,
-        at: At,
-    ) -> (Self, Vec<Effect>) {
-        let Some(task) = self.handoff.filter(|&task| {
-            self.handoff_pending.is_none()
-                && from != to
-                && movable(&source.tasks, task)
-                && sessions.get(&to).is_some_and(SessionView::takes_handoff)
-        }) else {
-            return (self, Vec::new());
-        };
-        self.handoff_pending = Some(to);
-        (
-            self,
-            Vec::from([at.send(
-                CommandBody::HandoffTask { from, to, task },
-                ReplyTo::Handoff,
-            )]),
-        )
-    }
-
-    pub const fn handoff_answered(&mut self) -> Option<SessionId> {
-        self.handoff_pending.take()
     }
 
     /// Sends the draft, once there is one and the agent takes messages.
@@ -544,7 +481,6 @@ impl Pane {
         id: SessionId,
         session: &SessionView,
         known: (Option<&Instances>, &Catalog),
-        sessions: &BTreeMap<SessionId, SessionView>,
         (notice, host, movement): (Option<String>, String, crate::MovePanel),
     ) -> SessionPane {
         let locked = self.movement.pending || session.movement.locked();
@@ -590,17 +526,7 @@ impl Pane {
                 undo_note(id, &session.undo)
             },
             movement,
-            tasks: if locked {
-                tasks(&session.tasks)
-            } else {
-                main_tasks(
-                    &session.tasks,
-                    (self.handoff, self.handoff_pending.is_some()),
-                    id,
-                    sessions,
-                    known,
-                )
-            },
+            tasks: tasks(&session.tasks),
             empty: session
                 .empty_transcript()
                 .map(|kind| empty(kind, &provider)),
@@ -744,82 +670,32 @@ fn undo_note(id: SessionId, undo: &UndoState) -> UndoNote {
     }
 }
 
-fn movable(tasks: &[Task], id: TaskId) -> bool {
-    tasks
-        .iter()
-        .any(|task| task.id == id && task.status != TaskStatus::Completed)
-}
-
-/// The agent's checklist, as the session holds it.
-fn main_tasks(
-    tasks: &[Task],
-    (choosing, handoff_pending): (Option<TaskId>, bool),
-    current: SessionId,
-    sessions: &BTreeMap<SessionId, SessionView>,
-    known: (Option<&Instances>, &Catalog),
-) -> Option<Tasks> {
-    if tasks.is_empty() {
-        return None;
-    }
-    let targets = sessions
-        .iter()
-        .filter(|(id, session)| **id != current && session.takes_handoff())
-        .map(|(&session, view)| HandoffChoice {
-            session,
-            label: format!(
-                "{} in {} (session {})",
-                agent(view, known),
-                view.directory.0,
-                session.0
-            ),
-        })
-        .collect::<Vec<_>>();
-    task_list(tasks, targets, (choosing, handoff_pending))
-}
-
-pub fn tasks(tasks: &[Task]) -> Option<Tasks> {
-    task_list(tasks, Vec::new(), (None, false))
-}
-
-fn task_list(
-    tasks: &[Task],
-    targets: Vec<HandoffChoice>,
-    (choosing, handoff_pending): (Option<TaskId>, bool),
-) -> Option<Tasks> {
+pub fn tasks(tasks: &[ChecklistEntry]) -> Option<Tasks> {
     if tasks.is_empty() {
         return None;
     }
     let done = tasks
         .iter()
-        .filter(|task| task.status == TaskStatus::Completed)
+        .filter(|task| task.status == ChecklistStatus::Completed)
         .count();
     Some(Tasks {
         count: format!("{done} of {} done", tasks.len()),
         items: tasks
             .iter()
             .map(|task| TaskRow {
-                key: format!("{}", task.id.0),
                 status: match task.status {
-                    TaskStatus::Pending => "pending",
-                    TaskStatus::InProgress => "in-progress",
-                    TaskStatus::Completed => "completed",
+                    ChecklistStatus::Pending => "pending",
+                    ChecklistStatus::InProgress => "in-progress",
+                    ChecklistStatus::Completed => "completed",
                 },
                 label: match task.status {
-                    TaskStatus::Pending => "To do",
-                    TaskStatus::InProgress => "In progress",
-                    TaskStatus::Completed => "Done",
+                    ChecklistStatus::Pending => "To do",
+                    ChecklistStatus::InProgress => "In progress",
+                    ChecklistStatus::Completed => "Done",
                 },
                 text: task.text.clone(),
-                handoff: (!handoff_pending
-                    && !targets.is_empty()
-                    && task.status != TaskStatus::Completed)
-                    .then_some(task.id),
-                choosing: choosing == Some(task.id)
-                    && task.status != TaskStatus::Completed,
             })
             .collect(),
-        targets,
-        handoff_pending,
     })
 }
 

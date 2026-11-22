@@ -72,7 +72,7 @@ so one UI and one set of commands work for both agents.
   approval requests opened and resolved (first decision wins, and a late
   one is told who decided); questions asked and answered; a turn
   completes, is interrupted or fails; the session's tasks change
-  (`TasksChanged`, the whole list); its effort changes (`EffortChanged`);
+  (`ChecklistChanged`, the whole list); its effort changes (`EffortChanged`);
   a sub-agent starts, acts and ends (`Subagent`).
 - **Model and effort:** `Welcome` lists, for each instance the host can
   run (§5.2), the models its CLI offers with the instance's current
@@ -104,33 +104,18 @@ so one UI and one set of commands work for both agents.
   (`apply_flag_settings`) right before that message, Codex as `effort` on
   that `turn/start`. A `Continue` or a host restart starts the CLI at the
   new effort.
-- **Tasks:** the host keeps the agent's checklist (Claude's `TodoWrite`,
-  Codex's plan) as tasks of its own: `Task { id, text, status, holder }`,
-  with a host-assigned ULID `TaskId`, a status of pending, in progress or
-  completed, and the session that holds it. Each update from the agent is
-  the whole list. The session assigns host task IDs to its native
-  checklist and logs `TasksChanged { tasks }`, the whole list in the
-  agent's order, when anything changed. A step keeps the id of the first held task with its
-  text that no earlier step took; failing that, if the list kept its
-  length, of the held task at its position, unless a step took that one by
-  its text; otherwise it is a new task. So a step reworded in place keeps
-  its id, but `[a, b, c]` to `[a, c']` makes `c'` a new task rather than
-  give it `b`'s id. A task no step keeps is dropped. The log is the store:
-  the host restores a session's tasks from its last `TasksChanged`, so ids
-  survive `Continue` and a restart. Undoing a turn restores the tasks as
-  they were at the checkpoint it goes back to (the last `TasksChanged`
-  before it, or none), logging `TasksChanged` with
-  `UndoHistoryRestored`. Only the main agent's checklist counts: a Claude
-  sub-agent's `TodoWrite` is left out of the session's tasks, and of the
-  sub-agent's transcript too.
-  Codex's plan `explanation` is not kept, since Claude has none. An owner
-  can hand off an unfinished task to an idle session on the same host.
-  The receiving agent gets a turn with the task and an ID-bearing checklist
-  label. Once the provider accepts the turn, `TaskHandedOff` moves the task
-  with its original ID and a pending status. Checklist updates with that
-  label update the same task. Omission from a checklist leaves the task
-  with its current holder, and replay of the source's older checklist
-  cannot bring the task back.
+- **Checklists:** each agent reports its latest ordered list of text and
+  status (pending, in progress or completed). Both providers use
+  `proto::ChecklistEntry`; the host records the whole changed snapshot as
+  `ChecklistChanged { tasks }`. Entries have no persistent identity or
+  owner beyond their session or sub-agent. Reordering, renaming, duplicate
+  text and removal are represented exactly as the provider reports them.
+  Repeated identical snapshots produce no event. Main and child
+  checklists remain separate; child updates use
+  `SubagentEvent::ChecklistChanged`. Replay and Continue retain the last
+  snapshot, and undo restores the snapshot before the retained checkpoint.
+  Checklists are displayed in the app and generate no issue notes.
+  Codex's plan `explanation` is not kept, since Claude has none.
 - **Sub-agents:** an agent's tool call may start a sub-agent, a child
   session in the model with no session of its own: its events are its
   parent's, in the parent's log and in seq order. Each is `Subagent {
@@ -418,7 +403,7 @@ probes and installs as `host::start` decides, and sends the plugins'
 `crates/daemon` depends on no provider crate outside its tests.
 
 - `agents`: the provider-agnostic API: the runtime protocol, `Step`,
-  `Reply`, the native request and turn ids, `PlanStep`, `Exit`, the
+  `Reply`, the native request and turn ids, `Exit`, the
   `Note`s a core logs through its shell, a provider's `Profile`, the
   runtime lifecycle that gates calls and releases closed agents, and
   the command, input, effect and failure types for CLI drivers
@@ -527,9 +512,9 @@ until someone re-records them by hand (§6.2).
 
 - **Store (built):** `<data>/conductor.redb`, with typed redb table constants
   and postcard values (storage option C). Its `metadata` records the log
-  format, 4 since command receipts no longer carry instance snapshots. A
-  database of another format doesn't open and is moved aside to start over. The
-  tables are `events`,
+  format, 5 since checklist entries no longer carry task identities or
+  ownership. A database of another format doesn't open and is moved aside
+  to start over. The tables are `events`,
   `command_receipts`, `pending_requests`, `conversations` and `metadata`.
   Sessions, their model choices and resolved requests are reconstructed from
   the event log; the native conversation id has its own table. A cursor is

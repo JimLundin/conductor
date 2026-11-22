@@ -164,12 +164,12 @@ pub fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
 
 #[cfg(test)]
 mod tests {
-    use agents::{Exit, NativeRequest, PlanStep, Reply, Step};
+    use agents::{Exit, NativeRequest, Reply, Step};
     use proto::{
-        Answer, ClientName, CloseReason, Decision, EventKind, Question,
-        QuestionOption, Selection, SubagentActivity, SubagentId,
-        SubagentOutcome, TaskStatus, ToolCallId, ToolKind, ToolOutcome,
-        ToolPhase,
+        Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason,
+        Decision, EventKind, Question, QuestionOption, Selection,
+        SubagentActivity, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
+        ToolOutcome, ToolPhase,
     };
 
     use super::{claude_answer, claude_steps};
@@ -203,10 +203,10 @@ mod tests {
         })
     }
 
-    fn checklist(status: TaskStatus) -> Vec<agents::PlanStep> {
+    fn checklist(status: ChecklistStatus) -> Vec<ChecklistEntry> {
         ["alpha", "beta"]
             .into_iter()
-            .map(|text| agents::PlanStep {
+            .map(|text| ChecklistEntry {
                 text: String::from(text),
                 status,
             })
@@ -252,12 +252,12 @@ mod tests {
                 },
                 Step::SubagentChecklist {
                     agent: agent(),
-                    steps: checklist(TaskStatus::Pending),
+                    steps: checklist(ChecklistStatus::Pending),
                 },
                 subagent_finished("toolu_01WSCsnAQWyaEonxDVnmncap"),
                 Step::SubagentChecklist {
                     agent: agent(),
-                    steps: checklist(TaskStatus::Completed),
+                    steps: checklist(ChecklistStatus::Completed),
                 },
                 subagent_finished("toolu_01H4nEBx6jVuR4PwHBWBgvPw"),
                 Step::SubagentEnded {
@@ -327,10 +327,10 @@ mod tests {
         }
     }
 
-    fn step() -> PlanStep {
-        PlanStep {
+    fn step() -> ChecklistEntry {
+        ChecklistEntry {
             text: String::from("write a.txt"),
-            status: TaskStatus::InProgress,
+            status: ChecklistStatus::InProgress,
         }
     }
 

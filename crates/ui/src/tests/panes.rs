@@ -4,9 +4,9 @@
 use alloc::rc::Rc;
 
 use proto::{
-    Change, CheckpointId, CommandBody, CommandResult, EventKind, FileChange,
-    RequestId, Task, TaskId, TaskStatus, ToolCallId, ToolKind, ToolPhase,
-    UndoAvailability,
+    Change, ChecklistEntry, ChecklistStatus, CheckpointId, CommandBody,
+    CommandResult, EventKind, FileChange, RequestId, ToolCallId, ToolKind,
+    ToolPhase, UndoAvailability,
 };
 
 use super::{
@@ -44,29 +44,24 @@ fn an_empty_transcript_says_whether_the_agent_is_starting_or_ready() {
 
 #[test]
 fn the_agents_tasks_count_those_done() {
-    let task = |id, words: &str, status| Task {
-        id: TaskId(id),
+    let task = |words: &str, status| ChecklistEntry {
         text: text(words),
         status,
-        holder: SESSION,
     };
     let (state, _) = opened(Vec::from([event(
         3,
-        EventKind::TasksChanged {
+        EventKind::ChecklistChanged {
             tasks: Vec::from([
-                task(1, "read", TaskStatus::Completed),
-                task(2, "write", TaskStatus::InProgress),
-                task(3, "test", TaskStatus::Pending),
+                task("read", ChecklistStatus::Completed),
+                task("write", ChecklistStatus::InProgress),
+                task("test", ChecklistStatus::Pending),
             ]),
         },
     )]));
-    let row = |key: &str, status, label, words: &str| TaskRow {
-        key: text(key),
+    let row = |status, label, words: &str| TaskRow {
         status,
         label,
         text: text(words),
-        handoff: None,
-        choosing: false,
     };
     assert_eq!(
         (
@@ -77,12 +72,10 @@ fn the_agents_tasks_count_those_done() {
             Some(Some(Tasks {
                 count: text("1 of 3 done"),
                 items: Vec::from([
-                    row("1", "completed", "Done", "read"),
-                    row("2", "in-progress", "In progress", "write"),
-                    row("3", "pending", "To do", "test"),
+                    row("completed", "Done", "read"),
+                    row("in-progress", "In progress", "write"),
+                    row("pending", "To do", "test"),
                 ]),
-                targets: Vec::new(),
-                handoff_pending: false,
             })),
             Some(None),
         )
@@ -337,61 +330,4 @@ fn a_transcript_rebuild_reuses_the_open_preview() {
                 && !before.undo_disabled
                 && after.undo_disabled
     ));
-}
-
-#[test]
-fn picking_a_destination_sends_the_selected_task_and_opens_the_receiving_session()
- {
-    let target = proto::SessionId(8);
-    let task = Task {
-        id: TaskId(6),
-        text: text("Write the new tests"),
-        status: TaskStatus::Pending,
-        holder: SESSION,
-    };
-    let on_target = |seq, kind| {
-        Intent::Link(
-            HOST,
-            client::link::Update::Feed(proto::Feed::Event(proto::Event {
-                seq: proto::HostSeq(seq),
-                session: target,
-                kind,
-            })),
-        )
-    };
-    let (shown, effects) = opened(Vec::from([
-        event(
-            3,
-            EventKind::TasksChanged {
-                tasks: Vec::from([task.clone()]),
-            },
-        ),
-        on_target(4, created()),
-        on_target(5, EventKind::SessionReady),
-        Intent::Session(SessionIntent::ChooseHandoff(task.id)),
-        Intent::Session(SessionIntent::HandoffTo(target)),
-        Intent::Session(SessionIntent::HandoffTo(target)),
-    ]));
-    assert_eq!(
-        sent(&effects),
-        [CommandBody::HandoffTask {
-            from: SESSION,
-            to: target,
-            task: task.id,
-        }]
-    );
-    let (received, _) = run(
-        shown,
-        Vec::from([
-            on_target(6, EventKind::TaskHandedOff { task }),
-            answer(&effects, Ok(CommandResult::Accepted)),
-        ]),
-    );
-    assert_eq!(pane(&received).map(|shown| shown.key), Some(text("8")));
-    assert_eq!(
-        pane(&received)
-            .and_then(|shown| shown.tasks)
-            .map(|tasks| tasks.count),
-        Some(text("0 of 1 done")),
-    );
 }

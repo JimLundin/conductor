@@ -222,63 +222,19 @@ fn Undo(note: UndoNote) -> Element {
 /// keeps room for the transcript.
 #[component]
 fn Tasks(tasks: ui::Tasks) -> Element {
-    let shell = use_context::<Shell>();
     rsx! {
         details { class: "tasks", open: true,
             summary {
-                span { class: "tasks-title", "Tasks" }
+                span { class: "tasks-title", "Checklist" }
                 span { class: "tasks-count", "{tasks.count}" }
             }
             ol {
                 for task in tasks.items {
-                    li { key: "{task.key}", class: "task", "data-status": task.status,
+                    li { class: "task", "data-status": task.status,
                         span { class: "task-mark", role: "img", "aria-label": task.label }
                         span { class: "task-text", "{task.text}" }
-                        if task.choosing {
-                            Handoff { choices: tasks.targets.clone(), pending: tasks.handoff_pending }
-                        } else if let Some(id) = task.handoff {
-                            button {
-                                r#type: "button",
-                                class: "clear handoff-task",
-                                "aria-label": "Hand off task: {task.text}",
-                                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::ChooseHandoff(id))),
-                                "Hand off"
-                            }
-                        }
                     }
                 }
-            }
-        }
-    }
-}
-
-#[component]
-fn Handoff(choices: Vec<ui::HandoffChoice>, pending: bool) -> Element {
-    let shell = use_context::<Shell>();
-    rsx! {
-        div { class: "task-handoff",
-            if pending {
-                p { role: "status", "Handing off the task?" }
-            } else if choices.is_empty() {
-                p { role: "status", "No other session is idle." }
-            } else {
-                p { "Choose a session to start work on this task." }
-            }
-            for choice in choices {
-                button {
-                    key: "{choice.session.0}",
-                    r#type: "button",
-                    disabled: pending,
-                    onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::HandoffTo(choice.session))),
-                    "{choice.label}"
-                }
-            }
-            button {
-                r#type: "button",
-                class: "clear",
-                disabled: pending,
-                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::CancelHandoff)),
-                "Cancel"
             }
         }
     }

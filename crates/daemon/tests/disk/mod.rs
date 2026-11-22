@@ -148,13 +148,3 @@ pub fn lose_terminal_finish(data: &Path, session: SessionId) -> Fallible {
     write.commit()?;
     Ok(())
 }
-
-pub fn rewind_progress_cursor(data: &Path) -> Fallible {
-    let database = Database::create(data.join("conductor.redb"))?;
-    let write = database.begin_write()?;
-    let _ = write
-        .open_table(TableDefinition::<&str, Vec<u8>>::new("metadata"))?
-        .insert("progress_cursor", postcard::to_stdvec(&HostSeq(0))?)?;
-    write.commit()?;
-    Ok(())
-}

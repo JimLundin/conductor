@@ -8,17 +8,16 @@ use core::cmp::Reverse;
 use proto::fleet::NodeId;
 use proto::movement::{MoveId, Phase};
 use proto::{
-    CheckpointId, ClientName, CloseReason, Effort, Epoch, Event, EventKind,
-    FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId, ModelId,
-    Provider, Question, RequestId, Resolution, SessionId, SubagentActivity,
-    SubagentEvent, SubagentId, SubagentOutcome, Task, TaskBoard, ToolCallId,
+    ChecklistEntry, CheckpointId, ClientName, CloseReason, Effort, Epoch,
+    Event, EventKind, FinishState, Finished, HostPath, HostSeq, InstanceId,
+    IssueId, ModelId, Provider, Question, RequestId, Resolution, SessionId,
+    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, ToolCallId,
     ToolKind, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostView {
     pub sessions: BTreeMap<SessionId, SessionView>,
-    task_board: TaskBoard,
     arrivals: BTreeMap<SessionId, Arrival>,
 }
 
@@ -34,8 +33,7 @@ pub struct SessionView {
     status: SessionStatus,
     pub issue: Option<IssueId>,
     finish: FinishState,
-    /// The tasks the session holds, in its agent's order.
-    pub tasks: Vec<Task>,
+    pub tasks: Vec<ChecklistEntry>,
     pub workspace: Option<Workspace>,
     pub checkpoints: Vec<TurnCheckpoint>,
     pub undo: UndoState,
@@ -112,7 +110,7 @@ pub struct Subagent {
     pub call: ToolCallId,
     pub description: String,
     pub kind: Option<String>,
-    pub tasks: Vec<Task>,
+    pub tasks: Vec<ChecklistEntry>,
     pub status: SubagentStatus,
     /// Its own transcript: replies, reasoning and tool calls, and its final
     /// report as its last reply.
@@ -380,7 +378,6 @@ impl HostView {
     pub const fn empty() -> Self {
         Self {
             sessions: BTreeMap::new(),
-            task_board: TaskBoard::new(),
             arrivals: BTreeMap::new(),
         }
     }
@@ -409,22 +406,6 @@ impl HostView {
         }
         let delta = is_delta(&event.kind);
         let mut sessions = self.sessions;
-        let mut task_board = self.task_board;
-        let task_change = matches!(
-            event.kind,
-            EventKind::TasksChanged { .. } | EventKind::TaskHandedOff { .. }
-        );
-        if (task_change
-            || matches!(event.kind, EventKind::SessionRemoved { .. }))
-            && sessions.contains_key(&event.session)
-        {
-            task_board.apply(&event);
-        }
-        if let EventKind::TaskHandedOff { task } = &event.kind
-            && let Some(source) = sessions.get_mut(&task.holder)
-        {
-            source.tasks = task_board.held(task.holder).to_vec();
-        }
         let mut arrivals = self.arrivals;
         let session = match (sessions.remove(&event.session), event.kind) {
             (
@@ -461,9 +442,6 @@ impl HostView {
             (_, EventKind::SessionRemoved { .. }) | (None, _) => None,
             (Some(view), kind) => {
                 let mut next = view.apply(kind, event.seq);
-                if task_change {
-                    next.tasks = task_board.held(event.session).to_vec();
-                }
                 if !delta {
                     next.activity = event.seq;
                 }
@@ -471,11 +449,7 @@ impl HostView {
             }
         };
         sessions.extend(session.map(|view| (event.session, view)));
-        Self {
-            sessions,
-            task_board,
-            arrivals,
-        }
+        Self { sessions, arrivals }
     }
 
     fn arrived(mut self, id: SessionId, arrival: Arrival) -> Self {
@@ -520,12 +494,6 @@ impl HostView {
 }
 
 impl SessionView {
-    #[must_use]
-    pub const fn takes_handoff(&self) -> bool {
-        matches!(self.controls().composer, Composer::Open)
-            && !matches!(self.finish, FinishState::Finishing)
-    }
-
     #[must_use]
     pub const fn history_available(&self) -> bool {
         match self.arrival {
@@ -753,6 +721,7 @@ impl SessionView {
 
     fn apply(self, kind: EventKind, seq: HostSeq) -> Self {
         match kind {
+            EventKind::ChecklistChanged { tasks } => Self { tasks, ..self },
             EventKind::SessionReady => self.ready(),
             EventKind::ModelChanged {
                 model,
@@ -828,8 +797,6 @@ impl SessionView {
             EventKind::SessionArrived { .. }
             | EventKind::SessionMoveNoticeSent
             | EventKind::SessionCreated { .. }
-            | EventKind::TasksChanged { .. }
-            | EventKind::TaskHandedOff { .. }
             | EventKind::SessionRemoved { .. }
             | EventKind::UndoHistoryRestored { .. }
             | EventKind::UndoRevertDispatched { .. }
@@ -1002,7 +969,7 @@ impl SessionView {
                     ..subagent
                 })
             }
-            SubagentEvent::TasksChanged { tasks } => {
+            SubagentEvent::ChecklistChanged { tasks } => {
                 self.subagent(&agent, |subagent| Subagent { tasks, ..subagent })
             }
             SubagentEvent::RequestOpened {
@@ -1595,12 +1562,12 @@ mod tests {
     use alloc::collections::BTreeMap;
 
     use proto::{
-        Answer, ClientName, CloseReason, Decision, Effort, Event, EventKind,
-        FinishState, HostPath, HostSeq, InstanceId, ModelId, Provider,
-        Question, QuestionOption, RequestId, Resolution, Selection, SessionId,
-        SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Task,
-        TaskId, TaskStatus, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-        TurnOutcome,
+        Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason,
+        Decision, Effort, Event, EventKind, FinishState, HostPath, HostSeq,
+        InstanceId, ModelId, Provider, Question, QuestionOption, RequestId,
+        Resolution, Selection, SessionId, SubagentActivity, SubagentEvent,
+        SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome,
+        ToolPhase, TurnOutcome,
     };
 
     use super::{
@@ -2171,12 +2138,10 @@ mod tests {
         );
     }
 
-    fn task(id: u128, text: &str, status: TaskStatus) -> Task {
-        Task {
-            id: TaskId(id),
+    fn task(text: &str, status: ChecklistStatus) -> ChecklistEntry {
+        ChecklistEntry {
             text: String::from(text),
             status,
-            holder: SessionId(1),
         }
     }
 
@@ -2459,17 +2424,18 @@ mod tests {
     #[test]
     fn tasks_are_replaced_and_the_effort_follows_its_last_change() {
         let first = Vec::from([
-            task(1, "write a.txt", TaskStatus::InProgress),
-            task(2, "write b.txt", TaskStatus::Pending),
+            task("write a.txt", ChecklistStatus::InProgress),
+            task("write b.txt", ChecklistStatus::Pending),
         ]);
-        let later = Vec::from([task(1, "write a.txt", TaskStatus::Completed)]);
+        let later =
+            Vec::from([task("write a.txt", ChecklistStatus::Completed)]);
         let view = fold(Vec::from([
             (1, created("/a")),
             (1, EventKind::SessionReady),
-            (1, EventKind::TasksChanged { tasks: first }),
+            (1, EventKind::ChecklistChanged { tasks: first }),
             (
                 1,
-                EventKind::TasksChanged {
+                EventKind::ChecklistChanged {
                     tasks: later.clone(),
                 },
             ),

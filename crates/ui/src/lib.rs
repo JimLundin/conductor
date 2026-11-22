@@ -56,8 +56,8 @@ pub use saved::{
     joined_host, legacy_to_migrate, restored,
 };
 pub use session::{
-    Composer, EffortControl, Entry, Footer, HandoffChoice, Mount,
-    SessionIntent, SessionPane, TaskRow, Tasks, UndoNote, WorkspaceContext,
+    Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
+    TaskRow, Tasks, UndoNote, WorkspaceContext,
 };
 pub use sessions::{HostGroup, Listing, SessionList, SessionRow};
 pub use state::{Detail, Dial, HostsScreen, State};
@@ -189,7 +189,6 @@ enum ReplyTo {
     Effort(Option<Effort>),
     Start(u64),
     Message,
-    Handoff,
     Move,
     /// A new issue in this project: it opens once the host has it.
     Created,

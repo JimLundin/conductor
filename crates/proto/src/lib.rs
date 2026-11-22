@@ -31,7 +31,6 @@ mod instance;
 mod issue;
 pub mod movement;
 mod sign_in;
-mod task_board;
 mod ticket;
 
 use alloc::boxed::Box;
@@ -59,13 +58,12 @@ pub use issue::{
     IssueStatus, Priority,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
-pub use task_board::TaskBoard;
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/27";
+pub const ALPN: &[u8] = b"conductor/28";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -566,11 +564,6 @@ pub enum CommandBody {
     FinishSession {
         session: SessionId,
     },
-    HandoffTask {
-        from: SessionId,
-        to: SessionId,
-        task: TaskId,
-    },
     PushPublicKey,
     RegisterPush(PushSubscription),
     /// Move a settled session to another host in the same fleet.
@@ -710,11 +703,6 @@ pub enum Rejection {
     NotOnIssue,
     /// The session is finishing, or has done nothing since it finished.
     AlreadyFinished,
-    TaskUnavailable,
-    HandoffToSameSession,
-    HandoffDeliveryFailed {
-        reason: String,
-    },
     MoveRefused {
         reason: String,
     },
@@ -800,15 +788,6 @@ impl Rejection {
             ),
             Self::IssueTaken { .. } => String::from(
                 "that instance has a session on the issue already; continue it, or remove it first",
-            ),
-            Self::TaskUnavailable => String::from(
-                "the source session no longer holds that unfinished task",
-            ),
-            Self::HandoffToSameSession => {
-                String::from("choose a different session for the task")
-            }
-            Self::HandoffDeliveryFailed { reason } => format!(
-                "the receiving agent could not start the handoff: {reason}"
             ),
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
@@ -955,10 +934,8 @@ pub enum EventKind {
         history: HistoryAnchor,
         turn_start: Option<HostSeq>,
     },
-    /// The latest native checklist, in the agent's order. Handoffs track
-    /// ownership independently of this snapshot.
-    TasksChanged {
-        tasks: Vec<Task>,
+    ChecklistChanged {
+        tasks: Vec<ChecklistEntry>,
     },
     /// The effort of the session's later turns, after a `SetEffort`.
     EffortChanged {
@@ -992,11 +969,6 @@ pub enum EventKind {
     /// native history without sending the rollback again.
     UndoRevertDispatched {
         checkpoint: CheckpointId,
-    },
-    /// The destination's turn accepted the handoff. The task still names
-    /// its previous holder. The event's session is its new holder.
-    TaskHandedOff {
-        task: Task,
     },
     SessionMoving {
         to: fleet::NodeId,
@@ -1095,8 +1067,8 @@ pub enum SubagentEvent {
     Kind {
         kind: String,
     },
-    TasksChanged {
-        tasks: Vec<Task>,
+    ChecklistChanged {
+        tasks: Vec<ChecklistEntry>,
     },
     RequestOpened {
         request: RequestId,
@@ -1132,42 +1104,14 @@ pub enum SubagentOutcome {
     Stopped,
 }
 
-/// A fleet-unique ULID assigned by the host, represented as its 128 bits.
-/// A task keeps it while the agent rewrites its checklist.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-)]
-pub struct TaskId(pub u128);
-
-/// A step of an agent's checklist (Claude's `TodoWrite`, Codex's plan), as
-/// the host keeps it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Task {
-    pub id: TaskId,
+pub struct ChecklistEntry {
     pub text: String,
-    pub status: TaskStatus,
-    /// The session whose agent works on it.
-    pub holder: SessionId,
-}
-
-impl Task {
-    #[must_use]
-    pub fn handoff_label(&self) -> String {
-        format!("[Conductor task {:032x}] {}", self.id.0, self.text)
-    }
+    pub status: ChecklistStatus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TaskStatus {
+pub enum ChecklistStatus {
     Pending,
     InProgress,
     Completed,

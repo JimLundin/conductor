@@ -16,7 +16,7 @@ use host::log::{
 };
 use proto::{
     Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
-    Instances, SessionId, Subscribe, Task, TaskId, Welcome,
+    Instances, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -104,22 +104,11 @@ enum LogMsg {
         id: String,
         reply: oneshot::Sender<()>,
     },
-    ProgressCursor {
-        reply: oneshot::Sender<(Epoch, HostSeq)>,
-    },
-    ProgressDelivered {
-        seq: HostSeq,
-        reply: oneshot::Sender<()>,
-    },
+    Epoch(oneshot::Sender<Epoch>),
     History {
         reply: oneshot::Sender<Vec<Event>>,
     },
     RunningSessions(oneshot::Sender<std::collections::BTreeSet<SessionId>>),
-    HandoffTask {
-        session: SessionId,
-        task: TaskId,
-        reply: oneshot::Sender<Option<Task>>,
-    },
     CurrentHistory {
         session: SessionId,
         reply: oneshot::Sender<Vec<Event>>,
@@ -302,18 +291,8 @@ impl Log {
             .await
     }
 
-    pub(crate) async fn progress_cursor(
-        &self,
-    ) -> Result<(Epoch, HostSeq), Stopped> {
-        self.ask(|reply| LogMsg::ProgressCursor { reply }).await
-    }
-
-    pub(crate) async fn progress_delivered(
-        &self,
-        seq: HostSeq,
-    ) -> Result<(), Stopped> {
-        self.ask(|reply| LogMsg::ProgressDelivered { seq, reply })
-            .await
+    pub(crate) async fn epoch(&self) -> Result<Epoch, Stopped> {
+        self.ask(LogMsg::Epoch).await
     }
 
     pub(crate) async fn history(&self) -> Result<Vec<Event>, Stopped> {
@@ -324,19 +303,6 @@ impl Log {
         &self,
     ) -> Result<std::collections::BTreeSet<SessionId>, Stopped> {
         self.ask(LogMsg::RunningSessions).await
-    }
-
-    pub(crate) async fn handoff_task(
-        &self,
-        session: SessionId,
-        task: TaskId,
-    ) -> Result<Option<Task>, Stopped> {
-        self.ask(|reply| LogMsg::HandoffTask {
-            session,
-            task,
-            reply,
-        })
-        .await
     }
 
     pub(crate) async fn finish_history(
@@ -482,31 +448,14 @@ impl LogActor {
                 self.finishes.insert(ticket, reply);
                 self.perform(effects)?;
             }
-            LogMsg::ProgressCursor { reply } => {
-                let cursor = self
-                    .storage
-                    .as_ref()
-                    .map(Storage::progress_cursor)
-                    .transpose()?
-                    .unwrap_or(HostSeq(0));
-                let _ = reply.send((self.core.epoch(), cursor));
-            }
-            LogMsg::ProgressDelivered { seq, reply } => {
-                self.perform(self.core.delivered_progress(seq))?;
-                let _ = reply.send(());
+            LogMsg::Epoch(reply) => {
+                let _ = reply.send(self.core.epoch());
             }
             LogMsg::History { reply } => {
                 let _ = reply.send(self.core.history().to_vec());
             }
             LogMsg::RunningSessions(reply) => {
                 let _ = reply.send(self.core.running_sessions());
-            }
-            LogMsg::HandoffTask {
-                session,
-                task,
-                reply,
-            } => {
-                let _ = reply.send(self.core.handoff_task(session, task));
             }
             LogMsg::CurrentHistory { session, reply } => {
                 let _ = reply.send(self.core.current_history(session));

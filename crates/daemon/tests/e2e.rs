@@ -25,15 +25,15 @@ use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
-    Answer, Auth, AuthToken, Availability, Change, ClientName, CloseReason,
-    CommandBody, CommandResult, Credential, Decision, Effort, Epoch, Event,
-    EventKind, Feed, FileChange, HostPath, HostSeq, InstanceId, InstanceStatus,
-    Instances, IssueChange, IssueFields, IssueId, IssueStatus, Kept,
-    ModelChoice, ModelId, Models, Priority, ProjectId, Provider, Question,
-    QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
-    SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
-    SubagentOutcome, Task, TaskId, TaskStatus, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome,
+    Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
+    ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
+    Credential, Decision, Effort, Epoch, Event, EventKind, Feed, FileChange,
+    HostPath, HostSeq, InstanceId, InstanceStatus, Instances, IssueChange,
+    IssueFields, IssueId, IssueStatus, Kept, ModelChoice, ModelId, Models,
+    Priority, ProjectId, Provider, Question, QuestionOption, Rejection,
+    RequestId, Resolution, Roster, Selection, SessionId, StartAt,
+    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, ToolCallId,
+    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
@@ -3226,7 +3226,7 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
                 kind,
                 EventKind::AssistantDelta { .. }
                     | EventKind::Subagent {
-                        event: SubagentEvent::TasksChanged { .. },
+                        event: SubagentEvent::ChecklistChanged { .. },
                         ..
                     }
             ))
@@ -3298,13 +3298,16 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
     fx.shutdown_with_client(phone).await
 }
 
-fn assert_child_checklists(events: &[Event], child: &SubagentId) -> Vec<Task> {
-    let checklists: Vec<&[Task]> = events
+fn assert_child_checklists(
+    events: &[Event],
+    child: &SubagentId,
+) -> Vec<ChecklistEntry> {
+    let checklists: Vec<&[ChecklistEntry]> = events
         .iter()
         .filter_map(|entry| match &entry.kind {
             EventKind::Subagent {
                 agent: id,
-                event: SubagentEvent::TasksChanged { tasks },
+                event: SubagentEvent::ChecklistChanged { tasks },
             } if id == child => Some(tasks.as_slice()),
             _ => None,
         })
@@ -3316,18 +3319,14 @@ fn assert_child_checklists(events: &[Event], child: &SubagentId) -> Vec<Task> {
             .collect::<Vec<_>>(),
         [
             vec![
-                ("alpha", TaskStatus::Pending),
-                ("beta", TaskStatus::Pending)
+                ("alpha", ChecklistStatus::Pending),
+                ("beta", ChecklistStatus::Pending)
             ],
             vec![
-                ("alpha", TaskStatus::Completed),
-                ("beta", TaskStatus::Completed)
+                ("alpha", ChecklistStatus::Completed),
+                ("beta", ChecklistStatus::Completed)
             ],
         ],
-    );
-    assert_eq!(
-        checklists[0].iter().map(|task| task.id).collect::<Vec<_>>(),
-        checklists[1].iter().map(|task| task.id).collect::<Vec<_>>(),
     );
     checklists[1].to_vec()
 }
@@ -3365,7 +3364,10 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
     };
     assert_eq!(alpha.description, "Inspect alpha");
     assert_eq!(alpha.kind.as_deref(), Some("explorer"));
-    assert_eq!(steps(&alpha.tasks), [("Read alpha", TaskStatus::Completed)]);
+    assert_eq!(
+        steps(&alpha.tasks),
+        [("Read alpha", ChecklistStatus::Completed)]
+    );
     assert_eq!(
         alpha.status,
         SubagentStatus::Ended(SubagentOutcome::Finished)
@@ -3389,7 +3391,7 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
     )));
     assert!(shown.items.contains(&done("Delegation done.")));
     assert!(!shown.items.contains(&done("Alpha checked.")));
-    assert_eq!(shown.tasks, [] as [Task; 0]);
+    assert_eq!(shown.tasks, [] as [ChecklistEntry; 0]);
     phone.stop().await?;
     fx.shutdown().await
 }
@@ -5039,20 +5041,23 @@ fn assert_isolated(
     Ok(worktree)
 }
 
-fn assert_turn_tasks(kept: &[Vec<Task>], discarded: &[Vec<Task>]) {
+fn assert_turn_tasks(
+    kept: &[Vec<ChecklistEntry>],
+    discarded: &[Vec<ChecklistEntry>],
+) {
     assert_eq!(
         [kept, discarded].map(|lists| lists
             .iter()
             .map(|tasks| owned(steps(tasks)))
-            .collect::<Vec<Vec<(String, TaskStatus)>>>()),
+            .collect::<Vec<Vec<(String, ChecklistStatus)>>>()),
         [
             Vec::from([Vec::from([(
                 String::from("turn one"),
-                TaskStatus::Completed
+                ChecklistStatus::Completed
             )])]),
             Vec::from([Vec::from([
-                (String::from("turn one"), TaskStatus::Completed),
-                (String::from("turn two"), TaskStatus::InProgress),
+                (String::from("turn one"), ChecklistStatus::Completed),
+                (String::from("turn two"), ChecklistStatus::InProgress),
             ])]),
         ]
     );
@@ -5751,18 +5756,17 @@ const fn set_effort(session: SessionId, effort: Effort) -> CommandBody {
 }
 
 /// The task lists in `events`, in order.
-fn task_lists(events: &[Event]) -> Vec<Vec<Task>> {
+fn task_lists(events: &[Event]) -> Vec<Vec<ChecklistEntry>> {
     events
         .iter()
         .filter_map(|event| match &event.kind {
-            EventKind::TasksChanged { tasks } => Some(tasks.clone()),
+            EventKind::ChecklistChanged { tasks } => Some(tasks.clone()),
             _ => None,
         })
         .collect()
 }
 
-/// Each task's text and status, the ids and holder aside.
-fn steps(tasks: &[Task]) -> Vec<(&str, TaskStatus)> {
+fn steps(tasks: &[ChecklistEntry]) -> Vec<(&str, ChecklistStatus)> {
     tasks
         .iter()
         .map(|task| (task.text.as_str(), task.status))
@@ -5771,48 +5775,30 @@ fn steps(tasks: &[Task]) -> Vec<(&str, TaskStatus)> {
 
 /// The three lists the recorded Claude and Codex runs wrote: three steps,
 /// the first pending, then in progress, then done.
-fn written(a: &str, b: &str, c: &str) -> Vec<Vec<(String, TaskStatus)>> {
+fn written(a: &str, b: &str, c: &str) -> Vec<Vec<(String, ChecklistStatus)>> {
     [
-        TaskStatus::Pending,
-        TaskStatus::InProgress,
-        TaskStatus::Completed,
+        ChecklistStatus::Pending,
+        ChecklistStatus::InProgress,
+        ChecklistStatus::Completed,
     ]
     .into_iter()
     .map(|first| {
         Vec::from([
             (String::from(a), first),
-            (String::from(b), TaskStatus::Pending),
-            (String::from(c), TaskStatus::Pending),
+            (String::from(b), ChecklistStatus::Pending),
+            (String::from(c), ChecklistStatus::Pending),
         ])
     })
     .collect()
 }
 
-fn owned(steps: Vec<(&str, TaskStatus)>) -> Vec<(String, TaskStatus)> {
+fn owned(
+    steps: Vec<(&str, ChecklistStatus)>,
+) -> Vec<(String, ChecklistStatus)> {
     steps
         .into_iter()
         .map(|(text, status)| (String::from(text), status))
         .collect()
-}
-
-/// Each task's id and holder, list by list.
-fn owners(lists: &[Vec<Task>]) -> Vec<Vec<(TaskId, SessionId)>> {
-    lists
-        .iter()
-        .map(|tasks| tasks.iter().map(|task| (task.id, task.holder)).collect())
-        .collect()
-}
-
-/// The first list's ids, held by `session`, as many times as there are
-/// lists: what `owners` gives when every list keeps them.
-fn kept(
-    session: SessionId,
-    lists: &[Vec<Task>],
-) -> Vec<Vec<(TaskId, SessionId)>> {
-    let first = lists.first().map_or_else(Vec::new, |tasks| {
-        tasks.iter().map(|task| (task.id, session)).collect()
-    });
-    lists.iter().map(|_| Vec::clone(&first)).collect()
 }
 
 /// What each line the session wrote to the Claude stand-in was: a control
@@ -5858,7 +5844,7 @@ fn hold_first_turn(dir: &Path) -> Fallible {
 }
 
 /// A Claude turn's `TodoWrite` calls become the session's tasks: one
-/// `TasksChanged` per call, each task keeping its id, and no call shown as
+/// `ChecklistChanged` per call, and no call shown as
 /// a tool call. An effort set while the turn runs is checked against the
 /// model's efforts, logged at once, and reaches the CLI with the next
 /// message (`apply_flag_settings`, then the message), not during the turn.
@@ -5888,8 +5874,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             lists
                 .iter()
                 .map(|tasks| owned(steps(tasks)))
-                .collect::<Vec<Vec<(String, TaskStatus)>>>(),
-            owners(&lists),
+                .collect::<Vec<Vec<(String, ChecklistStatus)>>>(),
             turn.iter()
                 .filter(|event| matches!(
                     event.kind,
@@ -5917,7 +5902,6 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             ],
             Vec::from([String::from("initialize "), String::from("plan")]),
             written("Write a.txt", "Write b.txt", "Write c.txt"),
-            kept(session, &lists),
             0,
             Vec::from([EventKind::EffortChanged {
                 effort: Effort::Low
@@ -5965,8 +5949,7 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
             lists
                 .iter()
                 .map(|tasks| owned(steps(tasks)))
-                .collect::<Vec<Vec<(String, TaskStatus)>>>(),
-            owners(&lists),
+                .collect::<Vec<Vec<(String, ChecklistStatus)>>>(),
             set,
             next.into_iter()
                 .filter(|kind| !matches!(
@@ -5981,7 +5964,6 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
         ),
         (
             written("write a.txt", "write b.txt", "write c.txt"),
-            kept(session, &lists),
             CommandResult::Accepted,
             Vec::from([
                 EventKind::EffortChanged {
@@ -5997,9 +5979,6 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
     fx.shutdown_with_client(phone).await
 }
 
-/// A host restart keeps the session's tasks and its effort: `Continue`
-/// starts the CLI at that effort, and the agent's next checklist keeps the
-/// tasks' ids.
 #[tokio::test]
 async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     let dir = scratch("tasks-restart", "claude-checklist-effort.jsonl")?;
@@ -6017,6 +5996,11 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     first.shutdown().await?;
 
     let second = durable_host(&data, address).await?;
+    let replayed = fold(second.history().await?);
+    assert_eq!(
+        replayed.sessions.get(&session).map(|shown| &shown.tasks),
+        before.last(),
+    );
     phone.reconnect().await;
     let _ = until_live(&mut updates).await?;
     let continued = send(&phone, continued(session)).await?;
@@ -6033,7 +6017,6 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
                 .iter()
                 .map(|run| flag(run, "--effort"))
                 .collect::<Vec<Option<String>>>(),
-            owners(&[before.clone(), after.clone()].concat()),
             after.len(),
             view.sessions
                 .get(&session)
@@ -6043,7 +6026,6 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
             CommandResult::Accepted,
             CommandResult::Accepted,
             Vec::from([None, Some(String::from("low"))]),
-            kept(session, &[before, after.clone()].concat()),
             3,
             Some((
                 Some(Effort::Low),
@@ -7416,88 +7398,6 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     Ok(())
 }
 
-#[tokio::test]
-async fn progress_catches_up_retries_and_deduplicates_after_restart() -> Fallible
-{
-    let land = homeland("progress-recovery")?;
-    let (first, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = first.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
-    link.stop().await?;
-    first.shutdown().await?;
-    record_pending_progress(&data, &land, issue)?;
-
-    let blocked = data.join("home-edits.new");
-    std::fs::create_dir(&blocked)?;
-    let (log, guard) = capture_log("progress-recovery")?;
-    let second = serve(endpoint().await?, claude_plugins(), &data).await?;
-    wait_for_diagnostic(&log, "progress note will retry").await?;
-    assert!(!pushed_issue(&land, issue)?.contains("Done: synthetic progress."));
-    std::fs::remove_dir(&blocked)?;
-    wait_for_diagnostic(&log, "noted a turn's progress").await?;
-    second.shutdown().await?;
-    drop(guard);
-    let _ = captured(&log)?;
-
-    disk::rewind_progress_cursor(&data)?;
-    let (log, guard) = capture_log("progress-replay")?;
-    let third = serve(endpoint().await?, claude_plugins(), &data).await?;
-    wait_for_diagnostic(&log, "noted a turn's progress").await?;
-    assert_eq!(
-        pushed_issue(&land, issue)?
-            .matches("Done: synthetic progress.")
-            .count(),
-        1,
-    );
-    third.shutdown().await?;
-    drop(guard);
-    let _ = captured(&log)?;
-    Ok(())
-}
-
-fn record_pending_progress(
-    data: &Path,
-    land: &Homeland,
-    issue: proto::IssueId,
-) -> Fallible {
-    disk::append(
-        data,
-        SessionId(101),
-        [
-            EventKind::SessionCreated {
-                instance: instance(Provider::Claude),
-                provider: Provider::Claude,
-                directory: HostPath(land.roots.display().to_string()),
-                by: ClientName(String::from("phone")),
-                model: None,
-                effort: None,
-            },
-            EventKind::OnIssue { issue },
-            EventKind::TasksChanged {
-                tasks: vec![Task {
-                    id: TaskId(101),
-                    holder: SessionId(101),
-                    text: String::from("synthetic progress"),
-                    status: TaskStatus::Completed,
-                }],
-            },
-            turn_end(TurnOutcome::Completed),
-        ],
-    )
-}
-
-async fn wait_for_diagnostic(path: &Path, expected: &str) -> Fallible {
-    tokio::time::timeout(STEP, async {
-        while !std::fs::read_to_string(path)?.contains(expected) {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-        Ok::<(), std::io::Error>(())
-    })
-    .await??;
-    Ok(())
-}
-
 fn assert_issue_notes(home: &proto::Home, issue: proto::IssueId, count: usize) {
     assert_eq!(
         alpha_issues(home)
@@ -7964,7 +7864,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
 }
 
 #[tokio::test]
-async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_asks_review()
+async fn finishing_lands_work_and_notes_only_the_summary_before_review()
 -> Fallible {
     let land = homeland("finish")?;
     let alpha = land.roots.join("apps").join("alpha");
@@ -8024,10 +7924,8 @@ async fn finishing_lands_the_sessions_work_on_the_issue_notes_its_progress_and_a
         .flat_map(|shown| shown.notes)
         .collect::<Vec<String>>();
     assert!(
-        notes
-            .iter()
-            .any(|note| note.ends_with("test-host · claude: Done: turn one.")),
-        "the brief's turn noted the checklist item it finished: {notes:?}"
+        !notes.iter().any(|note| note.contains("Done: turn one.")),
+        "checklist completion does not write an issue note: {notes:?}"
     );
     assert!(
         notes.last().is_some_and(
@@ -8111,93 +8009,4 @@ async fn assert_finish_recovery(
     );
     link.stop().await?;
     reopened.shutdown().await
-}
-
-#[tokio::test]
-async fn an_unfinished_claude_task_can_be_completed_by_codex() -> Fallible {
-    let data = data_dir("checklist-handoff")?;
-    let directory =
-        scratch("checklist-handoff", "claude-checklist-effort.jsonl")?;
-    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
-    let first = durable_host(&data, address).await?;
-    let (phone, mut updates) = first.connect().await?;
-    let source = launch(&phone, start(Provider::Claude, &directory)).await?;
-    let _ = legacy_events_until(&mut updates, Until::Ready).await?;
-    accepted(&phone, message(source, "make a checklist")).await?;
-    let _ = legacy_events_until(&mut updates, Until::TurnEnd).await?;
-    let before = fold(first.history().await?);
-    let task = before
-        .sessions
-        .get(&source)
-        .and_then(|session| {
-            session
-                .tasks
-                .iter()
-                .find(|task| task.status == TaskStatus::Pending)
-        })
-        .cloned()
-        .ok_or("Claude did not leave an unfinished task")?;
-    phone.stop().await?;
-    first.shutdown().await?;
-
-    let server = codex_server(
-        &data,
-        &instance(Provider::Codex),
-        "codex-plan-effort.jsonl",
-    )?;
-    let stdout = server.join("stdout.jsonl");
-    let label = task.handoff_label();
-    let frames = read(&stdout)?.replace(
-        r#""step":"write a.txt""#,
-        &format!(r#""step":{}"#, serde_json::to_string(&label)?),
-    );
-    std::fs::write(stdout, frames)?;
-    let second = serve(
-        durable_endpoint(&data, address).await?,
-        plugins(Some(fake_claude()), Some(fake_codex())),
-        &data,
-    )
-    .await?;
-    let (client, mut events) = second.connect().await?;
-    let target = launch(&client, start(Provider::Codex, &server)).await?;
-    let _ = legacy_events_until(&mut events, Until::Ready).await?;
-    let handoff = CommandBody::HandoffTask {
-        from: source,
-        to: target,
-        task: task.id,
-    };
-    accepted(&client, handoff.clone()).await?;
-    let _ = legacy_events_until(&mut events, Until::TurnEnd).await?;
-    assert_eq!(
-        send(&client, handoff).await?,
-        CommandResult::Rejected(Rejection::TaskUnavailable)
-    );
-    let turns = requests(&server, "stdin.jsonl", "turn/start")?;
-    assert_eq!(turns.len(), 1);
-    assert!(
-        turns
-            .iter()
-            .any(|params| params.to_string().contains(&label))
-    );
-    let after = fold(second.history().await?);
-    client.stop().await?;
-    second.shutdown().await?;
-
-    let restarted = durable_host(&data, address).await?;
-    let replayed = fold(restarted.history().await?);
-    let received = Task {
-        holder: target,
-        status: TaskStatus::Completed,
-        ..task
-    };
-    for view in [after, replayed] {
-        let held = |session| {
-            view.sessions.get(&session).and_then(|shown| {
-                shown.tasks.iter().find(|row| row.id == received.id)
-            })
-        };
-        assert_eq!(held(source), None);
-        assert_eq!(held(target), Some(&received));
-    }
-    restarted.shutdown().await
 }

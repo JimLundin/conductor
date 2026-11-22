@@ -19,7 +19,6 @@ pub mod log;
 pub mod movement;
 mod note;
 mod prelude;
-pub mod progress;
 pub mod push;
 pub mod registry;
 pub mod restore;
@@ -28,7 +27,6 @@ pub mod serve;
 pub mod session;
 pub mod sign_in;
 pub mod start;
-pub mod tasks;
 pub mod workspace;
 
 pub use note::Note;

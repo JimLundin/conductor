@@ -17,7 +17,7 @@ use claude::{
 };
 use install::Home;
 use n0_future::StreamExt;
-use proto::{Effort, TaskStatus};
+use proto::{ChecklistStatus, Effort};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -57,7 +57,7 @@ fn block_summary(block: &Block) -> String {
             steps
                 .iter()
                 .map(|step| (step.text.as_str(), step.status))
-                .collect::<Vec<(&str, TaskStatus)>>()
+                .collect::<Vec<(&str, ChecklistStatus)>>()
         ),
         Block::Other(_) => String::from("other"),
     }

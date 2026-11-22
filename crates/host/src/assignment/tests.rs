@@ -47,11 +47,11 @@ fn a_session_is_assigned_its_issue_and_the_instance_it_was_created_in() {
         event(1, EventKind::OnIssue { issue: ISSUE }),
     ];
     assert_eq!(
-        fold(&events).assignment(),
-        Some(Assignment {
-            issue: ISSUE,
-            instance: own(),
-        })
+        fold(&events),
+        Assigned {
+            issue: Some(ISSUE),
+            instance: Some(own()),
+        }
     );
 }
 
@@ -60,10 +60,9 @@ fn a_session_without_an_issue_or_an_instance_has_no_assignment() {
     let unassigned = fold(&[created(1, own())]);
     assert_eq!(unassigned.issue, None);
     assert_eq!(unassigned.instance, Some(own()));
-    assert_eq!(unassigned.assignment(), None);
     let unknown = fold(&[event(1, EventKind::OnIssue { issue: ISSUE })]);
     assert_eq!(unknown.issue, Some(ISSUE));
-    assert_eq!(unknown.assignment(), None);
+    assert_eq!(unknown.instance, None);
 }
 
 #[test]
@@ -96,13 +95,13 @@ fn each_session_folds_only_its_own_events() {
         created(2, other.clone()),
         event(2, EventKind::OnIssue { issue: ISSUE }),
     ]);
-    assert_eq!(sessions[&SessionId(1)].clone().assignment(), None);
+    assert_eq!(sessions[&SessionId(1)].issue, None);
     assert_eq!(
-        sessions[&SessionId(2)].clone().assignment(),
-        Some(Assignment {
-            issue: ISSUE,
-            instance: other,
-        })
+        sessions[&SessionId(2)],
+        Assigned {
+            issue: Some(ISSUE),
+            instance: Some(other),
+        }
     );
 }
 

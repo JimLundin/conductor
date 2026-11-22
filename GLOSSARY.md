@@ -1,5 +1,8 @@
 # Conductor glossary
 
+- **Checklist** is the latest ordered list of work and its status reported
+  by an agent or sub-agent. Its entries have no identity across revisions
+  and cannot be assigned to another session.
 - **Opening events** record a new session in order. They are
   `SessionCreated`, `OnIssue` for an issue start, `WorkspaceCreated`, and
   `CheckpointCreated`.

@@ -22,7 +22,7 @@ use proto::fleet::NodeId;
 use proto::movement::{MoveId, Phase};
 use proto::{
     CheckpointId, ClientName, CommandId, CommandResult, EventKind, HostPath,
-    HostSeq, Models, SessionId, TaskId, Workspace,
+    HostSeq, Models, SessionId, Workspace,
 };
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -702,7 +702,6 @@ impl Actor {
                 Input::Recorded(self.log.record(self.id, kind).await?.seq)
             }
             Call::History => Input::History(self.log.history().await?),
-            Call::Mint(count) => Input::Minted(mint(count)),
             Call::Exists(path) => {
                 Input::Exists(std::fs::read_dir(&path.0).is_ok())
             }
@@ -840,12 +839,6 @@ fn watched(
         Err(broadcast::error::RecvError::Lagged(_)) => Ok(FinishInput::Lagged),
         Err(broadcast::error::RecvError::Closed) => Err(Stopped {}),
     }
-}
-
-fn mint(count: usize) -> Vec<TaskId> {
-    (0..count)
-        .map(|_| TaskId(ulid::Ulid::new().into()))
-        .collect()
 }
 
 /// The outcome of a call that answers nothing else.

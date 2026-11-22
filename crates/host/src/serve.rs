@@ -7,7 +7,7 @@ use proto::{
     AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
     Credential, Effort, InstanceId, IssueChange, IssueFields, IssueId, ModelId,
     Models, Open, ProjectId, Provider, Rejection, RequestId, SessionId,
-    SignInCode, StartAt, Subscribe, Task, TaskId,
+    SignInCode, StartAt, Subscribe,
 };
 
 use crate::prelude::*;
@@ -71,10 +71,6 @@ pub enum Order {
         text: String,
         by: ClientName,
     },
-    Handoff {
-        task: Task,
-        by: ClientName,
-    },
     Interrupt,
     Diff(CheckpointId),
     Undo(CheckpointId),
@@ -102,7 +98,6 @@ impl Order {
         use session::Order as Core;
         match self {
             Self::Send { text, by } => Core::Send { text, by },
-            Self::Handoff { task, by } => Core::Handoff { task, by },
             Self::Interrupt => Core::Interrupt,
             Self::Diff(checkpoint) => Core::Diff(checkpoint),
             Self::Undo(checkpoint) => Core::Undo { checkpoint, fork },
@@ -167,12 +162,6 @@ pub enum Route {
     Home(HomeOrder),
     /// Finishes the session on its issue, in the background.
     Finish(SessionId, ClientName),
-    Handoff {
-        from: SessionId,
-        to: SessionId,
-        task: TaskId,
-        by: ClientName,
-    },
     Push(PushOrder),
     Move {
         session: SessionId,
@@ -262,10 +251,9 @@ impl Route {
             | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {
                 Ledger::Receipt
             }
-            Self::Order(..)
-            | Self::Relaunch(..)
-            | Self::Start { .. }
-            | Self::Handoff { .. } => Ledger::Session,
+            Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
+                Ledger::Session
+            }
         }
     }
 }
@@ -276,9 +264,6 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         CommandBody::PushPublicKey => Route::Push(PushOrder::PublicKey),
         CommandBody::RegisterPush(subscription) => {
             Route::Push(PushOrder::Register(subscription))
-        }
-        CommandBody::HandoffTask { from, to, task } => {
-            Route::Handoff { from, to, task, by }
         }
         CommandBody::FleetApprove(request) => {
             Route::Fleet(FleetAction::Approve(request))

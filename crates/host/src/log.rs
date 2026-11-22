@@ -19,9 +19,9 @@ use proto::{
 
 use crate::prelude::*;
 
-/// Format 4 removes instance snapshots from command receipts. A database
-/// of another format doesn't open.
-pub const FORMAT: u32 = 4;
+/// Format 5 removes checklist item identities and handoff events. A
+/// database of another format doesn't open.
+pub const FORMAT: u32 = 5;
 
 /// Whether a database opens, and whether its format is to be written: a
 /// `created` one takes [`FORMAT`], and one whose `stored` format is another
@@ -79,7 +79,6 @@ pub enum Write {
     Event(Event),
     Receipt(CommandId, CommandResult),
     Conversation(SessionId, String),
-    Progress(HostSeq),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -200,25 +199,6 @@ impl Log {
         let mut running = crate::registry::running(&self.events);
         running.extend(crate::registry::running(&self.staged));
         running
-    }
-
-    #[must_use]
-    pub fn handoff_task(
-        &self,
-        session: SessionId,
-        id: proto::TaskId,
-    ) -> Option<proto::Task> {
-        let mut board = proto::TaskBoard::new();
-        for event in self.events.iter().chain(&self.staged) {
-            board.apply(event);
-        }
-        board
-            .held(session)
-            .iter()
-            .find(|task| {
-                task.id == id && task.status != proto::TaskStatus::Completed
-            })
-            .cloned()
     }
 
     /// Admission in the session actor also sees the changes it just staged
@@ -366,15 +346,6 @@ impl Log {
     #[must_use]
     pub fn conversation(&self, session: SessionId, id: String) -> Vec<Effect> {
         let write = Write::Conversation(session, id);
-        match self.active {
-            Some(_) => Vec::from([Effect::Store(write)]),
-            None => alone(write),
-        }
-    }
-
-    #[must_use]
-    pub fn delivered_progress(&self, seq: HostSeq) -> Vec<Effect> {
-        let write = Write::Progress(seq);
         match self.active {
             Some(_) => Vec::from([Effect::Store(write)]),
             None => alone(write),

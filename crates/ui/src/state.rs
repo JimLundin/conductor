@@ -457,8 +457,7 @@ impl State {
             host: *host,
             visit: self.visit,
         };
-        let (next, effects) =
-            mem::take(pane).update(intent, *id, session, sessions, at);
+        let (next, effects) = mem::take(pane).update(intent, *id, session, at);
         *pane = next;
         (self, effects)
     }
@@ -535,14 +534,6 @@ impl State {
             (_, ReplyTo::Notice) => self.notice = refusal(answer),
             (ShownPlace::Issue(_, _, Some(draft)), ReplyTo::Issue(field)) => {
                 draft.answered(field, refusal(answer));
-            }
-            (ShownPlace::Session(_, _, Some(pane)), ReplyTo::Handoff) => {
-                if let Some(target) = pane.handoff_answered() {
-                    self.notice = refusal(answer);
-                    if self.notice.is_none() {
-                        self = self.show(Place::Session(reply.host, target));
-                    }
-                }
             }
             (ShownPlace::Session(_, _, Some(pane)), ReplyTo::Move) => {
                 pane.movement.replied(&answer);
@@ -711,7 +702,6 @@ impl State {
                         *id,
                         session,
                         (known.fold.instances.as_ref(), &known.fold.catalog),
-                        &known.fold.view.sessions,
                         (
                             self.notice.clone(),
                             known.name(),

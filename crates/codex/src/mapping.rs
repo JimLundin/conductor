@@ -202,10 +202,10 @@ pub fn codex_answer(reply: Reply) -> Decision {
 
 #[cfg(test)]
 mod tests {
-    use agents::{NativeRequest, PlanStep, Reply, Step};
+    use agents::{NativeRequest, Reply, Step};
     use proto::{
-        Answer, Decision as Chosen, EventKind, Question, QuestionOption,
-        Selection, TaskStatus, ToolCallId, ToolKind,
+        Answer, ChecklistEntry, ChecklistStatus, Decision as Chosen, EventKind,
+        Question, QuestionOption, Selection, ToolCallId, ToolKind,
     };
 
     use super::{codex_answer, codex_steps};
@@ -231,10 +231,10 @@ mod tests {
         TurnId(String::from("tu_1"))
     }
 
-    fn step() -> PlanStep {
-        PlanStep {
+    fn step() -> ChecklistEntry {
+        ChecklistEntry {
             text: String::from("write a.txt"),
-            status: TaskStatus::InProgress,
+            status: ChecklistStatus::InProgress,
         }
     }
 

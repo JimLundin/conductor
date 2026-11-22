@@ -64,15 +64,6 @@ impl Assigned {
     pub(crate) fn is(&self, issue: IssueId, instance: &InstanceId) -> bool {
         self.issue == Some(issue) && self.instance.as_ref() == Some(instance)
     }
-
-    /// The assignment, once both the issue and the instance are known.
-    #[must_use]
-    pub(crate) fn assignment(self) -> Option<Assignment> {
-        Some(Assignment {
-            issue: self.issue?,
-            instance: self.instance?,
-        })
-    }
 }
 
 /// Each session's issue and instance after `history`.

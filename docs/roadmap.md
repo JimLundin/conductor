@@ -4,6 +4,13 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Session-local checklists.** Main and child checklists are ordered
+  snapshots of text and status, retained through replay and undo.
+  Task handoff, persistent item identities and automatic checklist-derived
+  issue notes are removed. Explicit notes and the summary turn remain.
+  The wire uses ALPN `conductor/28`, session transfers `conductor-move/2`,
+  and the event store format is 5.
+
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
   `agents`, `claude`, `codex`, `host`, `home` and `ui`; `net`, `daemon`,
@@ -82,8 +89,8 @@ What is built and what comes next. Update it in the commit that changes it.
   retried after the host restarts. These wire changes use ALPN
   `conductor/24`.
 
-- **Notifications, subagent supervision and task handoffs**. These
-  features introduced wire protocol ALPN `conductor/25`. Credential sign-in
+- **Notifications and subagent supervision** introduced wire protocol
+  ALPN `conductor/25`. Credential sign-in
   from the paired app uses `conductor/26`.
 
 - **Worktrees and turn undo** (#13). Each new session gets a managed Git
@@ -278,14 +285,7 @@ Each item ends in something to try. The fleet design is
    the branch, copy the transcript and the events, resume on the target.
    *Try:* move a session from WSL to the Mac between turns and continue it
    from the phone.
-9. **Hand tasks between sessions** (#30). From a session's checklist, the
-   owner can choose an unfinished task and send it to an idle session on
-   the same host. The receiving agent starts a turn with the task and its
-   checklist label. The task moves after the provider accepts the turn,
-   keeps its ID across the handoff, and follows the receiving agent's
-   checklist updates. *Try:* hand a task from a Claude session to a Codex
-   session and watch it move to Codex's checklist and reach Done.
-10. **Monitor the subagents** (#31) each session runs (home step 1,
+9. **Monitor the subagents** (#31) each session runs (home step 1,
     `docs/home.md` §6). Child session events record each subagent's
     lifecycle, type, result, transcript, requests, and checklist.
     The phone shows the child next to the tool call that started it when
