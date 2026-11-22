@@ -2,14 +2,15 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
 use proptest::prelude::*;
-use proto::ProjectId;
+use proto::{Datum, Issue, IssueId, ProjectId, Section};
 
 use super::{Failure, Move, holds};
-use crate::flow::graph::{Datum, Graph, Issue};
-use crate::flow::{Flow, Literal, Predicate, Quantifier, Role, load};
+use crate::flow::graph::Graph;
+use crate::flow::load;
+use proto::flow::{Flow, Literal, Predicate, Quantifier, Role};
 
 fn flow() -> Flow {
-    load(include_str!("../flow.toml")).unwrap_or_else(|_| Flow {
+    load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
         default_kind: String::new(),
         statuses: Vec::new(),
         fields: Vec::new(),
@@ -20,27 +21,51 @@ fn flow() -> Flow {
     })
 }
 
-fn issue(id: &str, kind: &str, status: &str) -> Issue {
+/// The names the tests give issues, each standing for the id after its
+/// place.
+const NAMES: [&str; 10] = [
+    "spec", "review", "one", "two", "task", "i0", "i1", "i2", "i3", "i4",
+];
+
+fn id(name: &str) -> IssueId {
+    let place = NAMES.iter().position(|known| *known == name);
+    IssueId(place.map_or(0, |at| u128::try_from(at).unwrap_or_default() + 1))
+}
+
+/// The issue's id as a relation and a failure name it.
+fn named(name: &str) -> String {
+    id(name).to_string()
+}
+
+fn issue(name: &str, kind: &str, status: &str) -> Issue {
     Issue {
-        id: String::from(id),
+        id: id(name),
         project: ProjectId(String::from("home")),
-        title: String::from(id),
+        title: String::from(name),
         kind: String::from(kind),
         status: String::from(status),
         stage: None,
         fields: BTreeMap::new(),
         links: BTreeMap::new(),
+        body: String::new(),
         sections: Vec::new(),
+        checklist: Vec::new(),
         log: Vec::new(),
+        branch: String::new(),
     }
 }
 
 fn linked(mut issue: Issue, relation: &str, ids: &[&str]) -> Issue {
     issue.links.insert(
         String::from(relation),
-        ids.iter().map(|id| String::from(*id)).collect(),
+        ids.iter().map(|target| id(target)).collect(),
     );
     issue
+}
+
+/// The graph's issues, as `holds` takes them.
+fn among(graph: &Graph) -> Vec<&Issue> {
+    graph.issues.iter().collect()
 }
 
 fn rule(flow: &Flow, index: usize) -> Predicate {
@@ -63,11 +88,17 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &graph, &spec, Move::default(), &rule(&flow, 0)),
+        holds(
+            &flow,
+            &among(&graph),
+            &spec,
+            Move::default(),
+            &rule(&flow, 0)
+        ),
         Err(Failure {
             atom: String::from("{ status_role = \"terminal\" }"),
-            issue: String::from("review"),
-            path: Vec::from([String::from("children review")]),
+            issue: named("review"),
+            path: Vec::from([format!("children {}", named("review"))]),
         })
     );
     review.status = String::from("done");
@@ -76,7 +107,13 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &finished, &spec, Move::default(), &rule(&flow, 0)),
+        holds(
+            &flow,
+            &among(&finished),
+            &spec,
+            Move::default(),
+            &rule(&flow, 0)
+        ),
         Ok(())
     );
     let alone = Graph {
@@ -84,10 +121,16 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &alone, &spec, Move::default(), &rule(&flow, 0)),
+        holds(
+            &flow,
+            &among(&alone),
+            &spec,
+            Move::default(),
+            &rule(&flow, 0)
+        ),
         Err(Failure {
             atom: String::from("children reaches no issue"),
-            issue: String::from("spec"),
+            issue: named("spec"),
             path: Vec::new(),
         })
     );
@@ -103,11 +146,17 @@ fn blocking_holds_until_every_blocker_is_finished_and_ends_on_a_cycle() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &graph, &one, Move::default(), &rule(&flow, 1)),
+        holds(
+            &flow,
+            &among(&graph),
+            &one,
+            Move::default(),
+            &rule(&flow, 1)
+        ),
         Err(Failure {
             atom: String::from("{ status_role = \"terminal\" }"),
-            issue: String::from("two"),
-            path: Vec::from([String::from("blocked_by two")]),
+            issue: named("two"),
+            path: Vec::from([format!("blocked_by {}", named("two"))]),
         })
     );
 }
@@ -128,12 +177,15 @@ fn a_move_is_weighed_from_and_to() {
         Predicate::From(Box::new(Predicate::Stage(String::from("spec")))),
         Predicate::To(Box::new(Predicate::Stage(String::from("slice")))),
     ]));
-    assert_eq!(holds(&flow, &graph, &after, moving, &leaving), Ok(()));
     assert_eq!(
-        holds(&flow, &graph, &after, Move::default(), &leaving),
+        holds(&flow, &among(&graph), &after, moving, &leaving),
+        Ok(())
+    );
+    assert_eq!(
+        holds(&flow, &among(&graph), &after, Move::default(), &leaving),
         Err(Failure {
             atom: String::from("from: no move is being weighed"),
-            issue: String::from("spec"),
+            issue: named("spec"),
             path: Vec::new(),
         })
     );
@@ -147,10 +199,7 @@ fn a_field_left_out_has_its_default() {
         name: String::from("priority"),
         value: Literal::Text(String::from("normal")),
     };
-    assert_eq!(
-        holds(&flow, &Graph::default(), &task, Move::default(), &normal),
-        Ok(())
-    );
+    assert_eq!(holds(&flow, &[], &task, Move::default(), &normal), Ok(()));
 }
 
 /// The predicate's meaning, written directly: no explanations.
@@ -190,7 +239,7 @@ fn meets(
         }
         Predicate::Field { name, value } => {
             let default = flow
-                .field(name)
+                .field(&issue.kind, name)
                 .and_then(|field| field.default.clone())
                 .map(Datum::Text);
             match (issue.fields.get(name).cloned().or(default), value) {
@@ -211,7 +260,9 @@ fn meets(
                 || issue.fields.contains_key(name)
                 || issue.links.get(name).is_some_and(|ids| !ids.is_empty())
         }
-        Predicate::HasSection(section) => issue.sections.contains(section),
+        Predicate::HasSection(section) => {
+            issue.sections.iter().any(|had| had.heading == *section)
+        }
         Predicate::From(inner) => moving
             .from
             .is_some_and(|from| meets(flow, graph, from, moving, inner)),
@@ -294,10 +345,22 @@ fn issues() -> impl Strategy<Value = Vec<Issue>> {
                         (String::from("focus"), Datum::Text(word))
                     }));
                     made.links.extend(parent.map(|target| {
-                        (String::from("parent"), Vec::from([target]))
+                        (String::from("parent"), Vec::from([self::id(&target)]))
                     }));
-                    made.links.insert(String::from("blocked_by"), blockers);
-                    made.sections = sections;
+                    made.links.insert(
+                        String::from("blocked_by"),
+                        blockers
+                            .iter()
+                            .map(|target| self::id(target))
+                            .collect(),
+                    );
+                    made.sections = sections
+                        .into_iter()
+                        .map(|heading| Section {
+                            heading,
+                            text: String::new(),
+                        })
+                        .collect();
                     made
                 },
             )
@@ -375,14 +438,14 @@ proptest! {
         } else {
             Move::default()
         };
-        let evaluated = holds(&flow, &graph, subject, moving, &predicate);
+        let evaluated = holds(&flow, &among(&graph), subject, moving, &predicate);
         prop_assert_eq!(evaluated.is_ok(), meets(&flow, &graph, subject, moving, &predicate));
         if let Err(failure) = evaluated {
             prop_assert!(!failure.atom.is_empty());
-            prop_assert!(graph.issues.iter().any(|issue| issue.id == failure.issue));
+            prop_assert!(graph.issues.iter().any(|issue| issue.id.to_string() == failure.issue));
             for step in &failure.path {
                 let reached = step.split_once(' ').map(|(_, id)| id);
-                prop_assert!(graph.issues.iter().any(|issue| Some(issue.id.as_str()) == reached));
+                prop_assert!(graph.issues.iter().any(|issue| Some(issue.id.to_string().as_str()) == reached));
             }
         }
     }

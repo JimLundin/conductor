@@ -679,19 +679,25 @@ standards and issues, cloned on every host. Built so far are home steps
 - **Issues** (home step 6). `projects/<project>/issues/<id>.md`, one file
   per issue in the format of home §3, its name the issue's lowercase ULID
   (`IssueId`); `home::issue` reads it and lists a project's issues in
-  `Project.issues`. `CreateIssue { project, fields }` answers
-  `IssueCreated { issue }`, with an id the host mints, an `open` status
-  and the branch `issue/<id>`. `ChangeIssue { issue, change }` makes one
-  small change (`IssueChange`): the title, the body, the labels, the
-  priority or the status; an item added, or checked or removed against
-  the checklist snapshot shown to the person;
-  or a note, which the host dates and signs `<host> · <client>`. A change
-  rewrites only its own lines of the file, so comments, keys, tables and
-  sections a person added stay as written (Windows line ends become
-  Unix ones). Both commands use `Ledger::Receipt`, so a retry returns
-  the saved response. A local storage failure returns `IssueNotSaved`
-  without keeping a receipt, so the same command identity can retry when
-  storage recovers. When the host dies after safely recording a new
+  `Project.issues`. The app and the `home` command line share one edit
+  vocabulary, defined in `proto`: `CreateIssue(NewIssue)` is
+  `home issue new` (project, kind, title, `<field>=<value>` fields), with
+  an id the host mints, and `ChangeIssue { issue, change }` makes one
+  `IssueChange`: a `Move` of the stage or status with a reason, a `Set`
+  of a field (the title among them), a `Note`, a new `Body`, or a
+  `Checklist` item added, or checked, unchecked or removed by its place
+  in the checklist shown to the person. The host writes each through
+  `home::flow::command::write`, as the command line does: the file is
+  read back against the flow among the home's other issues, a structural
+  problem or an `error` rule refuses it (`IssueRefused`, with the command
+  line's reason), and anything softer is written and answered with the
+  warning (`IssueWritten { issue, warnings }`). Its log lines are signed
+  `<host>·<client>`. A change rewrites only its own lines of the file, so
+  comments, keys, tables and sections a person added stay as written
+  (Windows line ends become Unix ones). Both commands use
+  `Ledger::Receipt`, so a retry returns the saved response. A local
+  storage failure returns `IssueNotSaved` without keeping a receipt, so
+  the same command identity can retry when storage recovers. When the host dies after safely recording a new
   issue and before committing its receipt, a retry recovers its original
   ID from the queue or the commit that added the issue file, even if the
   current document is missing or malformed. Before acknowledging a
@@ -704,11 +710,8 @@ standards and issues, cloned on every host. Built so far are home steps
   A refused push or a sync with pending edits fetches and resets the
   clone to upstream, replays the pending edits in order, then pushes.
   If the fetch fails, the host replays against its local commits so
-  subsequent edits can appear immediately while offline. Original
-  queues carry no note identities. Their migration uses the upstream
-  baseline to distinguish older matching notes from queued occurrences,
-  and saves the occurrence numbers and markers before replay. Replaying
-  a migrated note records its marker for later recovery.
+  subsequent edits can appear immediately while offline. A queue stored
+  in an older version is set aside unread, never converted.
   Replay uses the fetched upstream file's last commit time to resolve
   conflicting fields. The issue file records which logical edits have
   been resolved, including edits whose value was already present and
@@ -741,8 +744,9 @@ standards and issues, cloned on every host. Built so far are home steps
   the agent's first message is the issue's brief (`home::issue::start`):
   its title, body, checklist and notes, the branch, and what to do when
   done; one that doesn't reach the agent leaves an `Error` in the session.
-  The home actor then moves an `open` or `ready` issue to `in-progress`,
-  as the issue is then (`home::issue::SessionUpdate`). The fetch runs in the
+  The home actor then moves an issue whose status has the flow's role
+  `idle` or `startable` to its first status of role `active`, as the issue
+  is then (`home::issue::SessionUpdate`). The fetch runs in the
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
 - **Finishing** (home step 7). `FinishSession { session }`, for a session
@@ -768,8 +772,9 @@ standards and issues, cloned on every host. Built so far are home steps
   checked out somewhere, which can't move under its worktree. It pushes
   the issue's branch to `origin`, never forced, which lets another host
   continue the issue. The summary becomes the issue's note, signed
-  `<host> · <instance>`, and an `open`, `ready` or `in-progress` issue
-  whose branch gained commits moves to `review`
+  `<host> · <instance>`, and an issue still `idle`, `startable` or `active`
+  by role whose branch gained commits moves to the flow's first status of
+  role `review`
   (`home::issue::SessionUpdate`). `SessionFinished { finished }` ends it: the
   commits that landed and where the branch went (`Kept`), or why nothing
   landed. The session stays, closed; *Remove* removes its workspace.

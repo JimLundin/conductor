@@ -1,16 +1,17 @@
 use alloc::collections::BTreeMap;
 
-use proto::ProjectId;
+use proto::{ChecklistItem, Datum, Entry, LogEvent, ProjectId, Section};
 
-use super::{Datum, Entry, Event, File, Graph, Problem, read};
-use crate::flow::{Flow, load};
+use super::{File, Graph, Problem, id_of, read};
+use crate::flow::load;
+use proto::flow::Flow;
 
 const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
 const TASK: &str = "01m7zxfbnt3hsv50a6078gek37";
 const DECISION: &str = "01m7zxfbnrxa7106qn4dx9f0jx";
 
 fn flow() -> Flow {
-    load(include_str!("../flow.toml")).unwrap_or_else(|_| Flow {
+    load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
         default_kind: String::new(),
         statuses: Vec::new(),
         fields: Vec::new(),
@@ -36,7 +37,9 @@ fn spec() -> File {
         "title = \"Interpret the flow\"\nkind = \"spec\"\nstage = \"build\"\n\
          status = \"active\"\npriority = \"high\"\nlabels = [\"home\"]\n\
          created = 2026-11-21T19:53:48Z\n",
-        "## Problem\n\nWhy.\n\n## Acceptance\n\n- It works.\n\n## Notes\n\n\
+        "Opening words.\n\n## Problem\n\nWhy.\n\n```\n## not a heading\n```\n\n\
+         ## Acceptance\n\n- It works.\n\n## Checklist\n\n- [x] the loader\n\
+         - [ ] the reader\n\n## Notes\n\n\
          - 2026-11-21T19:53:48Z laptop·claude stage shape→spec: shaped.\n\
          - 2026-11-18 laptop · codex · api: an older note\n  that goes on.\n\
          - 2026-11-22T10:00:00Z laptop·claude note: checked.\n",
@@ -93,7 +96,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
     let first = graph.issues.first();
     assert_eq!(
         first.map(|issue| (
-            issue.id.as_str(),
+            issue.id.to_string(),
             issue.kind.as_str(),
             issue.status.as_str(),
             issue.stage.as_deref(),
@@ -101,7 +104,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             &issue.sections,
         )),
         Some((
-            SPEC,
+            String::from(SPEC),
             "spec",
             "active",
             Some("build"),
@@ -116,8 +119,30 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
                 ),
                 (String::from("priority"), Datum::Text(String::from("high"))),
             ]),
-            &Vec::from([String::from("Problem"), String::from("Acceptance")]),
+            &[
+                ("", "Opening words."),
+                ("Problem", "Why.\n\n```\n## not a heading\n```"),
+                ("Acceptance", "- It works."),
+            ]
+            .map(|(heading, text)| Section {
+                heading: String::from(heading),
+                text: String::from(text),
+            })
+            .to_vec(),
         ))
+    );
+    assert_eq!(
+        first.map(|issue| issue.checklist.clone()),
+        Some(Vec::from([
+            ChecklistItem {
+                done: true,
+                text: String::from("the loader"),
+            },
+            ChecklistItem {
+                done: false,
+                text: String::from("the reader"),
+            },
+        ]))
     );
     assert_eq!(
         first.map(|issue| issue.log.clone()),
@@ -125,7 +150,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             Entry {
                 at: Some(String::from("2026-11-21T19:53:48Z")),
                 by: Some(String::from("laptop·claude")),
-                event: Event::Stage {
+                event: LogEvent::Stage {
                     from: String::from("shape"),
                     to: String::from("spec")
                 },
@@ -134,15 +159,15 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             Entry {
                 at: None,
                 by: None,
-                event: Event::Note,
+                event: LogEvent::Note,
                 text: String::from(
-                    "2026-11-18 laptop · codex · api: an older note that goes on."
+                    "2026-11-18 laptop · codex · api: an older note\nthat goes on."
                 ),
             },
             Entry {
                 at: Some(String::from("2026-11-22T10:00:00Z")),
                 by: Some(String::from("laptop·claude")),
-                event: Event::Note,
+                event: LogEvent::Note,
                 text: String::from("checked."),
             },
         ]))
@@ -151,8 +176,44 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
         graph.issues.get(1).map(|issue| issue.links.clone()),
         Some(BTreeMap::from([
             (String::from("blocked_by"), Vec::new()),
-            (String::from("parent"), Vec::from([String::from(SPEC)])),
+            (String::from("parent"), id_of(SPEC).into_iter().collect()),
         ]))
+    );
+}
+
+#[test]
+fn an_issue_keeps_its_body_before_the_checklist_and_the_log() {
+    let graph = read(&flow(), &[spec()]);
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.body.as_str()),
+        Some(
+            "Opening words.\n\n## Problem\n\nWhy.\n\n```\n## not a heading\n```\n\n\
+             ## Acceptance\n\n- It works."
+        )
+    );
+}
+
+#[test]
+fn a_problem_says_what_is_wrong_after_the_field_that_causes_it() {
+    let at = |field: Option<&str>| Problem {
+        issue: format!("conductor/{TASK}"),
+        field: field.map(String::from),
+        message: String::from("is missing"),
+    };
+    assert_eq!(at(Some("title")).to_string(), "title: is missing");
+    assert_eq!(at(None).to_string(), "is missing");
+}
+
+#[test]
+fn a_target_that_is_no_id_is_no_issue() {
+    let graph = read(&flow(), &[task("home", "parent = \"nothing\"\n")]);
+    assert_eq!(
+        problems(&graph),
+        Vec::from([problem(
+            &format!("home/{TASK}"),
+            "parent",
+            "nothing is no issue"
+        )])
     );
 }
 
@@ -349,4 +410,37 @@ fn an_id_is_its_file_s_name() {
             "is not its file's name, a lower-case ULID",
         )])
     );
+}
+
+/// The tests' flow with each edit's first text replaced by its second.
+fn flow_with(edits: &[(&str, &str)]) -> Result<Flow, String> {
+    let text = edits.iter().fold(
+        String::from(include_str!("../test-flow.toml")),
+        |text, (from, to)| {
+            assert!(text.contains(from), "the flow has no {from:?}");
+            text.replace(from, to)
+        },
+    );
+    load(&text)
+}
+
+#[test]
+fn an_issue_lands_on_the_branch_its_branch_field_names_whatever_it_is_called()
+-> Result<(), String> {
+    let renamed = flow_with(&[
+        ("name = \"branch\"", "name = \"lands_on\""),
+        ("\"branch\"]", "\"lands_on\"]"),
+    ])?;
+    let graph = read(&renamed, &[task("home", "lands_on = \"feature/x\"\n")]);
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.branch.as_str()),
+        Some("feature/x")
+    );
+    let roleless = flow_with(&[("role = \"branch\"\n", "")])?;
+    let graph = read(&roleless, &[task("home", "branch = \"feature/x\"\n")]);
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.branch.clone()),
+        Some(format!("issue/{TASK}"))
+    );
+    Ok(())
 }

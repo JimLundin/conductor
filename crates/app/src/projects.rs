@@ -94,12 +94,13 @@ fn Project(project: ui::ProjectGroup) -> Element {
 fn Issues(list: ui::IssueList) -> Element {
     let shell = use_context::<Shell>();
     let project = list.project.clone();
+    let picking = list.project.clone();
     let create = list.create.clone();
     rsx! {
         div { class: "issues",
             for group in list.groups {
                 div { class: "issue-group", "data-status": group.status,
-                    h3 { "{group.label}" }
+                    h3 { "{group.status}" }
                     ul {
                         for row in group.rows {
                             li { key: "{row.key}",
@@ -129,7 +130,20 @@ fn Issues(list: ui::IssueList) -> Element {
                     value: "{list.new_title}",
                     oninput: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::TypeTitle(project.clone(), event.value()))),
                 }
+                select {
+                    name: "issue-kind",
+                    "aria-label": "New issue's kind",
+                    onchange: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::PickKind(picking.clone(), event.value()))),
+                    for pick in list.kinds {
+                        option { value: pick.word, selected: pick.selected, "{pick.label}" }
+                    }
+                }
                 button { r#type: "submit", class: "clear", disabled: list.create.is_none(), "Open" }
+                ul { class: "new-issue-fields hint muted",
+                    for field in list.fields {
+                        li { key: "{field}", "{field}" }
+                    }
+                }
             }
         }
     }

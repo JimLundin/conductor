@@ -6,22 +6,14 @@
 //! severity. The check fails only on errors.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
+
+use proto::Issue;
+use proto::flow::{Flow, Severity};
 
 use super::eval::{Failure, Move, holds};
-use super::graph::{File, Graph, Issue, read};
-use super::{Flow, Severity, load};
+use super::snapshot::Snapshot;
 use crate::prelude::*;
-use crate::project::listed;
-
-/// What the check reads, as the shell found it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Inputs {
-    /// `docs/agents/flow.toml`, or why it couldn't be read.
-    pub flow: Result<String, String>,
-    /// Each folder of `projects/` with its `project.toml`, or why not.
-    pub projects: Vec<(String, Result<String, String>)>,
-    pub issues: Vec<File>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -74,41 +66,37 @@ impl Report {
 }
 
 #[must_use]
-pub fn check(inputs: &Inputs) -> Report {
+pub fn check(home: &Snapshot) -> Report {
     let error = |subject: Option<String>, message: String| Finding {
         severity: Severity::Error,
         subject,
         message,
     };
-    let flow = match inputs.flow.as_deref().map_err(Clone::clone).and_then(load)
-    {
+    let flow = match home.flow() {
         Ok(flow) => flow,
         Err(problem) => {
             return Report {
-                findings: Vec::from([error(
-                    None,
-                    format!("docs/agents/flow.toml: {problem}"),
-                )]),
+                findings: Vec::from([error(None, String::from(problem))]),
             };
         }
     };
-    let listing = listed(inputs.projects.clone());
-    let project_names: BTreeMap<String, String> = listing
-        .projects
+    let project_names: BTreeMap<String, String> = home
+        .projects()
         .iter()
         .map(|project| (project.id.0.clone(), project.name.clone()))
         .collect();
-    let mut findings: Vec<Finding> = listing
-        .problems
+    let mut findings: Vec<Finding> = home
+        .listing_problems()
         .iter()
+        .chain(home.unread())
         .map(|problem| error(None, problem.clone()))
         .collect();
     findings.extend(
-        providers(&listing.projects)
+        providers(home.projects())
             .into_iter()
             .map(|message| error(None, message)),
     );
-    let graph = read(&flow, &inputs.issues);
+    let graph = home.graph();
     let named = |place: &str| {
         place.split_once('/').map_or_else(
             || place.to_owned(),
@@ -121,17 +109,14 @@ pub fn check(inputs: &Inputs) -> Report {
         )
     };
     findings.extend(graph.problems.iter().map(|problem| {
-        let message = problem.field.as_ref().map_or_else(
-            || problem.message.clone(),
-            |field| format!("{field}: {}", problem.message),
-        );
-        error(Some(named(&problem.issue)), message)
+        error(Some(named(&problem.issue)), problem.to_string())
     }));
+    let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
         let subject = named(&format!("{}/{}", issue.project.0, issue.id));
         findings.extend(of_issue(
-            &flow,
-            &graph,
+            flow,
+            &issues,
             issue,
             Move::default(),
             &subject,
@@ -140,11 +125,11 @@ pub fn check(inputs: &Inputs) -> Report {
     Report { findings }
 }
 
-/// What the flow's sections and rules say of `issue`, weighing `moving`
-/// when a move is being made.
+/// What the flow's sections and rules say of `issue` among `issues`,
+/// weighing `moving` when a move is being made.
 pub(crate) fn of_issue(
     flow: &Flow,
-    graph: &Graph,
+    issues: &[&Issue],
     issue: &Issue,
     moving: Move<'_>,
     subject: &str,
@@ -154,7 +139,9 @@ pub(crate) fn of_issue(
         .map_or(&[][..], |kind| kind.sections.as_slice());
     let mut findings: Vec<Finding> = expected
         .iter()
-        .filter(|section| !issue.sections.contains(section))
+        .filter(|section| {
+            !issue.sections.iter().any(|had| had.heading == **section)
+        })
         .map(|section| Finding {
             severity: Severity::Warn,
             subject: Some(subject.to_owned()),
@@ -162,9 +149,9 @@ pub(crate) fn of_issue(
         })
         .collect();
     for rule in &flow.rules {
-        let applies = holds(flow, graph, issue, moving, &rule.when).is_ok();
+        let applies = holds(flow, issues, issue, moving, &rule.when).is_ok();
         let broken = applies
-            .then(|| holds(flow, graph, issue, moving, &rule.require).err())
+            .then(|| holds(flow, issues, issue, moving, &rule.require).err())
             .flatten();
         findings.extend(broken.map(|failure| Finding {
             severity: rule.severity,

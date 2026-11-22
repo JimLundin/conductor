@@ -19,207 +19,27 @@ use crate::prelude::*;
 pub mod check;
 pub mod command;
 pub mod eval;
+pub mod file;
 pub mod graph;
+pub mod role;
+pub mod snapshot;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Flow {
-    /// The kind of an issue that names none.
-    pub default_kind: String,
-    pub statuses: Vec<Status>,
-    /// The fields every kind has.
-    pub fields: Vec<Field>,
-    pub kinds: Vec<Kind>,
-    pub relations: Vec<Relation>,
-    pub stages: Vec<Stage>,
-    pub rules: Vec<Rule>,
-}
+use proto::flow::{
+    Field, FieldRole, FieldType, Flow, Kind, Literal, Predicate, Quantifier,
+    Relation, Role, Rule, Severity, Shape, Stage, Status,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Status {
-    pub name: String,
-    pub role: Role,
-    pub colour: Option<String>,
-}
-
-/// What a status means to Conductor, whatever the flow calls it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Role {
-    /// Waiting to be taken up.
-    Idle,
-    /// Ready for a session to start on.
-    Startable,
-    /// Being worked on.
-    Active,
-    /// Waiting for someone to look at what was done.
-    Review,
-    /// Finished.
-    Terminal,
-    /// Given up.
-    Dropped,
-}
-
-impl Role {
-    pub const ALL: [Self; 6] = [
-        Self::Idle,
-        Self::Startable,
-        Self::Active,
-        Self::Review,
-        Self::Terminal,
-        Self::Dropped,
-    ];
-
-    #[must_use]
-    pub const fn word(self) -> &'static str {
-        match self {
-            Self::Idle => "idle",
-            Self::Startable => "startable",
-            Self::Active => "active",
-            Self::Review => "review",
-            Self::Terminal => "terminal",
-            Self::Dropped => "dropped",
-        }
-    }
-
-    #[must_use]
-    pub fn named(word: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|role| role.word() == word)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Field {
-    pub name: String,
-    pub value: FieldType,
-    /// What an issue that leaves it out has.
-    pub default: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FieldType {
-    /// One of these words.
-    Enum(Vec<String>),
-    /// The id of an issue of one of these kinds, or of any kind when empty.
-    Ref(Vec<String>),
-    /// Ids of issues, as for [`FieldType::Ref`].
-    Refs(Vec<String>),
-    Text,
-    Texts,
-    Time,
-    Bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Kind {
-    pub name: String,
-    pub label: String,
-    pub icon: Option<String>,
-    pub colour: Option<String>,
-    /// The headings its body is expected to have.
-    pub sections: Vec<String>,
-    /// Its own fields, beyond those every kind has.
-    pub fields: Vec<Field>,
-    /// The fields and relations the app shows first, in this order.
-    pub order: Vec<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Relation {
-    pub name: String,
-    /// The kinds it may start from; any kind when empty.
-    pub from: Vec<String>,
-    /// The kinds it may point to; any kind when empty.
-    pub to: Vec<String>,
-    pub many: bool,
-    pub cycles: bool,
-    pub shape: Shape,
-    /// Its name followed backwards, from the issue it points to.
-    pub reverse: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Shape {
-    /// Drawn as a tree.
-    Hierarchy,
-    /// Drawn as a graph.
-    Dependency,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stage {
-    pub name: String,
-    /// The skills that serve it, the first one leading.
-    pub skills: Vec<String>,
-    /// The stages it usually moves to; any other move is unusual.
-    pub next: Vec<String>,
-    /// Whether the owner signs off before work moves on.
-    pub sign_off: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Rule {
-    pub message: String,
-    pub severity: Severity,
-    /// The issues it applies to.
-    pub when: Predicate,
-    /// What those issues should meet.
-    pub require: Predicate,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Warn,
-    Error,
-}
-
-/// A condition on an issue, among the issues it relates to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Predicate {
-    Kind(String),
-    Stage(String),
-    StatusRole(Role),
-    Field {
-        name: String,
-        value: Literal,
-    },
-    /// It has this field, this relation, or a stage.
-    Has(String),
-    HasSection(String),
-    /// While a move is weighed: the issue as it was.
-    From(Box<Self>),
-    /// While a move is weighed: the issue as it would be.
-    To(Box<Self>),
-    All(Vec<Self>),
-    Any(Vec<Self>),
-    Not(Box<Self>),
-    /// The issues reached through a relation, or its reverse, meet the
-    /// condition: any, all or none of them.
-    Across {
-        quantifier: Quantifier,
-        via: String,
-        condition: Box<Self>,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Literal {
-    Text(String),
-    Bool(bool),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Quantifier {
-    Any,
-    All,
-    None,
-}
+/// Where the flow is, from the home's root.
+pub const PATH: &str = "docs/agents/flow.toml";
 
 /// The flow `text` declares.
 ///
 /// # Errors
 ///
 /// The first thing it gets wrong, at its path in the file: a key, a value,
-/// a duplicate name, a reference to something it doesn't declare, or a
-/// role no status has.
+/// a duplicate name, a reference to something it doesn't declare, a role
+/// no status has, or a field role on two fields or on a field of the wrong
+/// type.
 pub fn load(text: &str) -> Result<Flow, String> {
     let table =
         toml::from_str::<Table>(text).map_err(|err| format!("flow: {err}"))?;
@@ -256,45 +76,6 @@ pub fn load(text: &str) -> Result<Flow, String> {
     flow.rules =
         listed(&top, &table, "rule", |at, entry| rule(&flow, at, entry))?;
     Ok(flow)
-}
-
-impl Flow {
-    #[must_use]
-    pub fn kind(&self, name: &str) -> Option<&Kind> {
-        self.kinds.iter().find(|kind| kind.name == name)
-    }
-
-    #[must_use]
-    pub fn stage(&self, name: &str) -> Option<&Stage> {
-        self.stages.iter().find(|stage| stage.name == name)
-    }
-
-    #[must_use]
-    pub fn status(&self, name: &str) -> Option<&Status> {
-        self.statuses.iter().find(|status| status.name == name)
-    }
-
-    /// The relation called `name`, and whether `name` is its reverse.
-    #[must_use]
-    pub fn relation(&self, name: &str) -> Option<(&Relation, bool)> {
-        self.relations.iter().find_map(|relation| {
-            if relation.name == name {
-                Some((relation, false))
-            } else {
-                (relation.reverse == name).then_some((relation, true))
-            }
-        })
-    }
-
-    /// The field called `name`: one every kind has, else the first kind's
-    /// that has it.
-    #[must_use]
-    pub fn field(&self, name: &str) -> Option<&Field> {
-        self.fields
-            .iter()
-            .chain(self.kinds.iter().flat_map(|kind| &kind.fields))
-            .find(|field| field.name == name)
-    }
 }
 
 /// Where a key or value is in the file, as `rule[0].require.any`.
@@ -455,7 +236,11 @@ fn status(at: &At, table: &Table) -> Result<Status, String> {
 }
 
 fn field(at: &At, table: &Table) -> Result<Field, String> {
-    known(at, table, &["name", "type", "values", "to", "default"])?;
+    known(
+        at,
+        table,
+        &["name", "type", "values", "to", "default", "role"],
+    )?;
     let word = text_of(at, table, "type")?;
     let value = match word.as_str() {
         "enum" => FieldType::Enum(texts(at, table, "values")?),
@@ -486,11 +271,49 @@ fn field(at: &At, table: &Table) -> Result<Field, String> {
                 .fail(format!("{missing:?} is not one of its values"));
         }
     }
+    let role = field_role(at, table)?;
+    if let Some(held) = role
+        && value != held.takes()
+    {
+        return at.key("role").fail(format!(
+            "a field with the role {:?} has type {}",
+            held.word(),
+            type_word(&held.takes())
+        ));
+    }
     Ok(Field {
         name,
         value,
         default,
+        role,
     })
+}
+
+fn field_role(at: &At, table: &Table) -> Result<Option<FieldRole>, String> {
+    let Some(word) = optional_text(at, table, "role")? else {
+        return Ok(None);
+    };
+    FieldRole::named(&word).map_or_else(
+        || {
+            at.key("role").fail(format!(
+                "{word:?} is not a field role; the field roles are {}",
+                FieldRole::ALL.map(FieldRole::word).join(", ")
+            ))
+        },
+        |role| Ok(Some(role)),
+    )
+}
+
+const fn type_word(value: &FieldType) -> &'static str {
+    match value {
+        FieldType::Enum(_) => "enum",
+        FieldType::Ref(_) => "ref",
+        FieldType::Refs(_) => "refs",
+        FieldType::Text => "text",
+        FieldType::Texts => "texts",
+        FieldType::Time => "time",
+        FieldType::Bool => "bool",
+    }
 }
 
 fn kind(at: &At, table: &Table) -> Result<Kind, String> {
@@ -580,13 +403,18 @@ fn declarations(flow: &Flow) -> Result<(), String> {
             ));
         }
     }
+    let mut roles = Vec::new();
     for (index, field) in flow.fields.iter().enumerate() {
-        field_refers(flow, &top.key("field").index(index), field)?;
+        let at = top.key("field").index(index);
+        field_refers(flow, &at, field)?;
+        role_once(&mut roles, at, field)?;
     }
     for (index, kind) in flow.kinds.iter().enumerate() {
         let at = top.key("kind").index(index);
         for (place, field) in kind.fields.iter().enumerate() {
-            field_refers(flow, &at.key("fields").index(place), field)?;
+            let field_at = at.key("fields").index(place);
+            field_refers(flow, &field_at, field)?;
+            role_once(&mut roles, field_at, field)?;
         }
         for (place, name) in kind.order.iter().enumerate() {
             if !shown(flow, kind, name) {
@@ -620,6 +448,26 @@ fn kinds_exist(flow: &Flow, at: &At, kinds: &[String]) -> Result<(), String> {
         })
 }
 
+/// No field at an earlier place in `seen` has `field`'s role.
+fn role_once(
+    seen: &mut Vec<(FieldRole, At)>,
+    at: At,
+    field: &Field,
+) -> Result<(), String> {
+    let Some(role) = field.role else {
+        return Ok(());
+    };
+    if let Some((_, first)) = seen.iter().find(|(other, _)| *other == role) {
+        return at.key("role").fail(format!(
+            "{} also has the role {:?}",
+            first.0,
+            role.word()
+        ));
+    }
+    seen.push((role, at));
+    Ok(())
+}
+
 fn field_refers(flow: &Flow, at: &At, field: &Field) -> Result<(), String> {
     match &field.value {
         FieldType::Ref(kinds) | FieldType::Refs(kinds) => {
@@ -632,8 +480,7 @@ fn field_refers(flow: &Flow, at: &At, field: &Field) -> Result<(), String> {
 /// Whether the app can show `name` on an issue of `kind`.
 fn shown(flow: &Flow, kind: &Kind, name: &str) -> bool {
     matches!(name, "status" | "stage")
-        || flow.fields.iter().any(|field| field.name == name)
-        || kind.fields.iter().any(|field| field.name == name)
+        || flow.field(&kind.name, name).is_some()
         || flow.relations.iter().any(|relation| {
             relation.name == name
                 && (relation.from.is_empty()
@@ -690,7 +537,7 @@ fn predicate(flow: &Flow, at: &At, value: &Value) -> Result<Predicate, String> {
         "status_role" => role_of(&here, inner).map(Predicate::StatusRole),
         "has" => declared(&here, inner, "field or relation", |name| {
             name == "stage"
-                || flow.field(name).is_some()
+                || some_field(flow, name).is_some()
                 || flow.relations.iter().any(|relation| relation.name == name)
         })
         .map(Predicate::Has),
@@ -756,7 +603,7 @@ fn field_atom(
         return at.fail("names exactly one field");
     };
     let here = at.key(name);
-    let Some(field) = flow.field(name) else {
+    let Some(field) = some_field(flow, name) else {
         return here.fail("no field is called that");
     };
     let value = match (&field.value, literal) {
@@ -774,6 +621,14 @@ fn field_atom(
         name: name.clone(),
         value,
     })
+}
+
+/// The field called `name` of whichever kind has one: a predicate may
+/// name any kind's.
+fn some_field<'flow>(flow: &'flow Flow, name: &str) -> Option<&'flow Field> {
+    flow.kinds
+        .iter()
+        .find_map(|kind| flow.field(&kind.name, name))
 }
 
 /// `all` or `any` of a list, or `any`, `all` or `none` of a relation's

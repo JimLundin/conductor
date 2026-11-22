@@ -9,34 +9,26 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use home::flow::check::Inputs;
-use home::flow::command::{Context, Write, command, run};
-use home::flow::graph::File;
-use proto::ProjectId;
-
-const FLOW: &str = "docs/agents/flow.toml";
+use home::flow::PATH;
+use home::flow::command::{Context, Write, command, fresh, homeless, run};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let Some(root) = root() else {
-        return say(
-            "home: no home here: no folder above holds docs/agents/flow.toml\n",
-            ExitCode::from(2),
-        );
-    };
-    let outcome = run(&command(&args), &inputs(&root), &context());
-    let written = outcome
-        .writes
-        .iter()
-        .try_for_each(|write| save(&root, write));
-    let text = written.as_ref().map_or_else(
-        |err| format!("{}home: {err}\n", outcome.output),
-        |()| outcome.output.clone(),
-    );
-    match (written.is_ok(), outcome.failed) {
-        (true, false) => say(&text, ExitCode::SUCCESS),
-        _ => say(&text, ExitCode::FAILURE),
-    }
+    let root = root();
+    let (text, code) = root.as_deref().map_or_else(homeless, |home| {
+        let snapshot = home_files::read(home);
+        let context = context();
+        let asked = command(&args, &snapshot, fresh(context.now, random()));
+        let file = asked.file().map(|path| read(Path::new(path)));
+        let outcome = run(asked, file, &snapshot, &context);
+        let saved = outcome
+            .writes
+            .iter()
+            .try_for_each(|write| save(home, write));
+        outcome.ended(saved)
+    });
+    let _written = std::io::stdout().lock().write_all(text.as_bytes());
+    ExitCode::from(code)
 }
 
 /// The nearest folder at or above this one that holds the flow.
@@ -44,72 +36,34 @@ fn root() -> Option<PathBuf> {
     env::current_dir()
         .ok()?
         .ancestors()
-        .find(|folder| folder.join(FLOW).is_file())
+        .find(|folder| folder.join(PATH).is_file())
         .map(Path::to_path_buf)
 }
 
-/// Now, a random number for a new id, and who signs the log: `HOME_BY`,
-/// else this host's name and `cli`.
+/// Now, and who signs the log: `HOME_BY`, else this host's name and
+/// `cli`.
 fn context() -> Context {
-    let mut random = [0_u8; 16];
-    let _filled = getrandom::fill(&mut random);
     let host = env::var("COMPUTERNAME")
         .or_else(|_| env::var("HOSTNAME"))
         .unwrap_or_else(|_| String::from("host"))
         .to_lowercase();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
     Context {
-        now: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            }),
-        random: u128::from_le_bytes(random),
+        now,
         by: env::var("HOME_BY").unwrap_or_else(|_| format!("{host}·cli")),
+        mark: None,
     }
 }
 
-fn inputs(root: &Path) -> Inputs {
-    let folders = entries(&root.join("projects"));
-    Inputs {
-        flow: read(&root.join(FLOW)),
-        projects: folders
-            .iter()
-            .map(|(folder, path)| {
-                (folder.clone(), read(&path.join("project.toml")))
-            })
-            .collect(),
-        issues: folders
-            .iter()
-            .flat_map(|(folder, path)| issues(folder, path))
-            .collect(),
-    }
-}
-
-fn issues(folder: &str, path: &Path) -> Vec<File> {
-    entries(&path.join("issues"))
-        .into_iter()
-        .filter_map(|(name, file)| {
-            Some(File {
-                project: ProjectId(folder.to_owned()),
-                stem: name.strip_suffix(".md")?.to_owned(),
-                text: fs::read_to_string(file).ok()?,
-            })
-        })
-        .collect()
-}
-
-/// Each entry of `folder` by name, sorted; none when it can't be read.
-fn entries(folder: &Path) -> Vec<(String, PathBuf)> {
-    let mut found: Vec<(String, PathBuf)> = fs::read_dir(folder)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            Some((entry.file_name().into_string().ok()?, entry.path()))
-        })
-        .collect();
-    found.sort();
-    found
+/// The randomness of the id a new issue takes.
+fn random() -> u128 {
+    let mut bytes = [0_u8; 16];
+    let _filled = getrandom::fill(&mut bytes);
+    u128::from_le_bytes(bytes)
 }
 
 fn read(path: &Path) -> Result<String, String> {
@@ -117,16 +71,7 @@ fn read(path: &Path) -> Result<String, String> {
 }
 
 fn save(root: &Path, write: &Write) -> Result<(), String> {
-    let path = root
-        .join("projects")
-        .join(&write.project.0)
-        .join("issues")
-        .join(format!("{}.md", write.stem));
+    let path = root.join(write.path());
     fs::write(&path, &write.text)
         .map_err(|err| format!("{}: {err}", path.display()))
-}
-
-fn say(text: &str, code: ExitCode) -> ExitCode {
-    let _written = std::io::stdout().lock().write_all(text.as_bytes());
-    code
 }

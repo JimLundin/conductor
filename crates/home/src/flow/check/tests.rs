@@ -1,10 +1,12 @@
 use proto::ProjectId;
 
-use super::{Finding, Inputs, check};
-use crate::flow::Severity;
-use crate::flow::graph::File;
+use proto::flow::Severity;
 
-const FLOW: &str = include_str!("../flow.toml");
+use super::{Finding, check as checked};
+use crate::flow::graph::File;
+use crate::flow::snapshot::{Inputs, Snapshot};
+
+const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
 const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
 const REVIEW: &str = "01m7zxfbp14y19v9kwp1sjc862";
@@ -53,7 +55,12 @@ fn inputs(flow: &str, review_status: &str) -> Inputs {
                 "## Scope\n\n## Findings\n",
             ),
         ]),
+        unread: Vec::new(),
     }
+}
+
+fn check(inputs: &Inputs) -> super::Report {
+    checked(&Snapshot::of(inputs.clone()))
 }
 
 fn subject(id: &str) -> String {

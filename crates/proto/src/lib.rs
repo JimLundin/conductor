@@ -23,6 +23,7 @@ extern crate alloc;
 mod calendar;
 mod credential;
 pub mod fleet;
+pub mod flow;
 mod frame;
 mod home;
 mod instance;
@@ -51,8 +52,8 @@ pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };
 pub use issue::{
-    ChecklistAction, ChecklistItem, Issue, IssueChange, IssueFields, IssueId,
-    IssueStatus, Priority,
+    ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, IssueId,
+    Item, LogEvent, NewIssue, Part, Section,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
@@ -60,7 +61,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/30";
+pub const ALPN: &[u8] = b"conductor/34";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -534,15 +535,11 @@ pub enum CommandBody {
     RemoveSession {
         session: SessionId,
     },
-    /// Opens an issue in the project, `open`, on the branch
-    /// `issue/<id>`. Answers `IssueCreated` once the host has written it
-    /// to its clone of the home; pushing it follows, and how that went is
-    /// in the home's `sync`.
-    CreateIssue {
-        project: ProjectId,
-        fields: IssueFields,
-    },
-    /// Answers `Accepted` once written, like `CreateIssue`.
+    /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
+    /// once the host has written it to its clone of the home; pushing it
+    /// follows, and how that went is in the home's `sync`.
+    CreateIssue(NewIssue),
+    /// Answers `IssueWritten` once written, like `CreateIssue`.
     ChangeIssue {
         issue: IssueId,
         change: IssueChange,
@@ -609,8 +606,11 @@ pub enum CommandResult {
     },
     Rejected(Rejection),
     Diff(CheckpointDiff),
-    IssueCreated {
+    /// The issue a `CreateIssue` or `ChangeIssue` wrote, and what the
+    /// flow warns of it.
+    IssueWritten {
         issue: IssueId,
+        warnings: Vec<String>,
     },
     PushPublicKey(String),
     PushUnavailable,
@@ -671,8 +671,13 @@ pub enum Rejection {
     NoRemote,
     SessionRemoved,
     UnknownIssue,
-    /// The issue's title is empty, or the home can't be written.
+    /// The home can't be written now, for this reason.
     IssueNotSaved {
+        reason: String,
+    },
+    /// The flow refuses the edit, for this reason, as the `home` command
+    /// line would.
+    IssueRefused {
         reason: String,
     },
     /// The instance has this session on the issue already: one session
@@ -765,6 +770,7 @@ impl Rejection {
                 "that instance has a session on the issue already; continue it, or remove it first",
             ),
             Self::NotOffered { reason }
+            | Self::IssueRefused { reason }
             | Self::WrongReply { reason }
             | Self::WorkspaceFailure { reason } => reason.clone(),
         }
@@ -1344,26 +1350,17 @@ mod tests {
     }
 
     #[test]
-    fn each_issue_status_and_priority_reads_back_from_its_word() {
-        use super::{IssueStatus, Priority};
+    fn an_issue_id_reads_as_its_lower_case_ulid() {
+        use super::IssueId;
         assert_eq!(
-            IssueStatus::ALL.map(IssueStatus::word),
-            ["open", "ready", "in-progress", "review", "done", "dropped"]
+            [IssueId(0), IssueId(1), IssueId(u128::MAX)]
+                .map(|id| id.to_string()),
+            [
+                "00000000000000000000000000",
+                "00000000000000000000000001",
+                "7zzzzzzzzzzzzzzzzzzzzzzzzz",
+            ]
         );
-        assert_eq!(
-            IssueStatus::ALL.map(|status| IssueStatus::named(status.word())),
-            IssueStatus::ALL.map(Some)
-        );
-        assert_eq!(IssueStatus::named("blocked"), None);
-        assert_eq!(
-            Priority::ALL.map(Priority::word),
-            ["low", "normal", "high", "urgent"]
-        );
-        assert_eq!(
-            Priority::ALL.map(|priority| Priority::named(priority.word())),
-            Priority::ALL.map(Some)
-        );
-        assert_eq!(Priority::named("someday"), None);
     }
 
     #[test]

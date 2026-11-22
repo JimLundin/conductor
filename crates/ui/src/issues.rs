@@ -1,14 +1,22 @@
 //! Issues in the app (docs/home.md §7): each project's issues by status in
 //! the projects view, with a field that opens one, and an issue's own pane
-//! with its status, priority, checklist and notes. The drafts the person
+//! with its status, its fields, checklist and notes. The drafts the person
 //! is typing are kept here until the place changes.
+//!
+//! The home's flow says what an issue holds: the statuses it groups by and
+//! offers, in the flow's order and by its names, and the fields whose
+//! values it offers. Nothing here names a status, a kind or a field: the
+//! edit form's labels and the time an issue was opened are the fields with
+//! those roles, and only the title is part of every issue.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use crate::prelude::*;
+use proto::flow::{FieldRole, FieldType, Flow};
 use proto::{
-    ChecklistAction, ChecklistItem, CommandBody, Issue, IssueChange,
-    IssueFields, IssueId, IssueStatus, Priority, Project, ProjectId,
+    ChecklistChange, CommandBody, Datum, Entry, Issue, IssueChange, IssueId,
+    Item, NewIssue, Part, Project, ProjectId,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -19,27 +27,31 @@ use crate::{At, Effect, Intent, Place, ReplyTo};
 pub enum NewIssueIntent {
     /// The title of a new issue in this project.
     TypeTitle(ProjectId, String),
-    /// Opens the issue the project's title draft names, on this host.
-    Create(HostId, ProjectId),
+    /// The kind of a new issue in this project, by its name in the flow.
+    PickKind(ProjectId, String),
+    /// Opens the issue the project's title draft names, of this kind, on
+    /// this host.
+    Create(HostId, ProjectId, String),
 }
 
 /// Acting on the issue shown.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IssueIntent {
-    /// A status's word, as the picker gives it.
+    /// A status's name, as the picker gives it.
     SetStatus(String),
-    /// A priority's word, as the picker gives it.
-    SetPriority(String),
-    Checklist {
-        snapshot: Vec<ChecklistItem>,
-        index: usize,
-        action: ChecklistAction,
+    /// One of a field's words, as its picker gives it.
+    SetField {
+        field: String,
+        value: String,
     },
+    /// Checks, unchecks or removes an item as the person saw it.
+    Checklist(ChecklistChange),
     TypeItem(String),
     AddItem,
     TypeNote(String),
     AddNote,
-    /// Opens the form that edits the title, the body and the labels.
+    /// Opens the form that edits the title, the body and the labels, when
+    /// the flow has a field for them.
     Edit,
     TypeTitle(String),
     TypeBody(String),
@@ -49,9 +61,13 @@ pub enum IssueIntent {
     Cancel,
 }
 
-/// What the person has typed and not sent.
+/// What the person has typed and chosen for each project's new issue, and
+/// not sent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Titles(BTreeMap<ProjectId, String>);
+pub struct Titles {
+    titles: BTreeMap<ProjectId, String>,
+    kinds: BTreeMap<ProjectId, String>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IssueDraft {
@@ -74,7 +90,8 @@ struct Editing {
 struct EditFields {
     title: String,
     body: String,
-    labels: String,
+    /// Separated by commas; `None` when the issue's kind has no labels.
+    labels: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,7 +125,25 @@ impl Submission {
 /// The issue shown, and where commands about it go.
 pub struct Shown<'issue> {
     pub at: At,
+    pub flow: &'issue Flow,
     pub issue: &'issue Issue,
+}
+
+impl Shown<'_> {
+    /// The name of the issue's field with `role`.
+    fn field(&self, role: FieldRole) -> Option<&str> {
+        field_with(self.flow, self.issue, role)
+    }
+}
+
+/// The name of `issue`'s field with `role`, as `flow` declares it.
+fn field_with<'flow>(
+    flow: &'flow Flow,
+    issue: &Issue,
+    role: FieldRole,
+) -> Option<&'flow str> {
+    flow.field_with(&issue.kind, role)
+        .map(|field| field.name.as_str())
 }
 
 impl Titles {
@@ -119,31 +154,33 @@ impl Titles {
     ) -> (Self, Vec<Effect>) {
         match intent {
             NewIssueIntent::TypeTitle(project, title) => {
-                let mut titles = self.0;
-                titles.insert(project, title);
-                (Self(titles), Vec::new())
+                let mut titles = self;
+                titles.titles.insert(project, title);
+                (titles, Vec::new())
             }
-            NewIssueIntent::Create(host, project) => {
-                let effects = self.create(At { host, visit }, project);
+            NewIssueIntent::PickKind(project, kind) => {
+                let mut titles = self;
+                titles.kinds.insert(project, kind);
+                (titles, Vec::new())
+            }
+            NewIssueIntent::Create(host, project, kind) => {
+                let effects = self.create(At { host, visit }, project, kind);
                 (self, effects)
             }
         }
     }
 
-    fn create(&self, at: At, project: ProjectId) -> Vec<Effect> {
-        let title = self.0.get(&project).map_or("", |title| title.trim());
+    fn create(&self, at: At, project: ProjectId, kind: String) -> Vec<Effect> {
+        let title = self.titles.get(&project).map_or("", |title| title.trim());
         if title.is_empty() {
             return Vec::new();
         }
-        let body = CommandBody::CreateIssue {
-            fields: IssueFields {
-                title: String::from(title),
-                body: String::new(),
-                priority: Priority::Normal,
-                labels: Vec::new(),
-            },
+        let body = CommandBody::CreateIssue(NewIssue {
             project,
-        };
+            kind,
+            title: String::from(title),
+            fields: Vec::new(),
+        });
         Vec::from([at.send(body, ReplyTo::Created)])
     }
 }
@@ -157,34 +194,32 @@ impl IssueDraft {
         let issue = shown.issue;
         let change = |change| send(shown, change);
         match intent {
-            IssueIntent::SetStatus(word) => (
-                self,
-                IssueStatus::named(&word)
-                    .filter(|status| *status != issue.status)
-                    .map_or_else(Vec::new, |status| {
-                        change(IssueChange::Status(status))
-                    }),
-            ),
-            IssueIntent::SetPriority(word) => (
-                self,
-                Priority::named(&word)
-                    .filter(|priority| *priority != issue.priority)
-                    .map_or_else(Vec::new, |priority| {
-                        change(IssueChange::Priority(priority))
-                    }),
-            ),
-            IssueIntent::Checklist {
-                snapshot,
-                index,
-                action,
-            } => (
-                self,
-                change(IssueChange::Checklist {
-                    snapshot,
-                    index,
-                    action,
-                }),
-            ),
+            IssueIntent::SetStatus(status) => {
+                let effects = if status == issue.status {
+                    Vec::new()
+                } else {
+                    change(IssueChange::Move {
+                        part: Part::Status,
+                        to: status,
+                        reason: String::new(),
+                    })
+                };
+                (self, effects)
+            }
+            IssueIntent::SetField { field, value } => {
+                let effects = if issue.text(&field) == Some(value.as_str()) {
+                    Vec::new()
+                } else {
+                    change(IssueChange::Set {
+                        field,
+                        value: Datum::Text(value),
+                    })
+                };
+                (self, effects)
+            }
+            IssueIntent::Checklist(item) => {
+                (self, change(IssueChange::Checklist(item)))
+            }
             IssueIntent::TypeItem(item) => (Self { item, ..self }, Vec::new()),
             IssueIntent::AddItem => self.add_item(shown),
             IssueIntent::TypeNote(note) => (Self { note, ..self }, Vec::new()),
@@ -193,7 +228,9 @@ impl IssueDraft {
                 let fields = EditFields {
                     title: issue.title.clone(),
                     body: issue.body.clone(),
-                    labels: issue.labels.join(", "),
+                    labels: shown
+                        .field(FieldRole::Labels)
+                        .map(|labels| issue.texts(labels).join(", ")),
                 };
                 (
                     Self {
@@ -213,7 +250,12 @@ impl IssueDraft {
                 (self.edited(|editing| editing.body = body), Vec::new())
             }
             IssueIntent::TypeLabels(labels) => {
-                (self.edited(|editing| editing.labels = labels), Vec::new())
+                let edit = |editing: &mut EditFields| {
+                    if let Some(draft) = editing.labels.as_mut() {
+                        *draft = labels;
+                    }
+                };
+                (self.edited(edit), Vec::new())
             }
             IssueIntent::Save => self.save(shown),
             IssueIntent::Cancel if self.saving.is_some() => (self, Vec::new()),
@@ -232,7 +274,8 @@ impl IssueDraft {
         if text.is_empty() || self.item_sent.is_some() {
             return (self, Vec::new());
         }
-        let change = IssueChange::AddItem(String::from(text));
+        let change =
+            IssueChange::Checklist(ChecklistChange::Add(String::from(text)));
         self.item_sent = Some(self.item.clone());
         (self, submit(shown, change, Submission::Item))
     }
@@ -275,20 +318,7 @@ impl IssueDraft {
                 (fields.body.trim() != original.body.trim())
                     .then(|| IssueChange::Body(fields.body.clone())),
             ),
-            (
-                Submission::Labels,
-                (fields.labels.trim() != original.labels.trim()).then(|| {
-                    IssueChange::Labels(
-                        fields
-                            .labels
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|label| !label.is_empty())
-                            .map(String::from)
-                            .collect(),
-                    )
-                }),
-            ),
+            (Submission::Labels, labelled(shown, fields, original)),
         ];
         let effects: Vec<_> = changes
             .into_iter()
@@ -362,6 +392,31 @@ impl IssueDraft {
     }
 }
 
+/// The change that sets the labels to those `fields` give, if they differ
+/// from the `original` ones and the issue's kind has a field for them.
+fn labelled(
+    shown: &Shown<'_>,
+    fields: &EditFields,
+    original: &EditFields,
+) -> Option<IssueChange> {
+    let field = shown.field(FieldRole::Labels)?;
+    let (Some(labels), Some(before)) = (&fields.labels, &original.labels)
+    else {
+        return None;
+    };
+    (labels.trim() != before.trim()).then(|| IssueChange::Set {
+        field: String::from(field),
+        value: Datum::Texts(
+            labels
+                .split(',')
+                .map(str::trim)
+                .filter(|label| !label.is_empty())
+                .map(String::from)
+                .collect(),
+        ),
+    })
+}
+
 fn settle_text(sent: &mut Option<String>, draft: &mut String, failed: bool) {
     if sent.take().as_ref() == Some(draft) && !failed {
         draft.clear();
@@ -407,6 +462,11 @@ pub struct IssueList {
     pub groups: Vec<StatusGroup>,
     /// The new issue's title so far.
     pub new_title: String,
+    /// The kinds it can be, the flow's default first, the chosen one
+    /// selected.
+    pub kinds: Vec<Pick>,
+    /// The fields of the chosen kind, in the flow's order.
+    pub fields: Vec<String>,
     /// What typing the title does.
     pub project: ProjectId,
     /// Opens it, once there is a title and a live host whose home lists
@@ -416,9 +476,8 @@ pub struct IssueList {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusGroup {
-    /// Also its `data-status`.
-    pub status: &'static str,
-    pub label: &'static str,
+    /// Its name in the flow, which labels it and is its `data-status`.
+    pub status: String,
     pub rows: Vec<IssueRow>,
 }
 
@@ -426,7 +485,8 @@ pub struct StatusGroup {
 pub struct IssueRow {
     pub key: String,
     pub title: String,
-    /// Its priority, then its labels and how much of its checklist is done.
+    /// The words of its fields, in the flow's order, a field it leaves out
+    /// as its default, then how much of its checklist is done.
     pub detail: String,
     pub open: Intent,
 }
@@ -438,64 +498,115 @@ pub fn list(
     host: Option<(HostId, &Host)>,
     drafts: &Titles,
 ) -> IssueList {
-    let new_title = drafts.0.get(&project.id).cloned().unwrap_or_default();
+    let new_title = drafts.titles.get(&project.id).cloned().unwrap_or_default();
+    let offered = host.and_then(|(_, known)| flow_of(known)).map(|declared| {
+        (declared, chosen(declared, drafts.kinds.get(&project.id)))
+    });
     let create = host
         .filter(|(_, known)| known.fold.live() && !new_title.trim().is_empty())
-        .map(|(id, _)| {
-            Intent::NewIssue(NewIssueIntent::Create(id, project.id.clone()))
+        .zip(offered)
+        .map(|((id, _), (_, picked))| {
+            Intent::NewIssue(NewIssueIntent::Create(
+                id,
+                project.id.clone(),
+                String::from(picked),
+            ))
         });
     IssueList {
-        groups: host.map_or_else(Vec::new, |(id, _)| groups(id, project)),
+        kinds: offered.map_or_else(Vec::new, |(declared, picked)| {
+            kinds(declared, picked)
+        }),
+        fields: offered.map_or_else(Vec::new, |(declared, picked)| {
+            declared
+                .fields_of(picked)
+                .map(|field| field.name.clone())
+                .collect()
+        }),
+        groups: host
+            .and_then(|(id, known)| Some((id, flow_of(known)?)))
+            .map_or_else(Vec::new, |(id, flow)| groups(id, flow, project)),
         new_title,
         project: project.id.clone(),
         create,
     }
 }
 
-fn groups(host: HostId, project: &Project) -> Vec<StatusGroup> {
-    IssueStatus::ALL
+/// The kind `picked` if the flow still has it, else the flow's default.
+fn chosen<'flow>(flow: &'flow Flow, picked: Option<&String>) -> &'flow str {
+    picked
+        .and_then(|name| flow.kind(name))
+        .map_or(flow.default_kind.as_str(), |kind| kind.name.as_str())
+}
+
+/// The flow's kinds, its default first and then the rest in its order,
+/// with `kind` selected.
+fn kinds(flow: &Flow, kind: &str) -> Vec<Pick> {
+    flow.kind(&flow.default_kind)
         .into_iter()
+        .chain(
+            flow.kinds
+                .iter()
+                .filter(|other| other.name != flow.default_kind),
+        )
+        .map(|offered| Pick {
+            word: offered.name.clone(),
+            label: offered.label.clone(),
+            selected: offered.name == kind,
+        })
+        .collect()
+}
+
+/// The flow `host`'s home declares.
+pub fn flow_of(host: &Host) -> Option<&Flow> {
+    host.fold.home.as_ref()?.flow.as_deref()
+}
+
+/// Each status with issues, in the flow's order.
+fn groups(host: HostId, flow: &Flow, project: &Project) -> Vec<StatusGroup> {
+    flow.statuses
+        .iter()
         .filter_map(|status| {
             let rows = project
                 .issues
                 .iter()
-                .filter(|issue| issue.status == status)
+                .filter(|issue| issue.status == status.name)
                 .map(|issue| IssueRow {
                     key: key_of(issue.id),
                     title: issue.title.clone(),
-                    detail: detail(issue),
+                    detail: detail(flow, issue),
                     open: Intent::Show(Place::Issue(host, issue.id)),
                 })
                 .collect::<Vec<IssueRow>>();
             (!rows.is_empty()).then(|| StatusGroup {
-                status: status.word(),
-                label: label(status),
+                status: status.name.clone(),
                 rows,
             })
         })
         .collect()
 }
 
-fn detail(issue: &Issue) -> String {
+fn detail(flow: &Flow, issue: &Issue) -> String {
     let done = issue.checklist.iter().filter(|item| item.done).count();
     let progress = (!issue.checklist.is_empty())
         .then(|| format!("{done}/{} done", issue.checklist.len()));
-    core::iter::once(String::from(issue.priority.word()))
-        .chain(issue.labels.iter().cloned())
+    flow.fields_of(&issue.kind)
+        .flat_map(|field| match field.value {
+            FieldType::Enum(_) => issue
+                .text(&field.name)
+                .or(field.default.as_deref())
+                .map(String::from)
+                .into_iter()
+                .collect(),
+            FieldType::Texts => issue.texts(&field.name).to_vec(),
+            FieldType::Ref(_)
+            | FieldType::Refs(_)
+            | FieldType::Text
+            | FieldType::Time
+            | FieldType::Bool => Vec::new(),
+        })
         .chain(progress)
         .collect::<Vec<String>>()
         .join(" · ")
-}
-
-const fn label(status: IssueStatus) -> &'static str {
-    match status {
-        IssueStatus::Open => "Open",
-        IssueStatus::Ready => "Ready",
-        IssueStatus::InProgress => "In progress",
-        IssueStatus::Review => "Review",
-        IssueStatus::Done => "Done",
-        IssueStatus::Dropped => "Dropped",
-    }
 }
 
 /// An issue's id in hex, which keys it in the page.
@@ -510,10 +621,12 @@ pub struct IssueScreen {
     /// Its project, and the host whose home it is read from.
     pub subtitle: String,
     pub status: Vec<Pick>,
-    pub priority: Vec<Pick>,
+    /// A picker for each field of its kind that takes one of a few words.
+    pub fields: Vec<FieldPicker>,
+    /// Empty when its kind has no labels.
     pub labels: String,
     pub body: String,
-    /// Its branch, and when it was opened.
+    /// Its kind, its branch, and when it was opened.
     pub detail: String,
     pub checklist: Vec<ItemRow>,
     pub item: String,
@@ -543,9 +656,16 @@ pub struct IssueSession {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pick {
-    pub word: &'static str,
-    pub label: &'static str,
+    pub word: String,
+    pub label: String,
     pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldPicker {
+    /// The field's name, which also labels it.
+    pub field: String,
+    pub picks: Vec<Pick>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -561,7 +681,8 @@ pub struct ItemRow {
 pub struct EditForm {
     pub title: String,
     pub body: String,
-    pub labels: String,
+    /// `None` when the issue's kind has no labels.
+    pub labels: Option<String>,
     pub save_disabled: bool,
 }
 
@@ -588,51 +709,50 @@ pub fn screen(
     notice: Option<String>,
 ) -> Option<IssueScreen> {
     let (project, issue) = find(host, id)?;
+    let flow = flow_of(host)?;
+    let kind = flow
+        .kind(&issue.kind)
+        .map_or(issue.kind.as_str(), |kind| kind.label.as_str());
+    let opened = field_with(flow, issue, FieldRole::Created)
+        .and_then(|created| issue.text(created))
+        .map_or_else(String::new, |created| format!(" · opened {created}"));
     Some(IssueScreen {
         key: key_of(issue.id),
         title: issue.title.clone(),
         subtitle: format!("{} · {}", project.title, host.name()),
-        status: IssueStatus::ALL
-            .into_iter()
+        status: flow
+            .statuses
+            .iter()
             .map(|status| Pick {
-                word: status.word(),
-                label: label(status),
-                selected: status == issue.status,
+                word: status.name.clone(),
+                label: status.name.clone(),
+                selected: status.name == issue.status,
             })
             .collect(),
-        priority: Priority::ALL
-            .into_iter()
-            .map(|priority| Pick {
-                word: priority.word(),
-                label: priority.word(),
-                selected: priority == issue.priority,
-            })
-            .collect(),
-        labels: issue.labels.join(" · "),
+        fields: pickers(flow, issue),
+        labels: field_with(flow, issue, FieldRole::Labels)
+            .map_or_else(String::new, |labels| issue.texts(labels).join(" · ")),
         body: issue.body.clone(),
-        detail: format!("{} · opened {}", issue.branch, issue.created),
+        detail: format!("{kind} · {}{opened}", issue.branch),
         checklist: issue
             .checklist
             .iter()
             .enumerate()
             .map(|(index, item)| ItemRow {
-                toggle: IssueIntent::Checklist {
-                    snapshot: issue.checklist.clone(),
-                    index,
-                    action: ChecklistAction::SetDone(!item.done),
-                },
-                remove: IssueIntent::Checklist {
-                    snapshot: issue.checklist.clone(),
-                    index,
-                    action: ChecklistAction::Remove,
-                },
+                toggle: IssueIntent::Checklist(ChecklistChange::Check {
+                    item: picked(issue, index),
+                    done: !item.done,
+                }),
+                remove: IssueIntent::Checklist(ChecklistChange::Remove(
+                    picked(issue, index),
+                )),
                 key: format!("{index}-{}", item.text),
                 text: item.text.clone(),
                 done: item.done,
             })
             .collect(),
         item: drafts.item.clone(),
-        notes: issue.notes.clone(),
+        notes: issue.log.iter().map(Entry::to_string).collect(),
         note: drafts.note.clone(),
         item_pending: drafts.item_sent.is_some(),
         note_pending: drafts.note_sent.is_some(),
@@ -648,6 +768,39 @@ pub fn screen(
         start: Intent::StartOn(at, id),
         sessions: sessions(hosts, id),
     })
+}
+
+/// The issue's item at `index`, as the person sees its checklist.
+fn picked(issue: &Issue, index: usize) -> Item {
+    Item {
+        index,
+        seen: Some(issue.checklist.clone()),
+    }
+}
+
+/// A picker for each field of the issue's kind whose value is one of a few
+/// words, each word as the flow lists it; the field's default is picked
+/// when the issue leaves it out.
+fn pickers(flow: &Flow, issue: &Issue) -> Vec<FieldPicker> {
+    flow.fields_of(&issue.kind)
+        .filter_map(|field| {
+            let FieldType::Enum(words) = &field.value else {
+                return None;
+            };
+            let current = issue.text(&field.name).or(field.default.as_deref());
+            Some(FieldPicker {
+                field: field.name.clone(),
+                picks: words
+                    .iter()
+                    .map(|word| Pick {
+                        word: word.clone(),
+                        label: word.clone(),
+                        selected: current == Some(word.as_str()),
+                    })
+                    .collect(),
+            })
+        })
+        .collect()
 }
 
 /// The sessions on issue `id` on every paired host, by host and the most

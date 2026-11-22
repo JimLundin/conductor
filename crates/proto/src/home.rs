@@ -1,11 +1,13 @@
 //! The home (docs/home.md): the projects the fleet works on, and where each
 //! is checked out on this host.
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
+use crate::flow::Flow;
 use crate::{HostPath, Issue, IssueId};
 
 /// A project by its folder's name in the home's `projects/`, a lowercase
@@ -26,6 +28,9 @@ pub struct Home {
     pub sync: HomeSync,
     /// Issue changes the host has made that the remote doesn't have yet.
     pub unpushed: u64,
+    /// The clone's `docs/agents/flow.toml`, which its issues are read
+    /// against; `None` while it has none that loads, and so no issues.
+    pub flow: Option<Box<Flow>>,
     /// As the clone lists them, by id.
     pub projects: Vec<Project>,
 }

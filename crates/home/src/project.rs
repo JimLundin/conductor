@@ -8,6 +8,7 @@
 use proto::ProjectId;
 use serde::Deserialize;
 
+use crate::layout::{self, PROJECT_FILE};
 use crate::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +56,10 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
             match text.and_then(|read| parse(&folder, &read)) {
                 Ok(project) => projects.push(project),
                 Err(problem) => {
-                    problems.push(format!("projects/{folder}: {problem}"));
+                    problems.push(format!(
+                        "{}: {problem}",
+                        layout::project(&folder)
+                    ));
                 }
             }
             (projects, problems)
@@ -72,8 +76,9 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
         });
     problems.extend(shared.iter().map(|project| {
         format!(
-            "projects/{}: another project is also called {:?}",
-            project.id.0, project.name
+            "{}: another project is also called {:?}",
+            layout::project(&project.id.0),
+            project.name
         )
     }));
     Listing {
@@ -90,7 +95,7 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
 pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
     let id = slug(folder)?;
     let file = toml::from_str::<File>(text)
-        .map_err(|err| format!("project.toml: {err}"))?;
+        .map_err(|err| format!("{PROJECT_FILE}: {err}"))?;
     Ok(Project {
         id,
         name: file.name,

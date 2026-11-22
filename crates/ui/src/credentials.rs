@@ -463,7 +463,7 @@ impl Forms {
             Ok(
                 CommandResult::Started { .. }
                 | CommandResult::Diff(_)
-                | CommandResult::IssueCreated { .. }
+                | CommandResult::IssueWritten { .. }
                 | CommandResult::PushPublicKey(_)
                 | CommandResult::PushUnavailable
                 | CommandResult::FleetStatus(_)

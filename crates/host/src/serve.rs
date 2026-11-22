@@ -5,7 +5,7 @@
 use agents::Reply;
 use proto::{
     AuthToken, ClientName, Command, CommandBody, Credential, Effort, HostSeq,
-    InstanceId, IssueChange, IssueFields, IssueId, ModelId, Models, Open,
+    InstanceId, IssueChange, IssueId, ModelId, Models, NewIssue, Open,
     ProjectId, Provider, RequestId, SessionId, SignInCode, StartAt, Subscribe,
 };
 
@@ -166,8 +166,8 @@ pub enum PushOrder {
 pub enum HomeOrder {
     Sync,
     Clone(ProjectId),
-    Create(ProjectId, IssueFields),
-    /// The client signs a note the change adds.
+    /// The client signs the lines each edit adds to the log.
+    Create(NewIssue, ClientName),
     Change(IssueId, IssueChange, ClientName),
 }
 
@@ -272,8 +272,8 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         CommandBody::Continue { session } => {
             Route::Relaunch(session, Relaunch::Continue)
         }
-        CommandBody::CreateIssue { project, fields } => {
-            Route::Home(HomeOrder::Create(project, fields))
+        CommandBody::CreateIssue(new) => {
+            Route::Home(HomeOrder::Create(new, by))
         }
         CommandBody::ChangeIssue { issue, change } => {
             Route::Home(HomeOrder::Change(issue, change, by))

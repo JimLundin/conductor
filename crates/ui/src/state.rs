@@ -422,11 +422,9 @@ impl State {
         let ShownPlace::Issue(host, id, Some(draft)) = &mut self.shown else {
             return (self, Vec::new());
         };
-        let Some((_, issue)) = self
-            .hosts
-            .get(host)
-            .and_then(|known| issues::find(known, *id))
-        else {
+        let Some((flow, (_, issue))) = self.hosts.get(host).and_then(|known| {
+            Some((issues::flow_of(known)?, issues::find(known, *id)?))
+        }) else {
             return (self, Vec::new());
         };
         let shown = Shown {
@@ -434,6 +432,7 @@ impl State {
                 host: *host,
                 visit: self.visit,
             },
+            flow,
             issue,
         };
         let (next, effects) = mem::take(draft).update(intent, &shown);
@@ -451,6 +450,14 @@ impl State {
         }
         let Some(known) = self.hosts.get(&reply.host) else {
             return (self, Vec::new());
+        };
+        let warning = match &answer {
+            Ok(CommandResult::IssueWritten { warnings, .. })
+                if !warnings.is_empty() =>
+            {
+                Some(warnings.join("; "))
+            }
+            _ => None,
         };
         match (&mut self.shown, reply.to) {
             (_, ReplyTo::Notice) => self.notice = refusal(answer),
@@ -472,7 +479,7 @@ impl State {
                 pane.message_answered(self.notice.is_none());
             }
             (ShownPlace::Projects(_), ReplyTo::Created) => {
-                if let Ok(CommandResult::IssueCreated { issue }) = answer {
+                if let Ok(CommandResult::IssueWritten { issue, .. }) = answer {
                     self = self.show(Place::Issue(reply.host, issue));
                 } else {
                     self.notice = refusal(answer);
@@ -506,6 +513,9 @@ impl State {
                 );
             }
             _ => {}
+        }
+        if warning.is_some() {
+            self.notice = warning;
         }
         (self, Vec::new())
     }
@@ -674,7 +684,7 @@ fn refusal(answer: Result<CommandResult, String>) -> Option<String> {
             CommandResult::Accepted
             | CommandResult::Started { .. }
             | CommandResult::Diff(_)
-            | CommandResult::IssueCreated { .. },
+            | CommandResult::IssueWritten { .. },
         ) => None,
         Ok(CommandResult::Rejected(rejection)) => Some(rejection.label()),
         Ok(

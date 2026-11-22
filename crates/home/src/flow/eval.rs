@@ -1,13 +1,16 @@
-//! Whether an issue meets a predicate, among the issues of the graph, and
-//! why not when it doesn't.
+//! Whether an issue meets a predicate, among the other issues, and why not
+//! when it doesn't.
 //!
-//! Evaluation follows the predicate, never the graph: each traversal is
+//! Evaluation follows the predicate, never the issues: each traversal is
 //! one step along a relation, so it ends however the issues link, cycles
 //! included.
 
-use super::graph::{Datum, Graph, Issue};
-use super::{Flow, Literal, Predicate, Quantifier};
+use alloc::string::ToString;
+
+use proto::{Datum, Issue};
+
 use crate::prelude::*;
+use proto::flow::{Flow, Literal, Predicate, Quantifier};
 
 /// The issue as it was and as it would be, while a move is weighed.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,7 +29,8 @@ pub struct Failure {
     pub path: Vec<String>,
 }
 
-/// Whether `issue` meets `predicate` in `graph`.
+/// Whether `issue` meets `predicate` among `issues`, the issues its
+/// relations can reach.
 ///
 /// # Errors
 ///
@@ -35,14 +39,14 @@ pub struct Failure {
 /// the first issue reached that decides it, or the relation reaching none.
 pub fn holds(
     flow: &Flow,
-    graph: &Graph,
+    issues: &[&Issue],
     issue: &Issue,
     moving: Move<'_>,
     predicate: &Predicate,
 ) -> Result<(), Failure> {
     Walk {
         flow,
-        graph,
+        issues,
         moving,
     }
     .holds(issue, predicate, &[])
@@ -50,7 +54,7 @@ pub fn holds(
 
 struct Walk<'a> {
     flow: &'a Flow,
-    graph: &'a Graph,
+    issues: &'a [&'a Issue],
     moving: Move<'a>,
 }
 
@@ -63,7 +67,7 @@ impl Walk<'_> {
     ) -> Result<(), Failure> {
         let fail = |atom: String| Failure {
             atom,
-            issue: issue.id.clone(),
+            issue: issue.id.to_string(),
             path: path.to_vec(),
         };
         match predicate {
@@ -152,7 +156,7 @@ impl Walk<'_> {
                 }
                 Err(first.unwrap_or_else(|| Failure {
                     atom: format!("{via} reaches no issue"),
-                    issue: issue.id.clone(),
+                    issue: issue.id.to_string(),
                     path: path.to_vec(),
                 }))
             }
@@ -164,7 +168,7 @@ impl Walk<'_> {
                 .map_or(Ok(()), |target| {
                     Err(Failure {
                         atom: format!("not {}", describe(condition)),
-                        issue: target.id.clone(),
+                        issue: target.id.to_string(),
                         path: step(target),
                     })
                 }),
@@ -182,13 +186,13 @@ impl Walk<'_> {
                 .into_iter()
                 .flatten()
                 .filter_map(|id| {
-                    self.graph.issues.iter().find(|other| other.id == *id)
+                    self.issues.iter().copied().find(|other| other.id == *id)
                 })
                 .collect(),
             Some((relation, true)) => self
-                .graph
                 .issues
                 .iter()
+                .copied()
                 .filter(|other| {
                     other
                         .links
@@ -213,7 +217,9 @@ impl Walk<'_> {
                     || issue.fields.contains_key(name)
                     || issue.links.get(name).is_some_and(|ids| !ids.is_empty())
             }
-            Predicate::HasSection(section) => issue.sections.contains(section),
+            Predicate::HasSection(section) => {
+                issue.sections.iter().any(|had| had.heading == *section)
+            }
             _ => false,
         }
     }
@@ -223,7 +229,7 @@ impl Walk<'_> {
     fn field(&self, issue: &Issue, name: &str, value: &Literal) -> bool {
         let given = issue.fields.get(name).cloned().or_else(|| {
             self.flow
-                .field(name)
+                .field(&issue.kind, name)
                 .and_then(|field| field.default.clone())
                 .map(Datum::Text)
         });

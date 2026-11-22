@@ -104,8 +104,9 @@ are never stored and can't disagree.
 ### 2.5 Lifecycles
 
 ```
-Issue    open ─► ready ─► in-progress ─► review ─► done
-            └─────────────────────────────────► dropped
+Issue    as the home's flow declares (docs/agents/flow.toml); by role:
+         idle ─► startable ─► active ─► review ─► terminal
+            └───────────────────────────────────► dropped
 Session  starting ─► idle ⇄ running ─► closed ─► removed (with its workspace)
 ```
 
@@ -154,7 +155,7 @@ profiles = ["rust"]
 +++
 id = "01JD…"
 title = "Sign in to a subscription from the app"
-status = "in-progress"        # open, ready, in-progress, review, done, dropped
+status = "active"             # one of the flow's statuses
 priority = "high"
 labels = ["app", "credentials"]
 branch = "issue/01JD…"
@@ -171,6 +172,12 @@ What to build and why, as written by whoever opened it.
 - 2026-11-18 laptop · codex · api: built the protocol; browser scenario
   left; landed on the issue branch.
 ```
+
+Beyond the id, the title, the kind, the status and the stage, an issue has
+the fields its flow declares. Conductor finds the labels, the branch and the
+time it was created by the role the flow gives a field (`role = "labels"`,
+`"branch"`, `"created"`), never by its name; a flow without a field of a
+role has none, and the branch is then `issue/<id>`.
 
 ## 4. Flows
 

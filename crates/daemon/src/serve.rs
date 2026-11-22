@@ -235,7 +235,7 @@ const fn command_outcome(result: &CommandResult) -> &'static str {
         CommandResult::Started { .. } => "started",
         CommandResult::Rejected(_) => "rejected",
         CommandResult::Diff(_) => "diff",
-        CommandResult::IssueCreated { .. } => "issue_created",
+        CommandResult::IssueWritten { .. } => "issue_written",
         CommandResult::PushPublicKey(_) => "push_public_key",
         CommandResult::PushUnavailable => "push_unavailable",
         CommandResult::FleetStatus(_) => "fleet_status",

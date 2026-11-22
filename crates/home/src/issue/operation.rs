@@ -1,21 +1,24 @@
-use alloc::{boxed::Box, collections::BTreeMap};
-use sha2::{Digest, Sha256};
+use alloc::boxed::Box;
+use alloc::string::ToString;
 
 use proto::{
-    CommandId, Issue, IssueChange, IssueFields, IssueId, IssueStatus,
-    ProjectId, Rejection,
+    CommandId, Issue, IssueChange, IssueId, NewIssue, Part, ProjectId,
+    Rejection,
 };
 
 use super::{
-    Applied, Change, Edit, EditData, EditIdentity, Mode, apply, changing, date,
-    edit_marker, file, finished, folder, listed, message, name, opening, parse,
-    signer, started, was,
+    Applied, Edit, EditData, Mode, apply, edit_marker, message, signer, was,
 };
+use crate::flow::command;
+use crate::flow::role;
+use crate::flow::snapshot::Snapshot;
+use crate::layout;
 use crate::prelude::*;
 
 /// The issue and file an operation reads before deciding what to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
+    pub project: ProjectId,
     pub issue: IssueId,
     pub path: String,
 }
@@ -58,9 +61,10 @@ pub enum RecordEffect {
     Scan,
 }
 
-/// An edit ready to record in the clone.
+/// An edit ready to record in the clone, and what the flow warns of
+/// what it writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recorded(Recording);
+pub struct Recorded(Recording, Vec<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Recording {
@@ -72,6 +76,11 @@ enum Recording {
 }
 
 impl Recorded {
+    #[must_use]
+    pub fn warnings(&self) -> &[String] {
+        &self.1
+    }
+
     /// The queue must be saved before writing the clone. A failed commit
     /// can be retried from the saved edit, so only persistence can reject
     /// the operation at this point.
@@ -193,11 +202,12 @@ impl PendingEdits {
     #[must_use]
     pub fn replay(
         &self,
+        home: &Snapshot,
         index: usize,
         current: Result<Option<&str>, String>,
         upstream_changed: Option<u64>,
     ) -> Write {
-        self.0[index].edit.replay(current, upstream_changed)
+        self.0[index].edit.replay(home, current, upstream_changed)
     }
 
     pub fn replayed(&mut self, index: usize, covered: bool) {
@@ -256,63 +266,85 @@ impl Delivery {
 /// The facts shared by requests from the host.
 pub struct Context<'a> {
     pub remote: Option<&'a str>,
-    pub issues: &'a BTreeMap<ProjectId, Vec<Issue>>,
+    pub home: &'a Snapshot,
     pub host: &'a str,
     pub at: u64,
     pub command: CommandId,
 }
 
 impl Context<'_> {
-    /// Opens an issue in a registered project.
+    /// Opens issue `issue` as `new` asks, in one of the home's projects.
     ///
     /// # Errors
     ///
-    /// The home or project is unknown, or the fields are invalid.
+    /// The host has no home, or its home lists no such project.
     pub fn open(
         &self,
-        projects: &[ProjectId],
-        project: ProjectId,
         issue: IssueId,
-        wanted: &IssueFields,
+        new: NewIssue,
+        client: &str,
     ) -> Result<Record, Rejection> {
-        let fields = opening(self.remote, projects, &project, wanted)?;
-        Ok(Record {
-            command: self.command,
-            data: EditData {
-                project,
-                issue,
-                at: self.at,
-                by: String::from(self.host),
-                change: Change::Create(fields),
-                was: None,
+        crate::configured(self.remote)?;
+        let project = self
+            .home
+            .projects()
+            .iter()
+            .find(|known| known.id == new.project)
+            .map(|known| known.id.clone())
+            .ok_or(Rejection::UnknownProject)?;
+        Ok(self.record(
+            project,
+            signer(self.host, client),
+            command::Edit::New {
+                id: issue,
+                issue: new,
             },
-        })
+        ))
     }
 
-    /// Edits a field, moves the issue, changes its checklist or adds a note.
+    /// Changes an issue as `home::flow::command` does.
     ///
     /// # Errors
     ///
-    /// The home or issue is unknown, or the change is invalid.
+    /// The host has no home, or its home lists no such issue.
     pub fn edit(
         &self,
         issue: IssueId,
-        wanted: IssueChange,
+        change: IssueChange,
         client: &str,
     ) -> Result<Record, Rejection> {
-        let (project, change) =
-            changing(self.remote, self.issues, issue, wanted)?;
-        Ok(Record {
+        crate::configured(self.remote)?;
+        let project = self
+            .home
+            .issue(issue)
+            .map(|known| known.project.clone())
+            .ok_or(Rejection::UnknownIssue)?;
+        Ok(self.record(
+            project,
+            signer(self.host, client),
+            command::Edit::Change {
+                id: issue,
+                changes: Vec::from([change]),
+            },
+        ))
+    }
+
+    const fn record(
+        &self,
+        project: ProjectId,
+        by: String,
+        edit: command::Edit,
+    ) -> Record {
+        Record {
             command: self.command,
             data: EditData {
                 project,
-                issue,
                 at: self.at,
-                by: signer(self.host, client),
-                change: Change::Issue(change),
-                was: None,
+                by,
+                edit,
+                was: Vec::new(),
             },
-        })
+        }
     }
 }
 
@@ -322,118 +354,74 @@ impl Record {
         self.data.read()
     }
 
-    /// Decides the commit and what to keep and deliver.
+    #[must_use]
+    pub fn project(&self) -> ProjectId {
+        self.data.project.clone()
+    }
+
+    /// Decides the commit and what to keep and deliver, among the home's
+    /// issues, the one it is to being `current`.
     ///
     /// # Errors
     ///
-    /// The file is gone or cannot be read as an issue.
+    /// The file is gone or cannot be read as an issue, or the flow refuses
+    /// what the edit writes.
     pub fn decide(
         mut self,
         current: Option<&str>,
+        home: &Snapshot,
         pending: &PendingEdits,
     ) -> Result<Recorded, Rejection> {
-        self.data.was = was(current, self.data.issue, &self.data.change);
+        self.data.was = was(home.flow().ok(), current, &self.data);
         let edit = Edit {
-            identity: EditIdentity::Command(self.command),
+            command: self.command,
             data: self.data,
         };
-        let commit = match apply(current, &edit, Mode::Record) {
-            Applied::Write(text) => Some(edit.commit(text)),
-            Applied::AlreadyRecorded => return Ok(Recorded(Recording::Done)),
-            Applied::Unchanged => None,
+        let (commit, warnings) = match apply(home, current, &edit, Mode::Record)
+        {
+            Applied::Write { text, warnings } => {
+                (Some(edit.commit(text)), warnings)
+            }
+            Applied::AlreadyRecorded => {
+                return Ok(Recorded(Recording::Done, Vec::new()));
+            }
+            Applied::Unchanged => (None, Vec::new()),
             Applied::Gone => return Err(Rejection::UnknownIssue),
             Applied::Unreadable(reason) => {
                 return Err(Rejection::IssueNotSaved { reason });
             }
+            Applied::Refused(reason) => {
+                return Err(Rejection::IssueRefused { reason });
+            }
         };
-        let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue));
-        Ok(Recorded(Recording::Keep(
-            Box::new(edit),
-            next,
-            self.command,
-        )))
+        let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue()));
+        Ok(Recorded(
+            Recording::Keep(Box::new(edit), next, self.command),
+            warnings,
+        ))
     }
 }
 
 fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
     earlier
         .iter()
-        .all(|pending| pending.covered || pending.edit.data.issue != issue)
+        .all(|pending| pending.covered || pending.edit.data.issue() != issue)
 }
 
 impl EditData {
-    pub(super) fn rendered_note(&self, text: &str) -> String {
-        let body = text.trim().lines().collect::<Vec<_>>().join("\n");
-        format!("{} {}: {body}", date(self.at), self.by)
-    }
-
     fn read(&self) -> Read {
         Read {
-            issue: self.issue,
-            path: file(&self.project, self.issue),
+            project: self.project.clone(),
+            issue: self.issue(),
+            path: layout::issue_file(&self.project, &self.issue().to_string()),
         }
     }
 }
 
 impl Edit {
     #[must_use]
-    pub fn legacy_note_target(&self) -> Option<Read> {
-        self.legacy_note().map(|_| self.read())
-    }
-
-    fn legacy_note(&self) -> Option<&str> {
-        match (&self.identity, &self.data.change) {
-            (EditIdentity::Legacy, Change::Issue(IssueChange::Note(text))) => {
-                Some(text)
-            }
-            _ => None,
-        }
-    }
-
-    fn legacy_note_key(&self) -> Option<(IssueId, String)> {
-        self.legacy_note()
-            .map(|text| (self.data.issue, self.data.rendered_note(text)))
-    }
-
-    /// A legacy queue starts after the notes already in its upstream
-    /// baseline. Local commits may contain only a prefix of the queue.
-    pub fn migrate_legacy_notes(
-        edits: &mut [Self],
-        upstream: &BTreeMap<IssueId, String>,
-    ) {
-        let mut occurrences = BTreeMap::new();
-        for (&id, text) in upstream {
-            if let Ok(issue) = parse(&name(id), text) {
-                for note in issue.notes {
-                    *occurrences.entry((id, note)).or_insert(0) += 1;
-                }
-            }
-        }
-        let mut queued = BTreeMap::new();
-        for edit in edits {
-            if let Some(key) = edit.legacy_note_key() {
-                let ordinal = occurrences.entry(key.clone()).or_insert(0);
-                *ordinal += 1;
-                let (issue, note) = key;
-                let digest = Sha256::digest(note.as_bytes());
-                let hash = data_encoding::HEXLOWER.encode(&digest);
-                let nth =
-                    queued.entry((issue, note, edit.data.at)).or_insert(0);
-                *nth += 1;
-                edit.identity = EditIdentity::MigratedNote {
-                    ordinal: *ordinal,
-                    marker: format!(
-                        "# conductor-legacy-note: {hash} {} {nth}",
-                        edit.data.at
-                    ),
-                };
-            }
-        }
-    }
-
-    #[must_use]
     pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
-        (self.identity == EditIdentity::Command(id)).then_some(self.data.issue)
+        (self.command == id).then_some(self.data.issue())
     }
 
     #[must_use]
@@ -441,10 +429,12 @@ impl Edit {
         self.data.read()
     }
 
-    /// Decides whether the edit still applies to the upstream file.
+    /// Decides whether the edit still applies to the upstream file, among
+    /// the home's issues.
     #[must_use]
     pub fn replay(
         &self,
+        home: &Snapshot,
         current: Result<Option<&str>, String>,
         upstream_changed: Option<u64>,
     ) -> Write {
@@ -456,11 +446,13 @@ impl Edit {
             return Write::Dropped;
         }
         let changed = upstream_changed.unwrap_or(0);
-        match apply(contents, self, Mode::Replay { changed }) {
-            Applied::Write(text) => Write::Commit(self.commit(text)),
+        match apply(home, contents, self, Mode::Replay { changed }) {
+            Applied::Write { text, .. } => Write::Commit(self.commit(text)),
             Applied::Unchanged | Applied::AlreadyRecorded => Write::Unchanged,
             Applied::Gone => Write::Dropped,
-            Applied::Unreadable(reason) => Write::Waiting(reason),
+            Applied::Unreadable(reason) | Applied::Refused(reason) => {
+                Write::Waiting(reason)
+            }
         }
     }
 
@@ -468,7 +460,7 @@ impl Edit {
         Commit {
             target: self.read(),
             text,
-            message: message(&self.data),
+            message: message(&self.data.edit),
             author: "Conductor",
             email: "conductor@localhost",
         }
@@ -504,7 +496,7 @@ impl SessionUpdate {
     #[must_use]
     pub fn next(
         &mut self,
-        issues: &BTreeMap<ProjectId, Vec<Issue>>,
+        home: &Snapshot,
         id: IssueId,
     ) -> Option<IssueChange> {
         let update = core::mem::replace(self, Self::Done);
@@ -521,27 +513,30 @@ impl SessionUpdate {
             }
             Self::Done => None,
             Self::Started | Self::Finished { summary: None, .. } => {
-                let from = status(issues, id)?;
-                let to = match update {
-                    Self::Started => started(from),
-                    Self::Finished { landed, .. } => finished(from, landed),
-                    Self::Done => None,
-                }?;
-                Some(IssueChange::Transition { from, to })
+                let flow = home.flow().ok()?;
+                let all: Vec<&Issue> = home.graph().issues.iter().collect();
+                let issue = home.issue(id)?;
+                let (moved, reason) = match update {
+                    Self::Started => (
+                        role::started(flow, &all, issue),
+                        "a session started on it",
+                    ),
+                    Self::Finished { landed, .. } => (
+                        (landed != 0)
+                            .then(|| role::landed(flow, issue))
+                            .flatten(),
+                        "a session on it landed work",
+                    ),
+                    Self::Done => (None, ""),
+                };
+                Some(IssueChange::Move {
+                    part: Part::Status,
+                    to: String::from(moved?),
+                    reason: String::from(reason),
+                })
             }
         }
     }
-}
-
-fn status(
-    issues: &BTreeMap<ProjectId, Vec<Issue>>,
-    id: IssueId,
-) -> Option<IssueStatus> {
-    issues
-        .values()
-        .flatten()
-        .find(|known| known.id == id)
-        .map(|known| known.status)
 }
 
 /// A Git observation needed to decide how to ready an issue branch.
@@ -617,37 +612,19 @@ impl RemoteProbe {
     }
 }
 
-/// Reads and interprets a project's issue directory.
-pub struct Listing<'a> {
-    project: &'a ProjectId,
+/// Where a project's issue files are, and how a new one is found.
+pub struct Listing {
     pub path: String,
 }
 
-impl<'a> Listing<'a> {
-    #[must_use]
-    pub fn for_project(project: &'a ProjectId) -> Self {
-        Self {
-            project,
-            path: folder(project),
-        }
-    }
-
+impl Listing {
     #[must_use]
     pub fn creation_pattern(id: CommandId) -> String {
-        format!("^{}$", edit_marker(id))
+        format!("^{}$", crate::flow::file::comment_line(&edit_marker(id)))
     }
 
     #[must_use]
     pub fn created_from_path(path: &str) -> Option<IssueId> {
-        let stem = path.rsplit('/').next()?.strip_suffix(".md")?;
-        ulid::Ulid::from_string(stem).ok().map(|id| IssueId(id.0))
-    }
-
-    #[must_use]
-    pub fn decide(
-        self,
-        files: Vec<(String, Result<String, String>)>,
-    ) -> (Vec<Issue>, Vec<String>) {
-        listed(self.project, files)
+        layout::issue_stem(path).and_then(crate::flow::graph::id_of)
     }
 }

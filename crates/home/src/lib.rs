@@ -14,12 +14,15 @@ pub mod checkout;
 pub mod flow;
 pub mod instructions;
 pub mod issue;
+pub mod layout;
 mod prelude;
 pub mod project;
 pub mod sync;
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
+use proto::flow::Flow;
 use proto::{
     Checkout, Cloning, CommandResult, Home, HostPath, Issue, ProjectId,
     Rejection, StartAt,
@@ -76,6 +79,8 @@ impl Stored {
 pub struct Found<'host> {
     pub checkouts: &'host BTreeMap<ProjectId, Vec<Checkout>>,
     pub cloning: &'host BTreeMap<ProjectId, Cloning>,
+    /// The home's flow, when it loads.
+    pub flow: Option<&'host Flow>,
     pub issues: &'host BTreeMap<ProjectId, Vec<Issue>>,
     /// Issue changes the remote doesn't have yet.
     pub unpushed: u64,
@@ -92,6 +97,7 @@ pub fn view(
     let Found {
         checkouts,
         cloning,
+        flow,
         issues,
         unpushed,
     } = found;
@@ -100,6 +106,7 @@ pub fn view(
         synced: sync.synced,
         sync: sync.status.clone(),
         unpushed,
+        flow: flow.cloned().map(Box::new),
         projects: projects
             .iter()
             .map(|project| proto::Project {

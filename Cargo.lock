@@ -1174,6 +1174,7 @@ dependencies = [
  "directories",
  "getrandom 0.4.3",
  "home",
+ "home-files",
  "host",
  "install",
  "iroh",
@@ -2483,12 +2484,10 @@ dependencies = [
 name = "home"
 version = "0.1.0"
 dependencies = [
- "data-encoding",
  "proptest",
  "proto",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "toml",
  "toml_parser",
  "ulid",
@@ -2499,6 +2498,15 @@ name = "home-cli"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "home",
+ "home-files",
+ "proto",
+]
+
+[[package]]
+name = "home-files"
+version = "0.1.0"
+dependencies = [
  "home",
  "proto",
 ]

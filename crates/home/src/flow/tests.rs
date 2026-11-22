@@ -1,7 +1,11 @@
-use super::{Literal, Predicate, Quantifier, Role, Severity, Shape, load};
+use proto::flow::{
+    FieldRole, Literal, Predicate, Quantifier, Role, Severity, Shape,
+};
+
+use super::load;
 
 /// A copy of the home's `docs/agents/flow.toml`.
-const FLOW: &str = include_str!("flow.toml");
+const FLOW: &str = include_str!("test-flow.toml");
 
 /// The flow with `from` replaced by `to`, which it must contain.
 fn edited(from: &str, to: &str) -> Result<super::Flow, String> {
@@ -218,5 +222,40 @@ fn references_between_parts_must_resolve() {
     assert_eq!(
         failure("default = \"normal\"", "default = \"meh\""),
         "field[0].default: \"meh\" is not one of its values"
+    );
+}
+
+#[test]
+fn a_field_s_role_is_read_with_it() {
+    let roles = load(FLOW).map(|flow| {
+        FieldRole::ALL.map(|role| {
+            flow.field_with("task", role)
+                .map(|field| field.name.clone())
+        })
+    });
+    assert_eq!(
+        roles,
+        Ok(["labels", "branch", "created"]
+            .map(|name| Some(String::from(name))))
+    );
+}
+
+#[test]
+fn a_field_role_is_known_held_once_and_of_its_type() {
+    assert_eq!(
+        failure("role = \"labels\"", "role = \"tags\""),
+        "field[1].role: \"tags\" is not a field role; the field roles are \
+         labels, branch, created"
+    );
+    assert_eq!(
+        failure("role = \"created\"", "role = \"branch\""),
+        "field[3].role: a field with the role \"branch\" has type text"
+    );
+    assert_eq!(
+        failure(
+            "name = \"created\"\ntype = \"time\"\nrole = \"created\"",
+            "name = \"created\"\ntype = \"text\"\nrole = \"branch\""
+        ),
+        "field[3].role: field[2] also has the role \"branch\""
     );
 }

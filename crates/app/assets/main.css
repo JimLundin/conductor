@@ -175,6 +175,8 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .issue-detail { color: var(--muted); font-size: 0.8125rem; }
 .new-issue, .add-item, .add-note { display: flex; gap: 0.5rem; align-items: flex-start; }
 .new-issue input, .add-item input, .add-note textarea { flex: 1; }
+.new-issue { flex-wrap: wrap; }
+.new-issue-fields { flex-basis: 100%; margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .issue-fields { display: flex; gap: 1rem; flex-wrap: wrap; }
 .issue-fields label, .edit-issue label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.875rem; }
 .issue-body { white-space: pre-wrap; }
