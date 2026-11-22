@@ -281,10 +281,9 @@ impl Forms {
             CredentialIntent::Save { provider, kind } => {
                 let described = catalog
                     .of(provider)
-                    .and_then(|info| info.form(&kind))
-                    .cloned();
+                    .and_then(|info| info.form(&kind));
                 match described {
-                    Some(form) => self.save(provider, &form, at),
+                    Some(form) => self.save(provider, form, at),
                     None => (self, Vec::new()),
                 }
             }
@@ -424,17 +423,13 @@ impl Forms {
         at: At,
     ) -> (Self, Vec<Effect>) {
         let key = (provider, form.kind.clone());
-        let draft = self.drafts.remove(&key).unwrap_or_default();
+        let draft = self.drafts.entry(key).or_default();
         let values = form
             .fields
             .iter()
-            .map(|field| (field.id.clone(), sent_value(field, &draft)))
+            .map(|field| (field.id.clone(), sent_value(field, draft)))
             .collect::<BTreeMap<String, String>>();
-        let kept = draft
-            .into_iter()
-            .filter(|(id, _)| !secret(form, id))
-            .collect::<BTreeMap<String, String>>();
-        self.drafts.insert(key, kept);
+        draft.retain(|id, _| !secret(form, id));
         let credential = Credential {
             kind: form.kind.clone(),
             values,

@@ -240,27 +240,10 @@ impl Log {
     pub(crate) async fn begin(
         &self,
         key: CommandId,
+        kind: Kind,
     ) -> Result<BeginCommand, Stopped> {
         self.ask(|reply| {
-            LogMsg::Begin(CommandStart {
-                key,
-                kind: Kind::Session,
-                reply,
-            })
-        })
-        .await
-    }
-
-    pub(crate) async fn begin_receipt(
-        &self,
-        key: CommandId,
-    ) -> Result<BeginCommand, Stopped> {
-        self.ask(|reply| {
-            LogMsg::Begin(CommandStart {
-                key,
-                kind: Kind::Receipt,
-                reply,
-            })
+            LogMsg::Begin(CommandStart { key, kind, reply })
         })
         .await
     }
@@ -679,14 +662,14 @@ mod durability_tests {
 
     use proto::{CommandId, CommandResult, EventKind, HostSeq, SessionId};
 
-    use super::{BeginCommand, CommandLease, CommandStart, Log, LogMsg};
+    use super::{BeginCommand, CommandLease, CommandStart, Kind, Log, LogMsg};
     use tokio::sync::oneshot;
 
     async fn lease(
         log: &Log,
         key: u128,
     ) -> Result<CommandLease, crate::Stopped> {
-        match log.begin(CommandId(key)).await? {
+        match log.begin(CommandId(key), Kind::Session).await? {
             BeginCommand::Execute(lease) => Ok(lease),
             BeginCommand::Cached(_) => Err(crate::Stopped {}),
         }
@@ -702,7 +685,7 @@ mod durability_tests {
             directory.join(format!("receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path)?;
-        let receipt = match log.begin_receipt(CommandId(23)).await? {
+        let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -744,7 +727,7 @@ mod durability_tests {
         assert_eq!(retried, Some(CommandResult::Accepted));
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
-        let cached = match reopened.begin_receipt(CommandId(23)).await? {
+        let cached = match reopened.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
@@ -838,7 +821,7 @@ mod durability_tests {
     async fn receipt_lease_drop_fails_closed()
     -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), proto::Epoch(1));
-        let receipt = match log.begin_receipt(CommandId(23)).await? {
+        let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -907,7 +890,7 @@ mod durability_tests {
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(reopened.subscribe(HostSeq(0)).await?.replay.len(), 1);
-        let cached = match reopened.begin(CommandId(1)).await? {
+        let cached = match reopened.begin(CommandId(1), Kind::Session).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };

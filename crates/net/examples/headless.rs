@@ -29,8 +29,8 @@ mod fixture;
 struct Args {
     #[arg(value_parser = net::parse)]
     ticket: Ticket,
-    #[arg(long, value_enum, default_value_t = ProviderChoice::Claude)]
-    provider: ProviderChoice,
+    #[arg(long, value_parser = provider, default_value = "claude")]
+    provider: Provider,
     /// The session's directory on the host.
     #[arg(long)]
     directory: String,
@@ -82,12 +82,6 @@ enum Register {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum ProviderChoice {
-    Claude,
-    Codex,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
 enum When {
     Never,
     FirstDelta,
@@ -98,6 +92,10 @@ enum When {
 enum Choice {
     Approve,
     Deny,
+}
+
+fn provider(name: &str) -> Result<Provider, String> {
+    Provider::named(name).ok_or_else(|| format!("unknown provider: {name}"))
 }
 
 #[tokio::main]
@@ -226,10 +224,7 @@ impl Session {
     }
 
     async fn start_session(&mut self) -> anyhow::Result<SessionId> {
-        let provider = match self.args.provider {
-            ProviderChoice::Claude => Provider::Claude,
-            ProviderChoice::Codex => Provider::Codex,
-        };
+        let provider = self.args.provider;
         let instance = match self.args.register {
             Register::Keep => self.args.account.as_ref().map_or_else(
                 || InstanceId::own(provider),

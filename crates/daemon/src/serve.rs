@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use host::log::Completion;
-use host::serve::{self, Admission, Ledger, Order, Relaunch, Route, Stream};
+use host::serve::{self, Admission, Order, Relaunch, Route, Stream};
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
@@ -398,14 +398,13 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         let route = serve::route(command.body, client);
         let begun = match route.ledger() {
-            Ledger::Unrecorded => {
+            None => {
                 return self
                     .command(route, command.id)
                     .await
                     .map(Completion::into_result);
             }
-            Ledger::Session => self.log.begin(command.id).await?,
-            Ledger::Receipt => self.log.begin_receipt(command.id).await?,
+            Some(kind) => self.log.begin(command.id, kind).await?,
         };
         match begun {
             BeginCommand::Cached(result) => Ok(result),
