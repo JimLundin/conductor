@@ -24,8 +24,7 @@ runs:
           echo RUSTC_WRAPPER=sccache
           echo SCCACHE_GHA_ENABLED=true
           echo "SCCACHE_ERROR_LOG=$RUNNER_TEMP/sccache.log"
-          echo "SCCACHE_LOG=warn,sccache::server=debug"
-          echo SCCACHE_GHA_VERSION=cold-diagnosis-1
+          echo SCCACHE_LOG=warn
           echo "STANDARDS=$GITHUB_WORKSPACE/standards"
         } >>"$GITHUB_ENV"
 
@@ -202,11 +201,15 @@ runs:
         if-no-files-found: ignore
         retention-days: 14
 
+    # sccache logs a failed cache write only at warn, so its stats alone
+    # don't say why. RateLimited on a cold cache is GitHub's limit of 200
+    # cache uploads a minute a repository, which sccache doesn't retry; the
+    # next run that compiles those objects writes them.
     - name: Show sccache's hits
       if: always() && steps.check.outcome != 'skipped'
       shell: bash
       run: |
         sccache --show-stats
-        log=$RUNNER_TEMP/sccache.log
-        grep -c "Error executing cache write" "$log" || true
-        grep -E "Error executing cache write|write failed" "$log" | sed -E "s/^\[[^ ]+ //; s/[0-9a-f]{64}/<hash>/g; s/written=[0-9]+ size=[0-9]+//; s/\"x-ms-request-id[^,]*,//g; s/\"date\"[^,]*,//g" | cut -c1-400 | sort | uniq -c | sort -rn | head -n 20 || true
+        echo "Failed cache writes by error:"
+        grep "write failed" "$RUNNER_TEMP/sccache.log" | grep -v "path=.sccache_check" |
+          grep -oE "write failed [A-Za-z]+" | sort | uniq -c || true
