@@ -213,7 +213,9 @@ impl Walk<'_> {
                     || issue.fields.contains_key(name)
                     || issue.links.get(name).is_some_and(|ids| !ids.is_empty())
             }
-            Predicate::HasSection(section) => issue.sections.contains(section),
+            Predicate::HasSection(section) => {
+                issue.sections.iter().any(|had| had.heading == *section)
+            }
             _ => false,
         }
     }

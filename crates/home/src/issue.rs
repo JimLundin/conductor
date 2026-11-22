@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use toml::{Spanned, Table, Value};
 use toml_parser::{Source, lexer::TokenKind};
 
+use crate::flow::graph::{item, markdown};
 use crate::prelude::*;
 
 const CHECKLIST: &str = "## Checklist";
@@ -230,42 +231,6 @@ fn array_with_comments(previous: &str, value: &str) -> Option<String> {
     Some(format!("[\n{comments}]"))
 }
 
-fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
-    let mut fence = None;
-    rest.iter().map(move |line| {
-        let previously_open = fence.is_some();
-        if let Some((marker, width, suffix)) = fence_line(line) {
-            match fence {
-                Some((open, minimum))
-                    if open == marker
-                        && width >= minimum
-                        && suffix.trim().is_empty() =>
-                {
-                    fence = None;
-                }
-                None if marker == b'~' || !suffix.contains('`') => {
-                    fence = Some((marker, width));
-                }
-                _ => {}
-            }
-        }
-        (line.as_str(), !previously_open && fence.is_none())
-    })
-}
-
-fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
-    let rest = line.trim_start_matches(' ');
-    if line.len() - rest.len() > 3 {
-        return None;
-    }
-    let marker = *rest.as_bytes().first()?;
-    let width = rest.bytes().take_while(|byte| *byte == marker).count();
-    if width < 3 || !matches!(marker, b'`' | b'~') {
-        return None;
-    }
-    Some((marker, width, rest.get(width..)?))
-}
-
 /// The issue in the file named `stem`.md.
 ///
 /// # Errors
@@ -388,18 +353,6 @@ fn noted(notes: &mut Vec<String>, line: &str) {
         }
         _ => {}
     }
-}
-
-fn item(line: &str) -> Option<ChecklistItem> {
-    let (done, text) = line
-        .strip_prefix("- [x] ")
-        .or_else(|| line.strip_prefix("- [X] "))
-        .map(|text| (true, text))
-        .or_else(|| line.strip_prefix("- [ ] ").map(|text| (false, text)))?;
-    Some(ChecklistItem {
-        done,
-        text: String::from(text),
-    })
 }
 
 fn item_line(item: &ChecklistItem) -> String {

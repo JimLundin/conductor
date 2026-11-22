@@ -1,8 +1,8 @@
 use alloc::collections::BTreeMap;
 
-use proto::ProjectId;
+use proto::{ChecklistItem, ProjectId};
 
-use super::{Datum, Entry, Event, File, Graph, Problem, read};
+use super::{Datum, Entry, Event, File, Graph, Problem, Section, read};
 use crate::flow::{Flow, load};
 
 const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
@@ -36,7 +36,9 @@ fn spec() -> File {
         "title = \"Interpret the flow\"\nkind = \"spec\"\nstage = \"build\"\n\
          status = \"active\"\npriority = \"high\"\nlabels = [\"home\"]\n\
          created = 2026-11-21T19:53:48Z\n",
-        "## Problem\n\nWhy.\n\n## Acceptance\n\n- It works.\n\n## Notes\n\n\
+        "Opening words.\n\n## Problem\n\nWhy.\n\n```\n## not a heading\n```\n\n\
+         ## Acceptance\n\n- It works.\n\n## Checklist\n\n- [x] the loader\n\
+         - [ ] the reader\n\n## Notes\n\n\
          - 2026-11-21T19:53:48Z laptop·claude stage shape→spec: shaped.\n\
          - 2026-11-18 laptop · codex · api: an older note\n  that goes on.\n\
          - 2026-11-22T10:00:00Z laptop·claude note: checked.\n",
@@ -116,8 +118,30 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
                 ),
                 (String::from("priority"), Datum::Text(String::from("high"))),
             ]),
-            &Vec::from([String::from("Problem"), String::from("Acceptance")]),
+            &[
+                ("", "Opening words."),
+                ("Problem", "Why.\n\n```\n## not a heading\n```"),
+                ("Acceptance", "- It works."),
+            ]
+            .map(|(heading, text)| Section {
+                heading: String::from(heading),
+                text: String::from(text),
+            })
+            .to_vec(),
         ))
+    );
+    assert_eq!(
+        first.map(|issue| issue.checklist.clone()),
+        Some(Vec::from([
+            ChecklistItem {
+                done: true,
+                text: String::from("the loader"),
+            },
+            ChecklistItem {
+                done: false,
+                text: String::from("the reader"),
+            },
+        ]))
     );
     assert_eq!(
         first.map(|issue| issue.log.clone()),
@@ -136,7 +160,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
                 by: None,
                 event: Event::Note,
                 text: String::from(
-                    "2026-11-18 laptop · codex · api: an older note that goes on."
+                    "2026-11-18 laptop · codex · api: an older note\nthat goes on."
                 ),
             },
             Entry {

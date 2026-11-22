@@ -14,6 +14,7 @@ use toml::{Table, Value};
 
 use super::{Field, FieldType, Flow, Relation};
 use crate::prelude::*;
+use proto::ChecklistItem;
 
 /// An issue file: the project it's in, its name without `.md`, its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,9 +43,19 @@ pub struct Issue {
     pub fields: BTreeMap<String, Datum>,
     /// The issues each relation from it points to, by relation.
     pub links: BTreeMap<String, Vec<String>>,
-    /// The body's `##` headings, in order.
-    pub sections: Vec<String>,
+    /// The body's sections in order, the text before the first heading
+    /// as one with no heading; the checklist and the log aren't among them.
+    pub sections: Vec<Section>,
+    /// The items of the `## Checklist` section.
+    pub checklist: Vec<ChecklistItem>,
     pub log: Vec<Entry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Section {
+    /// Empty for the text before the first heading.
+    pub heading: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +182,7 @@ fn issue(flow: &Flow, file: &File) -> Result<Issue, Problem> {
             ));
         }
     }
-    let (sections, log) = body_of(body);
+    let (sections, checklist, log) = body_of(body);
     Ok(Issue {
         id,
         project: file.project.clone(),
@@ -182,6 +193,7 @@ fn issue(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         fields,
         links,
         sections,
+        checklist,
         log,
     })
 }
@@ -253,29 +265,122 @@ fn targets(relation: &Relation, value: Value) -> Result<Vec<String>, String> {
     }
 }
 
-/// The `##` headings, and the log under `## Notes`.
-fn body_of(body: &str) -> (Vec<String>, Vec<Entry>) {
-    let mut sections = Vec::new();
+/// The body's sections, the checklist's items and the log, reading
+/// headings only outside code fences.
+fn body_of(body: &str) -> (Vec<Section>, Vec<ChecklistItem>, Vec<Entry>) {
+    let lines: Vec<String> = body.lines().map(ToOwned::to_owned).collect();
+    let mut sections: Vec<Section> = Vec::new();
+    let mut checklist = Vec::new();
     let mut log: Vec<Entry> = Vec::new();
-    let mut in_log = false;
-    for line in body.lines() {
-        if let Some(heading) = line.strip_prefix("## ") {
-            in_log = heading.trim() == "Notes";
-            if !in_log {
-                sections.push(heading.trim().to_owned());
+    let mut part = Part::Section;
+    for (line, outside) in markdown(&lines) {
+        match (line.strip_prefix("## ").filter(|_| outside), part) {
+            (Some(heading), _) => {
+                part = match heading.trim() {
+                    "Notes" => Part::Log,
+                    "Checklist" => Part::Checklist,
+                    named => {
+                        sections.push(Section {
+                            heading: named.to_owned(),
+                            text: String::new(),
+                        });
+                        Part::Section
+                    }
+                };
             }
-        } else if in_log {
-            if let Some(entry) = line.strip_prefix("- ") {
-                log.push(entry_of(entry));
-            } else if let (Some(more), Some(last)) =
-                (line.strip_prefix("  "), log.last_mut())
-            {
-                last.text.push(' ');
-                last.text.push_str(more.trim());
-            }
+            (None, Part::Log) => logged(&mut log, line),
+            (None, Part::Checklist) => checklist.extend(item(line)),
+            (None, Part::Section) => written(&mut sections, line),
         }
     }
-    (sections, log)
+    for section in &mut sections {
+        section.text = section.text.trim().to_owned();
+    }
+    sections.retain(|section| {
+        !section.heading.is_empty() || !section.text.is_empty()
+    });
+    (sections, checklist, log)
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Part {
+    Section,
+    Checklist,
+    Log,
+}
+
+fn written(sections: &mut Vec<Section>, line: &str) {
+    if sections.is_empty() {
+        sections.push(Section {
+            heading: String::new(),
+            text: String::new(),
+        });
+    }
+    if let Some(section) = sections.last_mut() {
+        section.text.push_str(line);
+        section.text.push('\n');
+    }
+}
+
+/// A log line, or the continuation of the last one when indented by two
+/// spaces.
+fn logged(log: &mut Vec<Entry>, line: &str) {
+    if let Some(entry) = line.strip_prefix("- ") {
+        log.push(entry_of(entry));
+    } else if let (Some(more), Some(last)) =
+        (line.strip_prefix("  "), log.last_mut())
+    {
+        last.text.push('\n');
+        last.text.push_str(more);
+    }
+}
+
+pub(crate) fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
+    let mut fence = None;
+    rest.iter().map(move |line| {
+        let previously_open = fence.is_some();
+        if let Some((marker, width, suffix)) = fence_line(line) {
+            match fence {
+                Some((open, minimum))
+                    if open == marker
+                        && width >= minimum
+                        && suffix.trim().is_empty() =>
+                {
+                    fence = None;
+                }
+                None if marker == b'~' || !suffix.contains('`') => {
+                    fence = Some((marker, width));
+                }
+                _ => {}
+            }
+        }
+        (line.as_str(), !previously_open && fence.is_none())
+    })
+}
+
+fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
+    let rest = line.trim_start_matches(' ');
+    if line.len() - rest.len() > 3 {
+        return None;
+    }
+    let marker = *rest.as_bytes().first()?;
+    let width = rest.bytes().take_while(|byte| *byte == marker).count();
+    if width < 3 || !matches!(marker, b'`' | b'~') {
+        return None;
+    }
+    Some((marker, width, rest.get(width..)?))
+}
+
+pub(crate) fn item(line: &str) -> Option<ChecklistItem> {
+    let (done, text) = line
+        .strip_prefix("- [x] ")
+        .or_else(|| line.strip_prefix("- [X] "))
+        .map(|text| (true, text))
+        .or_else(|| line.strip_prefix("- [ ] ").map(|text| (false, text)))?;
+    Some(ChecklistItem {
+        done,
+        text: String::from(text),
+    })
 }
 
 /// `<time> <who> <event>: <text>`, where the event is `note`,

@@ -154,7 +154,9 @@ pub(crate) fn of_issue(
         .map_or(&[][..], |kind| kind.sections.as_slice());
     let mut findings: Vec<Finding> = expected
         .iter()
-        .filter(|section| !issue.sections.contains(section))
+        .filter(|section| {
+            !issue.sections.iter().any(|had| had.heading == **section)
+        })
         .map(|section| Finding {
             severity: Severity::Warn,
             subject: Some(subject.to_owned()),

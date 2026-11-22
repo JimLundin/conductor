@@ -5,7 +5,7 @@ use proptest::prelude::*;
 use proto::ProjectId;
 
 use super::{Failure, Move, holds};
-use crate::flow::graph::{Datum, Graph, Issue};
+use crate::flow::graph::{Datum, Graph, Issue, Section};
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Role, load};
 
 fn flow() -> Flow {
@@ -31,6 +31,7 @@ fn issue(id: &str, kind: &str, status: &str) -> Issue {
         fields: BTreeMap::new(),
         links: BTreeMap::new(),
         sections: Vec::new(),
+        checklist: Vec::new(),
         log: Vec::new(),
     }
 }
@@ -211,7 +212,9 @@ fn meets(
                 || issue.fields.contains_key(name)
                 || issue.links.get(name).is_some_and(|ids| !ids.is_empty())
         }
-        Predicate::HasSection(section) => issue.sections.contains(section),
+        Predicate::HasSection(section) => {
+            issue.sections.iter().any(|had| had.heading == *section)
+        }
         Predicate::From(inner) => moving
             .from
             .is_some_and(|from| meets(flow, graph, from, moving, inner)),
@@ -297,7 +300,13 @@ fn issues() -> impl Strategy<Value = Vec<Issue>> {
                         (String::from("parent"), Vec::from([target]))
                     }));
                     made.links.insert(String::from("blocked_by"), blockers);
-                    made.sections = sections;
+                    made.sections = sections
+                        .into_iter()
+                        .map(|heading| Section {
+                            heading,
+                            text: String::new(),
+                        })
+                        .collect();
                     made
                 },
             )
