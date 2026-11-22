@@ -96,8 +96,7 @@ so one UI and one set of commands work for both agents.
   rule as `StartSession`: a model the host doesn't list takes any effort.
   The same effort again is `Accepted` and logs nothing. The host checks it
   against what the session's instance offers now, so it needs the instance
-  available (`InstanceUnavailable`). During undo recovery it is refused as
-  `UndoInProgress`, like every order. It is taken while a turn runs and on a closed
+  available (`InstanceUnavailable`). It is taken while a turn runs and on a closed
   session: `EffortChanged { effort }` is logged at once, and the agent gets
   the effort when the next turn the user sends starts, so a running turn
   keeps the effort it began with. Claude gets it in its running process
@@ -113,7 +112,7 @@ so one UI and one set of commands work for both agents.
   Repeated identical snapshots produce no event. Main and child
   checklists remain separate; child updates use
   `SubagentEvent::ChecklistChanged`. Replay and Continue retain the last
-  snapshot, and undo restores the snapshot before the retained checkpoint.
+  snapshot.
   Checklists are displayed in the app and generate no issue notes.
   Codex's plan `explanation` is not kept, since Claude has none.
 - **Sub-agents:** an agent's tool call may start a sub-agent, a child
@@ -370,7 +369,7 @@ credential, and each Codex instance its own app-server (below). Whatever
 is per account is keyed by `InstanceId`: the registry's launchers,
 availability, models, refreshes and sessions, `Welcome.instances`,
 `StartSession { instance }`, and `SessionCreated { instance, provider }`,
-so `Continue` and undo run on the session's own instance. What the plugin
+so `Continue` runs on the session's own instance. What the plugin
 describes stays keyed by `Provider`: the catalog's label, note and
 credential forms. The app shows an instance by its account, and the own
 instance by its provider's label. `SetCredential { provider, credential }`
@@ -415,7 +414,7 @@ probes and installs as `host::start` decides, and sends the plugins'
   and its credential forms, and reads its credential from the generic
   values. Claude's resume fallbacks
   live in `claude::runtime`: a missing conversation with no message seen
-  starts fresh, and an undo's fork whose target exists resumes the target.
+  starts fresh.
   Pure `no_std`; they log nothing themselves.
 - `runtime`: the session handle, provider instance, `Plugin`, and the agent
   task that feeds commands and provider events into the runtime machine.
@@ -508,11 +507,12 @@ the parsers and assert the exact events. The fixtures are recordings of
 the real CLIs. No tool in the repo re-records them, so they stay as recorded
 until someone re-records them by hand (§6.2).
 
-### 5.3 Durability, worktrees and checkpoints
+### 5.3 Durability, worktrees and snapshots
 
 - **Store (built):** `<data>/conductor.redb`, with typed redb table constants
   and postcard values (storage option C). Its `metadata` records the log
-  format, 6 since session migration events were removed. A database of another format doesn't open and is moved aside
+  format, 7 since snapshots became commit records and historical undo was
+  removed. A database of another format doesn't open and is moved aside
   to start over. The tables are `events`,
   `command_receipts`, `pending_requests`, `conversations` and `metadata`.
   Sessions, their model choices and resolved requests are reconstructed from
@@ -525,14 +525,12 @@ until someone re-records them by hand (§6.2).
   `CommandId`s (128 random bits), so a hedge onto a new transport identity
   still finds the same receipt. One command at a time stages its durable
   events and conversation/request writes, then commits them with its receipt
-  before replying. Ordinary commands use one transaction. Undo commits its
-  intent and native-history phase separately before their external effects,
-  and checkpoint reservations commit before snapshot effects; these explicit
-  boundaries broadcast the committed prefix while retaining the command
-  lease. A retry with a completed receipt returns its stored result. If
+  before replying. Ordinary commands use one transaction. Snapshot capture
+  keeps enough durable intent to recover work left by an interrupted turn.
+  A retry with a completed receipt returns its stored result. If
   execution is cancelled or a write fails, the log rolls back only its
   uncommitted suffix and the host stops its transport and provider processes.
-  Previously committed undo phases remain pending for recovery. Provider
+  Previously committed capture intent remains pending for recovery. Provider
   stdin writes and the separate credential file are external effects: a
   crash before the database commit can leave a CLI action sent without a
   receipt. Restart withdraws its requests and interrupts its turn; it does
@@ -558,31 +556,40 @@ until someone re-records them by hand (§6.2).
   and `push_tokens`, when their features land.
 - **The home's state:** the home's remote and the checkouts found, in
   `<data>/home.state` (postcard), outside the log (§5.4).
-- **Worktrees and checkpoints (built):** new sessions require a committed
+- **Worktrees (built):** new sessions require a committed
   Git repository and get `<data>/worktrees/<ulid>` on `conductor/<ulid>`,
   initially from committed HEAD. `host::workspace::Plan` decides the whole
-  workflow for creation, snapshots, restore, diffs, removal and landing.
+  workflow for creation, capture, diffs, removal and landing.
   The daemon executes each Git or filesystem step and passes the result
   back before the plan issues the next step. The original working tree and index stay
   untouched. The selected subdirectory is resolved within the managed tree.
-  An initial snapshot and each actual finished, failed or interrupted turn
-  is a commit on the session's branch (home §2.3): a temporary index reads
-  the branch's tip before `add -A` and `write-tree`, `commit-tree` makes
-  the turn's commit on the tip, or the tip is the checkpoint when the turn
-  changed no file, and the branch moves to it with the worktree's index
-  following (`reset`), so the files stay. A commit the agent makes in a
-  turn becomes the checkpoint's parent. Each checkpoint's commit is also
-  pinned by `refs/conductor/<ulid>/<checkpoint>`, which diffs and undo
-  check it against; a checkpoint taken again must record the same tree,
-  and moves the branch only from the checkpoint's parent, so a retry after
-  a crash never drops a commit made since (the snapshot plan). The
-  tip is read from the branch, which the workspace's checks hold `HEAD`
-  to. The index follows the branch, so what the agent staged apart from
-  its files, such as a file `.gitignore` names but it added, isn't kept. Durable reservations prevent
-  checkpoint id reuse after undo or a failed snapshot. A failed snapshot
-  retains its native turn boundary. Send and Continue retry the snapshot
-  between turns, even if the agent is already running. An unsuccessful retry
-  rejects the command. This preserves per-turn diff parents.
+- **Commit snapshots (built):** the initial workspace state and each
+  finished, failed or interrupted turn record a commit from the session's
+  branch (home §2.3). Capture uses a temporary index based on the branch
+  tip, adds the workspace's files and writes their tree. If that tree
+  differs from the tip, `commit-tree` creates a commit on top of it and
+  a compare-and-swap updates the branch. Otherwise the snapshot reuses
+  the tip. Commits the agent made during the turn stay in the branch's
+  history. The worktree's index follows the branch while its files stay
+  in place; staging choices separate from the files are not retained.
+  Opening events are `SessionCreated`, `OnIssue` for an issue start,
+  `WorkspaceCreated`, and `CheckpointCreated`. The wire's `Checkpoint`
+  is only a commit and an optional `turn_start`; the initial snapshot has
+  no turn. Each recorded snapshot event has its existing `HostSeq`, so
+  two unchanged turns remain separate records even when they share a
+  commit. There is no separate checkpoint id, reservation, ancestry or
+  provider-history anchor. Git owns the commit history; the session log
+  records which workspace state belongs to each turn.
+  A retention ref at `refs/conductor/<ulid>/<commit>` keeps each recorded
+  commit reachable and binds it to the session for diff requests.
+- **Capture recovery:** an acknowledged message leaves durable intent to
+  capture its workspace even if the provider's turn-start notification is
+  lost. Failed captures remain pending across a restart. Send and Continue
+  retry capture between turns before accepting more work, even if the
+  agent is already running; an unsuccessful retry rejects the command.
+  A retry captures the current files against the current session branch,
+  without resetting it to an earlier snapshot. Branch updates check the
+  expected tip, so a concurrent or later commit cannot be silently dropped.
 - **Removal (built):** `RemoveSession` is refused while a turn runs. It
   stops a running agent (`SessionClosed`), then follows
   the workspace removal plan: commit the worktree's untracked and changed
@@ -590,38 +597,26 @@ until someone re-records them by hand (§6.2).
   Git ignores, such as build output, go with the worktree), push
   only that branch to `origin` (never forced; a failed push keeps it
   locally and goes on), `git worktree remove` (or `prune` when the
-  directory is gone already), and delete `refs/conductor/<ulid>/`. A
+  directory is gone already). Snapshot retention refs remain because their
+  recorded events survive removal. A
   failed commit or remove stops the removal, logs an `Error` and keeps the
   session. The
   branch stays in the checkout. `SessionRemoved { kept }` ends the log of
   the session, which then refuses every command with `SessionRemoved`.
-- **Diff and undo (built):** immutable checkpoint diffs have bounded file
-  counts and patch sizes; binary and oversized files get markers. `GetDiff`
-  bypasses durable receipts so patches are never copied into the event log
-  or receipt table. Undo removes the selected turn and all later turns from
-  the client projection and restores the preceding snapshot, resetting
-  the session's branch to its commit. Native history
-  restoration runs first: Codex uses `thread/revert {beforeTurnId}` and
-  verifies the exact retained native turn-id prefix. Claude forks through
-  the preceding top-level message UUID with `--resume-session-at` and a
-  chosen target id; undoing the first turn starts fresh. Claude creates a
-  fork transcript lazily, so its source/through/target recipe stays durable
-  until native materialization is confirmed. Restart first tries the chosen
-  target and replays the recipe only for the CLI's exact missing-session
-  refusal, preserving a target written before its first result was observed.
-  An acknowledged message also leaves filesystem snapshot intent before a
-  native start notification. If that notification is lost, recovery captures
-  the files with an `Unknown` native boundary and disables unsafe historical
-  undo; its saved conversation or fork recipe still controls Continue.
-- **Undo recovery:** `UndoStarted` commits before provider effects;
-  `UndoHistoryRestored` commits before file effects. Files restore with
-  `git restore --source=<commit> --staged --worktree -- .` and an
-  ownership-verified nonignored clean, preserving ignored files and branch
-  HEAD. A recovered file phase also restarts a stopped agent before
-  `TurnsUndone` completes recovery. A failed or crashed phase blocks
-  Send and Continue, allows immutable diffs and retry of the same target,
-  and never silently discards the pending undo. Legacy sessions without
-  workspace events continue in their original directory without checkpoints.
+- **Per-turn diffs (built):** `GetDiff` names the snapshot's event sequence
+  in its session. The host finds that record and the preceding recorded
+  snapshot, checks their retained commits belong to the session, and
+  compares those commits. It never substitutes the selected commit's Git
+  parent: a turn can contain several agent commits, and unchanged turns
+  can share a commit. The initial snapshot provides the first turn's
+  baseline. Diffs have bounded file counts and patch sizes; binary and
+  oversized files get markers. `GetDiff` bypasses durable receipts so
+  patches are never copied into the event log or receipt table.
+- **Historical undo is removed.** The app has no undo command, provider
+  histories are not rewound or forked, and snapshot recovery only captures
+  workspace state. Ordinary Continue still resumes the saved provider
+  conversation, including after a host restart. Finishing and removal
+  keep the session's branch commits.
 
 ### 5.4 The home and its projects (built)
 
@@ -1489,7 +1484,7 @@ shows independent sessions from every host, grouped by host.
 - **Branch.** `conductor/<ulid>`. A session can carry a title, but the title
   is not in the branch name, so renaming never touches git.
 - **Worktree.** `<data>/worktrees/<ulid>`.
-- **Checkpoints.** `refs/conductor/<ulid>/<turn>`, as in §5.3.
+- **Snapshot retention.** `refs/conductor/<ulid>/<commit>`, as in §5.3.
 - **Short form.** The UI shows the last 6 characters where space is tight,
   and the full id on hover or long-press.
 
@@ -1497,14 +1492,14 @@ shows independent sessions from every host, grouped by host.
 and remains in that session's host log.
 
 The id change landed with durability, before redb tables keyed on it. It
-changes the wire format. The protocol ALPN was then `conductor/10`,
-including the appended workspace, checkpoint, diff and undo wire variants.
+changes the wire format. The protocol ALPN was then `conductor/10`.
+The current snapshot representation and capture recovery are described in §5.3.
 
 ### 6.8 Sessions stay on their starting host
 
-A session's native conversation, worktree, checkpoint refs and events stay
-on the host that created it. Local Continue, restart recovery, diffs and
-undo use that host's durable history and provider files.
+A session's native conversation, worktree, snapshot retention refs and
+events stay on the host that created it. Local Continue, restart recovery
+and diffs use that host's durable history and provider files.
 
 To continue an issue elsewhere, finish the current session to land its
 work and summary, then start a new session on the other host. That host
@@ -1638,7 +1633,7 @@ record scope changes.
   the harness for the daemon's e2e tests and the headless example.
   `tools/live-host.sh` runs the example from `net` against a live host.
   The example applies link updates to `HostFold` and uses its `HostView`
-  to read session controls, requests and turn checkpoints for its scripted
+  to read session controls, requests and turn snapshots for its scripted
   checks.
 
 ## 8. The app (`crates/app`)
@@ -1655,7 +1650,7 @@ into the next state and `Effect`s as data: send a command to a host, save
 the hosts, move the focus. A link update, a credential change and each
 `Effect::Send` name their host, and an answer comes back to the host and
 the visit that asked. Returning to the same place starts another visit.
-For example, a newly opened checkpoint diff may use the same request
+For example, a newly opened turn diff may use the same request
 number as a diff from an earlier visit to the same session. Resetting a
 host's event history also drops the shown session's draft while the app
 waits for its events to arrive again. `ui::view` describes the whole `Screen`, down to each

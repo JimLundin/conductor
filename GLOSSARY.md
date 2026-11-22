@@ -1,30 +1,45 @@
-# Conductor glossary
+# Conductor
 
-- **Session** is a conversation with an agent on one host. It belongs to
-  that host for its lifetime; work continued on another host starts a new
-  session.
-- **Checklist** is the latest ordered list of work and its status reported
-  by an agent or sub-agent. Its entries have no identity across revisions
-  and cannot be assigned to another session.
-- **Opening events** record a new session in order. They are
-  `SessionCreated`, `OnIssue` for an issue start, `WorkspaceCreated`, and
-  `CheckpointCreated`.
-- **Initial checkpoint** is the snapshot of a new workspace before its
-  agent starts. It has no parent or turn to undo.
-- **Issue brief** is the first message a session on an issue tries to send
-  to its agent. It gives the agent the issue's context.
-- **Summary turn** asks a running session's agent to describe its work
-  before closing the session and landing its branch. The reply becomes
-  a note on the issue.
-- **Workspace plan** decides the Git and filesystem steps for a session's
-  worktree. Each result determines the next step or completes the plan.
-- **Pending issue edit** is a home mutation kept on the host until its
-  upstream has accepted it. Replay can apply it to an updated issue file
-  or let a newer change to the same field stand.
-- **Line-JSON process runner** owns a CLI child and its pipes. It delivers
-  stdout lines and I/O outcomes to the protocol driver and runs its effects.
-- **Protocol driver** translates CLI frames and handle commands into
-  ordered effects and tracks replies that are waiting on the CLI.
-- **Host fold** is the client’s read model for one host. It takes link
-  updates and keeps the host’s latest welcome, sign-ins, home, instance
-  roster, and folded sessions.
+Conductor supervises agent conversations on the owner's hosts and keeps
+each session's work and progress available to the owner.
+
+## Language
+
+**Session**:
+A conversation with an agent on one host for its lifetime. Work continued
+on another host starts a new session.
+
+**Workspace**:
+The files a session works on, isolated from the owner's original working
+copy and from other sessions.
+
+**Turn**:
+A stretch of an agent's work that ends by completing, failing or being
+interrupted.
+
+**Snapshot**:
+A recorded state of a session's workspace before its agent starts or
+after a turn ends. Separate turns can have the same workspace state.
+_Avoid_: Checkpoint
+
+**Initial snapshot**:
+The recorded state of a new workspace before its agent starts. It is the
+starting point for the first turn's changes.
+
+**Checklist**:
+The latest ordered list of work and its status reported by an agent or
+sub-agent. Its entries have no identity across revisions and cannot be
+assigned to another session.
+
+**Issue brief**:
+The first message a session on an issue tries to send to its agent. It
+gives the agent the issue's context.
+
+**Summary turn**:
+A turn that asks a running session's agent to describe its work before
+closing the session and landing its work. The reply becomes a note on the
+issue.
+
+**Pending issue edit**:
+A change to an issue that the home has not yet accepted. It remains
+pending while the host is offline or the home cannot be updated.

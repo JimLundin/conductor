@@ -7,13 +7,12 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Sessions stay on their starting host.** Removed cross-host session
   migration, branch bundles, transcript archives, ownership recovery and
   move controls. Fleet membership, pairing, credentials and independent
-  sessions on multiple hosts remain. Local Continue, restart, checkpoint
-  diffs and undo remain. Continue work elsewhere with a new session using
-  the issue and its remote branch (architecture §6.8). The wire uses ALPN
-  `conductor/29` and the event store format is 6.
+  sessions on multiple hosts remain. Local Continue, restart and per-turn
+  diffs remain. Continue work elsewhere with a new session using
+  the issue and its remote branch (architecture §6.8).
 
 - **Session-local checklists.** Main and child checklists are ordered
-  snapshots of text and status, retained through replay and undo.
+  snapshots of text and status, retained through replay and Continue.
   Task handoff, persistent item identities and automatic checklist-derived
   issue notes are removed. Explicit notes and the summary turn remain.
 
@@ -23,7 +22,7 @@ What is built and what comes next. Update it in the commit that changes it.
   `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install` and `app` declare
   themselves the shell.
   `client` holds the host link's state machine, and `host` holds
-  checkpoints and tasks. Next: the shell still makes most decisions, and
+  workspace decisions and checklists. Next: the shell still makes most decisions, and
   `exceptions.toml` lists each shell file that does as debt. Move the
   registry, serve, log and workspace decisions into `host`, retiring an
   entry with each.
@@ -49,7 +48,7 @@ What is built and what comes next. Update it in the commit that changes it.
   account's. Each instance has its own credential, its own private home
   `<data>/home/<dir>`, its own work dir and its own agents, so a Codex
   instance gets its own app-server. Sessions start on an instance and
-  record it, so Continue and undo stay on it. The app's credentials screen
+  record it, so Continue stays on it. The app's credentials screen
   lists the instances by account, takes a credential per provider and
   removes an instance (refused while a session runs on one), and the
   new-session picker lists instances. `--cli` and `--model` are each
@@ -99,16 +98,17 @@ What is built and what comes next. Update it in the commit that changes it.
   ALPN `conductor/25`. Credential sign-in
   from the paired app uses `conductor/26`.
 
-- **Worktrees and turn undo** (#13). Each new session gets a managed Git
-  worktree from committed HEAD, an initial checkpoint and a snapshot per
-  actual turn. The phone shows bounded immutable diffs and can undo files
-  and conversation history to before a selected turn. Durable native-first
-  phases support retry after failure or restart; legacy sessions continue
-  in their original directory. Claude uses UUID prefix forks, Codex uses
-  verified `thread/revert` prefixes. One checkpoint history applies the
-  same recorded transitions during live execution and replay. It plans
-  snapshot retries and chooses the next undo phase while keeping discarded
-  checkpoints available for diffs.
+- **Worktrees and commit snapshots** (architecture §5.3). Each new session
+  gets a managed Git worktree from committed HEAD, an initial snapshot
+  and a snapshot per actual turn. The session records each snapshot's
+  commit; unchanged turns may share that commit. The phone shows bounded
+  immutable diffs between consecutive recorded snapshots, including all
+  commits the agent made within a turn. Capture recovery retains pending
+  work across failures and restart, and retention refs keep recorded
+  commits reachable. Historical undo, provider rewind and the independent
+  checkpoint identity and ancestry are removed. Continue still resumes
+  the provider conversation on the same host. The wire uses ALPN
+  `conductor/30` and the event store format is 7.
 
 - **Single CLI pin source** (#28). `tools/pin` writes only
   `crates/agents/src/pin/pins.rs`, including upstream verification notes.
@@ -165,8 +165,9 @@ What is built and what comes next. Update it in the commit that changes it.
   session's *Remove* (`RemoveSession`, ALPN `conductor/19`) stops its
   agent between turns, commits what its worktree holds onto
   `conductor/<ulid>`, pushes that branch alone to the checkout's `origin`
-  without force, and removes the worktree and its checkpoint refs. The
-  branch stays in the checkout; `SessionRemoved` says whether it was
+  without force, and removes the worktree. The branch stays in the checkout;
+  snapshot retention refs keep commits from surviving events reachable.
+  `SessionRemoved` says whether it was
   pushed. The removed session leaves the app and takes no command. *Try:*
   close a session, press *Remove*, and find its work on
   `conductor/<ulid>` in the checkout.
@@ -197,12 +198,13 @@ What is built and what comes next. Update it in the commit that changes it.
   whether the branch was pushed or kept on the source host. *Try:* finish
   an issue session, verify the push and start one on another host with a
   checkout that can fetch the issue branch ([home](home.md#4-flows)).
-- **Turns as commits** (home step 7c, architecture §5.3). Each turn of a
-  session is a commit on its branch, on top of any the agent made, and
-  undoing a turn resets the branch to the turn before; a turn that
-  changed nothing makes none. A finished issue's branch has a commit per
-  turn. No protocol change. *Try:* run two turns, then `git log` the
-  session's `conductor/<ulid>` branch.
+- **Turn commits when finishing** (home step 7c, architecture §5.3). Each
+  turn records the session branch's tip after capturing changes on top
+  of any commits the agent made. A turn with no further file changes
+  needs no new commit. Finishing lands the accumulated branch commits on
+  the issue branch. *Try:* run two turns, inspect each turn's diff and
+  `git log` on `conductor/<ulid>`, then finish the session and inspect the
+  issue branch.
 - **Instructions from the home** (home step 8, §5). Each start of a
   session's agent is told the home's shared rules, where its project's
   profiles keep their checks on the host, and the project's `AGENTS.md`

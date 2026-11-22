@@ -6,14 +6,21 @@
 | Adapter replay in `claude-cli` and `codex-cli` | Recorded CLI exchanges exercise process and thread lifecycle, request correlation, interruption, EOF and resume through the adapter. |
 | Provider-event mapping in `claude` and `codex` | Provider messages become the intended common event or request, with the IDs, outcomes and details the host uses. |
 | Host tests and daemon E2E in `host` and `daemon` | Commands reach the correct session, receipts and events survive retry and restart, and real host links catch up. The daemon tests run with fake or recorded providers. |
+| Workspace Git tests and daemon E2E | Initial and turn snapshots record commits, unchanged turns can share a commit, and diffs compare consecutive recorded snapshots even when the agent made several commits. Capture failure and restart preserve pending work and branch commits; retained commits stay reachable. Ownership checks, diff limits, original-checkout isolation, finishing and safe removal remain covered. |
 | Client fold in `client` | Event streams, reconnects and snapshots reconstruct session state and the pending actions shown to a client. |
-| Browser E2E in `crates/app/tests-e2e` | The web app's layout, browser storage, interaction and event wiring work against the daemon with fake CLIs. |
+| Browser E2E in `crates/app/tests-e2e` | The web app's layout, browser storage, interaction and event wiring work against the daemon with fake CLIs, including separate turn rows and diffs when commits repeat. |
 | Real CLI compatibility | The compiled pins, version checks and recorded exchanges anchor replay to known CLI versions. Re-record provider behavior when changing a pin and document it in the provider's `PROTOCOL.md`. |
-| Real host and CLI in `tools/live-host.sh` | The real host can configure a provider, open a session and handle approvals, interruption and Continue over iroh. The optional undo check adds file and conversation recovery. |
+| Real host and CLI in `tools/live-host.sh` | The real host can configure a provider, open a session and handle approvals, interruption and Continue over iroh. |
 
 Keep assertions at each boundary where they detect a wiring or behavior
 failure. The same user action can exercise distinct guarantees in the wire,
 daemon and browser suites.
+
+Historical undo and provider rewind are removed. Current snapshot checks
+cover capture and per-turn comparisons; Continue checks still verify
+ordinary provider resume after a restart. The dated run and allocation
+report below describe the versions tested then, including features since
+removed.
 
 ## Models in the live-host check
 
@@ -59,7 +66,7 @@ observed the control variable in the tool subprocess and zero copies of the
 provider key. Codex resumed after the test interrupted the registered account's
 app-server in its own work directory. [Claude gateway behavior](../crates/claude/PROTOCOL.md)
 
-## Checkpoint preview allocations
+## Historical checkpoint preview allocations
 
 A draft edit rebuilt a native session pane with 60 transcript rows, 12
 turns and three open checkpoint previews. Each preview held four text
@@ -82,8 +89,10 @@ test profile.
 
 Use a disposable checkout at `447f2aa` and the
 [allocation fixture](verification/preview_allocations.rs) from this tree.
-Set `fixed_checkout` to the absolute path of the checkout that has the fix,
-then run from the disposable checkout.
+Set `fixed_checkout` to the absolute path of a checkout with the original
+#96 fix, before commit snapshots replaced the checkpoint model, then run
+from the disposable checkout. These commands reproduce that historical
+comparison and are not checks for the current snapshot implementation.
 
 ```sh
 mkdir -p crates/ui/tests

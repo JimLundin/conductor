@@ -100,7 +100,7 @@
   <h2>Why it's shaped this way</h2>
   <ul class="notes">
     <li><b>A session owns its workspace.</b> The workspace is what a session needs to work on its issue: a checkout of the project on the instance's node, on the session's own branch. It is made when the session starts and removed with the session.</li>
-    <li><b>Each turn is a commit</b> on the session's branch, so undoing a turn resets the branch; there is no separate checkpoint.</li>
+    <li><b>Each turn records a snapshot commit</b> on the session's branch. Unchanged turns may share a commit, and per-turn diffs compare consecutive recorded snapshots. Historical undo is unavailable.</li>
     <li><b>A harness is shared</b> by every instance of it; it comes with the binary as plugin data. An instance is one harness on one node with one account, so a node can run the same harness on two accounts, e.g. a subscription and an API key.</li>
     <li><b>A session is an instance working on an issue</b>, at most one per pair, so two sessions of one instance never race on one issue. The harness's own id for the conversation is the harness's bookkeeping, kept by its plugin in the session's workspace, not part of the model.</li>
     <li><b>None of the owner's own names is a key.</b> Projects are keyed by ids that never change, so they can be renamed; nodes by their public key. An instance's account is named by its harness and provider, not by the owner, so it is a stable part of the instance's key.</li>

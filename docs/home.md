@@ -75,8 +75,9 @@ are never stored and can't disagree.
   cut from the issue's branch (a branch is checked out in one place at a
   time). It is made when the session starts and removed with the session;
   what the session did reaches the issue by landing its branch on the
-  issue's branch. Each turn is a commit on that branch, so undoing a turn
-  resets the branch.
+  issue's branch. The initial state and each turn's snapshot record a
+  commit on the session's branch. An unchanged turn may reuse the same
+  commit; per-turn diffs compare consecutive recorded snapshots.
 - **A session's transcript** holds its events, tasks, requests and
   sub-agents. A sub-agent is something an agent does inside its session,
   like a tool call, so it can't belong to another issue.
@@ -184,6 +185,12 @@ branch and notes. To carry landed commits to another node, first publish the
 issue branch to the project remote and make sure the target node has a
 checkout that can fetch it.
 
+**Continue this session.** Select **Continue** after its agent stops or
+the host restarts. The session resumes its provider conversation on the
+same node, with its workspace and recorded turn snapshots. Historical
+undo is unavailable; opening a turn's diff does not change its files or
+conversation.
+
 **Finish.** Select **Finish** in the session. The node asks the agent for a
 summary, stops it and tries to land the session branch on the issue branch.
 It adds the summary to the issue notes and moves the issue to `review` when
@@ -262,10 +269,10 @@ call that started each, a description, its own transcript and status.
 6. Issues: create, edit, status, checklist and notes in the app. Done
    (architecture §5.4).
 7. Sessions on issues: start, finish, continue elsewhere, with the
-   session's branch cut from the issue's and each turn a commit on it
+   session's branch cut from the issue's and each turn recording a commit
    (§2.3). Done (architecture §5.3, §5.4). See §4 for the checkout
-   and publication prerequisites. Each turn is a commit on the session
-   branch, and undoing resets it.
+   and publication prerequisites. Unchanged turns may share a commit;
+   finishing lands the session's branch on the issue's branch.
 8. Standards and instructions composed into sessions. Done (§5).
 9. Agent and sub-agent checklists shown in their sessions, without automatic issue notes (§4).
 
