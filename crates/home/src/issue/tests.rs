@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use proto::flow::Flow;
+use proto::flow::{Flow, Role, Status};
 use proto::{
     ChecklistChange, ChecklistItem, Checkout, Cloning, CommandId, Datum, Entry,
     Home, HomeSync, HostPath, Issue, IssueChange, IssueId, Item, LogEvent,
@@ -9,7 +9,7 @@ use proto::{
 
 use super::{
     Applied, Branch, Change, Edit, EditData, Mode, Move, PendingEdits, Remote,
-    branch, file, finished, listed, message, read, start, started,
+    SessionUpdate, branch, file, listed, message, read, start, startable,
 };
 use crate::flow::command::Issues;
 use crate::flow::graph::File;
@@ -717,19 +717,105 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
     assert_eq!(start(None, ID).map(|_| ()), Err(Rejection::NoHome));
 }
 
+/// The flow Conductor's own home declares, with every status renamed and
+/// a second active status after the first.
+fn renamed() -> Flow {
+    let mut flow = flow();
+    for status in &mut flow.statuses {
+        status.name = text(match status.role {
+            Role::Idle => "backlog",
+            Role::Startable => "queued",
+            Role::Active => "doing",
+            Role::Review => "checking",
+            Role::Terminal => "shipped",
+            Role::Dropped => "abandoned",
+        });
+    }
+    flow.statuses.push(Status {
+        name: text("pairing"),
+        role: Role::Active,
+        colour: None,
+    });
+    flow
+}
+
+const RENAMED: [&str; 7] = [
+    "backlog",
+    "queued",
+    "doing",
+    "checking",
+    "shipped",
+    "abandoned",
+    "pairing",
+];
+
+/// What a session's update moves the issue to, from `status`, alone in
+/// its home.
+fn moved(
+    flow: &Flow,
+    mut update: SessionUpdate,
+    status: &str,
+) -> Option<String> {
+    let mut known = issue();
+    known.status = text(status);
+    let listing = BTreeMap::from([(project(), vec![known])]);
+    match update.next(flow, &listing, ID) {
+        Some(IssueChange::Move {
+            part: Part::Status,
+            to,
+            ..
+        }) => Some(to),
+        _ => None,
+    }
+}
+
 #[test]
-fn work_on_an_idle_or_startable_issue_makes_it_active() {
-    let flow = flow();
+fn starting_a_session_makes_an_idle_or_startable_issue_active_by_role() {
+    let flow = renamed();
     assert_eq!(
-        ["open", "ready", "active", "review", "done", "dropped"]
-            .map(|status| started(&flow, status)),
+        RENAMED.map(|status| moved(&flow, SessionUpdate::Started, status)),
         [
-            Some(text("active")),
-            Some(text("active")),
+            Some(text("doing")),
+            Some(text("doing")),
             None,
             None,
             None,
-            None
+            None,
+            None,
+        ]
+    );
+}
+
+#[test]
+fn an_issue_blocked_by_one_not_yet_built_is_not_startable() {
+    let flow = renamed();
+    let blocker = IssueId(ID.0 + 1);
+    let mut waiting = issue();
+    waiting.status = text("queued");
+    waiting
+        .links
+        .insert(text("blocked_by"), Vec::from([blocker.to_string()]));
+    let offered = |status: &str| {
+        let mut blocking = issue();
+        blocking.id = blocker;
+        blocking.status = text(status);
+        let issues = [waiting.clone(), blocking];
+        let listing = BTreeMap::from([(project(), issues.to_vec())]);
+        (
+            startable(&flow, &issues, &waiting),
+            SessionUpdate::Started.next(&flow, &listing, ID).is_some(),
+        )
+    };
+    assert_eq!(
+        RENAMED.map(offered),
+        [
+            (false, false),
+            (false, false),
+            (false, false),
+            (true, true),
+            (true, true),
+            (true, true),
+            (false, false),
         ]
     );
 }
@@ -781,21 +867,25 @@ fn the_issue_branch_follows_the_remote_and_never_leaves_its_work_out() {
 }
 
 #[test]
-fn a_finished_issue_whose_branch_gained_commits_is_up_for_review() {
-    let flow = flow();
+fn a_finished_issue_whose_branch_gained_commits_is_up_for_review_by_role() {
+    let flow = renamed();
+    let landed = |landed| SessionUpdate::Finished {
+        summary: None,
+        landed,
+    };
     assert_eq!(
-        ["open", "ready", "active", "review", "done", "dropped"]
-            .map(|status| finished(&flow, status, 2)),
+        RENAMED.map(|status| moved(&flow, landed(2), status)),
         [
-            Some(text("review")),
-            Some(text("review")),
-            Some(text("review")),
+            Some(text("checking")),
+            Some(text("checking")),
+            Some(text("checking")),
             None,
             None,
             None,
+            Some(text("checking")),
         ]
     );
-    assert_eq!(finished(&flow, "active", 0), None);
+    assert_eq!(moved(&flow, landed(0), "doing"), None);
     let known = home(Vec::from([checkout()]), Vec::from([issue()]));
     assert_eq!(branch(Some(&known), ID), format!("refs/heads/issue/{ID}"));
     assert_eq!(branch(None, ID), format!("refs/heads/issue/{ID}"));
@@ -1313,8 +1403,6 @@ fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection
 
 #[test]
 fn a_session_updates_its_issue_using_the_listing_after_the_note() {
-    use super::SessionUpdate;
-
     let flow = flow();
     let mut known = issue();
     known.status = text("open");
@@ -1360,8 +1448,6 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
 #[test]
 fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 -> Result<(), String> {
-    use super::SessionUpdate;
-
     let listing = BTreeMap::from([(project(), vec![issue()])]);
     let mut finish = SessionUpdate::Finished {
         summary: None,

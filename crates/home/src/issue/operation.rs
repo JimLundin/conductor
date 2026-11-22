@@ -509,13 +509,15 @@ impl SessionUpdate {
             }
             Self::Done => None,
             Self::Started | Self::Finished { summary: None, .. } => {
-                let from = status(issues, id)?;
+                let all: Vec<Issue> =
+                    issues.values().flatten().cloned().collect();
+                let issue = all.iter().find(|known| known.id == id)?;
                 let (moved, reason) = match update {
                     Self::Started => {
-                        (started(flow, &from), "a session started on it")
+                        (started(flow, &all, issue), "a session started on it")
                     }
                     Self::Finished { landed, .. } => (
-                        finished(flow, &from, landed),
+                        finished(flow, &issue.status, landed),
                         "a session on it landed work",
                     ),
                     Self::Done => (None, ""),
@@ -529,17 +531,6 @@ impl SessionUpdate {
             }
         }
     }
-}
-
-fn status(
-    issues: &BTreeMap<ProjectId, Vec<Issue>>,
-    id: IssueId,
-) -> Option<String> {
-    issues
-        .values()
-        .flatten()
-        .find(|known| known.id == id)
-        .map(|known| known.status.clone())
 }
 
 /// A Git observation needed to decide how to ready an issue branch.

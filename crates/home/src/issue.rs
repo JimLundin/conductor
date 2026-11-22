@@ -15,10 +15,11 @@
 //! unless the edit is newer. Replay recognizes edits it already applied,
 //! even when a separately submitted note has the same text.
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::flow::{Flow, Role};
+use proto::flow::{Flow, Predicate, Quantifier, Role, Shape};
 use proto::{
     ChecklistChange, ChecklistItem, CommandId, Datum, Home, HostPath, Issue,
     IssueChange, IssueId, Item, NewIssue, Part, ProjectId, Rejection,
@@ -28,7 +29,8 @@ use toml::{Spanned, Value};
 use toml_parser::{Source, lexer::TokenKind};
 
 use crate::flow::command::{self, Issues};
-use crate::flow::graph::{self, File, item, markdown};
+use crate::flow::eval;
+use crate::flow::graph::{self, File, Graph, item, markdown};
 use crate::prelude::*;
 
 const CHECKLIST: &str = "## Checklist";
@@ -709,12 +711,48 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
     })
 }
 
-/// The status an issue moves to once a session on it has started: work
-/// on an idle or startable one is active.
+/// Whether a session may start on `issue`, among `issues`: it waits to be
+/// taken up, and everything it depends on is built or dropped.
 #[must_use]
-fn started(flow: &Flow, status: &str) -> Option<String> {
-    let role = flow.status(status)?.role;
-    matches!(role, Role::Idle | Role::Startable)
+pub fn startable(flow: &Flow, issues: &[Issue], issue: &Issue) -> bool {
+    let graph = Graph {
+        issues: issues.to_vec(),
+        problems: Vec::new(),
+    };
+    eval::holds(flow, &graph, issue, eval::Move::default(), &can_start(flow))
+        .is_ok()
+}
+
+/// What [`startable`] asks of an issue, across each of the flow's
+/// dependencies.
+fn can_start(flow: &Flow) -> Predicate {
+    let roles = |roles: &[Role]| {
+        Predicate::Any(
+            roles.iter().copied().map(Predicate::StatusRole).collect(),
+        )
+    };
+    let built = roles(&[Role::Review, Role::Terminal, Role::Dropped]);
+    let blockers = flow
+        .relations
+        .iter()
+        .filter(|relation| relation.shape == Shape::Dependency)
+        .map(|relation| Predicate::Across {
+            quantifier: Quantifier::All,
+            via: relation.name.clone(),
+            condition: Box::new(built.clone()),
+        });
+    Predicate::All(
+        core::iter::once(roles(&[Role::Idle, Role::Startable]))
+            .chain(blockers)
+            .collect(),
+    )
+}
+
+/// The status an issue moves to once a session on it has started: work
+/// on one that can start is active.
+#[must_use]
+fn started(flow: &Flow, issues: &[Issue], issue: &Issue) -> Option<String> {
+    startable(flow, issues, issue)
         .then(|| first(flow, Role::Active))
         .flatten()
 }
