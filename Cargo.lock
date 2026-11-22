@@ -2500,6 +2500,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "home-cli"
+version = "0.1.0"
+dependencies = [
+ "home",
+ "proto",
+]
+
+[[package]]
 name = "host"
 version = "0.1.0"
 dependencies = [
