@@ -1,7 +1,7 @@
 # Inactive branch consolidation
 
 Assessment began at `90cbb89` and incorporates the landing-queue work on
-`main` through `2513fd7`, 22 November 2026. The historical
+`main` through `bff84bd`, 22 November 2026. The historical
 reviews describe older versions of Conductor; their proposals do not
 override the current glossary or the accepted product decisions.
 
@@ -68,3 +68,16 @@ that design is implemented.
 `ci-units` and `queue-land` were active when this assessment began. Their
 completed CI and landing infrastructure subsequently reached `main` and
 is retained without changing its implementation.
+
+## Validation and landing
+
+The consolidation passed its standards and intent reviews. Landing still
+requires a passing queue run. The baseline CI run on `main` at `bff84bd`
+reported 51 uses of `Box` or `Rc` forbidden by the current core standard,
+across `proto`, `home`, `host` and `ui`. Replacing those representations is
+a separate refactor; this consolidation adds no exception to bypass it.
+
+That baseline also exposed a browser test which changed only the join
+fragment, leaving the existing document mounted. Pairing reads the fragment
+when the app opens. The storage-recovery scenario now reloads after that
+navigation so it exercises the denied write and retained join link.
