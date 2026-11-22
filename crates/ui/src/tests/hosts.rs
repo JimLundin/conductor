@@ -445,7 +445,7 @@ fn saved_hosts_round_trip_and_a_join_link_keeps_one_entry_per_host() {
 }
 
 #[test]
-fn current_host_records_ignore_obsolete_storage_and_orphaned_names() {
+fn host_records_ignore_orphaned_names_and_malformed_keys() {
     let saved = Saved {
         ticket: ticket(),
         name: Some(text("before")),
@@ -463,12 +463,6 @@ fn current_host_records_ignore_obsolete_storage_and_orphaned_names() {
             format!("{}{key}", crate::NAME_KEY, key = HOST.key()),
             text("desk"),
         ),
-        (
-            text("conductor.hosts"),
-            encode(core::slice::from_ref(&unrelated)),
-        ),
-        (text("conductor.ticket"), other().to_text()),
-        (text("conductor.migrated-ticket"), other().to_text()),
         (
             format!("{}{key}", crate::HOST_KEY, key = OTHER.key()),
             String::new(),
