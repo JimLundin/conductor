@@ -1,11 +1,14 @@
 //! The projects view and starting a session in a project.
 
+use std::collections::BTreeMap;
+
 use client::link::{LinkState, Update};
+use proto::flow::{Field, FieldType, Flow, Kind, Role, Status};
 use proto::{
     AuthToken, ChecklistAction, ChecklistItem, Checkout, Cloning, CommandBody,
-    CommandResult, EventKind, Feed, Home, HomeSync, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, IssueStatus, Origin, Priority, Project,
-    ProjectId, Rejection, StartAt, Ticket, Workspace,
+    CommandResult, Datum, Entry, EventKind, Feed, Home, HomeSync, HostPath,
+    Issue, IssueChange, IssueFields, IssueId, LogEvent, Origin, Project,
+    ProjectId, Rejection, Section, StartAt, Ticket, Workspace,
 };
 
 use super::{
@@ -13,9 +16,10 @@ use super::{
     paired, run, screen, sent, signed_in, text, welcomed,
 };
 use crate::{
-    CheckoutRow, Detail, Effect, FormIntent, HomeLine, Intent, IssueIntent,
-    IssueList, IssueRow, IssueScreen, Listing, NewIssueIntent, Place,
-    ProjectGroup, ProjectIntent, ProjectsScreen, StatusGroup, when,
+    CheckoutRow, Detail, Effect, FieldPicker, FormIntent, HomeLine, Intent,
+    IssueIntent, IssueList, IssueRow, IssueScreen, Listing, NewIssueIntent,
+    Pick, Place, ProjectGroup, ProjectIntent, ProjectsScreen, StatusGroup,
+    when,
 };
 
 const OTHER: crate::HostId = crate::HostId([7; 32]);
@@ -61,7 +65,68 @@ fn home(sync: HomeSync, projects: Vec<Project>) -> Home {
         synced: Some(1_700_000_000),
         sync,
         unpushed: 0,
+        flow: Some(Box::new(flow())),
         projects,
+    }
+}
+
+fn enumerated(name: &str, words: &[&str], default: Option<&str>) -> Field {
+    Field {
+        name: text(name),
+        value: FieldType::Enum(words.iter().copied().map(text).collect()),
+        default: default.map(text),
+    }
+}
+
+fn kind(name: &str, label: &str, fields: Vec<Field>) -> Kind {
+    Kind {
+        name: text(name),
+        label: text(label),
+        icon: None,
+        colour: None,
+        sections: Vec::new(),
+        fields,
+        order: Vec::new(),
+    }
+}
+
+/// A home's flow, like Conductor's own: six statuses, a priority, labels,
+/// a branch and when an issue was opened.
+fn flow() -> Flow {
+    let status = |name: &str, role| Status {
+        name: text(name),
+        role,
+        colour: None,
+    };
+    let field = |name: &str, value| Field {
+        name: text(name),
+        value,
+        default: None,
+    };
+    Flow {
+        default_kind: text("task"),
+        statuses: Vec::from([
+            status("open", Role::Idle),
+            status("ready", Role::Startable),
+            status("active", Role::Active),
+            status("review", Role::Review),
+            status("done", Role::Terminal),
+            status("dropped", Role::Dropped),
+        ]),
+        fields: Vec::from([
+            enumerated(
+                "priority",
+                &["low", "normal", "high", "urgent"],
+                Some("normal"),
+            ),
+            field("labels", FieldType::Texts),
+            field("branch", FieldType::Text),
+            field("created", FieldType::Time),
+        ]),
+        kinds: Vec::from([kind("task", "Task", Vec::new())]),
+        relations: Vec::new(),
+        stages: Vec::new(),
+        rules: Vec::new(),
     }
 }
 
@@ -782,16 +847,25 @@ fn a_time_is_a_utc_date_and_minute() {
 const OPENED: IssueId = IssueId(1);
 const CLOSED: IssueId = IssueId(2);
 
-fn issue(id: IssueId, title: &str, status: IssueStatus) -> Issue {
+fn issue(id: IssueId, title: &str, status: &str) -> Issue {
     Issue {
         id,
+        project: ProjectId(text("alpha")),
         title: text(title),
-        body: text("Why it matters."),
-        status,
-        priority: Priority::High,
-        labels: Vec::from([text("app")]),
+        kind: text("task"),
+        status: text(status),
+        stage: None,
+        fields: BTreeMap::from([
+            (text("priority"), Datum::Text(text("high"))),
+            (text("labels"), Datum::Texts(Vec::from([text("app")]))),
+            (text("created"), Datum::Text(text("2026-11-18T10:12:00Z"))),
+        ]),
+        links: BTreeMap::new(),
+        sections: Vec::from([Section {
+            heading: String::new(),
+            text: text("Why it matters."),
+        }]),
         branch: text("issue/x"),
-        created: text("2026-11-18T10:12:00Z"),
         checklist: Vec::from([
             ChecklistItem {
                 done: true,
@@ -802,15 +876,20 @@ fn issue(id: IssueId, title: &str, status: IssueStatus) -> Issue {
                 text: text("browser"),
             },
         ]),
-        notes: Vec::from([text("2026-11-18 desk · iPhone: started")]),
+        log: Vec::from([Entry {
+            at: None,
+            by: None,
+            event: LogEvent::Note,
+            text: text("2026-11-18 desk · iPhone: started"),
+        }]),
     }
 }
 
 fn issue_project(checkouts: Vec<Checkout>) -> Project {
     let mut alpha = project("alpha", Some("a"), checkouts, Cloning::Idle);
     alpha.issues = Vec::from([
-        issue(OPENED, "Sign in", IssueStatus::Open),
-        issue(CLOSED, "Pair", IssueStatus::Done),
+        issue(OPENED, "Sign in", "open"),
+        issue(CLOSED, "Pair", "done"),
     ]);
     alpha
 }
@@ -857,13 +936,13 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
         listed.map(|list| list.groups),
         Some(Vec::from([
             StatusGroup {
-                status: "open",
-                label: "Open",
+                status: text("open"),
+                label: text("open"),
                 rows: Vec::from([row(OPENED, "Sign in")]),
             },
             StatusGroup {
-                status: "done",
-                label: "Done",
+                status: text("done"),
+                label: text("done"),
                 rows: Vec::from([row(CLOSED, "Pair")]),
             },
         ]))
@@ -885,7 +964,6 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
             fields: IssueFields {
                 title: text("Remove"),
                 body: String::new(),
-                priority: Priority::Normal,
                 labels: Vec::new(),
             },
         }]
@@ -938,14 +1016,14 @@ fn an_issue_shows_its_fields_and_sends_each_change() -> Result<(), &'static str>
                 .status
                 .iter()
                 .find(|pick| pick.selected)
-                .map(|pick| pick.word),
+                .map(|pick| pick.word.clone()),
         )),
         Some((
             text("Project alpha · desk"),
-            text("issue/x · opened 2026-11-18T10:12:00Z"),
+            text("Task · issue/x · opened 2026-11-18T10:12:00Z"),
             Vec::from([text("2026-11-18 desk · iPhone: started")]),
             Vec::from([true, false]),
-            Some("open"),
+            Some(text("open")),
         ))
     );
     let row = shown
@@ -954,7 +1032,7 @@ fn an_issue_shows_its_fields_and_sends_each_change() -> Result<(), &'static str>
     let (draft, effects) = run(
         on_issue(),
         Vec::from([
-            Intent::Issue(IssueIntent::SetStatus(text("in-progress"))),
+            Intent::Issue(IssueIntent::SetStatus(text("active"))),
             Intent::Issue(IssueIntent::SetStatus(text("open"))),
             Intent::Issue(row.toggle),
             Intent::Issue(IssueIntent::TypeItem(text("docs"))),
@@ -972,9 +1050,9 @@ fn an_issue_shows_its_fields_and_sends_each_change() -> Result<(), &'static str>
     assert_eq!(
         sent(&effects),
         [
-            change(IssueChange::Status(IssueStatus::InProgress)),
+            change(IssueChange::Status(text("active"))),
             change(IssueChange::Checklist {
-                snapshot: issue(OPENED, "Sign in", IssueStatus::Open).checklist,
+                snapshot: issue(OPENED, "Sign in", "open").checklist,
                 index: 1,
                 action: ChecklistAction::SetDone(true),
             }),
@@ -1065,7 +1143,12 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
         Vec::from([
             Intent::Issue(IssueIntent::Edit),
             Intent::Issue(IssueIntent::TypeTitle(text("New title"))),
-            refresh_issue(|issue| issue.body = text("Remote body edit")),
+            refresh_issue(|issue| {
+                issue.sections = Vec::from([Section {
+                    heading: String::new(),
+                    text: text("Remote body edit"),
+                }]);
+            }),
             Intent::Issue(IssueIntent::TypeLabels(text("new labels"))),
         ]),
     );
@@ -1497,32 +1580,183 @@ fn a_late_created_reply_cannot_open_an_issue_or_clear_a_new_title()
 }
 
 #[test]
-fn an_issue_marks_its_priority_and_sends_only_a_new_one() {
-    let (_, effects) = run(
-        on_issue(),
-        Vec::from([
-            Intent::Issue(IssueIntent::SetPriority(text("high"))),
-            Intent::Issue(IssueIntent::SetPriority(text("low"))),
-        ]),
-    );
+fn an_issue_marks_a_fields_word_and_sends_only_a_new_one() {
+    let priority = |value: &str| {
+        Intent::Issue(IssueIntent::SetField {
+            field: text("priority"),
+            value: text(value),
+        })
+    };
+    let (_, effects) =
+        run(on_issue(), Vec::from([priority("high"), priority("low")]));
     assert_eq!(
         (
             issue_screen(&on_issue()).map(|issue| issue
-                .priority
+                .fields
                 .into_iter()
+                .flat_map(|picker| picker.picks)
                 .filter(|pick| pick.selected)
                 .map(|pick| pick.word)
                 .collect::<Vec<_>>()),
             sent(&effects),
         ),
         (
-            Some(Vec::from(["high"])),
+            Some(Vec::from([text("high")])),
             Vec::from([CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: IssueChange::Priority(Priority::Low),
+                change: IssueChange::Set {
+                    field: text("priority"),
+                    value: text("low"),
+                },
             }]),
         )
     );
+}
+
+/// The issues view on desk, whose home has `flow` and alpha's issues.
+fn under(flow: Flow, issues: Vec<Issue>) -> crate::State {
+    let mut alpha = issue_project(Vec::from([at(ALPHA, Origin::Found)]));
+    alpha.issues = issues;
+    let mut known = home(HomeSync::Synced, Vec::from([alpha]));
+    known.flow = Some(Box::new(flow));
+    run(
+        paired(),
+        Vec::from([
+            welcomed(HOST, "desk", claude(signed_in()), Some(known)),
+            connection(HOST, LinkState::Live, None),
+            Intent::Show(Place::Projects),
+        ]),
+    )
+    .0
+}
+
+fn picks(words: &[&str], selected: &str) -> Vec<Pick> {
+    words
+        .iter()
+        .map(|word| Pick {
+            word: text(word),
+            label: text(word),
+            selected: *word == selected,
+        })
+        .collect()
+}
+
+#[test]
+fn renamed_statuses_group_label_and_fill_the_picker_with_no_code_change()
+-> Result<(), &'static str> {
+    let mut renamed = flow();
+    for (status, name) in renamed
+        .statuses
+        .iter_mut()
+        .zip(["inbox", "queued", "doing", "checking", "shipped", "binned"])
+    {
+        status.name = text(name);
+    }
+    renamed.statuses.insert(
+        2,
+        Status {
+            name: text("blocked"),
+            role: Role::Idle,
+            colour: None,
+        },
+    );
+    let shown = under(
+        renamed,
+        Vec::from([
+            issue(OPENED, "Sign in", "shipped"),
+            issue(CLOSED, "Pair", "blocked"),
+        ]),
+    );
+    let groups = projects(&shown)
+        .and_then(|screen| screen.projects.into_iter().next())
+        .map(|group| {
+            group
+                .issues
+                .groups
+                .into_iter()
+                .map(|listed| (listed.status, listed.label, listed.rows.len()))
+                .collect::<Vec<_>>()
+        });
+    assert_eq!(
+        groups,
+        Some(Vec::from([
+            (text("blocked"), text("blocked"), 1),
+            (text("shipped"), text("shipped"), 1),
+        ])),
+        "groups follow the flow's order, by its names"
+    );
+    let (on_issue, _) =
+        run(shown, Vec::from([Intent::Show(Place::Issue(HOST, OPENED))]));
+    let screen = issue_screen(&on_issue).ok_or("no issue screen")?;
+    assert_eq!(
+        screen.status,
+        picks(
+            &[
+                "inbox", "queued", "blocked", "doing", "checking", "shipped",
+                "binned"
+            ],
+            "shipped"
+        )
+    );
+    let (_, effects) = run(
+        on_issue,
+        Vec::from([Intent::Issue(IssueIntent::SetStatus(text("checking")))]),
+    );
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::ChangeIssue {
+            issue: OPENED,
+            change: IssueChange::Status(text("checking")),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_new_kind_and_field_bring_their_own_label_and_pickers()
+-> Result<(), &'static str> {
+    let mut grown = flow();
+    grown
+        .fields
+        .push(enumerated("effort", &["small", "large"], Some("small")));
+    grown.kinds.push(kind(
+        "chore",
+        "Chore",
+        Vec::from([enumerated("area", &["ci", "docs"], None)]),
+    ));
+    let mut chore = issue(OPENED, "Tidy", "open");
+    chore.kind = text("chore");
+    chore.fields.insert(text("area"), Datum::Text(text("docs")));
+    let shown = under(grown, Vec::from([chore]));
+    let row = projects(&shown)
+        .and_then(|screen| screen.projects.into_iter().next())
+        .and_then(|group| group.issues.groups.into_iter().next())
+        .and_then(|listed| listed.rows.into_iter().next())
+        .map(|listed| listed.detail);
+    assert_eq!(row, Some(text("high · app · docs · 1/2 done")));
+    let (on_issue, _) =
+        run(shown, Vec::from([Intent::Show(Place::Issue(HOST, OPENED))]));
+    let screen = issue_screen(&on_issue).ok_or("no issue screen")?;
+    assert_eq!(
+        screen.fields,
+        Vec::from([
+            FieldPicker {
+                field: text("priority"),
+                picks: picks(&["low", "normal", "high", "urgent"], "high"),
+            },
+            FieldPicker {
+                field: text("effort"),
+                picks: picks(&["small", "large"], "small"),
+            },
+            FieldPicker {
+                field: text("area"),
+                picks: picks(&["ci", "docs"], "docs"),
+            },
+        ]),
+        "a field the issue leaves out shows its default"
+    );
+    assert!(screen.detail.starts_with("Chore · "), "{}", screen.detail);
+    Ok(())
 }
 
 #[test]

@@ -281,7 +281,7 @@ fn finished(
         .issues
         .iter()
         .find(|issue| {
-            (&issue.project, &issue.id) == (&file.project, &file.stem)
+            issue.project == file.project && issue.id.to_string() == file.stem
         })
         .map_or_else(Vec::new, |issue| {
             let from = before.issues.iter().find(|old| {
@@ -400,7 +400,7 @@ fn shifted(
         .issues
         .into_iter()
         .find(|issue| {
-            (&issue.project, &issue.id) == (&file.project, &file.stem)
+            issue.project == file.project && issue.id.to_string() == file.stem
         })
         .ok_or_else(|| {
             format!(

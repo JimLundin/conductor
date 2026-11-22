@@ -39,8 +39,8 @@ pub use credentials::{
 };
 pub use host::{HostId, StatusLine};
 pub use issues::{
-    EditForm, IssueIntent, IssueList, IssueRow, IssueScreen, IssueSession,
-    ItemRow, NewIssueIntent, Pick, StatusGroup,
+    EditForm, FieldPicker, IssueIntent, IssueList, IssueRow, IssueScreen,
+    IssueSession, ItemRow, NewIssueIntent, Pick, StatusGroup,
 };
 pub use new_session::{
     Choice, FormIntent, Hint, InstanceChoice, NewSessionForm, Suggestion,

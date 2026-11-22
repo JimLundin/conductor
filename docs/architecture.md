@@ -741,8 +741,9 @@ standards and issues, cloned on every host. Built so far are home steps
   the agent's first message is the issue's brief (`home::issue::start`):
   its title, body, checklist and notes, the branch, and what to do when
   done; one that doesn't reach the agent leaves an `Error` in the session.
-  The home actor then moves an `open` or `ready` issue to `in-progress`,
-  as the issue is then (`home::issue::SessionUpdate`). The fetch runs in the
+  The home actor then moves an issue whose status has the flow's role
+  `idle` or `startable` to its first status of role `active`, as the issue
+  is then (`home::issue::SessionUpdate`). The fetch runs in the
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
 - **Finishing** (home step 7). `FinishSession { session }`, for a session
@@ -768,8 +769,9 @@ standards and issues, cloned on every host. Built so far are home steps
   checked out somewhere, which can't move under its worktree. It pushes
   the issue's branch to `origin`, never forced, which lets another host
   continue the issue. The summary becomes the issue's note, signed
-  `<host> · <instance>`, and an `open`, `ready` or `in-progress` issue
-  whose branch gained commits moves to `review`
+  `<host> · <instance>`, and an issue still `idle`, `startable` or `active`
+  by role whose branch gained commits moves to the flow's first status of
+  role `review`
   (`home::issue::SessionUpdate`). `SessionFinished { finished }` ends it: the
   commits that landed and where the branch went (`Kept`), or why nothing
   landed. The session stays, closed; *Remove* removes its workspace.

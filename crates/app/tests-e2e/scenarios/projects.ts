@@ -85,7 +85,7 @@ const issue = async (run: Run): Promise<void> => {
 		"the new issue opens",
 	);
 	check((await status.inputValue()) === "open", "it opens as open");
-	await status.selectOption("in-progress");
+	await status.selectOption("active");
 	await pane.locator('input[name="item"]').fill("the browser scenario");
 	await pane.getByRole("button", { name: "Add", exact: true }).click();
 	await pane
@@ -101,14 +101,14 @@ const issue = async (run: Run): Promise<void> => {
 		SIGNED_NOTE.test(note),
 		`the note is dated and signed by the host and the device ("${note}")`,
 	);
-	check((await status.inputValue()) === "in-progress", "the status moved on");
+	check((await status.inputValue()) === "active", "the status moved on");
 	await settled();
 	await page.screenshot({ path: shotNamed(out, "issue") });
 	await pane.getByRole("button", { name: "Back to projects" }).click();
-	const inProgress = alpha.locator('.issue-group[data-status="in-progress"]');
-	await inProgress.locator(".issue-title").waitFor({ timeout: patience });
+	const active = alpha.locator('.issue-group[data-status="active"]');
+	await active.locator(".issue-title").waitFor({ timeout: patience });
 	check(
-		(await inProgress.locator(".issue-detail").innerText()) ===
+		(await active.locator(".issue-detail").innerText()) ===
 			"normal · 0/1 done",
 		"the project lists the issue under its status, with its checklist",
 	);

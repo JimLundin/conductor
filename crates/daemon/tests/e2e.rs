@@ -27,13 +27,13 @@ use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
     ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
-    Credential, Decision, Effort, Epoch, Event, EventKind, Feed, FileChange,
-    HostPath, HostSeq, InstanceId, InstanceStatus, Instances, IssueChange,
-    IssueFields, IssueId, IssueStatus, Kept, ModelChoice, ModelId, Models,
-    Priority, ProjectId, Provider, Question, QuestionOption, Rejection,
-    RequestId, Resolution, Roster, Selection, SessionId, StartAt,
-    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, ToolCallId,
-    ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Credential, Decision, Effort, Entry, Epoch, Event, EventKind, Feed,
+    FileChange, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
+    IssueChange, IssueFields, IssueId, Kept, ModelChoice, ModelId, Models,
+    ProjectId, Provider, Question, QuestionOption, Rejection, RequestId,
+    Resolution, Roster, Selection, SessionId, StartAt, SubagentActivity,
+    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
@@ -6020,6 +6020,10 @@ fn rooted(dir: &Path) -> Fallible<String> {
         .to_owned())
 }
 
+/// The flow Conductor's own home declares, which a test home's issues
+/// follow.
+const FLOW: &str = include_str!("../../home/src/flow/flow.toml");
+
 /// A project's `project.toml` in the home at `home`.
 fn listed_project(home: &Path, id: &str, fields: (&str, &str)) -> Fallible {
     let (remote, root) = fields;
@@ -6122,7 +6126,10 @@ fn homeland(name: &str) -> Fallible<Homeland> {
     git(&home_source, &["init", "--quiet"])?;
     listed_project(&home_source, "alpha", (&alpha, &alpha_root))?;
     listed_project(&home_source, "beta", (&beta, &beta_root))?;
-    git(&home_source, &["add", "projects"])?;
+    let agents = home_source.join("docs").join("agents");
+    std::fs::create_dir_all(&agents)?;
+    std::fs::write(agents.join("flow.toml"), FLOW)?;
+    git(&home_source, &["add", "projects", "docs"])?;
     git(
         &home_source,
         &[
@@ -6334,7 +6341,6 @@ fn create_issue_in(project: &str, title: &str) -> CommandBody {
         fields: IssueFields {
             title: String::from(title),
             body: String::from("Why."),
-            priority: Priority::High,
             labels: Vec::from([String::from("app")]),
         },
     }
@@ -6364,9 +6370,9 @@ async fn opens_an_issue(
     assert_eq!(
         alpha_issues(&opened)
             .iter()
-            .map(|shown| (shown.id, shown.title.clone(), shown.status))
+            .map(|shown| (shown.id, shown.title.clone(), shown.status.clone()))
             .collect::<Vec<_>>(),
-        [(issue, String::from("Sign in"), IssueStatus::Open)]
+        [(issue, String::from("Sign in"), String::from("open"))]
     );
     assert!(pushed_issue(land, issue)?.contains("title = \"Sign in\""));
     Ok(issue)
@@ -6391,7 +6397,11 @@ async fn lands_an_offline_note(
     assert!(
         alpha_issues(&waiting)
             .iter()
-            .flat_map(|shown| shown.notes.clone())
+            .flat_map(|shown| shown
+                .log
+                .iter()
+                .map(Entry::line)
+                .collect::<Vec<_>>())
             .any(|note| note.ends_with(&signed)),
         "the clone has the note, signed by the host and the client, before the remote does"
     );
@@ -6832,11 +6842,7 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     })
     .await?;
     assert_eq!(still_open.unpushed, 0);
-    assert!(
-        alpha_issues(&still_open)
-            .iter()
-            .all(|it| it.notes.is_empty())
-    );
+    assert!(alpha_issues(&still_open).iter().all(|it| it.log.is_empty()));
     assert_eq!(
         git(&data.join("home-repo"), &["rev-parse", "HEAD"])?,
         before
@@ -6895,7 +6901,7 @@ fn assert_issue_notes(home: &proto::Home, issue: proto::IssueId, count: usize) {
     assert_eq!(
         alpha_issues(home)
             .iter()
-            .map(|it| (it.id, it.notes.len()))
+            .map(|it| (it.id, it.log.len()))
             .collect::<Vec<_>>(),
         [(issue, count)]
     );
@@ -7020,7 +7026,7 @@ async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
     land.go_offline()?;
     // Postcard Vec<Edit> from before the queue had edit identities.
     let original =
-        b"\x01\x05alpha\x2a\x01\x06legacy\x00\x09Old queue\x00\x02\x00\x00";
+        b"\x01\x05alpha\x2a\x01\x06legacy\x00\x09Old queue\x00\x00\x00";
     std::fs::write(data.join("home-edits.state"), original)?;
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
     let (link, mut updates) = reopened.connect().await?;
@@ -7072,7 +7078,7 @@ async fn legacy_identical_notes(
     std::fs::create_dir_all(writer.join("projects/alpha/issues"))?;
     let note = "- 1970-01-01 legacy: identical\n";
     let upstream = format!(
-        "+++\nid = \"{stem}\"\ntitle = \"Legacy notes\"\n+++\n\n## Notes\n{note}"
+        "+++\nid = \"{stem}\"\ntitle = \"Legacy notes\"\nstatus = \"open\"\n+++\n\n## Notes\n{note}"
     );
     std::fs::write(file, &upstream)?;
     push_home_edit(&writer)?;
@@ -7197,12 +7203,12 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
     noted_by_hand(&land, issue)?;
     accepted(
         &link,
-        change(issue, IssueChange::Status(IssueStatus::InProgress)),
+        change(issue, IssueChange::Status(String::from("active"))),
     )
     .await?;
     let replayed = pushed_issue(&land, issue)?;
     assert!(
-        replayed.contains("status = \"in-progress\"")
+        replayed.contains("status = \"active\"")
             && replayed.contains("- by hand"),
         "the host's change lands on top of the person's: {replayed}"
     );
@@ -7346,7 +7352,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
     let moved = home_until(&mut updates, |home| {
         alpha_issues(home)
             .iter()
-            .any(|shown| shown.status == IssueStatus::InProgress)
+            .any(|shown| shown.status == "active")
     })
     .await?;
     assert_eq!(moved.unpushed, 0);
@@ -7409,12 +7415,13 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
     let reviewed = home_until(&mut updates, |home| {
         alpha_issues(home)
             .iter()
-            .any(|shown| shown.status == IssueStatus::Review)
+            .any(|shown| shown.status == "review")
     })
     .await?;
     let notes = alpha_issues(&reviewed)
         .into_iter()
-        .flat_map(|shown| shown.notes)
+        .flat_map(|shown| shown.log)
+        .map(|entry| entry.line())
         .collect::<Vec<String>>();
     assert!(
         !notes.iter().any(|note| note.contains("Done: turn one.")),

@@ -114,6 +114,7 @@ mod tests {
             synced: None,
             sync: HomeSync::Syncing,
             unpushed: 0,
+            flow: None,
             projects: Vec::new(),
         };
         host.apply(Update::Feed(Feed::Home(home.clone())));

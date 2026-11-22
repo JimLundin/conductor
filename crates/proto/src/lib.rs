@@ -52,8 +52,8 @@ pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };
 pub use issue::{
-    ChecklistAction, ChecklistItem, Issue, IssueChange, IssueFields, IssueId,
-    IssueStatus, Priority,
+    ChecklistAction, ChecklistItem, Datum, Entry, Issue, IssueChange,
+    IssueFields, IssueId, LogEvent, Section,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
@@ -1345,26 +1345,17 @@ mod tests {
     }
 
     #[test]
-    fn each_issue_status_and_priority_reads_back_from_its_word() {
-        use super::{IssueStatus, Priority};
+    fn an_issue_id_reads_as_its_lower_case_ulid() {
+        use super::IssueId;
         assert_eq!(
-            IssueStatus::ALL.map(IssueStatus::word),
-            ["open", "ready", "in-progress", "review", "done", "dropped"]
+            [IssueId(0), IssueId(1), IssueId(u128::MAX)]
+                .map(|id| id.to_string()),
+            [
+                "00000000000000000000000000",
+                "00000000000000000000000001",
+                "7zzzzzzzzzzzzzzzzzzzzzzzzz",
+            ]
         );
-        assert_eq!(
-            IssueStatus::ALL.map(|status| IssueStatus::named(status.word())),
-            IssueStatus::ALL.map(Some)
-        );
-        assert_eq!(IssueStatus::named("blocked"), None);
-        assert_eq!(
-            Priority::ALL.map(Priority::word),
-            ["low", "normal", "high", "urgent"]
-        );
-        assert_eq!(
-            Priority::ALL.map(|priority| Priority::named(priority.word())),
-            Priority::ALL.map(Some)
-        );
-        assert_eq!(Priority::named("someday"), None);
     }
 
     #[test]

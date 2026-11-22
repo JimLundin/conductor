@@ -104,8 +104,9 @@ are never stored and can't disagree.
 ### 2.5 Lifecycles
 
 ```
-Issue    open ─► ready ─► in-progress ─► review ─► done
-            └─────────────────────────────────► dropped
+Issue    as the home's flow declares (docs/agents/flow.toml); by role:
+         idle ─► startable ─► active ─► review ─► terminal
+            └───────────────────────────────────► dropped
 Session  starting ─► idle ⇄ running ─► closed ─► removed (with its workspace)
 ```
 
@@ -154,7 +155,7 @@ profiles = ["rust"]
 +++
 id = "01JD…"
 title = "Sign in to a subscription from the app"
-status = "in-progress"        # open, ready, in-progress, review, done, dropped
+status = "active"             # one of the flow's statuses
 priority = "high"
 labels = ["app", "credentials"]
 branch = "issue/01JD…"

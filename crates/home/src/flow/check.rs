@@ -8,7 +8,9 @@
 use alloc::collections::BTreeMap;
 
 use super::eval::{Failure, Move, holds};
-use super::graph::{File, Graph, Issue, read};
+use proto::Issue;
+
+use super::graph::{File, Graph, read};
 use super::{Flow, Severity, load};
 use crate::prelude::*;
 use crate::project::listed;

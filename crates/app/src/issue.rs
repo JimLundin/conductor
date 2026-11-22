@@ -1,4 +1,4 @@
-//! An issue's pane: its status and priority, body, checklist and notes.
+//! An issue's pane: its status and fields, body, checklist and notes.
 
 #![expect(
     clippy::disallowed_types,
@@ -58,13 +58,18 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                             }
                         }
                     }
-                    label { "Priority"
-                        select {
-                            name: "priority",
-                            disabled,
-                            onchange: move |event| issue(IssueIntent::SetPriority(event.value())),
-                            for pick in screen.priority {
-                                option { value: pick.word, selected: pick.selected, "{pick.label}" }
+                    for picker in screen.fields {
+                        label { key: "{picker.field}", "{picker.field}"
+                            select {
+                                name: "{picker.field}",
+                                disabled,
+                                onchange: {
+                                    let field = picker.field.clone();
+                                    move |event: FormEvent| issue(IssueIntent::SetField { field: field.clone(), value: event.value() })
+                                },
+                                for pick in picker.picks {
+                                    option { value: pick.word, selected: pick.selected, "{pick.label}" }
+                                }
                             }
                         }
                     }

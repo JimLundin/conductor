@@ -1,8 +1,8 @@
 use alloc::collections::BTreeMap;
 
-use proto::{ChecklistItem, ProjectId};
+use proto::{ChecklistItem, Datum, Entry, LogEvent, ProjectId, Section};
 
-use super::{Datum, Entry, Event, File, Graph, Problem, Section, read};
+use super::{File, Graph, Problem, read};
 use crate::flow::{Flow, load};
 
 const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
@@ -95,7 +95,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
     let first = graph.issues.first();
     assert_eq!(
         first.map(|issue| (
-            issue.id.as_str(),
+            issue.id.to_string(),
             issue.kind.as_str(),
             issue.status.as_str(),
             issue.stage.as_deref(),
@@ -103,7 +103,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             &issue.sections,
         )),
         Some((
-            SPEC,
+            String::from(SPEC),
             "spec",
             "active",
             Some("build"),
@@ -149,7 +149,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             Entry {
                 at: Some(String::from("2026-11-21T19:53:48Z")),
                 by: Some(String::from("laptop·claude")),
-                event: Event::Stage {
+                event: LogEvent::Stage {
                     from: String::from("shape"),
                     to: String::from("spec")
                 },
@@ -158,7 +158,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             Entry {
                 at: None,
                 by: None,
-                event: Event::Note,
+                event: LogEvent::Note,
                 text: String::from(
                     "2026-11-18 laptop · codex · api: an older note\nthat goes on."
                 ),
@@ -166,7 +166,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             Entry {
                 at: Some(String::from("2026-11-22T10:00:00Z")),
                 by: Some(String::from("laptop·claude")),
-                event: Event::Note,
+                event: LogEvent::Note,
                 text: String::from("checked."),
             },
         ]))

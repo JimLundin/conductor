@@ -37,6 +37,7 @@ use home::{Found, Stored};
 use host::log::Completion;
 use host::serve::HomeOrder;
 use issue_file::{read_issue, write_issue};
+use proto::flow::Flow;
 use proto::{
     Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeSync,
     HostPath, Issue, IssueChange, IssueFields, IssueId, ProjectId, Rejection,
@@ -322,6 +323,8 @@ struct Actor {
     projects: Vec<Project>,
     found: BTreeMap<ProjectId, Vec<Checkout>>,
     cloning: BTreeMap<ProjectId, Cloning>,
+    /// The clone's flow as the last scan read it, or why it couldn't.
+    flow: Result<Flow, String>,
     issues: BTreeMap<ProjectId, Vec<Issue>>,
     /// The issue changes the remote doesn't have yet, oldest first.
     edits: PendingEdits,
@@ -362,6 +365,7 @@ impl Actor {
             projects: Vec::new(),
             found: BTreeMap::new(),
             cloning: BTreeMap::new(),
+            flow: Err(String::from("the home has not been read yet")),
             issues: BTreeMap::new(),
             edits: PendingEdits::default(),
             edits_loaded: false,
@@ -493,7 +497,7 @@ impl Actor {
             return None;
         }
         self.refresh().await;
-        update.next(&self.issues, issue)
+        update.next(self.flow.as_ref().ok()?, &self.issues, issue)
     }
 
     async fn pull_now(&mut self) -> CommandResult {
@@ -627,7 +631,7 @@ impl Actor {
         let issue_dir = Listing::for_project(&project).path;
         let issue = IssueId(ulid::Ulid::new().0);
         let request = self
-            .issue_context(command)
+            .issue_context(command)?
             .open(&projects, project, issue, &wanted)?;
         if let Some(opened) = self.created(&issue_dir, command).await? {
             return Ok(opened);
@@ -690,8 +694,9 @@ impl Actor {
         command: CommandId,
     ) -> Result<(), IssueError> {
         self.destination().map_err(IssueError::Retryable)?;
-        let request =
-            self.issue_context(command).edit(issue, change, &client.0)?;
+        let request = self
+            .issue_context(command)?
+            .edit(issue, change, &client.0)?;
         self.record(request).await
     }
 
@@ -704,14 +709,29 @@ impl Actor {
         )
     }
 
-    fn issue_context(&self, command: CommandId) -> Context<'_> {
-        Context {
+    /// What an issue change is decided against.
+    ///
+    /// # Errors
+    ///
+    /// The home's flow doesn't load, so no issue can be read.
+    fn issue_context(
+        &self,
+        command: CommandId,
+    ) -> Result<Context<'_>, Rejection> {
+        let flow =
+            self.flow
+                .as_ref()
+                .map_err(|reason| Rejection::IssueNotSaved {
+                    reason: reason.clone(),
+                })?;
+        Ok(Context {
             remote: self.remote.as_deref(),
+            flow,
             issues: &self.issues,
             host: &self.host,
             at: now(),
             command,
-        }
+        })
     }
 
     async fn record(&mut self, request: Record) -> Result<(), IssueError> {
@@ -780,7 +800,9 @@ impl Actor {
             changed_at(&self.clone, &self.destination()?.tracking, path)
                 .await?;
         let current = committed_issue(&self.clone, path).await;
+        let flow = read_flow(&self.clone)?;
         match self.edits.replay(
+            &flow,
             index,
             current
                 .as_ref()
@@ -837,7 +859,8 @@ impl Actor {
         } else {
             BTreeMap::new()
         };
-        Edit::migrate_legacy_notes(edits, &files);
+        let flow = read_flow(&self.clone).ok();
+        Edit::migrate_legacy_notes(flow.as_ref(), edits, &files);
         Ok(true)
     }
 
@@ -905,19 +928,30 @@ impl Actor {
             tracing::warn!(target: "home", %problem, "skipped a project");
         }
         self.projects = listing.projects;
-        self.issues = self
-            .projects
-            .iter()
-            .map(|project| {
-                let listing = Listing::for_project(&project.id);
-                let files = issue_files(&self.clone.join(&listing.path));
-                let (issues, problems) = listing.decide(files);
+        self.flow = read_flow(&self.clone);
+        self.issues = match &self.flow {
+            Ok(flow) => {
+                let files = self
+                    .projects
+                    .iter()
+                    .flat_map(|project| {
+                        let path = Listing::for_project(&project.id).path;
+                        issue_files(&self.clone.join(path)).into_iter().map(
+                            |(stem, text)| (project.id.clone(), stem, text),
+                        )
+                    })
+                    .collect();
+                let (issues, problems) = home::issue::listed(flow, files);
                 for problem in &problems {
                     tracing::warn!(target: "home", %problem, "skipped an issue");
                 }
-                (project.id.clone(), issues)
-            })
-            .collect();
+                issues
+            }
+            Err(reason) => {
+                tracing::warn!(target: "home", %reason, "read no issues");
+                BTreeMap::new()
+            }
+        };
         let roots = self
             .roots
             .iter()
@@ -950,6 +984,7 @@ impl Actor {
                     Found {
                         checkouts: &self.found,
                         cloning: &self.cloning,
+                        flow: self.flow.as_ref().ok(),
                         issues: &self.issues,
                         unpushed: u64::try_from(self.edits.count())
                             .unwrap_or(u64::MAX),
@@ -1325,6 +1360,18 @@ fn issue_files(folder: &Path) -> Vec<(String, Result<String, String>)> {
         .collect()
 }
 
+/// The flow the clone's `docs/agents/flow.toml` declares.
+///
+/// # Errors
+///
+/// The file can't be read, or doesn't load.
+fn read_flow(clone: &Path) -> Result<Flow, String> {
+    let text = std::fs::read_to_string(clone.join("docs/agents/flow.toml"))
+        .map_err(|err| format!("docs/agents/flow.toml: {err}"))?;
+    home::flow::load(&text)
+        .map_err(|problem| format!("docs/agents/flow.toml: {problem}"))
+}
+
 /// Each folder of the clone's `projects/`, with its `project.toml`.
 fn folders(clone: &Path) -> Vec<(String, Result<String, String>)> {
     std::fs::read_dir(clone.join("projects"))
@@ -1424,7 +1471,7 @@ fn read(path: &Path) -> Option<String> {
 }
 
 // The original format starts with a canonical postcard vector length.
-const EDITS_VERSION: &[u8] = b"\x80\x00\x02";
+const EDITS_VERSION: &[u8] = b"\x80\x00\x03";
 const EDITS_VERSION_1: &[u8] = b"\x80\x00\x01";
 
 /// The unpushed issue changes the host kept. A store that no longer reads

@@ -9,12 +9,13 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
-use proto::ProjectId;
+use proto::{
+    ChecklistItem, Datum, Entry, Issue, IssueId, LogEvent, ProjectId, Section,
+};
 use toml::{Table, Value};
 
 use super::{Field, FieldType, Flow, Relation};
 use crate::prelude::*;
-use proto::ChecklistItem;
 
 /// An issue file: the project it's in, its name without `.md`, its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,57 +30,6 @@ pub struct Graph {
     /// By id.
     pub issues: Vec<Issue>,
     pub problems: Vec<Problem>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Issue {
-    pub id: String,
-    pub project: ProjectId,
-    pub title: String,
-    pub kind: String,
-    pub status: String,
-    pub stage: Option<String>,
-    /// The declared fields it gives, by name.
-    pub fields: BTreeMap<String, Datum>,
-    /// The issues each relation from it points to, by relation.
-    pub links: BTreeMap<String, Vec<String>>,
-    /// The body's sections in order, the text before the first heading
-    /// as one with no heading; the checklist and the log aren't among them.
-    pub sections: Vec<Section>,
-    /// The items of the `## Checklist` section.
-    pub checklist: Vec<ChecklistItem>,
-    pub log: Vec<Entry>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Section {
-    /// Empty for the text before the first heading.
-    pub heading: String,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Datum {
-    Text(String),
-    Texts(Vec<String>),
-    Bool(bool),
-}
-
-/// A line of an issue's log.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Entry {
-    /// When and by whom, when the line says so.
-    pub at: Option<String>,
-    pub by: Option<String>,
-    pub event: Event,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Event {
-    Note,
-    Stage { from: String, to: String },
-    Status { from: String, to: String },
 }
 
 /// Something structurally wrong with an issue, where a field is the cause.
@@ -99,7 +49,7 @@ pub fn read(flow: &Flow, files: &[File]) -> Graph {
     let mut problems = Vec::new();
     let mut unread = BTreeSet::new();
     for file in files {
-        match issue(flow, file) {
+        match one(flow, file) {
             Ok(read_issue) => issues.push(read_issue),
             Err(problem) => {
                 unread.insert(file.stem.as_str());
@@ -107,26 +57,34 @@ pub fn read(flow: &Flow, files: &[File]) -> Graph {
             }
         }
     }
-    issues.sort_by(|one, other| one.id.cmp(&other.id));
+    issues.sort_by_key(|read_issue| read_issue.id);
     problems.extend(references(flow, &issues, &unread));
     problems.extend(cycles(flow, &issues));
     Graph { issues, problems }
 }
 
-fn issue(flow: &Flow, file: &File) -> Result<Issue, Problem> {
+/// The issue one file holds, as `flow` declares it, or its structural
+/// problem; references to other issues are left to [`read`].
+///
+/// # Errors
+///
+/// What is structurally wrong with it.
+pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
     let place = format!("{}/{}", file.project.0, file.stem);
     let fail = |field: Option<&str>, message: String| Problem {
         issue: place.clone(),
         field: field.map(ToOwned::to_owned),
         message,
     };
-    let (front, body) = split(&file.text).ok_or_else(|| {
+    let unix = file.text.replace("\r\n", "\n");
+    let (front, body) = split(&unix).ok_or_else(|| {
         fail(None, String::from("it has no +++ front matter"))
     })?;
     let mut table = toml::from_str::<Table>(front)
         .map_err(|err| fail(None, format!("its front matter: {err}")))?;
     let id = text(&mut table, "id")
-        .filter(|id| *id == file.stem && is_id(id))
+        .filter(|id| *id == file.stem)
+        .and_then(|id| id_of(&id))
         .ok_or_else(|| {
             fail(
                 Some("id"),
@@ -183,6 +141,13 @@ fn issue(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         }
     }
     let (sections, checklist, log) = body_of(body);
+    let branch = crate::issue::branch_of(
+        id,
+        fields.get("branch").and_then(|datum| match datum {
+            Datum::Text(declared) => Some(declared.as_str()),
+            Datum::Texts(_) | Datum::Bool(_) => None,
+        }),
+    );
     Ok(Issue {
         id,
         project: file.project.clone(),
@@ -195,6 +160,7 @@ fn issue(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         sections,
         checklist,
         log,
+        branch,
     })
 }
 
@@ -207,9 +173,13 @@ fn split(text: &str) -> Option<(&str, &str)> {
     Some((front, after.strip_prefix('\n').unwrap_or(after)))
 }
 
-fn is_id(id: &str) -> bool {
-    ulid::Ulid::from_string(id)
-        .is_ok_and(|ulid| ulid.to_string().to_lowercase() == id)
+/// The id a lower-case ULID names.
+#[must_use]
+pub fn id_of(name: &str) -> Option<IssueId> {
+    ulid::Ulid::from_string(name)
+        .ok()
+        .map(|ulid| IssueId(ulid.0))
+        .filter(|id| id.to_string() == name)
 }
 
 fn text(table: &mut Table, key: &str) -> Option<String> {
@@ -288,8 +258,11 @@ fn body_of(body: &str) -> (Vec<Section>, Vec<ChecklistItem>, Vec<Entry>) {
                     }
                 };
             }
-            (None, Part::Log) => logged(&mut log, line),
-            (None, Part::Checklist) => checklist.extend(item(line)),
+            (None, Part::Log) if outside => logged(&mut log, line),
+            (None, Part::Checklist) if outside => {
+                checklist.extend(item(line));
+            }
+            (None, Part::Log | Part::Checklist) => {}
             (None, Part::Section) => written(&mut sections, line),
         }
     }
@@ -391,14 +364,14 @@ fn entry_of(line: &str) -> Entry {
         let at = words.next()?;
         let by = words.next()?;
         let event = match (words.next()?, words.next(), words.next()) {
-            ("note", None, _) => Event::Note,
+            ("note", None, _) => LogEvent::Note,
             (name @ ("stage" | "status"), Some(change), None) => {
                 let (before, after) = change.split_once('→')?;
                 let (from, to) = (before.to_owned(), after.to_owned());
                 if name == "stage" {
-                    Event::Stage { from, to }
+                    LogEvent::Stage { from, to }
                 } else {
-                    Event::Status { from, to }
+                    LogEvent::Status { from, to }
                 }
             }
             _ => return None,
@@ -413,7 +386,7 @@ fn entry_of(line: &str) -> Entry {
     structured.unwrap_or_else(|| Entry {
         at: None,
         by: None,
-        event: Event::Note,
+        event: LogEvent::Note,
         text: line.to_owned(),
     })
 }
@@ -426,9 +399,9 @@ fn references(
     issues: &[Issue],
     unread: &BTreeSet<&str>,
 ) -> Vec<Problem> {
-    let by_id: BTreeMap<&str, &Issue> = issues
+    let by_id: BTreeMap<String, &Issue> = issues
         .iter()
-        .map(|issue| (issue.id.as_str(), issue))
+        .map(|issue| (issue.id.to_string(), issue))
         .collect();
     let mut problems = Vec::new();
     for issue in issues {
@@ -439,7 +412,7 @@ fn references(
                 .find(|relation| relation.name == *name)
                 .map_or(&[][..], |relation| relation.to.as_slice());
             for id in ids {
-                let message = match by_id.get(id.as_str()) {
+                let message = match by_id.get(id) {
                     None if unread.contains(id.as_str()) => None,
                     None => Some(format!("{id} is no issue")),
                     Some(target)
@@ -468,27 +441,29 @@ fn references(
 /// naming the whole cycle, so an edit to any issue on it sees the problem
 /// as its own.
 fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
-    let projects: BTreeMap<&str, &str> = issues
+    let names: Vec<String> =
+        issues.iter().map(|issue| issue.id.to_string()).collect();
+    let projects: BTreeMap<&str, &str> = names
         .iter()
-        .map(|issue| (issue.id.as_str(), issue.project.0.as_str()))
+        .zip(issues)
+        .map(|(name, issue)| (name.as_str(), issue.project.0.as_str()))
         .collect();
     let mut problems = Vec::new();
     for relation in flow.relations.iter().filter(|relation| !relation.cycles) {
-        let edges: BTreeMap<&str, &[String]> = issues
+        let edges: BTreeMap<&str, &[String]> = names
             .iter()
-            .filter_map(|issue| {
+            .zip(issues)
+            .filter_map(|(name, issue)| {
                 issue
                     .links
                     .get(&relation.name)
-                    .map(|ids| (issue.id.as_str(), ids.as_slice()))
+                    .map(|ids| (name.as_str(), ids.as_slice()))
             })
             .collect();
         let mut done: BTreeSet<&str> = BTreeSet::new();
-        for issue in issues {
+        for name in &names {
             let mut path = Vec::new();
-            if let Some(cycle) =
-                walk(&edges, issue.id.as_str(), &mut path, &mut done)
-            {
+            if let Some(cycle) = walk(&edges, name, &mut path, &mut done) {
                 let message =
                     format!("is part of a cycle: {}", cycle.join(" → "));
                 let members = cycle.iter().skip(1).filter_map(|id| {

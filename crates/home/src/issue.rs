@@ -2,9 +2,11 @@
 //! (docs/home.md §3), and the changes a host makes to it.
 //!
 //! A file is `+++` TOML front matter, then the body, then `## Checklist`
-//! and `## Notes`. A change rewrites only the lines it is about, so what a
-//! person wrote anywhere else in the file stays as written: comments, keys
-//! and sections Conductor doesn't read, and the order of it all.
+//! and `## Notes`, read only by the flow's graph (`crate::flow::graph`). A
+//! change rewrites only the lines it is about, so what a person wrote
+//! anywhere else in the file stays as written: comments, sections of their
+//! own, and the order of it all. What a change writes is read back against
+//! the flow before it is kept.
 //!
 //! The host keeps each change as an [`Edit`] until the remote has it, and
 //! when the remote moved on it applies the edit again on top
@@ -15,31 +17,25 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
+use proto::flow::{FieldType, Flow, Role};
 use proto::{
     ChecklistAction, ChecklistItem, CommandId, Home, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, IssueStatus, Priority, ProjectId,
-    Rejection,
+    IssueChange, IssueFields, IssueId, ProjectId, Rejection,
 };
 use serde::{Deserialize, Serialize};
-use toml::{Spanned, Table, Value};
+use toml::{Spanned, Value};
 use toml_parser::{Source, lexer::TokenKind};
 
-use crate::flow::graph::{item, markdown};
+use crate::flow::graph::{self, File, item, markdown};
 use crate::prelude::*;
 
 const CHECKLIST: &str = "## Checklist";
 const NOTES: &str = "## Notes";
 
-/// The issue's id as its file and branch name it: a lower-case ULID.
-#[must_use]
-fn name(id: IssueId) -> String {
-    ulid::Ulid::from(id.0).to_string().to_lowercase()
-}
-
 /// The issue's file, from the home's root.
 #[must_use]
 fn file(project: &ProjectId, id: IssueId) -> String {
-    format!("{}/{}.md", folder(project), name(id))
+    format!("{}/{id}.md", folder(project))
 }
 
 /// Where a project keeps its issues, from the home's root.
@@ -81,11 +77,6 @@ impl Lines {
 
     fn has_marker(&self, marker: &str) -> bool {
         self.front.iter().any(|line| line == marker)
-    }
-
-    fn table(&self) -> Result<Table, String> {
-        toml::from_str::<Table>(&self.front.join("\n"))
-            .map_err(|err| format!("front matter: {err}"))
     }
 
     pub(crate) fn set(&mut self, key: &str, value: &str) -> Option<()> {
@@ -231,128 +222,31 @@ fn array_with_comments(previous: &str, value: &str) -> Option<String> {
     Some(format!("[\n{comments}]"))
 }
 
-/// The issue in the file named `stem`.md.
+/// Issue `id` of `project` in `text`, as the flow reads it.
 ///
 /// # Errors
 ///
-/// Why the file isn't an issue.
-fn parse(stem: &str, text: &str) -> Result<Issue, String> {
-    let lines = Lines::of(text)?;
-    let mut table = lines.table()?;
-    let id = ulid::Ulid::from_string(stem)
-        .ok()
-        .map(|ulid| IssueId(ulid.0))
-        .filter(|id| name(*id) == stem)
-        .filter(|_| string(table.remove("id")).as_deref() == Some(stem))
-        .ok_or_else(|| String::from("its id is not its file's name"))?;
-    let title = string(table.remove("title"))
-        .ok_or_else(|| String::from("it has no title"))?;
-    let status = word(
-        table.remove("status"),
-        "status",
-        IssueStatus::named,
-        &IssueStatus::ALL.map(IssueStatus::word),
-    )?
-    .unwrap_or(IssueStatus::Open);
-    let priority = word(
-        table.remove("priority"),
-        "priority",
-        Priority::named,
-        &Priority::ALL.map(Priority::word),
-    )?
-    .unwrap_or(Priority::Normal);
-    let labels = match table.remove("labels") {
-        Some(Value::Array(values)) => values
-            .into_iter()
-            .filter_map(|value| string(Some(value)))
-            .collect(),
-        _ => Vec::new(),
-    };
-    let branch =
-        string(table.remove("branch")).unwrap_or_else(|| branch_of(id));
-    let created = match table.remove("created") {
-        Some(Value::Datetime(at)) => at.to_string(),
-        other => string(other).unwrap_or_default(),
-    };
-    let (body, checklist, notes) = sections(&lines.rest);
-    Ok(Issue {
-        id,
-        title,
-        body,
-        status,
-        priority,
-        labels,
-        branch,
-        created,
-        checklist,
-        notes,
+/// Why the flow can't read the file.
+fn read(
+    flow: &Flow,
+    project: &ProjectId,
+    id: IssueId,
+    text: &str,
+) -> Result<Issue, String> {
+    graph::one(
+        flow,
+        &File {
+            project: project.clone(),
+            stem: id.to_string(),
+            text: String::from(text),
+        },
+    )
+    .map_err(|problem| {
+        problem.field.map_or_else(
+            || problem.message.clone(),
+            |field| format!("{field}: {}", problem.message),
+        )
     })
-}
-
-fn string(value: Option<Value>) -> Option<String> {
-    match value {
-        Some(Value::String(text)) => Some(text),
-        _ => None,
-    }
-}
-
-/// A field whose value is one of a few words, `None` when it is absent.
-fn word<T>(
-    value: Option<Value>,
-    field: &str,
-    named: impl Fn(&str) -> Option<T>,
-    words: &[&str],
-) -> Result<Option<T>, String> {
-    string(value).map_or(Ok(None), |text| {
-        named(&text).map(Some).ok_or_else(|| {
-            format!("{field} {text:?} is not one of {}", words.join(", "))
-        })
-    })
-}
-
-/// The body, the checklist and the notes after the front matter. The body
-/// runs to the checklist or the notes, whichever is first; a section after
-/// them that Conductor doesn't know is left out. A note continues on lines
-/// indented by two spaces.
-fn sections(rest: &[String]) -> (String, Vec<ChecklistItem>, Vec<String>) {
-    let mut body = Vec::new();
-    let mut checklist = Vec::new();
-    let mut notes: Vec<String> = Vec::new();
-    let mut section = "";
-    for (line, outside) in markdown(rest) {
-        if !outside {
-            if section.is_empty() {
-                body.push(line);
-            }
-            continue;
-        }
-        match (line.trim_end(), section) {
-            (heading @ (CHECKLIST | NOTES), _) => section = heading,
-            (other, CHECKLIST | NOTES) if other.starts_with("## ") => {
-                section = "other";
-            }
-            (_, "") => body.push(line),
-            (_, CHECKLIST) => checklist.extend(item(line)),
-            (_, NOTES) => noted(&mut notes, line),
-            _ => {}
-        }
-    }
-    (String::from(body.join("\n").trim()), checklist, notes)
-}
-
-fn noted(notes: &mut Vec<String>, line: &str) {
-    match (
-        line.strip_prefix("- "),
-        line.strip_prefix("  "),
-        notes.last_mut(),
-    ) {
-        (Some(note), _, _) => notes.push(String::from(note)),
-        (None, Some(more), Some(last)) => {
-            last.push('\n');
-            last.push_str(more);
-        }
-        _ => {}
-    }
 }
 
 fn item_line(item: &ChecklistItem) -> String {
@@ -382,56 +276,80 @@ fn labels_value(labels: &[String]) -> String {
         .to_string()
 }
 
-/// A new issue's file.
+/// A new issue's file: the flow's default kind, in its first status of
+/// role idle, with each field the flow declares for every kind that it has
+/// a value for, and the body.
 #[must_use]
-fn render(issue: &Issue) -> Lines {
-    let created = issue
-        .created
-        .parse::<toml::value::Datetime>()
-        .map_or_else(|_| quoted(&issue.created), |at| at.to_string());
+fn render(flow: &Flow, edit: &EditData, made: &IssueFields) -> Lines {
+    let status = first(flow, Role::Idle).unwrap_or_default();
+    let mut front = Vec::from([
+        format!("id = {}", quoted(&edit.issue.to_string())),
+        format!("title = {}", quoted(&made.title)),
+        format!("status = {}", quoted(&status)),
+    ]);
+    for field in &flow.fields {
+        let given = match (field.name.as_str(), &field.value) {
+            ("labels", FieldType::Texts) => Some(labels_value(&made.labels)),
+            ("branch", FieldType::Text) => {
+                Some(quoted(&branch_of(edit.issue, None)))
+            }
+            ("created", FieldType::Time) => Some(rfc3339(edit.at)),
+            (_, FieldType::Enum(_) | FieldType::Text) => {
+                field.default.as_deref().map(quoted)
+            }
+            _ => None,
+        };
+        front.extend(given.map(|value| format!("{} = {value}", field.name)));
+    }
     let mut lines = Lines {
-        front: Vec::from([
-            format!("id = {}", quoted(&name(issue.id))),
-            format!("title = {}", quoted(&issue.title)),
-            format!("status = {}", quoted(issue.status.word())),
-            format!("priority = {}", quoted(issue.priority.word())),
-            format!("labels = {}", labels_value(&issue.labels)),
-            format!("branch = {}", quoted(&issue.branch)),
-            format!("created = {created}"),
-        ]),
+        front,
         rest: Vec::new(),
     };
-    if !issue.body.is_empty() {
-        lines.body(&issue.body);
-    }
-    for added in &issue.checklist {
-        lines.append(CHECKLIST, Some(NOTES), Vec::from([item_line(added)]));
-    }
-    for note in &issue.notes {
-        lines.append(NOTES, None, note_lines(note));
+    if !made.body.is_empty() {
+        lines.body(&made.body);
     }
     lines
 }
 
-/// The issues of `project` in its folder's files, each `.md` file by its
-/// name without the extension, by id; and why any file isn't one.
+/// The name of the flow's first status of `role`.
+fn first(flow: &Flow, role: Role) -> Option<String> {
+    flow.statuses
+        .iter()
+        .find(|status| status.role == role)
+        .map(|status| status.name.clone())
+}
+
+/// The issues the files hold, each `.md` file of a project by its name
+/// without the extension, by project and id; and why any file isn't one.
 #[must_use]
-fn listed(
-    project: &ProjectId,
-    files: Vec<(String, Result<String, String>)>,
-) -> (Vec<Issue>, Vec<String>) {
-    let (mut issues, problems) = files.into_iter().fold(
-        (Vec::new(), Vec::new()),
-        |(mut issues, mut problems), (stem, text)| {
-            match text.and_then(|read| parse(&stem, &read)) {
-                Ok(issue) => issues.push(issue),
-                Err(problem) => problems
-                    .push(format!("{}/{stem}.md: {problem}", folder(project))),
-            }
-            (issues, problems)
-        },
-    );
-    issues.sort_by_key(|issue| issue.id);
+pub fn listed(
+    flow: &Flow,
+    files: Vec<(ProjectId, String, Result<String, String>)>,
+) -> (BTreeMap<ProjectId, Vec<Issue>>, Vec<String>) {
+    let mut problems = Vec::new();
+    let mut read_files = Vec::new();
+    for (project, stem, contents) in files {
+        match contents {
+            Ok(text) => read_files.push(File {
+                project,
+                stem,
+                text,
+            }),
+            Err(problem) => problems
+                .push(format!("{}/{stem}.md: {problem}", folder(&project))),
+        }
+    }
+    let graph = graph::read(flow, &read_files);
+    problems.extend(graph.problems.into_iter().map(|problem| {
+        let cause = problem
+            .field
+            .map_or_else(String::new, |field| format!("{field}: "));
+        format!("{}: {cause}{}", problem.issue, problem.message)
+    }));
+    let mut issues: BTreeMap<ProjectId, Vec<Issue>> = BTreeMap::new();
+    for issue in graph.issues {
+        issues.entry(issue.project.clone()).or_default().push(issue);
+    }
     (issues, problems)
 }
 
@@ -498,7 +416,7 @@ fn changing(
         IssueChange::Note(text) => {
             needs(&text, "a note").map(IssueChange::Note)
         }
-        other @ (IssueChange::Priority(_)
+        other @ (IssueChange::Set { .. }
         | IssueChange::Status(_)
         | IssueChange::Transition { .. }
         | IssueChange::Check { .. }
@@ -523,7 +441,7 @@ fn needs(text: &str, what: &str) -> Result<String, String> {
 /// The message of the commit an edit makes in the home.
 #[must_use]
 fn message(edit: &EditData) -> String {
-    let id = name(edit.issue);
+    let id = edit.issue;
     match &edit.change {
         Change::Create(fields) => {
             format!("Open issue {id}: {}", fields.title.trim())
@@ -533,14 +451,14 @@ fn message(edit: &EditData) -> String {
             format!("Describe issue {id} anew")
         }
         Change::Issue(IssueChange::Labels(_)) => format!("Label issue {id}"),
-        Change::Issue(IssueChange::Priority(priority)) => {
-            format!("Give issue {id} {} priority", priority.word())
+        Change::Issue(IssueChange::Set { field, value }) => {
+            format!("Set the {field} of issue {id} to {value}")
         }
         Change::Issue(
             IssueChange::Status(status)
             | IssueChange::Transition { to: status, .. },
         ) => {
-            format!("Move issue {id} to {}", status.word())
+            format!("Move issue {id} to {status}")
         }
         Change::Issue(
             IssueChange::Check { done: true, .. }
@@ -651,14 +569,14 @@ enum Applied {
     Unreadable(String),
 }
 
-/// The value the field `change` sets has in issue `id`'s file as it is
+/// The value the field the edit sets has in its issue's file as it is
 /// now: what [`Edit::was`] keeps.
 #[must_use]
-fn was(current: Option<&str>, id: IssueId, change: &Change) -> Option<String> {
-    let Change::Issue(sets) = change else {
+fn was(flow: &Flow, current: Option<&str>, edit: &EditData) -> Option<String> {
+    let Change::Issue(sets) = &edit.change else {
         return None;
     };
-    parse(&name(id), current?)
+    read(flow, &edit.project, edit.issue, current?)
         .ok()
         .and_then(|issue| field(&issue, sets))
 }
@@ -666,11 +584,13 @@ fn was(current: Option<&str>, id: IssueId, change: &Change) -> Option<String> {
 fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
     match change {
         IssueChange::Title(_) => Some(issue.title.clone()),
-        IssueChange::Body(_) => Some(issue.body.clone()),
-        IssueChange::Labels(_) => Some(labels_value(&issue.labels)),
-        IssueChange::Priority(_) => Some(String::from(issue.priority.word())),
+        IssueChange::Body(_) => Some(issue.body()),
+        IssueChange::Labels(_) => Some(labels_value(issue.texts("labels"))),
+        IssueChange::Set { field, .. } => {
+            Some(String::from(issue.text(field).unwrap_or_default()))
+        }
         IssueChange::Status(_) | IssueChange::Transition { .. } => {
-            Some(String::from(issue.status.word()))
+            Some(issue.status.clone())
         }
         IssueChange::Check { .. }
         | IssueChange::AddItem(_)
@@ -683,8 +603,14 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
 /// The edit on top of the issue's file as it is now, `None` when there is
 /// none.
 #[must_use]
-fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
+fn apply(
+    flow: &Flow,
+    current: Option<&str>,
+    edit: &Edit,
+    mode: Mode,
+) -> Applied {
     let data = &edit.data;
+    let written = |lines, marker| marked(flow, lines, marker, data);
     let marker = match &edit.identity {
         EditIdentity::Command(id) => Some(edit_marker(*id)),
         EditIdentity::MigratedNote { marker, .. } => Some(marker.clone()),
@@ -692,20 +618,20 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     };
     match (&data.change, current) {
         (Change::Create(_), Some(text)) => {
-            match parse(&name(data.issue), text) {
+            match read(flow, &data.project, data.issue, text) {
                 Ok(_) => Applied::AlreadyRecorded,
                 Err(reason) => Applied::Unreadable(reason),
             }
         }
         (Change::Create(wanted), None) => fields(wanted)
             .map_or(Applied::Unchanged, |made| {
-                marked(render(&opened(data, made)), marker, data.issue)
+                written(render(flow, data, &made), marker)
             }),
         (Change::Issue(_), None) => Applied::Gone,
         (Change::Issue(change), Some(text)) => {
-            let read = parse(&name(data.issue), text)
+            let found = read(flow, &data.project, data.issue, text)
                 .and_then(|issue| Lines::of(text).map(|lines| (issue, lines)));
-            match read {
+            match found {
                 Err(reason) => Applied::Unreadable(reason),
                 Ok((issue, lines)) => {
                     if marker
@@ -724,19 +650,17 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
                             Mode::Record => Applied::Unreadable(String::from(
                                 "The checklist changed. Select the item again.",
                             )),
-                            Mode::Replay { .. } => {
-                                marked(lines, marker, data.issue)
-                            }
+                            Mode::Replay { .. } => written(lines, marker),
                         };
                     }
                     match changed(lines, &issue, change, (edit, mode)) {
-                        Some(next) => marked(next, marker, data.issue),
+                        Some(next) => written(next, marker),
                         None if marker.is_some()
                             && matches!(mode, Mode::Replay { .. }) =>
                         {
                             Lines::of(text)
                                 .map_or_else(Applied::Unreadable, |lines| {
-                                    marked(lines, marker, data.issue)
+                                    written(lines, marker)
                                 })
                         }
                         None => Applied::Unchanged,
@@ -751,10 +675,15 @@ fn edit_marker(id: CommandId) -> String {
     format!("# conductor-edit: {:032x}", id.0)
 }
 
-fn marked(mut lines: Lines, marker: Option<String>, issue: IssueId) -> Applied {
+fn marked(
+    flow: &Flow,
+    mut lines: Lines,
+    marker: Option<String>,
+    edit: &EditData,
+) -> Applied {
     lines.front.extend(marker);
     let text = lines.text();
-    match parse(&name(issue), &text) {
+    match read(flow, &edit.project, edit.issue, &text) {
         Ok(_) => Applied::Write(text),
         Err(reason) => Applied::Unreadable(reason),
     }
@@ -801,7 +730,7 @@ fn changed(
         IssueChange::Title(_)
         | IssueChange::Body(_)
         | IssueChange::Labels(_)
-        | IssueChange::Priority(_)
+        | IssueChange::Set { .. }
         | IssueChange::Status(_)
         | IssueChange::Transition { .. } => setting(lines, issue, change),
     }
@@ -816,18 +745,20 @@ fn setting(
         IssueChange::Title(title) if issue.title != *title => {
             lines.set("title", &quoted(title))?;
         }
-        IssueChange::Body(body) if issue.body != *body => lines.body(body),
-        IssueChange::Labels(labels) if issue.labels != *labels => {
+        IssueChange::Body(body) if issue.body() != *body => lines.body(body),
+        IssueChange::Labels(labels) if issue.texts("labels") != labels => {
             lines.set("labels", &labels_value(labels))?;
         }
-        IssueChange::Priority(priority) if issue.priority != *priority => {
-            lines.set("priority", &quoted(priority.word()))?;
+        IssueChange::Set { field, value }
+            if issue.text(field) != Some(value.as_str()) =>
+        {
+            lines.set(field, &quoted(value))?;
         }
         IssueChange::Status(status) if issue.status != *status => {
-            lines.set("status", &quoted(status.word()))?;
+            lines.set("status", &quoted(status))?;
         }
         IssueChange::Transition { from, to } if issue.status == *from => {
-            lines.set("status", &quoted(to.word()))?;
+            lines.set("status", &quoted(to))?;
         }
         _ => return None,
     }
@@ -894,32 +825,12 @@ fn noting(
     occurrence: Option<usize>,
 ) -> Option<Lines> {
     if occurrence.is_some_and(|needed| {
-        issue
-            .notes
-            .iter()
-            .filter(|kept| kept.as_str() == note)
-            .count()
-            >= needed
+        issue.log.iter().filter(|kept| kept.line() == note).count() >= needed
     }) {
         return None;
     }
     lines.append(NOTES, None, note_lines(note));
     Some(lines)
-}
-
-fn opened(edit: &EditData, made: IssueFields) -> Issue {
-    Issue {
-        id: edit.issue,
-        title: made.title,
-        body: made.body,
-        status: IssueStatus::Open,
-        priority: made.priority,
-        labels: made.labels,
-        branch: branch_of(edit.issue),
-        created: rfc3339(edit.at),
-        checklist: Vec::new(),
-        notes: Vec::new(),
-    }
 }
 
 /// The fields as an issue keeps them: trimmed, each label once.
@@ -935,7 +846,6 @@ fn fields(wanted: &IssueFields) -> Result<IssueFields, String> {
     Ok(IssueFields {
         title,
         body: String::from(wanted.body.trim()),
-        priority: wanted.priority,
         labels: normal_labels(&wanted.labels),
     })
 }
@@ -953,8 +863,11 @@ fn normal_labels(labels: &[String]) -> Vec<String> {
     )
 }
 
-fn branch_of(id: IssueId) -> String {
-    format!("issue/{}", name(id))
+/// The branch an issue's sessions land on: the one its file declares, else
+/// `issue/<id>`.
+#[must_use]
+pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
+    declared.map_or_else(|| format!("issue/{id}"), String::from)
 }
 
 fn date(at: u64) -> String {
@@ -1014,32 +927,23 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
 }
 
 /// The status an issue moves to once a session on it has started: work
-/// on an `open` or `ready` one is in progress.
+/// on an idle or startable one is active.
 #[must_use]
-const fn started(status: IssueStatus) -> Option<IssueStatus> {
-    match status {
-        IssueStatus::Open | IssueStatus::Ready => Some(IssueStatus::InProgress),
-        IssueStatus::InProgress
-        | IssueStatus::Review
-        | IssueStatus::Done
-        | IssueStatus::Dropped => None,
-    }
+fn started(flow: &Flow, status: &str) -> Option<String> {
+    let role = flow.status(status)?.role;
+    matches!(role, Role::Idle | Role::Startable)
+        .then(|| first(flow, Role::Active))
+        .flatten()
 }
 
 /// The status an issue moves to once a session on it has finished: one
 /// still being worked on is up for review when its branch gained commits.
 #[must_use]
-const fn finished(status: IssueStatus, landed: u64) -> Option<IssueStatus> {
-    match (status, landed) {
-        (_, 0)
-        | (IssueStatus::Review | IssueStatus::Done | IssueStatus::Dropped, _) => {
-            None
-        }
-        (
-            IssueStatus::Open | IssueStatus::Ready | IssueStatus::InProgress,
-            _,
-        ) => Some(IssueStatus::Review),
-    }
+fn finished(flow: &Flow, status: &str, landed: u64) -> Option<String> {
+    let role = flow.status(status)?.role;
+    (landed != 0 && matches!(role, Role::Idle | Role::Startable | Role::Active))
+        .then(|| first(flow, Role::Review))
+        .flatten()
 }
 
 /// Issue `id`'s branch, as a full ref, as the home has it.
@@ -1053,7 +957,10 @@ pub fn branch(home: Option<&Home>, id: IssueId) -> String {
             .find(|issue| issue.id == id)
             .map(|issue| issue.branch.clone())
     });
-    format!("refs/heads/{}", named.unwrap_or_else(|| branch_of(id)))
+    format!(
+        "refs/heads/{}",
+        named.unwrap_or_else(|| branch_of(id, None))
+    )
 }
 
 /// The agent's first message: the issue as its file has it, and what to
@@ -1065,9 +972,9 @@ fn brief(project: &str, issue: &Issue) -> String {
         .map(item_line)
         .collect::<Vec<String>>();
     let notes = issue
-        .notes
+        .log
         .iter()
-        .flat_map(|note| note_lines(note))
+        .flat_map(|entry| note_lines(&entry.line()))
         .collect::<Vec<String>>();
     let section = |heading: &str, lines: &[String]| {
         if lines.is_empty() {
@@ -1076,14 +983,15 @@ fn brief(project: &str, issue: &Issue) -> String {
             format!("\n{heading}:\n{}\n", lines.join("\n"))
         }
     };
+    let body = issue.body();
     format!(
         "You are working on the issue \"{title}\" in {project}. You are on a branch cut from {branch}; commit your work on it as you go.\n\n{body}\n{checklist}{notes}\nWork through what is left. When you are done, or stuck, say so, and sum up what you did and what is left.",
         title = issue.title,
         branch = issue.branch,
-        body = if issue.body.is_empty() {
+        body = if body.is_empty() {
             "The issue has no description."
         } else {
-            &issue.body
+            &body
         },
         checklist = section("Its checklist", &checklist),
         notes = section("Its notes so far", &notes),

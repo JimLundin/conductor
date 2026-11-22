@@ -1,7 +1,7 @@
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, Effort, Epoch,
     Hello, HostSeq, InstanceId, IssueChange, IssueFields, IssueId, Models,
-    Open, Priority, Provider, SessionId, SignInCode, Subscribe,
+    Open, Provider, SessionId, SignInCode, Subscribe,
 };
 
 use super::{
@@ -155,7 +155,6 @@ fn issue_commands_keep_a_receipt_and_a_change_names_its_client() {
     let fields = IssueFields {
         title: String::from("Remove sessions"),
         body: String::new(),
-        priority: Priority::Normal,
         labels: Vec::new(),
     };
     let project = proto::ProjectId(String::from("conductor"));

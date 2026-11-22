@@ -366,6 +366,9 @@ projects_scenario() {
   git -C "$at/sources/home" init -q
   listed "$at/sources/home" alpha "file://$at/alpha-remote.git" "$at/sources/alpha"
   listed "$at/sources/home" beta "file://$at/beta-remote.git" "$at/sources/beta"
+  # The flow Conductor's own home declares, which the issues follow.
+  mkdir -p "$at/sources/home/docs/agents"
+  cp crates/home/src/flow/flow.toml "$at/sources/home/docs/agents/flow.toml"
   git -C "$at/sources/home" add .
   git -C "$at/sources/home" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm 'list alpha and beta' -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
   git clone -q --bare "$at/sources/home" "$at/home-remote.git"
@@ -390,7 +393,7 @@ projects_scenario() {
   echo "ok: host projects-host: the person's checkout is untouched"
   local pushed
   pushed=$(git -C "$at/home-remote.git" log --format=%s)
-  for subject in '^Open issue .*: Remove sessions$' '^Move issue .* to in-progress$' '^Add an item to issue ' '^Note on issue '; do
+  for subject in '^Open issue .*: Remove sessions$' '^Move issue .* to active$' '^Add an item to issue ' '^Note on issue '; do
     grep -q "$subject" <<<"$pushed" ||
       { echo "FAILED: host projects-host: the home's remote has no commit matching $subject"; return 1; }
   done

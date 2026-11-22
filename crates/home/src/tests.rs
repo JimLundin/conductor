@@ -165,6 +165,7 @@ fn a_renamed_project_keeps_its_id_and_its_checkouts() {
             Found {
                 checkouts: &found,
                 cloning: &BTreeMap::new(),
+                flow: None,
                 issues: &BTreeMap::new(),
                 unpushed: 0,
             },
@@ -338,6 +339,7 @@ fn home_and_project_snapshots_use_credential_free_addresses()
         Found {
             checkouts: &BTreeMap::new(),
             cloning: &BTreeMap::new(),
+            flow: None,
             issues: &BTreeMap::new(),
             unpushed: 0,
         },
@@ -442,6 +444,7 @@ fn home(checkouts: &[&str]) -> Home {
                     reason: String::from("no"),
                 },
             )]),
+            flow: None,
             issues: &BTreeMap::new(),
             unpushed: 2,
         },

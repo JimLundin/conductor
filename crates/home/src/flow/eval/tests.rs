@@ -2,10 +2,10 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
 use proptest::prelude::*;
-use proto::ProjectId;
+use proto::{Datum, Issue, IssueId, ProjectId, Section};
 
 use super::{Failure, Move, holds};
-use crate::flow::graph::{Datum, Graph, Issue, Section};
+use crate::flow::graph::Graph;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Role, load};
 
 fn flow() -> Flow {
@@ -20,11 +20,27 @@ fn flow() -> Flow {
     })
 }
 
-fn issue(id: &str, kind: &str, status: &str) -> Issue {
+/// The names the tests give issues, each standing for the id after its
+/// place.
+const NAMES: [&str; 10] = [
+    "spec", "review", "one", "two", "task", "i0", "i1", "i2", "i3", "i4",
+];
+
+fn id(name: &str) -> IssueId {
+    let place = NAMES.iter().position(|known| *known == name);
+    IssueId(place.map_or(0, |at| u128::try_from(at).unwrap_or_default() + 1))
+}
+
+/// The issue's id as a relation and a failure name it.
+fn named(name: &str) -> String {
+    id(name).to_string()
+}
+
+fn issue(name: &str, kind: &str, status: &str) -> Issue {
     Issue {
-        id: String::from(id),
+        id: id(name),
         project: ProjectId(String::from("home")),
-        title: String::from(id),
+        title: String::from(name),
         kind: String::from(kind),
         status: String::from(status),
         stage: None,
@@ -33,13 +49,14 @@ fn issue(id: &str, kind: &str, status: &str) -> Issue {
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
+        branch: String::new(),
     }
 }
 
 fn linked(mut issue: Issue, relation: &str, ids: &[&str]) -> Issue {
     issue.links.insert(
         String::from(relation),
-        ids.iter().map(|id| String::from(*id)).collect(),
+        ids.iter().map(|target| named(target)).collect(),
     );
     issue
 }
@@ -67,8 +84,8 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         holds(&flow, &graph, &spec, Move::default(), &rule(&flow, 0)),
         Err(Failure {
             atom: String::from("{ status_role = \"terminal\" }"),
-            issue: String::from("review"),
-            path: Vec::from([String::from("children review")]),
+            issue: named("review"),
+            path: Vec::from([format!("children {}", named("review"))]),
         })
     );
     review.status = String::from("done");
@@ -88,7 +105,7 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         holds(&flow, &alone, &spec, Move::default(), &rule(&flow, 0)),
         Err(Failure {
             atom: String::from("children reaches no issue"),
-            issue: String::from("spec"),
+            issue: named("spec"),
             path: Vec::new(),
         })
     );
@@ -107,8 +124,8 @@ fn blocking_holds_until_every_blocker_is_finished_and_ends_on_a_cycle() {
         holds(&flow, &graph, &one, Move::default(), &rule(&flow, 1)),
         Err(Failure {
             atom: String::from("{ status_role = \"terminal\" }"),
-            issue: String::from("two"),
-            path: Vec::from([String::from("blocked_by two")]),
+            issue: named("two"),
+            path: Vec::from([format!("blocked_by {}", named("two"))]),
         })
     );
 }
@@ -134,7 +151,7 @@ fn a_move_is_weighed_from_and_to() {
         holds(&flow, &graph, &after, Move::default(), &leaving),
         Err(Failure {
             atom: String::from("from: no move is being weighed"),
-            issue: String::from("spec"),
+            issue: named("spec"),
             path: Vec::new(),
         })
     );
@@ -177,7 +194,7 @@ fn meets(
                 };
                 from.links
                     .get(&relation.name)
-                    .is_some_and(|ids| ids.contains(&to.id))
+                    .is_some_and(|ids| ids.contains(&to.id.to_string()))
             })
             .collect()
     };
@@ -297,9 +314,12 @@ fn issues() -> impl Strategy<Value = Vec<Issue>> {
                         (String::from("focus"), Datum::Text(word))
                     }));
                     made.links.extend(parent.map(|target| {
-                        (String::from("parent"), Vec::from([target]))
+                        (String::from("parent"), Vec::from([named(&target)]))
                     }));
-                    made.links.insert(String::from("blocked_by"), blockers);
+                    made.links.insert(
+                        String::from("blocked_by"),
+                        blockers.iter().map(|target| named(target)).collect(),
+                    );
                     made.sections = sections
                         .into_iter()
                         .map(|heading| Section {
@@ -388,10 +408,10 @@ proptest! {
         prop_assert_eq!(evaluated.is_ok(), meets(&flow, &graph, subject, moving, &predicate));
         if let Err(failure) = evaluated {
             prop_assert!(!failure.atom.is_empty());
-            prop_assert!(graph.issues.iter().any(|issue| issue.id == failure.issue));
+            prop_assert!(graph.issues.iter().any(|issue| issue.id.to_string() == failure.issue));
             for step in &failure.path {
                 let reached = step.split_once(' ').map(|(_, id)| id);
-                prop_assert!(graph.issues.iter().any(|issue| Some(issue.id.as_str()) == reached));
+                prop_assert!(graph.issues.iter().any(|issue| Some(issue.id.to_string().as_str()) == reached));
             }
         }
     }

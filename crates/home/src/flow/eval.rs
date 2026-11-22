@@ -5,7 +5,11 @@
 //! one step along a relation, so it ends however the issues link, cycles
 //! included.
 
-use super::graph::{Datum, Graph, Issue};
+use alloc::string::ToString;
+
+use proto::{Datum, Issue};
+
+use super::graph::Graph;
 use super::{Flow, Literal, Predicate, Quantifier};
 use crate::prelude::*;
 
@@ -63,7 +67,7 @@ impl Walk<'_> {
     ) -> Result<(), Failure> {
         let fail = |atom: String| Failure {
             atom,
-            issue: issue.id.clone(),
+            issue: issue.id.to_string(),
             path: path.to_vec(),
         };
         match predicate {
@@ -152,7 +156,7 @@ impl Walk<'_> {
                 }
                 Err(first.unwrap_or_else(|| Failure {
                     atom: format!("{via} reaches no issue"),
-                    issue: issue.id.clone(),
+                    issue: issue.id.to_string(),
                     path: path.to_vec(),
                 }))
             }
@@ -164,7 +168,7 @@ impl Walk<'_> {
                 .map_or(Ok(()), |target| {
                     Err(Failure {
                         atom: format!("not {}", describe(condition)),
-                        issue: target.id.clone(),
+                        issue: target.id.to_string(),
                         path: step(target),
                     })
                 }),
@@ -182,20 +186,23 @@ impl Walk<'_> {
                 .into_iter()
                 .flatten()
                 .filter_map(|id| {
-                    self.graph.issues.iter().find(|other| other.id == *id)
+                    self.graph
+                        .issues
+                        .iter()
+                        .find(|other| other.id.to_string() == *id)
                 })
                 .collect(),
-            Some((relation, true)) => self
-                .graph
-                .issues
-                .iter()
-                .filter(|other| {
-                    other
-                        .links
-                        .get(&relation.name)
-                        .is_some_and(|ids| ids.contains(&issue.id))
-                })
-                .collect(),
+            Some((relation, true)) => {
+                self.graph
+                    .issues
+                    .iter()
+                    .filter(|other| {
+                        other.links.get(&relation.name).is_some_and(|ids| {
+                            ids.contains(&issue.id.to_string())
+                        })
+                    })
+                    .collect()
+            }
         }
     }
 
