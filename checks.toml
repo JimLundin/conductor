@@ -55,7 +55,7 @@ paths = [
     "tools/test-push.mjs",
     "tools/test-fleet-key.mjs",
     "tools/check-browser-harness.py",
-    "tools/e2e-worktrees-browser.sh",
+    "crates/conductord/examples/worktrees_browser.rs",
     "tools/e2e-common.sh",
     "tools/e2e-http.py",
     "tools/e2e-host-log.py",

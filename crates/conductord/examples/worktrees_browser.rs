@@ -1,6 +1,6 @@
-//! Seeds an existing fake host for the phone diff/undo browser scenario.
-//! The supplied directory is a committed Git repo holding claude-worktrees.jsonl
-//! as stdout.jsonl; the daemon remains live after this helper exits.
+//! Seeds a fake host for the browser suite's worktrees scenario: three turns,
+//! one unchanged, in a committed Git repo holding claude-worktrees.jsonl as
+//! stdout.jsonl. The daemon remains live after this helper exits.
 
 use std::path::PathBuf;
 use std::time::Duration;

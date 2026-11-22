@@ -3,7 +3,9 @@
 # GitHub Pages does, and drives headless Chromium and WebKit at an iPhone
 # viewport against `conductord host` running the fake CLIs
 # (crates/*-cli/tests/fake-*.sh) through n0's relays. Each scenario gets its
-# own host: a Claude turn with approval in each engine (turn), two Codex
+# own host: a Claude turn with approval in each engine (turn), three turns'
+# diffs, one unchanged and one refused once, then Continue, in each engine
+# (worktrees), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
 # CLI continued and the Thinking disclosure (continue), the agent's checklist
@@ -74,7 +76,7 @@ else
   (cd crates/app && dx build --platform web --release >/dev/null)
   echo "$built" >"$web/built-from"
 fi
-cargo build -q -p conductord
+cargo build -q -p conductord --bin conductord --example worktrees_browser
 start_browser_server
 
 # repo <dir>: a Git repository with one commit, which a session needs to
@@ -179,6 +181,40 @@ turn_in() {
 
 turn_chromium() { turn_in chromium; }
 turn_webkit() { turn_in webkit; }
+
+# worktrees_in <engine>: three turns seeded over the link (the
+# worktrees_browser example), one unchanged, with the middle turn's first
+# diff refused by a git that fails once, and Continue after it.
+worktrees_in() {
+  local name=worktrees-$1 dir=$scratch/worktrees-$1
+  session "$dir" claude-worktrees.jsonl
+  cp "$recordings/claude-worktrees-continued.jsonl" "$dir/stdout.2.jsonl"
+  mkdir -p "$scratch/$name-bin" "$scratch/$name-fail"
+  cat >"$scratch/$name-bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ " $* " == *" diff --no-ext-diff --no-textconv --no-renames --name-status "* ]] &&
+   rmdir "$PREVIEW_FAILURE" 2>/dev/null; then
+  echo 'fixture snapshot diff failure' >&2
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$scratch/$name-bin/git"
+  REAL_GIT=$(command -v git) PREVIEW_FAILURE=$scratch/$name-fail \
+    PATH="$scratch/$name-bin:$PATH" start_host "$name"
+  local ticket
+  ticket=$(awk '/^ticket:/ {print $2}' "$scratch/$name.log")
+  "$target"/debug/examples/worktrees_browser "$ticket" "$dir"
+  echo
+  echo "## Worktrees, $1"
+  run "$1" worktrees "$scratch/$name.png" "$dir"
+  echo
+  echo "## Worktrees, $1, host log"
+  host_log "$name"
+}
+
+worktrees_chromium() { worktrees_in chromium; }
+worktrees_webkit() { worktrees_in webkit; }
 
 codex_scenario() {
   # The app-server plays its recording in the Codex instance's work dir.
@@ -456,6 +492,8 @@ out=$record/browser-run.txt
   echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
   scenario "turn, chromium" turn_chromium
   scenario "turn, webkit" turn_webkit
+  scenario "worktrees, chromium" worktrees_chromium
+  scenario "worktrees, webkit" worktrees_webkit
   scenario "codex, chromium" codex_scenario
   scenario "questions, webkit" questions
   scenario "continue, chromium" continue_scenario

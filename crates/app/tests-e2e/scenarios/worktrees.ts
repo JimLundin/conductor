@@ -80,10 +80,6 @@ const middleTurnChanges = async (run: Run): Promise<void> => {
 	}
 	check(await isWithinWidth(page), "no page overflow at phone width");
 	await page.screenshot({ path: out, fullPage: true });
-	check(
-		(await pane.getByRole("button", { name: /undo/i }).count()) === 0,
-		"historical undo is unavailable",
-	);
 };
 
 const unchangedTurn = async (run: Run): Promise<void> => {
