@@ -6,7 +6,7 @@ use core::{
     task::{ContextBuilder, Poll, Waker},
 };
 
-use proto::{CheckpointDiff, HostPath, HostSeq, Kept, SessionId, Workspace};
+use proto::{HostPath, HostSeq, Kept, SessionId, SnapshotDiff, Workspace};
 
 use crate::prelude::*;
 
@@ -494,17 +494,17 @@ impl Steps {
             .scratch_git(
                 path,
                 &["read-tree", base],
-                "initializing checkpoint index",
+                "initializing snapshot index",
             )
             .await?;
         let _ = self
-            .scratch_git(path, &["add", "-A", "--", "."], "staging checkpoint")
+            .scratch_git(path, &["add", "-A", "--", "."], "staging snapshot")
             .await?;
         let output = self
-            .scratch_git(path, &["write-tree"], "checkpoint tree")
+            .scratch_git(path, &["write-tree"], "snapshot tree")
             .await?;
         self.done(Step::CloseIndex).await?;
-        utf8(output, "checkpoint tree").map(|tree| tree.trim().to_owned())
+        utf8(output, "snapshot tree").map(|tree| tree.trim().to_owned())
     }
 
     async fn snapshot(
@@ -555,8 +555,8 @@ impl Steps {
         args.extend(["-m", message]);
         let output = self.git_with(path, &args, false, true).await?;
         utf8(
-            checked(output, "creating checkpoint commit")?,
-            "checkpoint commit",
+            checked(output, "creating snapshot commit")?,
+            "snapshot commit",
         )
         .map(|text| text.trim().to_owned())
     }
@@ -584,16 +584,16 @@ impl Steps {
     }
 }
 
-impl<'a> Plan<'a, CheckpointDiff> {
+impl<'a> Plan<'a, SnapshotDiff> {
     #[must_use]
     pub fn diff(
         workspace: &'a Workspace,
-        checkpoint: HostSeq,
+        snapshot: HostSeq,
         commit: &'a str,
         previous: &'a str,
     ) -> Self {
         Self::new(|steps| async move {
-            steps.diff(workspace, checkpoint, commit, previous).await
+            steps.diff(workspace, snapshot, commit, previous).await
         })
     }
 }
@@ -602,10 +602,10 @@ impl Steps {
     async fn diff(
         &self,
         workspace: &Workspace,
-        checkpoint: HostSeq,
+        snapshot: HostSeq,
         commit: &str,
         previous: &str,
-    ) -> Result<CheckpointDiff, GitError> {
+    ) -> Result<SnapshotDiff, GitError> {
         let _ = self.validate(workspace).await?;
         let path = &workspace.worktree.0;
         self.owned_commit(workspace, commit).await?;
@@ -648,8 +648,8 @@ impl Steps {
             patched.push(patch(output, entry)?);
         }
         let (files, extent) = budget(patched, counted);
-        Ok(CheckpointDiff {
-            checkpoint,
+        Ok(SnapshotDiff {
+            snapshot,
             files,
             extent,
         })

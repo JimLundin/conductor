@@ -1,6 +1,6 @@
 //! Turn records and pending captures reconstructed from session events.
 use crate::prelude::*;
-use proto::{Checkpoint, Event, EventKind, HostSeq, TurnOutcome, Workspace};
+use proto::{Event, EventKind, HostSeq, Snapshot, TurnOutcome, Workspace};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotPlan {
@@ -10,8 +10,8 @@ pub struct SnapshotPlan {
 
 impl SnapshotPlan {
     #[must_use]
-    pub fn checkpoint(self, commit: String) -> Checkpoint {
-        Checkpoint {
+    pub fn snapshot(self, commit: String) -> Snapshot {
+        Snapshot {
             turn_start: self.turn_start,
             commit,
         }
@@ -21,7 +21,7 @@ impl SnapshotPlan {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Compared {
     pub workspace: Workspace,
-    pub checkpoint: HostSeq,
+    pub snapshot: HostSeq,
     pub commit: String,
     pub previous: String,
 }
@@ -34,7 +34,7 @@ enum PendingTurn {
 #[derive(Default)]
 pub struct Book {
     workspace: Option<Workspace>,
-    checkpoints: Vec<(HostSeq, Checkpoint)>,
+    snapshots: Vec<(HostSeq, Snapshot)>,
     pending: Option<PendingTurn>,
 }
 
@@ -45,8 +45,8 @@ impl Book {
         for event in events {
             match &event.kind {
                 EventKind::UserMessage { .. } => book.accept_message(event.seq),
-                EventKind::CheckpointCreated { checkpoint } => {
-                    book.record(event.seq, checkpoint.clone());
+                EventKind::SnapshotRecorded { snapshot } => {
+                    book.record(event.seq, snapshot.clone());
                 }
                 kind => book.apply_kind(kind),
             }
@@ -80,8 +80,8 @@ impl Book {
         }
     }
 
-    pub fn record(&mut self, seq: HostSeq, checkpoint: Checkpoint) {
-        self.checkpoints.push((seq, checkpoint));
+    pub fn record(&mut self, seq: HostSeq, snapshot: Snapshot) {
+        self.snapshots.push((seq, snapshot));
         self.pending = None;
     }
 
@@ -98,10 +98,10 @@ impl Book {
 
     #[must_use]
     pub fn diff(&self, seq: HostSeq) -> Option<Compared> {
-        let pair = self.checkpoints.windows(2).find(|pair| pair[1].0 == seq)?;
+        let pair = self.snapshots.windows(2).find(|pair| pair[1].0 == seq)?;
         Some(Compared {
             workspace: self.workspace.clone()?,
-            checkpoint: seq,
+            snapshot: seq,
             commit: pair[1].1.commit.clone(),
             previous: pair[0].1.commit.clone(),
         })
@@ -111,7 +111,7 @@ impl Book {
 mod tests {
     use super::Book;
     use proto::{
-        Checkpoint, ClientName, Event, EventKind, HostPath, HostSeq, SessionId,
+        ClientName, Event, EventKind, HostPath, HostSeq, SessionId, Snapshot,
         TurnOutcome, Workspace,
     };
 
@@ -145,8 +145,8 @@ mod tests {
     fn snapshot(seq: u64, turn: Option<u64>, commit: &str) -> Event {
         event(
             seq,
-            EventKind::CheckpointCreated {
-                checkpoint: Checkpoint {
+            EventKind::SnapshotRecorded {
+                snapshot: Snapshot {
                     turn_start: turn.map(HostSeq),
                     commit: String::from(commit),
                 },
@@ -165,7 +165,7 @@ mod tests {
         let book = Book::replay(&events);
         let comparisons = [8, 14, 20].map(|seq| {
             book.diff(HostSeq(seq))
-                .map(|diff| (diff.checkpoint, diff.previous, diff.commit))
+                .map(|diff| (diff.snapshot, diff.previous, diff.commit))
         });
         assert_eq!(
             comparisons,

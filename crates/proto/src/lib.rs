@@ -484,10 +484,10 @@ pub enum CommandBody {
         provider: Provider,
         credential: Credential,
     },
-    /// A bounded diff between this checkpoint and its predecessor.
+    /// A bounded diff between this snapshot and its predecessor.
     GetDiff {
         session: SessionId,
-        checkpoint: HostSeq,
+        snapshot: HostSeq,
     },
     /// Sets the effort of the session's later turns, one its model lists.
     /// A running turn keeps its effort: the next turn the user starts, or
@@ -605,7 +605,7 @@ pub enum CommandResult {
         session: SessionId,
     },
     Rejected(Rejection),
-    Diff(CheckpointDiff),
+    Diff(SnapshotDiff),
     /// The issue a `CreateIssue` or `ChangeIssue` wrote, and what the
     /// flow warns of it.
     IssueWritten {
@@ -650,7 +650,7 @@ pub enum Rejection {
         reason: String,
     },
     NotGitRepository,
-    CheckpointUnavailable,
+    SnapshotUnavailable,
     WorkspaceFailure {
         reason: String,
     },
@@ -735,7 +735,7 @@ impl Rejection {
             Self::NotGitRepository => {
                 String::from("choose a Git repository with a committed HEAD")
             }
-            Self::CheckpointUnavailable => {
+            Self::SnapshotUnavailable => {
                 String::from("this snapshot has no available comparison")
             }
             Self::SignInRunning => String::from(
@@ -876,14 +876,14 @@ pub enum EventKind {
     WorkspaceCreated {
         workspace: Workspace,
     },
-    CheckpointCreated {
-        checkpoint: Checkpoint,
+    SnapshotRecorded {
+        snapshot: Snapshot,
     },
     NativeTurnStarted {
         turn_start: Option<HostSeq>,
     },
     ChecklistChanged {
-        tasks: Vec<ChecklistEntry>,
+        checklist: Vec<ChecklistEntry>,
     },
     /// The effort of the session's later turns, after a `SetEffort`.
     EffortChanged {
@@ -987,7 +987,7 @@ pub enum SubagentEvent {
         kind: String,
     },
     ChecklistChanged {
-        tasks: Vec<ChecklistEntry>,
+        checklist: Vec<ChecklistEntry>,
     },
     RequestOpened {
         request: RequestId,
@@ -1060,21 +1060,21 @@ pub enum Kept {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Checkpoint {
+pub struct Snapshot {
     /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
     pub turn_start: Option<HostSeq>,
     pub commit: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CheckpointDiff {
-    pub checkpoint: HostSeq,
-    pub files: Vec<CheckpointFile>,
+pub struct SnapshotDiff {
+    pub snapshot: HostSeq,
+    pub files: Vec<SnapshotFile>,
     pub extent: DiffExtent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CheckpointFile {
+pub struct SnapshotFile {
     pub path: String,
     pub change: Change,
     pub patch: FilePatch,

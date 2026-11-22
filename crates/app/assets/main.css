@@ -378,20 +378,20 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 }
 
 /* The agent's checklist sits above the transcript and folds to one line. */
-.tasks { padding: 0 1rem 0.4rem; border-bottom: 1px solid var(--line); font-size: 0.875rem; }
-.tasks summary { min-height: 44px; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
-.tasks summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); }
-.tasks[open] summary::before { content: "▾"; }
-.tasks summary::-webkit-details-marker { display: none; }
-.tasks-title { font-weight: 650; }
-.tasks-count { color: var(--muted); }
-.tasks ol { max-height: 30dvh; margin: 0; padding: 0 0 0 1.5em; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
-.task { display: flex; align-items: baseline; gap: 0.55rem; padding: 0.2rem 0; overflow-wrap: anywhere; }
-.task-mark { flex-shrink: 0; width: 0.75rem; height: 0.75rem; border: 2px solid var(--faint); border-radius: 50%; transform: translateY(0.1rem); }
-.task[data-status="in-progress"] .task-mark { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 35%, transparent 40%); }
-.task[data-status="in-progress"] .task-text { color: var(--ink); font-weight: 600; }
-.task[data-status="completed"] .task-mark { border-color: var(--green); background: var(--green); }
-.task[data-status="completed"] .task-text { color: var(--muted); text-decoration: line-through; }
+.agent-checklist { padding: 0 1rem 0.4rem; border-bottom: 1px solid var(--line); font-size: 0.875rem; }
+.agent-checklist summary { min-height: 44px; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+.agent-checklist summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); }
+.agent-checklist[open] summary::before { content: "▾"; }
+.agent-checklist summary::-webkit-details-marker { display: none; }
+.agent-checklist-title { font-weight: 650; }
+.agent-checklist-count { color: var(--muted); }
+.agent-checklist ol { max-height: 30dvh; margin: 0; padding: 0 0 0 1.5em; overflow-y: auto; overscroll-behavior: contain; list-style: none; }
+.agent-checklist-item { display: flex; align-items: baseline; gap: 0.55rem; padding: 0.2rem 0; overflow-wrap: anywhere; }
+.agent-checklist-mark { flex-shrink: 0; width: 0.75rem; height: 0.75rem; border: 2px solid var(--faint); border-radius: 50%; transform: translateY(0.1rem); }
+.agent-checklist-item[data-status="in-progress"] .agent-checklist-mark { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 35%, transparent 40%); }
+.agent-checklist-item[data-status="in-progress"] .agent-checklist-text { color: var(--ink); font-weight: 600; }
+.agent-checklist-item[data-status="completed"] .agent-checklist-mark { border-color: var(--green); background: var(--green); }
+.agent-checklist-item[data-status="completed"] .agent-checklist-text { color: var(--muted); text-decoration: line-through; }
 .interrupt {
   position: relative;
   flex-shrink: 0;

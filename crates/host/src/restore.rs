@@ -1,7 +1,7 @@
 //! What a restart does to each session the log holds.
 //!
 //! Before the host serves the session again, requests nobody answered are
-//! withdrawn, a turn that was running is interrupted, after a checkpoint of
+//! withdrawn, a turn that was running is interrupted, after a snapshot of
 //! its files when it has a workspace, and an agent that was running is
 //! closed.
 //!
@@ -15,10 +15,10 @@ use proto::{
     SessionId, TurnOutcome,
 };
 
-use crate::checkpoints::Book;
-pub use crate::checkpoints::SnapshotPlan;
 use crate::prelude::*;
 use crate::session::Choice;
+use crate::snapshots::Book;
+pub use crate::snapshots::SnapshotPlan;
 
 /// A session the log says was created.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,11 +71,11 @@ impl SnapshotPlan {
     #[must_use]
     pub fn snapshotted(self, commit: Result<String, String>) -> EventKind {
         match commit {
-            Ok(made) => EventKind::CheckpointCreated {
-                checkpoint: self.checkpoint(made),
+            Ok(made) => EventKind::SnapshotRecorded {
+                snapshot: self.snapshot(made),
             },
             Err(err) => EventKind::Error {
-                message: format!("interrupted turn checkpoint failed: {err}"),
+                message: format!("interrupted turn snapshot failed: {err}"),
             },
         }
     }
@@ -103,7 +103,7 @@ pub struct Recovery {
     /// A turn was running.
     pub interrupted: bool,
     /// Pending work to capture before the session can continue.
-    pub checkpoint: Option<SnapshotPlan>,
+    pub snapshot: Option<SnapshotPlan>,
     /// The agent was running.
     pub closed: bool,
 }
@@ -129,7 +129,7 @@ impl Recovery {
             }),
             withdrawn: open_requests(events),
             interrupted,
-            checkpoint: interrupted
+            snapshot: interrupted
                 .then(|| Book::replay(events).plan_snapshot())
                 .flatten(),
             closed: agent_running(events),
@@ -137,7 +137,7 @@ impl Recovery {
     }
 
     /// What the restart does, in order: withdraw the open requests,
-    /// checkpoint and interrupt the running turn, and close the agent.
+    /// snapshot and interrupt the running turn, and close the agent.
     #[must_use]
     pub fn steps(&self) -> Vec<Step> {
         let mut steps = self
@@ -151,7 +151,7 @@ impl Recovery {
             })
             .collect::<Vec<Step>>();
         if self.interrupted {
-            if let Some(turn) = &self.checkpoint {
+            if let Some(turn) = &self.snapshot {
                 steps.extend([Step::Barrier, Step::Snapshot(turn.clone())]);
             }
             steps.push(Step::Append(EventKind::TurnCompleted {
@@ -246,8 +246,8 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Checkpoint, ClientName, Effort, Event, EventKind, HostPath, HostSeq,
-        InstanceId, ModelId, Provider, RequestId, Resolution, SessionId,
+        ClientName, Effort, Event, EventKind, HostPath, HostSeq, InstanceId,
+        ModelId, Provider, RequestId, Resolution, SessionId, Snapshot,
         ToolCallId, ToolKind, TurnOutcome, Workspace,
     };
 
@@ -351,7 +351,7 @@ mod tests {
                 talked: true,
                 withdrawn: Vec::from([RequestId(2)]),
                 interrupted: true,
-                checkpoint: None,
+                snapshot: None,
                 closed: true,
             }
         );
@@ -379,8 +379,8 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_withdraws_checkpoints_interrupts_and_closes_in_order() {
-        let recovery = |checkpoint, closed| Recovery {
+    fn a_restart_withdraws_snapshots_interrupts_and_closes_in_order() {
+        let recovery = |snapshot, closed| Recovery {
             choice: Choice {
                 model: None,
                 effort: None,
@@ -388,7 +388,7 @@ mod tests {
             talked: true,
             withdrawn: Vec::from([RequestId(2), RequestId(3)]),
             interrupted: true,
-            checkpoint,
+            snapshot,
             closed,
         };
         let interrupted = Step::Append(EventKind::TurnCompleted {
@@ -416,33 +416,33 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_records_its_checkpoint_or_why_it_failed() {
+    fn a_capture_records_its_snapshot_or_why_it_failed() {
         assert_eq!(
             [
                 turn().snapshotted(Ok(String::from("made"))),
                 turn().snapshotted(Err(String::from("git broke"))),
             ],
             [
-                EventKind::CheckpointCreated {
-                    checkpoint: Checkpoint {
+                EventKind::SnapshotRecorded {
+                    snapshot: Snapshot {
                         turn_start: Some(HostSeq(9)),
                         commit: String::from("made"),
                     },
                 },
                 EventKind::Error {
                     message: String::from(
-                        "interrupted turn checkpoint failed: git broke"
+                        "interrupted turn snapshot failed: git broke"
                     ),
                 },
             ]
         );
     }
 
-    /// A running turn's files are checkpointed on top of the last
-    /// checkpoint, at the model the log last chose; a finished turn's
+    /// A running turn's files are snapshotted on top of the last
+    /// snapshot, at the model the log last chose; a finished turn's
     /// are not.
     #[test]
-    fn a_restart_checkpoints_a_running_turn_and_leaves_a_finished_one() {
+    fn a_restart_snapshots_a_running_turn_and_leaves_a_finished_one() {
         let user = EventKind::UserMessage {
             text: String::from("edit"),
             by: ClientName(String::from("phone")),
@@ -459,8 +459,8 @@ mod tests {
             event(
                 3,
                 1,
-                EventKind::CheckpointCreated {
-                    checkpoint: Checkpoint {
+                EventKind::SnapshotRecorded {
+                    snapshot: Snapshot {
                         turn_start: None,
                         commit: String::from("c0"),
                     },
@@ -489,15 +489,15 @@ mod tests {
                 },
             )])
             .collect::<Vec<Event>>();
-        let recovery = |checkpoint: Option<SnapshotPlan>| Recovery {
+        let recovery = |snapshot: Option<SnapshotPlan>| Recovery {
             choice: Choice {
                 model: Some(ModelId(String::from("small"))),
                 effort: Some(Effort::Low),
             },
             talked: true,
             withdrawn: Vec::new(),
-            interrupted: checkpoint.is_some(),
-            checkpoint,
+            interrupted: snapshot.is_some(),
+            snapshot,
             closed: true,
         };
         let none = Choice {
@@ -542,7 +542,7 @@ mod tests {
                 talked: false,
                 withdrawn: Vec::new(),
                 interrupted: false,
-                checkpoint: None,
+                snapshot: None,
                 closed: false,
             }
         );

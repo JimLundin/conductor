@@ -8,7 +8,6 @@
 
 extern crate alloc;
 
-mod checkpoints;
 mod credentials;
 mod host;
 mod issues;
@@ -18,6 +17,7 @@ mod projects;
 mod saved;
 mod session;
 mod sessions;
+mod snapshots;
 mod state;
 mod transcript;
 
@@ -31,7 +31,6 @@ use proto::{
     TicketError,
 };
 
-pub use checkpoints::{DiffFile, DiffPanel, Patch, Preview, TurnChanges};
 pub use credentials::{
     ClearButton, Clipboard, CredentialIntent, CredentialsPane,
     CredentialsScreen, DeviceCode, FieldView, InstanceCredentials, KindForm,
@@ -54,10 +53,11 @@ pub use saved::{
     restored,
 };
 pub use session::{
-    Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
-    TaskRow, Tasks, WorkspaceContext,
+    ChecklistPanel, ChecklistRow, Composer, EffortControl, Entry, Footer,
+    Mount, SessionIntent, SessionPane, WorkspaceContext,
 };
 pub use sessions::{HostGroup, Listing, SessionList, SessionRow};
+pub use snapshots::{DiffFile, DiffPanel, Patch, Preview, TurnChanges};
 pub use state::{Detail, Dial, HostsScreen, State};
 pub use transcript::{
     Action, AgentGroup, AnsweredQuestion, ApprovalCard, Ask, OptionButton,
@@ -189,7 +189,7 @@ enum ReplyTo {
     Issue(issues::Submission),
     Instance(Subject, Done),
     Diff {
-        checkpoint: HostSeq,
+        snapshot: HostSeq,
         request: u64,
     },
 }

@@ -6,8 +6,8 @@
 # own host: a Claude turn with approval in each engine (turn), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
-# CLI continued and the Thinking disclosure (continue), a checklist shown as the
-# session's tasks and the effort changed between turns (tasks, WebKit), a
+# CLI continued and the Thinking disclosure (continue), the agent's checklist
+# and the effort changed between turns (checklist, WebKit), a
 # sub-agent folded under the call that started it and opened (subagents,
 # Chromium), the
 # credentials forms and a second Claude instance added from the app
@@ -242,22 +242,22 @@ continue_scenario() {
   echo "ok: host continue-host: the CLI received the picked model and effort"
 }
 
-tasks() {
-  session "$scratch/tasks" claude-checklist-effort.jsonl
-  start_host tasks
+checklist_scenario() {
+  session "$scratch/checklist" claude-checklist-effort.jsonl
+  start_host checklist
   echo
-  echo "## Tasks and the effort changed between turns, webkit"
-  run webkit tasks "$record/screens/phone-light-tasks.png" "$scratch/tasks"
+  echo "## Checklist and the effort changed between turns, webkit"
+  run webkit checklist "$record/screens/phone-light-checklist.png" "$scratch/checklist"
   echo
-  echo "## Tasks, host log"
-  host_log tasks
+  echo "## Checklist, host log"
+  host_log checklist
   echo
-  expect_commands tasks 1 set_effort accepted
+  expect_commands checklist 1 set_effort accepted
   # The CLI gets the effort right before the next message, not mid-turn.
-  order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/tasks/stdin.jsonl" | tr '\n' ' ')
+  order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/checklist/stdin.jsonl" | tr '\n' ' ')
   [ "$order" = '"subtype":"initialize" "text":"plan" "subtype":"apply_flag_settings" "text":"pong" ' ] ||
-    { echo "FAILED: host tasks: what the CLI read ($order)"; return 1; }
-  echo "ok: host tasks: the CLI read apply_flag_settings right before the next message"
+    { echo "FAILED: host checklist: what the CLI read ($order)"; return 1; }
+  echo "ok: host checklist: the CLI read apply_flag_settings right before the next message"
 }
 
 subagents() {
@@ -459,7 +459,7 @@ out=$record/browser-run.txt
   scenario "codex, chromium" codex_scenario
   scenario "questions, webkit" questions
   scenario "continue, chromium" continue_scenario
-  scenario "tasks, webkit" tasks
+  scenario "checklist, webkit" checklist_scenario
   scenario "subagents, chromium" subagents
   scenario "credentials, webkit" credentials
   scenario "sign-in, webkit" sign_in

@@ -99,7 +99,7 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
 }
 
 /// A question's `AskUserQuestion` call is not shown as a tool call: its
-/// `QuestionAsked` shows it. Nor is a `TodoWrite` call: the session's tasks
+/// `QuestionAsked` shows it. Nor is a `TodoWrite` call: the session's checklist
 /// show it. Their results then finish a call no client saw start, which a
 /// client ignores.
 fn claude_block(role: Role, block: Block) -> Option<Step> {

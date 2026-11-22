@@ -99,7 +99,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
     let diff = route(
         CommandBody::GetDiff {
             session: SessionId(1),
-            checkpoint: HostSeq(2),
+            snapshot: HostSeq(2),
         },
         phone(),
     );

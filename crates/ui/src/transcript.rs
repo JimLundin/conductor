@@ -161,7 +161,7 @@ pub struct AgentGroup {
     pub description: String,
     pub kind: Option<String>,
     pub needs_attention: bool,
-    pub tasks: Option<crate::session::Tasks>,
+    pub checklist: Option<crate::session::ChecklistPanel>,
     /// The status in a word, also its `data-status`.
     pub status: &'static str,
     pub label: &'static str,
@@ -179,7 +179,7 @@ pub fn agent_group(
         description: subagent.description.clone(),
         kind: subagent.kind.clone(),
         needs_attention: subagent.items.iter().any(Item::requests_attention),
-        tasks: crate::session::tasks(&subagent.tasks),
+        checklist: crate::session::checklist(&subagent.checklist),
         status: subagent.status.word(),
         label: match subagent.status {
             SubagentStatus::Running => "Running",
@@ -193,7 +193,7 @@ pub fn agent_group(
             .iter()
             .map(|item| row(item, drafts))
             .collect(),
-        empty: (subagent.items.is_empty() && subagent.tasks.is_empty())
+        empty: (subagent.items.is_empty() && subagent.checklist.is_empty())
             .then_some("Nothing yet"),
     }
 }

@@ -15,7 +15,7 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
   working directory. Later awaits match only lines read after it, so a test
   can hold the recording at a point and prove nothing was sent before.
 - `{"fake": "files", "write": {"file": "text"}, "delete": ["old"], "mode": {"file": 493}}`
-  changes actual CLI cwd files, for worktree/checkpoint tests.
+  changes actual CLI cwd files, for worktree/snapshot tests.
 - `{"fake": "hang_up", "after": 1}`, anywhere in the recording, closes stdin
   once that many lines are read, so the session's next write fails. The
   process stays up 1 s after the recording ends, so the failure isn't an exit.
@@ -53,7 +53,7 @@ import time
 
 # Session CLIs execute inside isolated worktrees, while test recordings and
 # gates belong to the original source directory. File-effect markers always
-# operate in the real cwd so checkpoint tests exercise the session workspace.
+# operate in the real cwd so snapshot tests exercise the session workspace.
 control = Path.cwd()
 try:
     root = Path(subprocess.check_output(["git", "rev-parse", "--show-toplevel"], stderr=subprocess.DEVNULL, text=True).strip())

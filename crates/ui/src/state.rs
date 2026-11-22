@@ -499,13 +499,10 @@ impl State {
             }
             (
                 ShownPlace::Session(_, _, Some(pane)),
-                ReplyTo::Diff {
-                    checkpoint,
-                    request,
-                },
+                ReplyTo::Diff { snapshot, request },
             ) => {
                 *pane = mem::take(pane).diffed(
-                    checkpoint,
+                    snapshot,
                     request,
                     answer,
                     &known.name(),

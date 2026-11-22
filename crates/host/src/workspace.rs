@@ -1,14 +1,14 @@
-//! The rules of a session's Git worktree and its checkpoints.
+//! The rules of a session's Git worktree and its snapshots.
 //!
 //! The names, branches and refs Conductor owns, what Git's output says, how
-//! a checkpoint's diff is bounded, and the steps that remove a workspace
+//! a snapshot's diff is bounded, and the steps that remove a workspace
 //! while keeping its branch. The shell runs each requested step.
 
 use alloc::format;
 use alloc::string::ToString;
 
 use proto::{
-    Change, CheckpointFile, DiffExtent, FilePatch, HostPath, Kept, SessionId,
+    Change, DiffExtent, FilePatch, HostPath, Kept, SessionId, SnapshotFile,
     Workspace,
 };
 
@@ -46,7 +46,7 @@ pub struct Output {
     pub error: String,
 }
 
-/// A file a checkpoint diff lists, before its patch is read.
+/// A file a snapshot diff lists, before its patch is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     path: String,
@@ -185,17 +185,17 @@ fn marker(workspace: &Workspace) -> String {
     )
 }
 
-/// Where the workspace's checkpoints are kept: one ref each, beside the
+/// Where the workspace's snapshots are kept: one ref each, beside the
 /// branch, so no commit of the project holds them.
 ///
 /// # Errors
 ///
 /// When Conductor doesn't own the branch.
-pub fn checkpoints(workspace: &Workspace) -> Result<String, GitError> {
+pub fn snapshots(workspace: &Workspace) -> Result<String, GitError> {
     let session = workspace
         .branch
         .strip_prefix(BRANCHES)
-        .ok_or_else(|| failure("checkpoint", "not an owned branch"))?;
+        .ok_or_else(|| failure("snapshot", "not an owned branch"))?;
     Ok(format!("refs/conductor/{session}/"))
 }
 
@@ -210,12 +210,12 @@ fn reference(workspace: &Workspace, commit: &str) -> Result<String, GitError> {
     if !matches!(commit.len(), 40 | 64)
         || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
-        return Err(failure("checkpoint", "expected a full commit object ID"));
+        return Err(failure("snapshot", "expected a full commit object ID"));
     }
-    Ok(format!("{}{commit}", checkpoints(workspace)?))
+    Ok(format!("{}{commit}", snapshots(workspace)?))
 }
 
-/// A turn's checkpoint is a commit on the session's branch: a new one on
+/// A turn's snapshot is a commit on the session's branch: a new one on
 /// its tip, or the tip itself when the turn changed no file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Turn {
@@ -245,10 +245,11 @@ fn listing(output: Output) -> Result<(Vec<Entry>, DiffExtent), GitError> {
         Ok((Vec::new(), DiffExtent::Truncated))
     } else {
         let metadata =
-            String::from_utf8(checked(output, "checkpoint file list")?)
-                .map_err(|error| {
+            String::from_utf8(checked(output, "snapshot file list")?).map_err(
+                |error| {
                     failure("diff contains non-UTF-8 paths", &error.to_string())
-                })?;
+                },
+            )?;
         let entries = entries(&metadata)?;
         let extent = if entries.len() > FILE_LIMIT {
             DiffExtent::Truncated
@@ -295,11 +296,11 @@ fn entry(parts: &[&str]) -> Result<Entry, GitError> {
 /// # Errors
 ///
 /// When Git failed.
-fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
+fn patch(output: Output, entry: Entry) -> Result<SnapshotFile, GitError> {
     let patch = if oversized(output.bytes.len()) {
         FilePatch::TooLarge
     } else {
-        match String::from_utf8(checked(output, "checkpoint patch")?) {
+        match String::from_utf8(checked(output, "snapshot patch")?) {
             Ok(text) if text.contains("\nBinary files ") => FilePatch::Binary,
             Ok(text) => FilePatch::Text(text),
             Err(error) => FilePatch::Unsupported {
@@ -307,7 +308,7 @@ fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
             },
         }
     };
-    Ok(CheckpointFile {
+    Ok(SnapshotFile {
         path: entry.path,
         change: entry.change,
         patch,
@@ -318,9 +319,9 @@ fn patch(output: Output, entry: Entry) -> Result<CheckpointFile, GitError> {
 /// sent as too large, and the diff as truncated.
 #[must_use]
 fn budget(
-    files: Vec<CheckpointFile>,
+    files: Vec<SnapshotFile>,
     counted: DiffExtent,
-) -> (Vec<CheckpointFile>, DiffExtent) {
+) -> (Vec<SnapshotFile>, DiffExtent) {
     let (kept, _, extent) = files.into_iter().fold(
         (Vec::new(), TOTAL_LIMIT, counted),
         |(mut kept, budget, so_far), file| {
@@ -334,7 +335,7 @@ fn budget(
                 kept.push(file);
                 (kept, remaining, so_far)
             } else {
-                kept.push(CheckpointFile {
+                kept.push(SnapshotFile {
                     patch: FilePatch::TooLarge,
                     ..file
                 });

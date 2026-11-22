@@ -96,7 +96,7 @@ impl Order {
         match self {
             Self::Send { text, by } => Core::Send { text, by },
             Self::Interrupt => Core::Interrupt,
-            Self::Diff(checkpoint) => Core::Diff(checkpoint),
+            Self::Diff(snapshot) => Core::Diff(snapshot),
             Self::Reply { request, reply, by } => {
                 Core::Reply { request, reply, by }
             }
@@ -234,10 +234,9 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
         CommandBody::FleetRevoke(node) => {
             Route::Fleet(FleetAction::Revoke(node))
         }
-        CommandBody::GetDiff {
-            session,
-            checkpoint,
-        } => Route::Order(session, Order::Diff(checkpoint)),
+        CommandBody::GetDiff { session, snapshot } => {
+            Route::Order(session, Order::Diff(snapshot))
+        }
         CommandBody::StartSession {
             instance,
             at,

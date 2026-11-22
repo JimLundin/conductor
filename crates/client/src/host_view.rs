@@ -28,9 +28,9 @@ pub struct SessionView {
     status: SessionStatus,
     pub issue: Option<IssueId>,
     finish: FinishState,
-    pub tasks: Vec<ChecklistEntry>,
+    pub checklist: Vec<ChecklistEntry>,
     pub workspace: Option<Workspace>,
-    pub checkpoints: Vec<TurnCheckpoint>,
+    pub snapshots: Vec<TurnSnapshot>,
     turn_starts: BTreeMap<HostSeq, usize>,
     pub items: Vec<Item>,
     /// The agents the session's agent started, in the order they started.
@@ -47,7 +47,7 @@ pub struct Subagent {
     pub call: ToolCallId,
     pub description: String,
     pub kind: Option<String>,
-    pub tasks: Vec<ChecklistEntry>,
+    pub checklist: Vec<ChecklistEntry>,
     pub status: SubagentStatus,
     /// Its own transcript: replies, reasoning and tool calls, and its final
     /// report as its last reply.
@@ -78,18 +78,18 @@ impl SubagentStatus {
 
 /// A completed turn and its transcript boundaries; provider identifiers stay opaque.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TurnCheckpoint {
-    pub checkpoint: HostSeq,
+pub struct TurnSnapshot {
+    pub snapshot: HostSeq,
     pub start: usize,
     pub end: usize,
 }
 
-/// A user turn's transcript, with its checkpoint once the host has saved it.
+/// A user turn's transcript, with its snapshot once the host has saved it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CompletedTurn<'a> {
     pub items: &'a [Item],
     pub outcome: &'a TurnOutcome,
-    pub checkpoint: Option<HostSeq>,
+    pub snapshot: Option<HostSeq>,
 }
 
 /// Derived from the events, never sent.
@@ -325,9 +325,9 @@ impl HostView {
                 status: SessionStatus::Starting,
                 issue: None,
                 finish: FinishState::Ready,
-                tasks: Vec::new(),
+                checklist: Vec::new(),
                 workspace: None,
-                checkpoints: Vec::new(),
+                snapshots: Vec::new(),
                 turn_starts: BTreeMap::new(),
                 items: Vec::new(),
                 subagents: Vec::new(),
@@ -528,21 +528,23 @@ impl SessionView {
                 Item::TurnCompleted(outcome) => Some((index, outcome)),
                 _ => None,
             })?;
-        let checkpoint = self
-            .checkpoints
+        let snapshot = self
+            .snapshots
             .iter()
             .find(|turn| turn.start == since.saturating_add(start))
-            .map(|turn| turn.checkpoint);
+            .map(|turn| turn.snapshot);
         Some(CompletedTurn {
             items: items.get(..end)?,
             outcome,
-            checkpoint,
+            snapshot,
         })
     }
 
     fn apply(self, kind: EventKind, seq: HostSeq) -> Self {
         match kind {
-            EventKind::ChecklistChanged { tasks } => Self { tasks, ..self },
+            EventKind::ChecklistChanged { checklist } => {
+                Self { checklist, ..self }
+            }
             EventKind::SessionReady => self.ready(),
             EventKind::ModelChanged {
                 model,
@@ -606,8 +608,8 @@ impl SessionView {
                 effort: Some(effort),
                 ..self
             },
-            EventKind::CheckpointCreated { checkpoint } => {
-                self.checkpoint_created(checkpoint.turn_start, seq)
+            EventKind::SnapshotRecorded { snapshot } => {
+                self.snapshot_recorded(snapshot.turn_start, seq)
             }
             EventKind::SessionCreated { .. }
             | EventKind::SessionRemoved { .. }
@@ -708,8 +710,11 @@ impl SessionView {
                     ..subagent
                 })
             }
-            SubagentEvent::ChecklistChanged { tasks } => {
-                self.subagent(&agent, |subagent| Subagent { tasks, ..subagent })
+            SubagentEvent::ChecklistChanged { checklist } => {
+                self.subagent(&agent, |subagent| Subagent {
+                    checklist,
+                    ..subagent
+                })
             }
             SubagentEvent::RequestOpened {
                 request,
@@ -751,7 +756,7 @@ impl SessionView {
                 call,
                 description,
                 kind: None,
-                tasks: Vec::new(),
+                checklist: Vec::new(),
                 status: SubagentStatus::Running,
                 items: Vec::new(),
             }),
@@ -833,7 +838,7 @@ impl SessionView {
         .push(message)
     }
 
-    fn checkpoint_created(
+    fn snapshot_recorded(
         self,
         turn_start: Option<HostSeq>,
         seq: HostSeq,
@@ -841,23 +846,20 @@ impl SessionView {
         let start = turn_start
             .and_then(|start| self.turn_starts.get(&start).copied())
             .unwrap_or_else(|| {
-                self.checkpoints
+                self.snapshots
                     .last()
                     .map_or(0, |turn| turn.end.saturating_add(1))
             });
         if start >= self.items.len() {
             return self;
         }
-        let mut checkpoints = self.checkpoints;
-        checkpoints.push(TurnCheckpoint {
-            checkpoint: seq,
+        let mut snapshots = self.snapshots;
+        snapshots.push(TurnSnapshot {
+            snapshot: seq,
             start,
             end: self.items.len().saturating_sub(1),
         });
-        Self {
-            checkpoints,
-            ..self
-        }
+        Self { snapshots, ..self }
     }
 
     /// A delta joins the reply that is still streaming; the final text
@@ -1422,7 +1424,7 @@ mod tests {
                     status: SessionStatus::Idle,
                     issue: None,
                     finish: FinishState::Ready,
-                    tasks: Vec::new(),
+                    checklist: Vec::new(),
                     subagents: Vec::new(),
                     items: Vec::from([
                         Item::User {
@@ -1473,7 +1475,7 @@ mod tests {
                         Item::TurnCompleted(TurnOutcome::Completed),
                     ]),
                     workspace: None,
-                    checkpoints: Vec::new(),
+                    snapshots: Vec::new(),
                     turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
                     activity: HostSeq(13),
                 },
@@ -1490,11 +1492,11 @@ mod tests {
                     }),
                     issue: None,
                     finish: FinishState::Ready,
-                    tasks: Vec::new(),
+                    checklist: Vec::new(),
                     subagents: Vec::new(),
                     items: Vec::from([Item::Error(text("odd"))]),
                     workspace: None,
-                    checkpoints: Vec::new(),
+                    snapshots: Vec::new(),
                     turn_starts: BTreeMap::new(),
                     activity: HostSeq(15),
                 },
@@ -1958,7 +1960,7 @@ mod tests {
         Vec::from([
             Subagent {
                 kind: None,
-                tasks: Vec::new(),
+                checklist: Vec::new(),
                 id: SubagentId(text("a")),
                 call: ToolCallId(text("toolu_agent_a")),
                 description: text("look for a"),
@@ -1992,7 +1994,7 @@ mod tests {
             },
             Subagent {
                 kind: None,
-                tasks: Vec::new(),
+                checklist: Vec::new(),
                 id: SubagentId(text("b")),
                 call: ToolCallId(text("toolu_agent_b")),
                 description: text("look for b"),
@@ -2099,7 +2101,7 @@ mod tests {
         }
     }
 
-    /// Each change replaces the tasks, and a new effort shows in the
+    /// Each change replaces the checklist, and a new effort shows in the
     /// header, with no transcript item for either.
     #[test]
     fn tasks_are_replaced_and_the_effort_follows_its_last_change() {
@@ -2112,11 +2114,11 @@ mod tests {
         let view = fold(Vec::from([
             (1, created("/a")),
             (1, EventKind::SessionReady),
-            (1, EventKind::ChecklistChanged { tasks: first }),
+            (1, EventKind::ChecklistChanged { checklist: first }),
             (
                 1,
                 EventKind::ChecklistChanged {
-                    tasks: later.clone(),
+                    checklist: later.clone(),
                 },
             ),
             (
@@ -2128,7 +2130,7 @@ mod tests {
         ]));
         assert_eq!(
             view.sessions.get(&SessionId(1)).map(|session| (
-                session.tasks.clone(),
+                session.checklist.clone(),
                 session.effort,
                 session.items.clone()
             )),
@@ -2430,16 +2432,16 @@ mod tests {
         );
     }
 
-    fn checkpoint(start: u64) -> EventKind {
-        EventKind::CheckpointCreated {
-            checkpoint: proto::Checkpoint {
+    fn snapshot(start: u64) -> EventKind {
+        EventKind::SnapshotRecorded {
+            snapshot: proto::Snapshot {
                 turn_start: Some(HostSeq(start)),
                 commit: text("opaque"),
             },
         }
     }
 
-    fn checkpoint_events() -> Vec<EventKind> {
+    fn snapshot_events() -> Vec<EventKind> {
         Vec::from([
             created("/a"),
             EventKind::SessionReady,
@@ -2453,7 +2455,7 @@ mod tests {
             EventKind::TurnCompleted {
                 outcome: TurnOutcome::Completed,
             },
-            checkpoint(3),
+            snapshot(3),
             EventKind::UserMessage {
                 text: text("second"),
                 by: ClientName(text("phone")),
@@ -2464,7 +2466,7 @@ mod tests {
             EventKind::TurnCompleted {
                 outcome: TurnOutcome::Completed,
             },
-            checkpoint(7),
+            snapshot(7),
             EventKind::UserMessage {
                 text: text("third"),
                 by: ClientName(text("phone")),
@@ -2475,26 +2477,25 @@ mod tests {
             EventKind::TurnCompleted {
                 outcome: TurnOutcome::Completed,
             },
-            checkpoint(11),
+            snapshot(11),
         ])
     }
 
     #[test]
-    fn a_completed_user_turn_gets_only_its_own_checkpoint_in_either_order()
+    fn a_completed_user_turn_gets_only_its_own_snapshot_in_either_order()
     -> Result<(), Box<dyn std::error::Error>> {
-        let mut events = checkpoint_events();
+        let mut events = snapshot_events();
         events.truncate(10);
         let suffix = events.split_off(8);
         let prefix = numbered(events)
             .into_iter()
             .fold(HostView::empty(), HostView::apply);
-        let [completion, checkpoint] = suffix.as_slice() else {
-            return Err("expected completion and checkpoint".into());
+        let [completion, snapshot] = suffix.as_slice() else {
+            return Err("expected completion and snapshot".into());
         };
-        for ([first, last], checkpoint_seq) in [
-            ([completion, checkpoint], 10),
-            ([checkpoint, completion], 9),
-        ] {
+        for ([first, last], snapshot_seq) in
+            [([completion, snapshot], 10), ([snapshot, completion], 9)]
+        {
             let event = |kind: &EventKind, seq| Event {
                 seq: HostSeq(seq),
                 session: SessionId(1),
@@ -2508,7 +2509,7 @@ mod tests {
             assert_eq!(
                 partial_view
                     .completed_turn_since(3)
-                    .and_then(|turn| turn.checkpoint),
+                    .and_then(|turn| turn.snapshot),
                 None
             );
             let complete = partial.apply(event(last, 10));
@@ -2520,8 +2521,8 @@ mod tests {
                 .completed_turn_since(3)
                 .ok_or("expected a completed turn")?;
             assert_eq!(
-                (turn.outcome, turn.checkpoint),
-                (&TurnOutcome::Completed, Some(HostSeq(checkpoint_seq)))
+                (turn.outcome, turn.snapshot),
+                (&TurnOutcome::Completed, Some(HostSeq(snapshot_seq)))
             );
             assert_eq!(turn.items.len(), 2);
         }
@@ -2531,7 +2532,7 @@ mod tests {
     #[test]
     fn turns_sharing_a_commit_keep_their_event_identity_across_replay()
     -> Result<(), Box<dyn std::error::Error>> {
-        let events = numbered(checkpoint_events());
+        let events = numbered(snapshot_events());
         let live = events
             .iter()
             .cloned()
@@ -2550,9 +2551,9 @@ mod tests {
             live.sessions.get(&SessionId(1)).ok_or("missing session")?;
         assert_eq!(
             session
-                .checkpoints
+                .snapshots
                 .iter()
-                .map(|turn| (turn.checkpoint, turn.start, turn.end,))
+                .map(|turn| (turn.snapshot, turn.start, turn.end,))
                 .collect::<Vec<_>>(),
             [(HostSeq(6), 0, 2), (HostSeq(10), 3, 5), (HostSeq(14), 6, 8),],
         );
@@ -2563,7 +2564,7 @@ mod tests {
     #[test]
     fn a_later_user_turn_does_not_complete_an_abandoned_one()
     -> Result<(), Box<dyn std::error::Error>> {
-        let events = checkpoint_events()
+        let events = snapshot_events()
             .into_iter()
             .enumerate()
             .filter(|(index, _)| !matches!(index, 4 | 5))
@@ -2602,22 +2603,22 @@ mod tests {
         let session =
             view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
         assert_eq!(session.workspace, None);
-        assert_eq!(session.checkpoints, Vec::new());
+        assert_eq!(session.snapshots, Vec::new());
         assert_eq!(session.controls().composer, Composer::Open);
         Ok(())
     }
 
     #[test]
-    fn autonomous_checkpoint_has_a_turn_boundary_but_initial_checkpoint_does_not()
+    fn autonomous_snapshot_has_a_turn_boundary_but_initial_snapshot_does_not()
     -> Result<(), Box<dyn std::error::Error>> {
-        let initial = EventKind::CheckpointCreated {
-            checkpoint: proto::Checkpoint {
+        let initial = EventKind::SnapshotRecorded {
+            snapshot: proto::Snapshot {
                 turn_start: None,
                 commit: text("initial"),
             },
         };
-        let autonomous = EventKind::CheckpointCreated {
-            checkpoint: proto::Checkpoint {
+        let autonomous = EventKind::SnapshotRecorded {
+            snapshot: proto::Snapshot {
                 turn_start: None,
                 commit: text("autonomous"),
             },
@@ -2636,15 +2637,12 @@ mod tests {
         let view = events.into_iter().fold(HostView::empty(), HostView::apply);
         let session =
             view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
-        assert_eq!(session.checkpoints.len(), 1);
+        assert_eq!(session.snapshots.len(), 1);
         assert_eq!(
-            session.checkpoints.first().ok_or("expected a value")?.start,
+            session.snapshots.first().ok_or("expected a value")?.start,
             0
         );
-        assert_eq!(
-            session.checkpoints.first().ok_or("expected a value")?.end,
-            1
-        );
+        assert_eq!(session.snapshots.first().ok_or("expected a value")?.end, 1);
         Ok(())
     }
     #[test]

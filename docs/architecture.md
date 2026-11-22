@@ -106,7 +106,7 @@ so one UI and one set of commands work for both agents.
 - **Checklists:** each agent reports its latest ordered list of text and
   status (pending, in progress or completed). Both providers use
   `proto::ChecklistEntry`; the host records the whole changed snapshot as
-  `ChecklistChanged { tasks }`. Entries have no persistent identity or
+  `ChecklistChanged { checklist }`. Entries have no persistent identity or
   owner beyond their session or sub-agent. Reordering, renaming, duplicate
   text and removal are represented exactly as the provider reports them.
   Repeated identical snapshots produce no event. Main and child
@@ -573,11 +573,11 @@ until someone re-records them by hand (§6.2).
   history. The worktree's index follows the branch while its files stay
   in place; staging choices separate from the files are not retained.
   Opening events are `SessionCreated`, `OnIssue` for an issue start,
-  `WorkspaceCreated`, and `CheckpointCreated`. The wire's `Checkpoint`
+  `WorkspaceCreated`, and `SnapshotRecorded`. The wire's `Snapshot`
   is only a commit and an optional `turn_start`; the initial snapshot has
   no turn. Each recorded snapshot event has its existing `HostSeq`, so
   two unchanged turns remain separate records even when they share a
-  commit. There is no separate checkpoint id, reservation, ancestry or
+  commit. There is no separate snapshot id, reservation, ancestry or
   provider-history anchor. Git owns the commit history; the session log
   records which workspace state belongs to each turn.
   A retention ref at `refs/conductor/<ulid>/<commit>` keeps each recorded

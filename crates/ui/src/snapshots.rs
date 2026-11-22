@@ -3,9 +3,9 @@
 use alloc::rc::Rc;
 
 use crate::prelude::*;
-use client::host_view::TurnCheckpoint;
+use client::host_view::TurnSnapshot;
 use proto::{
-    Change, CheckpointDiff, CommandResult, DiffExtent, FilePatch, HostSeq,
+    Change, CommandResult, DiffExtent, FilePatch, HostSeq, SnapshotDiff,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,11 +39,11 @@ impl DiffState {
     }
 }
 
-/// The changes of the turn a checkpoint ends.
+/// The changes of the turn a snapshot ends.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnChanges {
     pub key: String,
-    pub checkpoint: HostSeq,
+    pub snapshot: HostSeq,
     /// The id of the button that opens the diff, which takes the focus
     /// back when it closes.
     pub button: String,
@@ -80,12 +80,12 @@ pub enum Patch {
     Note(String),
 }
 
-pub fn changes(turn: &TurnCheckpoint, diff: Option<&DiffState>) -> TurnChanges {
+pub fn changes(turn: &TurnSnapshot, diff: Option<&DiffState>) -> TurnChanges {
     let loading = matches!(diff, Some(DiffState::Loading(_)));
     TurnChanges {
-        key: format!("checkpoint-{}", turn.checkpoint.0),
-        checkpoint: turn.checkpoint,
-        button: changes_id(turn.checkpoint),
+        key: format!("snapshot-{}", turn.snapshot.0),
+        snapshot: turn.snapshot,
+        button: changes_id(turn.snapshot),
         button_disabled: loading,
         panel: match diff {
             None | Some(DiffState::Hidden) => DiffPanel::Hidden,
@@ -100,7 +100,7 @@ pub fn changes(turn: &TurnCheckpoint, diff: Option<&DiffState>) -> TurnChanges {
     }
 }
 
-fn preview(changes: CheckpointDiff) -> Preview {
+fn preview(changes: SnapshotDiff) -> Preview {
     Preview {
         empty: match (changes.files.first(), changes.extent) {
             (None, DiffExtent::Complete) => {
@@ -150,6 +150,6 @@ const fn change_label(change: Change) -> &'static str {
     }
 }
 
-pub fn changes_id(checkpoint: HostSeq) -> String {
-    format!("checkpoint-{}-changes", checkpoint.0)
+pub fn changes_id(snapshot: HostSeq) -> String {
+    format!("snapshot-{}-changes", snapshot.0)
 }

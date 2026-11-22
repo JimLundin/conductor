@@ -4,7 +4,6 @@
 //! one screen shows at a time; on a wide window the list is a sidebar.
 //! `dx serve --platform web` runs it in a browser.
 
-mod checkpoints;
 mod credentials;
 mod fleet;
 mod issue;
@@ -13,6 +12,7 @@ mod push;
 mod session;
 mod sessions;
 mod shell;
+mod snapshots;
 mod ticket;
 
 use shell::{PaneHeader, Shell};

@@ -20,6 +20,7 @@ import {
 	recorder,
 	traceOf,
 } from "./records.ts";
+import { checklist } from "./scenarios/checklist.ts";
 import { codex } from "./scenarios/codex.ts";
 import { continueSession } from "./scenarios/continue.ts";
 import { credentials } from "./scenarios/credentials.ts";
@@ -29,7 +30,6 @@ import { questions } from "./scenarios/questions.ts";
 import { screens } from "./scenarios/screens.ts";
 import { signIn } from "./scenarios/sign-in.ts";
 import { subagents } from "./scenarios/subagents.ts";
-import { tasks } from "./scenarios/tasks.ts";
 import { turn } from "./scenarios/turn.ts";
 import { worktrees } from "./scenarios/worktrees.ts";
 
@@ -39,7 +39,7 @@ const SCENARIOS = {
 	codex,
 	questions,
 	continue: continueSession,
-	tasks,
+	checklist,
 	subagents,
 	credentials,
 	"sign-in": signIn,

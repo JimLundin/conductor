@@ -902,7 +902,7 @@ const fn conversation_event(kind: &EventKind) -> bool {
     !matches!(
         kind,
         EventKind::WorkspaceCreated { .. }
-            | EventKind::CheckpointCreated { .. }
+            | EventKind::SnapshotRecorded { .. }
             | EventKind::NativeTurnStarted { .. }
     )
 }
@@ -3171,7 +3171,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
             .filter(|kind| !matches!(
                 kind,
                 EventKind::WorkspaceCreated { .. }
-                    | EventKind::CheckpointCreated { .. }
+                    | EventKind::SnapshotRecorded { .. }
                     | EventKind::NativeTurnStarted { .. }
             ))
             .collect::<Vec<EventKind>>(),
@@ -3193,7 +3193,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
 
 /// `probe-subagent-todo.jsonl`: the main agent's `Agent` call runs a
 /// sub-agent, which calls `TodoWrite` twice and reports "ok". Its events are
-/// the session's, and its checklist is not the session's tasks.
+/// the session's, and its checklist is not the session's checklist.
 #[tokio::test]
 async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
 -> Fallible {
@@ -3272,12 +3272,12 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
         ]
         .concat()
     );
-    let final_tasks = assert_child_checklists(&events, &agent());
+    let final_checklist = assert_child_checklists(&events, &agent());
     let view = fold(events);
     assert_eq!(
         view.sessions
             .get(&session)
-            .map(|shown| (shown.tasks.clone(), shown.subagents.clone())),
+            .map(|shown| (shown.checklist.clone(), shown.subagents.clone())),
         Some((
             Vec::new(),
             Vec::from([Subagent {
@@ -3285,7 +3285,7 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
                 call: call(),
                 description: description(),
                 kind: Some(String::from("general-purpose")),
-                tasks: final_tasks,
+                checklist: final_checklist,
                 status: SubagentStatus::Ended(SubagentOutcome::Finished),
                 items: Vec::from([done("ok")]),
             }])
@@ -3303,15 +3303,15 @@ fn assert_child_checklists(
         .filter_map(|entry| match &entry.kind {
             EventKind::Subagent {
                 agent: id,
-                event: SubagentEvent::ChecklistChanged { tasks },
-            } if id == child => Some(tasks.as_slice()),
+                event: SubagentEvent::ChecklistChanged { checklist },
+            } if id == child => Some(checklist.as_slice()),
             _ => None,
         })
         .collect();
     assert_eq!(
         checklists
             .iter()
-            .map(|tasks| steps(tasks))
+            .map(|checklist| steps(checklist))
             .collect::<Vec<_>>(),
         [
             vec![
@@ -3361,7 +3361,7 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
     assert_eq!(alpha.description, "Inspect alpha");
     assert_eq!(alpha.kind.as_deref(), Some("explorer"));
     assert_eq!(
-        steps(&alpha.tasks),
+        steps(&alpha.checklist),
         [("Read alpha", ChecklistStatus::Completed)]
     );
     assert_eq!(
@@ -3387,7 +3387,7 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
     )));
     assert!(shown.items.contains(&done("Delegation done.")));
     assert!(!shown.items.contains(&done("Alpha checked.")));
-    assert_eq!(shown.tasks, [] as [ChecklistEntry; 0]);
+    assert_eq!(shown.checklist, [] as [ChecklistEntry; 0]);
     phone.stop().await?;
     fx.shutdown().await
 }
@@ -3886,7 +3886,7 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
 }
 
 /// After a restart, the replay from `cursor` holds only the cleanup: the
-/// open request withdrawn, the turn interrupted with a checkpoint, and the
+/// open request withdrawn, the turn interrupted with a snapshot, and the
 /// session closed. Nothing is reset.
 fn assert_restart_cleanup(
     caught_up: Vec<Update>,
@@ -3906,7 +3906,7 @@ fn assert_restart_cleanup(
         seqs(&cleanup),
         (cursor.next().0..=end).map(HostSeq).collect::<Vec<_>>()
     );
-    assert!(checkpoint(&cleanup)?.1.turn_start.is_some());
+    assert!(snapshot(&cleanup)?.1.turn_start.is_some());
     assert_eq!(
         of(session, &cleanup),
         [
@@ -4827,18 +4827,9 @@ fn assert_absent(path: &Path) {
 async fn get_diff(
     phone: &HostLink,
     session: SessionId,
-    checkpoint: HostSeq,
-) -> Fallible<proto::CheckpointDiff> {
-    diff_result(
-        send(
-            phone,
-            CommandBody::GetDiff {
-                session,
-                checkpoint,
-            },
-        )
-        .await?,
-    )
+    snapshot: HostSeq,
+) -> Fallible<proto::SnapshotDiff> {
+    diff_result(send(phone, CommandBody::GetDiff { session, snapshot }).await?)
 }
 
 fn assistant_messages(session: SessionId, events: &[Event]) -> Vec<EventKind> {
@@ -4861,7 +4852,7 @@ async fn assert_independent(
     let _ =
         send(phone, message(other, "an independent second session")).await?;
     let other_turn = events_until(updates, Until::TurnEnd).await?;
-    checkpoint(&other_turn)?;
+    snapshot(&other_turn)?;
     assert_eq!(
         std::fs::read_to_string(other_path.join("continued.txt"))?,
         "continued session\n"
@@ -4870,17 +4861,17 @@ async fn assert_independent(
     Ok(())
 }
 
-fn checkpoint(events: &[Event]) -> Fallible<(HostSeq, proto::Checkpoint)> {
+fn snapshot(events: &[Event]) -> Fallible<(HostSeq, proto::Snapshot)> {
     Ok(events
         .iter()
         .rev()
         .find_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => {
-                Some((event.seq, checkpoint.clone()))
+            EventKind::SnapshotRecorded { snapshot } => {
+                Some((event.seq, snapshot.clone()))
             }
             _ => None,
         })
-        .ok_or("the checkpoint was not published")?)
+        .ok_or("the snapshot was not published")?)
 }
 
 fn workspace(events: &[Event]) -> Fallible<proto::Workspace> {
@@ -4895,12 +4886,10 @@ fn workspace(events: &[Event]) -> Fallible<proto::Workspace> {
         .ok_or("the managed worktree was not published")?)
 }
 
-fn diff_result(result: CommandResult) -> Fallible<proto::CheckpointDiff> {
+fn diff_result(result: CommandResult) -> Fallible<proto::SnapshotDiff> {
     match result {
         CommandResult::Diff(diff) => Ok(diff),
-        other => {
-            Err(format!("expected a checkpoint diff, not {other:?}").into())
-        }
+        other => Err(format!("expected a snapshot diff, not {other:?}").into()),
     }
 }
 
@@ -4973,7 +4962,7 @@ fn assert_turn_tasks(
     assert_eq!(
         [kept, discarded].map(|lists| lists
             .iter()
-            .map(|tasks| owned(steps(tasks)))
+            .map(|checklist| owned(steps(checklist)))
             .collect::<Vec<Vec<(String, ChecklistStatus)>>>()),
         [
             Vec::from([Vec::from([(
@@ -4991,8 +4980,8 @@ fn assert_turn_tasks(
 /// The second turn's diff against the first: its files, its text, and the
 /// executable bit it set.
 fn assert_turn_diff(
-    diff: &proto::CheckpointDiff,
-    selected: &proto::Checkpoint,
+    diff: &proto::SnapshotDiff,
+    selected: &proto::Snapshot,
     worktree: &Path,
 ) -> Fallible {
     assert_eq!(diff.extent, proto::DiffExtent::Complete);
@@ -5036,7 +5025,7 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     let session = launch(&phone, start(Provider::Claude, &source)).await?;
     let opening = events_until(&mut updates, Until::Ready).await?;
     let managed = workspace(&opening)?;
-    assert_eq!(checkpoint(&opening)?.1.turn_start, None);
+    assert_eq!(snapshot(&opening)?.1.turn_start, None);
     let worktree = assert_isolated(&managed, &source, session)?;
     let other = launch(&phone, start(Provider::Claude, &source)).await?;
     let other_opening = events_until(&mut updates, Until::Ready).await?;
@@ -5047,10 +5036,10 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     assert_ne!(managed.branch, other_workspace.branch);
     let _ = send(&phone, message(session, "turn one")).await?;
     let first_turn = events_until(&mut updates, Until::TurnEnd).await?;
-    let (_, first_snapshot) = checkpoint(&first_turn)?;
+    let (_, first_snapshot) = snapshot(&first_turn)?;
     let _ = send(&phone, message(session, "turn two")).await?;
     let second_turn = events_until(&mut updates, Until::TurnEnd).await?;
-    let (second_seq, second_snapshot) = checkpoint(&second_turn)?;
+    let (second_seq, second_snapshot) = snapshot(&second_turn)?;
     let kept_tasks = task_lists(&first_turn);
     assert_turn_tasks(&kept_tasks, &task_lists(&second_turn));
     assert_ne!(first_snapshot.commit, second_snapshot.commit);
@@ -5058,7 +5047,7 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     assert_turn_diff(&diff, &second_snapshot, &worktree)?;
     let _ = send(&phone, message(session, "turn three")).await?;
     let third_turn = events_until(&mut updates, Until::TurnEnd).await?;
-    checkpoint(&third_turn)?;
+    snapshot(&third_turn)?;
     checkout.assert_unchanged(&source)?;
     assert_independent(&phone, &mut updates, other, &other_path, &worktree)
         .await?;
@@ -5161,13 +5150,13 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
     let worktree = PathBuf::from(&managed.worktree.0);
     let _ = send(&phone, message(session, "turn one")).await?;
     let (_, retained) =
-        checkpoint(&events_until(&mut updates, Until::TurnEnd).await?)?;
+        snapshot(&events_until(&mut updates, Until::TurnEnd).await?)?;
     git(&worktree, &["symbolic-ref", "HEAD", "refs/heads/unrelated"])?;
     let _ = send(&phone, message(session, "turn two")).await?;
     let failed = events_until(&mut updates, Until::TurnEnd).await?;
     assert!(!any_event(&failed, |kind| matches!(
         kind,
-        EventKind::CheckpointCreated { .. }
+        EventKind::SnapshotRecorded { .. }
     )));
     assert_eq!(
         failed
@@ -5207,25 +5196,23 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
     )?;
     accepted(&phone, continued(session)).await?;
     accepted(&phone, continued(session)).await?;
-    let (recovered_seq, recovered) = checkpoint(&host.history().await?)?;
+    let (recovered_seq, recovered) = snapshot(&host.history().await?)?;
     accepted(&phone, message(session, "turn three")).await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
-    let checkpoints = after
+    let snapshots = after
         .iter()
         .filter_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint } => {
-                Some(checkpoint.clone())
-            }
+            EventKind::SnapshotRecorded { snapshot } => Some(snapshot.clone()),
             _ => None,
         })
-        .collect::<Vec<proto::Checkpoint>>();
+        .collect::<Vec<proto::Snapshot>>();
     assert!(!any_event(&after, |kind| matches!(
         kind,
         EventKind::SessionReady | EventKind::SessionClosed { .. }
     )));
-    assert_eq!(checkpoints.len(), 2);
-    assert_eq!(checkpoints.first(), Some(&recovered));
-    let latest = checkpoints.last().ok_or("expected a value")?;
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots.first(), Some(&recovered));
+    let latest = snapshots.last().ok_or("expected a value")?;
     assert_ne!(recovered.commit, retained.commit);
     let failed_turn = failed
         .iter()
@@ -5234,7 +5221,7 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
         .seq;
     assert_eq!(recovered.turn_start, Some(failed_turn));
     assert_ne!(latest.turn_start, recovered.turn_start);
-    let (latest_seq, _) = checkpoint(&after)?;
+    let (latest_seq, _) = snapshot(&after)?;
     assert!(latest_seq > recovered_seq);
     let diff = get_diff(&phone, session, latest_seq).await?;
     assert_eq!(
@@ -5257,14 +5244,16 @@ fn task_lists(events: &[Event]) -> Vec<Vec<ChecklistEntry>> {
     events
         .iter()
         .filter_map(|event| match &event.kind {
-            EventKind::ChecklistChanged { tasks } => Some(tasks.clone()),
+            EventKind::ChecklistChanged { checklist } => {
+                Some(checklist.clone())
+            }
             _ => None,
         })
         .collect()
 }
 
-fn steps(tasks: &[ChecklistEntry]) -> Vec<(&str, ChecklistStatus)> {
-    tasks
+fn steps(checklist: &[ChecklistEntry]) -> Vec<(&str, ChecklistStatus)> {
+    checklist
         .iter()
         .map(|task| (task.text.as_str(), task.status))
         .collect()
@@ -5340,7 +5329,7 @@ fn hold_first_turn(dir: &Path) -> Fallible {
     Ok(())
 }
 
-/// A Claude turn's `TodoWrite` calls become the session's tasks: one
+/// A Claude turn's `TodoWrite` calls become the session's checklist: one
 /// `ChecklistChanged` per call, and no call shown as
 /// a tool call. An effort set while the turn runs is checked against the
 /// model's efforts, logged at once, and reaches the CLI with the next
@@ -5370,7 +5359,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             before,
             lists
                 .iter()
-                .map(|tasks| owned(steps(tasks)))
+                .map(|checklist| owned(steps(checklist)))
                 .collect::<Vec<Vec<(String, ChecklistStatus)>>>(),
             turn.iter()
                 .filter(|event| matches!(
@@ -5420,13 +5409,13 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
     assert_eq!(
         view.sessions
             .get(&session)
-            .map(|found| (found.effort, found.tasks.clone())),
+            .map(|found| (found.effort, found.checklist.clone())),
         Some((Some(Effort::Low), lists.last().cloned().unwrap_or_default()))
     );
     fx.shutdown_with_client(phone).await
 }
 
-/// A Codex turn's plan updates become the session's tasks as Claude's
+/// A Codex turn's plan updates become the session's checklist as Claude's
 /// checklist does, and a new effort rides on the next `turn/start`.
 #[tokio::test]
 async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
@@ -5445,7 +5434,7 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
         (
             lists
                 .iter()
-                .map(|tasks| owned(steps(tasks)))
+                .map(|checklist| owned(steps(checklist)))
                 .collect::<Vec<Vec<(String, ChecklistStatus)>>>(),
             set,
             next.into_iter()
@@ -5478,8 +5467,8 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
 
 #[tokio::test]
 async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
-    let dir = scratch("tasks-restart", "claude-checklist-effort.jsonl")?;
-    let data = data_dir("tasks-restart")?;
+    let dir = scratch("checklist-restart", "claude-checklist-effort.jsonl")?;
+    let data = data_dir("checklist-restart")?;
     std::fs::copy(dir.join("stdout.jsonl"), dir.join("stdout.2.jsonl"))?;
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
@@ -5495,7 +5484,10 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     let second = durable_host(&data, address).await?;
     let replayed = fold(second.history().await?);
     assert_eq!(
-        replayed.sessions.get(&session).map(|shown| &shown.tasks),
+        replayed
+            .sessions
+            .get(&session)
+            .map(|shown| &shown.checklist),
         before.last(),
     );
     phone.reconnect().await;
@@ -5517,7 +5509,7 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
             after.len(),
             view.sessions
                 .get(&session)
-                .map(|found| (found.effort, found.tasks.clone())),
+                .map(|found| (found.effort, found.checklist.clone())),
         ),
         (
             CommandResult::Accepted,

@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use host::workspace::{Answer, Output, Plan, Step};
-use proto::{CheckpointDiff, HostPath, HostSeq, Kept, SessionId, Workspace};
+use proto::{HostPath, HostSeq, Kept, SessionId, SnapshotDiff, Workspace};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
 
@@ -166,11 +166,11 @@ pub async fn snapshot(
 
 pub async fn diff(
     workspace: &Workspace,
-    checkpoint: HostSeq,
+    snapshot: HostSeq,
     commit: &str,
     previous: &str,
-) -> Result<CheckpointDiff, GitError> {
-    run(Plan::diff(workspace, checkpoint, commit, previous), None).await
+) -> Result<SnapshotDiff, GitError> {
+    run(Plan::diff(workspace, snapshot, commit, previous), None).await
 }
 
 pub async fn remove(workspace: &Workspace) -> Result<Kept, GitError> {
@@ -452,7 +452,7 @@ impl Scratch {
     fn create(dir: &Path) -> Result<Self, GitError> {
         let path = dir.join(format!("conductor-index-{}", ulid::Ulid::new()));
         std::fs::create_dir(&path).map_err(|error| {
-            failure("creating checkpoint scratch directory", &error.to_string())
+            failure("creating snapshot scratch directory", &error.to_string())
         })?;
         Ok(Self { path })
     }
@@ -465,7 +465,7 @@ impl Drop for Scratch {
         // symlinks and never traverses the repository's working files.
         if let Err(error) = std::fs::remove_dir_all(&self.path) {
             tracing::warn!(
-                "removing checkpoint scratch {}: {error}",
+                "removing snapshot scratch {}: {error}",
                 self.path.display()
             );
         }
@@ -564,7 +564,7 @@ mod tests {
             diff(&workspace, HostSeq(15), &completed, &completed)
                 .await?
                 .files,
-            Vec::<proto::CheckpointFile>::new()
+            Vec::<proto::SnapshotFile>::new()
         );
         let foreign_id = SessionId(ulid::Ulid::new().into());
         let foreign =
@@ -582,7 +582,7 @@ mod tests {
         );
         let _ = text(root, &["reset", "--hard", &initial]).await?;
         let reference =
-            format!("{}{completed}", host::workspace::checkpoints(&workspace)?);
+            format!("{}{completed}", host::workspace::snapshots(&workspace)?);
         assert_eq!(
             text(root, &["rev-parse", "--verify", &reference]).await?,
             completed
@@ -638,7 +638,7 @@ mod tests {
         let id = SessionId(u128::from(ulid::Ulid::new()));
         let original = super::host(&repo.source)?;
         let workspace = create(&repo.data, &original, id, None).await?;
-        let checkpointed = snapshot(&workspace, id).await?;
+        let snapshotted = snapshot(&workspace, id).await?;
         let root = PathBuf::from(&workspace.worktree.0);
         std::fs::write(root.join("new.txt"), "left uncommitted\n")?;
         assert_eq!(remove(&workspace).await?, Kept::Pushed { remote: url });
@@ -650,17 +650,17 @@ mod tests {
             text(&remote, &["show", &format!("{pushed}:new.txt")]).await?,
             "left uncommitted"
         );
-        let refs = host::workspace::checkpoints(&workspace)?;
+        let refs = host::workspace::snapshots(&workspace)?;
         assert_eq!(
             text(
                 &repo.source,
                 &["for-each-ref", "--format=%(objectname)", &refs]
             )
             .await?,
-            checkpointed
+            snapshotted
         );
         assert!(
-            text(&repo.source, &["cat-file", "-e", &checkpointed])
+            text(&repo.source, &["cat-file", "-e", &snapshotted])
                 .await
                 .is_ok()
         );
@@ -690,7 +690,7 @@ mod tests {
         let original = super::host(&repo.source)?;
         let workspace = create(&repo.data, &original, id, None).await?;
         let path = Path::new(&workspace.worktree.0);
-        std::fs::write(path.join("new.txt"), "checkpointed\n")?;
+        std::fs::write(path.join("new.txt"), "snapshotted\n")?;
         let lock = text(
             path,
             &[
@@ -711,15 +711,12 @@ mod tests {
         assert_eq!(text(path, &["rev-parse", "HEAD"]).await?, before);
         assert_eq!(
             std::fs::read_to_string(path.join("new.txt"))?,
-            "checkpointed\n"
+            "snapshotted\n"
         );
         std::fs::remove_file(lock)?;
         let committed = snapshot(&workspace, id).await?;
         assert_eq!(text(path, &["rev-parse", "HEAD"]).await?, committed);
-        assert_eq!(
-            text(path, &["show", "HEAD:new.txt"]).await?,
-            "checkpointed"
-        );
+        assert_eq!(text(path, &["show", "HEAD:new.txt"]).await?, "snapshotted");
         let _ = text(path, &["diff", "--cached", "--quiet"]).await?;
         Ok(())
     }
@@ -737,7 +734,7 @@ mod tests {
         std::fs::write(&file, "staged only\n")?;
         let _ = text(root, &["add", "deleted.txt"]).await?;
         std::fs::write(&file, "keep\n")?;
-        let refs = host::workspace::checkpoints(&workspace)?;
+        let refs = host::workspace::snapshots(&workspace)?;
         let list_refs =
             ["for-each-ref", "--format=%(objectname) %(refname)", &refs];
         let before = text(&repo.source, &list_refs).await?;
@@ -1008,7 +1005,7 @@ mod tests {
         let initial = snapshot(&workspace, id).await?;
         assert_eq!(
             initial, source_head,
-            "a checkpoint that changed nothing is the branch's tip"
+            "a snapshot that changed nothing is the branch's tip"
         );
         assert_eq!(
             text(root, &["show", &format!("{initial}:deleted.txt")]).await?,

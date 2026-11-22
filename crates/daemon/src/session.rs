@@ -591,7 +591,7 @@ async fn snapshot(workspace: Workspace, session: SessionId) -> Input {
 async fn diff(compared: Compared) -> Input {
     let listed = workspace::diff(
         &compared.workspace,
-        compared.checkpoint,
+        compared.snapshot,
         &compared.commit,
         &compared.previous,
     )
