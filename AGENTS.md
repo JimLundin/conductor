@@ -34,13 +34,32 @@ Home Screen. The design is in
   is available. If validation is unavailable or stalls, commit and push the
   task branch with the commands, results and outstanding checks recorded
   in the commit message and handoff. Saving work requires no validation
-  waiver. A passing `step` run in CI is required before merging;
-  `release` adds mutation testing and the slow checks, also in CI.
-  It checks only what changed since the merge base with `main`
-  (`--all` checks everything) and reports `cached` for a tree that already
-  passed. The standards come from a WSL clone of the standards project,
-  `~/projects/tools/standards`, kept fresh by the script; set `STANDARDS` to try
-  unpushed standards from another checkout.
+  waiver. `release` adds mutation testing and the slow checks, in CI.
+  It runs as units, each a check of one scope, and skips a unit whose key
+  already has a pass recorded on `refs/notes/checks`, which it fetches
+  from and pushes to `origin` (`--no-cache` runs every unit). CI,
+  `.github/workflows/check.yml`, runs `step` on every pushed branch other
+  than `main` and `queue/*`, so only units without a recorded pass run
+  there; on a failure its job summary names the failing units with the
+  tail of their logs. The standards come from a WSL clone of the
+  standards project, `~/projects/tools/standards`, kept fresh by the
+  script; set `STANDARDS` to try unpushed standards from another checkout.
+- **Landing.** Land a branch with
+  `git push origin <branch>:refs/heads/queue/<branch>`, which returns at
+  once. `.github/workflows/queue.yml` takes queued branches one at a time
+  in push order, rebases each onto `main`, runs `step`, and fast-forwards
+  `main` when it passes, then deploys Pages. It refuses a branch that
+  changes `.github/workflows` or `.github/actions`, which its token can't
+  push; such a branch lands by a direct push to `main` with the owner's
+  credentials after `tools/check.sh commit`. Either way it deletes the
+  queue ref and sets the commit status `queue` on the pushed commit; read
+  it with
+  `gh api repos/JimLundin/conductor/commits/<sha>/status --jq '.statuses[] | select(.context == "queue") | [.state, .description, .target_url] | join(" ")'`:
+  nothing while it waits, `pending` while it checks, `success` with
+  `landed at <sha>`, or `failure` naming the failing units, a conflict, a
+  CI change or a moved `main`, linking the run whose summary holds the
+  log tails. It needs no secret; no ruleset may block
+  `github-actions[bot]` from pushing to `main`.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo

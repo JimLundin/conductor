@@ -1,0 +1,37 @@
+# The step gate on every pushed branch, run as units by the units action:
+# tools/check.sh skips each unit whose key has a pass recorded on
+# refs/notes/checks, locally or here, and pushes the passes it records back
+# to this repository. Branches under queue/ are queue.yml's.
+#
+# Needs contents: write for this workflow's GITHUB_TOKEN, granted below, to
+# push refs/notes/checks to this repository. No ruleset may block pushes to
+# refs/notes/checks.
+name: Check the units without a recorded pass
+
+on:
+  push:
+    branches-ignore: [main, "queue/**"]
+  workflow_dispatch:
+
+permissions: {}
+
+# A newer push waits for the running check rather than cancelling it, so it
+# starts from the passes the older run records.
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  step:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      # Beside the standards, which the units action checks out.
+      - uses: actions/checkout@v7
+        with:
+          path: conductor
+          fetch-depth: 0
+
+      - uses: ./conductor/.github/actions/units

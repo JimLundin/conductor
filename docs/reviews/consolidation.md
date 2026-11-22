@@ -1,6 +1,7 @@
 # Inactive branch consolidation
 
-Assessment against `main` at `90cbb89`, 22 November 2026. The historical
+Assessment began at `90cbb89` and incorporates the landing-queue work on
+`main` through `2513fd7`, 22 November 2026. The historical
 reviews describe older versions of Conductor; their proposals do not
 override the current glossary or the accepted product decisions.
 
@@ -64,4 +65,6 @@ current-format-only persistence and provider retirement verification.
 Its existing commit remains available; this consolidation does not claim
 that design is implemented.
 
-`ci-units` and `queue-land` are active work and are outside this integration.
+`ci-units` and `queue-land` were active when this assessment began. Their
+completed CI and landing infrastructure subsequently reached `main` and
+is retained without changing its implementation.
