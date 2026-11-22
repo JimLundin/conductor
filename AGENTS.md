@@ -36,9 +36,16 @@ Home Screen. The design is in
   in the commit message and handoff. Saving work requires no validation
   waiver. A passing `step` run in CI is required before merging;
   `release` adds mutation testing and the slow checks, also in CI.
-  It checks only what changed since the merge base with `main`
-  (`--all` checks everything) and reports `cached` for a tree that already
-  passed. The standards come from a WSL clone of the standards project,
+  It runs as units, each a check of one scope, and skips a unit whose key
+  already has a pass recorded on `refs/notes/checks`, which it fetches
+  from and pushes to `origin` (`--no-cache` runs every unit). CI,
+  `.github/workflows/check.yml`, runs `step` on every pushed branch other
+  than `main`, so only units without a recorded pass run there; on a
+  failure its job summary names the failing units with the tail of their
+  logs. It needs a `STANDARDS_TOKEN` secret, a fine-grained token with
+  Contents: Read-only on `JimLundin/standards` alone, and pushes the notes
+  with its own `contents: write` token. The standards come from a WSL
+  clone of the standards project,
   `~/projects/tools/standards`, kept fresh by the script; set `STANDARDS` to try
   unpushed standards from another checkout.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.

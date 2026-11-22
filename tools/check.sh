@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The gate: the shared Rust standard, which runs Conductor's suites from
 # checks.toml beside its own checks, then the shared TypeScript standard on
-# the browser suite in crates/app/tests-e2e. Each checks what changed in its
-# own tree, and the gate fails if either does. `tools/check.sh
-# [commit|step|release] [--base <ref>|--all] [--no-cache]`.
+# the browser suite in crates/app/tests-e2e. Each runs its units without a
+# recorded pass, and the gate fails if either fails. `tools/check.sh
+# [commit|step|release] [--no-cache]`.
 #
 # The standards come from a clone of the standards project on the Linux
 # filesystem (`STANDARDS_CLONE`, default ~/projects/tools/standards), which
