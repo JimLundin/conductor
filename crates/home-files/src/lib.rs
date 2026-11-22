@@ -3,11 +3,13 @@
 //! host's clone share.
 
 use std::fs;
+use std::iter;
 use std::path::Path;
 
 use home::flow::PATH;
 use home::flow::snapshot::Snapshot;
 use home::layout::{self, IssueLocation};
+use home::repos;
 use proto::ProjectId;
 
 /// The home whose root is `root`.
@@ -28,6 +30,36 @@ pub fn read(root: &Path) -> Snapshot {
             .flat_map(|project| issues(root, project))
             .collect(),
     ))
+}
+
+/// The folders of the home's `projects/`, sorted.
+#[must_use]
+pub fn project_folders(root: &Path) -> Vec<String> {
+    folders(&root.join(layout::PROJECTS))
+}
+
+/// The repositories `home repos` looks at, by path from the home: the home,
+/// and each folder one or two deep holding `.git`.
+#[must_use]
+pub fn repositories(root: &Path) -> Vec<String> {
+    let found = folders(root)
+        .into_iter()
+        .flat_map(|top| {
+            let below: Vec<String> = folders(&root.join(&top))
+                .into_iter()
+                .map(|inner| format!("{top}/{inner}"))
+                .collect();
+            iter::once(top).chain(below)
+        })
+        .filter(|path| root.join(path).join(".git").exists())
+        .collect();
+    repos::repositories(found)
+}
+
+/// The names in the folder at `path`, none when it can't be read.
+#[must_use]
+pub fn names(path: &Path) -> Vec<String> {
+    entries(path).map(|(name, _)| name).collect()
 }
 
 /// Each issue file of `project`, with its text or why it couldn't be read.

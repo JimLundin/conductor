@@ -17,6 +17,8 @@ pub mod issue;
 pub mod layout;
 mod prelude;
 pub mod project;
+pub mod repos;
+pub mod skills;
 pub mod sync;
 
 use alloc::boxed::Box;

@@ -127,7 +127,9 @@ pub fn matched(
         .collect()
 }
 
-fn is_checkout(project: &Project, probe: &Probe) -> bool {
+/// Whether the repository `probe` is a checkout of `project`.
+#[must_use]
+pub fn is_checkout(project: &Project, probe: &Probe) -> bool {
     probe.roots.contains(&project.root)
         && project.remote.as_deref().map(normal)
             == probe.remote.as_deref().map(normal)

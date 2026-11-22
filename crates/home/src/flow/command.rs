@@ -36,6 +36,8 @@ pub const USAGE: &str = "usage:
   home issue body <id> --file <path>
   home issue checklist <id> add <text>...
   home issue checklist <id> check|uncheck|remove <n>
+  home repos [sync|scan]
+  home skills
 A list's value is comma-separated: blocked_by=<id>,<id>.
 A checklist's items are numbered from 1.
 ";
