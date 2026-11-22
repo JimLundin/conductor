@@ -172,6 +172,12 @@ fn no_issues(name: &str) -> IssueList {
     IssueList {
         groups: Vec::new(),
         new_title: String::new(),
+        kinds: Vec::from([Pick {
+            word: text("task"),
+            label: text("Task"),
+            selected: true,
+        }]),
+        fields: ["priority", "labels", "branch", "created"].map(text).into(),
         project: ProjectId(text(name)),
         create: None,
     }
@@ -1788,6 +1794,79 @@ fn a_new_kind_and_field_bring_their_own_label_and_pickers()
     );
     assert!(screen.detail.starts_with("Chore · "), "{}", screen.detail);
     Ok(())
+}
+
+#[test]
+fn a_new_kind_is_offered_when_opening_an_issue_with_its_own_fields() {
+    let alpha = || ProjectId(text("alpha"));
+    let mut grown = flow();
+    grown.kinds.insert(
+        0,
+        kind(
+            "chore",
+            "Chore",
+            Vec::from([enumerated("area", &["ci", "docs"], None)]),
+        ),
+    );
+    let drafted = |state: &crate::State| {
+        projects(state)
+            .and_then(|screen| screen.projects.into_iter().next())
+            .map(|group| (group.issues.kinds, group.issues.fields))
+    };
+    let common = ["priority", "labels", "branch", "created"].map(text);
+    let shown = under(grown, Vec::new());
+    assert_eq!(
+        drafted(&shown),
+        Some((
+            Vec::from([
+                Pick {
+                    word: text("task"),
+                    label: text("Task"),
+                    selected: true,
+                },
+                Pick {
+                    word: text("chore"),
+                    label: text("Chore"),
+                    selected: false,
+                },
+            ]),
+            Vec::from(common.clone()),
+        )),
+        "the default kind comes first and is chosen"
+    );
+    let (chosen, _) = run(
+        shown,
+        Vec::from([
+            Intent::NewIssue(NewIssueIntent::PickKind(alpha(), text("chore"))),
+            Intent::NewIssue(NewIssueIntent::TypeTitle(alpha(), text("Tidy"))),
+        ]),
+    );
+    let (kinds, fields) = drafted(&chosen).unwrap_or_default();
+    assert_eq!(
+        kinds
+            .into_iter()
+            .map(|pick| (pick.word, pick.selected))
+            .collect::<Vec<_>>(),
+        [(text("task"), false), (text("chore"), true)]
+    );
+    assert_eq!(
+        fields,
+        common.into_iter().chain([text("area")]).collect::<Vec<_>>(),
+        "the chosen kind shows its own fields"
+    );
+    let create = projects(&chosen)
+        .and_then(|screen| screen.projects.into_iter().next())
+        .and_then(|group| group.issues.create);
+    let (_, effects) = run(chosen, create.into_iter().collect());
+    assert_eq!(
+        sent(&effects),
+        [CommandBody::CreateIssue(NewIssue {
+            project: alpha(),
+            kind: text("chore"),
+            title: text("Tidy"),
+            fields: Vec::new(),
+        })]
+    );
 }
 
 #[test]

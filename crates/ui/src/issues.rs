@@ -27,6 +27,8 @@ use crate::{At, Effect, Intent, Place, ReplyTo};
 pub enum NewIssueIntent {
     /// The title of a new issue in this project.
     TypeTitle(ProjectId, String),
+    /// The kind of a new issue in this project, by its name in the flow.
+    PickKind(ProjectId, String),
     /// Opens the issue the project's title draft names, of this kind, on
     /// this host.
     Create(HostId, ProjectId, String),
@@ -59,9 +61,13 @@ pub enum IssueIntent {
     Cancel,
 }
 
-/// What the person has typed and not sent.
+/// What the person has typed and chosen for each project's new issue, and
+/// not sent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Titles(BTreeMap<ProjectId, String>);
+pub struct Titles {
+    titles: BTreeMap<ProjectId, String>,
+    kinds: BTreeMap<ProjectId, String>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IssueDraft {
@@ -148,9 +154,14 @@ impl Titles {
     ) -> (Self, Vec<Effect>) {
         match intent {
             NewIssueIntent::TypeTitle(project, title) => {
-                let mut titles = self.0;
-                titles.insert(project, title);
-                (Self(titles), Vec::new())
+                let mut titles = self;
+                titles.titles.insert(project, title);
+                (titles, Vec::new())
+            }
+            NewIssueIntent::PickKind(project, kind) => {
+                let mut titles = self;
+                titles.kinds.insert(project, kind);
+                (titles, Vec::new())
             }
             NewIssueIntent::Create(host, project, kind) => {
                 let effects = self.create(At { host, visit }, project, kind);
@@ -160,7 +171,7 @@ impl Titles {
     }
 
     fn create(&self, at: At, project: ProjectId, kind: String) -> Vec<Effect> {
-        let title = self.0.get(&project).map_or("", |title| title.trim());
+        let title = self.titles.get(&project).map_or("", |title| title.trim());
         if title.is_empty() {
             return Vec::new();
         }
@@ -455,6 +466,11 @@ pub struct IssueList {
     pub groups: Vec<StatusGroup>,
     /// The new issue's title so far.
     pub new_title: String,
+    /// The kinds it can be, the flow's default first, the chosen one
+    /// selected.
+    pub kinds: Vec<Pick>,
+    /// The fields of the chosen kind, in the flow's order.
+    pub fields: Vec<String>,
     /// What typing the title does.
     pub project: ProjectId,
     /// Opens it, once there is a title and a live host whose home lists
@@ -486,18 +502,30 @@ pub fn list(
     host: Option<(HostId, &Host)>,
     drafts: &Titles,
 ) -> IssueList {
-    let new_title = drafts.0.get(&project.id).cloned().unwrap_or_default();
+    let new_title = drafts.titles.get(&project.id).cloned().unwrap_or_default();
+    let offered = host.and_then(|(_, known)| flow_of(known)).map(|declared| {
+        (declared, chosen(declared, drafts.kinds.get(&project.id)))
+    });
     let create = host
         .filter(|(_, known)| known.fold.live() && !new_title.trim().is_empty())
-        .and_then(|(id, known)| {
-            let kind = flow_of(known)?.default_kind.clone();
-            Some(Intent::NewIssue(NewIssueIntent::Create(
+        .zip(offered)
+        .map(|((id, _), (_, picked))| {
+            Intent::NewIssue(NewIssueIntent::Create(
                 id,
                 project.id.clone(),
-                kind,
-            )))
+                String::from(picked),
+            ))
         });
     IssueList {
+        kinds: offered.map_or_else(Vec::new, |(declared, picked)| {
+            kinds(declared, picked)
+        }),
+        fields: offered.map_or_else(Vec::new, |(declared, picked)| {
+            declared
+                .fields_of(picked)
+                .map(|field| field.name.clone())
+                .collect()
+        }),
         groups: host
             .and_then(|(id, known)| Some((id, flow_of(known)?)))
             .map_or_else(Vec::new, |(id, flow)| groups(id, flow, project)),
@@ -505,6 +533,31 @@ pub fn list(
         project: project.id.clone(),
         create,
     }
+}
+
+/// The kind `picked` if the flow still has it, else the flow's default.
+fn chosen<'flow>(flow: &'flow Flow, picked: Option<&String>) -> &'flow str {
+    picked
+        .and_then(|name| flow.kind(name))
+        .map_or(flow.default_kind.as_str(), |kind| kind.name.as_str())
+}
+
+/// The flow's kinds, its default first and then the rest in its order,
+/// with `kind` selected.
+fn kinds(flow: &Flow, kind: &str) -> Vec<Pick> {
+    flow.kind(&flow.default_kind)
+        .into_iter()
+        .chain(
+            flow.kinds
+                .iter()
+                .filter(|other| other.name != flow.default_kind),
+        )
+        .map(|offered| Pick {
+            word: offered.name.clone(),
+            label: offered.label.clone(),
+            selected: offered.name == kind,
+        })
+        .collect()
 }
 
 /// The flow `host`'s home declares.
