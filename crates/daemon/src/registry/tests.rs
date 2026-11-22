@@ -8,8 +8,8 @@ use host::serve::{Configure, Relaunch};
 use host::sign_in::{Effect as SignInEffect, Key};
 use proto::{
     Account, Availability, CommandId, CommandResult, Credential, Epoch,
-    HostPath, InstanceId, Instances, Models, Provider, Rejection, Roster,
-    SessionId, SignInStep,
+    HostPath, InstanceId, Models, Provider, Rejection, Roster, SessionId,
+    SignInStep,
 };
 use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -104,7 +104,7 @@ impl Fixture {
                 &roster,
                 &super::Change::Added(instance.clone()),
                 None,
-                None::<(_, fn(&Roster) -> Instances)>,
+                None,
             )?;
         }
         let mut core = Core::new(&Stored::Opened(roster), catalog);
@@ -248,10 +248,8 @@ async fn a_pending_relaunch_blocks_removal_then_removal_blocks_relaunch()
     );
     fx.release.send_replace(true);
     let _ = tokio::time::timeout(DEADLINE, launch).await???;
-    assert!(matches!(
-        fx.remove(CommandId(2)).await?,
-        CommandResult::Instances(instances) if instances.of(&fx.source).is_none()
-    ));
+    assert_eq!(fx.remove(CommandId(2)).await?, CommandResult::Accepted);
+    assert!(fx.actor.offers.borrow().of(&fx.source).is_none());
     assert!(matches!(
         fx.adapter().await?,
         Err(Rejection::InstanceUnavailable { .. })
@@ -313,13 +311,12 @@ async fn a_cancelled_refresh_settles_its_availability_and_waiter()
     );
     fx.actor.refreshes.abort_all();
     let registry = fx.actor.spawn();
-    let CommandResult::Instances(offers) =
-        tokio::time::timeout(DEADLINE, answer).await??
-    else {
-        anyhow::bail!(
-            "a cancelled refresh did not answer with the instance offers"
-        );
-    };
+    assert_eq!(
+        tokio::time::timeout(DEADLINE, answer).await??,
+        CommandResult::Accepted
+    );
+    let (offers, _) =
+        tokio::time::timeout(DEADLINE, registry.instances()).await??;
     assert_eq!(
         offers.availability(&fx.source),
         Some(&Availability::Unavailable {

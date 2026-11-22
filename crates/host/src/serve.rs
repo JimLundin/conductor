@@ -220,8 +220,7 @@ pub enum SignInOrder {
     Cancel(InstanceId),
 }
 
-/// A command that changes the host's instances, and answers what it runs
-/// now.
+/// A command that changes the host's instances.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Configure {
     SetCredential {

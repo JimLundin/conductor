@@ -601,13 +601,11 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
             Some(gateway("t2"))
         ))])
     );
-    let result =
-        |registry: &Test| CommandResult::Instances(registry.instances());
     assert_eq!(
         registry.refreshed(refreshed(boot_jobs + 2, &api(), Ok(listing()))),
         Vec::from([
-            Effect::Reply("add", result(&registry)),
-            Effect::Reply("set", result(&registry)),
+            Effect::Reply("add", CommandResult::Accepted),
+            Effect::Reply("set", CommandResult::Accepted),
         ])
     );
     assert_eq!(
@@ -629,10 +627,7 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
     let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
     let removed =
         registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
-    let result = CommandResult::Instances(claude(Availability::Available {
-        auth: Auth::Unmanaged,
-        models: listed(),
-    }));
+    let result = CommandResult::Accepted;
     assert_eq!(
         saving(&mut registry, removed),
         Vec::from([
@@ -696,10 +691,7 @@ fn a_start_from_before_an_instance_was_added_again_is_dropped() {
             ]),
             Vec::new(),
             Some(unavailable("starting the instance's CLI")),
-            Vec::from([Effect::Reply(
-                "again",
-                CommandResult::Instances(registry.instances())
-            )]),
+            Vec::from([Effect::Reply("again", CommandResult::Accepted)]),
         )
     );
 }
@@ -750,10 +742,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
     );
     assert_eq!(
         kept,
-        Vec::from([Effect::Reply(
-            "own",
-            CommandResult::Instances(registry.instances())
-        )])
+        Vec::from([Effect::Reply("own", CommandResult::Accepted)])
     );
     assert!(registry.instances().of(&own(Provider::Claude)).is_some());
 }
@@ -857,7 +846,7 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
         &api(),
         Ok(offered.clone()),
     ));
-    let result = CommandResult::Instances(registry.instances());
+    let result = CommandResult::Accepted;
     assert_eq!(
         answered,
         Vec::from([
@@ -890,10 +879,7 @@ fn a_failed_refresh_leaves_the_instance_unavailable_until_the_next() {
                 instance: api(),
                 reason: text("probe failed"),
             }),
-            Effect::Reply(
-                "set",
-                CommandResult::Instances(registry.instances())
-            ),
+            Effect::Reply("set", CommandResult::Accepted),
         ])
     );
     assert_eq!(
@@ -956,10 +942,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
     let moved = registry.moved_aside(codex, "remove", Ok(()));
     assert_eq!(
         moved,
-        Vec::from([Effect::Reply(
-            "remove",
-            CommandResult::Instances(registry.instances())
-        )])
+        Vec::from([Effect::Reply("remove", CommandResult::Accepted)])
     );
     assert_eq!(
         registry.set_credential(Provider::Claude, gateway("t"), "set"),
@@ -984,13 +967,7 @@ fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
         ),
         Vec::from([
             stored_note(&codex),
-            Effect::Reply(
-                "set",
-                CommandResult::Instances(claude(Availability::Available {
-                    auth: Auth::Unmanaged,
-                    models: listed(),
-                }))
-            ),
+            Effect::Reply("set", CommandResult::Accepted),
         ])
     );
     assert_eq!(
@@ -1063,10 +1040,7 @@ fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
     );
     assert_eq!(
         answered,
-        Vec::from([Effect::Reply(
-            "signed in",
-            CommandResult::Instances(registry.instances())
-        )])
+        Vec::from([Effect::Reply("signed in", CommandResult::Accepted)])
     );
 }
 
@@ -1133,10 +1107,7 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
         (
             Some(unavailable("starting the instance's CLI")),
             Vec::new(),
-            Vec::from([Effect::Reply(
-                "signed in",
-                CommandResult::Instances(registry.instances())
-            )]),
+            Vec::from([Effect::Reply("signed in", CommandResult::Accepted)]),
         )
     );
     assert_eq!(
@@ -1674,7 +1645,7 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
     );
     let complete =
         registry.refreshed(refreshed(next, &instance, Ok(listing())));
-    let outcome = CommandResult::Instances(registry.instances());
+    let outcome = CommandResult::Accepted;
     assert_eq!(
         complete,
         [

@@ -22,7 +22,7 @@ use core::time::Duration;
 use agents::{SignIn as Flow, plain};
 use proto::{
     Account, Auth, Availability, Catalog, CommandResult, Credential, Instance,
-    InstanceId, Rejection, SignIn, SignInCode, SignInStep,
+    InstanceId, Instances, Rejection, SignIn, SignInCode, SignInStep,
 };
 
 use crate::Note;
@@ -479,24 +479,28 @@ impl SignIns {
         }
     }
 
-    /// The instance refreshed, and the host answered `result`, what it
-    /// runs now.
-    pub fn listed(&mut self, key: &Key, result: CommandResult) -> Vec<Effect> {
+    /// The instance refresh completed, or stopped without an answer.
+    pub fn listed(
+        &mut self,
+        key: &Key,
+        result: Option<CommandResult>,
+        instances: &Instances,
+    ) -> Vec<Effect> {
         let Some(running) = self.current(key) else {
             return Vec::new();
         };
         let credential = running.credential.take();
         self.running.remove(&key.instance);
         let step = match (credential, result) {
-            (expected, CommandResult::Instances(instances))
+            (expected, Some(CommandResult::Accepted))
                 if expected.as_ref().is_none_or(|target| {
                     matches!(
                         instances.availability(&target.destination),
                         Some(Availability::Available { auth: Auth::Stored { kind, .. }, .. })
                             if *kind == target.kind
                     )
-                }) => SignInStep::SignedIn { instances },
-            (Some(_), CommandResult::Rejected(Rejection::FleetUnavailable)) => SignInStep::Failed {
+                }) => SignInStep::SignedIn,
+            (Some(_), Some(CommandResult::Rejected(Rejection::FleetUnavailable))) => SignInStep::Failed {
                 reason: String::from("the fleet could not save the credential"),
             },
             (Some(_), _) => SignInStep::Failed {
@@ -570,7 +574,7 @@ impl Running {
 #[must_use]
 pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
     match sign_in.step {
-        SignInStep::SignedIn { .. }
+        SignInStep::SignedIn
         | SignInStep::Failed { .. }
         | SignInStep::Cancelled => Some(&sign_in.instance),
         SignInStep::Starting
@@ -587,7 +591,7 @@ pub fn note(sign_in: &SignIn) -> Note {
         SignInStep::Starting => String::from("starting"),
         SignInStep::Open { .. } => String::from("open"),
         SignInStep::Finishing => String::from("finishing"),
-        SignInStep::SignedIn { .. } => String::from("signed in"),
+        SignInStep::SignedIn => String::from("signed in"),
         SignInStep::Failed { reason } => format!("failed: {reason}"),
         SignInStep::Cancelled => String::from("cancelled"),
     };

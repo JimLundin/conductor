@@ -59,7 +59,6 @@ impl HostFold {
             Update::Feed(Feed::Instances(instances)) => {
                 self.instances = Some(instances);
             }
-            Update::Answer(_) => {}
         }
     }
 
@@ -78,10 +77,9 @@ mod tests {
     use crate::link::{LinkState, Status, Update};
     use alloc::collections::BTreeMap;
     use proto::{
-        Availability, Catalog, ClientName, CommandResult, Epoch, Event,
-        EventKind, Feed, Home, HomeSync, HostPath, HostSeq, InstanceId,
-        InstanceStatus, Instances, Provider, SessionId, SignIn, SignInStep,
-        Welcome,
+        Availability, Catalog, ClientName, Epoch, Event, EventKind, Feed, Home,
+        HomeSync, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
+        Provider, SessionId, SignIn, SignInStep, Welcome,
     };
 
     fn instances(reason: &str) -> Instances {
@@ -114,7 +112,7 @@ mod tests {
     }
 
     #[test]
-    fn welcome_and_live_snapshots_own_the_roster_across_earlier_receipts() {
+    fn welcome_and_live_snapshots_own_the_roster_apart_from_sign_in_status() {
         let mut host = HostFold::default();
         host.apply(welcome(1));
         assert_eq!(host.name.as_deref(), Some("desk"));
@@ -126,28 +124,18 @@ mod tests {
             projects: Vec::new(),
         };
         host.apply(Update::Feed(Feed::Home(home.clone())));
-        host.apply(sign_in(SignInStep::SignedIn {
-            instances: instances("signed in"),
-        }));
+        host.apply(sign_in(SignInStep::SignedIn));
         assert_eq!(
             (&host.home, &host.instances),
             (&Some(home), &Some(instances("welcome")))
         );
         host.apply(sign_in(SignInStep::Cancelled));
-        host.apply(Update::Answer(CommandResult::Instances(instances(
-            "command",
-        ))));
         assert_eq!(
             (&host.instances, host.sign_ins.is_empty()),
             (&Some(instances("welcome")), true)
         );
         host.apply(Update::Feed(Feed::Instances(instances("current"))));
-        host.apply(Update::Answer(CommandResult::Instances(instances(
-            "previous receipt",
-        ))));
-        host.apply(sign_in(SignInStep::SignedIn {
-            instances: instances("previous sign-in"),
-        }));
+        host.apply(sign_in(SignInStep::SignedIn));
         assert_eq!(host.instances, Some(instances("current")));
         host.apply(sign_in(SignInStep::Starting));
         host.apply(welcome(1));

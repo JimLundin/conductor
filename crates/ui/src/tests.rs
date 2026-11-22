@@ -1357,7 +1357,7 @@ fn a_secret_is_sent_once_and_its_account_makes_the_instance() {
     let (stored, _) = run(
         saving.clone(),
         Vec::from([
-            answer(&saved, Ok(CommandResult::Instances(two_claudes()))),
+            answer(&saved, Ok(CommandResult::Accepted)),
             connection(HOST, LinkState::Live, None),
             roster(two_claudes()),
         ]),
@@ -1948,9 +1948,7 @@ fn a_device_code_is_shown_to_copy_and_each_step_says_where_it_stands() {
         [
             progress(SignInStep::Starting),
             progress(SignInStep::Finishing),
-            progress(SignInStep::SignedIn {
-                instances: claude(signed_in())
-            }),
+            progress(SignInStep::SignedIn),
             progress(SignInStep::Failed {
                 reason: text("the code expired")
             }),

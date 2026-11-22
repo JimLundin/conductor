@@ -257,7 +257,7 @@ impl Registry {
         self.ask(|reply| RegistryMsg::Instances { reply }).await
     }
 
-    /// Changes the host's instances and answers with what it runs then:
+    /// Changes the host's instances and acknowledges completion:
     /// once a changed credential has refreshed its instance, and once an
     /// added instance's CLI has started.
     ///
@@ -697,7 +697,9 @@ impl RegistryActor {
                 Ok(None) => Vec::new(),
                 Err(reason) => self.sign_ins.write_failed(key, reason),
             },
-            Report::Listed(result) => self.sign_ins.listed(key, result),
+            Report::Listed(result) => {
+                self.sign_ins.listed(key, result, &self.offers.borrow())
+            }
             Report::CredentialLink(url) => {
                 self.sign_ins.credential_link(key, url)
             }
@@ -806,10 +808,10 @@ impl RegistryActor {
                 credential,
             } => self.core.set_credential(provider, credential, reply),
             Configure::Remove(instance) => {
-                if let Some(instances) = self.store.removal(id) {
+                if self.store.removal(id) {
                     return Ok(vec![Effect::Reply(
                         reply,
-                        CommandResult::Instances(instances),
+                        CommandResult::Accepted,
                     )]);
                 }
                 let running = self.running_sessions().await?;
@@ -901,9 +903,7 @@ impl RegistryActor {
                     &roster,
                     &change,
                     reply.credential.as_ref(),
-                    reply.removal.map(|id| {
-                        (id, |current: &Roster| self.core.instances_of(current))
-                    }),
+                    reply.removal,
                 )
             }
         };

@@ -132,17 +132,20 @@ async fn finish(
     link: &HostLink,
     updates: &mut Updates,
     own: &InstanceId,
+    account: &InstanceId,
 ) -> Fallible<Instances> {
     assert_eq!(send(link, submit(own)).await?, CommandResult::Accepted);
     let done = sign_in_until(updates, own, |step| {
-        matches!(
-            step,
-            SignInStep::SignedIn { .. } | SignInStep::Failed { .. }
-        )
+        matches!(step, SignInStep::SignedIn | SignInStep::Failed { .. })
     })
     .await?;
     match done {
-        SignInStep::SignedIn { instances } => Ok(instances),
+        SignInStep::SignedIn => {
+            crate::wait_for_offer(updates, account).await?;
+            updates.host.instances.clone().ok_or_else(|| {
+                "the signed-in host did not publish its instances".into()
+            })
+        }
         step => Err(format!("credential sign-in ended at {step:?}").into()),
     }
 }
@@ -214,7 +217,7 @@ async fn paired_client_creates_a_credential_that_the_host_keeps() -> Fallible {
     );
 
     begin(&link, &mut updates, &own).await?;
-    let instances = finish(&link, &mut updates, &own).await?;
+    let instances = finish(&link, &mut updates, &own, &account).await?;
     assert_eq!(
         instances.availability(&account),
         Some(&Availability::Available {

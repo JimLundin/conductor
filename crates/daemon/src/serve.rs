@@ -254,7 +254,6 @@ const fn command_outcome(result: &CommandResult) -> &'static str {
     match result {
         CommandResult::Accepted => "accepted",
         CommandResult::Started { .. } => "started",
-        CommandResult::Instances(_) => "instances",
         CommandResult::Rejected(_) => "rejected",
         CommandResult::Diff(_) => "diff",
         CommandResult::IssueCreated { .. } => "issue_created",

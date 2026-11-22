@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use host::sign_in::Run;
-use proto::{InstanceId, Provider};
+use host::sign_in::{Effect, Run, SignIns};
+use proto::{Instance, InstanceId, Instances, Provider, SignInStep};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
 use tokio::time::timeout;
 
@@ -52,7 +52,10 @@ async fn a_stalled_input_leaves_another_instance_responsive()
         .await?
         .context("listing report")?;
     assert_eq!(listed_key, other);
-    assert!(matches!(report, Report::Listed(CommandResult::Accepted)));
+    assert!(matches!(
+        report,
+        Report::Listed(Some(CommandResult::Accepted))
+    ));
 
     let mut other_reader = blocked_input(&mut runs, other.clone()).await?;
     runs.kill(&other);
@@ -72,5 +75,34 @@ async fn a_stalled_input_leaves_another_instance_responsive()
     assert!(result.is_err());
     assert!(runs.written(&written_key, result).is_err());
     assert!(!runs.writes.contains_key(&written_key));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dropped_refresh_reply_fails_the_sign_in()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut sign_ins = SignIns::default();
+    let (_, effects) = sign_ins
+        .start(InstanceId::own(Provider::Claude), Some(Instance::default()));
+    let key = effects
+        .into_iter()
+        .find_map(|effect| match effect {
+            Effect::Spawn { key, .. } => Some(key),
+            _ => None,
+        })
+        .ok_or("sign-in did not start")?;
+    let mut runs = Runs::default();
+    let (sender, answer) = oneshot::channel();
+    runs.listen(key.clone(), answer);
+    drop(sender);
+    let (reported, Report::Listed(result)) =
+        runs.next().await.ok_or("no refresh outcome")?
+    else {
+        return Err("unexpected sign-in report".into());
+    };
+    assert_eq!(reported, key);
+    assert!(
+        matches!(sign_ins.listed(&key, result, &Instances::default()).as_slice(), [Effect::Publish(sign_in)] if matches!(sign_in.step, SignInStep::Failed { .. }))
+    );
     Ok(())
 }

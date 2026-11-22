@@ -14,7 +14,7 @@
 mod adoption;
 mod key;
 
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -24,20 +24,19 @@ use anyhow::Context;
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use host::registry::{AccountAdoption, AdoptionReplay, Change};
-use proto::{Catalog, CommandId, Instance, InstanceId, Instances, Roster};
+use proto::{Catalog, CommandId, Instance, InstanceId, Roster};
 use serde::{Deserialize, Serialize};
 
 use adoption::Adoption;
 
 pub use host::registry::Stored;
 
-const FORMAT: u8 = 6;
-const LEGACY_FORMAT: u8 = 5;
+const FORMAT: u8 = 7;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Credentials {
     roster: Roster,
-    removals: BTreeMap<CommandId, Instances>,
+    removals: BTreeSet<CommandId>,
 }
 
 const PURPOSE: &[u8] = b"conductor credentials 1";
@@ -160,7 +159,7 @@ impl Store {
         planned: &Roster,
         change: &Change,
         claim: Option<&CredentialLease>,
-        removal: Option<(CommandId, impl FnOnce(&Roster) -> Instances)>,
+        removal: Option<CommandId>,
     ) -> anyhow::Result<Roster> {
         let _lock = self.lock()?;
         self.ensure_idle()?;
@@ -183,16 +182,19 @@ impl Store {
             change.apply(&mut roster, planned),
             "the instance changed before the credential could be stored"
         );
-        if let Some((id, snapshot)) = removal {
-            credentials.removals.insert(id, snapshot(&roster));
+        if let Some(id) = removal {
+            credentials.removals.insert(id);
         }
         credentials.roster = roster;
         self.write_credentials(&credentials)?;
         Ok(credentials.roster)
     }
 
-    pub(crate) fn removal(&self, id: CommandId) -> Option<Instances> {
-        self.read_credentials().ok()??.removals.remove(&id)
+    pub(crate) fn removal(&self, id: CommandId) -> bool {
+        self.read_credentials()
+            .ok()
+            .flatten()
+            .is_some_and(|stored| stored.removals.contains(&id))
     }
 
     fn ensure_idle(&self) -> anyhow::Result<()> {
@@ -374,10 +376,6 @@ impl Store {
             .ok()?;
         match *format {
             FORMAT => postcard::from_bytes(&plain).ok(),
-            LEGACY_FORMAT => Some(Credentials {
-                roster: postcard::from_bytes(&plain).ok()?,
-                removals: BTreeMap::new(),
-            }),
             _ => None,
         }
     }

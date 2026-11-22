@@ -76,7 +76,7 @@ pub enum Report {
     Expired,
     Checked(Result<Option<Account>, String>),
     Written(Result<ChildStdin, String>),
-    Listed(CommandResult),
+    Listed(Option<CommandResult>),
     CredentialLink(String),
     CredentialCreated(Option<Credential>),
 }
@@ -284,7 +284,7 @@ impl Runs {
     ) {
         let sender = self.sender.clone();
         self.tasks.spawn(async move {
-            let result = answer.await.unwrap_or(CommandResult::Accepted);
+            let result = answer.await.ok();
             let _ = sender.send((key, Report::Listed(result)));
         });
     }

@@ -10,8 +10,7 @@ use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 
 use crate::Fallible;
 
-const LEGACY_HEADER: u8 = 5;
-const HEADER: u8 = 6;
+const HEADER: u8 = 7;
 const PURPOSE: &[u8] = b"conductor credentials 1";
 
 pub fn seed_roster(data: &Path, roster: &Roster) -> Fallible {
@@ -19,7 +18,10 @@ pub fn seed_roster(data: &Path, roster: &Roster) -> Fallible {
     let mut nonce = [0; 24];
     getrandom::fill(&mut key)?;
     getrandom::fill(&mut nonce)?;
-    let plain = postcard::to_stdvec(roster)?;
+    let plain = postcard::to_stdvec(&(
+        roster,
+        std::collections::BTreeSet::<CommandId>::new(),
+    ))?;
     let cipher = XChaCha20Poly1305::new(&key.into());
     let sealed = cipher
         .encrypt(
@@ -36,7 +38,7 @@ pub fn seed_roster(data: &Path, roster: &Roster) -> Fallible {
     )?;
     std::fs::write(
         data.join("credentials"),
-        [&[LEGACY_HEADER], nonce.as_slice(), &sealed].concat(),
+        [&[HEADER], nonce.as_slice(), &sealed].concat(),
     )?;
     Ok(())
 }
@@ -62,7 +64,6 @@ pub fn roster(data: &Path) -> Fallible<Roster> {
         )
         .map_err(|_| "cannot open test roster")?;
     match *header {
-        LEGACY_HEADER => Ok(postcard::from_bytes(&plain)?),
         HEADER => Ok(postcard::take_from_bytes(&plain)?.0),
         _ => Err("unknown test roster format".into()),
     }

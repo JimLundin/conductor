@@ -29,7 +29,6 @@ impl DiffState {
             Ok(
                 CommandResult::Accepted
                 | CommandResult::Started { .. }
-                | CommandResult::Instances(_)
                 | CommandResult::IssueCreated { .. }
                 | CommandResult::PushPublicKey(_)
                 | CommandResult::PushUnavailable

@@ -515,11 +515,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     /// What `Welcome` tells a client the host can run.
     #[must_use]
     pub fn instances(&self) -> Instances {
-        self.instances_of(&self.roster)
-    }
-
-    #[must_use]
-    pub fn instances_of(&self, roster: &Roster) -> Instances {
+        let roster = &self.roster;
         Instances(
             roster
                 .0
@@ -733,7 +729,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             return Vec::from([Effect::MoveAside { instance, reply }]);
         }
         if instance.account == Account::Own {
-            return Vec::from([self.answer(reply)]);
+            return Vec::from([Self::answer(reply)]);
         }
         if let Some(reason) = self.instance_in_use(&[&instance], running) {
             return Vec::from([rejected(reply, reason)]);
@@ -813,7 +809,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 if from.account == Account::Own {
                     effects.extend(self.launch(from, left));
                 } else {
-                    effects.extend(self.answers(left));
+                    effects.extend(Self::answers(left));
                 }
                 effects
             }
@@ -822,7 +818,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 waiting.push(reply);
                 logged(
                     Note::InstanceRemoved { instance },
-                    self.answers(waiting),
+                    Self::answers(waiting),
                 )
             }
         }
@@ -843,7 +839,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 replies,
             }) if active == id && latest.id == id => {
                 let logged = self.configured(&instance, configured);
-                logged.into_iter().chain(self.answers(replies)).collect()
+                logged.into_iter().chain(Self::answers(replies)).collect()
             }
             Some(Refresh::Pending {
                 active,
@@ -889,7 +885,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 if refresh_requested {
                     self.schedule(instance, replies)
                 } else {
-                    self.answers(replies)
+                    Self::answers(replies)
                 }
             }
             other => {
@@ -938,7 +934,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         replies: Vec<R>,
     ) -> Vec<Effect<S, R>> {
         let Some(settings) = self.roster.of(&instance).cloned() else {
-            return self.answers(replies);
+            return Self::answers(replies);
         };
         Vec::from([Effect::Start(self.starting(
             instance,
@@ -1012,7 +1008,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let Some(Launcher::Running { start, .. }) =
             self.launchers.get(&instance)
         else {
-            return self.answers(asked);
+            return Self::answers(asked);
         };
         let credential = self.credential(&instance);
         self.jobs = self.jobs.saturating_add(1);
@@ -1046,17 +1042,12 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         run.into_iter().collect()
     }
 
-    fn answer(&self, reply: R) -> Effect<S, R> {
-        Effect::Reply(reply, CommandResult::Instances(self.instances()))
+    const fn answer(reply: R) -> Effect<S, R> {
+        Effect::Reply(reply, CommandResult::Accepted)
     }
 
-    /// Each reply gets what the host runs now.
-    fn answers(&self, replies: Vec<R>) -> Vec<Effect<S, R>> {
-        let result = CommandResult::Instances(self.instances());
-        replies
-            .into_iter()
-            .map(|reply| Effect::Reply(reply, result.clone()))
-            .collect()
+    fn answers(replies: Vec<R>) -> Vec<Effect<S, R>> {
+        replies.into_iter().map(Self::answer).collect()
     }
 
     fn credential(&self, instance: &InstanceId) -> Option<Credential> {

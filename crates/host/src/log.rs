@@ -19,10 +19,9 @@ use proto::{
 
 use crate::prelude::*;
 
-/// The format of the events a database holds. Format 3 records each
-/// session's instance by its provider and account; a database of another
-/// format doesn't open.
-pub const FORMAT: u32 = 3;
+/// Format 4 removes instance snapshots from command receipts. A database
+/// of another format doesn't open.
+pub const FORMAT: u32 = 4;
 
 /// Whether a database opens, and whether its format is to be written: a
 /// `created` one takes [`FORMAT`], and one whose `stored` format is another

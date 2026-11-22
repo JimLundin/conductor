@@ -58,7 +58,7 @@ pub fn wants_update(
 
 #[must_use]
 pub const fn applied(command: &Configure, result: &CommandResult) -> bool {
-    matches!(result, CommandResult::Instances(_))
+    matches!(result, CommandResult::Accepted)
         || matches!(
             (command, result),
             (

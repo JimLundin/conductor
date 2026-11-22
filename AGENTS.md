@@ -20,6 +20,9 @@ Home Screen. The design is in
 - **No API is stable.** Every crate is internal to this workspace. Change a
   public API whenever a clearer shape appears, and update its callers in
   the same change; never keep an old shape for compatibility.
+- **Existing data is disposable.** Change stored formats without migrations
+  or compatibility code, and bump their versions when the encoding changes.
+  Apply this policy without asking whether existing data must be preserved.
 - **Gate.** `tools/check.sh [commit|step|release]` runs the standard's
   `rust/check.sh`, which also runs Conductor's suites in `checks.toml`: the
   run-record IP scrub and clippy for the wasm crates at `commit`, and the

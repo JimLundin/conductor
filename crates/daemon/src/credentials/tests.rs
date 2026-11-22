@@ -414,7 +414,7 @@ fn competing_adoptions_and_a_stale_credential_update_keep_each_account()
         &roster,
         &Change::Added(credential_id.clone()),
         None,
-        None::<(_, fn(&Roster) -> proto::Instances)>,
+        None,
     )?;
 
     let (_, stored) = Store::open(&data.0, catalog)?;
@@ -521,18 +521,17 @@ fn removal_result_survives_reopening_before_the_command_receipt()
     let mut roster = Roster::default();
     roster.0.insert(instance.clone(), Instance::default());
     store.save(&roster)?;
-    let expected = proto::Instances::default();
     store.save_change(
         &Roster::default(),
         &Change::Removed(instance.clone()),
         None,
-        Some((id, |_: &Roster| expected.clone())),
+        Some(id),
     )?;
     drop(store);
 
     let (store, stored) = Store::open(&data.0, catalog)?;
     assert!(stored.roster(&Catalog::default()).of(&instance).is_none());
-    assert_eq!(store.removal(id), Some(expected));
-    assert_eq!(store.removal(proto::CommandId(18)), None);
+    assert!(store.removal(id));
+    assert!(!store.removal(proto::CommandId(18)));
     Ok(())
 }

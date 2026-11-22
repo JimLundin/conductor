@@ -65,7 +65,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/26";
+pub const ALPN: &[u8] = b"conductor/27";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -629,9 +629,6 @@ pub enum CommandResult {
     Started {
         session: SessionId,
     },
-    /// The answer to every instance command: what the host runs now.
-    /// This receipt retains its original snapshot. Subscribers follow `Feed::Instances`.
-    Instances(Instances),
     Rejected(Rejection),
     Diff(CheckpointDiff),
     IssueCreated {
@@ -1498,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn durability_v9_bytes_keep_their_original_meaning()
+    fn stored_events_and_receipts_use_the_current_format()
     -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             postcard::from_bytes::<super::Event>(&[1, 1, 1])?,
@@ -1513,7 +1510,7 @@ mod tests {
             super::CommandResult::Accepted
         );
         assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[3, 3])?,
+            postcard::from_bytes::<super::CommandResult>(&[2, 3])?,
             super::CommandResult::Rejected(super::Rejection::SessionClosed)
         );
         assert_eq!(

@@ -991,6 +991,23 @@ async fn send(link: &HostLink, body: CommandBody) -> Fallible<CommandResult> {
         .map_err(|_| "no command result within the step timeout")??)
 }
 
+async fn configured(
+    link: &HostLink,
+    body: CommandBody,
+    target: &Target,
+) -> Fallible<Instances> {
+    accepted(link, body).await?;
+    current_offers(target).await
+}
+
+async fn current_offers(target: &Target) -> Fallible<Instances> {
+    let observer = endpoint().await?;
+    let (conn, welcome) = hello(&observer, target).await?;
+    let offers = subscribed_offers(&conn, &welcome).await;
+    observer.close().await;
+    offers
+}
+
 async fn launch(link: &HostLink, body: CommandBody) -> Fallible<SessionId> {
     started_session(&send(link, body).await?)
 }
@@ -2464,7 +2481,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
     );
     assert_eq!(
         send(&link, claude_gateway()).await?,
-        CommandResult::Instances(with_api.clone())
+        CommandResult::Accepted
     );
     wait_for_offer(&mut updates, &claude_api).await?;
     assert_eq!(updates.host.instances.as_ref(), Some(&with_api));
@@ -2503,7 +2520,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
             }
         )
         .await?,
-        CommandResult::Instances(with_claude(no_credential()))
+        CommandResult::Accepted
     );
     assert_eq!(
         send(&link, start_on(claude_api, &dir)).await?,
@@ -2548,13 +2565,10 @@ fn with_codex(codex: Availability) -> Instances {
 }
 
 /// How Codex signs in and the models it offers, by id, with the default
-/// first, from a host's answer to a credential change.
+/// first, from the instance feed.
 fn codex_offer(
-    result: CommandResult,
+    Instances(mut shown): Instances,
 ) -> Option<(Auth, Option<String>, Vec<String>)> {
-    let CommandResult::Instances(Instances(mut shown)) = result else {
-        return None;
-    };
     let Availability::Available { auth, models } =
         shown.remove(&api(Provider::Codex))?.availability
     else {
@@ -2638,7 +2652,9 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         ))
     );
     assert_eq!(
-        codex_offer(send(&link, codex_provider(FIRST_KEY)).await?),
+        codex_offer(
+            configured(&link, codex_provider(FIRST_KEY), &fx.target).await?
+        ),
         Some(codex_gateway())
     );
     launch(&link, start_on(codex_api.clone(), &server)).await?;
@@ -2658,7 +2674,9 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         )
     );
     assert_eq!(
-        codex_offer(send(&link, codex_provider(SECOND_KEY)).await?),
+        codex_offer(
+            configured(&link, codex_provider(SECOND_KEY), &fx.target).await?
+        ),
         Some(codex_gateway())
     );
     assert_eq!(
@@ -2762,26 +2780,27 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
         "a refused set leaves the file as it was"
     );
     assert_eq!(
-        send(
+        configured(
             &link,
             CommandBody::RemoveInstance {
                 instance: instance(Provider::Codex),
-            }
+            },
+            &fx.target,
         )
         .await?,
-        CommandResult::Instances(with_claude(no_credential()))
+        with_claude(no_credential())
     );
     assert_eq!(
         read(&data.join("credentials.unreadable"))?,
         "not a sealed store"
     );
     assert_eq!(
-        send(&link, claude_gateway()).await?,
-        CommandResult::Instances(and(
+        configured(&link, claude_gateway(), &fx.target).await?,
+        and(
             with_claude(no_credential()),
             &api(Provider::Claude),
             gateway(probed())
-        ))
+        )
     );
     fx.shutdown_with_client(link).await
 }
@@ -2832,14 +2851,8 @@ async fn plugin_host(data: &Path) -> Fallible<Fixture> {
     serve(endpoint().await?, claude_plugins(), data).await
 }
 
-fn status_of(
-    result: &CommandResult,
-    id: &InstanceId,
-) -> Option<InstanceStatus> {
-    match result {
-        CommandResult::Instances(listed) => listed.of(id).cloned(),
-        _ => None,
-    }
+fn status_of(listed: &Instances, id: &InstanceId) -> Option<InstanceStatus> {
+    listed.of(id).cloned()
 }
 
 /// The session each `SessionCreated` names, with its instance.
@@ -2898,8 +2911,10 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
             &[("base_url", base_url), ("token", token)],
         ),
     };
-    let after_api = send(&link, set(GATEWAY, CLAUDE_TOKEN)).await?;
-    let after_other = send(&link, set(OTHER, OTHER_TOKEN)).await?;
+    let after_api =
+        configured(&link, set(GATEWAY, CLAUDE_TOKEN), &fx.target).await?;
+    let after_other =
+        configured(&link, set(OTHER, OTHER_TOKEN), &fx.target).await?;
     let other_gateway = Availability::Available {
         auth: Auth::Stored {
             kind: String::from("gateway"),
@@ -2916,7 +2931,8 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
         (Some(gateway(probed())), None, Some(other_gateway.clone()))
     );
     probe(&data, &claude_api, CLAUDE_MODELS)?;
-    let changed = send(&link, set(GATEWAY, API_TOKEN)).await?;
+    let changed =
+        configured(&link, set(GATEWAY, API_TOKEN), &fx.target).await?;
     assert_eq!(
         (
             status_of(&changed, &claude_api).map(|it| it.availability),
@@ -3645,7 +3661,10 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
     )?;
     let _ = kinds_until(&mut updates, Until::Ready).await?;
     assert_eq!(
-        codex_offer(send(&link, codex_provider("conductor-test-key")).await?),
+        codex_offer(
+            configured(&link, codex_provider("conductor-test-key"), &fx.target)
+                .await?
+        ),
         Some(codex_gateway())
     );
     let _ = kinds_until(&mut updates, Until::Closed).await?;
@@ -4146,17 +4165,19 @@ async fn start_ready(
 async fn assert_failed_refresh_then_another(
     phone: &HostLink,
     probe: &Path,
+    target: &Target,
 ) -> Fallible {
     std::fs::write(
         probe.join("stdout.4.jsonl"),
         "{\"fake\":\"fail\",\"stderr\":\"current probe failed\",\"status\":1}\n",
     )?;
-    let failed = send(
+    let failed = configured(
         phone,
         CommandBody::SetCredential {
             provider: Provider::Claude,
             credential: claude_credential("conductor-test-failing"),
         },
+        target,
     )
     .await?;
     let Some(Availability::Unavailable { reason }) =
@@ -4171,15 +4192,16 @@ async fn assert_failed_refresh_then_another(
     assert_ne!(reason, REFRESHING);
     assert_ne!(reason, "");
     assert_eq!(
-        send(
+        configured(
             phone,
             CommandBody::SetCredential {
                 provider: Provider::Claude,
                 credential: claude_credential("conductor-test-again"),
-            }
+            },
+            target,
         )
         .await?,
-        CommandResult::Instances(with_api_claude(gateway(probed())))
+        with_api_claude(gateway(probed()))
     );
     Ok(())
 }
@@ -4285,13 +4307,10 @@ async fn a_held_boot_probe_allows_connections_and_sessions_on_a_ready_account()
         std::fs::write(work.join("go"), "")?;
         wait_for_offer(&mut updates, &held).await?;
         let refreshed = send(&phone, claude_gateway()).await?;
+        assert_eq!(refreshed, CommandResult::Accepted);
         assert_eq!(
-            refreshed,
-            CommandResult::Instances(with_api_claude(gateway(probed())))
-        );
-        assert_eq!(
-            CommandResult::Instances(subscribed_offers(&conn, &welcome).await?),
-            refreshed
+            subscribed_offers(&conn, &welcome).await?,
+            with_api_claude(gateway(probed()))
         );
         desktop.close().await;
         phone.stop().await?;
@@ -4358,13 +4377,14 @@ async fn retrying_the_stored_credential_during_boot_receives_the_live_refresh_re
     }
     std::fs::write(work.join("go"), "")?;
     let receipt = finished_command(retry).await?;
+    assert_eq!(receipt, CommandResult::Accepted);
     assert!(
-        matches!(status_of(&receipt, &id).map(|status| status.availability), Some(Availability::Unavailable { reason }) if reason != REFRESHING && !reason.is_empty())
+        matches!(status_of(&current_offers(&target).await?, &id).map(|status| status.availability), Some(Availability::Unavailable { reason }) if reason != REFRESHING && !reason.is_empty())
     );
     std::fs::write(work.join("stdout.3.jsonl"), PROBED)?;
     assert_eq!(
-        send(&phone, body.clone()).await?,
-        CommandResult::Instances(with_api_claude(gateway(probed())))
+        configured(&phone, body.clone(), &target).await?,
+        with_api_claude(gateway(probed()))
     );
     assert_eq!(
         finished_command(queued_command(&conn, 2363, body)).await?,
@@ -4427,12 +4447,18 @@ async fn unsupported_stored_credentials_are_refused_by_both_instances_and_can_be
         assert!(!reason.contains("private-value"));
     }
     assert_eq!(
-        status_of(&send(&phone, claude_gateway()).await?, &claude)
-            .map(|status| status.availability),
+        status_of(
+            &configured(&phone, claude_gateway(), &fx.target).await?,
+            &claude
+        )
+        .map(|status| status.availability),
         Some(gateway(probed()))
     );
     assert_eq!(
-        codex_offer(send(&phone, codex_provider("replacement-key")).await?),
+        codex_offer(
+            configured(&phone, codex_provider("replacement-key"), &fx.target)
+                .await?
+        ),
         Some(codex_gateway())
     );
     fx.shutdown_with_client(phone).await
@@ -4451,7 +4477,7 @@ async fn a_new_account_with_failed_discovery_stays_unavailable_until_a_successfu
     )?;
     let fx = plugin_host(&data).await?;
     let (phone, _updates) = fx.connect().await?;
-    let failed = send(&phone, claude_gateway()).await?;
+    let failed = configured(&phone, claude_gateway(), &fx.target).await?;
     let Some(Availability::Unavailable { reason }) =
         status_of(&failed, &account).map(|status| status.availability)
     else {
@@ -4460,8 +4486,8 @@ async fn a_new_account_with_failed_discovery_stays_unavailable_until_a_successfu
     assert_ne!(reason, REFRESHING);
     probe(&data, &account, PROBED)?;
     assert_eq!(
-        send(&phone, claude_gateway()).await?,
-        CommandResult::Instances(with_api_claude(gateway(probed())))
+        configured(&phone, claude_gateway(), &fx.target).await?,
+        with_api_claude(gateway(probed()))
     );
     fx.shutdown_with_client(phone).await
 }
@@ -4518,17 +4544,21 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     saved(&data, seeded, newest_body).await?;
     assert_eq!(read(&probe.join("runs.txt"))?, "2");
     std::fs::write(probe.join("go"), "")?;
-    let result = CommandResult::Instances(with_api_claude(gateway(probed())));
+    let result = CommandResult::Accepted;
     assert_eq!(finished_command(first).await?, result);
     assert_eq!(finished_command(duplicate).await?, result);
     assert_eq!(finished_command(middle).await?, result);
     assert_eq!(finished_command(newest).await?, result);
+    assert_eq!(
+        current_offers(&fx.target).await?,
+        with_api_claude(gateway(probed()))
+    );
     assert_eq!(read(&probe.join("runs.txt"))?, "3");
     assert_ne!(
         read(&probe.join("env.txt"))?.find("conductor-test-newest"),
         None
     );
-    assert_failed_refresh_then_another(&phone, &probe).await?;
+    assert_failed_refresh_then_another(&phone, &probe, &fx.target).await?;
     phone.stop().await?;
     desktop.close().await;
     fx.shutdown().await?;
@@ -4644,11 +4674,12 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
     assert_eq!(read(&server.join("runs.txt"))?, "2");
     std::fs::write(server.join("go"), "")?;
     for task in [first, middle, newest] {
-        assert_eq!(
-            codex_offer(finished_command(task).await?),
-            Some(codex_gateway())
-        );
+        assert_eq!(finished_command(task).await?, CommandResult::Accepted);
     }
+    assert_eq!(
+        codex_offer(current_offers(&fx.target).await?),
+        Some(codex_gateway())
+    );
     assert_eq!(read(&server.join("runs.txt"))?, "3");
     assert_ne!(
         read(&server.join("env.txt"))?.find("conductor-test-newest"),
@@ -4734,9 +4765,8 @@ async fn removal_rebuilds_its_missing_command_receipt_after_restart() -> Fallibl
         },
     };
     let receipt = retry_command(&conn, &removal).await?;
-    assert!(
-        matches!(&receipt, CommandResult::Instances(instances) if !instances.0.contains_key(&instance))
-    );
+    assert_eq!(receipt, CommandResult::Accepted);
+    assert!(current_offers(&target).await?.of(&instance).is_none());
     first.shutdown().await?;
 
     // The roster is durable. Dropping the separate receipt restores the
@@ -6085,8 +6115,7 @@ async fn app_sign_in(
     sign_in_until(updates, id, |step| {
         matches!(
             step,
-            proto::SignInStep::SignedIn { .. }
-                | proto::SignInStep::Failed { .. }
+            proto::SignInStep::SignedIn | proto::SignInStep::Failed { .. }
         )
     })
     .await
@@ -6209,13 +6238,16 @@ async fn app_refresh_and_terminal_restart_show_the_same_signed_in_instance()
         }
         let fx = serve(endpoint().await?, sign_in_plugins(), &app).await?;
         let (link, mut updates) = fx.connect().await?;
-        let app_instances =
-            match app_sign_in(&link, &mut updates, source).await? {
-                proto::SignInStep::SignedIn { instances } => instances,
-                other => {
-                    return Err(format!("app sign-in failed: {other:?}").into());
-                }
-            };
+        assert_eq!(
+            app_sign_in(&link, &mut updates, source).await?,
+            proto::SignInStep::SignedIn
+        );
+        wait_for_offer(&mut updates, target).await?;
+        let app_instances = updates
+            .host
+            .instances
+            .as_ref()
+            .ok_or("the app host did not publish its instances")?;
         terminal_sign_in(&terminal, source).await?;
         let reopened =
             serve(endpoint().await?, sign_in_plugins(), &terminal).await?;
@@ -6228,7 +6260,7 @@ async fn app_refresh_and_terminal_restart_show_the_same_signed_in_instance()
             .ok_or("the reopened host did not publish its instances")?;
 
         for (data, instances) in
-            [(&app, &app_instances), (&terminal, terminal_instances)]
+            [(&app, app_instances), (&terminal, terminal_instances)]
         {
             assert_eq!(
                 (
@@ -6315,8 +6347,7 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
     let ended = |step: &proto::SignInStep| {
         matches!(
             step,
-            proto::SignInStep::Failed { .. }
-                | proto::SignInStep::SignedIn { .. }
+            proto::SignInStep::Failed { .. } | proto::SignInStep::SignedIn
         )
     };
 
@@ -6363,13 +6394,7 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
     );
     assert_eq!(
         (
-            match signed_in {
-                proto::SignInStep::SignedIn { instances } => {
-                    status_of(&CommandResult::Instances(instances), &account)
-                        .map(|it| it.availability)
-                }
-                _ => None,
-            },
+            signed_in,
             updates
                 .host
                 .instances
@@ -6383,7 +6408,7 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
                 .join(".fake-signed-in")
                 .exists(),
         ),
-        (Some(now.clone()), Some(now), true, false),
+        (proto::SignInStep::SignedIn, Some(now), true, false),
         "the signed-in home moved to the account's instance, and Claude's own is fresh"
     );
     link.stop().await?;
@@ -6439,12 +6464,16 @@ async fn app_retry_finishes_adoption_interrupted_before_the_roster_save()
     );
     assert_eq!(send(&link, start()).await?, CommandResult::Accepted);
     let done = sign_in_until(&mut updates, &own, |step| {
-        matches!(step, proto::SignInStep::SignedIn { .. })
+        matches!(step, proto::SignInStep::SignedIn)
     })
     .await?;
-    let proto::SignInStep::SignedIn { instances } = done else {
-        return Err("the recovered sign-in did not complete".into());
-    };
+    assert_eq!(done, proto::SignInStep::SignedIn);
+    wait_for_offer(&mut updates, &account).await?;
+    let instances = updates
+        .host
+        .instances
+        .as_ref()
+        .ok_or("the recovered sign-in did not publish its instances")?;
     assert_eq!(
         instances.availability(&account),
         Some(&Availability::Available {
