@@ -3,7 +3,8 @@ import { type Run, shotNamed, tools } from "../harness.ts";
 
 const SYNCED =
 	/^Home synced \d{4}-\d\d-\d\d \d\d:\d\d UTC from file:\/\/.*home-remote\.git\.$/u;
-const SIGNED_NOTE = /^\d{4}-\d\d-\d\d conductor · iPhone: from the phone$/u;
+const SIGNED_NOTE =
+	/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ conductor·iPhone note: from the phone$/u;
 const ISSUE_SESSION = /^Claude Code on conductor · /u;
 
 const projectOf =
@@ -93,10 +94,9 @@ const issue = async (run: Run): Promise<void> => {
 		.waitFor({ timeout: patience });
 	await pane.locator('textarea[name="note"]').fill("from the phone");
 	await pane.getByRole("button", { name: "Add note" }).click();
-	await pane
-		.locator(".note", { hasText: "from the phone" })
-		.waitFor({ timeout: patience });
-	const note = await pane.locator(".note").innerText();
+	const noted = pane.locator(".note", { hasText: "from the phone" });
+	await noted.waitFor({ timeout: patience });
+	const note = await noted.innerText();
 	check(
 		SIGNED_NOTE.test(note),
 		`the note is dated and signed by the host and the device ("${note}")`,

@@ -1,17 +1,18 @@
 use alloc::{boxed::Box, collections::BTreeMap};
-use sha2::{Digest, Sha256};
 
 use proto::flow::Flow;
 use proto::{
-    CommandId, Issue, IssueChange, IssueFields, IssueId, ProjectId, Rejection,
+    CommandId, Issue, IssueChange, IssueId, NewIssue, Part, ProjectId,
+    Rejection,
 };
 
 use super::{
-    Applied, Change, Edit, EditData, EditIdentity, Mode, apply, changing, date,
-    edit_marker, file, finished, folder, message, opening, read, signer,
-    started, was,
+    Applied, Change, Edit, EditData, Mode, apply, edit_marker, file, finished,
+    folder, locate, message, signer, started, was,
 };
+use crate::flow::command::Issues;
 use crate::prelude::*;
+use crate::project::Project;
 
 /// The issue and file an operation reads before deciding what to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,7 +24,6 @@ pub struct Read {
 /// A local edit ready to read its file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
-    flow: Flow,
     command: CommandId,
     data: EditData,
 }
@@ -59,9 +59,10 @@ pub enum RecordEffect {
     Scan,
 }
 
-/// An edit ready to record in the clone.
+/// An edit ready to record in the clone, and what the flow warns of
+/// what it writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recorded(Recording);
+pub struct Recorded(Recording, Vec<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Recording {
@@ -73,6 +74,11 @@ enum Recording {
 }
 
 impl Recorded {
+    #[must_use]
+    pub fn warnings(&self) -> &[String] {
+        &self.1
+    }
+
     /// The queue must be saved before writing the clone. A failed commit
     /// can be retried from the saved edit, so only persistence can reject
     /// the operation at this point.
@@ -194,12 +200,12 @@ impl PendingEdits {
     #[must_use]
     pub fn replay(
         &self,
-        flow: &Flow,
+        home: &Issues<'_>,
         index: usize,
         current: Result<Option<&str>, String>,
         upstream_changed: Option<u64>,
     ) -> Write {
-        self.0[index].edit.replay(flow, current, upstream_changed)
+        self.0[index].edit.replay(home, current, upstream_changed)
     }
 
     pub fn replayed(&mut self, index: usize, covered: bool) {
@@ -258,8 +264,7 @@ impl Delivery {
 /// The facts shared by requests from the host.
 pub struct Context<'a> {
     pub remote: Option<&'a str>,
-    /// What the home's issues are read against.
-    pub flow: &'a Flow,
+    pub projects: &'a [Project],
     pub issues: &'a BTreeMap<ProjectId, Vec<Issue>>,
     pub host: &'a str,
     pub at: u64,
@@ -267,58 +272,74 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
-    /// Opens an issue in a registered project.
+    /// Opens issue `issue` as `new` asks, in one of the home's projects.
     ///
     /// # Errors
     ///
-    /// The home or project is unknown, or the fields are invalid.
+    /// The host has no home, or its home lists no such project.
     pub fn open(
         &self,
-        projects: &[ProjectId],
-        project: ProjectId,
         issue: IssueId,
-        wanted: &IssueFields,
+        new: NewIssue,
+        client: &str,
     ) -> Result<Record, Rejection> {
-        let fields = opening(self.remote, projects, &project, wanted)?;
-        Ok(Record {
-            flow: self.flow.clone(),
-            command: self.command,
-            data: EditData {
-                project,
-                issue,
-                at: self.at,
-                by: String::from(self.host),
-                change: Change::Create(fields),
-                was: None,
-            },
-        })
+        crate::configured(self.remote)?;
+        let project = self
+            .projects
+            .iter()
+            .find(|known| {
+                known.name == new.project || known.id.0 == new.project
+            })
+            .map(|known| known.id.clone())
+            .ok_or(Rejection::UnknownProject)?;
+        Ok(self.record(
+            project,
+            issue,
+            signer(self.host, client),
+            Change::Create(new),
+        ))
     }
 
-    /// Edits a field, moves the issue, changes its checklist or adds a note.
+    /// Changes an issue as `home::flow::command` does.
     ///
     /// # Errors
     ///
-    /// The home or issue is unknown, or the change is invalid.
+    /// The host has no home, or its home lists no such issue.
     pub fn edit(
         &self,
         issue: IssueId,
-        wanted: IssueChange,
+        change: IssueChange,
         client: &str,
     ) -> Result<Record, Rejection> {
-        let (project, change) =
-            changing(self.remote, self.issues, issue, wanted)?;
-        Ok(Record {
-            flow: self.flow.clone(),
+        crate::configured(self.remote)?;
+        let project =
+            locate(self.issues, issue).ok_or(Rejection::UnknownIssue)?;
+        Ok(self.record(
+            project,
+            issue,
+            signer(self.host, client),
+            Change::Issue(change),
+        ))
+    }
+
+    const fn record(
+        &self,
+        project: ProjectId,
+        issue: IssueId,
+        by: String,
+        change: Change,
+    ) -> Record {
+        Record {
             command: self.command,
             data: EditData {
                 project,
                 issue,
                 at: self.at,
-                by: signer(self.host, client),
-                change: Change::Issue(change),
+                by,
+                change,
                 was: None,
             },
-        })
+        }
     }
 }
 
@@ -328,36 +349,52 @@ impl Record {
         self.data.read()
     }
 
-    /// Decides the commit and what to keep and deliver.
+    /// The project the issue is in.
+    #[must_use]
+    pub fn project(&self) -> ProjectId {
+        self.data.project.clone()
+    }
+
+    /// Decides the commit and what to keep and deliver, among the home's
+    /// issues, the one it is to being `current`.
     ///
     /// # Errors
     ///
-    /// The file is gone or cannot be read as an issue.
+    /// The file is gone or cannot be read as an issue, or the flow refuses
+    /// what the edit writes.
     pub fn decide(
         mut self,
         current: Option<&str>,
+        home: &Issues<'_>,
         pending: &PendingEdits,
     ) -> Result<Recorded, Rejection> {
-        self.data.was = was(&self.flow, current, &self.data);
+        self.data.was = was(home.flow, current, &self.data);
         let edit = Edit {
-            identity: EditIdentity::Command(self.command),
+            command: self.command,
             data: self.data,
         };
-        let commit = match apply(&self.flow, current, &edit, Mode::Record) {
-            Applied::Write(text) => Some(edit.commit(text)),
-            Applied::AlreadyRecorded => return Ok(Recorded(Recording::Done)),
-            Applied::Unchanged => None,
+        let (commit, warnings) = match apply(home, current, &edit, Mode::Record)
+        {
+            Applied::Write { text, warnings } => {
+                (Some(edit.commit(text)), warnings)
+            }
+            Applied::AlreadyRecorded => {
+                return Ok(Recorded(Recording::Done, Vec::new()));
+            }
+            Applied::Unchanged => (None, Vec::new()),
             Applied::Gone => return Err(Rejection::UnknownIssue),
             Applied::Unreadable(reason) => {
                 return Err(Rejection::IssueNotSaved { reason });
             }
+            Applied::Refused(reason) => {
+                return Err(Rejection::IssueRefused { reason });
+            }
         };
         let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue));
-        Ok(Recorded(Recording::Keep(
-            Box::new(edit),
-            next,
-            self.command,
-        )))
+        Ok(Recorded(
+            Recording::Keep(Box::new(edit), next, self.command),
+            warnings,
+        ))
     }
 }
 
@@ -368,11 +405,6 @@ fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
 }
 
 impl EditData {
-    pub(super) fn rendered_note(&self, text: &str) -> String {
-        let body = text.trim().lines().collect::<Vec<_>>().join("\n");
-        format!("{} {}: {body}", date(self.at), self.by)
-    }
-
     fn read(&self) -> Read {
         Read {
             issue: self.issue,
@@ -383,73 +415,8 @@ impl EditData {
 
 impl Edit {
     #[must_use]
-    pub fn legacy_note_target(&self) -> Option<Read> {
-        self.legacy_note().map(|_| self.read())
-    }
-
-    fn legacy_note(&self) -> Option<&str> {
-        match (&self.identity, &self.data.change) {
-            (EditIdentity::Legacy, Change::Issue(IssueChange::Note(text))) => {
-                Some(text)
-            }
-            _ => None,
-        }
-    }
-
-    fn legacy_note_key(&self) -> Option<(IssueId, String)> {
-        self.legacy_note()
-            .map(|text| (self.data.issue, self.data.rendered_note(text)))
-    }
-
-    /// A legacy queue starts after the notes already in its upstream
-    /// baseline. Local commits may contain only a prefix of the queue.
-    pub fn migrate_legacy_notes(
-        flow: Option<&Flow>,
-        edits: &mut [Self],
-        upstream: &BTreeMap<IssueId, String>,
-    ) {
-        let projects: BTreeMap<IssueId, ProjectId> = edits
-            .iter()
-            .map(|edit| (edit.data.issue, edit.data.project.clone()))
-            .collect();
-        let mut occurrences = BTreeMap::new();
-        for (&id, text) in upstream {
-            let issue =
-                flow.zip(projects.get(&id)).and_then(|(known, project)| {
-                    read(known, project, id, text).ok()
-                });
-            for entry in issue
-                .into_iter()
-                .flat_map(|upstream_issue| upstream_issue.log)
-            {
-                *occurrences.entry((id, entry.line())).or_insert(0) += 1;
-            }
-        }
-        let mut queued = BTreeMap::new();
-        for edit in edits {
-            if let Some(key) = edit.legacy_note_key() {
-                let ordinal = occurrences.entry(key.clone()).or_insert(0);
-                *ordinal += 1;
-                let (issue, note) = key;
-                let digest = Sha256::digest(note.as_bytes());
-                let hash = data_encoding::HEXLOWER.encode(&digest);
-                let nth =
-                    queued.entry((issue, note, edit.data.at)).or_insert(0);
-                *nth += 1;
-                edit.identity = EditIdentity::MigratedNote {
-                    ordinal: *ordinal,
-                    marker: format!(
-                        "# conductor-legacy-note: {hash} {} {nth}",
-                        edit.data.at
-                    ),
-                };
-            }
-        }
-    }
-
-    #[must_use]
     pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
-        (self.identity == EditIdentity::Command(id)).then_some(self.data.issue)
+        (self.command == id).then_some(self.data.issue)
     }
 
     #[must_use]
@@ -457,11 +424,12 @@ impl Edit {
         self.data.read()
     }
 
-    /// Decides whether the edit still applies to the upstream file.
+    /// Decides whether the edit still applies to the upstream file, among
+    /// the home's issues.
     #[must_use]
     pub fn replay(
         &self,
-        flow: &Flow,
+        home: &Issues<'_>,
         current: Result<Option<&str>, String>,
         upstream_changed: Option<u64>,
     ) -> Write {
@@ -473,11 +441,13 @@ impl Edit {
             return Write::Dropped;
         }
         let changed = upstream_changed.unwrap_or(0);
-        match apply(flow, contents, self, Mode::Replay { changed }) {
-            Applied::Write(text) => Write::Commit(self.commit(text)),
+        match apply(home, contents, self, Mode::Replay { changed }) {
+            Applied::Write { text, .. } => Write::Commit(self.commit(text)),
             Applied::Unchanged | Applied::AlreadyRecorded => Write::Unchanged,
             Applied::Gone => Write::Dropped,
-            Applied::Unreadable(reason) => Write::Waiting(reason),
+            Applied::Unreadable(reason) | Applied::Refused(reason) => {
+                Write::Waiting(reason)
+            }
         }
     }
 
@@ -540,14 +510,22 @@ impl SessionUpdate {
             Self::Done => None,
             Self::Started | Self::Finished { summary: None, .. } => {
                 let from = status(issues, id)?;
-                let to = match update {
-                    Self::Started => started(flow, &from),
-                    Self::Finished { landed, .. } => {
-                        finished(flow, &from, landed)
+                let (moved, reason) = match update {
+                    Self::Started => {
+                        (started(flow, &from), "a session started on it")
                     }
-                    Self::Done => None,
-                }?;
-                Some(IssueChange::Transition { from, to })
+                    Self::Finished { landed, .. } => (
+                        finished(flow, &from, landed),
+                        "a session on it landed work",
+                    ),
+                    Self::Done => (None, ""),
+                };
+                let to = moved?;
+                Some(IssueChange::Move {
+                    part: Part::Status,
+                    to,
+                    reason: String::from(reason),
+                })
             }
         }
     }

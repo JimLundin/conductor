@@ -10,19 +10,25 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::flow::check::Inputs;
-use home::flow::command::{Context, Write, command, run};
+use home::flow::command::{Context, Write, command, fresh, run};
 use home::flow::graph::File;
 use proto::ProjectId;
 
 const FLOW: &str = "docs/agents/flow.toml";
 
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let given: Vec<String> = env::args().skip(1).collect();
     let Some(root) = root() else {
         return say(
             "home: no home here: no folder above holds docs/agents/flow.toml\n",
             ExitCode::from(2),
         );
+    };
+    let args = match with_file(given) {
+        Ok(read) => read,
+        Err(reason) => {
+            return say(&format!("home: {reason}\n"), ExitCode::FAILURE);
+        }
     };
     let outcome = run(&command(&args), &inputs(&root), &context());
     let written = outcome
@@ -48,8 +54,22 @@ fn root() -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// Now, a random number for a new id, and who signs the log: `HOME_BY`,
-/// else this host's name and `cli`.
+/// The words, with the text of the file `home issue body <id> --file
+/// <path>` names in place of the flag and its path.
+fn with_file(args: Vec<String>) -> Result<Vec<String>, String> {
+    match args.as_slice() {
+        [issue, body, id, flag, path]
+            if issue == "issue" && body == "body" && flag == "--file" =>
+        {
+            let text = read(Path::new(path))?;
+            Ok(Vec::from([issue.clone(), body.clone(), id.clone(), text]))
+        }
+        _ => Ok(args),
+    }
+}
+
+/// Now, the id a new issue takes, and who signs the log: `HOME_BY`, else
+/// this host's name and `cli`.
 fn context() -> Context {
     let mut random = [0_u8; 16];
     let _filled = getrandom::fill(&mut random);
@@ -57,13 +77,14 @@ fn context() -> Context {
         .or_else(|_| env::var("HOSTNAME"))
         .unwrap_or_else(|_| String::from("host"))
         .to_lowercase();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        });
     Context {
-        now: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| {
-                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-            }),
-        random: u128::from_le_bytes(random),
+        now,
+        id: fresh(now, u128::from_le_bytes(random)),
         by: env::var("HOME_BY").unwrap_or_else(|_| format!("{host}·cli")),
     }
 }

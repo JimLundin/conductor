@@ -29,11 +29,11 @@ use proto::{
     ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
     Credential, Decision, Effort, Entry, Epoch, Event, EventKind, Feed,
     FileChange, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
-    IssueChange, IssueFields, IssueId, Kept, ModelChoice, ModelId, Models,
-    ProjectId, Provider, Question, QuestionOption, Rejection, RequestId,
-    Resolution, Roster, Selection, SessionId, StartAt, SubagentActivity,
-    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome,
+    IssueChange, IssueId, Kept, ModelChoice, ModelId, Models, ProjectId,
+    Provider, Question, QuestionOption, Rejection, RequestId, Resolution,
+    Roster, Selection, SessionId, StartAt, SubagentActivity, SubagentEvent,
+    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome,
 };
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
@@ -976,6 +976,15 @@ async fn resume_to_ready(
 
 async fn accepted(link: &HostLink, body: CommandBody) -> Fallible {
     assert_eq!(send(link, body).await?, CommandResult::Accepted);
+    Ok(())
+}
+
+/// An issue command is answered with the issue it wrote and no warning.
+async fn wrote(link: &HostLink, body: CommandBody) -> Fallible {
+    assert!(matches!(
+        send(link, body).await?,
+        CommandResult::IssueWritten { warnings, .. } if warnings.is_empty()
+    ));
     Ok(())
 }
 
@@ -6304,6 +6313,13 @@ fn pushed_issue(land: &Homeland, issue: proto::IssueId) -> Fallible<String> {
     git(&land.home_bare, &["show", &path])
 }
 
+fn set(field: &str, value: &str) -> IssueChange {
+    IssueChange::Set {
+        field: String::from(field),
+        value: String::from(value),
+    }
+}
+
 fn change(issue: proto::IssueId, change: IssueChange) -> CommandBody {
     CommandBody::ChangeIssue { issue, change }
 }
@@ -6336,14 +6352,12 @@ fn create_issue(title: &str) -> CommandBody {
 }
 
 fn create_issue_in(project: &str, title: &str) -> CommandBody {
-    CommandBody::CreateIssue {
-        project: ProjectId(String::from(project)),
-        fields: IssueFields {
-            title: String::from(title),
-            body: String::from("Why."),
-            labels: Vec::from([String::from("app")]),
-        },
-    }
+    CommandBody::CreateIssue(proto::NewIssue {
+        project: String::from(project),
+        kind: String::from("task"),
+        title: String::from(title),
+        fields: Vec::from([String::from("labels=app")]),
+    })
 }
 
 /// An issue without a title is refused, and one with one is opened in
@@ -6355,12 +6369,12 @@ async fn opens_an_issue(
 ) -> Fallible<proto::IssueId> {
     assert_eq!(
         send(link, create_issue(" ")).await?,
-        CommandResult::Rejected(Rejection::IssueNotSaved {
+        CommandResult::Rejected(Rejection::IssueRefused {
             reason: String::from("an issue needs a title")
         })
     );
     let issue = match send(link, create_issue("Sign in")).await? {
-        CommandResult::IssueCreated { issue } => issue,
+        CommandResult::IssueWritten { issue, .. } => issue,
         other => return Err(format!("expected an issue, not {other:?}").into()),
     };
     let opened = home_until(updates, |home| {
@@ -6387,13 +6401,13 @@ async fn lands_an_offline_note(
     issue: proto::IssueId,
 ) -> Fallible {
     land.go_offline()?;
-    accepted(
+    wrote(
         link,
         change(issue, IssueChange::Note(String::from("offline"))),
     )
     .await?;
     let waiting = home_until(updates, |home| home.unpushed == 1).await?;
-    let signed = format!("test-host · {}: offline", test_client().0);
+    let signed = format!("test-host·{} note: offline", test_client().0);
     assert!(
         alpha_issues(&waiting)
             .iter()
@@ -6418,12 +6432,12 @@ async fn lands_an_offline_note(
 
 async fn create_offline_issue(link: &HostLink) -> Fallible<proto::IssueId> {
     let issue = match send(link, create_issue("Offline issue")).await? {
-        CommandResult::IssueCreated { issue } => issue,
+        CommandResult::IssueWritten { issue, .. } => issue,
         other => {
             return Err(format!("expected a saved issue, got {other:?}").into());
         }
     };
-    accepted(
+    wrote(
         link,
         change(issue, IssueChange::Note(String::from("offline note"))),
     )
@@ -6490,7 +6504,7 @@ async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
     let (peer, mut observed) = second.connect().await?;
     let _ = home_until(&mut observed, |home| !alpha_issues(home).is_empty())
         .await?;
-    accepted(
+    wrote(
         &peer,
         change(issue, IssueChange::Note(String::from("second host note"))),
     )
@@ -6534,7 +6548,7 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
     let other = match send(&link, create_issue_in("beta", "Independent issue"))
         .await?
     {
-        CommandResult::IssueCreated { issue } => issue,
+        CommandResult::IssueWritten { issue, .. } => issue,
         result => {
             return Err(format!("expected an issue, got {result:?}").into());
         }
@@ -6542,7 +6556,7 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
     let writer = home_writer(&land)?;
     land.go_offline()?;
     let issue = create_offline_issue(&link).await?;
-    accepted(
+    wrote(
         &link,
         change(other, IssueChange::Note(String::from("independent note"))),
     )
@@ -6595,7 +6609,7 @@ async fn a_pending_note_preserves_the_tail_of_a_large_upstream_issue()
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
     let writer = home_writer(&land)?;
     land.go_offline()?;
-    accepted(
+    wrote(
         &link,
         change(issue, IssueChange::Note(String::from("offline addition"))),
     )
@@ -6639,7 +6653,7 @@ async fn a_pending_note_waits_for_a_readable_issue() -> Fallible {
         .join(format!("{}.md", issue_name(issue)));
     let original = std::fs::read(&file)?;
     land.go_offline()?;
-    accepted(
+    wrote(
         &link,
         change(issue, IssueChange::Note(String::from("wait for repair"))),
     )
@@ -6722,9 +6736,8 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
     let checkout = data.join("home-repo");
     let lock = checkout.join(".git/index.lock");
     std::fs::write(&lock, "")?;
-    let title =
-        |text: &str| change(issue, IssueChange::Title(String::from(text)));
-    accepted(&link, title("First setter")).await?;
+    let title = |text: &str| change(issue, set("title", text));
+    wrote(&link, title("First setter")).await?;
     let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
     std::fs::remove_file(&lock)?;
     git(
@@ -6737,7 +6750,7 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
         ],
     )?;
 
-    accepted(&link, title("Second setter")).await?;
+    wrote(&link, title("Second setter")).await?;
     let landed = home_until(&mut updates, |home| home.unpushed == 0).await?;
     assert_eq!(
         alpha_issues(&landed)
@@ -6771,7 +6784,7 @@ async fn a_queue_temporarily_unreadable_at_startup_is_loaded_before_the_next_edi
     land.go_offline()?;
     let note =
         |text: &str| change(issue, IssueChange::Note(String::from(text)));
-    accepted(&link, note("first note")).await?;
+    wrote(&link, note("first note")).await?;
     let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
     link.stop().await?;
     fx.shutdown().await?;
@@ -6789,7 +6802,7 @@ async fn a_queue_temporarily_unreadable_at_startup_is_loaded_before_the_next_edi
     ));
     std::fs::remove_dir(&state)?;
     std::fs::rename(&kept, &state)?;
-    accepted(&link, note("second note")).await?;
+    wrote(&link, note("second note")).await?;
     let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
     land.go_online()?;
     accepted(&link, CommandBody::SyncHome).await?;
@@ -6823,13 +6836,15 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     };
     let invalid = proto::Command {
         id: proto::CommandId(81),
-        body: change(issue, IssueChange::Title(String::new())),
+        body: change(issue, set("title", "")),
     };
     let invalid_result = retry_command(&connection, &invalid).await?;
-    assert!(matches!(
+    assert_eq!(
         invalid_result,
-        CommandResult::Rejected(Rejection::IssueNotSaved { .. })
-    ));
+        CommandResult::Rejected(Rejection::IssueRefused {
+            reason: String::from("an issue needs a title")
+        })
+    );
     let before = git(&data.join("home-repo"), &["rev-parse", "HEAD"])?;
     let refused = retry_command(&connection, &note).await?;
     assert!(matches!(
@@ -6842,7 +6857,7 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     })
     .await?;
     assert_eq!(still_open.unpushed, 0);
-    assert!(alpha_issues(&still_open).iter().all(|it| it.log.is_empty()));
+    assert!(alpha_issues(&still_open).iter().all(|it| it.log.len() == 1));
     assert_eq!(
         git(&data.join("home-repo"), &["rev-parse", "HEAD"])?,
         before
@@ -6857,26 +6872,26 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
         retry_command(&connection, &reuse_invalid_id).await?,
         invalid_result
     );
-    assert_eq!(
+    assert!(matches!(
         retry_command(&connection, &note).await?,
-        CommandResult::Accepted
-    );
+        CommandResult::IssueWritten { .. }
+    ));
     let kept = home_until(&mut updates, |home| home.unpushed == 1).await?;
-    assert_issue_notes(&kept, issue, 1);
+    assert_issue_notes(&kept, issue, 2);
     link.stop().await?;
     fx.shutdown().await?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
     let (link, mut updates) = reopened.connect().await?;
     let kept = home_until(&mut updates, |home| home.unpushed == 1).await?;
-    assert_issue_notes(&kept, issue, 1);
-    accepted(
+    assert_issue_notes(&kept, issue, 2);
+    wrote(
         &link,
         change(issue, IssueChange::Note(String::from("still offline"))),
     )
     .await?;
     let visible = home_until(&mut updates, |home| home.unpushed == 2).await?;
-    assert_issue_notes(&visible, issue, 2);
+    assert_issue_notes(&visible, issue, 3);
     land.go_online()?;
     accepted(&link, CommandBody::SyncHome).await?;
     let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
@@ -6897,6 +6912,7 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     Ok(())
 }
 
+/// The issue's log has `count` lines, the one opening it among them.
 fn assert_issue_notes(home: &proto::Home, issue: proto::IssueId, count: usize) {
     assert_eq!(
         alpha_issues(home)
@@ -6918,7 +6934,7 @@ async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
     let lock = data.join("home-repo/.git/index.lock");
     std::fs::write(&lock, "")?;
     let issue = match send(&link, create_issue("Commit after restart")).await? {
-        CommandResult::IssueCreated { issue } => issue,
+        CommandResult::IssueWritten { issue, .. } => issue,
         other => {
             return Err(format!("expected a saved issue, got {other:?}").into());
         }
@@ -6971,7 +6987,7 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
         body: create_issue("Published before the receipt"),
     };
     let created = retry_command(&connection, &command).await?;
-    let CommandResult::IssueCreated { issue } = created else {
+    let CommandResult::IssueWritten { issue, .. } = created else {
         return Err(format!("expected an issue, got {created:?}").into());
     };
     let _ = home_until(&mut updates, |home| {
@@ -7015,107 +7031,32 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
 }
 
 #[tokio::test]
-async fn a_host_replays_the_original_issue_queue_format() -> Fallible {
-    let land = homeland("legacy-issue-queue")?;
+async fn a_queue_stored_in_an_older_shape_is_set_aside() -> Fallible {
+    let land = homeland("older-issue-queue")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
     let (link, mut updates) = fx.connect().await?;
     let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
     link.stop().await?;
     fx.shutdown().await?;
 
-    land.go_offline()?;
-    // Postcard Vec<Edit> from before the queue had edit identities.
-    let original =
-        b"\x01\x05alpha\x2a\x01\x06legacy\x00\x09Old queue\x00\x00\x00";
-    std::fs::write(data.join("home-edits.state"), original)?;
-    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
-    land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
-    assert!(
-        pushed_issue(&land, proto::IssueId(42))?
-            .contains("title = \"Old queue\"")
-    );
-    link.stop().await?;
-    reopened.shutdown().await?;
-    let _ = std::fs::remove_dir_all(&land.scratch);
-    Ok(())
-}
-
-#[tokio::test]
-async fn an_original_queue_keeps_two_notes_identical_to_an_older_note()
--> Fallible {
-    let original = b"\x02\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
-    legacy_identical_notes("original-identical-notes", original, 2).await
-}
-
-#[tokio::test]
-async fn a_versioned_queue_recovers_markerless_identical_notes() -> Fallible {
-    let versioned = b"\x80\x00\x01\x02\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
-    legacy_identical_notes("versioned-identical-notes", versioned, 2).await
-}
-
-#[tokio::test]
-async fn a_legacy_note_saved_before_its_commit_keeps_its_own_occurrence()
--> Fallible {
-    let queue = b"\x02\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
-    legacy_identical_notes("uncommitted-legacy-note", queue, 1).await
-}
-
-async fn legacy_identical_notes(
-    name: &str,
-    queue: &[u8],
-    local_commits: usize,
-) -> Fallible {
-    let land = homeland(name)?;
-    let issue = proto::IssueId(42);
-    let stem = issue_name(issue);
-    let relative = format!("projects/alpha/issues/{stem}.md");
-    let writer = home_writer(&land)?;
-    let file = writer.join(&relative);
-    std::fs::create_dir_all(writer.join("projects/alpha/issues"))?;
-    let note = "- 1970-01-01 legacy: identical\n";
-    let upstream = format!(
-        "+++\nid = \"{stem}\"\ntitle = \"Legacy notes\"\nstatus = \"open\"\n+++\n\n## Notes\n{note}"
-    );
-    std::fs::write(file, &upstream)?;
-    push_home_edit(&writer)?;
-
-    let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ =
-        home_until(&mut updates, |home| !alpha_issues(home).is_empty()).await?;
-    link.stop().await?;
-    fx.shutdown().await?;
-
-    let checkout = data.join("home-repo");
-    for count in 1..=local_commits {
-        let local = note.repeat(count);
-        std::fs::write(checkout.join(&relative), format!("{upstream}{local}"))?;
-        git(
-            &checkout,
-            &["commit", "--quiet", "-am", &format!("Note on issue {stem}")],
-        )?;
-    }
+    // A queue in the store's previous version.
+    let older =
+        b"\x80\x00\x03\x01\x01\x00\x05alpha\x2a\x01\x06legacy\x01\x08\x09identical\x00";
     let state = data.join("home-edits.state");
-    std::fs::write(&state, queue)?;
+    std::fs::write(&state, older)?;
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
     let (link, mut updates) = reopened.connect().await?;
     accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
-    assert_eq!(pushed_issue(&land, issue)?.matches(note).count(), 3);
-    link.stop().await?;
-    reopened.shutdown().await?;
-
-    let before = git(&land.home_bare, &["rev-parse", "HEAD"])?;
-    std::fs::write(state, queue)?;
-    let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
-    assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, before);
+    let synced = home_until(&mut updates, |home| {
+        matches!(home.sync, proto::HomeSync::Synced)
+    })
+    .await?;
+    assert_eq!(synced.unpushed, 0);
+    assert_eq!(
+        std::fs::read(data.join("home-edits.unreadable"))?,
+        older.to_vec(),
+        "the older queue is kept aside, unread"
+    );
     link.stop().await?;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
@@ -7136,11 +7077,7 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
     let _ =
         home_until(&mut writer_updates, |home| !alpha_issues(home).is_empty())
             .await?;
-    accepted(
-        &writer,
-        change(issue, IssueChange::Title(String::from("Upstream title"))),
-    )
-    .await?;
+    wrote(&writer, change(issue, set("title", "Upstream title"))).await?;
     writer.stop().await?;
     second.shutdown().await?;
     assert!(pushed_issue(&land, issue)?.contains("title = \"Upstream title\""));
@@ -7150,11 +7087,14 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
     let conn = authenticated(&phone, &fx.target).await?;
     let matching = proto::Command {
         id: proto::CommandId(80),
-        body: change(issue, IssueChange::Title(String::from("Sign in"))),
+        body: change(issue, set("title", "Sign in")),
     };
     assert_eq!(
         retry_command(&conn, &matching).await?,
-        CommandResult::Accepted
+        CommandResult::IssueWritten {
+            issue,
+            warnings: Vec::new(),
+        }
     );
     accepted(&link, CommandBody::SyncHome).await?;
     let waiting = home_until(&mut updates, |home| {
@@ -7179,7 +7119,10 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
     let conn = authenticated(&retry, &reopened.target).await?;
     assert_eq!(
         retry_command(&conn, &matching).await?,
-        CommandResult::Accepted
+        CommandResult::IssueWritten {
+            issue,
+            warnings: Vec::new(),
+        }
     );
     land.go_online()?;
     accepted(&link, CommandBody::SyncHome).await?;
@@ -7201,9 +7144,16 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
     let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
     noted_by_hand(&land, issue)?;
-    accepted(
+    wrote(
         &link,
-        change(issue, IssueChange::Status(String::from("active"))),
+        change(
+            issue,
+            IssueChange::Move {
+                part: proto::Part::Status,
+                to: String::from("active"),
+                reason: String::new(),
+            },
+        ),
     )
     .await?;
     let replayed = pushed_issue(&land, issue)?;
@@ -7324,7 +7274,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
     assert!(
         brief.as_ref().is_some_and(|(text, by)| {
             text.contains("\"Sign in\"")
-                && text.contains("Why.")
+                && text.contains("## What")
                 && *by == test_client()
         }),
         "the first message is the issue's brief: {brief:?}"
@@ -7427,11 +7377,18 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
         !notes.iter().any(|note| note.contains("Done: turn one.")),
         "checklist completion does not write an issue note: {notes:?}"
     );
-    assert!(
-        notes.last().is_some_and(
-            |note| note.ends_with("test-host · claude: Completed turn 2.")
-        ),
-        "the summary is the issue's last note: {notes:?}"
+    assert_eq!(
+        notes
+            .iter()
+            .rev()
+            .take(2)
+            .map(|note| note.split_once(' ').map_or("", |(_, rest)| rest))
+            .collect::<Vec<&str>>(),
+        [
+            "test-host·claude status active→review: a session on it landed work",
+            "test-host·claude note: Completed turn 2.",
+        ],
+        "the summary is the issue's last note before it moves to review: {notes:?}"
     );
     assert_eq!(
         send(&link, CommandBody::FinishSession { session }).await?,

@@ -26,9 +26,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use home::checkout::{Probe, Root};
+use home::flow::command::Issues;
+use home::flow::graph::File;
 use home::instructions::{Own, Sources};
 use home::issue::{
-    Commit, Context, Delivery, Edit, EditData, Listing, PendingEdits, Record,
+    Commit, Context, Delivery, Edit, Listing, PendingEdits, Record,
     RecordEffect, RemoteProbe, SessionUpdate, Write,
 };
 use home::project::Project;
@@ -40,7 +42,7 @@ use issue_file::{read_issue, write_issue};
 use proto::flow::Flow;
 use proto::{
     Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeSync,
-    HostPath, Issue, IssueChange, IssueFields, IssueId, ProjectId, Rejection,
+    HostPath, Issue, IssueChange, IssueId, NewIssue, ProjectId, Rejection,
     StartAt,
 };
 use serde::Serialize;
@@ -399,16 +401,16 @@ impl Actor {
                 let _ = reply.send(self.clone_project(project).await.into());
             }
             Msg::Order {
-                order: HomeOrder::Create(project, fields),
+                order: HomeOrder::Create(new, client),
                 id,
                 reply,
             } => {
-                let answer = self
-                    .create(project, fields, id)
-                    .await
-                    .map_or_else(IssueError::completion, |issue| {
-                        CommandResult::IssueCreated { issue }.into()
-                    });
+                let answer = self.create(new, &client, id).await.map_or_else(
+                    IssueError::completion,
+                    |(issue, warnings)| {
+                        CommandResult::IssueWritten { issue, warnings }.into()
+                    },
+                );
                 let _ = reply.send(answer);
             }
             Msg::Order {
@@ -419,8 +421,8 @@ impl Actor {
                 let answer = self
                     .change(issue, change, &client, id)
                     .await
-                    .map_or_else(IssueError::completion, |()| {
-                        CommandResult::Accepted.into()
+                    .map_or_else(IssueError::completion, |warnings| {
+                        CommandResult::IssueWritten { issue, warnings }.into()
                     });
                 let _ = reply.send(answer);
             }
@@ -541,7 +543,7 @@ impl Actor {
         self.destination = None;
         let (destination, existing) = self.prepare_destination(remote).await?;
         self.destination = Some(destination.clone());
-        self.load_edits().await?;
+        self.load_edits()?;
         self.previous_remote.clone_from(&self.remote);
         match sync::next(existing, self.edits.count() != 0) {
             Git::Clone => self.replay_after_fetch().await,
@@ -597,7 +599,7 @@ impl Actor {
             self.fresh().await;
         }
         self.destination().map_err(IssueError::Retryable)?;
-        self.load_edits().await.map_err(IssueError::Retryable)
+        self.load_edits().map_err(IssueError::Retryable)
     }
 
     fn destination(&self) -> Result<&Destination, String> {
@@ -613,31 +615,25 @@ impl Actor {
 
     async fn create(
         &mut self,
-        project: ProjectId,
-        wanted: IssueFields,
+        new: NewIssue,
+        client: &ClientName,
         command: CommandId,
-    ) -> Result<IssueId, IssueError> {
+    ) -> Result<(IssueId, Vec<String>), IssueError> {
         self.load_current_edits().await?;
         if let Some(kept) = self.kept_issue(command) {
-            return kept;
+            return kept.map(|issue| (issue, Vec::new()));
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
-        let projects = self
-            .projects
-            .iter()
-            .map(|known| known.id.clone())
-            .collect::<Vec<ProjectId>>();
-        let issue_dir = Listing::for_project(&project).path;
         let issue = IssueId(ulid::Ulid::new().0);
-        let request = self
-            .issue_context(command)?
-            .open(&projects, project, issue, &wanted)?;
+        let request =
+            self.issue_context(command).open(issue, new, &client.0)?;
+        let issue_dir = Listing::for_project(&request.project()).path;
         if let Some(opened) = self.created(&issue_dir, command).await? {
-            return Ok(opened);
+            return Ok((opened, Vec::new()));
         }
-        self.record(request).await?;
-        Ok(issue)
+        let warnings = self.record(request).await?;
+        Ok((issue, warnings))
     }
 
     async fn created(
@@ -677,26 +673,15 @@ impl Actor {
         change: IssueChange,
         client: &ClientName,
         command: CommandId,
-    ) -> Result<(), IssueError> {
+    ) -> Result<Vec<String>, IssueError> {
         self.load_current_edits().await?;
         if let Some(kept) = self.kept_issue(command) {
-            return kept.map(drop);
+            return kept.map(|_| Vec::new());
         }
         self.fresh().await;
-        self.change_current(issue, change, client, command).await
-    }
-
-    async fn change_current(
-        &mut self,
-        issue: IssueId,
-        change: IssueChange,
-        client: &ClientName,
-        command: CommandId,
-    ) -> Result<(), IssueError> {
         self.destination().map_err(IssueError::Retryable)?;
-        let request = self
-            .issue_context(command)?
-            .edit(issue, change, &client.0)?;
+        let request =
+            self.issue_context(command).edit(issue, change, &client.0)?;
         self.record(request).await
     }
 
@@ -710,36 +695,41 @@ impl Actor {
     }
 
     /// What an issue change is decided against.
-    ///
-    /// # Errors
-    ///
-    /// The home's flow doesn't load, so no issue can be read.
-    fn issue_context(
-        &self,
-        command: CommandId,
-    ) -> Result<Context<'_>, Rejection> {
+    fn issue_context(&self, command: CommandId) -> Context<'_> {
+        Context {
+            remote: self.remote.as_deref(),
+            projects: &self.projects,
+            issues: &self.issues,
+            host: &self.host,
+            at: now(),
+            command,
+        }
+    }
+
+    /// Records the edit, written as the flow reads it back among the
+    /// clone's other issues, and says what the flow warns of it.
+    async fn record(
+        &mut self,
+        request: Record,
+    ) -> Result<Vec<String>, IssueError> {
         let flow =
             self.flow
                 .as_ref()
                 .map_err(|reason| Rejection::IssueNotSaved {
                     reason: reason.clone(),
                 })?;
-        Ok(Context {
-            remote: self.remote.as_deref(),
-            flow,
-            issues: &self.issues,
-            host: &self.host,
-            at: now(),
-            command,
-        })
-    }
-
-    async fn record(&mut self, request: Record) -> Result<(), IssueError> {
         let current = read_issue(&self.clone, &request.read().path)
             .map_err(IssueError::Retryable)?;
+        let files = issue_files_of(&self.clone, &self.projects);
+        let home = Issues {
+            flow,
+            projects: &self.projects,
+            files: &files,
+        };
         let mut recorded = request
-            .decide(current.as_deref(), &self.edits)
+            .decide(current.as_deref(), &home, &self.edits)
             .map_err(IssueError::local)?;
+        let warnings = recorded.warnings().to_vec();
         let mut outcome = Ok(());
         while let Some(effect) =
             recorded.next(outcome).map_err(IssueError::local)?
@@ -757,7 +747,7 @@ impl Actor {
                 }
             };
         }
-        Ok(())
+        Ok(warnings)
     }
 
     async fn deliver(&mut self, mut step: Delivery) -> Result<(), String> {
@@ -801,8 +791,15 @@ impl Actor {
                 .await?;
         let current = committed_issue(&self.clone, path).await;
         let flow = read_flow(&self.clone)?;
+        let projects = home::project::listed(folders(&self.clone)).projects;
+        let files = issue_files_of(&self.clone, &projects);
+        let home = Issues {
+            flow: &flow,
+            projects: &projects,
+            files: &files,
+        };
         match self.edits.replay(
-            &flow,
+            &home,
             index,
             current
                 .as_ref()
@@ -831,55 +828,15 @@ impl Actor {
         self.sync_edits()
     }
 
-    async fn load_edits(&mut self) -> Result<(), String> {
+    fn load_edits(&mut self) -> Result<(), String> {
         if self.edits_loaded {
             return Ok(());
         }
-        let mut edits = load_edits(&self.edits_at)?;
-        if self.migrate_edits(&mut edits).await? {
-            self.save_edits(edits.iter())?;
-        }
+        let edits = load_edits(&self.edits_at)?;
         self.sync_edits()?;
         self.edits = PendingEdits::loaded(edits);
         self.edits_loaded = true;
         Ok(())
-    }
-
-    async fn migrate_edits(&self, edits: &mut [Edit]) -> Result<bool, String> {
-        let paths: BTreeMap<_, _> = edits
-            .iter()
-            .filter_map(Edit::legacy_note_target)
-            .map(|read| (read.issue, read.path))
-            .collect();
-        if paths.is_empty() {
-            return Ok(false);
-        }
-        let files = if cloned(&self.clone) {
-            self.legacy_files(paths).await?
-        } else {
-            BTreeMap::new()
-        };
-        let flow = read_flow(&self.clone).ok();
-        Edit::migrate_legacy_notes(flow.as_ref(), edits, &files);
-        Ok(true)
-    }
-
-    async fn legacy_files(
-        &self,
-        paths: BTreeMap<IssueId, String>,
-    ) -> Result<BTreeMap<IssueId, String>, String> {
-        let mut files = BTreeMap::new();
-        let tracking = &self.destination()?.tracking;
-        for (issue, path) in paths {
-            let upstream =
-                committed_blob_at(&self.clone, tracking, &path).await?;
-            if let Some(text) =
-                upstream.and_then(|blob| String::from_utf8(blob).ok())
-            {
-                files.insert(issue, text);
-            }
-        }
-        Ok(files)
     }
 
     fn sync_edits(&self) -> Result<(), String> {
@@ -1360,6 +1317,25 @@ fn issue_files(folder: &Path) -> Vec<(String, Result<String, String>)> {
         .collect()
 }
 
+/// Every issue file of the clone's `projects` that reads.
+fn issue_files_of(clone: &Path, projects: &[Project]) -> Vec<File> {
+    projects
+        .iter()
+        .flat_map(|project| {
+            let path = Listing::for_project(&project.id).path;
+            issue_files(&clone.join(path)).into_iter().filter_map(
+                |(stem, text)| {
+                    Some(File {
+                        project: project.id.clone(),
+                        stem,
+                        text: text.ok()?,
+                    })
+                },
+            )
+        })
+        .collect()
+}
+
 /// The flow the clone's `docs/agents/flow.toml` declares.
 ///
 /// # Errors
@@ -1470,9 +1446,8 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-// The original format starts with a canonical postcard vector length.
-const EDITS_VERSION: &[u8] = b"\x80\x00\x03";
-const EDITS_VERSION_1: &[u8] = b"\x80\x00\x01";
+/// The store's encoding. A store in any other is set aside, never read.
+const EDITS_VERSION: &[u8] = b"\x80\x00\x04";
 
 /// The unpushed issue changes the host kept. A store that no longer reads
 /// is moved aside, so its changes are not lost unseen.
@@ -1496,16 +1471,10 @@ fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
 }
 
 fn decode_edits(bytes: &[u8]) -> Result<Vec<Edit>, postcard::Error> {
-    let versioned = bytes
-        .strip_prefix(EDITS_VERSION)
-        .or_else(|| bytes.strip_prefix(EDITS_VERSION_1));
-    let (edits, rest) = versioned.map_or_else(
-        || {
-            let (legacy, rest) =
-                postcard::take_from_bytes::<Vec<EditData>>(bytes)?;
-            Ok((legacy.into_iter().map(Edit::from).collect(), rest))
-        },
-        postcard::take_from_bytes,
+    let (edits, rest) = postcard::take_from_bytes(
+        bytes
+            .strip_prefix(EDITS_VERSION)
+            .ok_or(postcard::Error::DeserializeBadEncoding)?,
     )?;
     if !rest.is_empty() {
         return Err(postcard::Error::DeserializeBadEncoding);

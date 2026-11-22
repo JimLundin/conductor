@@ -2,22 +2,26 @@ use std::collections::BTreeMap;
 
 use proto::flow::Flow;
 use proto::{
-    ChecklistAction, ChecklistItem, Checkout, Cloning, CommandId, Datum, Entry,
-    Home, HomeSync, HostPath, Issue, IssueChange, IssueFields, IssueId,
-    LogEvent, Origin, ProjectId, Rejection, Section,
+    ChecklistChange, ChecklistItem, Checkout, Cloning, CommandId, Datum, Entry,
+    Home, HomeSync, HostPath, Issue, IssueChange, IssueId, Item, LogEvent,
+    NewIssue, Origin, Part, ProjectId, Rejection, Section,
 };
 
 use super::{
     Applied, Branch, Change, Edit, EditData, Mode, Move, PendingEdits, Remote,
-    branch, changing, fields, file, finished, listed, message, opening, read,
-    start, started,
+    branch, file, finished, listed, message, read, start, started,
 };
+use crate::flow::command::Issues;
+use crate::flow::graph::File;
 use crate::flow::load;
+use crate::project::Project;
 
 /// 01JD0000000000000000000001 as its bits.
 const ID: IssueId = IssueId(2_093_793_708_204_169_241_204_922_644_758_003_713);
 /// 2026-11-18T10:12:00Z.
 const OPENED: u64 = 1_794_996_720;
+/// How the log signs and dates what the edits here write.
+const SIGNED: &str = "2026-11-18T10:12:00Z laptop·iPhone";
 
 fn text(value: &str) -> String {
     String::from(value)
@@ -25,6 +29,18 @@ fn text(value: &str) -> String {
 
 fn project() -> ProjectId {
     ProjectId(text("01m7r5n23kp17wyfj138e0bcnf"))
+}
+
+fn projects() -> Vec<Project> {
+    Vec::from([Project {
+        id: project(),
+        name: text("conductor"),
+        title: text("Conductor"),
+        remote: None,
+        root: text("e22b7f7b2976650400965d4147ba771675f96076"),
+        profiles: Vec::new(),
+        provides: Vec::new(),
+    }])
 }
 
 /// The flow Conductor's own home declares.
@@ -40,13 +56,24 @@ fn flow() -> Flow {
     })
 }
 
+/// What `within` makes of the home whose issue files are `files`.
+fn among<T>(files: &[File], within: impl FnOnce(&Issues<'_>) -> T) -> T {
+    let flow = flow();
+    let projects = projects();
+    within(&Issues {
+        flow: &flow,
+        projects: &projects,
+        files,
+    })
+}
+
 /// The issue `text` holds, as the flow reads it.
 fn parse(text: &str) -> Result<Issue, String> {
     read(&flow(), &project(), ID, text)
 }
 
 fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
-    super::apply(&flow(), current, edit, mode)
+    among(&[], |home| super::apply(home, current, edit, mode))
 }
 
 fn was(current: Option<&str>, change: Change) -> Option<String> {
@@ -162,28 +189,71 @@ fn hand_edited() -> String {
     .replace('\n', "\r\n")
 }
 
+/// A command id of its own for each change, so no edit here finds
+/// another's mark.
+fn command_of(change: &Change) -> CommandId {
+    CommandId(format!("{change:?}").bytes().fold(1_000, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u128::from(byte))
+    }))
+}
+
 fn edit(change: Change) -> Edit {
-    EditData {
-        project: project(),
-        issue: ID,
-        at: OPENED,
-        by: text("laptop · iPhone"),
-        change,
-        was: None,
+    Edit {
+        command: command_of(&change),
+        data: EditData {
+            project: project(),
+            issue: ID,
+            at: OPENED,
+            by: text("laptop·iPhone"),
+            change,
+            was: None,
+        },
     }
-    .into()
 }
 
 fn changing_to(change: IssueChange) -> Edit {
     edit(Change::Issue(change))
 }
 
-/// The file an edit writes, or what it did instead.
+/// The file an edit writes, without the line that marks it written, or
+/// what it did instead.
 fn file_of(applied: Applied) -> Result<String, String> {
     match applied {
-        Applied::Write(text) => Ok(text),
+        Applied::Write { text, .. } => Ok(unmarked(&text)),
         other => Err(format!("expected a file, not {other:?}")),
     }
+}
+
+fn unmarked(text: &str) -> String {
+    text.lines()
+        .filter(|line| !line.starts_with("# conductor-edit: "))
+        .map(|line| format!("{line}\n"))
+        .collect::<Vec<String>>()
+        .concat()
+}
+
+fn moving_to(status: &str) -> IssueChange {
+    IssueChange::Move {
+        part: Part::Status,
+        to: text(status),
+        reason: String::new(),
+    }
+}
+
+fn setting(field: &str, value: &str) -> IssueChange {
+    IssueChange::Set {
+        field: text(field),
+        value: text(value),
+    }
+}
+
+fn adding(item: &str) -> IssueChange {
+    IssueChange::Checklist(ChecklistChange::Add(text(item)))
+}
+
+/// The checklist's item at `index`, picked from `seen`.
+const fn at(index: usize, seen: Option<Vec<ChecklistItem>>) -> Item {
+    Item { index, seen }
 }
 
 #[test]
@@ -192,21 +262,17 @@ fn an_issue_file_reads_as_the_flow_declares_it() {
 }
 
 #[test]
-fn a_change_rewrites_only_its_own_line_of_a_hand_edited_file()
+fn a_change_rewrites_only_its_own_lines_of_a_hand_edited_file()
 -> Result<(), String> {
     let unix = hand_edited().replace("\r\n", "\n");
     let moved = file_of(apply(
         Some(&hand_edited()),
-        &changing_to(IssueChange::Status(text("review"))),
+        &changing_to(moving_to("review")),
         Mode::Record,
     ))?;
-    assert_eq!(
-        moved,
-        unix.replace("status = \"open\"   #", "status = \"review\"   #")
-    );
     let added = file_of(apply(
         Some(&moved),
-        &changing_to(IssueChange::AddItem(text("docs"))),
+        &changing_to(adding("docs")),
         Mode::Record,
     ))?;
     let noted = file_of(apply(
@@ -216,20 +282,22 @@ fn a_change_rewrites_only_its_own_line_of_a_hand_edited_file()
     ))?;
     let labelled = file_of(apply(
         Some(&noted),
-        &changing_to(IssueChange::Labels(Vec::from([text("app")]))),
+        &changing_to(setting("labels", "app")),
         Mode::Record,
     ))?;
     assert_eq!(
         labelled,
-        unix.replace("status = \"open\"   #", "status = \"review\"   #")
-            .replace(
-                "status = \"review\"   # open, ready, active, review, done, dropped\n",
+        unix.replace(
+                "status = \"open\"   # open, ready, active, review, done, dropped\n",
                 "status = \"review\"   # open, ready, active, review, done, dropped\nlabels = [\"app\"]\n"
             )
             .replace("- [X] the protocol\n", "- [X] the protocol\n- [ ] docs\n")
             .replace(
                 "- first\n",
-                "- first\n- 2026-11-18 laptop · iPhone: second\n"
+                &format!(
+                    "- first\n- {SIGNED} status open→review: \n\
+                     - {SIGNED} note: second\n- {SIGNED} note: set labels=app.\n"
+                )
             ),
         "the comment, the key, the table, the [X] and the section stay"
     );
@@ -254,18 +322,20 @@ fn a_change_rewrites_only_its_own_line_of_a_hand_edited_file()
 }
 
 #[test]
-fn an_item_is_checked_added_and_removed_by_its_text() -> Result<(), String> {
+fn an_item_is_checked_and_removed_by_its_place() -> Result<(), String> {
     let checked = file_of(apply(
         Some(&written()),
-        &changing_to(IssueChange::Check {
-            item: text("the browser scenario"),
+        &changing_to(IssueChange::Checklist(ChecklistChange::Check {
+            item: at(1, None),
             done: true,
-        }),
+        })),
         Mode::Record,
     ))?;
     let removed = file_of(apply(
         Some(&checked),
-        &changing_to(IssueChange::RemoveItem(text("the protocol"))),
+        &changing_to(IssueChange::Checklist(ChecklistChange::Remove(at(
+            0, None,
+        )))),
         Mode::Record,
     ))?;
     assert_eq!(
@@ -278,10 +348,12 @@ fn an_item_is_checked_added_and_removed_by_its_text() -> Result<(), String> {
     assert_eq!(
         apply(
             Some(&removed),
-            &changing_to(IssueChange::RemoveItem(text("gone"))),
+            &changing_to(IssueChange::Checklist(ChecklistChange::Remove(at(
+                5, None
+            )))),
             Mode::Record
         ),
-        Applied::Unchanged
+        Applied::Refused(text("the checklist has no item 6"))
     );
     Ok(())
 }
@@ -325,16 +397,17 @@ fn a_project_lists_its_issues_by_id_and_says_why_one_is_skipped() {
     assert_eq!(problems.len(), 2);
 }
 
-fn wanted() -> IssueFields {
-    IssueFields {
+fn wanted() -> NewIssue {
+    NewIssue {
+        project: text("conductor"),
+        kind: text("task"),
         title: text("  Sign in  "),
-        body: text("Why.\n"),
-        labels: Vec::from([text(" app "), text(""), text("app")]),
+        fields: Vec::from([text("labels=app")]),
     }
 }
 
 #[test]
-fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
+fn creating_writes_what_home_issue_new_does_and_again_changes_nothing()
 -> Result<(), String> {
     let create = edit(Change::Create(wanted()));
     let opened = file_of(apply(None, &create, Mode::Record))?;
@@ -344,39 +417,29 @@ fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
             "+++\n\
              id = \"{ID}\"\n\
              title = \"Sign in\"\n\
+             kind = \"task\"\n\
              status = \"open\"\n\
-             priority = \"normal\"\n\
              labels = [\"app\"]\n\
-             branch = \"issue/{ID}\"\n\
              created = 2026-11-18T10:12:00Z\n\
              +++\n\
              \n\
-             Why.\n"
+             ## What\n\
+             \n\
+             ## Acceptance\n\
+             \n\
+             ## Notes\n\
+             \n\
+             - {SIGNED} note: opened.\n"
         ),
-        "the flow's default kind, its first idle status, the defaults of the fields every kind has"
+        "the kind's sections, its first idle status, a signed log"
     );
+    let Applied::Write { text: marked, .. } =
+        apply(None, &create, Mode::Record)
+    else {
+        return Err(text("expected a file"));
+    };
     assert_eq!(
-        parse(&opened),
-        Ok(Issue {
-            title: text("Sign in"),
-            status: text("open"),
-            fields: BTreeMap::from([
-                (text("priority"), Datum::Text(text("normal"))),
-                (text("labels"), Datum::Texts(Vec::from([text("app")]))),
-                (text("branch"), Datum::Text(format!("issue/{ID}"))),
-                (text("created"), Datum::Text(text("2026-11-18T10:12:00Z"))),
-            ]),
-            sections: Vec::from([Section {
-                heading: String::new(),
-                text: text("Why."),
-            }]),
-            checklist: Vec::new(),
-            log: Vec::new(),
-            ..issue()
-        })
-    );
-    assert_eq!(
-        apply(Some(&opened), &create, Mode::Replay { changed: 0 }),
+        apply(Some(&marked), &create, Mode::Replay { changed: 0 }),
         Applied::AlreadyRecorded
     );
     Ok(())
@@ -385,26 +448,35 @@ fn creating_opens_the_issue_on_its_own_branch_and_again_changes_nothing()
 #[test]
 fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
 -> Result<(), String> {
-    let note = changing_to(IssueChange::Note(text("done")));
-    let once = file_of(apply(Some(&written()), &note, Mode::Record))?;
-    let twice = file_of(apply(Some(&once), &note, Mode::Record))?;
+    let note = || changing_to(IssueChange::Note(text("done")));
+    let first = note();
+    let Applied::Write { text: once, .. } =
+        apply(Some(&written()), &first, Mode::Record)
+    else {
+        return Err(text("expected a file"));
+    };
+    let again = Edit {
+        command: CommandId(2),
+        ..note()
+    };
+    let twice = file_of(apply(Some(&once), &again, Mode::Record))?;
     let noted = |file: &str| parse(file).map(|read| notes(&read));
     assert_eq!(
         noted(&twice).map(|all| all.into_iter().skip(1).collect::<Vec<_>>()),
         Ok(Vec::from([
-            text("2026-11-18 laptop · iPhone: done"),
-            text("2026-11-18 laptop · iPhone: done"),
+            format!("{SIGNED} note: done"),
+            format!("{SIGNED} note: done"),
         ]))
     );
     assert_eq!(
         apply(
             Some(&once),
-            &note,
+            &first,
             Mode::Replay {
                 changed: OPENED + 9
             }
         ),
-        Applied::Unchanged,
+        Applied::AlreadyRecorded,
         "a replay finds the note it made already"
     );
     Ok(())
@@ -412,14 +484,13 @@ fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
 
 #[test]
 fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
-    let done: Edit = EditData {
-        was: was(
-            Some(&written()),
-            Change::Issue(IssueChange::Status(text("done"))),
-        ),
-        ..changing_to(IssueChange::Status(text("done"))).data
-    }
-    .into();
+    let done = Edit {
+        data: EditData {
+            was: was(Some(&written()), Change::Issue(moving_to("done"))),
+            ..changing_to(moving_to("done")).data
+        },
+        ..changing_to(moving_to("done"))
+    };
     assert_eq!(done.data.was, Some(text("active")));
     let reviewed = written().replace("\"active\"", "\"review\"");
     let after = Mode::Replay {
@@ -428,16 +499,16 @@ fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
     let before = Mode::Replay {
         changed: OPENED - 60,
     };
-    assert_eq!(
-        apply(Some(&reviewed), &done, after),
-        Applied::Unchanged,
-        "someone moved it to review after the edit was made"
-    );
     let closed = |file: &str, mode| {
         file_of(apply(Some(file), &done, mode))
             .and_then(|next| parse(&next))
             .map(|read| read.status)
     };
+    assert_eq!(
+        closed(&reviewed, after),
+        Ok(text("review")),
+        "someone moved it to review after the edit was made"
+    );
     assert_eq!(closed(&reviewed, before), Ok(text("done")));
     assert_eq!(
         closed(&written(), after),
@@ -458,67 +529,106 @@ fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
     );
 }
 
+fn context<'a>(
+    projects: &'a [Project],
+    issues: &'a BTreeMap<ProjectId, Vec<Issue>>,
+    command: CommandId,
+) -> super::Context<'a> {
+    super::Context {
+        remote: Some("origin"),
+        projects,
+        issues,
+        host: "stone",
+        at: OPENED,
+        command,
+    }
+}
+
 #[test]
-fn an_issue_opens_only_in_a_listed_project_on_a_host_with_a_home() {
-    let listed = [project()];
+fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
+-> Result<(), Rejection> {
+    let projects = projects();
+    let issues = BTreeMap::new();
+    let listed = context(&projects, &issues, CommandId(1));
+    let nowhere = super::Context {
+        remote: None,
+        ..context(&projects, &issues, CommandId(1))
+    };
     assert_eq!(
-        opening(None, &listed, &project(), &wanted()),
+        nowhere.open(ID, wanted(), "iPhone").map(|_| ()),
         Err(Rejection::NoHome)
     );
     assert_eq!(
-        opening(Some("remote"), &listed, &ProjectId(text("gone")), &wanted()),
+        listed
+            .open(
+                ID,
+                NewIssue {
+                    project: text("gone"),
+                    ..wanted()
+                },
+                "iPhone"
+            )
+            .map(|_| ()),
         Err(Rejection::UnknownProject)
     );
+    let untitled = listed.open(
+        ID,
+        NewIssue {
+            title: text(" "),
+            ..wanted()
+        },
+        "iPhone",
+    )?;
     assert_eq!(
-        opening(
-            Some("remote"),
-            &listed,
-            &project(),
-            &IssueFields {
-                title: text(""),
-                ..wanted()
-            }
-        ),
-        Err(Rejection::IssueNotSaved {
+        among(&[], |home| untitled
+            .decide(None, home, &PendingEdits::default())
+            .map(|_| ())),
+        Err(Rejection::IssueRefused {
             reason: text("an issue needs a title")
         })
     );
     assert_eq!(
-        opening(Some("remote"), &listed, &project(), &wanted())
-            .map(|made| made.title),
-        Ok(text("Sign in"))
+        listed
+            .open(
+                ID,
+                NewIssue {
+                    project: project().0,
+                    ..wanted()
+                },
+                "iPhone"
+            )
+            .map(|record| record.project()),
+        Ok(project()),
+        "a project is named by its name or its id"
     );
+    Ok(())
 }
 
 #[test]
-fn a_change_finds_its_issues_project_and_is_kept_as_the_issue_keeps_it() {
+fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
+    let projects = projects();
     let issues = BTreeMap::from([(project(), Vec::from([issue()]))]);
-    let check = |change| changing(Some("remote"), &issues, ID, change);
+    let listed = context(&projects, &issues, CommandId(1));
     assert_eq!(
-        check(IssueChange::Note(text(" hi "))),
-        Ok((project(), IssueChange::Note(text("hi"))))
+        listed
+            .edit(ID, IssueChange::Note(text("x")), "iPhone")
+            .map(|record| record.project()),
+        Ok(project())
     );
     assert_eq!(
-        check(IssueChange::Labels(Vec::from([text(" a "), text("a")]))),
-        Ok((project(), IssueChange::Labels(Vec::from([text("a")]))))
-    );
-    assert_eq!(
-        changing(
-            Some("remote"),
-            &issues,
-            IssueId(7),
-            IssueChange::Note(text("x"))
-        ),
+        listed
+            .edit(IssueId(7), IssueChange::Note(text("x")), "iPhone")
+            .map(|_| ()),
         Err(Rejection::UnknownIssue)
     );
+    let nowhere = super::Context {
+        remote: None,
+        ..listed
+    };
     assert_eq!(
-        check(IssueChange::Title(text(" "))),
-        Err(Rejection::IssueNotSaved {
-            reason: text("a title needs text")
-        })
-    );
-    assert_eq!(
-        changing(None, &issues, ID, IssueChange::Note(text("x"))),
+        nowhere
+            .edit(ID, IssueChange::Note(text("x")), "iPhone")
+            .map(|_| ()),
         Err(Rejection::NoHome)
     );
 }
@@ -528,12 +638,14 @@ fn each_change_is_its_own_commit() {
     assert_eq!(
         [
             message(&edit(Change::Create(wanted())).data),
-            message(&changing_to(IssueChange::Status(text("review"))).data),
+            message(&changing_to(moving_to("review")).data),
+            message(&changing_to(setting("priority", "low")).data),
             message(&changing_to(IssueChange::Note(text("x"))).data),
         ],
         [
             format!("Open issue {ID}: Sign in"),
             format!("Move issue {ID} to review"),
+            format!("Set the priority of issue {ID} to low"),
             format!("Note on issue {ID}"),
         ]
     );
@@ -669,17 +781,6 @@ fn the_issue_branch_follows_the_remote_and_never_leaves_its_work_out() {
 }
 
 #[test]
-fn an_issue_needs_a_title() {
-    assert_eq!(
-        fields(&IssueFields {
-            title: text("   "),
-            ..wanted()
-        }),
-        Err(text("an issue needs a title"))
-    );
-}
-
-#[test]
 fn a_finished_issue_whose_branch_gained_commits_is_up_for_review() {
     let flow = flow();
     assert_eq!(
@@ -729,14 +830,11 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
 -> Result<(), String> {
     let current = issue();
     for same in [
-        IssueChange::Title(current.title.clone()),
+        setting("title", &current.title),
         IssueChange::Body(current.body()),
-        IssueChange::Labels(current.texts("labels").to_vec()),
-        IssueChange::Set {
-            field: text("priority"),
-            value: text("high"),
-        },
-        IssueChange::Status(current.status.clone()),
+        setting("labels", "app, credentials"),
+        setting("priority", "high"),
+        moving_to(&current.status),
     ] {
         assert_eq!(
             apply(Some(&written()), &changing_to(same.clone()), Mode::Record),
@@ -744,24 +842,25 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
             "{same:?}"
         );
     }
-    for (change, from, to) in [
+    let logged = |line: &str| format!("{}- {SIGNED} note: {line}\n", written());
+    for (change, from, to, after) in [
         (
-            IssueChange::Title(text("Sign in")),
+            setting("title", "Sign in"),
             "title = \"Sign in to a subscription from the app\"",
             "title = \"Sign in\"",
+            logged("set title=Sign in."),
         ),
         (
-            IssueChange::Set {
-                field: text("priority"),
-                value: text("low"),
-            },
+            setting("priority", "low"),
             "priority = \"high\"",
             "priority = \"low\"",
+            logged("set priority=low."),
         ),
         (
             IssueChange::Body(text("Why.")),
             "What to build and why.",
             "Why.",
+            written(),
         ),
     ] {
         assert_eq!(
@@ -770,20 +869,36 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
                 &changing_to(change),
                 Mode::Record
             ))?,
-            written().replace(from, to)
+            after.replace(from, to)
         );
     }
     Ok(())
 }
 
 #[test]
+fn a_value_the_flow_doesnt_declare_is_refused() {
+    assert_eq!(
+        apply(
+            Some(&written()),
+            &changing_to(setting("priority", "someday")),
+            Mode::Record
+        ),
+        Applied::Refused(format!(
+            "refused conductor/{ID}: priority: \"someday\" is not one of low, normal, high, urgent"
+        ))
+    );
+}
+
+#[test]
 fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
 -> Result<(), String> {
-    let done: Edit = EditData {
-        was: Some(text("active")),
-        ..changing_to(IssueChange::Status(text("done"))).data
-    }
-    .into();
+    let done = Edit {
+        data: EditData {
+            was: Some(text("active")),
+            ..changing_to(moving_to("done")).data
+        },
+        ..changing_to(moving_to("done"))
+    };
     let reviewed = written().replace("\"active\"", "\"review\"");
     let replayed = file_of(apply(
         Some(&reviewed),
@@ -799,7 +914,7 @@ fn an_item_added_again_is_kept_twice_and_a_new_note_replays_in()
 -> Result<(), String> {
     let again = file_of(apply(
         Some(&written()),
-        &changing_to(IssueChange::AddItem(text("the protocol"))),
+        &changing_to(adding("the protocol")),
         Mode::Record,
     ))?;
     assert_eq!(parse(&again).map(|read| read.checklist.len()), Ok(3));
@@ -825,7 +940,9 @@ fn the_last_item_before_the_next_heading_is_found() -> Result<(), String> {
     assert_eq!(
         file_of(apply(
             Some(&listed),
-            &changing_to(IssueChange::RemoveItem(text("b"))),
+            &changing_to(IssueChange::Checklist(ChecklistChange::Remove(at(
+                1, None
+            )))),
             Mode::Record,
         ))?,
         listed.replace("- [ ] b\n", "")
@@ -855,25 +972,25 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
         );
     let labelled = file_of(apply(
         Some(&original),
-        &changing_to(IssueChange::Labels(vec![text("new")])),
+        &changing_to(setting("labels", "new")),
         Mode::Record,
     ))?;
     assert_eq!(
         labelled,
-        original.replace(
+        format!("{original}- {SIGNED} note: set labels=new.\n").replace(
             "[\n    \"one,two\", # Keep inline note\n    # Keep standalone note\n    \"three\",\n]",
             "[\n    # Keep inline note\n    # Keep standalone note\n    \"new\"\n]",
         ),
     );
     let titled = file_of(apply(
         Some(&labelled),
-        &changing_to(IssueChange::Title(text("New title"))),
+        &changing_to(setting("title", "New title")),
         Mode::Record,
     ))?;
     let reread = parse(&titled)?;
     assert_eq!(reread.title, "New title");
     assert_eq!(reread.texts("labels"), [text("new")]);
-    assert_eq!(notes(&reread), vec![text("Real note")]);
+    assert_eq!(notes(&reread).first(), Some(&text("Real note")));
     assert_eq!(reread.checklist.len(), 1);
     assert!(reread.body().contains("## Checklist"));
     assert!(reread.body().contains("## Notes"));
@@ -885,23 +1002,29 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
 fn a_newer_label_list_with_a_comma_is_a_distinct_snapshot() {
     let original = written()
         .replace("[\"app\", \"credentials\"]", "[\"app, credentials\"]");
-    let change = Change::Issue(IssueChange::Labels(vec![text("queued")]));
+    let change = Change::Issue(setting("labels", "queued"));
     let original_snapshot = was(Some(&original), change.clone());
     assert_ne!(original_snapshot, was(Some(&written()), change.clone()));
-    let queued = Edit::from(EditData {
-        was: original_snapshot,
-        change,
-        ..changing_to(IssueChange::Title(text("unused"))).data
-    });
+    let queued = Edit {
+        data: EditData {
+            was: original_snapshot,
+            change,
+            ..changing_to(setting("title", "unused")).data
+        },
+        ..changing_to(setting("title", "unused"))
+    };
     assert_eq!(
-        apply(
+        file_of(apply(
             Some(&written()),
             &queued,
             Mode::Replay {
                 changed: OPENED + 1
             }
-        ),
-        Applied::Unchanged,
+        ))
+        .and_then(|kept| parse(&kept))
+        .map(|read| read.texts("labels").to_vec()),
+        Ok(Vec::from([text("app"), text("credentials")])),
+        "the newer labels stay"
     );
 }
 
@@ -909,30 +1032,32 @@ fn a_newer_label_list_with_a_comma_is_a_distinct_snapshot() {
 fn checking_and_removing_the_second_identical_row_keeps_the_first()
 -> Result<(), String> {
     let original = bare("\n## Checklist\n- [ ] repeat\n- [ ] repeat\n");
-    let snapshot = parse(&original)?.checklist;
-    let change = |snapshot, action| {
-        changing_to(IssueChange::Checklist {
-            snapshot,
-            index: 1,
-            action,
-        })
-    };
-    let toggle = change(snapshot, ChecklistAction::SetDone(true));
+    let seen = parse(&original)?.checklist;
+    let toggle = changing_to(IssueChange::Checklist(ChecklistChange::Check {
+        item: at(1, Some(seen)),
+        done: true,
+    }));
     let checked = file_of(apply(Some(&original), &toggle, Mode::Record))?;
     assert!(checked.ends_with("- [ ] repeat\n- [x] repeat\n"));
-    let remove = change(parse(&checked)?.checklist, ChecklistAction::Remove);
+    let remove = changing_to(IssueChange::Checklist(ChecklistChange::Remove(
+        at(1, Some(parse(&checked)?.checklist)),
+    )));
     let removed = file_of(apply(Some(&checked), &remove, Mode::Record))?;
     assert!(removed.ends_with("## Checklist\n- [ ] repeat\n"));
-    assert!(matches!(
+    assert_eq!(
         apply(Some(&removed), &toggle, Mode::Record),
-        Applied::Unreadable(_),
-    ));
+        Applied::Refused(text("the checklist changed; select the item again")),
+    );
     Ok(())
 }
 
 #[test]
-fn a_note_is_signed_by_the_host_and_the_client() {
-    assert_eq!(super::signer("laptop", "iPhone"), "laptop · iPhone");
+fn what_a_client_writes_is_signed_by_the_host_and_the_client_as_one_word() {
+    assert_eq!(super::signer("laptop", "iPhone"), "laptop·iPhone");
+    assert_eq!(
+        super::signer("big laptop", "my phone"),
+        "big-laptop·my-phone"
+    );
 }
 
 #[test]
@@ -959,22 +1084,17 @@ fn unexpected_effect() -> Rejection {
 #[test]
 fn an_opening_is_rejected_until_its_edit_can_be_recovered()
 -> Result<(), Rejection> {
-    use super::{Context, Delivery, RecordEffect, Write};
+    use super::{Delivery, RecordEffect, Write};
 
+    let projects = projects();
     let issues = BTreeMap::new();
-    let flow = flow();
-    let context = Context {
-        remote: Some("origin"),
-        flow: &flow,
-        issues: &issues,
-        host: "stone",
-        at: OPENED,
-        command: CommandId(1),
-    };
-    let request = context.open(&[project()], project(), ID, &wanted())?;
+    let context = context(&projects, &issues, CommandId(1));
+    let request = context.open(ID, wanted(), "laptop")?;
     let target = request.read();
     assert_eq!(target.path, file(&project(), ID));
-    let mut recorded = request.decide(None, &PendingEdits::default())?;
+    let mut recorded = among(&[], |home| {
+        request.decide(None, home, &PendingEdits::default())
+    })?;
     let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
         return Err(unexpected_effect());
     };
@@ -996,11 +1116,11 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     );
     assert_eq!(kept.next(Ok(()))?, None);
     assert_eq!(
-        edit.replay(&flow, Ok(None), None),
+        among(&[], |home| edit.replay(home, Ok(None), None)),
         Write::Commit(commit.clone())
     );
     assert_eq!(commit.target, target);
-    assert!(commit.text.contains(&format!("branch = \"issue/{ID}\"")));
+    assert!(commit.text.contains("kind = \"task\""));
     assert!(commit.message.starts_with("Open issue "));
     assert_eq!(commit.author, "Conductor");
     assert_eq!(commit.email, "conductor@localhost");
@@ -1017,7 +1137,11 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     );
     assert_eq!(recorded.next(Ok(()))?, None);
     assert_eq!(
-        edit.replay(&flow, Ok(Some(&commit.text)), Some(OPENED)),
+        among(&[], |home| edit.replay(
+            home,
+            Ok(Some(&commit.text)),
+            Some(OPENED)
+        )),
         Write::Unchanged
     );
     assert_eq!(
@@ -1030,102 +1154,102 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
                 .trim_matches(['^', '$'])
         )
     );
-    let existing = context.open(&[project()], project(), ID, &wanted())?;
+    let existing = context.open(ID, wanted(), "laptop")?;
     assert_eq!(
-        existing
-            .decide(Some(&commit.text), &PendingEdits::default())?
-            .next(Ok(()))?,
+        among(&[], |home| existing.decide(
+            Some(&commit.text),
+            home,
+            &PendingEdits::default()
+        ))?
+        .next(Ok(()))?,
         None
     );
     Ok(())
 }
 
+/// What recording `change` as command `command` on the file `current`
+/// keeps, and the commit it makes.
+fn recorded(
+    change: IssueChange,
+    command: CommandId,
+    current: &str,
+) -> Result<(Edit, super::Commit), Rejection> {
+    use super::RecordEffect;
+
+    let projects = projects();
+    let issues = BTreeMap::from([(project(), vec![issue()])]);
+    let request =
+        context(&projects, &issues, command).edit(ID, change, "laptop")?;
+    let mut recorded = among(&[], |home| {
+        request.decide(Some(current), home, &PendingEdits::default())
+    })?;
+    let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
+        return Err(unexpected_effect());
+    };
+    let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
+        return Err(unexpected_effect());
+    };
+    Ok((edit, commit))
+}
+
+fn replay(
+    edit: &Edit,
+    current: Option<&str>,
+    changed: Option<u64>,
+) -> super::Write {
+    among(&[], |home| edit.replay(home, Ok(current), changed))
+}
+
 #[test]
 fn issue_changes_decide_each_commit_and_replay_against_the_file()
 -> Result<(), Rejection> {
-    use super::{Context, RecordEffect, Write};
+    use super::Write;
 
-    let issues = BTreeMap::from([(project(), vec![issue()])]);
-    let flow = flow();
-    let context = Context {
-        remote: Some("origin"),
-        flow: &flow,
-        issues: &issues,
-        host: "stone",
-        at: OPENED,
-        command: CommandId(1),
-    };
     let changes = [
-        (IssueChange::Title(text("New title")), "Retitle issue"),
+        (setting("title", "New title"), "Set the title of issue"),
         (IssueChange::Body(text("New body")), "Describe issue"),
-        (IssueChange::Labels(vec![text("new")]), "Label issue"),
+        (setting("labels", "new"), "Set the labels of issue"),
+        (setting("priority", "low"), "Set the priority of issue"),
+        (moving_to("review"), "Move issue"),
+        (adding("Test the change"), "Add an item"),
         (
-            IssueChange::Set {
-                field: text("priority"),
-                value: text("low"),
-            },
-            "Set the priority of issue",
-        ),
-        (IssueChange::Status(text("review")), "Move issue"),
-        (IssueChange::AddItem(text("Test the change")), "Add an item"),
-        (
-            IssueChange::Check {
-                item: text("Test the change"),
+            IssueChange::Checklist(ChecklistChange::Check {
+                item: at(2, None),
                 done: true,
-            },
+            }),
             "Check off",
         ),
         (
-            IssueChange::RemoveItem(text("Test the change")),
+            IssueChange::Checklist(ChecklistChange::Remove(at(2, None))),
             "Remove an item",
         ),
         (IssueChange::Note(text("Summary")), "Note on issue"),
     ];
     let mut current = written();
     for (index, (change, message)) in changes.into_iter().enumerate() {
-        let each = Context {
-            command: CommandId(index as u128),
-            ..context
-        };
-        let request = each.edit(ID, change, "laptop")?;
-        let mut recorded =
-            request.decide(Some(&current), &PendingEdits::default())?;
-        let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
-            return Err(unexpected_effect());
-        };
-        let Some(RecordEffect::Commit(commit)) = recorded.next(Ok(()))? else {
-            return Err(unexpected_effect());
-        };
-        assert!(commit.message.starts_with(message));
+        let (edit, commit) =
+            recorded(change, CommandId(index as u128), &current)?;
+        assert!(commit.message.starts_with(message), "{}", commit.message);
         assert_eq!(
-            edit.replay(&flow, Ok(Some(&current)), Some(OPENED)),
+            replay(&edit, Some(&current), Some(OPENED)),
             Write::Commit(commit.clone())
         );
         assert_eq!(
-            edit.replay(&flow, Ok(Some(&commit.text)), Some(OPENED)),
+            replay(&edit, Some(&commit.text), Some(OPENED)),
             Write::Unchanged
         );
-        assert_eq!(edit.replay(&flow, Ok(None), None), Write::Dropped);
+        assert_eq!(replay(&edit, None, None), Write::Dropped);
         assert!(matches!(
-            edit.replay(&flow, Ok(Some("malformed")), Some(OPENED)),
+            replay(&edit, Some("malformed"), Some(OPENED)),
             Write::Waiting(_)
         ));
         current = commit.text;
     }
-    assert!(current.contains("stone \u{b7} laptop: Summary"));
-    let fresh = Context {
-        command: CommandId(100),
-        ..context
-    };
-    let request =
-        fresh.edit(ID, IssueChange::Title(text("Older edit")), "laptop")?;
-    let mut recorded =
-        request.decide(Some(&written()), &PendingEdits::default())?;
-    let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
-        return Err(unexpected_effect());
-    };
+    assert!(current.contains("stone·laptop note: Summary"));
+    let (edit, _) =
+        recorded(setting("title", "Older edit"), CommandId(100), &written())?;
     let Write::Commit(resolved) =
-        edit.replay(&flow, Ok(Some(&current)), Some(OPENED + 1))
+        replay(&edit, Some(&current), Some(OPENED + 1))
     else {
         return Err(unexpected_effect());
     };
@@ -1133,11 +1257,11 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     assert!(!resolved.text.contains("Older edit"));
     let reverted = resolved.text.replace("New title", &issue().title);
     assert_eq!(
-        edit.replay(&flow, Ok(Some(&reverted)), Some(OPENED + 2)),
+        replay(&edit, Some(&reverted), Some(OPENED + 2)),
         Write::Unchanged
     );
     assert!(matches!(
-        edit.replay(&flow, Ok(Some(&current)), Some(OPENED)),
+        replay(&edit, Some(&current), Some(OPENED)),
         Write::Commit(_)
     ));
     Ok(())
@@ -1146,58 +1270,42 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
 #[test]
 fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection>
 {
-    use super::{Context, RecordEffect, Write};
+    use super::Write;
 
-    let issues = BTreeMap::from([(project(), vec![issue()])]);
-    let flow = flow();
-    let context = Context {
-        remote: Some("origin"),
-        flow: &flow,
-        issues: &issues,
-        host: "stone",
-        at: OPENED,
-        command: CommandId(1),
-    };
     let note = || IssueChange::Note(text("Same note"));
-    let record = |command, current: &str| -> Result<Edit, Rejection> {
-        let request_context = Context { command, ..context };
-        let mut recorded = request_context
-            .edit(ID, note(), "laptop")?
-            .decide(Some(current), &PendingEdits::default())?;
-        while let Some(effect) = recorded.next(Ok(()))? {
-            if let RecordEffect::Persist(edit) = effect {
-                return Ok(edit);
-            }
-        }
-        Err(unexpected_effect())
-    };
     let original = written();
-    let first = record(CommandId(1), &original)?;
+    let (first, _) = recorded(note(), CommandId(1), &original)?;
     let Write::Commit(first_commit) =
-        first.replay(&flow, Ok(Some(&original)), Some(OPENED))
+        replay(&first, Some(&original), Some(OPENED))
     else {
         return Err(unexpected_effect());
     };
+    let projects = projects();
+    let issues = BTreeMap::from([(project(), vec![issue()])]);
+    let again =
+        context(&projects, &issues, CommandId(1)).edit(ID, note(), "laptop")?;
     assert_eq!(
-        context
-            .edit(ID, note(), "laptop")?
-            .decide(Some(&first_commit.text), &PendingEdits::default())?
-            .next(Ok(()))?,
+        among(&[], |home| again.decide(
+            Some(&first_commit.text),
+            home,
+            &PendingEdits::default()
+        ))?
+        .next(Ok(()))?,
         None
     );
-    let second = record(CommandId(2), &first_commit.text)?;
+    let (second, _) = recorded(note(), CommandId(2), &first_commit.text)?;
     let Write::Commit(second_commit) =
-        second.replay(&flow, Ok(Some(&first_commit.text)), Some(OPENED))
+        replay(&second, Some(&first_commit.text), Some(OPENED))
     else {
         return Err(unexpected_effect());
     };
     assert_eq!(second_commit.text.matches(": Same note").count(), 2);
     assert_eq!(
-        first.replay(&flow, Ok(Some(&second_commit.text)), Some(OPENED)),
+        replay(&first, Some(&second_commit.text), Some(OPENED)),
         Write::Unchanged
     );
     assert_eq!(
-        second.replay(&flow, Ok(Some(&second_commit.text)), Some(OPENED)),
+        replay(&second, Some(&second_commit.text), Some(OPENED)),
         Write::Unchanged
     );
     Ok(())
@@ -1214,9 +1322,10 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
     let mut start = SessionUpdate::Started;
     assert_eq!(
         start.next(&flow, &open, ID),
-        Some(IssueChange::Transition {
-            from: text("open"),
-            to: text("active")
+        Some(IssueChange::Move {
+            part: Part::Status,
+            to: text("active"),
+            reason: text("a session started on it"),
         })
     );
     assert_eq!(start.next(&flow, &open, ID), None);
@@ -1239,34 +1348,269 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
     };
     assert_eq!(
         finish.next(&flow, &open, ID),
-        Some(IssueChange::Transition {
-            from: text("open"),
-            to: text("review")
+        Some(IssueChange::Move {
+            part: Part::Status,
+            to: text("review"),
+            reason: text("a session on it landed work"),
         })
     );
     assert_eq!(finish.next(&flow, &open, ID), None);
 }
 
 #[test]
-fn a_competing_done_commit_supersedes_a_session_finishing_its_issue() {
+fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
+-> Result<(), String> {
     use super::SessionUpdate;
 
-    let known = issue();
-    let listing = BTreeMap::from([(project(), vec![known])]);
+    let listing = BTreeMap::from([(project(), vec![issue()])]);
     let mut finish = SessionUpdate::Finished {
         summary: None,
         landed: 1,
     };
-    let transition = finish.next(&flow(), &listing, ID).map(changing_to);
+    let change = finish
+        .next(&flow(), &listing, ID)
+        .ok_or_else(|| text("expected a move"))?;
+    let finishing = Edit {
+        data: EditData {
+            was: was(Some(&written()), Change::Issue(change.clone())),
+            ..changing_to(change.clone()).data
+        },
+        ..changing_to(change)
+    };
     let done = written().replace("status = \"active\"", "status = \"done\"");
     assert_eq!(
-        transition.as_ref().map(|edit| apply(
+        file_of(apply(
             Some(&done),
-            edit,
-            Mode::Replay { changed: OPENED }
-        )),
-        Some(Applied::Unchanged),
+            &finishing,
+            Mode::Replay {
+                changed: OPENED + 1
+            }
+        ))
+        .and_then(|kept| parse(&kept))
+        .map(|read| read.status),
+        Ok(text("done")),
     );
+    Ok(())
+}
+
+/// The home the `home` command line's own tests use: a spec, and a task
+/// under it that lacks a section.
+mod as_the_command_line {
+    use proto::{CommandId, IssueChange, ProjectId, Rejection};
+
+    use super::super::{Context, PendingEdits, listed};
+    use crate::flow::check::Inputs;
+    use crate::flow::command::{self, Issues, command, fresh, run};
+    use crate::flow::graph::{File, id_of};
+    use crate::flow::load;
+    use crate::project;
+
+    const FLOW: &str = include_str!("../flow/flow.toml");
+    const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
+    const SPEC: &str = "01m7ztr3ha005c92e0ykb9q429";
+    const TASK: &str = "01m7zxfbp2qygtekcr6b6ndg28";
+    /// 2026-11-22T12:00:00Z, in seconds.
+    const NOW: u64 = 1_795_348_800;
+
+    fn issue(id: &str, front: &str, body: &str) -> File {
+        File {
+            project: ProjectId(String::from(FOLDER)),
+            stem: String::from(id),
+            text: format!("+++\nid = \"{id}\"\n{front}+++\n\n{body}"),
+        }
+    }
+
+    fn inputs() -> Inputs {
+        Inputs {
+            flow: Ok(String::from(FLOW)),
+            projects: Vec::from([(
+                String::from(FOLDER),
+                Ok(String::from(
+                    "name = \"home\"\ntitle = \"Home\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n",
+                )),
+            )]),
+            issues: Vec::from([
+                issue(
+                    SPEC,
+                    "title = \"The flow\"\nkind = \"spec\"\nstage = \"spec\"\nstatus = \"open\"\n",
+                    "## Problem\n\n## Intended design\n\n## Acceptance\n\n## Notes\n",
+                ),
+                issue(
+                    TASK,
+                    &format!(
+                        "title = \"Write it\"\nkind = \"task\"\nstatus = \"open\"\nparent = \"{SPEC}\"\n"
+                    ),
+                    "## What\n\n## Notes\n",
+                ),
+            ]),
+        }
+    }
+
+    /// What the command line says to `said`: its refusal or its
+    /// warnings, as the app would be told them.
+    fn by_command_line(said: &str) -> Result<Vec<String>, String> {
+        let words: Vec<String> = said.split(' ').map(String::from).collect();
+        let outcome = run(
+            &command(&words),
+            &inputs(),
+            &command::Context {
+                now: NOW * 1000,
+                id: fresh(NOW * 1000, 7),
+                by: String::from("laptop·claude"),
+            },
+        );
+        let subject = format!("home/{TASK}");
+        if outcome.failed {
+            return Err(outcome
+                .output
+                .trim_end()
+                .trim_start_matches("home: ")
+                .to_owned());
+        }
+        Ok(outcome
+            .output
+            .lines()
+            .filter_map(|line| {
+                line.strip_prefix(&format!("warn   {subject}  "))
+                    .map(String::from)
+            })
+            .collect())
+    }
+
+    /// What the app is told of `change` to the task.
+    fn by_app(change: IssueChange) -> Result<Vec<String>, Rejection> {
+        let home = inputs();
+        let flow =
+            load(FLOW).map_err(|reason| Rejection::IssueNotSaved { reason })?;
+        let projects = project::listed(home.projects.clone()).projects;
+        let (issues, _) = listed(
+            &flow,
+            home.issues
+                .iter()
+                .map(|file| {
+                    (
+                        file.project.clone(),
+                        file.stem.clone(),
+                        Ok(file.text.clone()),
+                    )
+                })
+                .collect(),
+        );
+        let task = id_of(TASK).ok_or(Rejection::UnknownIssue)?;
+        let current = home
+            .issues
+            .iter()
+            .find(|file| file.stem == TASK)
+            .map(|file| file.text.clone());
+        let record = Context {
+            remote: Some("origin"),
+            projects: &projects,
+            issues: &issues,
+            host: "laptop",
+            at: NOW,
+            command: CommandId(1),
+        }
+        .edit(task, change, "iPhone")?;
+        let recorded = record.decide(
+            current.as_deref(),
+            &Issues {
+                flow: &flow,
+                projects: &projects,
+                files: &home.issues,
+            },
+            &PendingEdits::default(),
+        )?;
+        Ok(recorded.warnings().to_vec())
+    }
+
+    fn set(field: &str, value: &str) -> IssueChange {
+        IssueChange::Set {
+            field: String::from(field),
+            value: String::from(value),
+        }
+    }
+
+    #[test]
+    fn an_edit_the_command_line_refuses_is_refused_with_its_reason() {
+        let dangling = "01m7zxfbnrxa7106qn4dx9f0jx";
+        for (said, change) in [
+            (
+                format!("issue set {TASK} priority=someday"),
+                set("priority", "someday"),
+            ),
+            (
+                format!("issue set {TASK} blocked_by={dangling}"),
+                set("blocked_by", dangling),
+            ),
+            (
+                format!("issue set {TASK} blocked_by={TASK}"),
+                set("blocked_by", TASK),
+            ),
+        ] {
+            let refused = by_command_line(&said);
+            assert!(
+                refused
+                    .as_ref()
+                    .is_err_and(|reason| reason.starts_with("refused home/")),
+                "{refused:?}"
+            );
+            assert_eq!(
+                by_app(change),
+                Err(Rejection::IssueRefused {
+                    reason: refused.err().unwrap_or_default()
+                }),
+                "{said}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_edit_the_command_line_warns_of_is_written_with_its_warning() {
+        let warned = by_command_line(&format!("issue note {TASK} checked"));
+        assert_eq!(
+            warned,
+            Ok(Vec::from([String::from(
+                "lacks the section \"Acceptance\""
+            )]))
+        );
+        assert_eq!(
+            by_app(IssueChange::Note(String::from("checked"))),
+            warned.map_err(|reason| Rejection::IssueRefused { reason })
+        );
+    }
+
+    #[test]
+    fn the_app_and_the_command_line_write_the_same_file() {
+        let home = inputs();
+        let flow = load(FLOW).unwrap_or_else(|_| super::flow());
+        let projects = project::listed(home.projects.clone()).projects;
+        let words: Vec<String> = format!("issue set {TASK} priority=high")
+            .split(' ')
+            .map(String::from)
+            .collect();
+        let by = command::Context {
+            now: NOW * 1000,
+            id: fresh(NOW * 1000, 7),
+            by: String::from("laptop·iPhone"),
+        };
+        let typed = run(&command(&words), &home, &by);
+        let made = command::write(
+            &Issues {
+                flow: &flow,
+                projects: &projects,
+                files: &home.issues,
+            },
+            command::Edit::Change {
+                id: TASK,
+                changes: &[set("priority", "high")],
+            },
+            &by,
+        );
+        assert_eq!(
+            typed.writes.first().map(|write| write.text.clone()),
+            made.map(|written| written.write.text).ok()
+        );
+    }
 }
 
 #[test]

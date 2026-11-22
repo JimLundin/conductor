@@ -5,10 +5,10 @@ use std::collections::BTreeMap;
 use client::link::{LinkState, Update};
 use proto::flow::{Field, FieldType, Flow, Kind, Role, Status};
 use proto::{
-    AuthToken, ChecklistAction, ChecklistItem, Checkout, Cloning, CommandBody,
+    AuthToken, ChecklistChange, ChecklistItem, Checkout, Cloning, CommandBody,
     CommandResult, Datum, Entry, EventKind, Feed, Home, HomeSync, HostPath,
-    Issue, IssueChange, IssueFields, IssueId, LogEvent, Origin, Project,
-    ProjectId, Rejection, Section, StartAt, Ticket, Workspace,
+    Issue, IssueChange, IssueId, Item, LogEvent, NewIssue, Origin, Part,
+    Project, ProjectId, Rejection, Section, StartAt, Ticket, Workspace,
 };
 
 use super::{
@@ -954,26 +954,31 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
                 alpha(),
                 text(" Remove "),
             )),
-            Intent::NewIssue(NewIssueIntent::Create(HOST, alpha())),
+            Intent::NewIssue(NewIssueIntent::Create(
+                HOST,
+                alpha(),
+                text("task"),
+            )),
         ]),
     );
     assert_eq!(
         sent(&effects),
-        [CommandBody::CreateIssue {
-            project: alpha(),
-            fields: IssueFields {
-                title: text("Remove"),
-                body: String::new(),
-                labels: Vec::new(),
-            },
-        }]
+        [CommandBody::CreateIssue(NewIssue {
+            project: text("alpha"),
+            kind: text("task"),
+            title: text("Remove"),
+            fields: Vec::new(),
+        })]
     );
     let reply = reply_of(&effects).ok_or("no reply")?;
     let (opened, _) = run(
         typed,
         Vec::from([Intent::Replied(
             reply,
-            Ok(CommandResult::IssueCreated { issue: OPENED }),
+            Ok(CommandResult::IssueWritten {
+                issue: OPENED,
+                warnings: Vec::new(),
+            }),
         )]),
     );
     assert_eq!(
@@ -981,6 +986,25 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
         Some(text("Sign in"))
     );
     Ok(())
+}
+
+fn moving_to(status: &str) -> IssueChange {
+    IssueChange::Move {
+        part: Part::Status,
+        to: text(status),
+        reason: String::new(),
+    }
+}
+
+fn setting(field: &str, value: &str) -> IssueChange {
+    IssueChange::Set {
+        field: text(field),
+        value: text(value),
+    }
+}
+
+fn adding(item: &str) -> IssueChange {
+    IssueChange::Checklist(ChecklistChange::Add(text(item)))
 }
 
 fn on_issue() -> crate::State {
@@ -1050,13 +1074,15 @@ fn an_issue_shows_its_fields_and_sends_each_change() -> Result<(), &'static str>
     assert_eq!(
         sent(&effects),
         [
-            change(IssueChange::Status(text("active"))),
-            change(IssueChange::Checklist {
-                snapshot: issue(OPENED, "Sign in", "open").checklist,
-                index: 1,
-                action: ChecklistAction::SetDone(true),
-            }),
-            change(IssueChange::AddItem(text("docs"))),
+            change(moving_to("active")),
+            change(IssueChange::Checklist(ChecklistChange::Check {
+                item: Item {
+                    index: 1,
+                    seen: Some(issue(OPENED, "Sign in", "open").checklist),
+                },
+                done: true,
+            })),
+            change(adding("docs")),
             change(IssueChange::Note(text("halfway"))),
         ]
     );
@@ -1095,11 +1121,8 @@ fn editing_an_issue_sends_its_fields_once_saved() {
     assert_eq!(
         sent(&effects),
         [
-            change(IssueChange::Title(text("Sign in from the app"))),
-            change(IssueChange::Labels(Vec::from([
-                text("app"),
-                text("credentials"),
-            ]))),
+            change(setting("title", "Sign in from the app")),
+            change(setting("labels", "app, credentials,")),
         ],
         "the body didn't change, so it isn't sent"
     );
@@ -1159,11 +1182,11 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
         [
             CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: IssueChange::Title(text("New title"))
+                change: setting("title", "New title"),
             },
             CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: IssueChange::Labels(vec![text("new labels")])
+                change: setting("labels", "new labels"),
             },
         ]
     );
@@ -1196,7 +1219,7 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
         sent(&retry),
         [CommandBody::ChangeIssue {
             issue: OPENED,
-            change: IssueChange::Title(text("New title")),
+            change: setting("title", "New title"),
         }]
     );
     Ok(())
@@ -1255,7 +1278,7 @@ fn transport_failures_keep_submitted_drafts_and_later_input()
     assert_eq!(
         submitted_changes,
         [
-            IssueChange::AddItem(text("Checklist draft")),
+            adding("Checklist draft"),
             IssueChange::Note(text("More recent note draft")),
         ]
     );
@@ -1290,36 +1313,29 @@ fn a_rendered_checklist_row_uses_its_snapshot_after_a_refresh()
             Intent::Issue(row.remove),
         ]),
     );
+    let seen = || Item {
+        index: 1,
+        seen: Some(vec![
+            ChecklistItem {
+                done: false,
+                text: text("repeat")
+            };
+            2
+        ]),
+    };
     assert_eq!(
         sent(&effects),
         [
             CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: IssueChange::Checklist {
-                    snapshot: vec![
-                        ChecklistItem {
-                            done: false,
-                            text: text("repeat")
-                        };
-                        2
-                    ],
-                    index: 1,
-                    action: ChecklistAction::SetDone(true),
-                }
+                change: IssueChange::Checklist(ChecklistChange::Check {
+                    item: seen(),
+                    done: true,
+                }),
             },
             CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: IssueChange::Checklist {
-                    snapshot: vec![
-                        ChecklistItem {
-                            done: false,
-                            text: text("repeat")
-                        };
-                        2
-                    ],
-                    index: 1,
-                    action: ChecklistAction::Remove,
-                }
+                change: IssueChange::Checklist(ChecklistChange::Remove(seen())),
             },
         ]
     );
@@ -1495,6 +1511,7 @@ fn a_project_shared_by_live_hosts_opens_its_issues_on_the_first() {
         Some(Intent::NewIssue(NewIssueIntent::Create(
             HOST,
             ProjectId(text("alpha")),
+            text("task"),
         )))
     );
 }
@@ -1510,7 +1527,11 @@ fn a_refused_issue_is_the_notice_and_keeps_its_title()
                 alpha(),
                 text("Remove"),
             )),
-            Intent::NewIssue(NewIssueIntent::Create(HOST, alpha())),
+            Intent::NewIssue(NewIssueIntent::Create(
+                HOST,
+                alpha(),
+                text("task"),
+            )),
         ]),
     );
     let reply = reply_of(&effects).ok_or("no reply")?;
@@ -1543,7 +1564,11 @@ fn a_late_created_reply_cannot_open_an_issue_or_clear_a_new_title()
                 alpha(),
                 text("Remove"),
             )),
-            Intent::NewIssue(NewIssueIntent::Create(HOST, alpha())),
+            Intent::NewIssue(NewIssueIntent::Create(
+                HOST,
+                alpha(),
+                text("task"),
+            )),
         ]),
     );
     let reply = reply_of(&effects).ok_or("no reply")?;
@@ -1556,7 +1581,10 @@ fn a_late_created_reply_cannot_open_an_issue_or_clear_a_new_title()
     );
     let answer = Intent::Replied(
         reply,
-        Ok(CommandResult::IssueCreated { issue: CLOSED }),
+        Ok(CommandResult::IssueWritten {
+            issue: CLOSED,
+            warnings: Vec::new(),
+        }),
     );
     let on_issue_before_reply = on_issue.clone();
     let (still_open, _) = run(on_issue.clone(), Vec::from([answer.clone()]));
@@ -1706,7 +1734,7 @@ fn renamed_statuses_group_label_and_fill_the_picker_with_no_code_change()
         sent(&effects),
         [CommandBody::ChangeIssue {
             issue: OPENED,
-            change: IssueChange::Status(text("checking")),
+            change: moving_to("checking"),
         }]
     );
     Ok(())
@@ -1733,7 +1761,11 @@ fn a_new_kind_and_field_bring_their_own_label_and_pickers()
         .and_then(|group| group.issues.groups.into_iter().next())
         .and_then(|listed| listed.rows.into_iter().next())
         .map(|listed| listed.detail);
-    assert_eq!(row, Some(text("high · app · docs · 1/2 done")));
+    assert_eq!(
+        row,
+        Some(text("high · app · small · docs · 1/2 done")),
+        "a field left out reads as its default"
+    );
     let (on_issue, _) =
         run(shown, Vec::from([Intent::Show(Place::Issue(HOST, OPENED))]));
     let screen = issue_screen(&on_issue).ok_or("no issue screen")?;
@@ -1797,8 +1829,7 @@ fn an_accepted_item_or_note_empties_its_field() -> Result<(), &'static str> {
     };
     let (item_accepted, _) = run(
         blocked,
-        Vec::from([accept(IssueChange::AddItem(text("docs")))
-            .ok_or("item was not submitted")?]),
+        Vec::from([accept(adding("docs")).ok_or("item was not submitted")?]),
     );
     assert_eq!(
         fields(&item_accepted),
@@ -1867,4 +1898,29 @@ fn leaving_an_issue_drops_its_drafts() {
         issue_screen(&typed).map(|issue| issue.item),
         Some(String::new())
     );
+}
+
+#[test]
+fn a_change_written_with_a_warning_shows_the_warning()
+-> Result<(), &'static str> {
+    let (moved, effects) = run(
+        on_issue(),
+        Vec::from([Intent::Issue(IssueIntent::SetStatus(text("active")))]),
+    );
+    let reply = reply_of(&effects).ok_or("no reply")?;
+    let (warned, _) = run(
+        moved,
+        Vec::from([Intent::Replied(
+            reply,
+            Ok(CommandResult::IssueWritten {
+                issue: OPENED,
+                warnings: Vec::from([text("lacks the section \"What\"")]),
+            }),
+        )]),
+    );
+    assert_eq!(
+        issue_screen(&warned).and_then(|issue| issue.notice),
+        Some(text("lacks the section \"What\""))
+    );
+    Ok(())
 }

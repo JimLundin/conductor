@@ -5,8 +5,9 @@
 //! and `## Notes`, read only by the flow's graph (`crate::flow::graph`). A
 //! change rewrites only the lines it is about, so what a person wrote
 //! anywhere else in the file stays as written: comments, sections of their
-//! own, and the order of it all. What a change writes is read back against
-//! the flow before it is kept.
+//! own, and the order of it all. A change is written by
+//! `crate::flow::command`, as the `home` command line's is, and read back
+//! against the flow before it is kept.
 //!
 //! The host keeps each change as an [`Edit`] until the remote has it, and
 //! when the remote moved on it applies the edit again on top
@@ -17,15 +18,16 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::flow::{FieldType, Flow, Role};
+use proto::flow::{Flow, Role};
 use proto::{
-    ChecklistAction, ChecklistItem, CommandId, Home, HostPath, Issue,
-    IssueChange, IssueFields, IssueId, ProjectId, Rejection,
+    ChecklistChange, ChecklistItem, CommandId, Datum, Home, HostPath, Issue,
+    IssueChange, IssueId, Item, NewIssue, Part, ProjectId, Rejection,
 };
 use serde::{Deserialize, Serialize};
 use toml::{Spanned, Value};
 use toml_parser::{Source, lexer::TokenKind};
 
+use crate::flow::command::{self, Issues};
 use crate::flow::graph::{self, File, item, markdown};
 use crate::prelude::*;
 
@@ -119,7 +121,7 @@ impl Lines {
             .unwrap_or(self.rest.len())
     }
 
-    fn body(&mut self, body: &str) {
+    pub(crate) fn body(&mut self, body: &str) {
         let end = self.body_end();
         let mut lines = Vec::from([String::new()]);
         lines.extend(body.lines().map(String::from));
@@ -158,8 +160,28 @@ impl Lines {
         )
     }
 
-    fn item(&self, text: &str) -> Option<(usize, ChecklistItem)> {
-        self.items().find(|(_, found)| found.text == text)
+    pub(crate) fn add_item(&mut self, text: &str) {
+        let added = ChecklistItem {
+            done: false,
+            text: String::from(text),
+        };
+        self.append(CHECKLIST, Some(NOTES), Vec::from([item_line(&added)]));
+    }
+
+    /// Checks or unchecks the checklist's item at `index`.
+    pub(crate) fn check(&mut self, index: usize, done: bool) -> Option<()> {
+        let (at, found) = self.items().nth(index)?;
+        *self.rest.get_mut(at)? = item_line(&ChecklistItem {
+            done,
+            text: found.text,
+        });
+        Some(())
+    }
+
+    pub(crate) fn remove_item(&mut self, index: usize) -> Option<()> {
+        let (at, _) = self.items().nth(index)?;
+        self.rest.remove(at);
+        Some(())
     }
 
     /// Adds `lines` after the last line with text of the section under
@@ -267,50 +289,6 @@ fn note_lines(note: &str) -> Vec<String> {
         .collect()
 }
 
-fn quoted(text: &str) -> String {
-    Value::String(String::from(text)).to_string()
-}
-
-fn labels_value(labels: &[String]) -> String {
-    Value::Array(labels.iter().cloned().map(Value::String).collect())
-        .to_string()
-}
-
-/// A new issue's file: the flow's default kind, in its first status of
-/// role idle, with each field the flow declares for every kind that it has
-/// a value for, and the body.
-#[must_use]
-fn render(flow: &Flow, edit: &EditData, made: &IssueFields) -> Lines {
-    let status = first(flow, Role::Idle).unwrap_or_default();
-    let mut front = Vec::from([
-        format!("id = {}", quoted(&edit.issue.to_string())),
-        format!("title = {}", quoted(&made.title)),
-        format!("status = {}", quoted(&status)),
-    ]);
-    for field in &flow.fields {
-        let given = match (field.name.as_str(), &field.value) {
-            ("labels", FieldType::Texts) => Some(labels_value(&made.labels)),
-            ("branch", FieldType::Text) => {
-                Some(quoted(&branch_of(edit.issue, None)))
-            }
-            ("created", FieldType::Time) => Some(rfc3339(edit.at)),
-            (_, FieldType::Enum(_) | FieldType::Text) => {
-                field.default.as_deref().map(quoted)
-            }
-            _ => None,
-        };
-        front.extend(given.map(|value| format!("{} = {value}", field.name)));
-    }
-    let mut lines = Lines {
-        front,
-        rest: Vec::new(),
-    };
-    if !made.body.is_empty() {
-        lines.body(&made.body);
-    }
-    lines
-}
-
 /// The name of the flow's first status of `role`.
 fn first(flow: &Flow, role: Role) -> Option<String> {
     flow.statuses
@@ -365,165 +343,69 @@ fn locate(
         .map(|(project, _)| project.clone())
 }
 
-/// The fields an issue opens with in `project`, one of the home's
-/// `projects`.
-///
-/// # Errors
-///
-/// The host has no home, the home lists no such project, or the fields
-/// won't do.
-fn opening(
-    remote: Option<&str>,
-    projects: &[ProjectId],
-    project: &ProjectId,
-    wanted: &IssueFields,
-) -> Result<IssueFields, Rejection> {
-    crate::configured(remote)?;
-    if !projects.contains(project) {
-        return Err(Rejection::UnknownProject);
-    }
-    fields(wanted).map_err(|reason| Rejection::IssueNotSaved { reason })
-}
-
-/// The project of the issue a change is to, and the change as the issue
-/// keeps it.
-///
-/// # Errors
-///
-/// The host has no home, its home lists no such issue, or the change
-/// won't do.
-fn changing(
-    remote: Option<&str>,
-    issues: &BTreeMap<ProjectId, Vec<Issue>>,
-    id: IssueId,
-    change: IssueChange,
-) -> Result<(ProjectId, IssueChange), Rejection> {
-    crate::configured(remote)?;
-    let project = locate(issues, id).ok_or(Rejection::UnknownIssue)?;
-    let checked = match change {
-        IssueChange::Title(title) => {
-            needs(&title, "a title").map(IssueChange::Title)
-        }
-        IssueChange::Body(body) => {
-            Ok(IssueChange::Body(String::from(body.trim())))
-        }
-        IssueChange::Labels(labels) => {
-            Ok(IssueChange::Labels(normal_labels(&labels)))
-        }
-        IssueChange::AddItem(text) => {
-            needs(&text, "a checklist item").map(IssueChange::AddItem)
-        }
-        IssueChange::Note(text) => {
-            needs(&text, "a note").map(IssueChange::Note)
-        }
-        other @ (IssueChange::Set { .. }
-        | IssueChange::Status(_)
-        | IssueChange::Transition { .. }
-        | IssueChange::Check { .. }
-        | IssueChange::RemoveItem(_)
-        | IssueChange::Checklist { .. }) => Ok(other),
-    };
-    checked
-        .map(|change| (project, change))
-        .map_err(|reason| Rejection::IssueNotSaved { reason })
-}
-
-/// `text` trimmed, unless that leaves nothing.
-fn needs(text: &str, what: &str) -> Result<String, String> {
-    let kept = text.trim();
-    if kept.is_empty() {
-        Err(format!("{what} needs text"))
-    } else {
-        Ok(String::from(kept))
-    }
-}
-
 /// The message of the commit an edit makes in the home.
 #[must_use]
 fn message(edit: &EditData) -> String {
     let id = edit.issue;
     match &edit.change {
-        Change::Create(fields) => {
-            format!("Open issue {id}: {}", fields.title.trim())
+        Change::Create(new) => {
+            format!("Open issue {id}: {}", new.title.trim())
         }
-        Change::Issue(IssueChange::Title(_)) => format!("Retitle issue {id}"),
-        Change::Issue(IssueChange::Body(_)) => {
-            format!("Describe issue {id} anew")
+        Change::Issue(IssueChange::Move { to, .. }) => {
+            format!("Move issue {id} to {to}")
         }
-        Change::Issue(IssueChange::Labels(_)) => format!("Label issue {id}"),
         Change::Issue(IssueChange::Set { field, value }) => {
             format!("Set the {field} of issue {id} to {value}")
         }
-        Change::Issue(
-            IssueChange::Status(status)
-            | IssueChange::Transition { to: status, .. },
-        ) => {
-            format!("Move issue {id} to {status}")
-        }
-        Change::Issue(
-            IssueChange::Check { done: true, .. }
-            | IssueChange::Checklist {
-                action: ChecklistAction::SetDone(true),
-                ..
-            },
-        ) => {
-            format!("Check off an item of issue {id}")
-        }
-        Change::Issue(
-            IssueChange::Check { done: false, .. }
-            | IssueChange::Checklist {
-                action: ChecklistAction::SetDone(false),
-                ..
-            },
-        ) => {
-            format!("Uncheck an item of issue {id}")
-        }
-        Change::Issue(IssueChange::AddItem(_)) => {
-            format!("Add an item to issue {id}")
-        }
-        Change::Issue(
-            IssueChange::RemoveItem(_)
-            | IssueChange::Checklist {
-                action: ChecklistAction::Remove,
-                ..
-            },
-        ) => {
-            format!("Remove an item from issue {id}")
+        Change::Issue(IssueChange::Body(_)) => {
+            format!("Describe issue {id} anew")
         }
         Change::Issue(IssueChange::Note(_)) => format!("Note on issue {id}"),
+        Change::Issue(IssueChange::Checklist(ChecklistChange::Add(_))) => {
+            format!("Add an item to issue {id}")
+        }
+        Change::Issue(IssueChange::Checklist(ChecklistChange::Check {
+            done: true,
+            ..
+        })) => {
+            format!("Check off an item of issue {id}")
+        }
+        Change::Issue(IssueChange::Checklist(ChecklistChange::Check {
+            done: false,
+            ..
+        })) => {
+            format!("Uncheck an item of issue {id}")
+        }
+        Change::Issue(IssueChange::Checklist(ChecklistChange::Remove(_))) => {
+            format!("Remove an item from issue {id}")
+        }
     }
 }
 
-/// Who signs a note: the host, and the client that sent it.
+/// Who signs what a client's change writes in the log, as one word: the
+/// host, and the client that sent it.
 #[must_use]
 fn signer(host: &str, client: &str) -> String {
-    format!("{host} · {client}")
+    let word =
+        |name: &str| name.split_whitespace().collect::<Vec<_>>().join("-");
+    format!("{}·{}", word(host), word(client))
 }
 
-/// A change a host made to an issue, kept until the remote has it.
+/// A change a host made to an issue, kept until the remote has it, by the
+/// command that asked for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
-    identity: EditIdentity,
+    command: CommandId,
     data: EditData,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum EditIdentity {
-    // The first two tags match the postcard Option<CommandId> encoding.
-    Legacy,
-    Command(CommandId),
-    NoteOccurrence(usize),
-    MigratedNote { ordinal: usize, marker: String },
-}
-
-/// The contents of an issue edit, also the original queue's disk format.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditData {
     project: ProjectId,
     issue: IssueId,
     /// When the host took it, in seconds since the Unix epoch.
     at: u64,
-    /// Who signs a note it adds.
+    /// Who signs the lines it adds to the log.
     by: String,
     change: Change,
     /// The value the field it sets had when it was made, as [`was`] gives
@@ -531,18 +413,9 @@ pub struct EditData {
     was: Option<String>,
 }
 
-impl From<EditData> for Edit {
-    fn from(data: EditData) -> Self {
-        Self {
-            identity: EditIdentity::Legacy,
-            data,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 enum Change {
-    Create(IssueFields),
+    Create(NewIssue),
     Issue(IssueChange),
 }
 
@@ -559,14 +432,20 @@ enum Mode {
 /// What an edit does to the issue's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Applied {
-    Write(String),
+    /// The file, and what the flow warns of it.
+    Write {
+        text: String,
+        warnings: Vec<String>,
+    },
     AlreadyRecorded,
-    /// The file has it already, or a newer change replaced it.
+    /// The file has it already.
     Unchanged,
     /// The issue it changes is gone, so it is dropped.
     Gone,
     /// The file isn't an issue any more, for this reason; the edit waits.
     Unreadable(String),
+    /// The flow refuses what it would write, for this reason.
+    Refused(String),
 }
 
 /// The value the field the edit sets has in its issue's file as it is
@@ -583,90 +462,139 @@ fn was(flow: &Flow, current: Option<&str>, edit: &EditData) -> Option<String> {
 
 fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
     match change {
-        IssueChange::Title(_) => Some(issue.title.clone()),
+        IssueChange::Move {
+            part: Part::Status, ..
+        } => Some(issue.status.clone()),
+        IssueChange::Move {
+            part: Part::Stage, ..
+        } => Some(issue.stage.clone().unwrap_or_default()),
+        IssueChange::Set { field, .. } => Some(value_of(issue, field)),
         IssueChange::Body(_) => Some(issue.body()),
-        IssueChange::Labels(_) => Some(labels_value(issue.texts("labels"))),
-        IssueChange::Set { field, .. } => {
-            Some(String::from(issue.text(field).unwrap_or_default()))
-        }
-        IssueChange::Status(_) | IssueChange::Transition { .. } => {
-            Some(issue.status.clone())
-        }
-        IssueChange::Check { .. }
-        | IssueChange::AddItem(_)
-        | IssueChange::RemoveItem(_)
-        | IssueChange::Checklist { .. }
-        | IssueChange::Note(_) => None,
+        IssueChange::Note(_) | IssueChange::Checklist(_) => None,
     }
 }
 
+/// A field's or relation's value as `<field>=<value>` would give it, the
+/// title among them.
+fn value_of(issue: &Issue, field: &str) -> String {
+    if field == "title" {
+        return issue.title.clone();
+    }
+    match issue.fields.get(field) {
+        Some(Datum::Text(text)) => text.clone(),
+        Some(Datum::Texts(texts)) => texts.join(","),
+        Some(Datum::Bool(flag)) => flag.to_string(),
+        None => issue
+            .links
+            .get(field)
+            .map_or_else(String::new, |ids| ids.join(",")),
+    }
+}
+
+/// The issue has what the change gives it already.
+fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
+    let list = |value: &str| {
+        value
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(String::from)
+            .collect::<Vec<String>>()
+    };
+    match change {
+        IssueChange::Move {
+            part: Part::Status,
+            to,
+            ..
+        } => issue.status == *to,
+        IssueChange::Move {
+            part: Part::Stage,
+            to,
+            ..
+        } => issue.stage.as_ref() == Some(to),
+        IssueChange::Set { field, value } => {
+            match (issue.fields.get(field), issue.links.get(field)) {
+                (Some(Datum::Texts(texts)), _) | (None, Some(texts)) => {
+                    *texts == list(value)
+                }
+                _ => value_of(issue, field) == value.trim(),
+            }
+        }
+        IssueChange::Body(body) => issue.body() == body.trim(),
+        IssueChange::Checklist(ChecklistChange::Check { item, done }) => {
+            !stale(issue, item)
+                && issue
+                    .checklist
+                    .get(item.index)
+                    .is_some_and(|found| found.done == *done)
+        }
+        IssueChange::Note(_)
+        | IssueChange::Checklist(
+            ChecklistChange::Add(_) | ChecklistChange::Remove(_),
+        ) => false,
+    }
+}
+
+/// The item is no longer where the person picked it.
+fn stale(issue: &Issue, item: &Item) -> bool {
+    item.seen
+        .as_ref()
+        .is_some_and(|seen| *seen != issue.checklist)
+        || item.index >= issue.checklist.len()
+}
+
 /// The edit on top of the issue's file as it is now, `None` when there is
-/// none.
+/// none, among the home's other issues.
 #[must_use]
 fn apply(
-    flow: &Flow,
+    home: &Issues<'_>,
     current: Option<&str>,
     edit: &Edit,
     mode: Mode,
 ) -> Applied {
     let data = &edit.data;
-    let written = |lines, marker| marked(flow, lines, marker, data);
-    let marker = match &edit.identity {
-        EditIdentity::Command(id) => Some(edit_marker(*id)),
-        EditIdentity::MigratedNote { marker, .. } => Some(marker.clone()),
-        _ => None,
-    };
-    match (&data.change, current) {
+    let marker = edit_marker(edit.command);
+    let text = match (&data.change, current) {
         (Change::Create(_), Some(text)) => {
-            match read(flow, &data.project, data.issue, text) {
+            return match read(home.flow, &data.project, data.issue, text) {
                 Ok(_) => Applied::AlreadyRecorded,
                 Err(reason) => Applied::Unreadable(reason),
-            }
+            };
         }
-        (Change::Create(wanted), None) => fields(wanted)
-            .map_or(Applied::Unchanged, |made| {
-                written(render(flow, data, &made), marker)
-            }),
-        (Change::Issue(_), None) => Applied::Gone,
-        (Change::Issue(change), Some(text)) => {
-            let found = read(flow, &data.project, data.issue, text)
-                .and_then(|issue| Lines::of(text).map(|lines| (issue, lines)));
-            match found {
-                Err(reason) => Applied::Unreadable(reason),
-                Ok((issue, lines)) => {
-                    if marker
-                        .as_deref()
-                        .is_some_and(|expected| lines.has_marker(expected))
-                    {
-                        return Applied::AlreadyRecorded;
-                    }
-                    if let IssueChange::Checklist {
-                        snapshot, index, ..
-                    } = change
-                        && (snapshot != &issue.checklist
-                            || *index >= snapshot.len())
-                    {
-                        return match mode {
-                            Mode::Record => Applied::Unreadable(String::from(
-                                "The checklist changed. Select the item again.",
-                            )),
-                            Mode::Replay { .. } => written(lines, marker),
-                        };
-                    }
-                    match changed(lines, &issue, change, (edit, mode)) {
-                        Some(next) => written(next, marker),
-                        None if marker.is_some()
-                            && matches!(mode, Mode::Replay { .. }) =>
-                        {
-                            Lines::of(text)
-                                .map_or_else(Applied::Unreadable, |lines| {
-                                    written(lines, marker)
-                                })
-                        }
-                        None => Applied::Unchanged,
-                    }
-                }
-            }
+        (Change::Create(_), None) => return written(home, data, None, &marker),
+        (Change::Issue(_), None) => return Applied::Gone,
+        (Change::Issue(_), Some(text)) => text,
+    };
+    let Change::Issue(change) = &data.change else {
+        return Applied::Gone;
+    };
+    let issue = match read(home.flow, &data.project, data.issue, text)
+        .and_then(|issue| Lines::of(text).map(|lines| (issue, lines)))
+    {
+        Ok((_, lines)) if lines.has_marker(&marker) => {
+            return Applied::AlreadyRecorded;
+        }
+        Ok((issue, _)) => issue,
+        Err(reason) => return Applied::Unreadable(reason),
+    };
+    let moot = unchanged(&issue, change)
+        || matches!(
+            change,
+            IssueChange::Checklist(
+                ChecklistChange::Check { item, .. }
+                    | ChecklistChange::Remove(item)
+            ) if stale(&issue, item)
+        );
+    match mode {
+        Mode::Record if unchanged(&issue, change) => Applied::Unchanged,
+        Mode::Replay { changed }
+            if moot
+                || (data.was != field(&issue, change) && data.at < changed) =>
+        {
+            marked(text, &marker)
+        }
+        Mode::Record | Mode::Replay { .. } => {
+            written(home, data, Some(text), &marker)
         }
     }
 }
@@ -675,192 +603,63 @@ fn edit_marker(id: CommandId) -> String {
     format!("# conductor-edit: {:032x}", id.0)
 }
 
-fn marked(
-    flow: &Flow,
-    mut lines: Lines,
-    marker: Option<String>,
-    edit: &EditData,
-) -> Applied {
-    lines.front.extend(marker);
-    let text = lines.text();
-    match read(flow, &edit.project, edit.issue, &text) {
-        Ok(_) => Applied::Write(text),
-        Err(reason) => Applied::Unreadable(reason),
-    }
-}
-
-/// The file's lines with the change, or `None` when it changes nothing: it
-/// is in the file already, or on a replay a newer change replaced it.
-fn changed(
-    lines: Lines,
-    issue: &Issue,
-    change: &IssueChange,
-    (edit, mode): (&Edit, Mode),
-) -> Option<Lines> {
-    let data = &edit.data;
-    let legacy_replay = match mode {
-        Mode::Record => false,
-        Mode::Replay { changed } => {
-            if data.was != field(issue, change) && data.at < changed {
-                return None;
-            }
-            !matches!(edit.identity, EditIdentity::Command(_))
+/// The file as it is, marked as having had the edit.
+fn marked(text: &str, marker: &str) -> Applied {
+    Lines::of(text).map_or_else(Applied::Unreadable, |mut lines| {
+        lines.front.push(String::from(marker));
+        Applied::Write {
+            text: lines.text(),
+            warnings: Vec::new(),
         }
-    };
-    match change {
-        IssueChange::Note(text) => {
-            let note = data.rendered_note(text);
-            let replay_occurrence = match (&edit.identity, mode) {
-                (EditIdentity::Legacy, Mode::Replay { .. }) => Some(1),
-                (
-                    EditIdentity::NoteOccurrence(ordinal)
-                    | EditIdentity::MigratedNote { ordinal, .. },
-                    Mode::Replay { .. },
-                ) => Some(*ordinal),
-                _ => None,
-            };
-            noting(lines, issue, &note, replay_occurrence)
-        }
-        IssueChange::Check { .. }
-        | IssueChange::AddItem(_)
-        | IssueChange::RemoveItem(_)
-        | IssueChange::Checklist { .. } => {
-            checking(lines, change, legacy_replay)
-        }
-        IssueChange::Title(_)
-        | IssueChange::Body(_)
-        | IssueChange::Labels(_)
-        | IssueChange::Set { .. }
-        | IssueChange::Status(_)
-        | IssueChange::Transition { .. } => setting(lines, issue, change),
-    }
-}
-
-fn setting(
-    mut lines: Lines,
-    issue: &Issue,
-    change: &IssueChange,
-) -> Option<Lines> {
-    match change {
-        IssueChange::Title(title) if issue.title != *title => {
-            lines.set("title", &quoted(title))?;
-        }
-        IssueChange::Body(body) if issue.body() != *body => lines.body(body),
-        IssueChange::Labels(labels) if issue.texts("labels") != labels => {
-            lines.set("labels", &labels_value(labels))?;
-        }
-        IssueChange::Set { field, value }
-            if issue.text(field) != Some(value.as_str()) =>
-        {
-            lines.set(field, &quoted(value))?;
-        }
-        IssueChange::Status(status) if issue.status != *status => {
-            lines.set("status", &quoted(status))?;
-        }
-        IssueChange::Transition { from, to } if issue.status == *from => {
-            lines.set("status", &quoted(to))?;
-        }
-        _ => return None,
-    }
-    Some(lines)
-}
-
-fn checking(
-    mut lines: Lines,
-    change: &IssueChange,
-    replaying: bool,
-) -> Option<Lines> {
-    match change {
-        IssueChange::Check { item, done } => {
-            let (at, found) = lines.item(item)?;
-            let line =
-                lines.rest.get_mut(at).filter(|_| found.done != *done)?;
-            *line = item_line(&ChecklistItem {
-                done: *done,
-                text: found.text,
-            });
-        }
-        IssueChange::AddItem(text) => {
-            if replaying && lines.item(text).is_some() {
-                return None;
-            }
-            let added = ChecklistItem {
-                done: false,
-                text: text.clone(),
-            };
-            lines.append(
-                CHECKLIST,
-                Some(NOTES),
-                Vec::from([item_line(&added)]),
-            );
-        }
-        IssueChange::RemoveItem(text) => {
-            let (at, _) = lines.item(text)?;
-            lines.rest.remove(at);
-        }
-        IssueChange::Checklist { index, action, .. } => {
-            let (at, found) = lines.items().nth(*index)?;
-            match action {
-                ChecklistAction::SetDone(done) if found.done != *done => {
-                    *lines.rest.get_mut(at)? = item_line(&ChecklistItem {
-                        done: *done,
-                        text: found.text,
-                    });
-                }
-                ChecklistAction::SetDone(_) => return None,
-                ChecklistAction::Remove => {
-                    lines.rest.remove(at);
-                }
-            }
-        }
-        _ => return None,
-    }
-    Some(lines)
-}
-
-fn noting(
-    mut lines: Lines,
-    issue: &Issue,
-    note: &str,
-    occurrence: Option<usize>,
-) -> Option<Lines> {
-    if occurrence.is_some_and(|needed| {
-        issue.log.iter().filter(|kept| kept.line() == note).count() >= needed
-    }) {
-        return None;
-    }
-    lines.append(NOTES, None, note_lines(note));
-    Some(lines)
-}
-
-/// The fields as an issue keeps them: trimmed, each label once.
-///
-/// # Errors
-///
-/// When the title is empty.
-fn fields(wanted: &IssueFields) -> Result<IssueFields, String> {
-    let title = String::from(wanted.title.trim());
-    if title.is_empty() {
-        return Err(String::from("an issue needs a title"));
-    }
-    Ok(IssueFields {
-        title,
-        body: String::from(wanted.body.trim()),
-        labels: normal_labels(&wanted.labels),
     })
 }
 
-/// Each label trimmed, once, and none empty.
-fn normal_labels(labels: &[String]) -> Vec<String> {
-    labels.iter().map(|label| label.trim()).fold(
-        Vec::<String>::new(),
-        |mut kept, label| {
-            if !label.is_empty() && !kept.iter().any(|known| known == label) {
-                kept.push(String::from(label));
-            }
-            kept
+/// What `home::flow::command` writes for the edit, among the home's other
+/// issues and the issue's file as it is now, marked as having had it.
+fn written(
+    home: &Issues<'_>,
+    data: &EditData,
+    current: Option<&str>,
+    marker: &str,
+) -> Applied {
+    let stem = data.issue.to_string();
+    let mut files: Vec<File> = home
+        .files
+        .iter()
+        .filter(|file| file.project != data.project || file.stem != stem)
+        .cloned()
+        .collect();
+    files.extend(current.map(|text| File {
+        project: data.project.clone(),
+        stem: stem.clone(),
+        text: String::from(text),
+    }));
+    let among = Issues {
+        files: &files,
+        ..*home
+    };
+    let context = command::Context {
+        now: data.at.saturating_mul(1000),
+        id: data.issue,
+        by: data.by.clone(),
+    };
+    let edit = match &data.change {
+        Change::Create(new) => command::Edit::New(new),
+        Change::Issue(change) => command::Edit::Change {
+            id: &stem,
+            changes: core::slice::from_ref(change),
         },
-    )
+    };
+    match command::write(&among, edit, &context) {
+        Ok(made) => match marked(&made.write.text, marker) {
+            Applied::Write { text, .. } => Applied::Write {
+                text,
+                warnings: made.warnings,
+            },
+            other => other,
+        },
+        Err(reason) => Applied::Refused(reason),
+    }
 }
 
 /// The branch an issue's sessions land on: the one its file declares, else
@@ -868,22 +667,6 @@ fn normal_labels(labels: &[String]) -> Vec<String> {
 #[must_use]
 pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
     declared.map_or_else(|| format!("issue/{id}"), String::from)
-}
-
-fn date(at: u64) -> String {
-    let (year, month, day) = proto::civil(at / 86_400);
-    format!("{year}-{month:02}-{day:02}")
-}
-
-fn rfc3339(at: u64) -> String {
-    let rest = at % 86_400;
-    format!(
-        "{}T{:02}:{:02}:{:02}Z",
-        date(at),
-        rest / 3600,
-        rest % 3600 / 60,
-        rest % 60
-    )
 }
 
 /// What a session on an issue starts from.

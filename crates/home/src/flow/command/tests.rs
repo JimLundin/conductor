@@ -1,6 +1,6 @@
-use proto::ProjectId;
+use proto::{ChecklistChange, IssueChange, Item, NewIssue, Part, ProjectId};
 
-use super::{Command, Context, New, Outcome, Part, command, run, stamp};
+use super::{Command, Context, Outcome, command, fresh, run, stamp};
 use crate::flow::check::{Inputs, check};
 use crate::flow::graph::File;
 
@@ -54,7 +54,7 @@ fn home() -> Inputs {
 fn context() -> Context {
     Context {
         now: NOW,
-        random: 7,
+        id: fresh(NOW, 7),
         by: String::from("laptop·claude"),
     }
 }
@@ -92,28 +92,86 @@ fn the_words_name_a_command() {
     assert_eq!(command(&words("check")), Command::Check);
     assert_eq!(
         command(&words("issue new home task Do-it parent=x")),
-        Command::New(New {
+        Command::New(NewIssue {
             project: String::from("home"),
             kind: String::from("task"),
             title: String::from("Do-it"),
             fields: Vec::from([String::from("parent=x")]),
         })
     );
+    let changing = |change| Command::Change {
+        id: String::from("x"),
+        changes: Vec::from([change]),
+    };
     assert_eq!(
         command(&words("issue move x stage slice signed off")),
-        Command::Move {
-            id: String::from("x"),
+        changing(IssueChange::Move {
             part: Part::Stage,
             to: String::from("slice"),
             reason: String::from("signed off"),
-        }
+        })
     );
     assert_eq!(
         command(&words("issue note x it works")),
-        Command::Note {
+        changing(IssueChange::Note(String::from("it works")))
+    );
+    assert_eq!(
+        command(&words("issue set x a=1 b=2")),
+        Command::Change {
             id: String::from("x"),
-            text: String::from("it works"),
+            changes: Vec::from([
+                IssueChange::Set {
+                    field: String::from("a"),
+                    value: String::from("1"),
+                },
+                IssueChange::Set {
+                    field: String::from("b"),
+                    value: String::from("2"),
+                },
+            ]),
         }
+    );
+    assert_eq!(
+        command(&words("issue set x a")),
+        Command::Wrong(String::from("\"a\" is not <field>=<value>"))
+    );
+    assert_eq!(
+        command(&words("issue body x Why it matters.")),
+        changing(IssueChange::Body(String::from("Why it matters.")))
+    );
+    assert_eq!(
+        command(&words("issue checklist x add the docs")),
+        changing(IssueChange::Checklist(ChecklistChange::Add(String::from(
+            "the docs"
+        ))))
+    );
+    let first = || Item {
+        index: 0,
+        seen: None,
+    };
+    assert_eq!(
+        [
+            command(&words("issue checklist x check 1")),
+            command(&words("issue checklist x uncheck 1")),
+            command(&words("issue checklist x remove 1")),
+        ],
+        [
+            changing(IssueChange::Checklist(ChecklistChange::Check {
+                item: first(),
+                done: true,
+            })),
+            changing(IssueChange::Checklist(ChecklistChange::Check {
+                item: first(),
+                done: false,
+            })),
+            changing(IssueChange::Checklist(ChecklistChange::Remove(first()))),
+        ]
+    );
+    assert_eq!(
+        command(&words("issue checklist x check 0")),
+        Command::Wrong(String::from(
+            "0 is not an item's number, counted from 1"
+        ))
     );
     assert_eq!(command(&words("issue set x")), Command::Usage);
     assert_eq!(command(&words("issue move x phase build")), Command::Usage);
@@ -262,4 +320,64 @@ fn a_stage_or_status_is_moved_not_set() {
 fn a_time_is_written_to_the_second_in_utc() {
     assert_eq!(stamp(NOW), "2026-11-22T12:00:00Z");
     assert_eq!(stamp(0), "1970-01-01T00:00:00Z");
+}
+
+#[test]
+fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
+    let inputs = home();
+    let said = |inputs: &Inputs, words_said: &str| {
+        run(&command(&words(words_said)), inputs, &context())
+    };
+    let described = said(&inputs, &format!("issue body {TASK} Wire it up."));
+    assert!(!described.failed, "{}", described.output);
+    assert!(
+        text(&described).contains("+++\n\nWire it up.\n\n## Notes\n"),
+        "{}",
+        text(&described)
+    );
+    let added = said(
+        &after(&inputs, &described),
+        &format!("issue checklist {TASK} add the docs"),
+    );
+    let more = said(
+        &after(&after(&inputs, &described), &added),
+        &format!("issue checklist {TASK} add the tests"),
+    );
+    let home_now = after(&after(&after(&inputs, &described), &added), &more);
+    assert!(
+        text(&more).contains(
+            "## Checklist\n- [ ] the docs\n- [ ] the tests\n\n## Notes"
+        ),
+        "{}",
+        text(&more)
+    );
+    let checked = said(&home_now, &format!("issue checklist {TASK} check 2"));
+    assert!(text(&checked).contains("- [ ] the docs\n- [x] the tests\n"));
+    let removed = said(
+        &after(&home_now, &checked),
+        &format!("issue checklist {TASK} remove 1"),
+    );
+    assert!(text(&removed).contains("## Checklist\n- [x] the tests\n\n"));
+    let missing = said(&home_now, &format!("issue checklist {TASK} check 3"));
+    assert_eq!(
+        (missing.failed, missing.output),
+        (true, String::from("home: the checklist has no item 3\n"))
+    );
+}
+
+#[test]
+fn a_note_of_several_lines_is_indented_under_its_first() {
+    let outcome = run(
+        &Command::Change {
+            id: String::from(TASK),
+            changes: Vec::from([IssueChange::Note(String::from(
+                "first\nsecond",
+            ))]),
+        },
+        &home(),
+        &context(),
+    );
+    assert!(text(&outcome).ends_with(
+        "- 2026-11-22T12:00:00Z laptop·claude note: first\n  second\n"
+    ));
 }

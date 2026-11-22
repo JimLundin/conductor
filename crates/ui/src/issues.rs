@@ -12,8 +12,8 @@ use alloc::collections::BTreeMap;
 use crate::prelude::*;
 use proto::flow::{Field, FieldType, Flow};
 use proto::{
-    ChecklistAction, ChecklistItem, CommandBody, Entry, Issue, IssueChange,
-    IssueFields, IssueId, Project, ProjectId,
+    ChecklistChange, CommandBody, Entry, Issue, IssueChange, IssueId, Item,
+    NewIssue, Part, Project, ProjectId,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -24,8 +24,9 @@ use crate::{At, Effect, Intent, Place, ReplyTo};
 pub enum NewIssueIntent {
     /// The title of a new issue in this project.
     TypeTitle(ProjectId, String),
-    /// Opens the issue the project's title draft names, on this host.
-    Create(HostId, ProjectId),
+    /// Opens the issue the project's title draft names, of this kind, on
+    /// this host.
+    Create(HostId, ProjectId, String),
 }
 
 /// Acting on the issue shown.
@@ -38,11 +39,8 @@ pub enum IssueIntent {
         field: String,
         value: String,
     },
-    Checklist {
-        snapshot: Vec<ChecklistItem>,
-        index: usize,
-        action: ChecklistAction,
-    },
+    /// Checks, unchecks or removes an item as the person saw it.
+    Checklist(ChecklistChange),
     TypeItem(String),
     AddItem,
     TypeNote(String),
@@ -131,26 +129,24 @@ impl Titles {
                 titles.insert(project, title);
                 (Self(titles), Vec::new())
             }
-            NewIssueIntent::Create(host, project) => {
-                let effects = self.create(At { host, visit }, project);
+            NewIssueIntent::Create(host, project, kind) => {
+                let effects = self.create(At { host, visit }, project, kind);
                 (self, effects)
             }
         }
     }
 
-    fn create(&self, at: At, project: ProjectId) -> Vec<Effect> {
+    fn create(&self, at: At, project: ProjectId, kind: String) -> Vec<Effect> {
         let title = self.0.get(&project).map_or("", |title| title.trim());
         if title.is_empty() {
             return Vec::new();
         }
-        let body = CommandBody::CreateIssue {
-            fields: IssueFields {
-                title: String::from(title),
-                body: String::new(),
-                labels: Vec::new(),
-            },
-            project,
-        };
+        let body = CommandBody::CreateIssue(NewIssue {
+            project: project.0,
+            kind,
+            title: String::from(title),
+            fields: Vec::new(),
+        });
         Vec::from([at.send(body, ReplyTo::Created)])
     }
 }
@@ -168,7 +164,11 @@ impl IssueDraft {
                 let effects = if status == issue.status {
                     Vec::new()
                 } else {
-                    change(IssueChange::Status(status))
+                    change(IssueChange::Move {
+                        part: Part::Status,
+                        to: status,
+                        reason: String::new(),
+                    })
                 };
                 (self, effects)
             }
@@ -180,18 +180,9 @@ impl IssueDraft {
                 };
                 (self, effects)
             }
-            IssueIntent::Checklist {
-                snapshot,
-                index,
-                action,
-            } => (
-                self,
-                change(IssueChange::Checklist {
-                    snapshot,
-                    index,
-                    action,
-                }),
-            ),
+            IssueIntent::Checklist(item) => {
+                (self, change(IssueChange::Checklist(item)))
+            }
             IssueIntent::TypeItem(item) => (Self { item, ..self }, Vec::new()),
             IssueIntent::AddItem => self.add_item(shown),
             IssueIntent::TypeNote(note) => (Self { note, ..self }, Vec::new()),
@@ -239,7 +230,8 @@ impl IssueDraft {
         if text.is_empty() || self.item_sent.is_some() {
             return (self, Vec::new());
         }
-        let change = IssueChange::AddItem(String::from(text));
+        let change =
+            IssueChange::Checklist(ChecklistChange::Add(String::from(text)));
         self.item_sent = Some(self.item.clone());
         (self, submit(shown, change, Submission::Item))
     }
@@ -274,8 +266,12 @@ impl IssueDraft {
         let changes = [
             (
                 Submission::Title,
-                (fields.title.trim() != original.title.trim())
-                    .then(|| IssueChange::Title(fields.title.clone())),
+                (fields.title.trim() != original.title.trim()).then(|| {
+                    IssueChange::Set {
+                        field: String::from(TITLE),
+                        value: fields.title.clone(),
+                    }
+                }),
             ),
             (
                 Submission::Body,
@@ -285,15 +281,10 @@ impl IssueDraft {
             (
                 Submission::Labels,
                 (fields.labels.trim() != original.labels.trim()).then(|| {
-                    IssueChange::Labels(
-                        fields
-                            .labels
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|label| !label.is_empty())
-                            .map(String::from)
-                            .collect(),
-                    )
+                    IssueChange::Set {
+                        field: String::from(LABELS),
+                        value: fields.labels.clone(),
+                    }
                 }),
             ),
         ];
@@ -433,8 +424,8 @@ pub struct StatusGroup {
 pub struct IssueRow {
     pub key: String,
     pub title: String,
-    /// The words of its fields, in the flow's order, then how much of its
-    /// checklist is done.
+    /// The words of its fields, in the flow's order, a field it leaves out
+    /// as its default, then how much of its checklist is done.
     pub detail: String,
     pub open: Intent,
 }
@@ -449,8 +440,13 @@ pub fn list(
     let new_title = drafts.0.get(&project.id).cloned().unwrap_or_default();
     let create = host
         .filter(|(_, known)| known.fold.live() && !new_title.trim().is_empty())
-        .map(|(id, _)| {
-            Intent::NewIssue(NewIssueIntent::Create(id, project.id.clone()))
+        .and_then(|(id, known)| {
+            let kind = flow_of(known)?.default_kind.clone();
+            Some(Intent::NewIssue(NewIssueIntent::Create(
+                id,
+                project.id.clone(),
+                kind,
+            )))
         });
     IssueList {
         groups: host
@@ -469,6 +465,8 @@ fn flow_of(host: &Host) -> Option<&Flow> {
 
 /// The field the edit form's labels are.
 const LABELS: &str = "labels";
+/// What the edit form's title sets.
+const TITLE: &str = "title";
 
 /// Each status with issues, in the flow's order.
 fn groups(host: HostId, flow: &Flow, project: &Project) -> Vec<StatusGroup> {
@@ -514,6 +512,7 @@ fn detail(flow: &Flow, issue: &Issue) -> String {
         .flat_map(|field| match field.value {
             FieldType::Enum(_) => issue
                 .text(&field.name)
+                .or(field.default.as_deref())
                 .map(String::from)
                 .into_iter()
                 .collect(),
@@ -656,16 +655,13 @@ pub fn screen(
             .iter()
             .enumerate()
             .map(|(index, item)| ItemRow {
-                toggle: IssueIntent::Checklist {
-                    snapshot: issue.checklist.clone(),
-                    index,
-                    action: ChecklistAction::SetDone(!item.done),
-                },
-                remove: IssueIntent::Checklist {
-                    snapshot: issue.checklist.clone(),
-                    index,
-                    action: ChecklistAction::Remove,
-                },
+                toggle: IssueIntent::Checklist(ChecklistChange::Check {
+                    item: picked(issue, index),
+                    done: !item.done,
+                }),
+                remove: IssueIntent::Checklist(ChecklistChange::Remove(
+                    picked(issue, index),
+                )),
                 key: format!("{index}-{}", item.text),
                 text: item.text.clone(),
                 done: item.done,
@@ -688,6 +684,14 @@ pub fn screen(
         start: Intent::StartOn(at, id),
         sessions: sessions(hosts, id),
     })
+}
+
+/// The issue's item at `index`, as the person sees its checklist.
+fn picked(issue: &Issue, index: usize) -> Item {
+    Item {
+        index,
+        seen: Some(issue.checklist.clone()),
+    }
 }
 
 /// A picker for each field of the issue's kind whose value is one of a few

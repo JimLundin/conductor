@@ -2483,12 +2483,10 @@ dependencies = [
 name = "home"
 version = "0.1.0"
 dependencies = [
- "data-encoding",
  "proptest",
  "proto",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "toml",
  "toml_parser",
  "ulid",

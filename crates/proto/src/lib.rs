@@ -52,8 +52,8 @@ pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };
 pub use issue::{
-    ChecklistAction, ChecklistItem, Datum, Entry, Issue, IssueChange,
-    IssueFields, IssueId, LogEvent, Section,
+    ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, IssueId,
+    Item, LogEvent, NewIssue, Part, Section,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
@@ -61,7 +61,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/30";
+pub const ALPN: &[u8] = b"conductor/31";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -535,15 +535,11 @@ pub enum CommandBody {
     RemoveSession {
         session: SessionId,
     },
-    /// Opens an issue in the project, `open`, on the branch
-    /// `issue/<id>`. Answers `IssueCreated` once the host has written it
-    /// to its clone of the home; pushing it follows, and how that went is
-    /// in the home's `sync`.
-    CreateIssue {
-        project: ProjectId,
-        fields: IssueFields,
-    },
-    /// Answers `Accepted` once written, like `CreateIssue`.
+    /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
+    /// once the host has written it to its clone of the home; pushing it
+    /// follows, and how that went is in the home's `sync`.
+    CreateIssue(NewIssue),
+    /// Answers `IssueWritten` once written, like `CreateIssue`.
     ChangeIssue {
         issue: IssueId,
         change: IssueChange,
@@ -610,8 +606,11 @@ pub enum CommandResult {
     },
     Rejected(Rejection),
     Diff(CheckpointDiff),
-    IssueCreated {
+    /// The issue a `CreateIssue` or `ChangeIssue` wrote, and what the
+    /// flow warns of it.
+    IssueWritten {
         issue: IssueId,
+        warnings: Vec<String>,
     },
     PushPublicKey(String),
     PushUnavailable,
@@ -672,8 +671,13 @@ pub enum Rejection {
     NoRemote,
     SessionRemoved,
     UnknownIssue,
-    /// The issue's title is empty, or the home can't be written.
+    /// The home can't be written now, for this reason.
     IssueNotSaved {
+        reason: String,
+    },
+    /// The flow refuses the edit, for this reason, as the `home` command
+    /// line would.
+    IssueRefused {
         reason: String,
     },
     /// The instance has this session on the issue already: one session
@@ -766,6 +770,7 @@ impl Rejection {
                 "that instance has a session on the issue already; continue it, or remove it first",
             ),
             Self::NotOffered { reason }
+            | Self::IssueRefused { reason }
             | Self::WrongReply { reason }
             | Self::WorkspaceFailure { reason } => reason.clone(),
         }

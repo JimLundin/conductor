@@ -64,7 +64,7 @@ pub fn IssueScreen(screen: ui::IssueScreen) -> Element {
                                 name: "{picker.field}",
                                 disabled,
                                 onchange: {
-                                    let field = picker.field.clone();
+                                    let field = picker.field;
                                     move |event: FormEvent| issue(IssueIntent::SetField { field: field.clone(), value: event.value() })
                                 },
                                 for pick in picker.picks {

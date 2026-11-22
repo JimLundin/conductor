@@ -1,7 +1,7 @@
 use proto::{
     AuthToken, ClientName, Command, CommandBody, CommandId, Effort, Epoch,
-    Hello, HostSeq, InstanceId, IssueChange, IssueFields, IssueId, Models,
-    Open, Provider, SessionId, SignInCode, Subscribe,
+    Hello, HostSeq, InstanceId, IssueChange, IssueId, Models, NewIssue, Open,
+    Provider, SessionId, SignInCode, Subscribe,
 };
 
 use super::{
@@ -151,19 +151,16 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 }
 
 #[test]
-fn issue_commands_keep_a_receipt_and_a_change_names_its_client() {
-    let fields = IssueFields {
+fn issue_commands_keep_a_receipt_and_name_their_client() {
+    let new = NewIssue {
+        project: String::from("conductor"),
+        kind: String::from("task"),
         title: String::from("Remove sessions"),
-        body: String::new(),
-        labels: Vec::new(),
+        fields: Vec::new(),
     };
-    let project = proto::ProjectId(String::from("conductor"));
     let note = IssueChange::Note(String::from("done"));
     let routed = [
-        CommandBody::CreateIssue {
-            project: project.clone(),
-            fields: fields.clone(),
-        },
+        CommandBody::CreateIssue(new.clone()),
         CommandBody::ChangeIssue {
             issue: IssueId(1),
             change: note.clone(),
@@ -174,7 +171,7 @@ fn issue_commands_keep_a_receipt_and_a_change_names_its_client() {
     assert_eq!(
         routed,
         [
-            Route::Home(HomeOrder::Create(project, fields)),
+            Route::Home(HomeOrder::Create(new, phone())),
             Route::Home(HomeOrder::Change(IssueId(1), note, phone())),
         ]
     );

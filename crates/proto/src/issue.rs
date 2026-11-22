@@ -168,52 +168,58 @@ pub struct ChecklistItem {
     pub text: String,
 }
 
-/// What a new issue opens with.
+/// A new issue, as `home issue new` opens one: its project, by name or
+/// id, its kind, its title, and its fields as `<field>=<value>`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct IssueFields {
+pub struct NewIssue {
+    pub project: String,
+    pub kind: String,
     pub title: String,
-    pub body: String,
-    pub labels: Vec<String>,
+    pub fields: Vec<String>,
 }
 
-/// One change to an existing issue, as small as a person makes it, so
-/// changes made on two hosts at once touch different lines of its file.
-/// A status, and a field's value, is one of the flow's words.
+/// What a move changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Part {
+    Stage,
+    Status,
+}
+
+/// One change to an issue, as the `home` command line and the app make
+/// it. The home reads the file it writes back against the flow before
+/// keeping it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum IssueChange {
-    Title(String),
-    Body(String),
-    /// The labels it has from now on.
-    Labels(Vec<String>),
-    /// Gives a field one of the words the flow declares for it.
+    Move {
+        part: Part,
+        to: String,
+        reason: String,
+    },
+    /// A field's value as `<field>=<value>` gives it; a list's is
+    /// comma-separated.
     Set {
         field: String,
         value: String,
     },
-    Status(String),
-    /// Checks or unchecks the checklist's first item with this text.
-    Check {
-        item: String,
-        done: bool,
-    },
-    AddItem(String),
-    /// Removes the checklist's first item with this text.
-    RemoveItem(String),
-    /// A note, which the host signs and dates.
+    /// A note, which the writer signs and dates.
     Note(String),
-    Transition {
-        from: String,
-        to: String,
-    },
-    Checklist {
-        snapshot: Vec<ChecklistItem>,
-        index: usize,
-        action: ChecklistAction,
-    },
+    Body(String),
+    Checklist(ChecklistChange),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ChecklistAction {
-    SetDone(bool),
-    Remove,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChecklistChange {
+    Add(String),
+    Check { item: Item, done: bool },
+    Remove(Item),
+}
+
+/// A checklist item by its place, from 0.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Item {
+    pub index: usize,
+    /// The checklist the place was picked from; when the file's has
+    /// changed since, the change is refused. `None` takes the place in
+    /// the file as it is.
+    pub seen: Option<Vec<ChecklistItem>>,
 }
