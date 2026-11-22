@@ -19,7 +19,8 @@ use super::check::{Finding, Inputs, check, of_issue};
 use super::eval::Move;
 use super::file::Document;
 use super::graph::{File, Graph, one, read};
-use super::{FieldType, Flow, Role, Severity, load};
+use super::role::opening;
+use super::{FieldType, Flow, Severity, load};
 use crate::prelude::*;
 use crate::project::{Project, listed};
 
@@ -434,11 +435,7 @@ fn opened(
         .kind(kind)
         .ok_or_else(|| format!("no kind is called {kind}"))?;
     let title = needs(wanted, "an issue needs a title")?;
-    let status = flow
-        .statuses
-        .iter()
-        .find(|status| status.role == Role::Idle)
-        .map_or_else(String::new, |status| status.name.clone());
+    let status = opening(flow).map_or_else(String::new, String::from);
     let id = context.id.to_string();
     let mut front = Vec::from([
         (String::from("id"), quoted(&id)),

@@ -1,13 +1,14 @@
-//! Whether an issue meets a predicate, among the issues of the graph, and
-//! why not when it doesn't.
+//! Whether an issue meets a predicate, among the other issues, and why not
+//! when it doesn't.
 //!
-//! Evaluation follows the predicate, never the graph: each traversal is
+//! Evaluation follows the predicate, never the issues: each traversal is
 //! one step along a relation, so it ends however the issues link, cycles
 //! included.
 
+use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::{Datum, Issue};
+use proto::{Datum, Issue, ProjectId};
 
 use super::graph::Graph;
 use super::{Flow, Literal, Predicate, Quantifier};
@@ -30,35 +31,53 @@ pub struct Failure {
     pub path: Vec<String>,
 }
 
-/// Whether `issue` meets `predicate` in `graph`.
+/// The issues a predicate's relations reach, as the caller holds them.
+pub trait Among {
+    fn issues(&self) -> impl Iterator<Item = &Issue>;
+}
+
+impl Among for Graph {
+    fn issues(&self) -> impl Iterator<Item = &Issue> {
+        self.issues.iter()
+    }
+}
+
+/// The issues by project, as a host lists them.
+impl Among for BTreeMap<ProjectId, Vec<Issue>> {
+    fn issues(&self) -> impl Iterator<Item = &Issue> {
+        self.values().flatten()
+    }
+}
+
+/// Whether `issue` meets `predicate` among `issues`.
 ///
 /// # Errors
 ///
 /// The failure that decides it: for `all`, the first part that fails; for
 /// `any`, the first of the parts, all of which fail; across a relation,
 /// the first issue reached that decides it, or the relation reaching none.
-pub fn holds(
+pub fn holds<A: Among + ?Sized>(
     flow: &Flow,
-    graph: &Graph,
+    issues: &A,
     issue: &Issue,
     moving: Move<'_>,
     predicate: &Predicate,
 ) -> Result<(), Failure> {
     Walk {
         flow,
-        graph,
+        issues,
         moving,
     }
     .holds(issue, predicate, &[])
 }
 
-struct Walk<'a> {
+struct Walk<'a, A: ?Sized> {
     flow: &'a Flow,
-    graph: &'a Graph,
+    issues: &'a A,
     moving: Move<'a>,
 }
 
-impl Walk<'_> {
+impl<A: Among + ?Sized> Walk<'_, A> {
     fn holds(
         &self,
         issue: &Issue,
@@ -186,16 +205,14 @@ impl Walk<'_> {
                 .into_iter()
                 .flatten()
                 .filter_map(|id| {
-                    self.graph
-                        .issues
-                        .iter()
+                    self.issues
+                        .issues()
                         .find(|other| other.id.to_string() == *id)
                 })
                 .collect(),
             Some((relation, true)) => {
-                self.graph
-                    .issues
-                    .iter()
+                self.issues
+                    .issues()
                     .filter(|other| {
                         other.links.get(&relation.name).is_some_and(|ids| {
                             ids.contains(&issue.id.to_string())

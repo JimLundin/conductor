@@ -7,10 +7,11 @@ use proto::{
 };
 
 use super::{
-    Applied, Change, Edit, EditData, Mode, apply, edit_marker, file, finished,
-    folder, locate, message, signer, started, was,
+    Applied, Change, Edit, EditData, Mode, apply, edit_marker, file, folder,
+    locate, message, signer, was,
 };
 use crate::flow::command::Issues;
+use crate::flow::role;
 use crate::prelude::*;
 use crate::project::Project;
 
@@ -509,23 +510,24 @@ impl SessionUpdate {
             }
             Self::Done => None,
             Self::Started | Self::Finished { summary: None, .. } => {
-                let all: Vec<Issue> =
-                    issues.values().flatten().cloned().collect();
-                let issue = all.iter().find(|known| known.id == id)?;
+                let issue =
+                    issues.values().flatten().find(|known| known.id == id)?;
                 let (moved, reason) = match update {
-                    Self::Started => {
-                        (started(flow, &all, issue), "a session started on it")
-                    }
+                    Self::Started => (
+                        role::started(flow, issues, issue),
+                        "a session started on it",
+                    ),
                     Self::Finished { landed, .. } => (
-                        finished(flow, &issue.status, landed),
+                        (landed != 0)
+                            .then(|| role::landed(flow, issue))
+                            .flatten(),
                         "a session on it landed work",
                     ),
                     Self::Done => (None, ""),
                 };
-                let to = moved?;
                 Some(IssueChange::Move {
                     part: Part::Status,
-                    to,
+                    to: String::from(moved?),
                     reason: String::from(reason),
                 })
             }

@@ -12,11 +12,10 @@
 //! unless the edit is newer. Replay recognizes edits it already applied,
 //! even when a separately submitted note has the same text.
 
-use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::flow::{Flow, Predicate, Quantifier, Role, Shape};
+use proto::flow::Flow;
 use proto::{
     ChecklistChange, CommandId, Datum, Home, HostPath, Issue, IssueChange,
     IssueId, Item, NewIssue, Part, ProjectId, Rejection,
@@ -24,9 +23,8 @@ use proto::{
 use serde::{Deserialize, Serialize};
 
 use crate::flow::command::{self, Issues};
-use crate::flow::eval;
 use crate::flow::file::{Document, checklist_line, log_line};
-use crate::flow::graph::{self, File, Graph, branch_of};
+use crate::flow::graph::{self, File, branch_of};
 use crate::prelude::*;
 
 /// The issue's file, from the home's root.
@@ -66,14 +64,6 @@ fn read(
             |field| format!("{field}: {}", problem.message),
         )
     })
-}
-
-/// The name of the flow's first status of `role`.
-fn first(flow: &Flow, role: Role) -> Option<String> {
-    flow.statuses
-        .iter()
-        .find(|status| status.role == role)
-        .map(|status| status.name.clone())
 }
 
 /// The issues the files hold, each `.md` file of a project by its name
@@ -480,62 +470,6 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
         branch: format!("refs/heads/{}", issue.branch),
         brief: brief(&project.title, issue),
     })
-}
-
-/// Whether a session may start on `issue`, among `issues`: it waits to be
-/// taken up, and everything it depends on is built or dropped.
-#[must_use]
-pub fn startable(flow: &Flow, issues: &[Issue], issue: &Issue) -> bool {
-    let graph = Graph {
-        issues: issues.to_vec(),
-        problems: Vec::new(),
-    };
-    eval::holds(flow, &graph, issue, eval::Move::default(), &can_start(flow))
-        .is_ok()
-}
-
-/// What [`startable`] asks of an issue, across each of the flow's
-/// dependencies.
-fn can_start(flow: &Flow) -> Predicate {
-    let roles = |roles: &[Role]| {
-        Predicate::Any(
-            roles.iter().copied().map(Predicate::StatusRole).collect(),
-        )
-    };
-    let built = roles(&[Role::Review, Role::Terminal, Role::Dropped]);
-    let blockers = flow
-        .relations
-        .iter()
-        .filter(|relation| relation.shape == Shape::Dependency)
-        .map(|relation| Predicate::Across {
-            quantifier: Quantifier::All,
-            via: relation.name.clone(),
-            condition: Box::new(built.clone()),
-        });
-    Predicate::All(
-        core::iter::once(roles(&[Role::Idle, Role::Startable]))
-            .chain(blockers)
-            .collect(),
-    )
-}
-
-/// The status an issue moves to once a session on it has started: work
-/// on one that can start is active.
-#[must_use]
-fn started(flow: &Flow, issues: &[Issue], issue: &Issue) -> Option<String> {
-    startable(flow, issues, issue)
-        .then(|| first(flow, Role::Active))
-        .flatten()
-}
-
-/// The status an issue moves to once a session on it has finished: one
-/// still being worked on is up for review when its branch gained commits.
-#[must_use]
-fn finished(flow: &Flow, status: &str, landed: u64) -> Option<String> {
-    let role = flow.status(status)?.role;
-    (landed != 0 && matches!(role, Role::Idle | Role::Startable | Role::Active))
-        .then(|| first(flow, Role::Review))
-        .flatten()
 }
 
 /// Issue `id`'s branch, as a full ref, as the home has it.

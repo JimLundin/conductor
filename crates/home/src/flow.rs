@@ -21,6 +21,7 @@ pub mod command;
 pub mod eval;
 pub mod file;
 pub mod graph;
+pub mod role;
 
 pub use proto::flow::{
     Field, FieldType, Flow, Kind, Literal, Predicate, Quantifier, Relation,
