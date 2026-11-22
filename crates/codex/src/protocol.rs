@@ -1545,7 +1545,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use proto::{Answer, Effort, Question, QuestionOption, Selection};
-    use serde_json::{Value, json};
+    use serde_json::Value;
 
     use super::{
         AnswerError, AnswerShape, ApprovalId, ApprovalKind, ApprovalPolicy,

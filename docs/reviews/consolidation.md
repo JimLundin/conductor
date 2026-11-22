@@ -77,6 +77,13 @@ reported 51 uses of `Box` or `Rc` forbidden by the current core standard,
 across `proto`, `home`, `host` and `ui`. Replacing those representations is
 a separate refactor; this consolidation adds no exception to bypass it.
 
+Queue run `45074034715` also exposed browser-only `future_not_send`
+failures after removing the blanket wasm lint suppression: browser
+JavaScript promises and iroh's local futures cannot move between threads.
+The existing standard rejects target-conditional lint expectations, while
+an unconditional expectation is unfulfilled on native targets. That needs
+a scoped policy solution before this stricter wasm check can land.
+
 That baseline also exposed a browser test which changed only the join
 fragment, leaving the existing document mounted. Pairing reads the fragment
 when the app opens. The storage-recovery scenario now reloads after that
