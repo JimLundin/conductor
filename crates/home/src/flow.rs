@@ -16,6 +16,8 @@ use toml::{Table, Value};
 
 use crate::prelude::*;
 
+pub mod graph;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flow {
     /// The kind of an issue that names none.
