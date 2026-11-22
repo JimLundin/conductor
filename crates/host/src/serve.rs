@@ -163,11 +163,6 @@ pub enum Route {
     /// Finishes the session on its issue, in the background.
     Finish(SessionId, ClientName),
     Push(PushOrder),
-    Move {
-        session: SessionId,
-        to: proto::fleet::NodeId,
-        retry: Option<proto::movement::MoveId>,
-    },
     Fleet(FleetAction),
 }
 
@@ -241,7 +236,6 @@ impl Route {
             Self::Order(_, Order::Diff(_))
             | Self::SignIn(_)
             | Self::Push(_)
-            | Self::Move { .. }
             | Self::Fleet(_)
             | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => {
                 Ledger::Unrecorded
@@ -309,9 +303,6 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             Route::Home(HomeOrder::Change(issue, change, by))
         }
         CommandBody::FinishSession { session } => Route::Finish(session, by),
-        CommandBody::MoveSession { session, to, retry } => {
-            Route::Move { session, to, retry }
-        }
         CommandBody::RemoveSession { session } => {
             Route::Order(session, Order::Remove)
         }

@@ -747,7 +747,6 @@ dependencies = [
  "proto",
  "serde",
  "serde_json",
- "uuid",
 ]
 
 [[package]]
@@ -763,7 +762,6 @@ dependencies = [
  "runtime",
  "rustix",
  "serde_json",
- "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -802,8 +800,6 @@ dependencies = [
  "proto",
  "serde",
  "serde_json",
- "time",
- "uuid",
 ]
 
 [[package]]
@@ -823,7 +819,6 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]

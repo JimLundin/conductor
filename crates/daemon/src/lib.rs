@@ -6,7 +6,6 @@ mod credentials;
 pub mod fleet;
 mod home;
 mod log;
-mod movement;
 mod push;
 mod registry;
 mod serve;

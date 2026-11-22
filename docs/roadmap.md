@@ -4,12 +4,18 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Sessions stay on their starting host.** Removed cross-host session
+  migration, branch bundles, transcript archives, ownership recovery and
+  move controls. Fleet membership, pairing, credentials and independent
+  sessions on multiple hosts remain. Local Continue, restart, checkpoint
+  diffs and undo remain. Continue work elsewhere with a new session using
+  the issue and its remote branch (architecture §6.8). The wire uses ALPN
+  `conductor/29` and the event store format is 6.
+
 - **Session-local checklists.** Main and child checklists are ordered
   snapshots of text and status, retained through replay and undo.
   Task handoff, persistent item identities and automatic checklist-derived
   issue notes are removed. Explicit notes and the summary turn remain.
-  The wire uses ALPN `conductor/28`, session transfers `conductor-move/2`,
-  and the event store format is 5.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
@@ -281,16 +287,12 @@ Each item ends in something to try. The fleet design is
    session on it with the fleet's token, without signing in again.
 7. **Push.** (#15) Web Push from the host when an approval or question opens.
    *Try:* lock the phone and get the approval notification.
-8. **Move a session** (#16) (§6.8), after experiments E4 and E5 (§6.9). Bundle
-   the branch, copy the transcript and the events, resume on the target.
-   *Try:* move a session from WSL to the Mac between turns and continue it
-   from the phone.
-9. **Monitor the subagents** (#31) each session runs (home step 1,
+8. **Monitor the subagents** (#31) each session runs (home step 1,
     `docs/home.md` §6). Child session events record each subagent's
     lifecycle, type, result, transcript, requests, and checklist.
     The phone shows the child next to the tool call that started it when
-    that call is in the session transcript. The host assigns stable IDs to
-    child checklist tasks. The Claude probe and synthetic Codex replay cover
+    that call is in the session transcript. Each child has its own ordered
+    checklist snapshot. The Claude probe and synthetic Codex replay cover
     these paths. Live Codex events and child approvals still need validation.
     *Try:* ask a Claude and a Codex session to delegate two pieces of work
     and watch each child's progress, approvals, and result on the phone.

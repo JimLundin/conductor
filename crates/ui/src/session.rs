@@ -78,7 +78,6 @@ pub struct SessionPane {
     pub finish: bool,
     pub workspace: WorkspaceContext,
     pub undo: UndoNote,
-    pub movement: crate::MovePanel,
     pub tasks: Option<Tasks>,
     /// What an empty transcript says.
     pub empty: Option<String>,
@@ -152,7 +151,6 @@ pub enum Footer {
         resume: bool,
     },
     Composer(Composer),
-    Moving,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -170,7 +168,6 @@ pub struct Pane {
     draft: String,
     pending_message: Option<String>,
     refused_messages: Vec<String>,
-    pub(crate) movement: crate::movement::Draft,
     answers: BTreeMap<RequestId, Draft>,
     diffs: BTreeMap<CheckpointId, DiffState>,
     /// Numbers each diff request, so only the latest one's answer shows.
@@ -481,9 +478,8 @@ impl Pane {
         id: SessionId,
         session: &SessionView,
         known: (Option<&Instances>, &Catalog),
-        (notice, host, movement): (Option<String>, String, crate::MovePanel),
+        (notice, host): (Option<String>, String),
     ) -> SessionPane {
-        let locked = self.movement.pending || session.movement.locked();
         let controls = session.controls();
         let provider = agent(session, known);
         let status = String::from(status_text(session.status_label()));
@@ -493,10 +489,7 @@ impl Pane {
             .map_or_else(Models::none, Availability::models)
             .efforts(session.model.as_ref());
         SessionPane {
-            key: session.arrival.map_or_else(
-                || format!("{}", id.0),
-                |arrival| format!("{}-{}", id.0, arrival.move_id.0),
-            ),
+            key: format!("{}", id.0),
             title: short(&session.directory).to_owned(),
             subtitle: format!("{} on {host}", session.directory.0),
             pill: format!("{provider}, {status}"),
@@ -504,13 +497,9 @@ impl Pane {
                 || String::from("default model"),
                 |model| model.0.clone(),
             ),
-            effort: if locked {
-                EffortControl::Hidden
-            } else {
-                effort_control(session.effort, &offered)
-            },
-            interrupt: !locked && controls.interrupt == Interrupt::Offered,
-            finish: !locked && controls.finish,
+            effort: effort_control(session.effort, &offered),
+            interrupt: controls.interrupt == Interrupt::Offered,
+            finish: controls.finish,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
                     "This session has no worktree checkpoints.",
@@ -520,17 +509,12 @@ impl Pane {
                     directory: workspace.directory.0.clone(),
                 },
             ),
-            undo: if locked {
-                UndoNote::Hidden
-            } else {
-                undo_note(id, &session.undo)
-            },
-            movement,
+            undo: undo_note(id, &session.undo),
             tasks: tasks(&session.tasks),
             empty: session
                 .empty_transcript()
                 .map(|kind| empty(kind, &provider)),
-            entries: self.entries(session, locked),
+            entries: self.entries(session),
             other_agents: session
                 .subagents
                 .iter()
@@ -543,9 +527,9 @@ impl Pane {
                 })
                 .map(|agent| transcript::agent_group(agent, &self.answers))
                 .collect(),
-            working: !locked && session.working() == Working::Shown,
+            working: session.working() == Working::Shown,
             notice,
-            footer: self.footer(session, controls, &provider, locked),
+            footer: self.footer(session, controls, &provider),
             status,
         }
     }
@@ -555,41 +539,35 @@ impl Pane {
         session: &SessionView,
         controls: host_view::Controls,
         provider: &str,
-        locked: bool,
     ) -> Footer {
-        if locked {
-            Footer::Moving
-        } else {
-            session.closed_reason().map_or_else(
-                || {
-                    Footer::Composer(Composer {
-                        text: self.draft.clone(),
-                        pending: self.pending_message.is_some(),
-                        refused: self.refused_messages.clone(),
-                        placeholder: match controls.composer {
-                            host_view::Composer::Open => {
-                                format!("Message {provider}")
-                            }
-                            host_view::Composer::Busy => {
-                                format!("{provider} is working…")
-                            }
-                            host_view::Composer::Closed => {
-                                String::from("This session has ended")
-                            }
-                        },
-                        disabled: controls.composer
-                            != host_view::Composer::Open,
-                    })
-                },
-                |reason| Footer::Closed {
-                    text: closed(reason),
-                    resume: controls.resume == Resume::Offered,
-                },
-            )
-        }
+        session.closed_reason().map_or_else(
+            || {
+                Footer::Composer(Composer {
+                    text: self.draft.clone(),
+                    pending: self.pending_message.is_some(),
+                    refused: self.refused_messages.clone(),
+                    placeholder: match controls.composer {
+                        host_view::Composer::Open => {
+                            format!("Message {provider}")
+                        }
+                        host_view::Composer::Busy => {
+                            format!("{provider} is working…")
+                        }
+                        host_view::Composer::Closed => {
+                            String::from("This session has ended")
+                        }
+                    },
+                    disabled: controls.composer != host_view::Composer::Open,
+                })
+            },
+            |reason| Footer::Closed {
+                text: closed(reason),
+                resume: controls.resume == Resume::Offered,
+            },
+        )
     }
 
-    fn entries(&self, session: &SessionView, locked: bool) -> Vec<Entry> {
+    fn entries(&self, session: &SessionView) -> Vec<Entry> {
         let composer = session.controls().composer;
         let mut checkpoints = BTreeMap::new();
         for turn in &session.checkpoints {
@@ -612,16 +590,14 @@ impl Pane {
                         })
                         .collect()
                 }),
-                changes: checkpoints.get(&index).filter(|_| !locked).map(
-                    |turn| {
-                        checkpoints::changes(
-                            turn,
-                            self.diffs.get(&turn.checkpoint),
-                            composer,
-                            session.can_view_changes(),
-                        )
-                    },
-                ),
+                changes: checkpoints.get(&index).map(|turn| {
+                    checkpoints::changes(
+                        turn,
+                        self.diffs.get(&turn.checkpoint),
+                        composer,
+                        session.can_view_changes(),
+                    )
+                }),
             })
             .collect()
     }
@@ -719,9 +695,6 @@ pub const fn status_text(label: StatusLabel) -> &'static str {
         StatusLabel::Closed => "closed",
         StatusLabel::Undoing => "undoing",
         StatusLabel::RecoveryNeeded => "recovery needed",
-        StatusLabel::Moving => "moving",
-        StatusLabel::MoveFailed => "move failed",
-        StatusLabel::Moved => "moved",
     }
 }
 

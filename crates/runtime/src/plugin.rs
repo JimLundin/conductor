@@ -3,16 +3,16 @@
 
 use std::fmt::Debug;
 use std::future::Future;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
 use agents::{Configuration, Profile};
 use install::Home;
-use proto::{Credential, SessionId, SignInCode};
+use proto::{Credential, SignInCode};
 use tokio::sync::oneshot;
 
-use crate::{Runtime, Transcript};
+use crate::Runtime;
 
 /// What the host's command line sets for one provider: the defaults of
 /// each of its instances.
@@ -59,23 +59,6 @@ pub trait ProviderInstance: Send + Sync + Debug {
 
 pub type Instance = Arc<dyn ProviderInstance>;
 
-type ReadTranscript =
-    fn(&Path, SessionId, &[String]) -> Result<Transcript, String>;
-type WriteTranscript =
-    fn(&Path, SessionId, &[String], &Transcript) -> Result<(), String>;
-type RemoveTranscript = fn(&Path, SessionId, &[String]) -> Result<(), String>;
-
-/// Portable session history, with provider-specific lookup and validation.
-///
-/// The caller supplies a private home and suspends the session before export.
-/// Remove is called only after the destination has durably accepted ownership.
-#[derive(Debug, Clone, Copy)]
-pub struct TranscriptFiles {
-    pub export: ReadTranscript,
-    pub import: WriteTranscript,
-    pub remove: RemoveTranscript,
-}
-
 /// A provider's description and the instance it builds for each account.
 #[derive(Debug, Clone)]
 pub struct Plugin {
@@ -85,5 +68,4 @@ pub struct Plugin {
     /// The account a signed-in home is, from what the CLI reports where
     /// the profile's `account` says.
     pub account: fn(&str) -> Option<String>,
-    pub transcripts: TranscriptFiles,
 }

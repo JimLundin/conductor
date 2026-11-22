@@ -135,56 +135,6 @@ impl Providers {
         }
     }
 
-    pub(crate) async fn move_files(
-        &self,
-        id: &InstanceId,
-        instance: &Instance,
-    ) -> Result<crate::movement::ProviderFiles, String> {
-        let member = self.fleet.borrow().clone().ok_or_else(|| {
-            String::from("session moves require fleet membership")
-        })?;
-        let revision = member.revision().await;
-        let Prepared {
-            plugin,
-            settings,
-            home,
-            ..
-        } = prepare(
-            &self.plugins,
-            &self.data_dir,
-            id,
-            instance,
-            Some(revision.clone()),
-        )?;
-        let profile = plugin.profile;
-        let program = provider_program(
-            settings.path,
-            profile.pin,
-            &self.data_dir,
-            Some(&revision),
-        )
-        .await?;
-        let observed =
-            version(command(&program, &home, profile.version)).await?;
-        let pin = revision.pins.version(id.provider).ok_or_else(|| {
-            String::from(
-                "the provider has no pin in the signed fleet configuration",
-            )
-        })?;
-        let version =
-            host::movement::verified_pin(pin, observed.code, &observed.stdout)?;
-        let Home::Private(private_home) = home else {
-            return Err(String::from(
-                "session moves require a private provider home",
-            ));
-        };
-        Ok(crate::movement::ProviderFiles {
-            home: private_home,
-            version,
-            io: plugin.transcripts,
-        })
-    }
-
     pub(crate) async fn share_credential(
         &self,
         id: InstanceId,
@@ -445,12 +395,7 @@ pub async fn start(
     let started =
         assemble(plugins, options, fleet_slot.clone(), endpoint.clone()).await;
     match started {
-        Ok((mut conductor, log, token, initialized)) => {
-            let mover = conductor.enable_moves(
-                endpoint.clone(),
-                fleet_slot.clone(),
-                data.clone(),
-            );
+        Ok((conductor, log, token, initialized)) => {
             let protocol = crate::fleet::Protocol::new(
                 fleet_slot.clone(),
                 data,
@@ -460,9 +405,7 @@ pub async fn start(
             let router = Router::builder(endpoint.clone())
                 .accept(proto::ALPN, conductor)
                 .accept(proto::fleet::ALPN, protocol)
-                .accept(crate::movement::ALPN, mover.clone())
                 .spawn();
-            tokio::spawn(mover.recover_when_enrolled());
             tokio::spawn(crate::fleet::follow_when_enrolled(
                 endpoint, fleet_slot,
             ));

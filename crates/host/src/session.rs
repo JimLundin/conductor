@@ -450,41 +450,6 @@ impl Session {
     }
 
     #[must_use]
-    pub fn pending_move_notice(&self, history: &[Event]) -> Option<HostPath> {
-        self.book
-            .workspace()
-            .filter(|_| crate::movement::notice_pending(history))
-            .map(|workspace| workspace.directory.clone())
-    }
-
-    /// Checks that neither the conversation nor the workspace is changing.
-    ///
-    /// # Errors
-    /// The session was removed, is busy, or has no managed workspace.
-    pub fn plan_move(&self) -> Result<SnapshotPlan, Rejection> {
-        if self.removed {
-            return Err(Rejection::SessionRemoved);
-        }
-        if !matches!((&self.flow, &self.turn), (Flow::Idle, Turn::Idle))
-            || self
-                .requests
-                .values()
-                .any(|request| request.native().is_some())
-        {
-            return Err(Rejection::TurnInProgress);
-        }
-        if self.book.undo_pending() {
-            return Err(Rejection::UndoInProgress);
-        }
-        self.book.plan_move().ok_or(Rejection::NotGitRepository)
-    }
-
-    /// Replays a newly committed move snapshot into the running core.
-    pub fn moved_checkpoint(&mut self, event: &Event) {
-        self.book.apply(event);
-    }
-
-    #[must_use]
     pub fn step(mut self, input: Input) -> (Self, Vec<Effect>) {
         let flow = mem::replace(&mut self.flow, Flow::Idle);
         let effects = self.on(flow, input);

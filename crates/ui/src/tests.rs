@@ -1,6 +1,5 @@
 mod credentials;
 mod hosts;
-mod movement;
 mod new_session;
 mod panes;
 mod places;
@@ -912,7 +911,6 @@ fn composer(state: &State) -> Option<(String, String, bool)> {
             (composer.text, composer.placeholder, composer.disabled)
         }
         Footer::Closed { text, .. } => (text, String::new(), true),
-        Footer::Moving => (String::new(), String::new(), true),
     })
 }
 
@@ -980,7 +978,7 @@ fn a_failed_send_keeps_the_text_typed_while_the_message_was_pending() {
     assert_eq!(
         pane(&rejected).and_then(|shown| match shown.footer {
             Footer::Composer(composer) => Some(composer.refused),
-            Footer::Moving | Footer::Closed { .. } => None,
+            Footer::Closed { .. } => None,
         }),
         Some(Vec::from([text(" first ")]))
     );

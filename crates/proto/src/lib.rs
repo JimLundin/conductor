@@ -20,8 +20,6 @@
 
 extern crate alloc;
 
-pub mod transcript;
-
 mod calendar;
 mod credential;
 pub mod fleet;
@@ -29,7 +27,6 @@ mod frame;
 mod home;
 mod instance;
 mod issue;
-pub mod movement;
 mod sign_in;
 mod ticket;
 
@@ -63,7 +60,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/28";
+pub const ALPN: &[u8] = b"conductor/29";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,7 +70,6 @@ pub enum Feed {
     Home(Home),
     /// The current instance offers, replacing the previous snapshot.
     Instances(Instances),
-    MoveTargets(Vec<fleet::NodeId>),
 }
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
@@ -566,12 +562,6 @@ pub enum CommandBody {
     },
     PushPublicKey,
     RegisterPush(PushSubscription),
-    /// Move a settled session to another host in the same fleet.
-    MoveSession {
-        session: SessionId,
-        to: fleet::NodeId,
-        retry: Option<movement::MoveId>,
-    },
     FleetStatus,
     FleetInvite,
     FleetRevoke(fleet::NodeId),
@@ -703,9 +693,6 @@ pub enum Rejection {
     NotOnIssue,
     /// The session is finishing, or has done nothing since it finished.
     AlreadyFinished,
-    MoveRefused {
-        reason: String,
-    },
     FleetUnavailable,
 }
 
@@ -792,7 +779,6 @@ impl Rejection {
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
             | Self::UndoFailed { reason }
-            | Self::MoveRefused { reason }
             | Self::WorkspaceFailure { reason } => reason.clone(),
         }
     }
@@ -970,30 +956,6 @@ pub enum EventKind {
     UndoRevertDispatched {
         checkpoint: CheckpointId,
     },
-    SessionMoving {
-        to: fleet::NodeId,
-        move_id: movement::MoveId,
-        phase: movement::Phase,
-    },
-    SessionMoveFailed {
-        move_id: movement::MoveId,
-        reason: String,
-        resumable: bool,
-    },
-    SessionMoved {
-        to: fleet::NodeId,
-        move_id: movement::MoveId,
-    },
-    SessionArrived {
-        from: fleet::NodeId,
-        move_id: movement::MoveId,
-        source_epoch: Epoch,
-        source_last_seq: HostSeq,
-    },
-    SessionArrivalReady {
-        move_id: movement::MoveId,
-    },
-    SessionMoveNoticeSent,
 }
 
 /// Where a session on an issue stands with finishing, as its events say:

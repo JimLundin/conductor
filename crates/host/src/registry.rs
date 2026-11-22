@@ -579,31 +579,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.sessions.insert(session, (instance, handle));
     }
 
-    /// Finds the same account when it is signed in, or the target's only
-    /// available account for this provider.
-    ///
-    /// # Errors
-    /// No provider account is available, or selecting one would be ambiguous.
-    pub fn move_instance(
-        &self,
-        source: &InstanceId,
-    ) -> Result<InstanceId, String> {
-        if self.ready(source).is_ok() {
-            return Ok(source.clone());
-        }
-        let instances = self.instances();
-        let mut candidates = instances.0.iter().filter(|(id, status)| {
-            id.provider == source.provider
-                && matches!(status.availability, Availability::Available { .. })
-        });
-        match (candidates.next(), candidates.next()) {
-            (Some((id, _)), None) => Ok(id.clone()),
-            _ => Err(String::from(
-                "the target needs one available account for this provider",
-            )),
-        }
-    }
-
     /// The session and what its instance offers, for an order that may
     /// start its agent.
     ///

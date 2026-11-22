@@ -10,7 +10,6 @@ agents = { path = "../agents" }
 proto = { path = "../proto" }
 serde.workspace = true
 serde_json.workspace = true
-uuid = { version = "1.29.2", default-features = false }
 
 [lints]
 workspace = true

@@ -5,12 +5,10 @@ use crate::prelude::*;
 use alloc::collections::BTreeMap;
 use core::cmp::Reverse;
 
-use proto::fleet::NodeId;
-use proto::movement::{MoveId, Phase};
 use proto::{
-    ChecklistEntry, CheckpointId, ClientName, CloseReason, Effort, Epoch,
-    Event, EventKind, FinishState, Finished, HostPath, HostSeq, InstanceId,
-    IssueId, ModelId, Provider, Question, RequestId, Resolution, SessionId,
+    ChecklistEntry, CheckpointId, ClientName, CloseReason, Effort, Event,
+    EventKind, FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId,
+    ModelId, Provider, Question, RequestId, Resolution, SessionId,
     SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, ToolCallId,
     ToolKind, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
 };
@@ -18,7 +16,6 @@ use proto::{
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct HostView {
     pub sessions: BTreeMap<SessionId, SessionView>,
-    arrivals: BTreeMap<SessionId, Arrival>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,62 +41,6 @@ pub struct SessionView {
     pub subagents: Vec<Subagent>,
     /// The last event that touched this session.
     pub activity: HostSeq,
-    pub movement: Movement,
-    pub arrival: Option<Arrival>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Arrival {
-    pub from: NodeId,
-    pub move_id: MoveId,
-    pub source_epoch: Epoch,
-    pub source_last_seq: HostSeq,
-    pub ready: bool,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum Movement {
-    #[default]
-    Owned,
-    Moving {
-        to: NodeId,
-        id: MoveId,
-        phase: Phase,
-    },
-    Failed {
-        to: NodeId,
-        id: MoveId,
-        reason: String,
-        resumable: bool,
-    },
-    Moved {
-        to: NodeId,
-        id: MoveId,
-    },
-}
-
-impl Movement {
-    #[must_use]
-    pub const fn locked(&self) -> bool {
-        !matches!(
-            self,
-            Self::Owned
-                | Self::Failed {
-                    resumable: true,
-                    ..
-                }
-        )
-    }
-
-    #[must_use]
-    pub const fn transfer(&self) -> Option<(NodeId, MoveId)> {
-        match self {
-            Self::Owned => None,
-            Self::Moving { to, id, .. }
-            | Self::Failed { to, id, .. }
-            | Self::Moved { to, id } => Some((*to, *id)),
-        }
-    }
 }
 
 /// A sub-agent: a child of its session, shown under the tool call that
@@ -303,9 +244,6 @@ pub enum StatusLabel {
     Closed,
     Undoing,
     RecoveryNeeded,
-    Moving,
-    MoveFailed,
-    Moved,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,7 +316,6 @@ impl HostView {
     pub const fn empty() -> Self {
         Self {
             sessions: BTreeMap::new(),
-            arrivals: BTreeMap::new(),
         }
     }
 
@@ -386,27 +323,8 @@ impl HostView {
     /// a removed session is gone.
     #[must_use]
     pub fn apply(self, event: Event) -> Self {
-        if let EventKind::SessionArrived {
-            from,
-            move_id,
-            source_epoch,
-            source_last_seq,
-        } = event.kind
-        {
-            return self.arrived(
-                event.session,
-                Arrival {
-                    from,
-                    move_id,
-                    source_epoch,
-                    source_last_seq,
-                    ready: false,
-                },
-            );
-        }
         let delta = is_delta(&event.kind);
         let mut sessions = self.sessions;
-        let mut arrivals = self.arrivals;
         let session = match (sessions.remove(&event.session), event.kind) {
             (
                 _,
@@ -436,8 +354,6 @@ impl HostView {
                 items: Vec::new(),
                 subagents: Vec::new(),
                 activity: event.seq,
-                movement: Movement::Owned,
-                arrival: arrivals.remove(&event.session),
             }),
             (_, EventKind::SessionRemoved { .. }) | (None, _) => None,
             (Some(view), kind) => {
@@ -449,17 +365,7 @@ impl HostView {
             }
         };
         sessions.extend(session.map(|view| (event.session, view)));
-        Self { sessions, arrivals }
-    }
-
-    fn arrived(mut self, id: SessionId, arrival: Arrival) -> Self {
-        let existing =
-            self.sessions.get(&id).and_then(|session| session.arrival);
-        if existing.is_none_or(|known| known.move_id != arrival.move_id) {
-            self.sessions.remove(&id);
-            self.arrivals.insert(id, arrival);
-        }
-        self
+        Self { sessions }
     }
 
     /// The sessions' ids, the most recently active first.
@@ -495,23 +401,7 @@ impl HostView {
 
 impl SessionView {
     #[must_use]
-    pub const fn history_available(&self) -> bool {
-        match self.arrival {
-            Some(arrival) => arrival.ready,
-            None => true,
-        }
-    }
-
-    #[must_use]
     pub const fn controls(&self) -> Controls {
-        if !self.history_available() || self.movement.locked() {
-            return Controls {
-                composer: Composer::Busy,
-                interrupt: Interrupt::Hidden,
-                resume: Resume::Hidden,
-                finish: false,
-            };
-        }
         let (composer, interrupt, resume) = match (&self.undo, &self.status) {
             (UndoState::Undoing(_) | UndoState::Failed { .. }, _)
             | (_, SessionStatus::Starting) => {
@@ -546,12 +436,6 @@ impl SessionView {
 
     #[must_use]
     pub const fn status_label(&self) -> StatusLabel {
-        match self.movement {
-            Movement::Moving { .. } => return StatusLabel::Moving,
-            Movement::Failed { .. } => return StatusLabel::MoveFailed,
-            Movement::Moved { .. } => return StatusLabel::Moved,
-            Movement::Owned => {}
-        }
         match (&self.undo, &self.status) {
             (UndoState::Undoing(_), _) => StatusLabel::Undoing,
             (UndoState::Failed { .. }, _) => StatusLabel::RecoveryNeeded,
@@ -563,28 +447,9 @@ impl SessionView {
     }
 
     #[must_use]
-    pub fn can_start_move(&self) -> bool {
-        self.history_available()
-            && self.workspace.is_some()
-            && !self.movement.locked()
-            && matches!(
-                self.status,
-                SessionStatus::Idle | SessionStatus::Closed(_)
-            )
-            && matches!(self.undo, UndoState::Ready | UndoState::Undone)
-            && !matches!(self.finish, FinishState::Finishing)
-            && self.attention() == Attention::Quiet
-    }
-
-    #[must_use]
     pub fn list_status(&self) -> ListStatus {
         let label = self.status_label();
-        if self.movement.locked()
-            || matches!(
-                label,
-                StatusLabel::Undoing | StatusLabel::RecoveryNeeded
-            )
-        {
+        if matches!(label, StatusLabel::Undoing | StatusLabel::RecoveryNeeded) {
             return ListStatus::Session(label);
         }
         match self.attention() {
@@ -619,7 +484,7 @@ impl SessionView {
 
     #[must_use]
     pub const fn can_view_changes(&self) -> bool {
-        !self.movement.locked() && !matches!(self.undo, UndoState::Undoing(_))
+        !matches!(self.undo, UndoState::Undoing(_))
     }
 
     /// A running turn shows it is working, unless it waits on a person or
@@ -627,9 +492,6 @@ impl SessionView {
     /// a tool call running.
     #[must_use]
     pub fn working(&self) -> Working {
-        if self.movement.locked() {
-            return Working::Hidden;
-        }
         match self.undo {
             UndoState::Undoing(_) | UndoState::Failed { .. } => Working::Hidden,
             UndoState::Ready | UndoState::Undone => self.turn_working(),
@@ -788,15 +650,7 @@ impl SessionView {
             EventKind::CheckpointCreated { checkpoint } => {
                 self.checkpoint_created(checkpoint)
             }
-            movement @ (EventKind::SessionMoving { .. }
-            | EventKind::SessionMoveFailed { .. }
-            | EventKind::SessionMoved { .. }) => self.movement_event(movement),
-            EventKind::SessionArrivalReady { move_id } => {
-                self.arrival_ready(move_id)
-            }
-            EventKind::SessionArrived { .. }
-            | EventKind::SessionMoveNoticeSent
-            | EventKind::SessionCreated { .. }
+            EventKind::SessionCreated { .. }
             | EventKind::SessionRemoved { .. }
             | EventKind::UndoHistoryRestored { .. }
             | EventKind::UndoRevertDispatched { .. }
@@ -825,54 +679,6 @@ impl SessionView {
                 self.change(&Change::Finish(call, outcome))
             }
         }
-    }
-
-    fn arrival_ready(mut self, move_id: MoveId) -> Self {
-        if let Some(arrival) = &mut self.arrival
-            && arrival.move_id == move_id
-        {
-            arrival.ready = true;
-        }
-        self
-    }
-
-    fn movement_event(self, event: EventKind) -> Self {
-        let transfer = self.movement.transfer();
-        let movement = match event {
-            EventKind::SessionMoving { to, move_id, phase }
-                if !matches!(self.movement, Movement::Moved { .. })
-                    && transfer
-                        .is_none_or(|current| current == (to, move_id)) =>
-            {
-                Movement::Moving {
-                    to,
-                    id: move_id,
-                    phase,
-                }
-            }
-            EventKind::SessionMoveFailed {
-                move_id,
-                reason,
-                resumable,
-            } if matches!(self.movement, Movement::Moving { .. }) => {
-                match transfer {
-                    Some((to, id)) if id == move_id => Movement::Failed {
-                        to,
-                        id,
-                        reason,
-                        resumable,
-                    },
-                    _ => return self,
-                }
-            }
-            EventKind::SessionMoved { to, move_id }
-                if transfer == Some((to, move_id)) =>
-            {
-                Movement::Moved { to, id: move_id }
-            }
-            _ => return self,
-        };
-        Self { movement, ..self }
     }
 
     fn model_changed(
@@ -1789,8 +1595,6 @@ mod tests {
                     turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
                     subagents_at: BTreeMap::new(),
                     activity: HostSeq(13),
-                    movement: super::Movement::Owned,
-                    arrival: None,
                 },
             ),
             (
@@ -1815,8 +1619,6 @@ mod tests {
                     turn_starts: BTreeMap::new(),
                     subagents_at: BTreeMap::new(),
                     activity: HostSeq(15),
-                    movement: super::Movement::Owned,
-                    arrival: None,
                 },
             ),
         ])

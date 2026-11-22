@@ -19,7 +19,6 @@ mod prelude;
 mod protocol;
 pub mod runtime;
 mod sign_in;
-pub mod transcript;
 
 pub use credentials::{
     CodexCredential, account, credential, default_model, info,

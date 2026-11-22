@@ -882,7 +882,3 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 .diff-note, .undo-scope, .undo-hint { padding: 0.6rem 0.75rem; color: var(--muted); font-size: 0.85rem; overflow-wrap: anywhere; }
 .undo-turn { margin: 0.25rem 0.75rem; background: var(--red); color: var(--surface); }
 .row-branch { display: block; font-size: 0.75rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.move-session { padding: 0.35rem 1rem; border-bottom: 1px solid var(--line); }
-.move-session summary { min-height: 44px; align-content: center; cursor: pointer; }
-.move-session button { margin: 0.25rem 0.5rem 0.25rem 0; }

@@ -9,7 +9,6 @@
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
-use alloc::string::ToString;
 use core::mem;
 
 use proto::{
@@ -19,9 +18,9 @@ use proto::{
 
 use crate::prelude::*;
 
-/// Format 5 removes checklist item identities and handoff events. A
-/// database of another format doesn't open.
-pub const FORMAT: u32 = 5;
+/// Format 6 removes session migration events. A database of another
+/// format does not open.
+pub const FORMAT: u32 = 6;
 
 /// Whether a database opens, and whether its format is to be written: a
 /// `created` one takes [`FORMAT`], and one whose `stored` format is another
@@ -185,11 +184,6 @@ impl Log {
     }
 
     #[must_use]
-    pub const fn epoch(&self) -> Epoch {
-        self.epoch
-    }
-
-    #[must_use]
     pub fn history(&self) -> &[Event] {
         &self.events
     }
@@ -286,59 +280,6 @@ impl Log {
             }
         };
         (event, effects)
-    }
-
-    /// Applies a move receipt and its imported history in one transaction.
-    ///
-    /// # Errors
-    /// Another command is committing, this session already exists, or
-    /// transferred history is incomplete.
-    pub fn arrive(
-        &mut self,
-        arrival: crate::movement::Arrival,
-    ) -> Result<Vec<Effect>, String> {
-        if arrival.incoming.receipt(&self.events) {
-            return Ok(Vec::new());
-        }
-        if self.active.is_some() {
-            return Err(String::from(
-                "the target is committing another command; retry this move",
-            ));
-        }
-        let session = arrival.incoming.session;
-        let prior = self.current_history(session);
-        match crate::movement::Reception::after(&prior) {
-            crate::movement::Reception::Vacant => {}
-            crate::movement::Reception::Returning => {
-                arrival
-                    .confirm_successor(&prior)
-                    .map_err(|err| err.to_string())?;
-            }
-            crate::movement::Reception::Owned => {
-                return Err(String::from(
-                    "the target already has this session",
-                ));
-            }
-        }
-        let events =
-            arrival.events(self.head()).map_err(|err| err.to_string())?;
-        let mut effects = Vec::with_capacity(2 * events.len() + 3);
-        effects.push(Effect::Open);
-        if let Some(conversation) = arrival.conversation {
-            effects.push(Effect::Store(Write::Conversation(
-                session,
-                conversation,
-            )));
-        }
-        effects.extend(
-            events
-                .iter()
-                .cloned()
-                .map(|event| Effect::Store(Write::Event(event))),
-        );
-        effects.push(Effect::Commit);
-        effects.extend(events.into_iter().map(|event| self.publish(event)));
-        Ok(effects)
     }
 
     /// Saves the session's conversation id, in the active command's

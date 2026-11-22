@@ -5,14 +5,11 @@
 
 pub mod agent;
 mod plugin;
-pub mod transcript;
 
 pub use plugin::{
     Configuring, CredentialSigningIn, Instance, Launch, Plugin,
-    ProviderInstance, Settings, TranscriptFiles,
+    ProviderInstance, Settings,
 };
-
-pub use transcript::{MAX_TRANSCRIPT_BYTES, Transcript, TranscriptFile};
 
 use agents::Note;
 use agents::runtime::{Command, Event};

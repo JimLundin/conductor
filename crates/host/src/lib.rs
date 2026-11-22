@@ -16,7 +16,6 @@ mod checkpoints;
 pub mod finish;
 pub mod fleet;
 pub mod log;
-pub mod movement;
 mod note;
 mod prelude;
 pub mod push;

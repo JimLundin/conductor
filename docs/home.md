@@ -22,7 +22,7 @@ on:
   every session in a matching project follows.
 
 The point is continuity without transcripts. A conversation belongs to one
-harness and one account; the work belongs to the issue, its branch and its
+host, harness and account; the work belongs to the issue, its branch and its
 notes. So when a subscription runs low, a new session on the same issue
 starts on the API instance, on another node or with another harness, and
 picks up from the branch and the notes.

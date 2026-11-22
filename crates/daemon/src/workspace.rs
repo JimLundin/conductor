@@ -15,8 +15,6 @@ use tokio::process::Child;
 
 pub use host::workspace::GitError;
 
-pub mod movement;
-
 fn failure(context: &str, error: &str) -> GitError {
     GitError::failed(context, error)
 }
@@ -160,15 +158,6 @@ pub async fn create(
     base: Option<&str>,
 ) -> Result<Workspace, GitError> {
     run(Plan::create(original, session, base), Some(data_dir)).await
-}
-
-async fn attach_moved(
-    data: &Path,
-    original: &HostPath,
-    session: SessionId,
-    tip: &str,
-) -> Result<Workspace, GitError> {
-    run(Plan::attach_moved(original, session, tip), Some(data)).await
 }
 
 pub async fn snapshot(
@@ -513,7 +502,7 @@ mod tests {
     };
     use proto::{
         Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor,
-        HostPath, HostSeq, Kept, SessionId, UndoAvailability, Workspace,
+        HostSeq, Kept, SessionId, UndoAvailability, Workspace,
     };
     use std::path::{Path, PathBuf};
 
@@ -546,159 +535,6 @@ mod tests {
         let _ = text(&source, &["add", "-A"]).await?;
         let _ = text(&source, &["commit", "-qm", "Initial source"]).await?;
         Ok(Repository { root, source, data })
-    }
-
-    #[tokio::test]
-    async fn a_bundle_moves_uncommitted_work_and_earlier_checkpoint_refs()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let repo = repository().await?;
-        let id = SessionId(ulid::Ulid::new().into());
-        let target = repo.root.join("target");
-        let _ =
-            text(&repo.root, &["clone", "--quiet", "--", "source", "target"])
-                .await?;
-        let source = create(&repo.data, &host(&repo.source)?, id, None).await?;
-        let first = snapshot(&source, id, CheckpointId(0), None).await?;
-        std::fs::write(
-            Path::new(&source.worktree.0).join("move.txt"),
-            "pending work\n",
-        )?;
-        let second =
-            snapshot(&source, id, CheckpointId(1), Some(&first)).await?;
-        let bundle = repo.root.join("move.bundle");
-        let refs = super::movement::export(
-            &source,
-            id,
-            &bundle,
-            &second,
-            Some(&first),
-        )
-        .await?;
-        let listed = text(
-            &target,
-            &[
-                "bundle",
-                "list-heads",
-                bundle.to_str().ok_or("non-UTF-8 bundle")?,
-            ],
-        )
-        .await?;
-        let included = host::movement::Refs::listed(id, &listed)?;
-        assert!(!included.checkpoints.contains_key(&0));
-        assert!(refs.checkpoints.contains_key(&0));
-        let incoming = host::movement::Incoming {
-            from: [3; 32],
-            id: proto::movement::MoveId(7),
-            session: id,
-        };
-        let target_data = repo.root.join("target-data");
-        let target_checkout = host(&target)?;
-        let imported = super::movement::import(
-            &target_data,
-            &target_checkout,
-            incoming,
-            &bundle,
-            &refs,
-            None,
-        )
-        .await?;
-        assert_attach_recovers(
-            &imported,
-            &target_data,
-            &target_checkout,
-            incoming,
-            &bundle,
-            &refs,
-        )
-        .await?;
-        let root = Path::new(&imported.worktree.0);
-        let compared = diff(
-            &imported,
-            &checkpoint(1, second.clone()),
-            &checkpoint(0, first.clone()),
-        )
-        .await?;
-        assert_eq!(
-            compared.files.first().map(|file| file.path.as_str()),
-            Some("move.txt")
-        );
-        restore(&imported, &first).await?;
-        assert!(!root.join("move.txt").try_exists()?);
-        super::movement::release(&source, &second).await?;
-        assert!(!Path::new(&source.worktree.0).try_exists()?);
-        assert_eq!(
-            text(&repo.source, &["rev-parse", &source.branch]).await?,
-            second
-        );
-        assert_released_checkout_accepts_return(
-            &repo, &imported, incoming, &first, &second,
-        )
-        .await
-    }
-
-    async fn assert_attach_recovers(
-        imported: &Workspace,
-        data: &Path,
-        target: &HostPath,
-        incoming: host::movement::Incoming,
-        bundle: &Path,
-        refs: &host::movement::Refs,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let root = Path::new(&imported.worktree.0);
-        std::fs::remove_file(
-            super::git_dir(root).await?.join("conductor-workspace"),
-        )?;
-        std::fs::write(root.join("move.txt"), "incomplete checkout\n")?;
-        let retry =
-            super::movement::import(data, target, incoming, bundle, refs, None)
-                .await?;
-        assert_eq!(&retry, imported);
-        assert_eq!(
-            std::fs::read_to_string(root.join("move.txt"))?,
-            "pending work\n"
-        );
-        Ok(())
-    }
-
-    async fn assert_released_checkout_accepts_return(
-        repo: &Repository,
-        departed: &Workspace,
-        outbound: host::movement::Incoming,
-        first: &str,
-        previous: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let id = outbound.session;
-        std::fs::write(
-            Path::new(&departed.worktree.0).join("return.txt"),
-            "new turn\n",
-        )?;
-        let next = snapshot(departed, id, CheckpointId(2), Some(first)).await?;
-        let bundle = repo.root.join("return.bundle");
-        let refs =
-            super::movement::export(departed, id, &bundle, &next, Some(first))
-                .await?;
-        let inbound = host::movement::Incoming {
-            from: [4; 32],
-            id: proto::movement::MoveId(8),
-            session: id,
-        };
-        let returned = super::movement::import(
-            &repo.data,
-            &host(&repo.source)?,
-            inbound,
-            &bundle,
-            &refs,
-            Some(previous),
-        )
-        .await?;
-        let root = Path::new(&returned.worktree.0);
-        assert_eq!(
-            std::fs::read_to_string(root.join("return.txt"))?,
-            "new turn\n"
-        );
-        assert_eq!(text(root, &["rev-parse", "HEAD"]).await?, next);
-        assert!(!root.join("move.txt").try_exists()?);
-        Ok(())
     }
 
     #[tokio::test]

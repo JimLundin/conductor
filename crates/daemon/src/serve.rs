@@ -38,7 +38,6 @@ pub struct Conductor {
     token: AuthToken,
     handshakes: Arc<Semaphore>,
     push: Option<crate::push::Push>,
-    mover: Option<crate::movement::Mover>,
     fleet: crate::fleet::Slot,
     endpoint: iroh::Endpoint,
     plugins: crate::Plugins,
@@ -72,7 +71,6 @@ struct Authenticated {
 /// What a subscription does next.
 enum Upcoming {
     Frame(Frame),
-    MoveTargets(crate::movement::Mover),
     /// Nothing to send: the home changed to none.
     Quiet,
     /// The client fell behind or the log or the registry stopped: end the
@@ -94,22 +92,6 @@ struct Feed {
     sign_ins: broadcast::Receiver<SignIn>,
     home: watch::Receiver<Option<Home>>,
     offers: watch::Receiver<Instances>,
-    movement: Option<MovementFeed>,
-}
-
-struct MovementFeed {
-    versions: tokio::sync::watch::Receiver<u64>,
-    mover: crate::movement::Mover,
-}
-
-async fn next_move_targets(movement: &mut Option<MovementFeed>) -> Upcoming {
-    let Some(feed) = movement else {
-        return core::future::pending().await;
-    };
-    if feed.versions.changed().await.is_err() {
-        return Upcoming::Resubscribe;
-    }
-    Upcoming::MoveTargets(feed.mover.clone())
 }
 
 impl ProtocolHandler for Conductor {
@@ -239,7 +221,6 @@ fn trace_command(command: &Command) {
         CommandBody::FinishSession { .. } => "finish_session",
         CommandBody::PushPublicKey => "push_public_key",
         CommandBody::RegisterPush(_) => "register_push",
-        CommandBody::MoveSession { .. } => "move_session",
         CommandBody::FleetStatus => "fleet_status",
         CommandBody::FleetInvite => "fleet_invite",
         CommandBody::FleetRevoke(_) => "fleet_revoke",
@@ -265,8 +246,6 @@ const fn command_outcome(result: &CommandResult) -> &'static str {
 }
 
 impl Conductor {
-    /// The host's protocol handler, which also notes the progress of its
-    /// sessions on issues from now on.
     #[must_use]
     pub(crate) fn new(
         log: Log,
@@ -288,49 +267,9 @@ impl Conductor {
             token,
             handshakes: Arc::new(Semaphore::new(HANDSHAKE_LIMIT)),
             push,
-            mover: None,
             fleet,
             endpoint,
             plugins,
-        }
-    }
-
-    pub(crate) fn enable_moves(
-        &mut self,
-        endpoint: iroh::Endpoint,
-        member: crate::fleet::Slot,
-        data: std::path::PathBuf,
-    ) -> crate::movement::Mover {
-        let mover = crate::movement::Mover::new(
-            endpoint,
-            member,
-            self.log.clone(),
-            self.registry.clone(),
-            self.home.clone(),
-            data,
-        );
-        self.mover = Some(mover.clone());
-        mover
-    }
-
-    async fn move_session(
-        &self,
-        session: SessionId,
-        to: proto::fleet::NodeId,
-        id: proto::movement::MoveId,
-    ) -> CommandResult {
-        match &self.mover {
-            Some(mover) => mover.order(session, to, id).await,
-            None => CommandResult::Rejected(Rejection::MoveRefused {
-                reason: String::from("session moves require fleet membership"),
-            }),
-        }
-    }
-
-    async fn move_targets(&self) -> Vec<proto::fleet::NodeId> {
-        match &self.mover {
-            Some(mover) => mover.targets().await,
-            None => Vec::new(),
         }
     }
 
@@ -516,10 +455,6 @@ impl Conductor {
             .await),
             Route::SignIn(order) => self.registry.sign_in(order).await,
             Route::Home(order) => return self.home.order(order, id).await,
-            Route::Move { session, to, retry } => {
-                let move_id = retry.unwrap_or(proto::movement::MoveId(id.0));
-                Ok(self.move_session(session, to, move_id).await)
-            }
             Route::Finish(session, by) => {
                 match self.registry.find(session).await? {
                     Some(handle) => handle.finish(by).await,
@@ -544,9 +479,6 @@ impl Conductor {
         session: SessionId,
         order: Order,
     ) -> Result<CommandResult, Stopped> {
-        if let Some(result) = self.resume_arrival(session, &order).await? {
-            return Ok(result);
-        }
         match self.registry.find(session).await? {
             None => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
             Some(handle) => Ok(handle
@@ -554,22 +486,6 @@ impl Conductor {
                 .await
                 .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
         }
-    }
-
-    async fn resume_arrival(
-        &self,
-        session: SessionId,
-        order: &Order,
-    ) -> Result<Option<CommandResult>, Stopped> {
-        if !matches!(order, Order::Send { .. }) {
-            return Ok(None);
-        }
-        let history = self.log.finish_history(session).await?;
-        if !host::movement::resume_for_message(&history) {
-            return Ok(None);
-        }
-        let resumed = self.relaunch(session, Relaunch::Continue).await?;
-        Ok((resumed != CommandResult::Accepted).then_some(resumed))
     }
 
     async fn relaunch(
@@ -607,21 +523,11 @@ impl Conductor {
                 let snapshot = offers.borrow_and_update().clone();
                 let mut home = self.home.watch();
                 let current = home.borrow_and_update().clone();
-                let membership = self.fleet.borrow().clone();
-                let movement = self.mover.clone().zip(membership).map(
-                    |(mover, member)| MovementFeed {
-                        versions: member.versions(),
-                        mover,
-                    },
-                );
                 let first = subscription
                     .replay
                     .into_iter()
                     .map(Frame::Event)
-                    .chain([
-                        Frame::Instances(snapshot),
-                        Frame::MoveTargets(self.move_targets().await),
-                    ])
+                    .chain([Frame::Instances(snapshot)])
                     .chain(running.into_iter().map(Frame::SignIn))
                     .chain(current.into_iter().map(Frame::Home))
                     .collect::<Vec<Frame>>();
@@ -632,7 +538,6 @@ impl Conductor {
                     sign_ins,
                     home,
                     offers,
-                    movement,
                 };
                 let result = feed.run(conn).await;
                 tracing::info!(?result, "subscription ended");
@@ -651,10 +556,6 @@ impl Feed {
                 Upcoming::Frame(frame) => {
                     wire::write(&mut self.send, &frame).await?;
                 }
-                Upcoming::MoveTargets(mover) => {
-                    let frame = Frame::MoveTargets(mover.targets().await);
-                    wire::write(&mut self.send, &frame).await?;
-                }
                 Upcoming::Quiet => {}
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
                 Upcoming::Gone => break Ok(()),
@@ -669,7 +570,6 @@ impl Feed {
             tokio::select! {
                 next = self.live.recv() => upcoming(next.map(Frame::Event)),
                 next = self.sign_ins.recv() => upcoming(next.map(Frame::SignIn)),
-                next = next_move_targets(&mut self.movement) => next,
                 changed = self.offers.changed() => changed.map_or(Upcoming::Resubscribe, |()| Upcoming::Frame(Frame::Instances(self.offers.borrow_and_update().clone()))),
                 changed = self.home.changed() => changed.map_or(
                     Upcoming::Resubscribe,

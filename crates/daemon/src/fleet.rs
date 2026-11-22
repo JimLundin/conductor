@@ -340,9 +340,6 @@ async fn new_invite(fleet: &Membership) -> anyhow::Result<Invite> {
 }
 
 #[cfg(test)]
-pub(crate) use tests::test_pair;
-
-#[cfg(test)]
 mod tests;
 
 async fn admit_existing(

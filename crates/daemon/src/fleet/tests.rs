@@ -55,44 +55,6 @@ async fn sync(
     .await?
 }
 
-pub async fn test_pair(
-    root_dir: &std::path::Path,
-    root_key: &SecretKey,
-    member_dir: &std::path::Path,
-    member_id: iroh::EndpointId,
-) -> anyhow::Result<(Membership, Membership)> {
-    std::fs::create_dir_all(root_dir)?;
-    let root_host = HostEntry {
-        node: *root_key.public().as_bytes(),
-        name: String::from("root fixture"),
-        relay: String::from("https://relay.example.invalid/"),
-        added_at: 0,
-    };
-    let root = Membership::initialize(
-        root_dir,
-        root_host.clone(),
-        root_key,
-        &root_dir.join("fixture-backup"),
-        b"fixture-only passphrase",
-    )?;
-    let invite = root.invite(0).await?;
-    let member = HostEntry {
-        node: *member_id.as_bytes(),
-        name: String::from("member fixture"),
-        ..root_host
-    };
-    let (certificate, config) =
-        root.join(member_id, &invite.secret, member, 0).await?;
-    let joined = Membership::install_joined(
-        member_dir,
-        member_id,
-        &invite,
-        certificate,
-        config,
-    )?;
-    Ok((root, joined))
-}
-
 #[tokio::test]
 async fn loopback_join_replays_for_one_host_and_propagates_revocations()
 -> anyhow::Result<()> {

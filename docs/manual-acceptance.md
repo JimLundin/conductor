@@ -14,7 +14,7 @@ paste the code, and tap **Send code**. The host stores the setup token.
 | --- | --- |
 | Phone sign-in | Approve the disposable Claude or ChatGPT sign-in when prompted. |
 | Notifications | In the Home Screen app, enable notifications and lock the phone. Tap the test notification and confirm it opens the session with the pending request. |
-| Two hosts | Tap **Add host** for the prepared Mac. Once session movement is ready, move the prepared session there and send one follow-up from the phone. |
+| Two hosts | Tap **Add host** for the prepared Mac. Start a new session there, send a message from the phone, then switch back to the original host's session and send a follow-up. |
 | Tasks and subagents | Hand the prepared Claude task to Codex and check that it finishes. Open the prepared child sessions to see their progress and results. |
 
 The agent prepares the hosts and sessions, runs the four-day and day-nine checks, and records the results.

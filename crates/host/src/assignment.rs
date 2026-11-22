@@ -50,8 +50,7 @@ impl Assigned {
                 issue: Some(*issue),
                 ..self
             },
-            EventKind::SessionRemoved { .. }
-            | EventKind::SessionMoved { .. } => Self {
+            EventKind::SessionRemoved { .. } => Self {
                 issue: None,
                 ..self
             },

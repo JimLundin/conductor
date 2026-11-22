@@ -1,5 +1,8 @@
 # Conductor glossary
 
+- **Session** is a conversation with an agent on one host. It belongs to
+  that host for its lifetime; work continued on another host starts a new
+  session.
 - **Checklist** is the latest ordered list of work and its status reported
   by an agent or sub-agent. Its entries have no identity across revisions
   and cannot be assigned to another session.

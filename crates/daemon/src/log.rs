@@ -15,7 +15,7 @@ use host::log::{
     Begun, Completion, Effect, FreshRequest, Kind, Log as Core, Ticket,
 };
 use proto::{
-    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
+    Catalog, CommandId, CommandResult, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -95,16 +95,11 @@ enum LogMsg {
         completion: Completion,
         reply: oneshot::Sender<()>,
     },
-    Arrive {
-        arrival: Box<host::movement::Arrival>,
-        reply: oneshot::Sender<Result<(), String>>,
-    },
     Conversation {
         session: SessionId,
         id: String,
         reply: oneshot::Sender<()>,
     },
-    Epoch(oneshot::Sender<Epoch>),
     History {
         reply: oneshot::Sender<Vec<Event>>,
     },
@@ -270,18 +265,6 @@ impl Log {
         .await
     }
 
-    pub(crate) async fn arrive(
-        &self,
-        arrival: host::movement::Arrival,
-    ) -> Result<(), String> {
-        self.ask(|reply| LogMsg::Arrive {
-            arrival: Box::new(arrival),
-            reply,
-        })
-        .await
-        .map_err(|err| err.to_string())?
-    }
-
     pub(crate) async fn conversation(
         &self,
         session: SessionId,
@@ -289,10 +272,6 @@ impl Log {
     ) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Conversation { session, id, reply })
             .await
-    }
-
-    pub(crate) async fn epoch(&self) -> Result<Epoch, Stopped> {
-        self.ask(LogMsg::Epoch).await
     }
 
     pub(crate) async fn history(&self) -> Result<Vec<Event>, Stopped> {
@@ -448,9 +427,6 @@ impl LogActor {
                 self.finishes.insert(ticket, reply);
                 self.perform(effects)?;
             }
-            LogMsg::Epoch(reply) => {
-                let _ = reply.send(self.core.epoch());
-            }
             LogMsg::History { reply } => {
                 let _ = reply.send(self.core.history().to_vec());
             }
@@ -468,13 +444,6 @@ impl LogActor {
                     .transpose()?
                     .flatten();
                 let _ = reply.send(value);
-            }
-            LogMsg::Arrive { arrival, reply } => {
-                let result = match self.core.arrive(*arrival) {
-                    Ok(effects) => Ok(self.perform(effects)?),
-                    Err(reason) => Err(reason),
-                };
-                let _ = reply.send(result);
             }
             LogMsg::Conversation { session, id, reply } => {
                 self.perform(self.core.conversation(session, id))?;
@@ -1025,6 +994,3 @@ mod durability_tests {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod movement_tests;

@@ -4,7 +4,6 @@ use core::mem;
 use crate::host_view::HostView;
 use crate::link::{LinkState, Status, Update};
 use crate::prelude::*;
-use proto::fleet::NodeId;
 use proto::{
     Catalog, Epoch, Feed, Home, InstanceId, Instances, SignIn, SignInStep,
 };
@@ -15,7 +14,6 @@ pub struct HostFold {
     pub status: Option<Status>,
     pub name: Option<String>,
     pub epoch: Option<Epoch>,
-    pub move_targets: Vec<NodeId>,
     pub instances: Option<Instances>,
     pub catalog: Catalog,
     pub home: Option<Home>,
@@ -37,12 +35,10 @@ impl HostFold {
             Update::Reset(epoch) => {
                 self.view = HostView::empty();
                 self.epoch = Some(epoch);
-                self.move_targets.clear();
             }
             Update::Welcome(welcome) => {
                 self.name = Some(welcome.host);
                 self.epoch = Some(welcome.epoch);
-                self.move_targets.clear();
                 self.instances = Some(welcome.instances);
                 self.catalog = welcome.catalog;
                 self.home = welcome.home;
@@ -50,9 +46,6 @@ impl HostFold {
             }
             Update::Feed(Feed::Event(event)) => {
                 self.view = mem::take(&mut self.view).apply(event);
-            }
-            Update::Feed(Feed::MoveTargets(targets)) => {
-                self.move_targets = targets;
             }
             Update::Feed(Feed::Home(home)) => self.home = Some(home),
             Update::Feed(Feed::SignIn(sign_in)) => self.sign_in(sign_in),

@@ -33,15 +33,8 @@ pub struct Created {
 /// Every session the log holds, in the order they were created.
 #[must_use]
 pub fn created(history: &[Event]) -> Vec<Created> {
-    let mut latest = alloc::collections::BTreeMap::new();
-    for event in history {
-        if matches!(event.kind, EventKind::SessionCreated { .. }) {
-            latest.insert(event.session, event.seq);
-        }
-    }
     history
         .iter()
-        .filter(|event| latest.get(&event.session) == Some(&event.seq))
         .filter_map(|event| match &event.kind {
             EventKind::SessionCreated {
                 instance,
@@ -68,19 +61,9 @@ pub fn created(history: &[Event]) -> Vec<Created> {
 /// One session's events.
 #[must_use]
 pub fn events_of(session: SessionId, history: &[Event]) -> Vec<Event> {
-    let start = history
-        .iter()
-        .rev()
-        .find(|event| {
-            event.session == session
-                && matches!(event.kind, EventKind::SessionArrived { .. })
-        })
-        .map(|event| event.seq);
     history
         .iter()
-        .filter(|event| {
-            event.session == session && start.is_none_or(|seq| event.seq >= seq)
-        })
+        .filter(|event| event.session == session)
         .cloned()
         .collect()
 }

@@ -20,9 +20,8 @@
 use dioxus::prelude::*;
 use proto::{Decision, RequestId};
 use ui::{
-    Ask, EffortControl, Footer, Intent, Keystroke, Mount, MoveIntent,
-    MovePanel, QuestionBody, Row, SessionIntent, ToolDetail, UndoNote,
-    WorkspaceContext,
+    Ask, EffortControl, Footer, Intent, Keystroke, Mount, QuestionBody, Row,
+    SessionIntent, ToolDetail, UndoNote, WorkspaceContext,
 };
 
 use crate::checkpoints::TurnChanges;
@@ -54,7 +53,6 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                 }
             }
             Workspace { context: pane.workspace }
-            MovementPanel { panel: pane.movement }
             Undo { note: pane.undo }
             if let Some(tasks) = pane.tasks {
                 Tasks { tasks }
@@ -83,67 +81,6 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                 }
             }
             Ending { footer: pane.footer }
-        }
-    }
-}
-
-#[component]
-fn MovementPanel(panel: MovePanel) -> Element {
-    match panel {
-        MovePanel::Hidden => rsx! {},
-        MovePanel::Offer(targets) => rsx! { MoveTargets { targets } },
-        MovePanel::Starting => rsx! {
-            p { class: "move-session", role: "status", "Starting the move…" }
-        },
-        MovePanel::Moving { text, can_retry } => rsx! {
-            div { class: "move-session", role: "status",
-                p { "{text}" }
-                if can_retry { Retry {} }
-            }
-        },
-        MovePanel::Failed {
-            text,
-            can_retry,
-            targets,
-        } => rsx! {
-            div { class: "move-session error", role: "alert",
-                p { "{text}" }
-                if can_retry { Retry {} }
-                if !targets.is_empty() { MoveTargets { targets } }
-            }
-        },
-        MovePanel::Moved(text) => rsx! {
-            p { class: "move-session", role: "status", "{text}" }
-        },
-    }
-}
-
-#[component]
-fn MoveTargets(targets: Vec<ui::MoveTarget>) -> Element {
-    let shell = use_context::<Shell>();
-    rsx! {
-        details { class: "move-session",
-            summary { "Move session" }
-            for target in targets {
-                button {
-                    key: "{target.id.key()}",
-                    r#type: "button",
-                    onclick: move |_| shell.dispatch(Intent::Move(MoveIntent::To(target.id))),
-                    "Move to {target.name}"
-                }
-            }
-        }
-    }
-}
-
-#[component]
-fn Retry() -> Element {
-    let shell = use_context::<Shell>();
-    rsx! {
-        button {
-            r#type: "button",
-            onclick: move |_| shell.dispatch(Intent::Move(MoveIntent::Retry)),
-            "Retry move"
         }
     }
 }
@@ -502,7 +439,6 @@ fn Ending(footer: Footer) -> Element {
                 }
             }
         },
-        Footer::Moving => rsx! {},
         Footer::Composer(composer) => rsx! { Composer { composer } },
     }
 }
