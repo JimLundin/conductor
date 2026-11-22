@@ -5,12 +5,10 @@
 //! one step along a relation, so it ends however the issues link, cycles
 //! included.
 
-use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::{Datum, Issue, ProjectId};
+use proto::{Datum, Issue};
 
-use super::graph::Graph;
 use super::{Flow, Literal, Predicate, Quantifier};
 use crate::prelude::*;
 
@@ -31,34 +29,17 @@ pub struct Failure {
     pub path: Vec<String>,
 }
 
-/// The issues a predicate's relations reach, as the caller holds them.
-pub trait Among {
-    fn issues(&self) -> impl Iterator<Item = &Issue>;
-}
-
-impl Among for Graph {
-    fn issues(&self) -> impl Iterator<Item = &Issue> {
-        self.issues.iter()
-    }
-}
-
-/// The issues by project, as a host lists them.
-impl Among for BTreeMap<ProjectId, Vec<Issue>> {
-    fn issues(&self) -> impl Iterator<Item = &Issue> {
-        self.values().flatten()
-    }
-}
-
-/// Whether `issue` meets `predicate` among `issues`.
+/// Whether `issue` meets `predicate` among `issues`, the issues its
+/// relations can reach.
 ///
 /// # Errors
 ///
 /// The failure that decides it: for `all`, the first part that fails; for
 /// `any`, the first of the parts, all of which fail; across a relation,
 /// the first issue reached that decides it, or the relation reaching none.
-pub fn holds<A: Among + ?Sized>(
+pub fn holds(
     flow: &Flow,
-    issues: &A,
+    issues: &[&Issue],
     issue: &Issue,
     moving: Move<'_>,
     predicate: &Predicate,
@@ -71,13 +52,13 @@ pub fn holds<A: Among + ?Sized>(
     .holds(issue, predicate, &[])
 }
 
-struct Walk<'a, A: ?Sized> {
+struct Walk<'a> {
     flow: &'a Flow,
-    issues: &'a A,
+    issues: &'a [&'a Issue],
     moving: Move<'a>,
 }
 
-impl<A: Among + ?Sized> Walk<'_, A> {
+impl Walk<'_> {
     fn holds(
         &self,
         issue: &Issue,
@@ -206,13 +187,15 @@ impl<A: Among + ?Sized> Walk<'_, A> {
                 .flatten()
                 .filter_map(|id| {
                     self.issues
-                        .issues()
+                        .iter()
+                        .copied()
                         .find(|other| other.id.to_string() == *id)
                 })
                 .collect(),
             Some((relation, true)) => {
                 self.issues
-                    .issues()
+                    .iter()
+                    .copied()
                     .filter(|other| {
                         other.links.get(&relation.name).is_some_and(|ids| {
                             ids.contains(&issue.id.to_string())

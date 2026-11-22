@@ -10,7 +10,7 @@ use alloc::collections::BTreeMap;
 use super::eval::{Failure, Move, holds};
 use proto::Issue;
 
-use super::graph::{File, Graph, read};
+use super::graph::{File, read};
 use super::{Flow, Severity, load};
 use crate::prelude::*;
 use crate::project::listed;
@@ -129,11 +129,12 @@ pub fn check(inputs: &Inputs) -> Report {
         );
         error(Some(named(&problem.issue)), message)
     }));
+    let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
         let subject = named(&format!("{}/{}", issue.project.0, issue.id));
         findings.extend(of_issue(
             &flow,
-            &graph,
+            &issues,
             issue,
             Move::default(),
             &subject,
@@ -142,11 +143,11 @@ pub fn check(inputs: &Inputs) -> Report {
     Report { findings }
 }
 
-/// What the flow's sections and rules say of `issue`, weighing `moving`
-/// when a move is being made.
+/// What the flow's sections and rules say of `issue` among `issues`,
+/// weighing `moving` when a move is being made.
 pub(crate) fn of_issue(
     flow: &Flow,
-    graph: &Graph,
+    issues: &[&Issue],
     issue: &Issue,
     moving: Move<'_>,
     subject: &str,
@@ -166,9 +167,9 @@ pub(crate) fn of_issue(
         })
         .collect();
     for rule in &flow.rules {
-        let applies = holds(flow, graph, issue, moving, &rule.when).is_ok();
+        let applies = holds(flow, issues, issue, moving, &rule.when).is_ok();
         let broken = applies
-            .then(|| holds(flow, graph, issue, moving, &rule.require).err())
+            .then(|| holds(flow, issues, issue, moving, &rule.require).err())
             .flatten();
         findings.extend(broken.map(|failure| Finding {
             severity: rule.severity,

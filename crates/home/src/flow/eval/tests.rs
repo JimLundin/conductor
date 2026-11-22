@@ -61,6 +61,11 @@ fn linked(mut issue: Issue, relation: &str, ids: &[&str]) -> Issue {
     issue
 }
 
+/// The graph's issues, as `holds` takes them.
+fn among(graph: &Graph) -> Vec<&Issue> {
+    graph.issues.iter().collect()
+}
+
 fn rule(flow: &Flow, index: usize) -> Predicate {
     flow.rules
         .get(index)
@@ -81,7 +86,13 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &graph, &spec, Move::default(), &rule(&flow, 0)),
+        holds(
+            &flow,
+            &among(&graph),
+            &spec,
+            Move::default(),
+            &rule(&flow, 0)
+        ),
         Err(Failure {
             atom: String::from("{ status_role = \"terminal\" }"),
             issue: named("review"),
@@ -94,7 +105,13 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &finished, &spec, Move::default(), &rule(&flow, 0)),
+        holds(
+            &flow,
+            &among(&finished),
+            &spec,
+            Move::default(),
+            &rule(&flow, 0)
+        ),
         Ok(())
     );
     let alone = Graph {
@@ -102,7 +119,13 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &alone, &spec, Move::default(), &rule(&flow, 0)),
+        holds(
+            &flow,
+            &among(&alone),
+            &spec,
+            Move::default(),
+            &rule(&flow, 0)
+        ),
         Err(Failure {
             atom: String::from("children reaches no issue"),
             issue: named("spec"),
@@ -121,7 +144,13 @@ fn blocking_holds_until_every_blocker_is_finished_and_ends_on_a_cycle() {
         problems: Vec::new(),
     };
     assert_eq!(
-        holds(&flow, &graph, &one, Move::default(), &rule(&flow, 1)),
+        holds(
+            &flow,
+            &among(&graph),
+            &one,
+            Move::default(),
+            &rule(&flow, 1)
+        ),
         Err(Failure {
             atom: String::from("{ status_role = \"terminal\" }"),
             issue: named("two"),
@@ -146,9 +175,12 @@ fn a_move_is_weighed_from_and_to() {
         Predicate::From(Box::new(Predicate::Stage(String::from("spec")))),
         Predicate::To(Box::new(Predicate::Stage(String::from("slice")))),
     ]));
-    assert_eq!(holds(&flow, &graph, &after, moving, &leaving), Ok(()));
     assert_eq!(
-        holds(&flow, &graph, &after, Move::default(), &leaving),
+        holds(&flow, &among(&graph), &after, moving, &leaving),
+        Ok(())
+    );
+    assert_eq!(
+        holds(&flow, &among(&graph), &after, Move::default(), &leaving),
         Err(Failure {
             atom: String::from("from: no move is being weighed"),
             issue: named("spec"),
@@ -165,10 +197,7 @@ fn a_field_left_out_has_its_default() {
         name: String::from("priority"),
         value: Literal::Text(String::from("normal")),
     };
-    assert_eq!(
-        holds(&flow, &Graph::default(), &task, Move::default(), &normal),
-        Ok(())
-    );
+    assert_eq!(holds(&flow, &[], &task, Move::default(), &normal), Ok(()));
 }
 
 /// The predicate's meaning, written directly: no explanations.
@@ -404,7 +433,7 @@ proptest! {
         } else {
             Move::default()
         };
-        let evaluated = holds(&flow, &graph, subject, moving, &predicate);
+        let evaluated = holds(&flow, &among(&graph), subject, moving, &predicate);
         prop_assert_eq!(evaluated.is_ok(), meets(&flow, &graph, subject, moving, &predicate));
         if let Err(failure) = evaluated {
             prop_assert!(!failure.atom.is_empty());

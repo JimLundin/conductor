@@ -386,7 +386,8 @@ fn finished(
             } else {
                 Move::default()
             };
-            of_issue(flow, &graph, issue, moving, &subject)
+            let issues: Vec<&Issue> = graph.issues.iter().collect();
+            of_issue(flow, &issues, issue, moving, &subject)
         });
     problems.extend(
         findings

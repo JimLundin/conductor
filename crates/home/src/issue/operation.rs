@@ -510,11 +510,11 @@ impl SessionUpdate {
             }
             Self::Done => None,
             Self::Started | Self::Finished { summary: None, .. } => {
-                let issue =
-                    issues.values().flatten().find(|known| known.id == id)?;
+                let all: Vec<&Issue> = issues.values().flatten().collect();
+                let issue = all.iter().find(|known| known.id == id)?;
                 let (moved, reason) = match update {
                     Self::Started => (
-                        role::started(flow, issues, issue),
+                        role::started(flow, &all, issue),
                         "a session started on it",
                     ),
                     Self::Finished { landed, .. } => (

@@ -70,11 +70,6 @@ fn issue(id: IssueId, status: &str) -> Issue {
     }
 }
 
-/// The host's listing of `issues`, all in one project.
-fn listing(issues: Vec<Issue>) -> BTreeMap<ProjectId, Vec<Issue>> {
-    BTreeMap::from([(ProjectId(text("home")), issues)])
-}
-
 #[test]
 fn a_new_issue_opens_in_the_first_idle_status() {
     assert_eq!(opening(&renamed()), Some("backlog"));
@@ -85,7 +80,7 @@ fn starting_a_session_makes_an_idle_or_startable_issue_active_by_role() {
     let flow = renamed();
     let after = |status: &str| {
         let issue = issue(WAITING, status);
-        started(&flow, &listing(Vec::from([issue.clone()])), &issue)
+        started(&flow, &[&issue], &issue)
     };
     assert_eq!(
         RENAMED.map(after),
@@ -101,8 +96,8 @@ fn an_issue_blocked_by_one_not_yet_built_is_not_startable() {
         .links
         .insert(text("blocked_by"), Vec::from([BLOCKER.to_string()]));
     let offered = |status: &str| {
-        let issues =
-            listing(Vec::from([waiting.clone(), issue(BLOCKER, status)]));
+        let blocking = issue(BLOCKER, status);
+        let issues = [&waiting, &blocking];
         (
             can_start(&flow, &issues, &waiting),
             started(&flow, &issues, &waiting).is_some(),

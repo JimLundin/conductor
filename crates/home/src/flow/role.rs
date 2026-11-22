@@ -8,7 +8,7 @@ use alloc::boxed::Box;
 
 use proto::Issue;
 
-use super::eval::{self, Among};
+use super::eval;
 use super::{Flow, Predicate, Quantifier, Role, Shape};
 
 /// The status that holds `role`: the first with it the flow declares.
@@ -29,11 +29,7 @@ pub fn opening(flow: &Flow) -> Option<&str> {
 /// taken up, and every issue it depends on, through each of the flow's
 /// dependency relations, is built or dropped.
 #[must_use]
-pub fn can_start<A: Among + ?Sized>(
-    flow: &Flow,
-    issues: &A,
-    issue: &Issue,
-) -> bool {
+pub fn can_start(flow: &Flow, issues: &[&Issue], issue: &Issue) -> bool {
     eval::holds(flow, issues, issue, eval::Move::default(), &startable(flow))
         .is_ok()
 }
@@ -64,9 +60,9 @@ fn any_of(roles: &[Role]) -> Predicate {
 /// The status `issue` moves to once a session on it has started, among
 /// `issues`: one that can start becomes active.
 #[must_use]
-pub fn started<'a, A: Among + ?Sized>(
+pub fn started<'a>(
     flow: &'a Flow,
-    issues: &A,
+    issues: &[&Issue],
     issue: &Issue,
 ) -> Option<&'a str> {
     can_start(flow, issues, issue)
