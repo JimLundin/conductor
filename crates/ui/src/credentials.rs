@@ -279,9 +279,8 @@ impl Forms {
                 (self, Vec::new())
             }
             CredentialIntent::Save { provider, kind } => {
-                let described = catalog
-                    .of(provider)
-                    .and_then(|info| info.form(&kind));
+                let described =
+                    catalog.of(provider).and_then(|info| info.form(&kind));
                 match described {
                     Some(form) => self.save(provider, form, at),
                     None => (self, Vec::new()),

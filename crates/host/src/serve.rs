@@ -203,9 +203,7 @@ impl Route {
             | Self::SignIn(_)
             | Self::Push(_)
             | Self::Fleet(_)
-            | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => {
-                None
-            }
+            | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => None,
             Self::Configure(_)
             | Self::Finish(..)
             | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {

@@ -7,8 +7,8 @@ use proto::{
 use crate::log::Kind;
 
 use super::{
-    Admission, Configure, HomeOrder, Order, Relaunch, Route,
-    SignInOrder, Stream, admit, route, stream,
+    Admission, Configure, HomeOrder, Order, Relaunch, Route, SignInOrder,
+    Stream, admit, route, stream,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -169,7 +169,10 @@ fn issue_commands_keep_a_receipt_and_name_their_client() {
         },
     ]
     .map(|body| route(body, phone()));
-    assert_eq!(routed.each_ref().map(Route::ledger), [Some(Kind::Receipt); 2]);
+    assert_eq!(
+        routed.each_ref().map(Route::ledger),
+        [Some(Kind::Receipt); 2]
+    );
     assert_eq!(
         routed,
         [
@@ -187,10 +190,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
         CommandBody::CloneProject { project: project() },
     ]
     .map(|body| route(body, phone()));
-    assert_eq!(
-        routed.each_ref().map(Route::ledger),
-        [None; 2]
-    );
+    assert_eq!(routed.each_ref().map(Route::ledger), [None; 2]);
     assert_eq!(
         routed,
         [
@@ -237,10 +237,7 @@ fn sign_in_commands_keep_no_receipt() {
         },
     ]
     .map(|body| route(body, phone()));
-    assert_eq!(
-        routed.each_ref().map(Route::ledger),
-        [None; 4]
-    );
+    assert_eq!(routed.each_ref().map(Route::ledger), [None; 4]);
     assert_eq!(
         routed,
         [

@@ -242,10 +242,8 @@ impl Log {
         key: CommandId,
         kind: Kind,
     ) -> Result<BeginCommand, Stopped> {
-        self.ask(|reply| {
-            LogMsg::Begin(CommandStart { key, kind, reply })
-        })
-        .await
+        self.ask(|reply| LogMsg::Begin(CommandStart { key, kind, reply }))
+            .await
     }
 
     pub(crate) async fn conversation(
