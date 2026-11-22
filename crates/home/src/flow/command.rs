@@ -115,6 +115,13 @@ impl Write {
     pub fn path(&self) -> String {
         crate::layout::issue_file(&self.project, &self.stem)
     }
+
+    /// The folder it is written in, from the home's root, made first since
+    /// a project's first issue finds none.
+    #[must_use]
+    pub fn folder(&self) -> String {
+        crate::layout::issues(&self.project)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,14 +133,12 @@ pub struct Outcome {
 
 impl Outcome {
     /// What the command line says once the shell has saved the writes, or
-    /// failed to, and its exit code.
+    /// only why it couldn't, and its exit code.
     #[must_use]
     pub fn ended(&self, saved: Result<(), String>) -> (String, u8) {
         let code = u8::from(self.failed || saved.is_err());
-        let text = saved.map_or_else(
-            |reason| format!("{}{}", self.output, refusal(&reason)),
-            |()| self.output.clone(),
-        );
+        let text = saved
+            .map_or_else(|reason| refusal(&reason), |()| self.output.clone());
         (text, code)
     }
 }
