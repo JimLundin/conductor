@@ -327,7 +327,7 @@ pub struct Session {
     /// Tool calls the user denied, whose failed result means `Declined`.
     declined: Vec<(Option<SubagentId>, ToolCallId)>,
     checklist: Vec<ChecklistEntry>,
-    subagent_tasks: BTreeMap<SubagentId, Vec<ChecklistEntry>>,
+    subagent_checklists: BTreeMap<SubagentId, Vec<ChecklistEntry>>,
     removed: bool,
     flow: Flow,
 }
@@ -363,7 +363,7 @@ impl Session {
                 .unwrap_or(RequestId(0)),
             declined: Vec::new(),
             checklist: last_checklist(history.iter()),
-            subagent_tasks: history
+            subagent_checklists: history
                 .iter()
                 .filter_map(|entry| match &entry.kind {
                     EventKind::Subagent {
@@ -871,7 +871,7 @@ impl Session {
         match agent {
             Some(scope) => {
                 let previous =
-                    self.subagent_tasks.entry(scope.clone()).or_default();
+                    self.subagent_checklists.entry(scope.clone()).or_default();
                 if *previous == snapshot {
                     Vec::new()
                 } else {

@@ -16,11 +16,9 @@ Keep assertions at each boundary where they detect a wiring or behavior
 failure. The same user action can exercise distinct guarantees in the wire,
 daemon and browser suites.
 
-Historical undo and provider rewind are removed. Current snapshot checks
-cover capture and per-turn comparisons; Continue checks still verify
-ordinary provider resume after a restart. The dated run and allocation
-report below describe the versions tested then, including features since
-removed.
+Snapshot checks cover capture and per-turn comparisons; Continue checks
+verify ordinary provider resume after a restart. The dated run below
+describes the versions tested then.
 
 ## Models in the live-host check
 
@@ -50,9 +48,6 @@ isolated provider homes. Each session's creation event identified the expected
 account. Both providers passed file approval, interruption on first output,
 interruption at send, the subprocess credential check, and crash followed by
 Continue with the original codeword. The source checkouts stayed clean.
-One additional session per gateway exercised the optional undo scenario.
-Both restored the retained file and conversation history and removed the
-discarded file.
 
 | Pinned CLI | Session model recorded by Conductor | Model in the provider's own session record |
 | --- | --- | --- |
@@ -65,45 +60,3 @@ HTTP 400. The passing run used its documented
 observed the control variable in the tool subprocess and zero copies of the
 provider key. Codex resumed after the test interrupted the registered account's
 app-server in its own work directory. [Claude gateway behavior](../crates/claude/PROTOCOL.md)
-
-## Historical checkpoint preview allocations
-
-A draft edit rebuilt a native session pane with 60 transcript rows, 12
-turns and three open checkpoint previews. Each preview held four text
-patches of 64 KiB each. The control used the same open previews and file
-metadata with empty patch text. Each measurement recorded one
-`State::detail()` call. Fixture setup, diff loading, the draft edit itself
-and browser rendering were outside that call.
-
-| Fixture | Baseline allocations | Baseline bytes | With #96 allocations | With #96 bytes |
-| --- | ---: | ---: | ---: | ---: |
-| Whole pane with 64 KiB patches | 250 | 815,205 | 178 | 24,705 |
-| Whole pane with empty patches | 238 | 28,773 | 178 | 24,705 |
-| Difference per text patch | 1 | 65,536 | 0 | 0 |
-
-The baseline was `447f2aa`. The comparison applied the checkpoint preview
-implementation only to that baseline. The measurement used
-`allocation-counter` 0.8.1 with `nightly-2026-11-15`
-(`rustc 1.102.0-nightly (5f4effd57 2026-11-13)`) on x86-64 Linux in Cargo's
-test profile.
-
-Use a disposable checkout at `447f2aa` and the
-[allocation fixture](verification/preview_allocations.rs) from this tree.
-Set `fixed_checkout` to the absolute path of a checkout with the original
-#96 fix, before commit snapshots replaced the checkpoint model, then run
-from the disposable checkout. These commands reproduce that historical
-comparison and are not checks for the current snapshot implementation.
-
-```sh
-mkdir -p crates/ui/tests
-cp "$fixed_checkout/docs/verification/preview_allocations.rs" crates/ui/tests/
-sed -i 's/^    fn detail(/    pub fn detail(/' crates/ui/src/state.rs
-cargo +nightly-2026-11-15 add --dev -p ui allocation-counter@=0.8.1
-cargo +nightly-2026-11-15 test --locked -j 1 -p ui --test preview_allocations -- --nocapture
-```
-
-For the isolated comparison, copy the fixed
-`crates/ui/src/checkpoints.rs` and the fixed `Pane::entries` method in
-`crates/ui/src/session.rs` into the disposable checkout. Add `Preview` to
-the `checkpoints` re-exports in `crates/ui/src/lib.rs` and repeat the test
-command.

@@ -629,7 +629,7 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
     .await?;
     accepted(&writer, message(session, "two")).await?;
     reader.reconnect().await;
-    legacy_events_until(&mut written, Until::TurnEnd).await?;
+    conversation_events_until(&mut written, Until::TurnEnd).await?;
     let third = feed_turn(&writer, &mut written, session, "three").await?;
     observed.extend(
         events_through(
@@ -880,16 +880,16 @@ async fn kinds_until(
     updates: &mut Updates,
     until: Until,
 ) -> Fallible<Vec<EventKind>> {
-    Ok(legacy_events_until(updates, until)
+    Ok(conversation_events_until(updates, until)
         .await?
         .into_iter()
         .map(|event| event.kind)
         .collect())
 }
 
-/// Preserve existing protocol assertions while workspace metadata has dedicated
-/// raw-event coverage below.
-async fn legacy_events_until(
+/// The events through the first that reaches `until`, without the workspace
+/// and snapshot metadata, which have tests of their own.
+async fn conversation_events_until(
     updates: &mut Updates,
     until: Until,
 ) -> Fallible<Vec<Event>> {
@@ -1753,9 +1753,11 @@ async fn an_interrupt_withdraws_an_open_question() -> Fallible {
     let (link, mut updates) = fx.connect().await?;
     let session = launch(&link, start(Provider::Claude, &dir)).await?;
     let _ = send(&link, message(session, "ask me")).await?;
-    let mut events = legacy_events_until(&mut updates, Until::Question).await?;
+    let mut events =
+        conversation_events_until(&mut updates, Until::Question).await?;
     accepted(&link, interrupt(session)).await?;
-    events.extend(legacy_events_until(&mut updates, Until::TurnEnd).await?);
+    events
+        .extend(conversation_events_until(&mut updates, Until::TurnEnd).await?);
     assert_eq!(
         events
             .iter()
@@ -1932,10 +1934,10 @@ async fn two_codex_sessions_share_one_server() -> Fallible {
     let first_session = launch(&link, start(Provider::Codex, &dir)).await?;
     // The second session starts once the first has its thread, so the first
     // gets the recording's first thread.
-    let first = legacy_events_until(&mut updates, Until::Ready).await?;
+    let first = conversation_events_until(&mut updates, Until::Ready).await?;
     let second_session = launch(&link, start(Provider::Codex, &dir)).await?;
     assert_ne!(first_session, second_session);
-    let second = legacy_events_until(&mut updates, Until::Ready).await?;
+    let second = conversation_events_until(&mut updates, Until::Ready).await?;
     assert_eq!(
         [
             send(&link, message(first_session, "create a.txt")).await?,
@@ -1944,8 +1946,8 @@ async fn two_codex_sessions_share_one_server() -> Fallible {
         [CommandResult::Accepted, CommandResult::Accepted]
     );
     let asked = [
-        legacy_events_until(&mut updates, Until::Request).await?,
-        legacy_events_until(&mut updates, Until::Request).await?,
+        conversation_events_until(&mut updates, Until::Request).await?,
+        conversation_events_until(&mut updates, Until::Request).await?,
     ]
     .concat();
     assert_eq!(
@@ -1956,8 +1958,8 @@ async fn two_codex_sessions_share_one_server() -> Fallible {
         [CommandResult::Accepted, CommandResult::Accepted]
     );
     let ended = [
-        legacy_events_until(&mut updates, Until::TurnEnd).await?,
-        legacy_events_until(&mut updates, Until::TurnEnd).await?,
+        conversation_events_until(&mut updates, Until::TurnEnd).await?,
+        conversation_events_until(&mut updates, Until::TurnEnd).await?,
     ]
     .concat();
     let view = fold([first, second, asked, ended].concat());
@@ -2107,13 +2109,13 @@ async fn the_app_server_exiting_closes_every_codex_session() -> Fallible {
     )?;
     let (link, mut updates) = fx.connect().await?;
     let first_session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let first = legacy_events_until(&mut updates, Until::Ready).await?;
+    let first = conversation_events_until(&mut updates, Until::Ready).await?;
     let second_session = launch(&link, start(Provider::Codex, &dir)).await?;
     assert_ne!(first_session, second_session);
     let seen = [
         first,
-        legacy_events_until(&mut updates, Until::Closed).await?,
-        legacy_events_until(&mut updates, Until::Closed).await?,
+        conversation_events_until(&mut updates, Until::Closed).await?,
+        conversation_events_until(&mut updates, Until::Closed).await?,
     ]
     .concat();
     let closed = EventKind::SessionClosed {
@@ -2495,7 +2497,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
     );
 
     launch(&link, start_on(claude_api.clone(), &dir)).await?;
-    let events = legacy_events_until(&mut updates, Until::Ready).await?;
+    let events = conversation_events_until(&mut updates, Until::Ready).await?;
     let env = read(&dir.join("env.txt"))?;
     assert_gateway_env(&env, CLAUDE_TOKEN, GATEWAY, &home);
     assert_eq!(scrubbed(&env), scrubbed(&probe_env));
@@ -2657,7 +2659,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         Some(codex_gateway())
     );
     launch(&link, start_on(codex_api.clone(), &server)).await?;
-    let first = legacy_events_until(&mut updates, Until::Ready).await?;
+    let first = conversation_events_until(&mut updates, Until::Ready).await?;
     let home = dir_of(&data, "home", &codex_api);
     assert_eq!(
         read(&server.join("env.txt"))?,
@@ -2687,7 +2689,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         }]
     );
     launch(&link, start_on(codex_api, &server)).await?;
-    let second = legacy_events_until(&mut updates, Until::Ready).await?;
+    let second = conversation_events_until(&mut updates, Until::Ready).await?;
     assert_eq!(
         read(&server.join("env.txt"))?,
         format!(
@@ -3202,7 +3204,8 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
     let (phone, mut updates) = fx.connect().await?;
     let session = launch(&phone, start(Provider::Claude, &dir)).await?;
     let _ = send(&phone, message(session, "delegate")).await?;
-    let events = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let events =
+        conversation_events_until(&mut updates, Until::TurnEnd).await?;
     let agent = || SubagentId(String::from("af19920e77caaf1de"));
     let call = || ToolCallId(String::from("toolu_015av4j2jHs5CwVCv76qxYf2"));
     let description = || String::from("Run TodoWrite checklist task");
@@ -3340,7 +3343,8 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
     let (phone, mut updates) = fx.connect().await?;
     let session = launch(&phone, start(Provider::Codex, &dir)).await?;
     let _ = send(&phone, message(session, "delegate")).await?;
-    let events = legacy_events_until(&mut updates, Until::Request).await?;
+    let events =
+        conversation_events_until(&mut updates, Until::Request).await?;
     let request = events
         .last()
         .and_then(|event| match &event.kind {
@@ -3352,7 +3356,7 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
         })
         .ok_or("expected the child approval")?;
     accepted(&phone, resolve(session, request.0, Decision::Approve)).await?;
-    let _ = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let _ = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     let view = fold(fx.history().await?);
     let shown = view.sessions.get(&session).ok_or("missing session")?;
     let [alpha, beta] = shown.subagents.as_slice() else {
@@ -3402,7 +3406,7 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure()
     let (phone, mut updates) = fx.connect().await?;
     let session = launch(&phone, start(Provider::Claude, &dir)).await?;
     let _ = send(&phone, message(session, "sheep?")).await?;
-    let turn = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let turn = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
         (
             turn.iter()
@@ -3455,10 +3459,10 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
         .await?,
     )?;
     let _ = send(&link, message(session, "sheep?")).await?;
-    let first = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let first = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     accepted(&link, continued(session)).await?;
     let _ = send(&link, message(session, "count")).await?;
-    let killed = legacy_events_until(&mut updates, Until::Closed).await?;
+    let killed = conversation_events_until(&mut updates, Until::Closed).await?;
     assert_eq!(
         killed
             .iter()
@@ -3478,9 +3482,9 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
         CommandResult::Rejected(Rejection::SessionClosed)
     );
     accepted(&link, continued(session)).await?;
-    let ready = legacy_events_until(&mut updates, Until::Ready).await?;
+    let ready = conversation_events_until(&mut updates, Until::Ready).await?;
     let _ = send(&link, message(session, "how many sheep?")).await?;
-    let after = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let after = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
         after
             .iter()
@@ -3540,9 +3544,9 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason()
     let (link, mut updates) = fx.connect().await?;
     let session = launch(&link, start(Provider::Claude, &dir)).await?;
     let _ = send(&link, message(session, "sheep?")).await?;
-    let _ = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let _ = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     let _ = send(&link, message(session, "count")).await?;
-    let _ = legacy_events_until(&mut updates, Until::Closed).await?;
+    let _ = conversation_events_until(&mut updates, Until::Closed).await?;
     accepted(&link, continued(session)).await?;
     assert_eq!(
         kinds_until(&mut updates, Until::Closed).await?,
@@ -3831,7 +3835,8 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
     let (phone, mut updates) = first.connect().await?;
     let session = launch(&phone, start(Provider::Claude, &dir)).await?;
     let _ = send(&phone, message(session, "create a.txt")).await?;
-    let before = legacy_events_until(&mut updates, Until::Request).await?;
+    let before =
+        conversation_events_until(&mut updates, Until::Request).await?;
     let cursor = before.last().ok_or("expected a value")?.seq;
     let conversation = argv(&dir)?
         .first()
@@ -5342,7 +5347,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
     hold_first_turn(&dir)?;
     let (phone, mut updates) = fx.connect().await?;
     let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let opened = legacy_events_until(&mut updates, Until::Ready).await?;
+    let opened = conversation_events_until(&mut updates, Until::Ready).await?;
     let _ = send(&phone, message(session, "plan")).await?;
     let mid_turn = [
         send(&phone, set_effort(session, Effort::Max)).await?,
@@ -5351,7 +5356,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
     ];
     let before = written_to_claude(&dir)?;
     std::fs::write(dir.join("release"), "")?;
-    let turn = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let turn = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     let lists = task_lists(&turn);
     assert_eq!(
         (
@@ -5395,7 +5400,7 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
         )
     );
     let _ = send(&phone, message(session, "pong")).await?;
-    let next = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let next = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
         written_to_claude(&dir)?,
         [
@@ -5423,9 +5428,9 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
     let (fx, dir) = codex_host("codex-plan-effort.jsonl").await?;
     let (phone, mut updates) = fx.connect().await?;
     let session = launch(&phone, start(Provider::Codex, &dir)).await?;
-    let _ = legacy_events_until(&mut updates, Until::Ready).await?;
+    let _ = conversation_events_until(&mut updates, Until::Ready).await?;
     let _ = send(&phone, message(session, "plan")).await?;
-    let turn = legacy_events_until(&mut updates, Until::TurnEnd).await?;
+    let turn = conversation_events_until(&mut updates, Until::TurnEnd).await?;
     let lists = task_lists(&turn);
     let set = send(&phone, set_effort(session, Effort::High)).await?;
     let _ = send(&phone, message(session, "pong")).await?;
@@ -5476,8 +5481,9 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     let (phone, mut updates) = first.connect().await?;
     let session = launch(&phone, start(Provider::Claude, &dir)).await?;
     let _ = send(&phone, message(session, "plan")).await?;
-    let before =
-        task_lists(&legacy_events_until(&mut updates, Until::TurnEnd).await?);
+    let before = task_lists(
+        &conversation_events_until(&mut updates, Until::TurnEnd).await?,
+    );
     let set = send(&phone, set_effort(session, Effort::Low)).await?;
     first.shutdown().await?;
 
@@ -5495,8 +5501,9 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     let continued = send(&phone, continued(session)).await?;
     let _ = kinds_until(&mut updates, Until::Ready).await?;
     let _ = send(&phone, message(session, "plan")).await?;
-    let after =
-        task_lists(&legacy_events_until(&mut updates, Until::TurnEnd).await?);
+    let after = task_lists(
+        &conversation_events_until(&mut updates, Until::TurnEnd).await?,
+    );
     let view = fold(second.history().await?);
     assert_eq!(
         (

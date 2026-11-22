@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run disposable Codex E3 and E5 probes without printing provider frames."""
+"""Run disposable Codex E3 probes without printing provider frames."""
 
 import argparse
 import json
@@ -91,9 +91,6 @@ class AppServer:
         return messages
 
 
-SEED_WORD = "conductor-quince-482"
-
-
 def refresh(server):
     response = server.request("account/read", {"refreshToken": True})
     account = response.get("result", {}).get("account") or {}
@@ -102,18 +99,13 @@ def refresh(server):
     print("ChatGPT account/read accepted with refreshToken=true")
 
 
-def thread(server, worktree, thread_id):
-    params = {
+def thread(server, worktree):
+    return server.call("thread/start", {
         "cwd": str(worktree),
         "approvalPolicy": "on-request",
         "sandbox": "workspace-write",
-    }
-    if thread_id is None:
-        params["historyMode"] = "paginated"
-        return server.call("thread/start", params)["thread"]["id"]
-    params["threadId"] = thread_id
-    return server.call("thread/resume", params)["thread"]["id"]
-
+        "historyMode": "paginated",
+    })["thread"]["id"]
 
 def run(server, args, worktree):
     server.call("initialize", {
@@ -124,38 +116,15 @@ def run(server, args, worktree):
     if args.action == "refresh":
         refresh(server)
         return
-    if args.action == "turn":
-        identifier = thread(server, worktree, None)
-        server.turn(identifier, "Reply with OK. Do not use tools.")
-        print("Test turn completed")
-        return
-    if args.action == "seed":
-        identifier = thread(server, worktree, None)
-        server.turn(identifier, f"Remember the codeword {SEED_WORD}. Reply OK. Do not use tools.")
-        server.turn(identifier, "Reply READY. Do not use tools.")
-        print(f"Disposable thread ID: {identifier}")
-        return
-    identifier = input("Disposable thread ID: ").strip()
-    if not identifier or thread(server, worktree, identifier) != identifier:
-        raise ProbeError("The requested thread did not resume by ID.")
-    marker = worktree / "codex-e5-target.txt"
-    if marker.exists() or marker.is_symlink():
-        raise ProbeError("Use a target checkout without the probe marker file.")
-    messages = server.turn(
-        identifier,
-        "Create codex-e5-target.txt in your current directory containing only the "
-        "codeword I previously asked you to remember. Then reply with that codeword.",
-    )
-    if marker.read_text().strip() != SEED_WORD or not any(SEED_WORD in message for message in messages):
-        raise ProbeError("The target edit and remembered history were not both confirmed.")
-    print("Resumed by ID, recalled synthetic word, and edited the target working directory")
-
+    identifier = thread(server, worktree)
+    server.turn(identifier, "Reply with OK. Do not use tools.")
+    print("Test turn completed")
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("codex", type=Path, help="Absolute path to the pinned executable")
     parser.add_argument("worktree", type=Path, help="Disposable checkout inside the run directory")
-    parser.add_argument("action", choices=("refresh", "turn", "seed", "resume"))
+    parser.add_argument("action", choices=("refresh", "turn"))
     args = parser.parse_args()
     configured = os.environ.get("CODEX_HOME")
     if not configured:

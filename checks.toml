@@ -13,10 +13,10 @@ paths = ["docs/**/*.txt", "docs/**/*.log", "docs/**/NOTES.md", "tools/scrub-ips.
 
 [[suite]]
 name = "tooling"
-command = "python3 -B tools/test-tooling.py"
+command = "python3 -B tools/test-tooling.py && python3 -B tools/test-pin.py"
 [[suite.when]]
 tier = "commit"
-paths = ["tools/test-tooling.py", "tools/scrub-ips.py", "tools/pin", "tools/live-host.sh", "tools/live-host-child.py"]
+paths = ["tools/test-tooling.py", "tools/test-pin.py", "tools/scrub-ips.py", "tools/pin", "tools/live-host.sh", "tools/live-host-child.py"]
 
 [[suite]]
 name = "wasm-clippy"

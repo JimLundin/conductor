@@ -872,7 +872,7 @@ pub enum EventKind {
         effort: Option<Effort>,
         reason: String,
     },
-    /// Appended metadata: legacy sessions keep their original directory.
+    /// The session's managed worktree, logged before its first snapshot.
     WorkspaceCreated {
         workspace: Workspace,
     },
