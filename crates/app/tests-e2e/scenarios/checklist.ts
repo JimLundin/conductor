@@ -35,15 +35,15 @@ export const checklist = async (run: Run): Promise<void> => {
 	);
 	await send("plan");
 	await pane.locator(COMPLETED).waitFor({ timeout: patience });
-	const checklist = pane.locator("details.agent-checklist");
+	const panel = pane.locator("details.agent-checklist");
 	check(
-		squeeze(await checklist.locator("summary").innerText()).trim() ===
+		squeeze(await panel.locator("summary").innerText()).trim() ===
 			"Checklist 1 of 3 done",
 		"the checklist counts what is done",
 	);
 	check(
 		(
-			await checklist
+			await panel
 				.locator(".agent-checklist-item")
 				.evaluateAll((items) =>
 					items
@@ -58,19 +58,19 @@ export const checklist = async (run: Run): Promise<void> => {
 		"each item shows its status and text, in the agent's order",
 	);
 	check(
-		(await checklist
+		(await panel
 			.locator(".agent-checklist-mark")
 			.first()
 			.getAttribute("aria-label")) === "Done",
 		"a status is announced in words",
 	);
-	check(await isOpen(checklist), "the checklist starts open");
+	check(await isOpen(panel), "the checklist starts open");
 	check(
 		(await pane.locator(".tool").count()) === 0,
 		"the checklist calls show no tool cards",
 	);
 	check(await isWithinWidth(page), "no page overflow at phone width");
-	const summary = await boxOf(checklist.locator("summary"));
+	const summary = await boxOf(panel.locator("summary"));
 	check(
 		summary.height >= THUMB,
 		`the checklist's summary is a thumb-sized target (${Math.round(summary.height)}px)`,
@@ -92,8 +92,8 @@ export const checklist = async (run: Run): Promise<void> => {
 	await send("pong");
 	await pane.locator(`${COMPLETED} >> nth=1`).waitFor({ timeout: patience });
 	check((await text(".reply")).endsWith("pong"), "the next turn ran");
-	await checklist.locator("summary").tap();
-	check(!(await isOpen(checklist)), "a tap folds the checklist away");
+	await panel.locator("summary").tap();
+	check(!(await isOpen(panel)), "a tap folds the checklist away");
 	await page.reload();
 	await waitFor(LIVE);
 	await openRow(lastSegment(dir));
