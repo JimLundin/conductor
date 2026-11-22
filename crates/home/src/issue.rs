@@ -1,10 +1,11 @@
-//! An issue's file in the home, `projects/<project>/issues/<id>.md`
-//! (docs/home.md §3), and the changes a host makes to it.
+//! An issue's file in the home (docs/home.md §3), where `crate::layout`
+//! puts it, and the changes a host makes to it.
 //!
 //! The file's layout is `crate::flow::file`'s, and the flow's graph
-//! (`crate::flow::graph`) reads issues from it. A change is written by
-//! `crate::flow::command`, as the `home` command line's is, and read back
-//! against the flow before it is kept.
+//! (`crate::flow::graph`) reads issues from it. A change is a
+//! `crate::flow::command::Edit`, written by `crate::flow::command` as the
+//! `home` command line's is, and read back against the flow before it is
+//! kept.
 //!
 //! The host keeps each change as an [`Edit`] until the remote has it, and
 //! when the remote moved on it applies the edit again on top
@@ -17,7 +18,7 @@ use alloc::string::ToString;
 use proto::flow::Flow;
 use proto::{
     ChecklistChange, CommandId, Datum, Home, HostPath, Issue, IssueChange,
-    IssueId, Item, NewIssue, Part, ProjectId, Rejection,
+    IssueId, Item, Part, ProjectId, Rejection,
 };
 use serde::{Deserialize, Serialize};
 
@@ -27,19 +28,8 @@ use crate::flow::graph::{self, File, branch_of};
 use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
 
-/// The issue's file, from the home's root.
-#[must_use]
-fn file(project: &ProjectId, id: IssueId) -> String {
-    format!("{}/{id}.md", folder(project))
-}
-
-/// Where a project keeps its issues, from the home's root.
-#[must_use]
-pub fn folder(project: &ProjectId) -> String {
-    format!("projects/{}/issues", project.0)
-}
-
-/// Issue `id` of `project` in `text`, as the flow reads it.
+/// Issue `id` of `project` in `text`, as the flow reads it, with the
+/// document it was read from.
 ///
 /// # Errors
 ///
@@ -49,8 +39,8 @@ fn read(
     project: &ProjectId,
     id: IssueId,
     text: &str,
-) -> Result<Issue, String> {
-    graph::one(
+) -> Result<(Issue, Document), String> {
+    graph::parsed(
         flow,
         &File {
             project: project.clone(),
@@ -63,38 +53,43 @@ fn read(
 
 /// The message of the commit an edit makes in the home.
 #[must_use]
-fn message(edit: &EditData) -> String {
-    let id = edit.issue;
-    match &edit.change {
-        Change::Create(new) => {
-            format!("Open issue {id}: {}", new.title.trim())
+fn message(edit: &command::Edit) -> String {
+    match edit {
+        command::Edit::New { id, issue } => {
+            format!("Open issue {id}: {}", issue.title.trim())
         }
-        Change::Issue(IssueChange::Move { to, .. }) => {
-            format!("Move issue {id} to {to}")
-        }
-        Change::Issue(IssueChange::Set { field, value }) => {
+        command::Edit::Change { id, changes } => match changes.as_slice() {
+            [change] => change_message(*id, change),
+            _ => format!("Change issue {id}"),
+        },
+    }
+}
+
+fn change_message(id: IssueId, change: &IssueChange) -> String {
+    match change {
+        IssueChange::Move { to, .. } => format!("Move issue {id} to {to}"),
+        IssueChange::Set { field, value } => {
             format!("Set the {field} of issue {id} to {}", said(value))
         }
-        Change::Issue(IssueChange::Body(_)) => {
-            format!("Describe issue {id} anew")
+        IssueChange::Title(title) => {
+            format!("Retitle issue {id}: {}", title.trim())
         }
-        Change::Issue(IssueChange::Note(_)) => format!("Note on issue {id}"),
-        Change::Issue(IssueChange::Checklist(ChecklistChange::Add(_))) => {
+        IssueChange::Body(_) => format!("Describe issue {id} anew"),
+        IssueChange::Note(_) => format!("Note on issue {id}"),
+        IssueChange::Checklist(ChecklistChange::Add(_)) => {
             format!("Add an item to issue {id}")
         }
-        Change::Issue(IssueChange::Checklist(ChecklistChange::Check {
-            done: true,
-            ..
-        })) => {
+        IssueChange::Checklist(ChecklistChange::Check {
+            done: true, ..
+        }) => {
             format!("Check off an item of issue {id}")
         }
-        Change::Issue(IssueChange::Checklist(ChecklistChange::Check {
-            done: false,
-            ..
-        })) => {
+        IssueChange::Checklist(ChecklistChange::Check {
+            done: false, ..
+        }) => {
             format!("Uncheck an item of issue {id}")
         }
-        Change::Issue(IssueChange::Checklist(ChecklistChange::Remove(_))) => {
+        IssueChange::Checklist(ChecklistChange::Remove(_)) => {
             format!("Remove an item from issue {id}")
         }
     }
@@ -120,21 +115,20 @@ pub struct Edit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditData {
     project: ProjectId,
-    issue: IssueId,
     /// When the host took it, in seconds since the Unix epoch.
     at: u64,
     /// Who signs the lines it adds to the log.
     by: String,
-    change: Change,
-    /// The value the field it sets had when it was made, as [`was`] gives
+    edit: command::Edit,
+    /// The value each change sets had when it was made, as [`was`] gives
     /// it, so a replay can tell whether someone else changed it since.
-    was: Option<Vec<String>>,
+    was: Vec<Option<Vec<String>>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-enum Change {
-    Create(NewIssue),
-    Issue(IssueChange),
+impl EditData {
+    const fn issue(&self) -> IssueId {
+        self.edit.id()
+    }
 }
 
 /// How an edit meets the file.
@@ -166,20 +160,35 @@ enum Applied {
     Refused(String),
 }
 
-/// The value the field the edit sets has in its issue's file as it is
-/// now: what [`Edit::was`] keeps.
+/// The value each change of the edit sets has in its issue's file as it
+/// is now, under `flow`: what [`EditData::was`] keeps.
 #[must_use]
 fn was(
-    flow: &Flow,
+    flow: Option<&Flow>,
     current: Option<&str>,
     edit: &EditData,
-) -> Option<Vec<String>> {
-    let Change::Issue(sets) = &edit.change else {
-        return None;
-    };
-    read(flow, &edit.project, edit.issue, current?)
-        .ok()
-        .and_then(|issue| field(&issue, sets))
+) -> Vec<Option<Vec<String>>> {
+    let issue = flow
+        .zip(current)
+        .and_then(|(read_flow, text)| {
+            read(read_flow, &edit.project, edit.issue(), text).ok()
+        })
+        .map(|(issue, _)| issue);
+    values(issue.as_ref(), &edit.edit)
+}
+
+/// What each change of `edit` sets has in `issue`, as words.
+fn values(
+    issue: Option<&Issue>,
+    edit: &command::Edit,
+) -> Vec<Option<Vec<String>>> {
+    match edit {
+        command::Edit::New { .. } => Vec::new(),
+        command::Edit::Change { changes, .. } => changes
+            .iter()
+            .map(|change| issue.and_then(|had| field(had, change)))
+            .collect(),
+    }
 }
 
 /// What the change sets has in `issue`, as words.
@@ -193,16 +202,14 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<Vec<String>> {
             part: Part::Stage, ..
         } => Some(one(issue.stage.as_deref().unwrap_or_default())),
         IssueChange::Set { field, .. } => Some(value_of(issue, field)),
+        IssueChange::Title(_) => Some(one(&issue.title)),
         IssueChange::Body(_) => Some(one(&issue.body)),
         IssueChange::Note(_) | IssueChange::Checklist(_) => None,
     }
 }
 
-/// A field's or relation's value, the title among them, as words.
+/// A field's or relation's value, as words.
 fn value_of(issue: &Issue, field: &str) -> Vec<String> {
-    if field == "title" {
-        return words(&Datum::Text(issue.title.clone()));
-    }
     issue.fields.get(field).map_or_else(
         || {
             issue
@@ -233,6 +240,15 @@ fn words(value: &Datum) -> Vec<String> {
     }
 }
 
+/// Someone else changed what the edit sets since it was made: the value
+/// a change sets in `issue` isn't the one it had then.
+fn overtaken(edit: &EditData, issue: &Issue) -> bool {
+    values(Some(issue), &edit.edit)
+        .into_iter()
+        .enumerate()
+        .any(|(at, now)| edit.was.get(at).cloned().flatten() != now)
+}
+
 /// The issue has what the change gives it already.
 fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
     match change {
@@ -249,6 +265,7 @@ fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
         IssueChange::Set { field, value } => {
             value_of(issue, field) == words(value)
         }
+        IssueChange::Title(title) => issue.title.trim() == title.trim(),
         IssueChange::Body(body) => issue.body == body.trim(),
         IssueChange::Checklist(ChecklistChange::Check { item, done }) => {
             !stale(issue, item)
@@ -262,6 +279,19 @@ fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
             ChecklistChange::Add(_) | ChecklistChange::Remove(_),
         ) => false,
     }
+}
+
+/// A replay can let the change go: the issue has it already, or the item
+/// it picks is no longer where the person picked it.
+fn moot(issue: &Issue, change: &IssueChange) -> bool {
+    unchanged(issue, change)
+        || matches!(
+            change,
+            IssueChange::Checklist(
+                ChecklistChange::Check { item, .. }
+                    | ChecklistChange::Remove(item)
+            ) if stale(issue, item)
+        )
 }
 
 /// The item is no longer where the person picked it.
@@ -283,51 +313,41 @@ fn apply(
 ) -> Applied {
     let data = &edit.data;
     let marker = edit_marker(edit.command);
-    let text = match (&data.change, current) {
-        (Change::Create(_), Some(text)) => {
-            return match home
-                .flow()
-                .map_err(String::from)
-                .and_then(|flow| read(flow, &data.project, data.issue, text))
-            {
-                Ok(_) => Applied::AlreadyRecorded,
-                Err(reason) => Applied::Unreadable(reason),
-            };
+    let readable = |text: &str| {
+        home.flow()
+            .map_err(String::from)
+            .and_then(|flow| read(flow, &data.project, data.issue(), text))
+    };
+    let (changes, text) = match (&data.edit, current) {
+        (command::Edit::New { .. }, Some(text)) => {
+            return readable(text).map_or_else(Applied::Unreadable, |_| {
+                Applied::AlreadyRecorded
+            });
         }
-        (Change::Create(_), None) => return written(home, data, None, &marker),
-        (Change::Issue(_), None) => return Applied::Gone,
-        (Change::Issue(_), Some(text)) => text,
+        (command::Edit::New { .. }, None) => {
+            return written(home, data, None, &marker);
+        }
+        (command::Edit::Change { .. }, None) => return Applied::Gone,
+        (command::Edit::Change { changes, .. }, Some(text)) => (changes, text),
     };
-    let Change::Issue(change) = &data.change else {
-        return Applied::Gone;
-    };
-    let issue = match home
-        .flow()
-        .map_err(String::from)
-        .and_then(|flow| read(flow, &data.project, data.issue, text))
-        .and_then(|issue| Document::of(text).map(|document| (issue, document)))
-    {
+    let (issue, document) = match readable(text) {
         Ok((_, document)) if document.has_comment(&marker) => {
             return Applied::AlreadyRecorded;
         }
-        Ok((issue, _)) => issue,
+        Ok(read) => read,
         Err(reason) => return Applied::Unreadable(reason),
     };
-    let moot = unchanged(&issue, change)
-        || matches!(
-            change,
-            IssueChange::Checklist(
-                ChecklistChange::Check { item, .. }
-                    | ChecklistChange::Remove(item)
-            ) if stale(&issue, item)
-        );
     match mode {
-        Mode::Record if unchanged(&issue, change) => Applied::Unchanged,
-        Mode::Replay { changed }
-            if moot
-                || (data.was != field(&issue, change) && data.at < changed) =>
+        Mode::Record
+            if changes.iter().all(|change| unchanged(&issue, change)) =>
         {
-            marked(text, &marker)
+            Applied::Unchanged
+        }
+        Mode::Replay { changed }
+            if changes.iter().all(|change| moot(&issue, change))
+                || (data.at < changed && overtaken(data, &issue)) =>
+        {
+            marked(document, &marker)
         }
         Mode::Record | Mode::Replay { .. } => {
             written(home, data, Some(text), &marker)
@@ -341,14 +361,12 @@ fn edit_marker(id: CommandId) -> String {
 }
 
 /// The file as it is, marked as having had the edit.
-fn marked(text: &str, marker: &str) -> Applied {
-    Document::of(text).map_or_else(Applied::Unreadable, |mut document| {
-        document.comment(marker);
-        Applied::Write {
-            text: document.text(),
-            warnings: Vec::new(),
-        }
-    })
+fn marked(mut document: Document, marker: &str) -> Applied {
+    document.comment(marker);
+    Applied::Write {
+        text: document.text(),
+        warnings: Vec::new(),
+    }
 }
 
 /// What `home::flow::command` writes for the edit, among the home's other
@@ -359,36 +377,25 @@ fn written(
     current: Option<&str>,
     marker: &str,
 ) -> Applied {
-    let stem = data.issue.to_string();
     let among = current.map_or_else(
         || home.clone(),
         |text| {
             home.with(File {
                 project: data.project.clone(),
-                stem: stem.clone(),
+                stem: data.issue().to_string(),
                 text: String::from(text),
             })
         },
     );
     let context = command::Context {
         now: data.at.saturating_mul(1000),
-        id: data.issue,
         by: data.by.clone(),
+        mark: Some(String::from(marker)),
     };
-    let edit = match &data.change {
-        Change::Create(new) => command::Edit::New(new.clone()),
-        Change::Issue(change) => command::Edit::Change {
-            id: data.issue,
-            changes: Vec::from([change.clone()]),
-        },
-    };
-    match command::write(&among, &edit, &context) {
-        Ok(made) => match marked(&made.write.text, marker) {
-            Applied::Write { text, .. } => Applied::Write {
-                text,
-                warnings: made.warnings,
-            },
-            other => other,
+    match command::write(&among, &data.edit, &context) {
+        Ok(made) => Applied::Write {
+            text: made.write.text,
+            warnings: made.warnings,
         },
         Err(reason) => Applied::Refused(reason),
     }

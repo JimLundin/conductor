@@ -14,13 +14,14 @@ use proto::{
     ChecklistChange, Datum, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
     NewIssue, Part, ProjectId,
 };
+use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use super::PATH;
 use super::check::{Finding, check, of_issue};
 use super::eval::Move;
-use super::file::Document;
-use super::graph::{File, id_of, one};
+use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
+use super::graph::{File, id_of, parsed};
 use super::role::opening;
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -65,10 +66,12 @@ impl Command {
     }
 }
 
-/// An edit to the home's issues.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An edit to one of the home's issues, the command line's and the app's
+/// alike.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Edit {
-    New(NewIssue),
+    /// Opens issue `id`.
+    New { id: IssueId, issue: NewIssue },
     /// Changes to one issue, made in one write.
     Change {
         id: IssueId,
@@ -76,15 +79,26 @@ pub enum Edit {
     },
 }
 
-/// What the shell knows that the core can't: when it is, the id a new
-/// issue takes, and who is writing.
+impl Edit {
+    /// The issue it edits.
+    #[must_use]
+    pub const fn id(&self) -> IssueId {
+        match self {
+            Self::New { id, .. } | Self::Change { id, .. } => *id,
+        }
+    }
+}
+
+/// What the shell knows that the core can't: when it is, and who is
+/// writing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
     /// Milliseconds since the Unix epoch.
     pub now: u64,
-    pub id: IssueId,
     /// As the log signs it, `<node>·<harness>`.
     pub by: String,
+    /// A comment the written file's front matter ends with.
+    pub mark: Option<String>,
 }
 
 /// An issue file to write, whole.
@@ -99,7 +113,7 @@ impl Write {
     /// Where it is written, from the home's root.
     #[must_use]
     pub fn path(&self) -> String {
-        format!("{}/{}.md", crate::issue::folder(&self.project), self.stem)
+        crate::layout::issue_file(&self.project, &self.stem)
     }
 }
 
@@ -155,11 +169,13 @@ pub const fn fresh(now: u64, random: u128) -> IssueId {
     IssueId(ulid::Ulid::from_parts(now, random).0)
 }
 
-/// The command `args` ask for in `home`, after the program's name: a
-/// project by its name or id, and each `<field>=<value>` as a value of the
-/// field's type, a list where it takes several.
+/// The command `args` ask for in `home`, after the program's name.
+///
+/// A project is named by its name or id, each `<field>=<value>` is a value
+/// of the field's type, a list where it takes several, and a new issue
+/// takes the id `fresh`.
 #[must_use]
-pub fn command(args: &[String], home: &Snapshot) -> Command {
+pub fn command(args: &[String], home: &Snapshot, fresh: IssueId) -> Command {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     let joined = |first: &str, more: &[&str]| {
         core::iter::once(first)
@@ -170,7 +186,7 @@ pub fn command(args: &[String], home: &Snapshot) -> Command {
     match words.as_slice() {
         ["check"] => Command::Check,
         ["issue", "new", project, kind, title, fields @ ..] => {
-            opening_command(home, [project, kind, title], fields)
+            opening_command(home, fresh, [project, kind, title], fields)
         }
         ["issue", "body", id, "--file", path] => {
             named(id).map_or_else(Command::Wrong, |issue| Command::BodyFrom {
@@ -237,6 +253,7 @@ fn changing(word: &str, change: IssueChange) -> Command {
 
 fn opening_command(
     home: &Snapshot,
+    id: IssueId,
     [name, kind, title]: [&str; 3],
     pairs: &[&str],
 ) -> Command {
@@ -244,12 +261,15 @@ fn opening_command(
         .map(|known| known.id.clone())
         .ok_or_else(|| format!("no project is called {name}"))
         .and_then(|project| {
-            Ok(Edit::New(NewIssue {
-                project,
-                kind: String::from(kind),
-                title: String::from(title),
-                fields: settings(home, kind, pairs)?,
-            }))
+            Ok(Edit::New {
+                id,
+                issue: NewIssue {
+                    project,
+                    kind: String::from(kind),
+                    title: String::from(title),
+                    fields: settings(home, kind, pairs)?,
+                },
+            })
         })
         .map_or_else(Command::Wrong, Command::Edit)
 }
@@ -260,7 +280,10 @@ fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
             let kind = home.issue(id).map_or("", |issue| issue.kind.as_str());
             let changes = settings(home, kind, pairs)?
                 .into_iter()
-                .map(|(field, value)| IssueChange::Set { field, value })
+                .map(|(field, value)| match field.as_str() {
+                    TITLE => IssueChange::Title(said(&value)),
+                    _ => IssueChange::Set { field, value },
+                })
                 .collect();
             Ok(Edit::Change { id, changes })
         })
@@ -436,9 +459,12 @@ pub fn write(
     let sign = Signer {
         at: stamp(context.now),
         by: context.by.clone(),
+        mark: context.mark.clone(),
     };
     let (file, moved) = match edit {
-        Edit::New(new) => (opened(home, flow, context, &sign, new)?, false),
+        Edit::New { id, issue } => {
+            (opened(home, flow, *id, &sign, issue)?, false)
+        }
         Edit::Change { id, changes } => {
             let stem = id.to_string();
             let file = home
@@ -455,10 +481,11 @@ pub fn write(
     finished(home, flow, file, moved)
 }
 
-/// Who writes a log line, and when.
+/// Who writes a file, and when.
 struct Signer {
     at: String,
     by: String,
+    mark: Option<String>,
 }
 
 impl Signer {
@@ -470,6 +497,14 @@ impl Signer {
             event,
             text: String::from(text),
         }
+    }
+
+    /// The document's text as it is written, marked.
+    fn text(&self, mut document: Document) -> String {
+        if let Some(mark) = &self.mark {
+            document.comment(mark);
+        }
+        document.text()
     }
 }
 
@@ -540,7 +575,7 @@ fn finished(
 fn opened(
     home: &Snapshot,
     flow: &Flow,
-    context: &Context,
+    id: IssueId,
     sign: &Signer,
     new: &NewIssue,
 ) -> Result<File, String> {
@@ -559,12 +594,12 @@ fn opened(
         .ok_or_else(|| format!("no kind is called {kind}"))?;
     let title = needs(wanted, "an issue needs a title")?;
     let status = opening(flow).map_or_else(String::new, String::from);
-    let id = context.id.to_string();
+    let stem = id.to_string();
     let mut front = Vec::from([
-        (String::from("id"), quoted(&id)),
-        (String::from("title"), quoted(title)),
-        (String::from("kind"), quoted(kind)),
-        (String::from("status"), quoted(&status)),
+        (String::from(ID), quoted(&stem)),
+        (String::from(TITLE), quoted(title)),
+        (String::from(KIND), quoted(kind)),
+        (String::from(STATUS), quoted(&status)),
     ]);
     front.extend(
         fields
@@ -581,8 +616,8 @@ fn opened(
     );
     Ok(File {
         project: project.clone(),
-        stem: id,
-        text: document.text(),
+        stem,
+        text: sign.text(document),
     })
 }
 
@@ -594,24 +629,26 @@ fn changed(
     changes: &[IssueChange],
     sign: &Signer,
 ) -> Result<File, String> {
-    let issue = one(flow, file).map_err(|_| {
-        format!("{} has problems of its own; see home check", file.stem)
+    let (issue, mut document) = parsed(flow, file).map_err(|problem| {
+        format!("{} doesn't read as the flow declares: {problem}", file.stem)
     })?;
-    let mut document = Document::of(&file.text)?;
     let mut set = Vec::new();
     for change in changes {
         match change {
             IssueChange::Move { part, to, reason } => {
                 let (key, event, text) =
                     shifted(flow, &issue, (*part, to, reason))?;
-                document.set(key, &quoted(to)).ok_or_else(|| {
-                    String::from("its front matter doesn't read")
-                })?;
+                document.set(key, &quoted(to)).ok_or_else(unread)?;
                 document.log_entry(&sign.entry(event, &text));
             }
             IssueChange::Set { field, value } => {
                 setting(&mut document, field, value)?;
                 set.push(format!("{field}={}", said(value)));
+            }
+            IssueChange::Title(title) => {
+                let kept = needs(title, "an issue needs a title")?;
+                document.set(TITLE, &quoted(kept)).ok_or_else(unread)?;
+                set.push(format!("{TITLE}={kept}"));
             }
             IssueChange::Note(note) => {
                 let text = needs(note, "a note needs text")?;
@@ -629,7 +666,7 @@ fn changed(
         );
     }
     Ok(File {
-        text: document.text(),
+        text: sign.text(document),
         ..file.clone()
     })
 }
@@ -647,10 +684,10 @@ fn shifted(
                 .as_ref()
                 .and_then(|stage| flow.stage(stage))
                 .is_some_and(|stage| stage.next.iter().any(|next| next == to));
-            ("stage", from, flow.stage(to).is_some(), usual)
+            (STAGE, from, flow.stage(to).is_some(), usual)
         }
         Part::Status => (
-            "status",
+            STATUS,
             Some(current.status.clone()),
             flow.status(to).is_some(),
             true,
@@ -677,22 +714,27 @@ fn shifted(
     Ok((key, event, format!("{reason}{unusual}")))
 }
 
+/// Sets a declared field or relation; an issue's own words change by
+/// changes of their own.
 fn setting(
     document: &mut Document,
     key: &str,
     value: &Datum,
 ) -> Result<(), String> {
-    if matches!(key, "id" | "kind" | "status" | "stage") {
-        return Err(format!(
-            "{key} isn't set this way; use home issue move for a stage or status"
-        ));
+    match key {
+        STAGE | STATUS => {
+            Err(format!("a {key} changes by a move, not by setting a field"))
+        }
+        ID | KIND => Err(format!("an issue's {key} doesn't change")),
+        TITLE => Err(String::from(
+            "the title changes by retitling, not by setting a field",
+        )),
+        _ => document.set(key, &toml_of(value)).ok_or_else(unread),
     }
-    if key == "title" {
-        needs(&said(value), "an issue needs a title")?;
-    }
-    document
-        .set(key, &toml_of(value))
-        .ok_or_else(|| String::from("its front matter doesn't read"))
+}
+
+fn unread() -> String {
+    String::from("its front matter doesn't read")
 }
 
 /// A value as TOML, its text trimmed and a list without empty items.

@@ -12,11 +12,31 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::{ChecklistItem, Entry, LogEvent, Section};
-use toml::{Spanned, Value};
+use proto::{ChecklistItem, Entry, Section};
+use toml::{Spanned, Table, Value};
 use toml_parser::{Source, lexer::TokenKind};
 
 use crate::prelude::*;
+
+/// The keys of an issue's own words in its front matter, beside the
+/// fields and relations the flow declares.
+pub const ID: &str = "id";
+pub const TITLE: &str = "title";
+pub const KIND: &str = "kind";
+pub const STATUS: &str = "status";
+pub const STAGE: &str = "stage";
+
+/// An issue's front matter, read: its own words, each where it is text,
+/// and the rest by key.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Front {
+    pub id: Option<String>,
+    pub title: Option<String>,
+    pub kind: Option<String>,
+    pub status: Option<String>,
+    pub stage: Option<String>,
+    pub rest: Table,
+}
 
 /// An issue file, as its parts.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,10 +137,32 @@ impl Document {
         format!("+++\n{}\n+++\n{rest}", self.front.join("\n"))
     }
 
-    /// The front matter, as TOML.
-    #[must_use]
-    pub fn front(&self) -> String {
+    fn front(&self) -> String {
         self.front.join("\n")
+    }
+
+    /// The front matter, read.
+    ///
+    /// # Errors
+    ///
+    /// It isn't TOML.
+    pub fn front_matter(&self) -> Result<Front, String> {
+        let mut rest = toml::from_str::<Table>(&self.front())
+            .map_err(|err| format!("its front matter: {err}"))?;
+        let mut word = |key: &str| match rest.remove(key) {
+            Some(Value::String(text)) => Some(text),
+            _ => None,
+        };
+        let (id, title, kind, status, stage) =
+            (word(ID), word(TITLE), word(KIND), word(STATUS), word(STAGE));
+        Ok(Front {
+            id,
+            title,
+            kind,
+            status,
+            stage,
+            rest,
+        })
     }
 
     /// The body's sections in order, the text before the first heading as
@@ -190,7 +232,7 @@ impl Document {
                 continue;
             }
             if let Some(entry) = line.strip_prefix("- ") {
-                log.push(entry_of(entry));
+                log.push(Entry::of(entry));
             } else if let (Some(more), Some(last)) =
                 (line.strip_prefix("  "), log.last_mut())
             {
@@ -406,41 +448,6 @@ fn log_lines(entry: &Entry) -> Vec<String> {
             }
         })
         .collect()
-}
-
-/// `<time> <who> <event>: <text>`, where the event is `note`,
-/// `stage <a>→<b>` or `status <a>→<b>`; any other line is a note as written.
-fn entry_of(line: &str) -> Entry {
-    let structured = line.split_once(": ").and_then(|(head, text)| {
-        let mut words = head.split(' ');
-        let at = words.next()?;
-        let by = words.next()?;
-        let event = match (words.next()?, words.next(), words.next()) {
-            ("note", None, _) => LogEvent::Note,
-            (name @ ("stage" | "status"), Some(change), None) => {
-                let (before, after) = change.split_once('→')?;
-                let (from, to) = (before.to_owned(), after.to_owned());
-                if name == "stage" {
-                    LogEvent::Stage { from, to }
-                } else {
-                    LogEvent::Status { from, to }
-                }
-            }
-            _ => return None,
-        };
-        at.contains('T').then(|| Entry {
-            at: Some(at.to_owned()),
-            by: Some(by.to_owned()),
-            event,
-            text: text.to_owned(),
-        })
-    });
-    structured.unwrap_or_else(|| Entry {
-        at: None,
-        by: None,
-        event: LogEvent::Note,
-        text: line.to_owned(),
-    })
 }
 
 fn item(line: &str) -> Option<ChecklistItem> {

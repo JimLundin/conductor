@@ -8,13 +8,15 @@ use proto::{
 };
 
 use super::{
-    Applied, Branch, Change, Edit, EditData, Mode, Move, PendingEdits, Remote,
-    SessionUpdate, branch, file, message, read, start,
+    Applied, Branch, Edit, EditData, Mode, Move, PendingEdits, Remote,
+    SessionUpdate, branch, message, read, start,
 };
+use crate::flow::command;
 use crate::flow::file::log_line;
 use crate::flow::graph::File;
 use crate::flow::load;
 use crate::flow::snapshot::{Inputs, Snapshot};
+use crate::layout;
 
 /// 01JD0000000000000000000001 as its bits.
 const ID: IssueId = IssueId(2_093_793_708_204_169_241_204_922_644_758_003_713);
@@ -88,20 +90,23 @@ fn among<T>(files: &[File], within: impl FnOnce(&Snapshot) -> T) -> T {
 
 /// The issue `text` holds, as the flow reads it.
 fn parse(text: &str) -> Result<Issue, String> {
-    read(&flow(), &project(), ID, text)
+    read(&flow(), &project(), ID, text).map(|(issue, _)| issue)
 }
 
 fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     among(&[], |home| super::apply(home, current, edit, mode))
 }
 
-fn was(current: Option<&str>, change: Change) -> Option<Vec<String>> {
+fn was(
+    current: Option<&str>,
+    change: command::Edit,
+) -> Vec<Option<Vec<String>>> {
     super::was(
-        &flow(),
+        Some(&flow()),
         current,
         &EditData {
-            change,
-            ..edit(Change::Issue(IssueChange::Note(text("unused")))).data
+            edit: change,
+            ..edit(changing(IssueChange::Note(text("unused")))).data
         },
     )
 }
@@ -219,28 +224,38 @@ fn hand_edited() -> String {
 
 /// A command id of its own for each change, so no edit here finds
 /// another's mark.
-fn command_of(change: &Change) -> CommandId {
+fn command_of(change: &command::Edit) -> CommandId {
     CommandId(format!("{change:?}").bytes().fold(1_000, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(u128::from(byte))
     }))
 }
 
-fn edit(change: Change) -> Edit {
+fn edit(change: command::Edit) -> Edit {
     Edit {
         command: command_of(&change),
         data: EditData {
             project: project(),
-            issue: ID,
             at: OPENED,
             by: text("laptop·iPhone"),
-            change,
-            was: None,
+            edit: change,
+            was: Vec::new(),
         },
     }
 }
 
+const fn creating(new: NewIssue) -> command::Edit {
+    command::Edit::New { id: ID, issue: new }
+}
+
+fn changing(change: IssueChange) -> command::Edit {
+    command::Edit::Change {
+        id: ID,
+        changes: Vec::from([change]),
+    }
+}
+
 fn changing_to(change: IssueChange) -> Edit {
-    edit(Change::Issue(change))
+    edit(changing(change))
 }
 
 /// The file an edit writes, without the line that marks it written, or
@@ -273,6 +288,10 @@ fn setting(field: &str, value: &str) -> IssueChange {
         field: text(field),
         value: Datum::Text(text(value)),
     }
+}
+
+fn retitling(title: &str) -> IssueChange {
+    IssueChange::Title(text(title))
 }
 
 fn listing(field: &str, values: &[&str]) -> IssueChange {
@@ -392,7 +411,7 @@ fn an_item_is_checked_and_removed_by_its_place() -> Result<(), String> {
 fn an_issue_id_its_file_and_its_status_must_agree() {
     assert_eq!(ID.to_string(), "01jd0000000000000000000001");
     assert_eq!(
-        file(&project(), ID),
+        layout::issue_file(&project(), &ID.to_string()),
         "projects/01m7r5n23kp17wyfj138e0bcnf/issues/01jd0000000000000000000001.md"
     );
     assert_eq!(
@@ -424,7 +443,7 @@ fn wanted() -> NewIssue {
 #[test]
 fn creating_writes_what_home_issue_new_does_and_again_changes_nothing()
 -> Result<(), String> {
-    let create = edit(Change::Create(wanted()));
+    let create = edit(creating(wanted()));
     let opened = file_of(apply(None, &create, Mode::Record))?;
     assert_eq!(
         opened,
@@ -501,12 +520,12 @@ fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
 fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
     let done = Edit {
         data: EditData {
-            was: was(Some(&written()), Change::Issue(moving_to("done"))),
+            was: was(Some(&written()), changing(moving_to("done"))),
             ..changing_to(moving_to("done")).data
         },
         ..changing_to(moving_to("done"))
     };
-    assert_eq!(done.data.was, Some(Vec::from([text("active")])));
+    assert_eq!(done.data.was, [Some(Vec::from([text("active")]))]);
     let reviewed = written().replace("\"active\"", "\"review\"");
     let after = Mode::Replay {
         changed: OPENED + 60,
@@ -631,10 +650,10 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
 fn each_change_is_its_own_commit() {
     assert_eq!(
         [
-            message(&edit(Change::Create(wanted())).data),
-            message(&changing_to(moving_to("review")).data),
-            message(&changing_to(setting("priority", "low")).data),
-            message(&changing_to(IssueChange::Note(text("x"))).data),
+            message(&creating(wanted())),
+            message(&changing(moving_to("review"))),
+            message(&changing(setting("priority", "low"))),
+            message(&changing(IssueChange::Note(text("x")))),
         ],
         [
             format!("Open issue {ID}: Sign in"),
@@ -845,7 +864,7 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
 -> Result<(), String> {
     let current = issue();
     for same in [
-        setting("title", &current.title),
+        retitling(&current.title),
         IssueChange::Body(current.body.clone()),
         listing("labels", &["app", "credentials"]),
         setting("priority", "high"),
@@ -860,7 +879,7 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
     let logged = |line: &str| format!("{}- {SIGNED} note: {line}\n", written());
     for (change, from, to, after) in [
         (
-            setting("title", "Sign in"),
+            retitling("Sign in"),
             "title = \"Sign in to a subscription from the app\"",
             "title = \"Sign in\"",
             logged("set title=Sign in."),
@@ -909,7 +928,7 @@ fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
 -> Result<(), String> {
     let done = Edit {
         data: EditData {
-            was: Some(Vec::from([text("active")])),
+            was: Vec::from([Some(Vec::from([text("active")]))]),
             ..changing_to(moving_to("done")).data
         },
         ..changing_to(moving_to("done"))
@@ -999,7 +1018,7 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
     );
     let titled = file_of(apply(
         Some(&labelled),
-        &changing_to(setting("title", "New title")),
+        &changing_to(retitling("New title")),
         Mode::Record,
     ))?;
     let reread = parse(&titled)?;
@@ -1017,16 +1036,16 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
 fn a_newer_label_list_with_a_comma_is_a_distinct_snapshot() {
     let original = written()
         .replace("[\"app\", \"credentials\"]", "[\"app, credentials\"]");
-    let change = Change::Issue(listing("labels", &["queued"]));
+    let change = changing(listing("labels", &["queued"]));
     let original_snapshot = was(Some(&original), change.clone());
     assert_ne!(original_snapshot, was(Some(&written()), change.clone()));
     let queued = Edit {
         data: EditData {
             was: original_snapshot,
-            change,
-            ..changing_to(setting("title", "unused")).data
+            edit: change,
+            ..changing_to(retitling("unused")).data
         },
-        ..changing_to(setting("title", "unused"))
+        ..changing_to(retitling("unused"))
     };
     assert_eq!(
         file_of(apply(
@@ -1105,7 +1124,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     let context = context(&home, CommandId(1));
     let request = context.open(ID, wanted(), "laptop")?;
     let target = request.read();
-    assert_eq!(target.path, file(&project(), ID));
+    assert_eq!(target.path, layout::issue_file(&project(), &ID.to_string()));
     let mut recorded = among(&[], |home| {
         request.decide(None, home, &PendingEdits::default())
     })?;
@@ -1218,7 +1237,7 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     use super::Write;
 
     let changes = [
-        (setting("title", "New title"), "Set the title of issue"),
+        (retitling("New title"), "Retitle issue"),
         (IssueChange::Body(text("New body")), "Describe issue"),
         (listing("labels", &["new"]), "Set the labels of issue"),
         (setting("priority", "low"), "Set the priority of issue"),
@@ -1259,7 +1278,7 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     }
     assert!(current.contains("stone·laptop note: Summary"));
     let (edit, _) =
-        recorded(setting("title", "Older edit"), CommandId(100), &written())?;
+        recorded(retitling("Older edit"), CommandId(100), &written())?;
     let Write::Commit(resolved) =
         replay(&edit, Some(&current), Some(OPENED + 1))
     else {
@@ -1374,7 +1393,7 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
         .ok_or_else(|| text("expected a move"))?;
     let finishing = Edit {
         data: EditData {
-            was: was(Some(&written()), Change::Issue(change.clone())),
+            was: was(Some(&written()), changing(change.clone())),
             ..changing_to(change.clone()).data
         },
         ..changing_to(change)
@@ -1455,13 +1474,13 @@ mod as_the_command_line {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
         let home = Snapshot::of(inputs());
         let outcome = run(
-            command(&words, &home),
+            command(&words, &home, fresh(NOW * 1000, 7)),
             None,
             &home,
             &command::Context {
                 now: NOW * 1000,
-                id: fresh(NOW * 1000, 7),
                 by: String::from("laptop·claude"),
+                mark: None,
             },
         );
         let subject = format!("home/{TASK}");
@@ -1581,10 +1600,15 @@ mod as_the_command_line {
             .collect();
         let by = command::Context {
             now: NOW * 1000,
-            id: fresh(NOW * 1000, 7),
             by: String::from("laptop·iPhone"),
+            mark: None,
         };
-        let typed = run(command(&said, &home), None, &home, &by);
+        let typed = run(
+            command(&said, &home, fresh(NOW * 1000, 7)),
+            None,
+            &home,
+            &by,
+        );
         let made = id_of(TASK).ok_or_else(String::new).and_then(|id| {
             command::write(
                 &home,

@@ -26,9 +26,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use home::checkout::{Probe, Root};
-use home::flow::PATH;
 use home::flow::graph::File;
-use home::flow::snapshot::{Inputs, Snapshot};
+use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
 use home::issue::{
     Commit, Context, Delivery, Edit, Listing, PendingEdits, Record,
@@ -902,18 +901,7 @@ impl Actor {
 
     /// The home the clone holds now.
     fn read_home(&self) -> Snapshot {
-        let projects = folders(&self.clone);
-        let (issues, unread): (Vec<_>, Vec<_>) = projects
-            .iter()
-            .flat_map(|(folder, _)| issue_files(&self.clone, folder))
-            .partition(Result::is_ok);
-        Snapshot::of(Inputs {
-            flow: std::fs::read_to_string(self.clone.join(PATH))
-                .map_err(|err| err.to_string()),
-            projects,
-            issues: issues.into_iter().filter_map(Result::ok).collect(),
-            unread: unread.into_iter().filter_map(Result::err).collect(),
-        })
+        home_files::read(&self.clone)
     }
 
     fn publish(&self) {
@@ -1280,52 +1268,6 @@ async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
     .map_err(|err| err.to_string())
 }
 
-/// Each `.md` file in the issues folder of the project in `folder`, or
-/// why it couldn't be read.
-fn issue_files(clone: &Path, folder: &str) -> Vec<Result<File, String>> {
-    let project = ProjectId(String::from(folder));
-    let path = Listing::for_project(&project).path;
-    std::fs::read_dir(clone.join(&path))
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let file = entry.path();
-            let stem = file
-                .extension()
-                .filter(|extension| *extension == "md")
-                .and_then(|_| file.file_stem())?
-                .to_string_lossy()
-                .into_owned();
-            Some(
-                std::fs::read_to_string(&file)
-                    .map(|text| File {
-                        project: project.clone(),
-                        stem: stem.clone(),
-                        text,
-                    })
-                    .map_err(|err| format!("{path}/{stem}.md: {err}")),
-            )
-        })
-        .collect()
-}
-
-/// Each folder of the clone's `projects/`, with its `project.toml`.
-fn folders(clone: &Path) -> Vec<(String, Result<String, String>)> {
-    std::fs::read_dir(clone.join("projects"))
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| {
-            let read =
-                std::fs::read_to_string(entry.path().join("project.toml"))
-                    .map_err(|err| err.to_string());
-            (entry.file_name().to_string_lossy().into_owned(), read)
-        })
-        .collect()
-}
-
 /// A search root with the directories in it and in each of those that
 /// isn't hidden, so a checkout one level down is found too.
 fn root(path: &Path) -> Root {
@@ -1409,7 +1351,7 @@ fn read(path: &Path) -> Option<String> {
 }
 
 /// The store's encoding. A store in any other is set aside, never read.
-const EDITS_VERSION: &[u8] = b"\x80\x00\x05";
+const EDITS_VERSION: &[u8] = b"\x80\x00\x06";
 
 /// The unpushed issue changes the host kept. A store that no longer reads
 /// is moved aside, so its changes are not lost unseen.

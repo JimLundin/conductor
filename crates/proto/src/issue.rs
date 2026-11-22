@@ -135,6 +135,46 @@ impl fmt::Display for Entry {
     }
 }
 
+impl Entry {
+    /// The entry `line` writes, as `Display` writes it: any line that
+    /// isn't `<time> <who> <event>: <text>` is a note as written.
+    #[must_use]
+    pub fn of(line: &str) -> Self {
+        Self::structured(line).unwrap_or_else(|| Self {
+            at: None,
+            by: None,
+            event: LogEvent::Note,
+            text: String::from(line),
+        })
+    }
+
+    fn structured(line: &str) -> Option<Self> {
+        let (head, text) = line.split_once(": ")?;
+        let mut words = head.split(' ');
+        let at = words.next()?;
+        let by = words.next()?;
+        let event = match (words.next()?, words.next(), words.next()) {
+            ("note", None, _) => LogEvent::Note,
+            (name @ ("stage" | "status"), Some(change), None) => {
+                let (before, after) = change.split_once('→')?;
+                let (from, to) = (String::from(before), String::from(after));
+                if name == "stage" {
+                    LogEvent::Stage { from, to }
+                } else {
+                    LogEvent::Status { from, to }
+                }
+            }
+            _ => return None,
+        };
+        at.contains('T').then(|| Self {
+            at: Some(String::from(at)),
+            by: Some(String::from(by)),
+            event,
+            text: String::from(text),
+        })
+    }
+}
+
 impl fmt::Display for LogEvent {
     /// `note`, `stage <from>→<to>` or `status <from>→<to>`.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -180,11 +220,12 @@ pub enum IssueChange {
         to: String,
         reason: String,
     },
-    /// A field's or relation's value, the title among them.
+    /// A declared field's or relation's value.
     Set {
         field: String,
         value: Datum,
     },
+    Title(String),
     /// A note, which the writer signs and dates.
     Note(String),
     Body(String),
@@ -206,4 +247,59 @@ pub struct Item {
     /// changed since, the change is refused. `None` takes the place in
     /// the file as it is.
     pub seen: Option<Vec<ChecklistItem>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use alloc::string::{String, ToString};
+
+    use super::{Entry, LogEvent};
+
+    fn entry(event: LogEvent, text: &str) -> Entry {
+        Entry {
+            at: Some(String::from("2026-11-22T17:26:37Z")),
+            by: Some(String::from("laptop·claude")),
+            event,
+            text: String::from(text),
+        }
+    }
+
+    #[test]
+    fn a_log_line_reads_back_as_the_entry_that_wrote_it() {
+        let entries = [
+            entry(LogEvent::Note, "opened."),
+            entry(
+                LogEvent::Status {
+                    from: String::from("open"),
+                    to: String::from("done"),
+                },
+                "landed: and merged",
+            ),
+            entry(
+                LogEvent::Stage {
+                    from: String::from("none"),
+                    to: String::from("build"),
+                },
+                "",
+            ),
+        ];
+        for written in entries {
+            assert_eq!(Entry::of(&written.to_string()), written);
+        }
+    }
+
+    #[test]
+    fn a_line_that_names_no_time_and_no_one_is_a_note_as_written() {
+        for line in ["just words", "someone note: no time", "a b c d: e"] {
+            assert_eq!(
+                Entry::of(line),
+                Entry {
+                    at: None,
+                    by: None,
+                    event: LogEvent::Note,
+                    text: String::from(line),
+                }
+            );
+        }
+    }
 }

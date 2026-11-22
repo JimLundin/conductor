@@ -14,6 +14,7 @@ pub mod checkout;
 pub mod flow;
 pub mod instructions;
 pub mod issue;
+pub mod layout;
 mod prelude;
 pub mod project;
 pub mod sync;

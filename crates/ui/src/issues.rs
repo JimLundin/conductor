@@ -310,12 +310,8 @@ impl IssueDraft {
         let changes = [
             (
                 Submission::Title,
-                (fields.title.trim() != original.title.trim()).then(|| {
-                    IssueChange::Set {
-                        field: String::from(TITLE),
-                        value: Datum::Text(fields.title.clone()),
-                    }
-                }),
+                (fields.title.trim() != original.title.trim())
+                    .then(|| IssueChange::Title(fields.title.clone())),
             ),
             (
                 Submission::Body,
@@ -564,9 +560,6 @@ fn kinds(flow: &Flow, kind: &str) -> Vec<Pick> {
 pub fn flow_of(host: &Host) -> Option<&Flow> {
     host.fold.home.as_ref()?.flow.as_deref()
 }
-
-/// What the edit form's title sets.
-const TITLE: &str = "title";
 
 /// Each status with issues, in the flow's order.
 fn groups(host: HostId, flow: &Flow, project: &Project) -> Vec<StatusGroup> {

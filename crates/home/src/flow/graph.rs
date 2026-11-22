@@ -13,9 +13,9 @@ use core::fmt;
 
 use proto::flow::{Field, FieldRole, FieldType, Flow, Relation};
 use proto::{Datum, Issue, IssueId, ProjectId};
-use toml::{Table, Value};
+use toml::Value;
 
-use super::file::Document;
+use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
 use crate::prelude::*;
 
 /// An issue file: the project it's in, its name without `.md`, its text.
@@ -81,6 +81,16 @@ pub fn read(flow: &Flow, files: &[File]) -> Graph {
 ///
 /// What is structurally wrong with it.
 pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
+    parsed(flow, file).map(|(issue, _)| issue)
+}
+
+/// The issue one file holds, as [`one`] reads it, with the document it
+/// was read from.
+///
+/// # Errors
+///
+/// What is structurally wrong with it.
+pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
     let place = format!("{}/{}", file.project.0, file.stem);
     let fail = |field: Option<&str>, message: String| Problem {
         issue: place.clone(),
@@ -89,43 +99,43 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
     };
     let document =
         Document::of(&file.text).map_err(|message| fail(None, message))?;
-    let mut table = toml::from_str::<Table>(&document.front())
-        .map_err(|err| fail(None, format!("its front matter: {err}")))?;
-    let id = text(&mut table, "id")
+    let front = document
+        .front_matter()
+        .map_err(|message| fail(None, message))?;
+    let id = front
+        .id
         .filter(|id| *id == file.stem)
         .and_then(|id| id_of(&id))
         .ok_or_else(|| {
             fail(
-                Some("id"),
+                Some(ID),
                 String::from("is not its file's name, a lower-case ULID"),
             )
         })?;
-    let title = text(&mut table, "title")
-        .ok_or_else(|| fail(Some("title"), String::from("is missing")))?;
-    let kind =
-        text(&mut table, "kind").unwrap_or_else(|| flow.default_kind.clone());
+    let title = front
+        .title
+        .ok_or_else(|| fail(Some(TITLE), String::from("is missing")))?;
+    let kind = front.kind.unwrap_or_else(|| flow.default_kind.clone());
     if flow.kind(&kind).is_none() {
-        return Err(fail(Some("kind"), format!("no kind is called {kind:?}")));
+        return Err(fail(Some(KIND), format!("no kind is called {kind:?}")));
     }
-    let status = text(&mut table, "status")
-        .ok_or_else(|| fail(Some("status"), String::from("is missing")))?;
+    let status = front
+        .status
+        .ok_or_else(|| fail(Some(STATUS), String::from("is missing")))?;
     if flow.status(&status).is_none() {
         return Err(fail(
-            Some("status"),
+            Some(STATUS),
             format!("no status is called {status:?}"),
         ));
     }
-    let stage = text(&mut table, "stage");
+    let stage = front.stage;
     if let Some(name) = stage.as_ref().filter(|name| flow.stage(name).is_none())
     {
-        return Err(fail(
-            Some("stage"),
-            format!("no stage is called {name:?}"),
-        ));
+        return Err(fail(Some(STAGE), format!("no stage is called {name:?}")));
     }
     let mut fields = BTreeMap::new();
     let mut links = BTreeMap::new();
-    for (key, value) in table {
+    for (key, value) in front.rest {
         if let Some(field) = flow.field(&kind, &key) {
             let datum = datum(field, value)
                 .map_err(|message| fail(Some(&key), message))?;
@@ -153,7 +163,7 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
                 Datum::Texts(_) | Datum::Bool(_) => None,
             }),
     );
-    Ok(Issue {
+    let issue = Issue {
         id,
         project: file.project.clone(),
         title,
@@ -167,7 +177,8 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         checklist: document.checklist(),
         log: document.log(),
         branch,
-    })
+    };
+    Ok((issue, document))
 }
 
 /// The branch an issue's sessions land on: the one its file declares, else
@@ -184,13 +195,6 @@ pub fn id_of(name: &str) -> Option<IssueId> {
         .ok()
         .map(|ulid| IssueId(ulid.0))
         .filter(|id| id.to_string() == name)
-}
-
-fn text(table: &mut Table, key: &str) -> Option<String> {
-    match table.remove(key) {
-        Some(Value::String(text)) => Some(text),
-        _ => None,
-    }
 }
 
 fn datum(field: &Field, value: Value) -> Result<Datum, String> {

@@ -6312,11 +6312,8 @@ fn pushed_issue(land: &Homeland, issue: proto::IssueId) -> Fallible<String> {
     git(&land.home_bare, &["show", &path])
 }
 
-fn set(field: &str, value: &str) -> IssueChange {
-    IssueChange::Set {
-        field: String::from(field),
-        value: proto::Datum::Text(String::from(value)),
-    }
+fn retitle(title: &str) -> IssueChange {
+    IssueChange::Title(String::from(title))
 }
 
 fn change(issue: proto::IssueId, change: IssueChange) -> CommandBody {
@@ -6738,7 +6735,7 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
     let checkout = data.join("home-repo");
     let lock = checkout.join(".git/index.lock");
     std::fs::write(&lock, "")?;
-    let title = |text: &str| change(issue, set("title", text));
+    let title = |text: &str| change(issue, retitle(text));
     wrote(&link, title("First setter")).await?;
     let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
     std::fs::remove_file(&lock)?;
@@ -6838,7 +6835,7 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
     };
     let invalid = proto::Command {
         id: proto::CommandId(81),
-        body: change(issue, set("title", "")),
+        body: change(issue, retitle("")),
     };
     let invalid_result = retry_command(&connection, &invalid).await?;
     assert_eq!(
@@ -7079,7 +7076,7 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
     let _ =
         home_until(&mut writer_updates, |home| !alpha_issues(home).is_empty())
             .await?;
-    wrote(&writer, change(issue, set("title", "Upstream title"))).await?;
+    wrote(&writer, change(issue, retitle("Upstream title"))).await?;
     writer.stop().await?;
     second.shutdown().await?;
     assert!(pushed_issue(&land, issue)?.contains("title = \"Upstream title\""));
@@ -7089,7 +7086,7 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
     let conn = authenticated(&phone, &fx.target).await?;
     let matching = proto::Command {
         id: proto::CommandId(80),
-        body: change(issue, set("title", "Sign in")),
+        body: change(issue, retitle("Sign in")),
     };
     assert_eq!(
         retry_command(&conn, &matching).await?,

@@ -366,7 +366,7 @@ projects_scenario() {
   git -C "$at/sources/home" init -q
   listed "$at/sources/home" alpha "file://$at/alpha-remote.git" "$at/sources/alpha"
   listed "$at/sources/home" beta "file://$at/beta-remote.git" "$at/sources/beta"
-  # The flow Conductor's own home declares, which the issues follow.
+  # The tests' own flow, which the issues follow.
   mkdir -p "$at/sources/home/docs/agents"
   cp crates/home/src/flow/test-flow.toml "$at/sources/home/docs/agents/flow.toml"
   git -C "$at/sources/home" add .

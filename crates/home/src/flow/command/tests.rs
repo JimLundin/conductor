@@ -5,6 +5,7 @@ use proto::{
 
 use super::{
     Command, Context, Edit, Outcome, command, fresh, homeless, run, stamp,
+    write,
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
@@ -66,13 +67,18 @@ fn id(stem: &str) -> IssueId {
 
 /// What the command line `line` asks of the home `inputs` holds.
 fn asked(inputs: &Inputs, line: &str) -> Command {
-    command(&words(line), &Snapshot::of(inputs.clone()))
+    command(&words(line), &Snapshot::of(inputs.clone()), fresh(NOW, 7))
 }
 
 /// What saying `line` to the home `inputs` holds writes and says.
 fn ran(inputs: &Inputs, line: &str) -> Outcome {
     let home = Snapshot::of(inputs.clone());
-    run(command(&words(line), &home), None, &home, &context())
+    run(
+        command(&words(line), &home, fresh(NOW, 7)),
+        None,
+        &home,
+        &context(),
+    )
 }
 
 fn check(inputs: &Inputs) -> Report {
@@ -82,8 +88,8 @@ fn check(inputs: &Inputs) -> Report {
 fn context() -> Context {
     Context {
         now: NOW,
-        id: fresh(NOW, 7),
         by: String::from("laptop·claude"),
+        mark: None,
     }
 }
 
@@ -116,22 +122,29 @@ fn text(outcome: &Outcome) -> String {
 }
 
 #[test]
+fn a_new_issue_takes_the_fresh_id() {
+    assert_eq!(
+        asked(&home(), &format!("issue new home task Do-it parent={SPEC}")),
+        Command::Edit(Edit::New {
+            id: fresh(NOW, 7),
+            issue: NewIssue {
+                project: ProjectId(String::from(FOLDER)),
+                kind: String::from("task"),
+                title: String::from("Do-it"),
+                fields: Vec::from([(
+                    String::from("parent"),
+                    Datum::Text(String::from(SPEC)),
+                )]),
+            },
+        })
+    );
+}
+
+#[test]
 fn the_words_name_a_command() {
     let inputs = home();
     let asked = |line: &str| asked(&inputs, line);
     assert_eq!(asked("check"), Command::Check);
-    assert_eq!(
-        asked(&format!("issue new home task Do-it parent={SPEC}")),
-        Command::Edit(Edit::New(NewIssue {
-            project: ProjectId(String::from(FOLDER)),
-            kind: String::from("task"),
-            title: String::from("Do-it"),
-            fields: Vec::from([(
-                String::from("parent"),
-                Datum::Text(String::from(SPEC)),
-            )]),
-        }))
-    );
     let changing = |change| {
         Command::Edit(Edit::Change {
             id: id(TASK),
@@ -276,7 +289,7 @@ fn a_value_is_read_as_its_field_takes_it() {
     );
     assert_eq!(
         set("title=Read,-then-write"),
-        value("title", Datum::Text(String::from("Read,-then-write")))
+        [IssueChange::Title(String::from("Read,-then-write"))]
     );
     assert_eq!(
         set(&format!("parent={SPEC}")),
@@ -683,5 +696,51 @@ fn a_new_issue_writes_when_it_opened_in_its_created_field_whatever_it_is_called(
         !text(&roleless).contains("created ="),
         "{}",
         text(&roleless)
+    );
+}
+
+#[test]
+fn an_issue_s_own_words_are_refused_as_fields_in_the_flow_s_terms() {
+    let refused = |field: &str| {
+        let edit = Edit::Change {
+            id: id(TASK),
+            changes: Vec::from([IssueChange::Set {
+                field: String::from(field),
+                value: Datum::Text(String::from("x")),
+            }]),
+        };
+        write(&Snapshot::of(home()), &edit, &context()).map(|_| ())
+    };
+    assert_eq!(
+        ["status", "stage", "kind", "id", "title"].map(refused),
+        [
+            Err(String::from(
+                "a status changes by a move, not by setting a field"
+            )),
+            Err(String::from(
+                "a stage changes by a move, not by setting a field"
+            )),
+            Err(String::from("an issue's kind doesn't change")),
+            Err(String::from("an issue's id doesn't change")),
+            Err(String::from(
+                "the title changes by retitling, not by setting a field"
+            )),
+        ]
+    );
+}
+
+#[test]
+fn an_edit_to_an_issue_that_doesn_t_read_says_what_is_wrong_with_it() {
+    let inputs =
+        with_task(&format!("+++\nid = \"{TASK}\"\nstatus = \"open\"\n+++\n"));
+    let outcome = ran(&inputs, &format!("issue note {TASK} hello"));
+    assert_eq!(
+        (outcome.failed, outcome.output),
+        (
+            true,
+            format!(
+                "home: {TASK} doesn't read as the flow declares: title: is missing\n"
+            )
+        )
     );
 }

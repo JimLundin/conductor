@@ -1135,7 +1135,7 @@ fn editing_an_issue_sends_its_fields_once_saved() {
     assert_eq!(
         sent(&effects),
         [
-            change(setting("title", "Sign in from the app")),
+            change(IssueChange::Title(text("Sign in from the app"))),
             change(labelling(&["app", "credentials"])),
         ],
         "the body didn't change, so it isn't sent"
@@ -1193,7 +1193,7 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
         [
             CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: setting("title", "New title"),
+                change: IssueChange::Title(text("New title")),
             },
             CommandBody::ChangeIssue {
                 issue: OPENED,
@@ -1230,7 +1230,7 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
         sent(&retry),
         [CommandBody::ChangeIssue {
             issue: OPENED,
-            change: setting("title", "New title"),
+            change: IssueChange::Title(text("New title")),
         }]
     );
     Ok(())

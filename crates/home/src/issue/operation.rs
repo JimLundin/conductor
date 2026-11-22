@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use alloc::string::ToString;
 
 use proto::{
     CommandId, Issue, IssueChange, IssueId, NewIssue, Part, ProjectId,
@@ -6,11 +7,12 @@ use proto::{
 };
 
 use super::{
-    Applied, Change, Edit, EditData, Mode, apply, edit_marker, file, folder,
-    message, signer, was,
+    Applied, Edit, EditData, Mode, apply, edit_marker, message, signer, was,
 };
+use crate::flow::command;
 use crate::flow::role;
 use crate::flow::snapshot::Snapshot;
+use crate::layout;
 use crate::prelude::*;
 
 /// The issue and file an operation reads before deciding what to write.
@@ -292,9 +294,11 @@ impl Context<'_> {
             .ok_or(Rejection::UnknownProject)?;
         Ok(self.record(
             project,
-            issue,
             signer(self.host, client),
-            Change::Create(new),
+            command::Edit::New {
+                id: issue,
+                issue: new,
+            },
         ))
     }
 
@@ -317,28 +321,28 @@ impl Context<'_> {
             .ok_or(Rejection::UnknownIssue)?;
         Ok(self.record(
             project,
-            issue,
             signer(self.host, client),
-            Change::Issue(change),
+            command::Edit::Change {
+                id: issue,
+                changes: Vec::from([change]),
+            },
         ))
     }
 
     const fn record(
         &self,
         project: ProjectId,
-        issue: IssueId,
         by: String,
-        change: Change,
+        edit: command::Edit,
     ) -> Record {
         Record {
             command: self.command,
             data: EditData {
                 project,
-                issue,
                 at: self.at,
                 by,
-                change,
-                was: None,
+                edit,
+                was: Vec::new(),
             },
         }
     }
@@ -368,10 +372,7 @@ impl Record {
         home: &Snapshot,
         pending: &PendingEdits,
     ) -> Result<Recorded, Rejection> {
-        self.data.was = home
-            .flow()
-            .ok()
-            .and_then(|flow| was(flow, current, &self.data));
+        self.data.was = was(home.flow().ok(), current, &self.data);
         let edit = Edit {
             command: self.command,
             data: self.data,
@@ -393,7 +394,7 @@ impl Record {
                 return Err(Rejection::IssueRefused { reason });
             }
         };
-        let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue));
+        let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue()));
         Ok(Recorded(
             Recording::Keep(Box::new(edit), next, self.command),
             warnings,
@@ -404,15 +405,15 @@ impl Record {
 fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
     earlier
         .iter()
-        .all(|pending| pending.covered || pending.edit.data.issue != issue)
+        .all(|pending| pending.covered || pending.edit.data.issue() != issue)
 }
 
 impl EditData {
     fn read(&self) -> Read {
         Read {
             project: self.project.clone(),
-            issue: self.issue,
-            path: file(&self.project, self.issue),
+            issue: self.issue(),
+            path: layout::issue_file(&self.project, &self.issue().to_string()),
         }
     }
 }
@@ -420,7 +421,7 @@ impl EditData {
 impl Edit {
     #[must_use]
     pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
-        (self.command == id).then_some(self.data.issue)
+        (self.command == id).then_some(self.data.issue())
     }
 
     #[must_use]
@@ -459,7 +460,7 @@ impl Edit {
         Commit {
             target: self.read(),
             text,
-            message: message(&self.data),
+            message: message(&self.data.edit),
             author: "Conductor",
             email: "conductor@localhost",
         }
@@ -620,7 +621,7 @@ impl Listing {
     #[must_use]
     pub fn for_project(project: &ProjectId) -> Self {
         Self {
-            path: folder(project),
+            path: layout::issues(project),
         }
     }
 
@@ -631,7 +632,6 @@ impl Listing {
 
     #[must_use]
     pub fn created_from_path(path: &str) -> Option<IssueId> {
-        let stem = path.rsplit('/').next()?.strip_suffix(".md")?;
-        crate::flow::graph::id_of(stem)
+        layout::issue_stem(path).and_then(crate::flow::graph::id_of)
     }
 }
