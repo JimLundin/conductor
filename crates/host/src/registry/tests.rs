@@ -748,7 +748,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
 }
 
 #[test]
-fn undo_reopens_a_closed_session_for_instance_removal_checks() {
+fn continue_reopens_a_closed_session_for_instance_removal_checks() {
     let event = |session, kind| Event {
         seq: HostSeq(1),
         session: SessionId(session),
@@ -775,13 +775,7 @@ fn undo_reopens_a_closed_session_for_instance_removal_checks() {
         event(3, EventKind::SessionReady),
         event(2, closed()),
         event(3, closed()),
-        event(
-            3,
-            EventKind::TurnsUndone {
-                checkpoint: proto::CheckpointId(2),
-                restored: proto::CheckpointId(1),
-            },
-        ),
+        event(3, EventKind::SessionReady),
     ];
     assert_eq!(
         running(&history),
@@ -1314,7 +1308,6 @@ fn at_snapshot(
             StartEffect::Snapshot {
                 session: id,
                 workspace: worktree,
-                id: checkpoint,
             },
         next,
     }) = prepare.report(
@@ -1324,10 +1317,7 @@ fn at_snapshot(
     else {
         return Err("expected a workspace snapshot");
     };
-    assert_eq!(
-        (id, worktree, checkpoint),
-        (session, workspace, proto::CheckpointId(0))
-    );
+    assert_eq!((id, worktree), (session, workspace));
     Ok(next)
 }
 
@@ -1424,14 +1414,8 @@ fn initial_seed() -> [EventKind; 2] {
         },
         EventKind::CheckpointCreated {
             checkpoint: proto::Checkpoint {
-                id: proto::CheckpointId(0),
-                parent: None,
                 turn_start: None,
                 commit: text("initial commit"),
-                history: proto::HistoryAnchor::Fresh,
-                undo: proto::UndoAvailability::Unavailable {
-                    reason: text("initial checkpoint has no turn"),
-                },
             },
         },
     ]

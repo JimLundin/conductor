@@ -27,11 +27,11 @@ mod tests;
 use crate::prelude::*;
 use client::link::Update;
 use proto::{
-    CheckpointId, CommandBody, CommandResult, Effort, IssueId, SessionId,
-    Ticket, TicketError,
+    CommandBody, CommandResult, Effort, HostSeq, IssueId, SessionId, Ticket,
+    TicketError,
 };
 
-pub use checkpoints::{Diff, DiffFile, DiffPanel, Patch, Preview, TurnChanges};
+pub use checkpoints::{DiffFile, DiffPanel, Patch, Preview, TurnChanges};
 pub use credentials::{
     ClearButton, Clipboard, CredentialIntent, CredentialsPane,
     CredentialsScreen, DeviceCode, FieldView, InstanceCredentials, KindForm,
@@ -55,7 +55,7 @@ pub use saved::{
 };
 pub use session::{
     Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
-    TaskRow, Tasks, UndoNote, WorkspaceContext,
+    TaskRow, Tasks, WorkspaceContext,
 };
 pub use sessions::{HostGroup, Listing, SessionList, SessionRow};
 pub use state::{Detail, Dial, HostsScreen, State};
@@ -164,8 +164,6 @@ pub enum Focus {
     Element(String),
     /// The element with this id, once the next frame is drawn.
     NextFrame(String),
-    /// The composer if it takes input, else the undo note.
-    AfterUndo,
     Composer,
 }
 
@@ -191,7 +189,7 @@ enum ReplyTo {
     Issue(issues::Submission),
     Instance(Subject, Done),
     Diff {
-        checkpoint: CheckpointId,
+        checkpoint: HostSeq,
         request: u64,
     },
 }

@@ -1,8 +1,7 @@
 use proto::{
-    AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandId,
-    CommandResult, Effort, Epoch, Hello, HostSeq, InstanceId, IssueChange,
-    IssueFields, IssueId, Models, Open, Priority, Provider, Rejection,
-    SessionId, SignInCode, Subscribe,
+    AuthToken, ClientName, Command, CommandBody, CommandId, Effort, Epoch,
+    Hello, HostSeq, InstanceId, IssueChange, IssueFields, IssueId, Models,
+    Open, Priority, Provider, SessionId, SignInCode, Subscribe,
 };
 
 use super::{
@@ -98,14 +97,11 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
     let diff = route(
         CommandBody::GetDiff {
             session: SessionId(1),
-            checkpoint: CheckpointId(2),
+            checkpoint: HostSeq(2),
         },
         phone(),
     );
-    assert_eq!(
-        diff,
-        Route::Order(SessionId(1), Order::Diff(CheckpointId(2)))
-    );
+    assert_eq!(diff, Route::Order(SessionId(1), Order::Diff(HostSeq(2))));
     assert_eq!(diff.ledger(), Ledger::Unrecorded);
     let work = || InstanceId::named(Provider::Codex, "https://gw.example");
     let gateway = || proto::Credential {
@@ -281,30 +277,6 @@ fn relaunching_orders_take_the_offered_models() {
     assert_eq!(
         Relaunch::Continue.order(Models::none()),
         Order::Start(Models::none())
-    );
-    assert_eq!(
-        Relaunch::Undo(CheckpointId(3)).order(Models::none()),
-        Order::Undo(CheckpointId(3))
-    );
-}
-
-#[test]
-fn an_undo_whose_session_stopped_fails_closed() {
-    assert_eq!(Relaunch::Undo(CheckpointId(3)).closed(), None);
-    assert_eq!(
-        Relaunch::Continue.closed(),
-        Some(CommandResult::Rejected(Rejection::SessionClosed))
-    );
-}
-
-#[test]
-fn an_undo_order_forks_its_conversation_with_the_given_id() {
-    assert_eq!(
-        Order::Undo(CheckpointId(3)).session(String::from("fork")),
-        crate::session::Order::Undo {
-            checkpoint: CheckpointId(3),
-            fork: String::from("fork"),
-        }
     );
 }
 

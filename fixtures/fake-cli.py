@@ -26,7 +26,7 @@ line it reads to `stdin.jsonl`. A line waits for what the session writes:
 In managed worktrees, recordings and gate/log files stay in the original Git
 source directory, while `files` markers operate in the isolated CLI cwd.
 Claude synthetic frames may use `session_id: "$session"` to report the
-actual `--session-id`, including a newly allocated fork target.
+actual `--session-id`.
 
 Each start in the same control directory is a new run. Run 1 plays `stdout.jsonl`
 and logs `stdin.jsonl`; run n after it plays `stdout.n.jsonl`, or
@@ -100,7 +100,7 @@ def cli_flag(name):
 native_session = cli_flag("--session-id") or cli_flag("--resume")
 resume = cli_flag("--resume")
 sessions = control / ".fake-sessions"
-if synthetic and resume and "--fork-session" not in cli_args and not (sessions / resume).exists():
+if synthetic and resume and not (sessions / resume).exists():
     recording = [json.dumps({"fake": "await", "match": {"type": "control_request"}}),
                  json.dumps({"fake": "fail", "stderr": "No conversation found with session ID: " + resume, "status": 1})]
 elif synthetic and resume and (control / "stdout.2.jsonl").exists():

@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::prelude::*;
 use crate::{
-    ClaudeCredential, ClaudeEvent, MessageId, PermissionMode, SessionId,
+    ClaudeCredential, ClaudeEvent, PermissionMode, SessionId,
     UnsupportedVersion, check_version,
 };
 
@@ -39,19 +39,10 @@ pub enum VersionPolicy {
     AllowUntested,
 }
 
-/// Native conversation history to load. A fork is inclusive of `through`.
-///
-/// Its target transcript is created lazily on the first real user turn, so
-/// persist this recipe until then; `id()` alone does not prove persistence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resume {
     Fresh,
     Session(SessionId),
-    Fork {
-        session: SessionId,
-        through: MessageId,
-        target: SessionId,
-    },
 }
 
 impl Resume {
@@ -60,13 +51,12 @@ impl Resume {
     pub const fn target(&self) -> Option<&SessionId> {
         match self {
             Self::Fresh => None,
-            Self::Session(id) | Self::Fork { target: id, .. } => Some(id),
+            Self::Session(id) => Some(id),
         }
     }
 
     /// The session whose transcript `reason`, why the CLI exited at start,
-    /// says is missing. Recovery may replay a persisted fork recipe only for
-    /// that exact reason about the requested resume id.
+    /// says is missing. Only the exact requested id permits a fresh start.
     #[must_use]
     pub fn missing(&self, reason: &str) -> Option<SessionId> {
         match self {
@@ -79,7 +69,7 @@ impl Resume {
             {
                 Some(id.clone())
             }
-            Self::Fresh | Self::Session(_) | Self::Fork { .. } => None,
+            Self::Fresh | Self::Session(_) => None,
         }
     }
 }
@@ -344,17 +334,6 @@ fn resume_args(resume: &Resume, id: &SessionId) -> Vec<String> {
         Resume::Session(session) => {
             Vec::from([format!("--resume={}", session.0)])
         }
-        Resume::Fork {
-            session,
-            through,
-            target,
-        } => Vec::from([
-            format!("--resume={}", session.0),
-            format!("--resume-session-at={}", through.0),
-            String::from("--fork-session"),
-            String::from("--session-id"),
-            target.0.clone(),
-        ]),
     }
 }
 
@@ -423,7 +402,7 @@ mod tests {
         profile, reported_refusal, sandbox, session, unprotected,
     };
     use crate::{
-        ClaudeCredential, ClaudeEvent, MessageId, PermissionMode, SessionId,
+        ClaudeCredential, ClaudeEvent, PermissionMode, SessionId,
         UnsupportedVersion,
     };
 
@@ -503,31 +482,6 @@ mod tests {
                 Resume::Fresh.missing(&reason("target")),
             ],
             [Some(id("target")), None, None]
-        );
-    }
-
-    #[test]
-    fn a_fork_resumes_through_its_message_as_the_chosen_session() {
-        let fork = Resume::Fork {
-            session: id("source"),
-            through: MessageId(String::from("assistant-uuid")),
-            target: id("new-session"),
-        };
-        let args = session(&launch(fork.clone())).args;
-        assert_eq!(
-            (&args[8..13], fork.target(), Resume::Fresh.target()),
-            (
-                &[
-                    "--resume=source",
-                    "--resume-session-at=assistant-uuid",
-                    "--fork-session",
-                    "--session-id",
-                    "new-session",
-                ]
-                .map(String::from)[..],
-                Some(&id("new-session")),
-                None
-            )
         );
     }
 
@@ -708,7 +662,6 @@ mod tests {
             terminal_reason: None,
             session_id: id("s"),
             errors: errors.iter().copied().map(String::from).collect(),
-            last_message: None,
         };
         assert_eq!(
             (

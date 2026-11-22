@@ -6,11 +6,11 @@ use alloc::collections::BTreeMap;
 use core::cmp::Reverse;
 
 use proto::{
-    ChecklistEntry, CheckpointId, ClientName, CloseReason, Effort, Event,
-    EventKind, FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId,
-    ModelId, Provider, Question, RequestId, Resolution, SessionId,
-    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, ToolCallId,
-    ToolKind, ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Workspace,
+    ChecklistEntry, ClientName, CloseReason, Effort, Event, EventKind,
+    FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId, ModelId,
+    Provider, Question, RequestId, Resolution, SessionId, SubagentActivity,
+    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -33,9 +33,7 @@ pub struct SessionView {
     pub tasks: Vec<ChecklistEntry>,
     pub workspace: Option<Workspace>,
     pub checkpoints: Vec<TurnCheckpoint>,
-    pub undo: UndoState,
     turn_starts: BTreeMap<HostSeq, usize>,
-    subagents_at: BTreeMap<CheckpointId, Vec<Subagent>>,
     pub items: Vec<Item>,
     /// The agents the session's agent started, in the order they started.
     pub subagents: Vec<Subagent>,
@@ -83,10 +81,9 @@ impl SubagentStatus {
 /// A completed turn and its transcript boundaries; provider identifiers stay opaque.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnCheckpoint {
-    pub checkpoint: CheckpointId,
+    pub checkpoint: HostSeq,
     pub start: usize,
     pub end: usize,
-    pub undo: UndoAvailability,
 }
 
 /// A user turn's transcript, with its checkpoint once the host has saved it.
@@ -94,18 +91,7 @@ pub struct TurnCheckpoint {
 pub struct CompletedTurn<'a> {
     pub items: &'a [Item],
     pub outcome: &'a TurnOutcome,
-    pub checkpoint: Option<CheckpointId>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UndoState {
-    Ready,
-    Undoing(CheckpointId),
-    Failed {
-        checkpoint: CheckpointId,
-        reason: String,
-    },
-    Undone,
+    pub checkpoint: Option<HostSeq>,
 }
 
 /// Derived from the events, never sent.
@@ -242,8 +228,6 @@ pub enum StatusLabel {
     Idle,
     Running,
     Closed,
-    Undoing,
-    RecoveryNeeded,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -348,9 +332,7 @@ impl HostView {
                 tasks: Vec::new(),
                 workspace: None,
                 checkpoints: Vec::new(),
-                undo: UndoState::Ready,
                 turn_starts: BTreeMap::new(),
-                subagents_at: BTreeMap::new(),
                 items: Vec::new(),
                 subagents: Vec::new(),
                 activity: event.seq,
@@ -402,18 +384,17 @@ impl HostView {
 impl SessionView {
     #[must_use]
     pub const fn controls(&self) -> Controls {
-        let (composer, interrupt, resume) = match (&self.undo, &self.status) {
-            (UndoState::Undoing(_) | UndoState::Failed { .. }, _)
-            | (_, SessionStatus::Starting) => {
+        let (composer, interrupt, resume) = match &self.status {
+            SessionStatus::Starting => {
                 (Composer::Busy, Interrupt::Hidden, Resume::Hidden)
             }
-            (_, SessionStatus::Idle) => {
+            SessionStatus::Idle => {
                 (Composer::Open, Interrupt::Hidden, Resume::Hidden)
             }
-            (_, SessionStatus::Running) => {
+            SessionStatus::Running => {
                 (Composer::Busy, Interrupt::Offered, Resume::Hidden)
             }
-            (_, SessionStatus::Closed(_)) => {
+            SessionStatus::Closed(_) => {
                 (Composer::Closed, Interrupt::Hidden, Resume::Offered)
             }
         };
@@ -426,7 +407,6 @@ impl SessionView {
                     self.status,
                     SessionStatus::Idle | SessionStatus::Closed(_)
                 )
-                && matches!(self.undo, UndoState::Ready | UndoState::Undone)
                 && matches!(
                     self.finish,
                     FinishState::Ready | FinishState::Retrying
@@ -436,22 +416,17 @@ impl SessionView {
 
     #[must_use]
     pub const fn status_label(&self) -> StatusLabel {
-        match (&self.undo, &self.status) {
-            (UndoState::Undoing(_), _) => StatusLabel::Undoing,
-            (UndoState::Failed { .. }, _) => StatusLabel::RecoveryNeeded,
-            (_, SessionStatus::Starting) => StatusLabel::Starting,
-            (_, SessionStatus::Idle) => StatusLabel::Idle,
-            (_, SessionStatus::Running) => StatusLabel::Running,
-            (_, SessionStatus::Closed(_)) => StatusLabel::Closed,
+        match &self.status {
+            SessionStatus::Starting => StatusLabel::Starting,
+            SessionStatus::Idle => StatusLabel::Idle,
+            SessionStatus::Running => StatusLabel::Running,
+            SessionStatus::Closed(_) => StatusLabel::Closed,
         }
     }
 
     #[must_use]
     pub fn list_status(&self) -> ListStatus {
         let label = self.status_label();
-        if matches!(label, StatusLabel::Undoing | StatusLabel::RecoveryNeeded) {
-            return ListStatus::Session(label);
-        }
         match self.attention() {
             Attention::Quiet => ListStatus::Session(label),
             Attention::Requests(open) => ListStatus::Requests(open),
@@ -482,23 +457,11 @@ impl SessionView {
         })
     }
 
-    #[must_use]
-    pub const fn can_view_changes(&self) -> bool {
-        !matches!(self.undo, UndoState::Undoing(_))
-    }
-
     /// A running turn shows it is working, unless it waits on a person or
     /// its last item is live already: a reply or reasoning streaming in, or
     /// a tool call running.
     #[must_use]
     pub fn working(&self) -> Working {
-        match self.undo {
-            UndoState::Undoing(_) | UndoState::Failed { .. } => Working::Hidden,
-            UndoState::Ready | UndoState::Undone => self.turn_working(),
-        }
-    }
-
-    fn turn_working(&self) -> Working {
         match (&self.status, self.attention(), self.items.last()) {
             (
                 SessionStatus::Running,
@@ -648,18 +611,11 @@ impl SessionView {
                 ..self
             },
             EventKind::CheckpointCreated { checkpoint } => {
-                self.checkpoint_created(checkpoint)
+                self.checkpoint_created(checkpoint.turn_start, seq)
             }
             EventKind::SessionCreated { .. }
             | EventKind::SessionRemoved { .. }
-            | EventKind::UndoHistoryRestored { .. }
-            | EventKind::UndoRevertDispatched { .. }
-            | EventKind::CheckpointReserved { .. }
-            | EventKind::HistoryMaterialized { .. }
             | EventKind::NativeTurnStarted { .. } => self,
-            undo @ (EventKind::UndoStarted { .. }
-            | EventKind::UndoFailed { .. }
-            | EventKind::TurnsUndone { .. }) => self.undo_event(undo),
             EventKind::Error { message } => self.push(Item::Error(message)),
             EventKind::Subagent { agent, event } => {
                 self.subagent_event(agent, event)
@@ -693,25 +649,6 @@ impl SessionView {
             ..self
         }
         .push(Item::ModelChanged(reason))
-    }
-
-    /// An undo's phases.
-    fn undo_event(self, kind: EventKind) -> Self {
-        match kind {
-            EventKind::UndoStarted { checkpoint, .. } => Self {
-                undo: UndoState::Undoing(checkpoint),
-                ..self
-            },
-            EventKind::UndoFailed { checkpoint, reason } => Self {
-                undo: UndoState::Failed { checkpoint, reason },
-                ..self
-            },
-            EventKind::TurnsUndone {
-                checkpoint,
-                restored,
-            } => self.turns_undone(checkpoint, restored),
-            _ => self,
-        }
     }
 
     /// The issue the session works on, and finishing the session on it.
@@ -890,7 +827,6 @@ impl SessionView {
         turn_starts.insert(seq, self.items.len());
         Self {
             turn_starts,
-            undo: UndoState::Ready,
             finish: self.finish.after(&EventKind::UserMessage {
                 text: String::new(),
                 by: ClientName(String::new()),
@@ -901,77 +837,30 @@ impl SessionView {
         .push(message)
     }
 
-    /// A checkpoint covers the items since its turn started, or since the
-    /// last checkpoint when the host names no turn start.
-    fn checkpoint_created(mut self, checkpoint: proto::Checkpoint) -> Self {
-        self.subagents_at
-            .insert(checkpoint.id, self.subagents.clone());
-        let start = checkpoint
-            .turn_start
-            .and_then(|seq| self.turn_starts.get(&seq).copied())
-            .or_else(|| {
-                checkpoint.parent.map(|_| {
-                    self.checkpoints
-                        .last()
-                        .map_or(0, |turn| turn.end.saturating_add(1))
-                })
+    fn checkpoint_created(
+        self,
+        turn_start: Option<HostSeq>,
+        seq: HostSeq,
+    ) -> Self {
+        let start = turn_start
+            .and_then(|start| self.turn_starts.get(&start).copied())
+            .unwrap_or_else(|| {
+                self.checkpoints
+                    .last()
+                    .map_or(0, |turn| turn.end.saturating_add(1))
             });
-        let Some(first) = start else {
+        if start >= self.items.len() {
             return self;
-        };
+        }
         let mut checkpoints = self.checkpoints;
         checkpoints.push(TurnCheckpoint {
-            checkpoint: checkpoint.id,
-            undo: checkpoint.undo,
-            start: first,
+            checkpoint: seq,
+            start,
             end: self.items.len().saturating_sub(1),
         });
         Self {
             checkpoints,
             ..self
-        }
-    }
-
-    fn turns_undone(
-        mut self,
-        checkpoint: CheckpointId,
-        restored: CheckpointId,
-    ) -> Self {
-        match self
-            .checkpoints
-            .iter()
-            .find(|turn| turn.checkpoint == checkpoint)
-            .map(|turn| turn.start)
-        {
-            Some(start) => {
-                let subagents = self
-                    .subagents_at
-                    .get(&restored)
-                    .cloned()
-                    .unwrap_or_default();
-                self.subagents_at.retain(|id, _| *id <= restored);
-                Self {
-                    subagents,
-                    items: self.items.into_iter().take(start).collect(),
-                    checkpoints: self
-                        .checkpoints
-                        .into_iter()
-                        .filter(|turn| turn.start < start)
-                        .collect(),
-                    turn_starts: self
-                        .turn_starts
-                        .into_iter()
-                        .filter(|(_, index)| index < &start)
-                        .collect(),
-                    undo: UndoState::Undone,
-                    status: SessionStatus::Idle,
-                    ..self
-                }
-            }
-            None => Self {
-                undo: UndoState::Undone,
-                ..self
-            },
         }
     }
 
@@ -1377,9 +1266,9 @@ mod tests {
     };
 
     use super::{
-        Approval, Attention, Composer, HostView, Interrupt, Item, ListStatus,
-        ReplyState, RequestState, Resume, SessionStatus, SessionView,
-        StatusLabel, Subagent, SubagentStatus, ToolState, UndoState, Working,
+        Approval, Attention, Composer, HostView, Item, ListStatus, ReplyState,
+        RequestState, Resume, SessionStatus, SessionView, StatusLabel,
+        Subagent, SubagentStatus, ToolState, Working,
     };
 
     fn text(text: &str) -> String {
@@ -1591,9 +1480,7 @@ mod tests {
                     ]),
                     workspace: None,
                     checkpoints: Vec::new(),
-                    undo: UndoState::Ready,
                     turn_starts: BTreeMap::from([(HostSeq(4), 0)]),
-                    subagents_at: BTreeMap::new(),
                     activity: HostSeq(13),
                 },
             ),
@@ -1615,9 +1502,7 @@ mod tests {
                     items: Vec::from([Item::Error(text("odd"))]),
                     workspace: None,
                     checkpoints: Vec::new(),
-                    undo: UndoState::Ready,
                     turn_starts: BTreeMap::new(),
-                    subagents_at: BTreeMap::new(),
                     activity: HostSeq(15),
                 },
             ),
@@ -2552,15 +2437,11 @@ mod tests {
         );
     }
 
-    fn checkpoint(id: u64, start: u64, parent: u64) -> EventKind {
+    fn checkpoint(start: u64) -> EventKind {
         EventKind::CheckpointCreated {
             checkpoint: proto::Checkpoint {
-                id: proto::CheckpointId(id),
-                parent: Some(proto::CheckpointId(parent)),
                 turn_start: Some(HostSeq(start)),
                 commit: text("opaque"),
-                history: proto::HistoryAnchor::Fresh,
-                undo: proto::UndoAvailability::Available,
             },
         }
     }
@@ -2579,7 +2460,7 @@ mod tests {
             EventKind::TurnCompleted {
                 outcome: TurnOutcome::Completed,
             },
-            checkpoint(1, 3, 0),
+            checkpoint(3),
             EventKind::UserMessage {
                 text: text("second"),
                 by: ClientName(text("phone")),
@@ -2590,7 +2471,7 @@ mod tests {
             EventKind::TurnCompleted {
                 outcome: TurnOutcome::Completed,
             },
-            checkpoint(2, 7, 1),
+            checkpoint(7),
             EventKind::UserMessage {
                 text: text("third"),
                 by: ClientName(text("phone")),
@@ -2601,7 +2482,7 @@ mod tests {
             EventKind::TurnCompleted {
                 outcome: TurnOutcome::Completed,
             },
-            checkpoint(3, 11, 2),
+            checkpoint(11),
         ])
     }
 
@@ -2617,9 +2498,10 @@ mod tests {
         let [completion, checkpoint] = suffix.as_slice() else {
             return Err("expected completion and checkpoint".into());
         };
-        for [first, last] in
-            [[completion, checkpoint], [checkpoint, completion]]
-        {
+        for ([first, last], checkpoint_seq) in [
+            ([completion, checkpoint], 10),
+            ([checkpoint, completion], 9),
+        ] {
             let event = |kind: &EventKind, seq| Event {
                 seq: HostSeq(seq),
                 session: SessionId(1),
@@ -2646,10 +2528,42 @@ mod tests {
                 .ok_or("expected a completed turn")?;
             assert_eq!(
                 (turn.outcome, turn.checkpoint),
-                (&TurnOutcome::Completed, Some(proto::CheckpointId(2)))
+                (&TurnOutcome::Completed, Some(HostSeq(checkpoint_seq)))
             );
             assert_eq!(turn.items.len(), 2);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn turns_sharing_a_commit_keep_their_event_identity_across_replay()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let events = numbered(checkpoint_events());
+        let live = events
+            .iter()
+            .cloned()
+            .fold(HostView::empty(), HostView::apply);
+        let before_reconnect = events
+            .iter()
+            .take(8)
+            .cloned()
+            .fold(HostView::empty(), HostView::apply);
+        let reconnected = events
+            .into_iter()
+            .skip(8)
+            .fold(before_reconnect, HostView::apply);
+        assert_eq!(live, reconnected);
+        let session =
+            live.sessions.get(&SessionId(1)).ok_or("missing session")?;
+        assert_eq!(
+            session
+                .checkpoints
+                .iter()
+                .map(|turn| (turn.checkpoint, turn.start, turn.end,))
+                .collect::<Vec<_>>(),
+            [(HostSeq(6), 0, 2), (HostSeq(10), 3, 5), (HostSeq(14), 6, 8),],
+        );
+        assert_eq!(session.items.len(), 9);
         Ok(())
     }
 
@@ -2686,145 +2600,7 @@ mod tests {
     }
 
     #[test]
-    fn undo_removes_selected_and_later_turns_on_live_fold_replay_and_reconnect()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let events = numbered(
-            checkpoint_events()
-                .into_iter()
-                .chain([
-                    EventKind::UndoStarted {
-                        checkpoint: proto::CheckpointId(2),
-                        restore: proto::CheckpointId(1),
-                        history: proto::HistoryAnchor::Fresh,
-                    },
-                    EventKind::UndoHistoryRestored {
-                        checkpoint: proto::CheckpointId(2),
-                        history: proto::HistoryAnchor::Fresh,
-                    },
-                    EventKind::TurnsUndone {
-                        checkpoint: proto::CheckpointId(2),
-                        restored: proto::CheckpointId(1),
-                    },
-                ])
-                .collect(),
-        );
-        let live = events
-            .clone()
-            .into_iter()
-            .fold(HostView::empty(), HostView::apply);
-        let before_reconnect = events
-            .iter()
-            .take(15)
-            .cloned()
-            .fold(HostView::empty(), HostView::apply);
-        let reconnect = events
-            .into_iter()
-            .skip(15)
-            .fold(before_reconnect, HostView::apply);
-        assert_eq!(live, reconnect);
-        let session =
-            live.sessions.get(&SessionId(1)).ok_or("expected a value")?;
-        assert_eq!(session.items.len(), 3);
-        assert_eq!(session.checkpoints.len(), 1);
-        assert_eq!(
-            session
-                .checkpoints
-                .first()
-                .ok_or("expected a value")?
-                .checkpoint,
-            proto::CheckpointId(1)
-        );
-        assert_eq!(session.undo, super::UndoState::Undone);
-        assert_eq!(session.controls().composer, Composer::Open);
-        Ok(())
-    }
-
-    #[test]
-    fn in_progress_and_failed_undo_preserve_transcript_and_block_controls()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let original = numbered(checkpoint_events())
-            .into_iter()
-            .fold(HostView::empty(), HostView::apply)
-            .apply(Event {
-                seq: HostSeq(15),
-                session: SessionId(1),
-                kind: EventKind::OnIssue {
-                    issue: proto::IssueId(7),
-                },
-            });
-        let session = original
-            .sessions
-            .get(&SessionId(1))
-            .ok_or("expected a value")?;
-        assert!(session.controls().finish);
-        let pending = original.clone().apply(Event {
-            seq: HostSeq(16),
-            session: SessionId(1),
-            kind: EventKind::UndoStarted {
-                checkpoint: proto::CheckpointId(2),
-                restore: proto::CheckpointId(1),
-                history: proto::HistoryAnchor::Fresh,
-            },
-        });
-        let session = pending
-            .sessions
-            .get(&SessionId(1))
-            .ok_or("expected a value")?;
-        assert_eq!(session.items.len(), 9);
-        assert_eq!(session.status_label(), StatusLabel::Undoing);
-        assert_eq!(
-            session.list_status(),
-            ListStatus::Session(StatusLabel::Undoing)
-        );
-        assert_eq!(
-            session.controls(),
-            super::Controls {
-                composer: Composer::Busy,
-                interrupt: Interrupt::Hidden,
-                resume: Resume::Hidden,
-                finish: false,
-            }
-        );
-        let failed = pending.apply(Event {
-            seq: HostSeq(17),
-            session: SessionId(1),
-            kind: EventKind::UndoFailed {
-                checkpoint: proto::CheckpointId(2),
-                reason: text("restore failed"),
-            },
-        });
-        let session = failed
-            .sessions
-            .get(&SessionId(1))
-            .ok_or("expected a value")?;
-        assert_eq!(
-            session.items,
-            original
-                .sessions
-                .get(&SessionId(1))
-                .ok_or("expected a value")?
-                .items
-        );
-        assert_eq!(session.checkpoints.len(), 3);
-        assert_eq!(
-            session.undo,
-            super::UndoState::Failed {
-                checkpoint: proto::CheckpointId(2),
-                reason: text("restore failed")
-            }
-        );
-        assert_eq!(session.controls().composer, Composer::Busy);
-        assert!(!session.controls().finish);
-        assert_eq!(session.status_label(), StatusLabel::RecoveryNeeded);
-        assert_eq!(
-            session.list_status(),
-            ListStatus::Session(StatusLabel::RecoveryNeeded)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn legacy_session_stays_usable_without_workspace_or_checkpoint_controls()
+    fn a_session_without_workspace_events_has_no_changes_controls()
     -> Result<(), Box<dyn std::error::Error>> {
         let view = fold(Vec::from([
             (1, created("/legacy")),
@@ -2843,22 +2619,14 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let initial = EventKind::CheckpointCreated {
             checkpoint: proto::Checkpoint {
-                id: proto::CheckpointId(0),
-                parent: None,
                 turn_start: None,
                 commit: text("initial"),
-                history: proto::HistoryAnchor::Fresh,
-                undo: proto::UndoAvailability::Available,
             },
         };
         let autonomous = EventKind::CheckpointCreated {
             checkpoint: proto::Checkpoint {
-                id: proto::CheckpointId(1),
-                parent: Some(proto::CheckpointId(0)),
                 turn_start: None,
                 commit: text("autonomous"),
-                history: proto::HistoryAnchor::Fresh,
-                undo: proto::UndoAvailability::Available,
             },
         };
         let events = numbered(Vec::from([
@@ -3039,21 +2807,12 @@ mod tests {
                 Vec::from([Item::Finishing])
             )
         );
-        events.extend([
-            (
-                1,
-                EventKind::SessionFinished {
-                    finished: failed.clone(),
-                },
-            ),
-            (
-                1,
-                EventKind::UndoFailed {
-                    checkpoint: proto::CheckpointId(1),
-                    reason: text("restore failed"),
-                },
-            ),
-        ]);
+        events.extend([(
+            1,
+            EventKind::SessionFinished {
+                finished: failed.clone(),
+            },
+        )]);
         let finished = fold(events.clone());
         let session = finished
             .sessions
@@ -3078,155 +2837,7 @@ mod tests {
             .sessions
             .get(&SessionId(1))
             .ok_or("expected a value")?;
-        assert_eq!(
-            (session.finish, session.undo.clone()),
-            (FinishState::Ready, UndoState::Ready)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn an_undo_keeps_only_the_earlier_turns_sub_agents_and_starts_and_idles()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let said = |words: &str| EventKind::UserMessage {
-            text: text(words),
-            by: ClientName(text("phone")),
-        };
-        let completed = || EventKind::TurnCompleted {
-            outcome: TurnOutcome::Completed,
-        };
-        let undone = numbered(Vec::from([
-            created("/a"),
-            EventKind::SessionReady,
-            EventKind::OnIssue {
-                issue: proto::IssueId(7),
-            },
-            said("first"),
-            started("call1"),
-            subagent_started("a", "call1"),
-            completed(),
-            checkpoint(1, 4, 0),
-            said("second"),
-            started("call2"),
-            subagent_started("b", "call2"),
-            completed(),
-            checkpoint(2, 9, 1),
-            said("third"),
-            EventKind::TurnsUndone {
-                checkpoint: proto::CheckpointId(2),
-                restored: proto::CheckpointId(1),
-            },
-        ]))
-        .into_iter()
-        .fold(HostView::empty(), HostView::apply);
-        let session = undone
-            .sessions
-            .get(&SessionId(1))
-            .ok_or("expected a value")?;
-        assert_eq!(
-            session
-                .subagents
-                .iter()
-                .map(|subagent| subagent.id.0.as_str())
-                .collect::<Vec<_>>(),
-            Vec::from(["a"])
-        );
-        assert_eq!(
-            session.turn_starts.keys().copied().collect::<Vec<_>>(),
-            Vec::from([HostSeq(4)])
-        );
-        assert_eq!(
-            (session.status.clone(), session.undo.clone()),
-            (SessionStatus::Idle, UndoState::Undone)
-        );
-        assert_eq!(session.status_label(), StatusLabel::Idle);
-        assert!(session.controls().finish);
-        Ok(())
-    }
-
-    #[test]
-    fn undo_restores_a_resumed_subagent_to_the_retained_checkpoint()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let said = |words: &str| EventKind::UserMessage {
-            text: text(words),
-            by: ClientName(text("phone")),
-        };
-        let completed = || EventKind::TurnCompleted {
-            outcome: TurnOutcome::Completed,
-        };
-        let events = numbered(Vec::from([
-            created("/a"),
-            EventKind::SessionReady,
-            said("first"),
-            started("call1"),
-            subagent_started("a", "call1"),
-            subagent_ended(
-                "a",
-                SubagentOutcome::Finished,
-                Some("first report"),
-            ),
-            completed(),
-            checkpoint(1, 3, 0),
-            said("second"),
-            subagent_started("a", "call1"),
-            subagent_ended("a", SubagentOutcome::Failed, Some("second report")),
-            completed(),
-            checkpoint(2, 9, 1),
-            EventKind::TurnsUndone {
-                checkpoint: proto::CheckpointId(2),
-                restored: proto::CheckpointId(1),
-            },
-        ]));
-        let fold = |events: &[Event]| {
-            events
-                .iter()
-                .cloned()
-                .fold(HostView::empty(), HostView::apply)
-        };
-        let retained = fold(&events[..8]);
-        let before = fold(&events[..13]);
-        let last = events.last().cloned().ok_or("expected an undo")?;
-        let live = before.clone().apply(last);
-        let replay = fold(&events);
-        let subagents = |view: &HostView| {
-            view.sessions
-                .get(&SessionId(1))
-                .map(|session| session.subagents.clone())
-        };
-        let expected = subagents(&retained);
-        assert_ne!(subagents(&before), expected);
-        assert_eq!(subagents(&live), expected);
-        assert_eq!(subagents(&replay), expected);
-        Ok(())
-    }
-
-    #[test]
-    fn an_undo_of_a_checkpoint_the_view_lacks_still_ends()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let view = numbered(
-            checkpoint_events()
-                .into_iter()
-                .chain([
-                    EventKind::UndoStarted {
-                        checkpoint: proto::CheckpointId(9),
-                        restore: proto::CheckpointId(1),
-                        history: proto::HistoryAnchor::Fresh,
-                    },
-                    EventKind::TurnsUndone {
-                        checkpoint: proto::CheckpointId(9),
-                        restored: proto::CheckpointId(1),
-                    },
-                ])
-                .collect(),
-        )
-        .into_iter()
-        .fold(HostView::empty(), HostView::apply);
-        let session =
-            view.sessions.get(&SessionId(1)).ok_or("expected a value")?;
-        assert_eq!(
-            (session.items.len(), session.undo.clone()),
-            (9, UndoState::Undone)
-        );
+        assert_eq!(session.finish, FinishState::Ready);
         Ok(())
     }
 }

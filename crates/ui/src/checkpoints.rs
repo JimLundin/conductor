@@ -1,13 +1,11 @@
-//! Per-turn changes and undo. The host's events own the undo state; the
-//! pane holds only which diffs are open.
+//! Per-turn changes. The pane holds only which diffs are open.
 
 use alloc::rc::Rc;
 
 use crate::prelude::*;
-use client::host_view::{Composer, TurnCheckpoint};
+use client::host_view::TurnCheckpoint;
 use proto::{
-    Change, CheckpointDiff, CheckpointId, CommandResult, DiffExtent, FilePatch,
-    UndoAvailability,
+    Change, CheckpointDiff, CommandResult, DiffExtent, FilePatch, HostSeq,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,7 +43,7 @@ impl DiffState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnChanges {
     pub key: String,
-    pub checkpoint: CheckpointId,
+    pub checkpoint: HostSeq,
     /// The id of the button that opens the diff, which takes the focus
     /// back when it closes.
     pub button: String,
@@ -58,14 +56,7 @@ pub enum DiffPanel {
     Hidden,
     Loading,
     Failed(String),
-    Loaded(Diff),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diff {
-    pub preview: Rc<Preview>,
-    pub undo_disabled: bool,
-    pub undo_hint: String,
+    Loaded(Rc<Preview>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,18 +80,13 @@ pub enum Patch {
     Note(String),
 }
 
-pub fn changes(
-    turn: &TurnCheckpoint,
-    diff: Option<&DiffState>,
-    composer: Composer,
-    can_view_changes: bool,
-) -> TurnChanges {
+pub fn changes(turn: &TurnCheckpoint, diff: Option<&DiffState>) -> TurnChanges {
     let loading = matches!(diff, Some(DiffState::Loading(_)));
     TurnChanges {
         key: format!("checkpoint-{}", turn.checkpoint.0),
         checkpoint: turn.checkpoint,
         button: changes_id(turn.checkpoint),
-        button_disabled: !can_view_changes || loading,
+        button_disabled: loading,
         panel: match diff {
             None | Some(DiffState::Hidden) => DiffPanel::Hidden,
             Some(DiffState::Loading(_)) => DiffPanel::Loading,
@@ -108,29 +94,7 @@ pub fn changes(
                 DiffPanel::Failed(reason.clone())
             }
             Some(DiffState::Loaded(changes)) => {
-                DiffPanel::Loaded(loaded(changes, composer, &turn.undo))
-            }
-        },
-    }
-}
-
-fn loaded(
-    changes: &Rc<Preview>,
-    composer: Composer,
-    availability: &UndoAvailability,
-) -> Diff {
-    Diff {
-        preview: Rc::clone(changes),
-        undo_disabled: !matches!(
-            (composer, availability),
-            (Composer::Open, UndoAvailability::Available)
-        ),
-        undo_hint: match availability {
-            UndoAvailability::Available => {
-                String::from("Undo is available when the session is idle.")
-            }
-            UndoAvailability::Unavailable { reason } => {
-                format!("Undo unavailable: {reason}")
+                DiffPanel::Loaded(Rc::clone(changes))
             }
         },
     }
@@ -186,6 +150,6 @@ const fn change_label(change: Change) -> &'static str {
     }
 }
 
-pub fn changes_id(checkpoint: CheckpointId) -> String {
+pub fn changes_id(checkpoint: HostSeq) -> String {
     format!("checkpoint-{}-changes", checkpoint.0)
 }

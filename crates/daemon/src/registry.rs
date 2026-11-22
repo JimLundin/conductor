@@ -185,7 +185,7 @@ impl Registry {
 
     /// The session, its current instance adapter and its offer, for an
     /// order that may start the agent or is checked against what the
-    /// instance offers: `Continue`, `UndoTurn` and `SetEffort`. The
+    /// instance offers: `Continue` and `SetEffort`. The
     /// session starts its agent itself, so a slow start never blocks the
     /// registry.
     ///
@@ -1000,14 +1000,11 @@ impl RegistryActor {
                     .await;
                     StartReport::Workspace(id, workspace)
                 }
-                StartEffect::Snapshot {
-                    session,
-                    workspace,
-                    id,
-                } => StartReport::Snapshot(
-                    crate::workspace::snapshot(&workspace, session, id, None)
-                        .await,
-                ),
+                StartEffect::Snapshot { session, workspace } => {
+                    StartReport::Snapshot(
+                        crate::workspace::snapshot(&workspace, session).await,
+                    )
+                }
                 StartEffect::Record {
                     session,
                     before,
@@ -1140,14 +1137,9 @@ async fn recover(
             Step::Append(kind) => log.append(id, kind).await?,
             Step::Barrier => log.barrier().await?,
             Step::Snapshot(turn) => {
-                let snapshot = crate::workspace::snapshot(
-                    &turn.workspace,
-                    id,
-                    turn.reserved,
-                    turn.base.as_deref(),
-                )
-                .await
-                .map_err(|err| err.to_string());
+                let snapshot = crate::workspace::snapshot(&turn.workspace, id)
+                    .await
+                    .map_err(|err| err.to_string());
                 log.append(id, turn.snapshotted(snapshot)).await?;
             }
         }

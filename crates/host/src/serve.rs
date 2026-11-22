@@ -4,10 +4,9 @@
 
 use agents::Reply;
 use proto::{
-    AuthToken, CheckpointId, ClientName, Command, CommandBody, CommandResult,
-    Credential, Effort, InstanceId, IssueChange, IssueFields, IssueId, ModelId,
-    Models, Open, ProjectId, Provider, Rejection, RequestId, SessionId,
-    SignInCode, StartAt, Subscribe,
+    AuthToken, ClientName, Command, CommandBody, Credential, Effort, HostSeq,
+    InstanceId, IssueChange, IssueFields, IssueId, ModelId, Models, Open,
+    ProjectId, Provider, RequestId, SessionId, SignInCode, StartAt, Subscribe,
 };
 
 use crate::prelude::*;
@@ -72,8 +71,7 @@ pub enum Order {
         by: ClientName,
     },
     Interrupt,
-    Diff(CheckpointId),
-    Undo(CheckpointId),
+    Diff(HostSeq),
     Reply {
         request: RequestId,
         reply: Reply,
@@ -91,16 +89,13 @@ pub enum Order {
 }
 
 impl Order {
-    /// The order for the session's state machine. A conversation an undo
-    /// forks takes `fork` as its id.
     #[must_use]
-    pub fn session(self, fork: String) -> session::Order {
+    pub fn session(self) -> session::Order {
         use session::Order as Core;
         match self {
             Self::Send { text, by } => Core::Send { text, by },
             Self::Interrupt => Core::Interrupt,
             Self::Diff(checkpoint) => Core::Diff(checkpoint),
-            Self::Undo(checkpoint) => Core::Undo { checkpoint, fork },
             Self::Reply { request, reply, by } => {
                 Core::Reply { request, reply, by }
             }
@@ -115,31 +110,16 @@ impl Order {
 /// models its provider offers now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Relaunch {
-    Undo(CheckpointId),
     Continue,
     Effort(Effort),
 }
 
 impl Relaunch {
     #[must_use]
-    pub fn order(self, offered: Models) -> Order {
+    pub const fn order(self, offered: Models) -> Order {
         match self {
-            Self::Undo(checkpoint) => Order::Undo(checkpoint),
             Self::Continue => Order::Start(offered),
             Self::Effort(effort) => Order::Effort(effort, offered),
-        }
-    }
-
-    /// What the command answers if the relaunched session has stopped.
-    /// `None` fails the command closed: an undo may have begun its durable
-    /// phases, so its receipt must not be written.
-    #[must_use]
-    pub const fn closed(self) -> Option<CommandResult> {
-        match self {
-            Self::Undo(_) => None,
-            Self::Continue | Self::Effort(_) => {
-                Some(CommandResult::Rejected(Rejection::SessionClosed))
-            }
         }
     }
 }
@@ -274,10 +254,6 @@ pub fn route(body: CommandBody, by: ClientName) -> Route {
             session,
             checkpoint,
         } => Route::Order(session, Order::Diff(checkpoint)),
-        CommandBody::UndoTurn {
-            session,
-            checkpoint,
-        } => Route::Relaunch(session, Relaunch::Undo(checkpoint)),
         CommandBody::StartSession {
             instance,
             at,

@@ -56,14 +56,9 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
         ClaudeEvent::PermissionCancelled { id } => {
             Vec::from([Step::Withdraw(NativeRequest(id.0))])
         }
-        ClaudeEvent::TurnFinished {
-            outcome,
-            last_message,
-            ..
-        } => Vec::from([
-            Step::HistoryBoundary(last_message.map(|message| message.0)),
-            Step::TurnEnded(outcome),
-        ]),
+        ClaudeEvent::TurnFinished { outcome, .. } => {
+            Vec::from([Step::TurnEnded(outcome)])
+        }
         ClaudeEvent::SubagentStarted {
             agent,
             tool_use_id,
@@ -391,7 +386,6 @@ mod tests {
             },
             Case {
                 got: claude_steps(ClaudeEvent::Message {
-                    uuid: None,
                     role: Role::Assistant,
                     content: Vec::from([
                         Block::Thinking(String::from("hmm")),
@@ -426,7 +420,6 @@ mod tests {
             },
             Case {
                 got: claude_steps(ClaudeEvent::Message {
-                    uuid: None,
                     role: Role::Assistant,
                     content: Vec::from([tool_use(
                         "AskUserQuestion",
@@ -440,7 +433,6 @@ mod tests {
             },
             Case {
                 got: claude_steps(ClaudeEvent::Message {
-                    uuid: None,
                     role: Role::Assistant,
                     content: Vec::from([Block::Checklist(Vec::from([step()]))]),
                 }),

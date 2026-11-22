@@ -6,18 +6,14 @@ use core::{
     task::{ContextBuilder, Poll, Waker},
 };
 
-use proto::{
-    Checkpoint, CheckpointDiff, CheckpointId, HostPath, HostSeq, Kept,
-    SessionId, Workspace,
-};
+use proto::{CheckpointDiff, HostPath, HostSeq, Kept, SessionId, Workspace};
 
 use crate::prelude::*;
 
 use super::{
     GitError, Output, PATCH_LIMIT, Turn, branch, budget, checked, checked_out,
-    checkpoints, existing, failure, head, host_path, kept, listing, marker,
-    merge_message, merged, message, owned, owner, patch, probed, reference,
-    reuse, same, settle, subtree, text, turn, utf8, worktree,
+    failure, head, host_path, kept, listing, marker, merge_message, merged,
+    owner, patch, probed, reference, same, subtree, text, turn, utf8, worktree,
 };
 
 /// An operation requested by a workspace plan.
@@ -449,12 +445,7 @@ impl Steps {
 
 impl<'a> Plan<'a, String> {
     #[must_use]
-    pub fn snapshot(
-        workspace: &'a Workspace,
-        session: SessionId,
-        checkpoint: CheckpointId,
-        previous: Option<&'a str>,
-    ) -> Self {
+    pub fn snapshot(workspace: &'a Workspace, session: SessionId) -> Self {
         Self::new(|steps| async move {
             let directory = steps.validate(workspace).await?;
             same(
@@ -463,7 +454,7 @@ impl<'a> Plan<'a, String> {
                 "session owning workspace",
             )?;
             steps.done(Step::OpenIndex(directory)).await?;
-            steps.snapshot(workspace, checkpoint, previous).await
+            steps.snapshot(workspace).await
         })
     }
 
@@ -473,39 +464,20 @@ impl<'a> Plan<'a, String> {
     }
 }
 
-impl<'a> Plan<'a, ()> {
-    #[must_use]
-    pub fn preflight(workspace: &'a Workspace, commit: &'a str) -> Self {
-        Self::new(
-            |steps| async move { steps.preflight(workspace, commit).await },
-        )
-    }
-
-    #[must_use]
-    pub fn restore(workspace: &'a Workspace, commit: &'a str) -> Self {
-        Self::new(|steps| async move { steps.restore(workspace, commit).await })
-    }
-}
-
 impl Steps {
     async fn owned_commit(
         &self,
         workspace: &Workspace,
         commit: &str,
     ) -> Result<(), GitError> {
-        let refs = self
+        let reference = reference(workspace, commit)?;
+        let actual = self
             .text(
                 &workspace.worktree.0,
-                &[
-                    "for-each-ref",
-                    "--format=%(objectname)",
-                    "--count=1",
-                    &format!("--points-at={commit}"),
-                    &checkpoints(workspace)?,
-                ],
+                &["rev-parse", "--verify", &reference],
             )
             .await?;
-        owned(&refs, commit)
+        same(&actual, commit, "recorded commit ref")
     }
 
     async fn scratch_git(
@@ -538,65 +510,35 @@ impl Steps {
     async fn snapshot(
         &self,
         workspace: &Workspace,
-        checkpoint: CheckpointId,
-        previous: Option<&str>,
     ) -> Result<String, GitError> {
         let path = &workspace.worktree.0;
-        if let Some(commit) = previous {
-            self.owned_commit(workspace, commit).await?;
-        }
         let tip = self.text(path, &["rev-parse", &head(workspace)]).await?;
         let tree = self.tree(path, &tip).await?;
-        let commit = self
-            .recorded_or_made(workspace, checkpoint, &tip, &tree)
-            .await?;
-        let parent = self
-            .text(
-                path,
-                &["rev-parse", "--verify", "--quiet", &format!("{commit}^")],
-            )
-            .await
-            .ok();
-        if settle(&tip, &commit, parent.as_deref())? {
-            self.update_branch(workspace, &commit, &tip).await?;
-        }
-        self.sync_index(workspace).await?;
-        Ok(commit)
-    }
-
-    async fn recorded_or_made(
-        &self,
-        workspace: &Workspace,
-        checkpoint: CheckpointId,
-        tip: &str,
-        tree: &str,
-    ) -> Result<String, GitError> {
-        let path = &workspace.worktree.0;
-        let reference = reference(workspace, checkpoint)?;
-        let output = self
-            .git(path, &["rev-parse", "--verify", &reference])
-            .await?;
-        if let Some(commit) = existing(output)? {
-            let recorded = self
-                .text(path, &["rev-parse", &format!("{commit}^{{tree}}")])
-                .await?;
-            reuse(&recorded, tree)?;
-            return Ok(commit);
-        }
         let tip_tree = self
             .text(path, &["rev-parse", &format!("{tip}^{{tree}}")])
             .await?;
-        let made = match turn(&tip_tree, tree) {
-            Turn::Tip => String::from(tip),
+        self.preserve_index(path, &tip_tree, &tree).await?;
+        let commit = match turn(&tip_tree, &tree) {
+            Turn::Tip => tip.clone(),
             Turn::Commit => {
-                self.commit(path, tree, &[tip], &message(checkpoint))
-                    .await?
+                self.commit(
+                    path,
+                    &tree,
+                    &[&tip],
+                    "Conductor: snapshot session work",
+                )
+                .await?
             }
         };
+        let reference = reference(workspace, &commit)?;
         let _ = self
-            .text(path, &["update-ref", &reference, &made, ""])
+            .text(path, &["update-ref", &reference, &commit])
             .await?;
-        Ok(made)
+        self.sync_index(workspace, &commit).await?;
+        if commit != tip {
+            self.update_branch(workspace, &commit, &tip).await?;
+        }
+        Ok(commit)
     }
 
     async fn commit(
@@ -619,43 +561,6 @@ impl Steps {
         .map(|text| text.trim().to_owned())
     }
 
-    async fn preflight(
-        &self,
-        workspace: &Workspace,
-        commit: &str,
-    ) -> Result<(), GitError> {
-        let _ = self.validate(workspace).await?;
-        self.owned_commit(workspace, commit).await
-    }
-
-    async fn restore(
-        &self,
-        workspace: &Workspace,
-        commit: &str,
-    ) -> Result<(), GitError> {
-        self.preflight(workspace, commit).await?;
-        let path = &workspace.worktree.0;
-        let _ = self
-            .text(
-                path,
-                &[
-                    "restore",
-                    &format!("--source={commit}"),
-                    "--staged",
-                    "--worktree",
-                    "--",
-                    ".",
-                ],
-            )
-            .await?;
-        let _ = self
-            .text(path, &["clean", "-q", "-f", "-d", "--", "."])
-            .await?;
-        let tip = self.text(path, &["rev-parse", &head(workspace)]).await?;
-        self.update_branch(workspace, commit, &tip).await?;
-        self.sync_index(workspace).await
-    }
-
     async fn update_branch(
         &self,
         workspace: &Workspace,
@@ -668,8 +573,12 @@ impl Steps {
             .map(drop)
     }
 
-    async fn sync_index(&self, workspace: &Workspace) -> Result<(), GitError> {
-        self.text(&workspace.worktree.0, &["reset", "--quiet"])
+    async fn sync_index(
+        &self,
+        workspace: &Workspace,
+        commit: &str,
+    ) -> Result<(), GitError> {
+        self.text(&workspace.worktree.0, &["read-tree", commit])
             .await
             .map(drop)
     }
@@ -679,11 +588,12 @@ impl<'a> Plan<'a, CheckpointDiff> {
     #[must_use]
     pub fn diff(
         workspace: &'a Workspace,
-        checkpoint: &'a Checkpoint,
-        parent: &'a Checkpoint,
+        checkpoint: HostSeq,
+        commit: &'a str,
+        previous: &'a str,
     ) -> Self {
         Self::new(|steps| async move {
-            steps.diff(workspace, checkpoint, parent).await
+            steps.diff(workspace, checkpoint, commit, previous).await
         })
     }
 }
@@ -692,21 +602,14 @@ impl Steps {
     async fn diff(
         &self,
         workspace: &Workspace,
-        checkpoint: &Checkpoint,
-        parent: &Checkpoint,
+        checkpoint: HostSeq,
+        commit: &str,
+        previous: &str,
     ) -> Result<CheckpointDiff, GitError> {
         let _ = self.validate(workspace).await?;
         let path = &workspace.worktree.0;
-        let checkpoint_ref = reference(workspace, checkpoint.id)?;
-        let parent_ref = reference(workspace, parent.id)?;
-        let actual = self
-            .text(path, &["rev-parse", "--verify", &checkpoint_ref])
-            .await?;
-        let actual_parent = self
-            .text(path, &["rev-parse", "--verify", &parent_ref])
-            .await?;
-        same(&actual, &checkpoint.commit, "immutable checkpoint ref")?;
-        same(&actual_parent, &parent.commit, "immutable parent ref")?;
+        self.owned_commit(workspace, commit).await?;
+        self.owned_commit(workspace, previous).await?;
         let output = self
             .git(
                 path,
@@ -717,8 +620,8 @@ impl Steps {
                     "--no-renames",
                     "--name-status",
                     "-z",
-                    &parent_ref,
-                    &checkpoint_ref,
+                    previous,
+                    commit,
                     "--",
                 ],
             )
@@ -735,8 +638,8 @@ impl Steps {
                         "--no-textconv",
                         "--no-renames",
                         "--no-color",
-                        &parent.commit,
-                        &checkpoint.commit,
+                        previous,
+                        commit,
                         "--",
                         &format!(":(literal){}", entry.path),
                     ],
@@ -746,8 +649,7 @@ impl Steps {
         }
         let (files, extent) = budget(patched, counted);
         Ok(CheckpointDiff {
-            checkpoint: checkpoint.id,
-            parent: parent.id,
+            checkpoint,
             files,
             extent,
         })
@@ -819,7 +721,6 @@ impl Steps {
         } else {
             let _ = self.text(repository, &["worktree", "prune"]).await?;
         }
-        self.forget(repository, &checkpoints(workspace)?).await?;
         self.forget(repository, &landing_refs(workspace)?).await?;
         Ok(kept(pushed))
     }

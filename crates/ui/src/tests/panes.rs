@@ -4,9 +4,8 @@
 use alloc::rc::Rc;
 
 use proto::{
-    Change, ChecklistEntry, ChecklistStatus, CheckpointId, CommandBody,
-    CommandResult, EventKind, FileChange, RequestId, ToolCallId, ToolKind,
-    ToolPhase, UndoAvailability,
+    Change, ChecklistEntry, ChecklistStatus, CommandBody, CommandResult,
+    EventKind, FileChange, HostSeq, RequestId, ToolCallId, ToolKind, ToolPhase,
 };
 
 use super::{
@@ -84,13 +83,13 @@ fn the_agents_tasks_count_those_done() {
 
 #[test]
 fn a_turns_changes_hang_under_its_end_and_only_the_latest_load_shows() {
-    let show = || Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
+    let show = || Intent::Session(SessionIntent::ShowChanges(HostSeq(5)));
     let (reopened, effects) = opened(
-        a_turn(UndoAvailability::Available)
+        a_turn()
             .into_iter()
             .chain([
                 show(),
-                Intent::Session(SessionIntent::CloseChanges(CheckpointId(1))),
+                Intent::Session(SessionIntent::CloseChanges(HostSeq(5))),
                 show(),
             ])
             .collect(),
@@ -190,13 +189,8 @@ fn a_file_change_lists_each_file_with_its_verb() {
 
 #[test]
 fn a_diff_from_an_old_visit_does_not_answer_the_same_checkpoint_again() {
-    let show = || Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
-    let (loading, old) = opened(
-        a_turn(UndoAvailability::Available)
-            .into_iter()
-            .chain([show()])
-            .collect(),
-    );
+    let show = || Intent::Session(SessionIntent::ShowChanges(HostSeq(5)));
+    let (loading, old) = opened(a_turn().into_iter().chain([show()]).collect());
     let (reopened, new) = run(
         loading,
         Vec::from([
@@ -225,8 +219,8 @@ fn a_diff_from_an_old_visit_does_not_answer_the_same_checkpoint_again() {
 
 #[test]
 fn a_host_reset_drops_the_old_sessions_draft_and_pending_diff() {
-    let show = Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
-    let turn = a_turn(UndoAvailability::Available);
+    let show = Intent::Session(SessionIntent::ShowChanges(HostSeq(5)));
+    let turn = a_turn();
     let (loading, old) = opened(
         turn.iter()
             .cloned()
@@ -264,14 +258,10 @@ fn a_host_reset_drops_the_old_sessions_draft_and_pending_diff() {
 
 #[test]
 fn failed_changes_can_close_with_focus_returned_or_retry() {
-    let checkpoint = CheckpointId(1);
+    let checkpoint = HostSeq(5);
     let show = Intent::Session(SessionIntent::ShowChanges(checkpoint));
-    let (loading, requested) = opened(
-        a_turn(UndoAvailability::Available)
-            .into_iter()
-            .chain([show.clone()])
-            .collect(),
-    );
+    let (loading, requested) =
+        opened(a_turn().into_iter().chain([show.clone()]).collect());
     let (failed, _) = run(
         loading,
         Vec::from([answer(&requested, Err(text("offline")))]),
@@ -293,16 +283,16 @@ fn failed_changes_can_close_with_focus_returned_or_retry() {
     assert_eq!(
         focus,
         [Effect::Focus(Focus::NextFrame(text(
-            "checkpoint-1-changes"
+            "checkpoint-5-changes"
         )))]
     );
 }
 
 #[test]
 fn a_transcript_rebuild_reuses_the_open_preview() {
-    let checkpoint = CheckpointId(1);
+    let checkpoint = HostSeq(5);
     let (loading, requested) = opened(
-        a_turn(UndoAvailability::Available)
+        a_turn()
             .into_iter()
             .chain([Intent::Session(SessionIntent::ShowChanges(checkpoint))])
             .collect(),
@@ -326,8 +316,6 @@ fn a_transcript_rebuild_reuses_the_open_preview() {
     assert!(matches!(
         (before_panel, after_panel),
         (Some(DiffPanel::Loaded(before)), Some(DiffPanel::Loaded(after)))
-            if Rc::ptr_eq(&before.preview, &after.preview)
-                && !before.undo_disabled
-                && after.undo_disabled
+            if Rc::ptr_eq(&before, &after)
     ));
 }

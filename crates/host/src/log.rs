@@ -18,9 +18,9 @@ use proto::{
 
 use crate::prelude::*;
 
-/// Format 6 removes session migration events. A database of another
+/// Format 7 stores commits without checkpoint identities or historical undo. A database of another
 /// format does not open.
-pub const FORMAT: u32 = 6;
+pub const FORMAT: u32 = 7;
 
 /// Whether a database opens, and whether its format is to be written: a
 /// `created` one takes [`FORMAT`], and one whose `stored` format is another
@@ -293,7 +293,7 @@ impl Log {
         }
     }
 
-    /// Undo's durable boundary: commits what the active command has staged,
+    /// Commits what the active command has staged before changing the workspace,
     /// and keeps it active in a new transaction.
     pub fn barrier(&mut self) -> Vec<Effect> {
         let mut effects = self.commit();

@@ -47,9 +47,7 @@ impl Lifecycle {
         match command {
             Command::Send { .. }
             | Command::Interrupt(_)
-            | Command::Reply { .. }
-            | Command::Turns
-            | Command::Revert(_) => {
+            | Command::Reply { .. } => {
                 Some(Report::emit(command.failed(NOT_RUNNING)))
             }
             Command::Start(_) | Command::Shutdown => None,
@@ -110,14 +108,13 @@ impl Lifecycle {
 #[cfg(test)]
 mod tests {
     use super::{Lifecycle, Report};
-    use crate::runtime::{Anchoring, Command, Event, Outcome, Started};
+    use crate::runtime::{Command, Event, Outcome, Started};
     use crate::{NativeTurn, Note, Step};
     use proto::{CloseReason, Provider};
 
     fn start(lifecycle: &mut Lifecycle) {
         let started = Started {
             conversation: String::from("conversation"),
-            anchoring: Anchoring::Messages,
         };
         assert_eq!(
             lifecycle.started::<Report>(started.clone()),

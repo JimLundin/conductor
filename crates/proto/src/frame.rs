@@ -112,7 +112,7 @@ mod tests {
     fn checklist_and_subagent_frames_have_their_wire_shapes()
     -> Result<(), Box<dyn std::error::Error>> {
         let checklist =
-            decode::<Event>(&[1, 7, 24, 2, 1, b'a', 2, 1, b'a', 0])?;
+            decode::<Event>(&[1, 7, 18, 2, 1, b'a', 2, 1, b'a', 0])?;
         assert_eq!(
             checklist.kind,
             EventKind::ChecklistChanged {
@@ -128,7 +128,7 @@ mod tests {
                 ])
             }
         );
-        let child = decode::<Event>(&[1, 7, 26, 1, b'a', 0, 1, b'c', 1, b'd'])?;
+        let child = decode::<Event>(&[1, 7, 20, 1, b'a', 0, 1, b'c', 1, b'd'])?;
         assert_eq!(
             child,
             Event {

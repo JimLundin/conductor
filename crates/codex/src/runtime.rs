@@ -10,9 +10,9 @@
 
 use agents::Step;
 use agents::runtime::{
-    Anchoring, Command, Event, Lifecycle, Outcome, Report, Start, Started,
+    Command, Event, Lifecycle, Outcome, Report, Start, Started,
 };
-use proto::{CloseReason, Effort, HistoryAnchor};
+use proto::{CloseReason, Effort};
 
 use crate::hub::Routed;
 use crate::mapping::codex_note;
@@ -43,7 +43,6 @@ pub enum Call {
         id: ApprovalId,
         decision: Decision,
     },
-    Revert(TurnId),
 }
 
 /// The command a call's outcome answers.
@@ -52,7 +51,6 @@ pub enum Then {
     Sent,
     Interrupted,
     Replied,
-    Reverted,
 }
 
 /// What happened, as the shell saw it.
@@ -66,9 +64,6 @@ pub enum Input {
         then: Then,
         outcome: Result<(), String>,
     },
-    /// The turns [`Effect::Turns`] listed.
-    Listed(Result<Vec<TurnId>, String>),
-    RevertUnknown,
     /// The thread's next event, `None` once its events end.
     Event(Option<Routed>),
 }
@@ -84,8 +79,6 @@ pub enum Effect {
         call: Call,
         then: Then,
     },
-    /// List the running thread's turns and report [`Input::Listed`].
-    Turns,
     Runtime(Report),
 }
 
@@ -113,7 +106,6 @@ impl Runtime {
             Input::Command(command) => self.command(command),
             Input::Opened(Ok(thread)) => self.lifecycle.started(Started {
                 conversation: thread.0,
-                anchoring: Anchoring::Turns,
             }),
             Input::Opened(Err(error)) => {
                 Report::emit(Outcome::Started(Err(error)))
@@ -121,12 +113,6 @@ impl Runtime {
             Input::Called { then, outcome } => {
                 Report::emit(answered(then, outcome))
             }
-            Input::Listed(listed) => {
-                Report::emit(Outcome::Turns(listed.map(|turns| {
-                    turns.into_iter().map(|turn| turn.0).collect()
-                })))
-            }
-            Input::RevertUnknown => Report::emit(Outcome::RevertUnknown),
             Input::Event(Some(routed)) => self.routed(routed),
             Input::Event(None) => self.lifecycle.ended(),
         }
@@ -159,10 +145,6 @@ impl Runtime {
                     Then::Replied,
                 )
             }
-            Command::Turns => Vec::from([Effect::Turns]),
-            Command::Revert(turn) => {
-                call(Call::Revert(TurnId(turn)), Then::Reverted)
-            }
         }
     }
 
@@ -185,7 +167,7 @@ impl Runtime {
 /// leaves the workspace.
 fn open(start: Start) -> Open {
     Open {
-        resume: resume(start.history, start.conversation),
+        resume: start.conversation.map(ThreadId),
         options: ThreadOptions {
             cwd: start.directory.0,
             model: start.model.map(|model| model.0),
@@ -197,30 +179,11 @@ fn open(start: Start) -> Open {
     }
 }
 
-/// The thread to resume: the one `history` names, else the saved
-/// `conversation`; a fresh history opens a new thread.
-#[must_use]
-pub fn resume(
-    history: Option<HistoryAnchor>,
-    conversation: Option<String>,
-) -> Option<ThreadId> {
-    match history {
-        Some(HistoryAnchor::Fresh) => None,
-        Some(HistoryAnchor::Turns {
-            conversation: native,
-            ..
-        }) => Some(native),
-        _ => conversation,
-    }
-    .map(ThreadId)
-}
-
 const fn answered(then: Then, outcome: Result<(), String>) -> Outcome {
     match then {
         Then::Sent => Outcome::Sent(outcome),
         Then::Interrupted => Outcome::Interrupted(outcome),
         Then::Replied => Outcome::Replied(outcome),
-        Then::Reverted => Outcome::Reverted(outcome),
     }
 }
 
@@ -230,17 +193,15 @@ fn call(call: Call, then: Then) -> Vec<Effect> {
 
 #[cfg(test)]
 mod tests {
-    use agents::runtime::{
-        Anchoring, Command, Event, Outcome, Report, Start, Started,
-    };
+    use agents::runtime::{Command, Event, Outcome, Report, Start, Started};
     use agents::{NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
-        ClientName, CloseReason, Decision as Chosen, Effort, HistoryAnchor,
-        HostPath, ModelId, Provider, SessionId,
+        ClientName, CloseReason, Decision as Chosen, Effort, HostPath, ModelId,
+        Provider, SessionId,
     };
     use serde_json::json;
 
-    use super::{Call, Effect, Input, Open, Runtime, Then, resume};
+    use super::{Call, Effect, Input, Open, Runtime, Then};
     use crate::hub::Routed;
     use crate::{
         ApprovalId, ApprovalPolicy, CodexEvent, Decision, Sandbox, ThreadEvent,
@@ -269,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn a_start_opens_the_thread_its_history_names_with_the_preset() {
+    fn a_start_resumes_the_saved_conversation_with_the_preset() {
         let mut runtime = Runtime::new();
         let seen = walk(
             &mut runtime,
@@ -280,11 +241,7 @@ mod tests {
                     directory: HostPath(text("/work")),
                     model: Some(ModelId(text("gpt"))),
                     effort: Some(Effort::High),
-                    history: Some(HistoryAnchor::Turns {
-                        conversation: text("th_1"),
-                        turn: Some(text("tu_1")),
-                    }),
-                    conversation: Some(text("saved")),
+                    conversation: Some(text("th_1")),
                 })),
                 Input::Opened(Ok(ThreadId(text("th_1")))),
             ]),
@@ -305,26 +262,8 @@ mod tests {
                 })]),
                 outcome(Outcome::Started(Ok(Started {
                     conversation: text("th_1"),
-                    anchoring: Anchoring::Turns,
                 }))),
             ]
-        );
-    }
-
-    #[test]
-    fn the_thread_resumed_follows_the_history_then_the_saved_one() {
-        let fork = HistoryAnchor::Fork {
-            source: text("a"),
-            through: text("b"),
-            target: text("c"),
-        };
-        assert_eq!(
-            [
-                resume(Some(HistoryAnchor::Fresh), Some(text("saved"))),
-                resume(Some(fork), Some(text("saved"))),
-                resume(None, None),
-            ],
-            [None, Some(ThreadId(text("saved"))), None]
         );
     }
 
@@ -348,13 +287,6 @@ mod tests {
                     reply: Reply::Decide(Chosen::Deny),
                     by: ClientName(text("phone")),
                 }),
-                Input::Command(Command::Turns),
-                Input::Listed(Ok(Vec::from([TurnId(text("tu_1"))]))),
-                Input::Command(Command::Revert(text("tu_1"))),
-                Input::Called {
-                    then: Then::Reverted,
-                    outcome: Err(text("busy")),
-                },
             ]),
         );
         assert_eq!(
@@ -380,13 +312,6 @@ mod tests {
                     },
                     then: Then::Replied,
                 }]),
-                Vec::from([Effect::Turns]),
-                outcome(Outcome::Turns(Ok(Vec::from([text("tu_1")])))),
-                Vec::from([Effect::Call {
-                    call: Call::Revert(TurnId(text("tu_1"))),
-                    then: Then::Reverted,
-                }]),
-                outcome(Outcome::Reverted(Err(text("busy")))),
             ]
         );
     }

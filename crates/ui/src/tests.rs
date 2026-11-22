@@ -12,24 +12,24 @@ use client::link::{LinkState, Status, Update};
 use proto::StartAt;
 use proto::{
     Auth, AuthToken, Availability, Catalog, Checkpoint, CheckpointDiff,
-    CheckpointFile, CheckpointId, ClientName, CloseReason, CommandBody,
-    CommandResult, Credential, CredentialForm, Decision, DiffExtent, Effort,
-    Epoch, Event, EventKind, Feed, Field, FieldKind, FilePatch, HistoryAnchor,
-    Home, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
-    ModelChoice, ModelId, Models, Provider, ProviderInfo, Question,
-    QuestionOption, Rejection, RequestId, Resolution, Selection, SessionId,
-    SignIn, SignInCode, SignInStep, SubagentActivity, SubagentEvent,
-    SubagentId, SubagentOutcome, Ticket, TicketError, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome, UndoAvailability, Welcome,
+    CheckpointFile, ClientName, CloseReason, CommandBody, CommandResult,
+    Credential, CredentialForm, Decision, DiffExtent, Effort, Epoch, Event,
+    EventKind, Feed, Field, FieldKind, FilePatch, Home, HostPath, HostSeq,
+    InstanceId, InstanceStatus, Instances, ModelChoice, ModelId, Models,
+    Provider, ProviderInfo, Question, QuestionOption, Rejection, RequestId,
+    Resolution, Selection, SessionId, SignIn, SignInCode, SignInStep,
+    SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Ticket,
+    TicketError, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
+    Welcome,
 };
 
 use crate::{
-    Action, AgentGroup, Ask, CredentialIntent, Detail, Diff, DiffFile,
-    DiffPanel, Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
+    Action, AgentGroup, Ask, CredentialIntent, Detail, DiffFile, DiffPanel,
+    Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
     HostsScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
     Patch, Place, Preview, QuestionBody, Row, Saved, Screen, SessionIntent,
-    SessionPane, State, Stored, ToolDetail, ToolLine, TurnChanges, UndoNote,
-    sends, update, view,
+    SessionPane, State, Stored, ToolDetail, ToolLine, TurnChanges, sends,
+    update, view,
 };
 
 const SESSION: SessionId = SessionId(7);
@@ -1581,7 +1581,7 @@ fn the_new_session_form_lists_each_instance_and_starts_on_the_one_picked() {
     );
 }
 
-fn a_turn(undo: UndoAvailability) -> Vec<Intent> {
+fn a_turn() -> Vec<Intent> {
     Vec::from([
         event(3, said("go")),
         event(
@@ -1594,12 +1594,8 @@ fn a_turn(undo: UndoAvailability) -> Vec<Intent> {
             5,
             EventKind::CheckpointCreated {
                 checkpoint: Checkpoint {
-                    id: CheckpointId(1),
-                    parent: Some(CheckpointId(0)),
                     turn_start: Some(HostSeq(3)),
                     commit: text("abc"),
-                    history: HistoryAnchor::Fresh,
-                    undo,
                 },
             },
         ),
@@ -1614,8 +1610,7 @@ fn changes(state: &State) -> Option<TurnChanges> {
 
 fn diff() -> CheckpointDiff {
     CheckpointDiff {
-        checkpoint: CheckpointId(1),
-        parent: CheckpointId(0),
+        checkpoint: HostSeq(5),
         files: Vec::from([CheckpointFile {
             path: text("a.txt"),
             change: proto::Change::Write,
@@ -1626,151 +1621,119 @@ fn diff() -> CheckpointDiff {
 }
 
 #[test]
-fn a_turns_changes_load_once_and_offer_undo_only_while_idle() {
-    let show = Intent::Session(SessionIntent::ShowChanges(CheckpointId(1)));
-    let turn = |undo| {
-        opened(
-            a_turn(undo)
-                .into_iter()
-                .chain([show.clone(), show.clone()])
-                .collect(),
-        )
-    };
-    let (loading, asked) = turn(UndoAvailability::Available);
+fn a_turns_changes_load_once_and_stay_open_during_later_work() {
+    let show = Intent::Session(SessionIntent::ShowChanges(HostSeq(5)));
+    let (loading, asked) =
+        opened(a_turn().into_iter().chain([show.clone(), show]).collect());
     let loaded_with =
         |result| run(loading.clone(), Vec::from([answer(&asked, result)])).0;
     let loaded = loaded_with(Ok(CommandResult::Diff(diff())));
     let (busy, _) = run(loaded.clone(), Vec::from([event(6, said("again"))]));
-    let (not_offered, unavailable_request) =
-        turn(UndoAvailability::Unavailable {
-            reason: text("no worktree"),
-        });
-    let unavailable = run(
-        not_offered,
-        Vec::from([answer(
-            &unavailable_request,
-            Ok(CommandResult::Diff(diff())),
-        )]),
-    )
-    .0;
     let panel = |state: &State| changes(state).map(|turn| turn.panel);
-    let undo = |state: &State| match panel(state) {
-        Some(DiffPanel::Loaded(Diff {
-            undo_disabled,
-            undo_hint,
-            ..
-        })) => Some((undo_disabled, undo_hint)),
-        _ => None,
-    };
+    let expected = DiffPanel::Loaded(Rc::new(Preview {
+        empty: None,
+        files: Vec::from([DiffFile {
+            path: text("Added a.txt"),
+            patch: Patch::Note(text(
+                "Binary file changed. Preview unavailable.",
+            )),
+        }]),
+        truncated: Some("Preview limit reached. Some changes are omitted."),
+    }));
     assert_eq!(
-        (
-            changes(&loading).map(|turn| (
-                turn.key,
-                turn.button,
-                turn.button_disabled,
-                turn.panel
-            )),
-            sent(&asked),
-            panel(&loaded),
-            undo(&busy),
-            undo(&unavailable),
-            panel(&loaded_with(Err(text("offline")))),
-        ),
-        (
-            Some((
-                text("checkpoint-1"),
-                text("checkpoint-1-changes"),
-                true,
-                DiffPanel::Loading
-            )),
-            Vec::from([CommandBody::GetDiff {
-                session: SESSION,
-                checkpoint: CheckpointId(1)
-            }]),
-            Some(DiffPanel::Loaded(Diff {
-                preview: Rc::new(Preview {
-                    empty: None,
-                    files: Vec::from([DiffFile {
-                        path: text("Added a.txt"),
-                        patch: Patch::Note(text(
-                            "Binary file changed. Preview unavailable."
-                        )),
-                    }]),
-                    truncated: Some(
-                        "Preview limit reached. Some changes are omitted."
-                    ),
-                }),
-                undo_disabled: false,
-                undo_hint: text("Undo is available when the session is idle."),
-            })),
-            Some((true, text("Undo is available when the session is idle."))),
-            Some((true, text("Undo unavailable: no worktree"))),
-            Some(DiffPanel::Failed(text("offline"))),
-        )
+        changes(&loading).map(|turn| (
+            turn.key,
+            turn.button,
+            turn.button_disabled,
+            turn.panel,
+        )),
+        Some((
+            text("checkpoint-5"),
+            text("checkpoint-5-changes"),
+            true,
+            DiffPanel::Loading,
+        ))
+    );
+    assert_eq!(
+        sent(&asked),
+        [CommandBody::GetDiff {
+            session: SESSION,
+            checkpoint: HostSeq(5)
+        }]
+    );
+    assert_eq!(panel(&loaded), Some(expected.clone()));
+    assert_eq!(panel(&busy), Some(expected));
+    assert_eq!(
+        panel(&loaded_with(Err(text("offline")))),
+        Some(DiffPanel::Failed(text("offline")))
     );
 }
 
 #[test]
-fn undo_sends_the_checkpoint_and_the_pane_follows_its_progress() {
-    let (state, effects) = opened(
-        a_turn(UndoAvailability::Available)
+fn turns_sharing_a_commit_keep_independent_diff_requests_and_previews() {
+    let (first_loading, first_request) = opened(
+        a_turn()
             .into_iter()
-            .chain([Intent::Session(SessionIntent::Undo(CheckpointId(1)))])
+            .chain([Intent::Session(SessionIntent::ShowChanges(HostSeq(5)))])
             .collect(),
     );
-    let after = |kind| run(state.clone(), Vec::from([event(6, kind)])).0;
-    let undoing = after(EventKind::UndoStarted {
-        checkpoint: CheckpointId(1),
-        restore: CheckpointId(0),
-        history: HistoryAnchor::Fresh,
-    });
-    let failed = after(EventKind::UndoFailed {
-        checkpoint: CheckpointId(1),
-        reason: text("dirty tree"),
-    });
-    let undone = after(EventKind::TurnsUndone {
-        checkpoint: CheckpointId(1),
-        restored: CheckpointId(0),
-    });
-    let (_, focus) = run(
-        undone.clone(),
-        Vec::from([Intent::Session(SessionIntent::Mounted(Mount::Undone))]),
+    let (first_loaded, _) = run(
+        first_loading,
+        Vec::from([answer(&first_request, Ok(CommandResult::Diff(diff())))]),
+    );
+    let (second_loading, second_request) = run(
+        first_loaded,
+        Vec::from([
+            event(6, said("no file changes")),
+            event(
+                7,
+                EventKind::TurnCompleted {
+                    outcome: TurnOutcome::Completed,
+                },
+            ),
+            event(
+                8,
+                EventKind::CheckpointCreated {
+                    checkpoint: Checkpoint {
+                        commit: text("abc"),
+                        turn_start: Some(HostSeq(6)),
+                    },
+                },
+            ),
+            Intent::Session(SessionIntent::ShowChanges(HostSeq(8))),
+        ]),
     );
     assert_eq!(
-        (
-            sent(&effects),
-            pane(&undoing).map(|shown| (shown.undo, shown.status)),
-            pane(&failed).map(|shown| shown.undo),
-            pane(&undone).map(|shown| (shown.undo, shown.entries.len())),
-            focus,
-        ),
-        (
-            Vec::from([CommandBody::UndoTurn {
-                session: SESSION,
-                checkpoint: CheckpointId(1)
-            }]),
-            Some((
-                UndoNote::Undoing(
-                    "Undoing this turn and all later file and conversation changes…"
-                ),
-                text("undoing")
-            )),
-            Some(UndoNote::Failed {
-                text: text(
-                    "Undo needs recovery: dirty tree. Other actions are blocked until recovery finishes."
-                ),
-                checkpoint: CheckpointId(1),
-            }),
-            Some((
-                UndoNote::Undone {
-                    key: text("undo-done-7"),
-                    text: "Turn and all later file and conversation changes undone.",
-                },
-                0
-            )),
-            Vec::from([Effect::Focus(Focus::AfterUndo)]),
-        )
+        sent(&second_request),
+        [CommandBody::GetDiff {
+            session: SESSION,
+            checkpoint: HostSeq(8)
+        }]
     );
+    let (loaded, _) = run(
+        second_loading,
+        Vec::from([answer(
+            &second_request,
+            Ok(CommandResult::Diff(CheckpointDiff {
+                checkpoint: HostSeq(8),
+                files: Vec::new(),
+                extent: DiffExtent::Complete,
+            })),
+        )]),
+    );
+    let panels = pane(&loaded)
+        .into_iter()
+        .flat_map(|shown| shown.entries)
+        .filter_map(|entry| entry.changes)
+        .map(|changes| (changes.checkpoint, changes.panel))
+        .collect::<Vec<_>>();
+    assert!(matches!(
+        panels.as_slice(),
+        [(HostSeq(5), DiffPanel::Loaded(first)), (HostSeq(8), DiffPanel::Loaded(second))]
+            if first.files.len() == 1
+                && second.files.is_empty()
+                && second.empty == Some("No file changes in this turn.")
+    ));
 }
 
 #[test]

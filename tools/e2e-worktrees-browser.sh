@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phone-sized checkpoint diff / middle-turn undo / reconnect checks. Outputs
+# Phone-sized per-turn diffs / unchanged turns / reconnect checks. Outputs
 # remain in target; Chromium and WebKit are emulation, not physical iPhone tests.
 set -euo pipefail
 umask 077
@@ -39,7 +39,7 @@ for engine in chromium webkit; do
   git -C "$source" add baseline.txt
   git -C "$source" -c user.name=Conductor -c user.email=conductor@example.invalid commit -qm baseline -m 'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>'
   cp fixtures/e2e/claude-worktrees.jsonl "$source/stdout.jsonl"
-  cp fixtures/e2e/claude-worktrees-fork.jsonl "$source/stdout.2.jsonl"
+  cp fixtures/e2e/claude-worktrees-continued.jsonl "$source/stdout.2.jsonl"
   head -2 fixtures/e2e/claude-killed.jsonl >"$data/work/claude/stdout.jsonl"
   REAL_GIT="$real_git" PREVIEW_FAILURE="$work/fail-preview" PATH="$scratch/bin:$PATH" \
     "$target/debug/conductord" host --data-dir "$data" \
@@ -52,5 +52,5 @@ for engine in chromium webkit; do
   join=$(awk '/^join:/ {print $2}' "$work/host.txt")
   "$target/debug/examples/worktrees_browser" "$ticket" "$source" >"$work/seed.txt" 2>&1
   ENGINE="$engine" node crates/app/tests-e2e/browser.ts "$join" "$run/$engine.png" worktrees unused >"$run/$engine.txt" 2>&1
-  echo "$engine checkpoint/undo browser checks passed: $run/$engine.txt"
+  echo "$engine snapshot diff browser checks passed: $run/$engine.txt"
 done

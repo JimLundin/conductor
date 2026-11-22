@@ -105,8 +105,7 @@ pub struct Recovery {
     pub withdrawn: Vec<RequestId>,
     /// A turn was running.
     pub interrupted: bool,
-    /// The running turn's checkpoint, when it has a workspace and no undo
-    /// is being recovered.
+    /// Pending work to capture before the session can continue.
     pub checkpoint: Option<SnapshotPlan>,
     /// The agent was running.
     pub closed: bool,
@@ -156,13 +155,7 @@ impl Recovery {
             .collect::<Vec<Step>>();
         if self.interrupted {
             if let Some(turn) = &self.checkpoint {
-                steps.extend([
-                    Step::Append(EventKind::CheckpointReserved {
-                        checkpoint: turn.reserved,
-                    }),
-                    Step::Barrier,
-                    Step::Snapshot(turn.clone()),
-                ]);
+                steps.extend([Step::Barrier, Step::Snapshot(turn.clone())]);
             }
             steps.push(Step::Append(EventKind::TurnCompleted {
                 outcome: TurnOutcome::Interrupted,
@@ -225,15 +218,14 @@ fn agent_running(events: &[Event]) -> bool {
         .unwrap_or(false)
 }
 
-/// An undo can only complete after its restored agent is running.
 pub(crate) const fn agent_activity(kind: &EventKind) -> Option<bool> {
     match kind {
         EventKind::SessionClosed { .. } | EventKind::SessionRemoved { .. } => {
             Some(false)
         }
-        EventKind::SessionCreated { .. }
-        | EventKind::SessionReady
-        | EventKind::TurnsUndone { .. } => Some(true),
+        EventKind::SessionCreated { .. } | EventKind::SessionReady => {
+            Some(true)
+        }
         _ => None,
     }
 }
@@ -257,10 +249,9 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 #[cfg(test)]
 mod tests {
     use proto::{
-        Checkpoint, CheckpointId, ClientName, Effort, Event, EventKind,
-        HistoryAnchor, HostPath, HostSeq, InstanceId, ModelId, Provider,
-        RequestId, Resolution, SessionId, ToolCallId, ToolKind, TurnOutcome,
-        UndoAvailability, Workspace,
+        Checkpoint, ClientName, Effort, Event, EventKind, HostPath, HostSeq,
+        InstanceId, ModelId, Provider, RequestId, Resolution, SessionId,
+        ToolCallId, ToolKind, TurnOutcome, Workspace,
     };
 
     use super::{Created, Recovery, SnapshotPlan, Step, created, events_of};
@@ -381,14 +372,7 @@ mod tests {
                 directory: path,
                 branch: String::from("conductor/1"),
             },
-            reserved: CheckpointId(3),
-            base: Some(String::from("base")),
-            parent: Some(CheckpointId(2)),
             turn_start: Some(HostSeq(9)),
-            history: HistoryAnchor::Fresh,
-            undo: UndoAvailability::Unavailable {
-                reason: String::from("test"),
-            },
         }
     }
 
@@ -424,9 +408,6 @@ mod tests {
                 Vec::from([
                     withdrawn(2),
                     withdrawn(3),
-                    Step::Append(EventKind::CheckpointReserved {
-                        checkpoint: CheckpointId(3),
-                    }),
                     Step::Barrier,
                     Step::Snapshot(turn()),
                     interrupted.clone(),
@@ -449,14 +430,8 @@ mod tests {
             [
                 EventKind::CheckpointCreated {
                     checkpoint: Checkpoint {
-                        id: CheckpointId(3),
-                        parent: Some(CheckpointId(2)),
                         turn_start: Some(HostSeq(9)),
                         commit: String::from("made"),
-                        history: HistoryAnchor::Fresh,
-                        undo: UndoAvailability::Unavailable {
-                            reason: String::from("test"),
-                        },
                     },
                 },
                 EventKind::Error {
@@ -491,12 +466,8 @@ mod tests {
                 1,
                 EventKind::CheckpointCreated {
                     checkpoint: Checkpoint {
-                        id: CheckpointId(0),
-                        parent: None,
                         turn_start: None,
                         commit: String::from("c0"),
-                        history: HistoryAnchor::Fresh,
-                        undo: UndoAvailability::Available,
                     },
                 },
             ),
@@ -545,16 +516,7 @@ mod tests {
             ],
             [
                 recovery(Some(SnapshotPlan {
-                    reserved: CheckpointId(1),
-                    base: Some(String::from("c0")),
-                    parent: Some(CheckpointId(0)),
                     turn_start: Some(HostSeq(6)),
-                    history: HistoryAnchor::Unknown,
-                    undo: UndoAvailability::Unavailable {
-                        reason: String::from(
-                            "native turn boundary was not observed"
-                        ),
-                    },
                     ..turn()
                 })),
                 recovery(None),

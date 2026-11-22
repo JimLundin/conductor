@@ -21,7 +21,7 @@ use dioxus::prelude::*;
 use proto::{Decision, RequestId};
 use ui::{
     Ask, EffortControl, Footer, Intent, Keystroke, Mount, QuestionBody, Row,
-    SessionIntent, ToolDetail, UndoNote, WorkspaceContext,
+    SessionIntent, ToolDetail, WorkspaceContext,
 };
 
 use crate::checkpoints::TurnChanges;
@@ -53,7 +53,6 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                 }
             }
             Workspace { context: pane.workspace }
-            Undo { note: pane.undo }
             if let Some(tasks) = pane.tasks {
                 Tasks { tasks }
             }
@@ -119,37 +118,6 @@ fn Workspace(context: WorkspaceContext) -> Element {
                     summary { "Working directory" }
                     code { "{directory}" }
                 }
-            }
-        },
-    }
-}
-
-#[component]
-fn Undo(note: UndoNote) -> Element {
-    let shell = use_context::<Shell>();
-    match note {
-        UndoNote::Hidden => rsx! {},
-        UndoNote::Undoing(text) => {
-            rsx! { p { class: "undo-status", role: "status", "{text}" } }
-        }
-        UndoNote::Failed { text, checkpoint } => rsx! {
-            div { class: "undo-status error", role: "alert",
-                p { "{text}" }
-                button {
-                    class: "undo-turn",
-                    onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::Undo(checkpoint))),
-                    "Retry undo"
-                }
-            }
-        },
-        UndoNote::Undone { key, text } => rsx! {
-            p {
-                key: "{key}",
-                class: "undo-status",
-                role: "status",
-                tabindex: "-1",
-                onmounted: move |_| shell.dispatch(Intent::Session(SessionIntent::Mounted(Mount::Undone))),
-                "{text}"
             }
         },
     }

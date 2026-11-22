@@ -206,7 +206,6 @@ fn trace_command(command: &Command) {
         CommandBody::Answer { .. } => "answer",
         CommandBody::SetCredential { .. } => "set_credential",
         CommandBody::GetDiff { .. } => "get_diff",
-        CommandBody::UndoTurn { .. } => "undo_turn",
         CommandBody::SetEffort { .. } => "set_effort",
         CommandBody::RemoveInstance { .. } => "remove_instance",
         CommandBody::StartSignIn { .. } => "start_sign_in",
@@ -495,10 +494,10 @@ impl Conductor {
     ) -> Result<CommandResult, Stopped> {
         match self.registry.relaunch(session).await? {
             Err(rejection) => Ok(CommandResult::Rejected(rejection)),
-            Ok((handle, adapter, offered, reservation)) => handle
+            Ok((handle, adapter, offered, reservation)) => Ok(handle
                 .relaunch(relaunch.order(offered), adapter, reservation)
                 .await
-                .or_else(|stopped| relaunch.closed().ok_or(stopped)),
+                .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
         }
     }
 

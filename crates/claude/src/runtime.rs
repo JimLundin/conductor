@@ -9,15 +9,13 @@
 //! event into an [`Input`], and performs each [`Effect`] in order.
 
 use agents::Note;
-use agents::runtime::{
-    Anchoring, Command, Lifecycle, Outcome, Report, Start, Started,
-};
-use proto::{Effort, HistoryAnchor, HostPath, Provider, SessionId as Session};
+use agents::runtime::{Command, Lifecycle, Outcome, Report, Start, Started};
+use proto::{Effort, HostPath, Provider, SessionId as Session};
 
 use crate::prelude::*;
 use crate::{
-    ClaudeEvent, MessageId, PermissionDecision, PermissionRequestId, Resume,
-    SessionId, claude_answer, claude_steps,
+    ClaudeEvent, PermissionDecision, PermissionRequestId, Resume, SessionId,
+    claude_answer, claude_steps,
 };
 
 /// Why the CLI did not start, and the conversation it found missing if
@@ -94,18 +92,10 @@ pub enum Effect {
     Runtime(Report),
 }
 
-/// The start in flight: the resume it tries and those left if it finds
-/// its conversation missing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Starting {
-    spawn: Spawn,
-    rest: Vec<Resume>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Runtime {
     lifecycle: Lifecycle,
-    starting: Option<Starting>,
+    starting: Option<Spawn>,
 }
 
 impl From<Report> for Effect {
@@ -135,9 +125,7 @@ impl Runtime {
     }
 
     fn command(&mut self, command: Command) -> Vec<Effect> {
-        if !matches!(command, Command::Turns | Command::Revert(_))
-            && let Some(refused) = self.lifecycle.refusal(&command)
-        {
+        if let Some(refused) = self.lifecycle.refusal(&command) {
             return refused;
         }
         match command {
@@ -158,9 +146,6 @@ impl Runtime {
                 },
                 then: Then::Replied,
             }]),
-            refused @ (Command::Turns | Command::Revert(_)) => {
-                Report::emit(refused.failed("Claude keeps no turns to revert"))
-            }
         }
     }
 
@@ -170,11 +155,12 @@ impl Runtime {
             directory,
             model,
             effort,
-            history,
             conversation,
             instructions,
         } = start;
-        let (resume, rest) = attempts(history, conversation);
+        let resume = conversation
+            .map(SessionId)
+            .map_or(Resume::Fresh, Resume::Session);
         let spawn = Spawn {
             session,
             directory,
@@ -183,34 +169,25 @@ impl Runtime {
             resume,
             instructions,
         };
-        self.starting = Some(Starting {
-            spawn: spawn.clone(),
-            rest,
-        });
+        self.starting = Some(spawn.clone());
         Vec::from([Effect::Spawn(spawn)])
     }
 
-    /// A CLI that finds the conversation it resumes missing starts on the
-    /// next resume, if there is one.
     fn spawned(&mut self, spawned: Result<SessionId, Refusal>) -> Vec<Effect> {
         let starting = self.starting.take();
         match (spawned, starting) {
-            (Ok(id), _) => self.lifecycle.started(Started {
-                conversation: id.0,
-                anchoring: Anchoring::Messages,
-            }),
-            (Err(refusal), Some(Starting { spawn, rest }))
-                if refusal.missing.is_some() && !rest.is_empty() =>
+            (Ok(id), _) => {
+                self.lifecycle.started(Started { conversation: id.0 })
+            }
+            (Err(refusal), Some(spawn))
+                if refusal.missing.is_some()
+                    && matches!(spawn.resume, Resume::Session(_)) =>
             {
-                let mut left = rest.into_iter();
                 let next = Spawn {
-                    resume: left.next().unwrap_or(Resume::Fresh),
+                    resume: Resume::Fresh,
                     ..spawn
                 };
-                self.starting = Some(Starting {
-                    spawn: next.clone(),
-                    rest: left.collect(),
-                });
+                self.starting = Some(next.clone());
                 Vec::from([Effect::Spawn(next)])
             }
             (Err(refusal), _) => {
@@ -261,82 +238,16 @@ fn called(then: Then, outcome: Result<(), String>) -> Vec<Effect> {
     }
 }
 
-/// The resumes to try in turn when starting at `history`, else on the
-/// saved `conversation`; each after the first only when the one before
-/// finds its conversation missing.
-///
-/// A fork whose target already exists resumes the target instead. A
-/// conversation in which no message was seen may not have been written
-/// yet, so when it is missing the CLI starts fresh.
-#[must_use]
-pub fn attempts(
-    history: Option<HistoryAnchor>,
-    conversation: Option<String>,
-) -> (Resume, Vec<Resume>) {
-    let unseen = matches!(
-        history,
-        None | Some(HistoryAnchor::Messages { message: None, .. })
-    );
-    match resume(history, conversation) {
-        Resume::Fork {
-            session,
-            through,
-            target,
-        } => (
-            Resume::Session(target.clone()),
-            Vec::from([Resume::Fork {
-                session,
-                through,
-                target,
-            }]),
-        ),
-        Resume::Session(session) if unseen => {
-            (Resume::Session(session), Vec::from([Resume::Fresh]))
-        }
-        first => (first, Vec::new()),
-    }
-}
-
-fn resume(
-    history: Option<HistoryAnchor>,
-    conversation: Option<String>,
-) -> Resume {
-    match history {
-        Some(HistoryAnchor::Fresh) => Resume::Fresh,
-        Some(HistoryAnchor::Fork {
-            source,
-            through,
-            target,
-        }) => Resume::Fork {
-            session: SessionId(source),
-            through: MessageId(through),
-            target: SessionId(target),
-        },
-        Some(HistoryAnchor::Messages {
-            conversation: native,
-            ..
-        }) => Resume::Session(SessionId(native)),
-        _ => conversation
-            .map(SessionId)
-            .map_or(Resume::Fresh, Resume::Session),
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use agents::runtime::{
-        Anchoring, Command, Event, Outcome, Report, Start, Started,
-    };
+    use agents::runtime::{Command, Event, Outcome, Report, Start, Started};
     use agents::{NativeRequest, NativeTurn, Reply};
     use proto::{
-        ClientName, Decision, Effort, HistoryAnchor, HostPath, ModelId,
-        SessionId as Session,
+        ClientName, Decision, Effort, HostPath, ModelId, SessionId as Session,
     };
 
-    use super::{Call, Effect, Input, Refusal, Runtime, Spawn, Then, attempts};
-    use crate::{
-        MessageId, PermissionDecision, PermissionRequestId, Resume, SessionId,
-    };
+    use super::{Call, Effect, Input, Refusal, Runtime, Spawn, Then};
+    use crate::{PermissionDecision, PermissionRequestId, Resume, SessionId};
 
     fn id(text: &str) -> SessionId {
         SessionId(String::from(text))
@@ -357,15 +268,14 @@ mod tests {
         Vec::from([Report::Emit(Event::Outcome(outcome)).into()])
     }
 
-    fn start(history: Option<HistoryAnchor>) -> Input {
+    fn start(conversation: Option<&str>) -> Input {
         Input::Command(Command::Start(Start {
             instructions: None,
             session: Session(1),
             directory: HostPath(text("/work")),
             model: Some(ModelId(text("haiku"))),
             effort: Some(Effort::Low),
-            history,
-            conversation: Some(text("saved")),
+            conversation: conversation.map(text),
         }))
     }
 
@@ -390,7 +300,6 @@ mod tests {
     fn started(conversation: &str) -> Vec<Effect> {
         outcome(Outcome::Started(Ok(Started {
             conversation: text(conversation),
-            anchoring: Anchoring::Messages,
         })))
     }
 
@@ -398,21 +307,18 @@ mod tests {
         let mut runtime = Runtime::new();
         let _ = walk(
             &mut runtime,
-            Vec::from([start(None), Input::Spawned(Ok(id("saved")))]),
+            Vec::from([start(Some("saved")), Input::Spawned(Ok(id("saved")))]),
         );
         runtime
     }
 
     #[test]
-    fn a_missing_conversation_with_no_message_seen_starts_fresh() {
+    fn a_missing_saved_conversation_starts_fresh() {
         let mut runtime = Runtime::new();
         let seen = walk(
             &mut runtime,
             Vec::from([
-                start(Some(HistoryAnchor::Messages {
-                    conversation: text("conv"),
-                    message: None,
-                })),
+                start(Some("conv")),
                 missing("conv"),
                 Input::Spawned(Ok(id("new"))),
             ]),
@@ -423,68 +329,6 @@ mod tests {
                 Vec::from([spawn(Resume::Session(id("conv")))]),
                 Vec::from([spawn(Resume::Fresh)]),
                 started("new"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_fork_whose_target_exists_resumes_the_target_and_else_forks() {
-        let mut runtime = Runtime::new();
-        let fork = Resume::Fork {
-            session: id("source"),
-            through: MessageId(text("boundary")),
-            target: id("target"),
-        };
-        let seen = walk(
-            &mut runtime,
-            Vec::from([
-                start(Some(HistoryAnchor::Fork {
-                    source: text("source"),
-                    through: text("boundary"),
-                    target: text("target"),
-                })),
-                missing("target"),
-                missing("target"),
-            ]),
-        );
-        assert_eq!(
-            seen,
-            [
-                Vec::from([spawn(Resume::Session(id("target")))]),
-                Vec::from([spawn(fork)]),
-                outcome(Outcome::Started(Err(text("missing")))),
-            ]
-        );
-    }
-
-    #[test]
-    fn the_resumes_follow_the_history_then_the_saved_conversation() {
-        let messages = |message: Option<&str>| {
-            Some(HistoryAnchor::Messages {
-                conversation: text("conv"),
-                message: message.map(String::from),
-            })
-        };
-        assert_eq!(
-            [
-                attempts(Some(HistoryAnchor::Fresh), Some(text("saved"))),
-                attempts(messages(Some("m1")), None),
-                attempts(None, Some(text("saved"))),
-                attempts(None, None),
-                attempts(
-                    Some(HistoryAnchor::Turns {
-                        conversation: text("thread"),
-                        turn: None,
-                    }),
-                    Some(text("saved"))
-                ),
-            ],
-            [
-                (Resume::Fresh, Vec::new()),
-                (Resume::Session(id("conv")), Vec::new()),
-                (Resume::Session(id("saved")), Vec::from([Resume::Fresh])),
-                (Resume::Fresh, Vec::new()),
-                (Resume::Session(id("saved")), Vec::new()),
             ]
         );
     }
@@ -553,7 +397,6 @@ mod tests {
                         reply: Reply::Decide(Decision::Approve),
                         by: ClientName(text("phone")),
                     }),
-                    Input::Command(Command::Turns),
                     Input::Command(Command::Shutdown),
                 ]),
             ),
@@ -569,9 +412,6 @@ mod tests {
                     },
                     then: Then::Replied,
                 }]),
-                outcome(Outcome::Turns(Err(text(
-                    "Claude keeps no turns to revert"
-                )))),
                 Vec::from([Effect::Shutdown]),
             ],
         );

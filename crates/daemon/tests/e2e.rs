@@ -850,8 +850,6 @@ enum Until {
     Delta,
     TurnEnd,
     Closed,
-    Undone,
-    UndoFailure,
     Removed,
     Finished,
 }
@@ -873,8 +871,6 @@ const fn reached(until: &Until, kind: &EventKind) -> bool {
             | (Until::Delta, EventKind::AssistantDelta { .. })
             | (Until::TurnEnd, EventKind::TurnCompleted { .. })
             | (Until::Closed, EventKind::SessionClosed { .. })
-            | (Until::Undone, EventKind::TurnsUndone { .. })
-            | (Until::UndoFailure, EventKind::UndoFailed { .. })
             | (Until::Removed, EventKind::SessionRemoved { .. })
             | (Until::Finished, EventKind::SessionFinished { .. })
     )
@@ -909,8 +905,6 @@ const fn conversation_event(kind: &EventKind) -> bool {
         kind,
         EventKind::WorkspaceCreated { .. }
             | EventKind::CheckpointCreated { .. }
-            | EventKind::CheckpointReserved { .. }
-            | EventKind::HistoryMaterialized { .. }
             | EventKind::NativeTurnStarted { .. }
     )
 }
@@ -3174,9 +3168,7 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
                 kind,
                 EventKind::WorkspaceCreated { .. }
                     | EventKind::CheckpointCreated { .. }
-                    | EventKind::CheckpointReserved { .. }
                     | EventKind::NativeTurnStarted { .. }
-                    | EventKind::HistoryMaterialized { .. }
             ))
             .collect::<Vec<EventKind>>(),
         stored
@@ -3905,15 +3897,12 @@ fn assert_restart_cleanup(
         0
     );
     let cleanup = replayed(caught_up);
-    let end = cursor.0.checked_add(5).ok_or("restart cursor overflow")?;
+    let end = cursor.0.checked_add(4).ok_or("restart cursor overflow")?;
     assert_eq!(
         seqs(&cleanup),
         (cursor.next().0..=end).map(HostSeq).collect::<Vec<_>>()
     );
-    assert_eq!(
-        checkpoint(&cleanup, proto::CheckpointId(1))?.parent,
-        Some(proto::CheckpointId(0))
-    );
+    assert!(checkpoint(&cleanup)?.1.turn_start.is_some());
     assert_eq!(
         of(session, &cleanup),
         [
@@ -4110,9 +4099,19 @@ async fn saved(
 }
 
 async fn marker(path: &Path) -> Fallible {
-    tokio::time::timeout(STEP, drive_materialization(path))
-        .await
-        .map_err(|_| "the marker did not appear in time")??;
+    tokio::time::timeout(STEP, async {
+        loop {
+            match tokio::fs::metadata(path).await {
+                Ok(_) => break Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(error) => break Err(error),
+            }
+        }
+    })
+    .await
+    .map_err(|_| "the marker did not appear in time")??;
     Ok(())
 }
 
@@ -4809,50 +4808,9 @@ async fn restart(
     Ok(second)
 }
 
-/// A Claude session in a managed worktree of `source`, after two turns.
-struct TwoTurns {
-    session: SessionId,
-    worktree: PathBuf,
-    retained: proto::Checkpoint,
-    selected: proto::Checkpoint,
-}
-
-async fn two_turns(
-    phone: &HostLink,
-    updates: &mut Updates,
-    source: &Path,
-) -> Fallible<TwoTurns> {
-    let session = launch(phone, start(Provider::Claude, source)).await?;
-    let managed = workspace(&events_until(updates, Until::Ready).await?)?;
-    let _ = send(phone, message(session, "turn one")).await?;
-    let retained = checkpoint(
-        &events_until(updates, Until::TurnEnd).await?,
-        proto::CheckpointId(1),
-    )?;
-    let _ = send(phone, message(session, "turn two")).await?;
-    let selected = checkpoint(
-        &events_until(updates, Until::TurnEnd).await?,
-        proto::CheckpointId(2),
-    )?;
-    Ok(TwoTurns {
-        session,
-        worktree: PathBuf::from(&managed.worktree.0),
-        retained,
-        selected,
-    })
-}
-
 /// Whether any of `events` is of a kind `wanted` picks.
 fn any_event(events: &[Event], wanted: impl Fn(&EventKind) -> bool) -> bool {
     events.iter().any(|event| wanted(&event.kind))
-}
-
-/// How many of the session's items in `view` are user messages.
-fn user_items(view: &HostView, session: SessionId) -> usize {
-    items(view, session)
-        .iter()
-        .filter(|item| matches!(item, Item::User { .. }))
-        .count()
 }
 
 fn assert_absent(path: &Path) {
@@ -4862,29 +4820,10 @@ fn assert_absent(path: &Path) {
     );
 }
 
-/// The command is refused while an undo is unfinished.
-async fn assert_undo_blocks(phone: &HostLink, body: CommandBody) -> Fallible {
-    assert_eq!(
-        send(phone, body).await?,
-        CommandResult::Rejected(Rejection::UndoInProgress)
-    );
-    Ok(())
-}
-
-const fn undo_turn(
-    session: SessionId,
-    checkpoint: proto::CheckpointId,
-) -> CommandBody {
-    CommandBody::UndoTurn {
-        session,
-        checkpoint,
-    }
-}
-
 async fn get_diff(
     phone: &HostLink,
     session: SessionId,
-    checkpoint: proto::CheckpointId,
+    checkpoint: HostSeq,
 ) -> Fallible<proto::CheckpointDiff> {
     diff_result(
         send(
@@ -4905,20 +4844,6 @@ fn assistant_messages(session: SessionId, events: &[Event]) -> Vec<EventKind> {
         .collect()
 }
 
-/// The undo put the retained turn's files back, and dropped the executable
-/// bit the discarded turn set.
-fn assert_undone_files(worktree: &Path) -> Fallible {
-    assert_restored_files(worktree)?;
-    assert_absent(&worktree.join("later.txt"));
-    assert_eq!(
-        git(worktree, &["ls-files", "--stage", "exec.sh"])?
-            .split_whitespace()
-            .next(),
-        Some("100644")
-    );
-    Ok(())
-}
-
 /// A turn in the `other` session, in `other_path`, changes only its own
 /// worktree.
 async fn assert_independent(
@@ -4932,30 +4857,26 @@ async fn assert_independent(
     let _ =
         send(phone, message(other, "an independent second session")).await?;
     let other_turn = events_until(updates, Until::TurnEnd).await?;
-    checkpoint(&other_turn, proto::CheckpointId(1))?;
+    checkpoint(&other_turn)?;
     assert_eq!(
-        std::fs::read_to_string(other_path.join("after-undo.txt"))?,
-        "continued from retained prefix\n"
+        std::fs::read_to_string(other_path.join("continued.txt"))?,
+        "continued session\n"
     );
-    assert_absent(&worktree.join("after-undo.txt"));
+    assert_absent(&worktree.join("continued.txt"));
     Ok(())
 }
 
-fn checkpoint(
-    events: &[Event],
-    id: proto::CheckpointId,
-) -> Fallible<proto::Checkpoint> {
+fn checkpoint(events: &[Event]) -> Fallible<(HostSeq, proto::Checkpoint)> {
     Ok(events
         .iter()
+        .rev()
         .find_map(|event| match &event.kind {
-            EventKind::CheckpointCreated { checkpoint }
-                if checkpoint.id == id =>
-            {
-                Some(checkpoint.clone())
+            EventKind::CheckpointCreated { checkpoint } => {
+                Some((event.seq, checkpoint.clone()))
             }
             _ => None,
         })
-        .ok_or("the requested checkpoint was not published")?)
+        .ok_or("the checkpoint was not published")?)
 }
 
 fn workspace(events: &[Event]) -> Fallible<proto::Workspace> {
@@ -4980,7 +4901,7 @@ fn diff_result(result: CommandResult) -> Fallible<proto::CheckpointDiff> {
 }
 
 /// A source checkout with staged, unstaged and untracked changes, whose
-/// recordings fork on the second and third runs.
+/// recordings continue on the second and third runs.
 struct SourceCheckout {
     index: Vec<u8>,
     staged: String,
@@ -4990,7 +4911,7 @@ struct SourceCheckout {
 impl SourceCheckout {
     fn dirty(source: &Path) -> Fallible<Self> {
         std::fs::copy(
-            recording_file("claude-worktrees-fork.jsonl"),
+            recording_file("claude-worktrees-continued.jsonl"),
             source.join("stdout.2.jsonl"),
         )?;
         std::fs::copy(
@@ -5065,13 +4986,11 @@ fn assert_turn_tasks(
 
 /// The second turn's diff against the first: its files, its text, and the
 /// executable bit it set.
-fn assert_discarded_diff(
+fn assert_turn_diff(
     diff: &proto::CheckpointDiff,
-    retained: &proto::Checkpoint,
-    discarded: &proto::Checkpoint,
+    selected: &proto::Checkpoint,
     worktree: &Path,
 ) -> Fallible {
-    assert_eq!(diff.parent, retained.id);
     assert_eq!(diff.extent, proto::DiffExtent::Complete);
     assert_eq!(
         diff.files
@@ -5092,7 +5011,7 @@ fn assert_discarded_diff(
         None
     );
     assert_eq!(
-        git(worktree, &["ls-tree", &discarded.commit, "exec.sh"])?
+        git(worktree, &["ls-tree", &selected.commit, "exec.sh"])?
             .split_whitespace()
             .next(),
         Some("100755")
@@ -5100,47 +5019,20 @@ fn assert_discarded_diff(
     Ok(())
 }
 
-/// The last run of the Claude stand-in forked the conversation at the
-/// retained turn's message.
-fn assert_forked_at_retained_prefix(source: &Path) -> Fallible {
-    let runs = argv(source)?;
-    let resumed = runs.last().ok_or("expected a value")?;
-    assert_eq!(
-        resumed
-            .iter()
-            .find(|arg| arg.starts_with("--resume-session-at="))
-            .cloned(),
-        Some(String::from(
-            "--resume-session-at=00000000-0000-4000-8000-000000000201"
-        ))
-    );
-    assert_eq!(
-        resumed
-            .iter()
-            .find(|arg| arg.as_str() == "--fork-session")
-            .cloned(),
-        Some(String::from("--fork-session"))
-    );
-    Ok(())
-}
-
-/// File undo and the lazy native fork survive restart together. All Git
-/// staging/checkpoint operations stay out of the source repository's index.
 #[tokio::test]
-async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_restart()
+async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
 -> Fallible {
-    let source = scratch("workspace-undo", "claude-worktrees.jsonl")?;
+    let source = scratch("workspace-snapshots", "claude-worktrees.jsonl")?;
     let checkout = SourceCheckout::dirty(&source)?;
-    let data = data_dir("workspace-undo")?;
+    let data = data_dir("workspace-snapshots")?;
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let address = first.address()?;
-    let ticket = first.target.clone();
     let (phone, mut updates) = first.connect().await?;
     let session = launch(&phone, start(Provider::Claude, &source)).await?;
     let opening = events_until(&mut updates, Until::Ready).await?;
     let managed = workspace(&opening)?;
-    assert_eq!(checkpoint(&opening, proto::CheckpointId(0))?.parent, None);
+    assert_eq!(checkpoint(&opening)?.1.turn_start, None);
     let worktree = assert_isolated(&managed, &source, session)?;
     let other = launch(&phone, start(Provider::Claude, &source)).await?;
     let other_opening = events_until(&mut updates, Until::Ready).await?;
@@ -5151,59 +5043,36 @@ async fn managed_worktrees_isolate_source_diff_and_undo_files_and_history_after_
     assert_ne!(managed.branch, other_workspace.branch);
     let _ = send(&phone, message(session, "turn one")).await?;
     let first_turn = events_until(&mut updates, Until::TurnEnd).await?;
-    let retained = checkpoint(&first_turn, proto::CheckpointId(1))?;
+    let (_, first_snapshot) = checkpoint(&first_turn)?;
     let _ = send(&phone, message(session, "turn two")).await?;
     let second_turn = events_until(&mut updates, Until::TurnEnd).await?;
-    let discarded = checkpoint(&second_turn, proto::CheckpointId(2))?;
+    let (second_seq, second_snapshot) = checkpoint(&second_turn)?;
     let kept_tasks = task_lists(&first_turn);
     assert_turn_tasks(&kept_tasks, &task_lists(&second_turn));
-    assert_eq!(discarded.parent, Some(retained.id));
-    let diff = get_diff(&phone, session, discarded.id).await?;
-    assert_discarded_diff(&diff, &retained, &discarded, &worktree)?;
+    assert_ne!(first_snapshot.commit, second_snapshot.commit);
+    let diff = get_diff(&phone, session, second_seq).await?;
+    assert_turn_diff(&diff, &second_snapshot, &worktree)?;
     let _ = send(&phone, message(session, "turn three")).await?;
     let third_turn = events_until(&mut updates, Until::TurnEnd).await?;
-    checkpoint(&third_turn, proto::CheckpointId(3))?;
+    checkpoint(&third_turn)?;
     checkout.assert_unchanged(&source)?;
     assert_independent(&phone, &mut updates, other, &other_path, &worktree)
         .await?;
-    let retry_endpoint = endpoint().await?;
-    let retry = authenticated(&retry_endpoint, &ticket).await?;
-    let undo = proto::Command {
-        id: proto::CommandId(1301),
-        body: CommandBody::UndoTurn {
-            session,
-            checkpoint: discarded.id,
-        },
-    };
-    let receipt = retry_command(&retry, &undo).await?;
-    assert_eq!(receipt, CommandResult::Accepted);
-    let undone = events_until(&mut updates, Until::Undone).await?;
-    assert_eq!(
-        of(session, &undone).last(),
-        Some(&EventKind::TurnsUndone {
-            checkpoint: discarded.id,
-            restored: retained.id
-        })
-    );
-    assert_eq!(task_lists(&undone), kept_tasks);
-    assert_undone_files(&worktree)?;
-    retry_endpoint.close().await;
     let second = restart(first, &data, address, &phone, &mut updates).await?;
-    let restarted_retry_endpoint = endpoint().await?;
-    let restarted_retry =
-        authenticated(&restarted_retry_endpoint, &ticket).await?;
-    assert_eq!(retry_command(&restarted_retry, &undo).await?, receipt);
+    assert_eq!(get_diff(&phone, session, second_seq).await?, diff);
     accepted(&phone, continued(session)).await?;
     events_until(&mut updates, Until::Ready).await?;
-    let _ = send(&phone, message(session, "remember retained prefix")).await?;
+    accepted(&phone, message(session, "continue after restart")).await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
         assistant_messages(session, &after),
-        [reply("Retained turn one.")]
+        [reply("Continued session.")]
     );
-    assert_forked_at_retained_prefix(&source)?;
-    assert_eq!(std::fs::read(source.join(".git/index"))?, checkout.index);
-    restarted_retry_endpoint.close().await;
+    let runs = argv(&source)?;
+    let resumed = runs.last().ok_or("missing resumed invocation")?;
+    assert!(resumed.iter().any(|arg| arg.starts_with("--resume=")));
+    assert_eq!(get_diff(&phone, session, second_seq).await?, diff);
+    checkout.assert_unchanged(&source)?;
     phone.stop().await?;
     second.shutdown().await
 }
@@ -5233,12 +5102,12 @@ async fn new_sessions_require_an_existing_repository_with_a_commit() -> Fallible
 /// Old persisted sessions have no workspace metadata. Continue still starts
 /// their CLI in the original directory, even when it is not a Git repository.
 #[tokio::test]
-async fn a_legacy_session_continues_in_its_original_directory_without_undo()
+async fn a_session_without_a_worktree_continues_in_its_original_directory()
 -> Fallible {
     let source = data_dir("legacy-session-source")?;
     std::fs::write(source.join(".git"), "gitdir: no-such-git-directory\n")?;
     std::fs::copy(
-        recording_file("claude-worktrees-fork.jsonl"),
+        recording_file("claude-worktrees-continued.jsonl"),
         source.join("stdout.jsonl"),
     )?;
     let data = data_dir("legacy-session-host")?;
@@ -5258,17 +5127,6 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo()
     let host =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let (phone, mut updates) = host.connect().await?;
-    assert_eq!(
-        send(
-            &phone,
-            CommandBody::UndoTurn {
-                session,
-                checkpoint: proto::CheckpointId(0)
-            }
-        )
-        .await?,
-        CommandResult::Rejected(Rejection::CheckpointUnavailable)
-    );
     accepted(&phone, continued(session)).await?;
     let ready = events_until(&mut updates, Until::Ready).await?;
     assert_eq!(
@@ -5281,355 +5139,11 @@ async fn a_legacy_session_continues_in_its_original_directory_without_undo()
     let _ = send(&phone, message(session, "legacy directory")).await?;
     events_until(&mut updates, Until::TurnEnd).await?;
     assert_eq!(
-        std::fs::read_to_string(source.join("after-undo.txt"))?,
-        "continued from retained prefix\n"
+        std::fs::read_to_string(source.join("continued.txt"))?,
+        "continued session\n"
     );
     phone.stop().await?;
     host.shutdown().await
-}
-
-/// Logs an undo of `discarded` back to `retained` that started and failed
-/// before it restored any files.
-fn inject_failed_undo(
-    data: &Path,
-    session: SessionId,
-    retained: &proto::Checkpoint,
-    discarded: &proto::Checkpoint,
-) -> Fallible {
-    let history = match retained.history.clone() {
-        proto::HistoryAnchor::Messages {
-            conversation,
-            message: Some(through),
-        } => Some(proto::HistoryAnchor::Fork {
-            source: conversation,
-            through,
-            target: String::from("00000000-0000-4000-8000-000000000300"),
-        }),
-        _ => None,
-    }
-    .ok_or("expected a value")?;
-    disk::append(
-        data,
-        session,
-        [
-            EventKind::UndoStarted {
-                checkpoint: discarded.id,
-                restore: retained.id,
-                history,
-            },
-            EventKind::UndoFailed {
-                checkpoint: discarded.id,
-                reason: "injected failure before files were restored".into(),
-            },
-        ],
-    )
-}
-
-/// A crash after durable undo intent/failure retains the original transcript
-/// and blocks normal commands until the same undo completes on retry.
-#[tokio::test]
-async fn a_failed_pending_undo_replays_after_restart_and_requires_a_successful_retry()
--> Fallible {
-    let source = scratch("pending-undo", "claude-worktrees.jsonl")?;
-    let data = data_dir("pending-undo")?;
-    let first =
-        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
-    let address = first.address()?;
-    let (phone, mut updates) = first.connect().await?;
-    let TwoTurns {
-        session,
-        retained,
-        selected: discarded,
-        ..
-    } = two_turns(&phone, &mut updates, &source).await?;
-    first.shutdown().await?;
-    inject_failed_undo(&data, session, &retained, &discarded)?;
-    let second = durable_host(&data, address).await?;
-    phone.reconnect().await;
-    until_live(&mut updates).await?;
-    let replay = second.history().await?;
-    let view = fold(replay);
-    assert_eq!(
-        view.sessions.get(&session).map(|found| found.undo.clone()),
-        Some(client::host_view::UndoState::Failed {
-            checkpoint: discarded.id,
-            reason: String::from("injected failure before files were restored")
-        })
-    );
-    assert_eq!(user_items(&view, session), 2);
-    assert_undo_blocks(&phone, message(session, "blocked while recovering"))
-        .await?;
-    assert_undo_blocks(&phone, continued(session)).await?;
-    accepted(
-        &phone,
-        CommandBody::UndoTurn {
-            session,
-            checkpoint: discarded.id,
-        },
-    )
-    .await?;
-    events_until(&mut updates, Until::Undone).await?;
-    let history = second.history().await?;
-    assert!(host::registry::running(&history).contains(&session));
-    let after = fold(history);
-    assert_eq!(user_items(&after, session), 1);
-    assert_eq!(
-        after.sessions.get(&session).map(|found| found.undo.clone()),
-        Some(client::host_view::UndoState::Undone)
-    );
-    let third = restart(second, &data, address, &phone, &mut updates).await?;
-    let recovered = third.history().await?;
-    assert!(matches!(
-        of(session, &recovered).last(),
-        Some(EventKind::SessionClosed { reason }) if *reason == host::restore::restarted()
-    ));
-    phone.stop().await?;
-    third.shutdown().await
-}
-
-fn undo_failure(result: CommandResult) -> Fallible<String> {
-    match result {
-        CommandResult::Rejected(Rejection::UndoFailed { reason }) => Ok(reason),
-        other => {
-            Err(format!("expected an undo phase failure, not {other:?}").into())
-        }
-    }
-}
-
-#[tokio::test]
-async fn native_refusal_then_files_failure_requires_retry_across_a_real_restart()
--> Fallible {
-    let source = scratch("actual-undo-failures", "claude-worktrees.jsonl")?;
-    let data = data_dir("actual-undo-failures")?;
-    let first =
-        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
-    let address = first.address()?;
-    let (phone, mut updates) = first.connect().await?;
-    let TwoTurns {
-        session,
-        worktree,
-        retained,
-        selected,
-    } = two_turns(&phone, &mut updates, &source).await?;
-    std::fs::copy(
-        recording_file("claude-worktrees-fork-refused.jsonl"),
-        source.join("stdout.2.jsonl"),
-    )?;
-    let undo = CommandBody::UndoTurn {
-        session,
-        checkpoint: selected.id,
-    };
-    assert_ne!(
-        undo_failure(send(&phone, undo.clone()).await?)?
-            .find("temporary fake native fork refusal"),
-        None
-    );
-    let native_failure = events_until(&mut updates, Until::UndoFailure).await?;
-    assert!(!any_event(&native_failure, |kind| matches!(
-        kind,
-        EventKind::UndoHistoryRestored { .. }
-    )));
-    assert_ne!(
-        std::fs::read_to_string(worktree.join("changed.txt"))?.find("turn two"),
-        None
-    );
-    assert_undo_blocks(
-        &phone,
-        message(session, "blocked after native refusal"),
-    )
-    .await?;
-    let git_dir = PathBuf::from(
-        git(&worktree, &["rev-parse", "--absolute-git-dir"])?.trim(),
-    );
-    let lock = git_dir.join("index.lock");
-    std::fs::write(&lock, "owned test lock\n")?;
-    assert_ne!(
-        undo_failure(send(&phone, undo.clone()).await?)?.find("index.lock"),
-        None
-    );
-    let files_failure = events_until(&mut updates, Until::UndoFailure).await?;
-    assert_eq!(
-        files_failure
-            .iter()
-            .filter(|event| matches!(
-                event.kind,
-                EventKind::UndoHistoryRestored { .. }
-            ))
-            .count(),
-        1
-    );
-    assert!(!any_event(&files_failure, |kind| matches!(
-        kind,
-        EventKind::TurnsUndone { .. }
-    )));
-    assert_ne!(
-        undo_failure(send(&phone, undo.clone()).await?)?.find("index.lock"),
-        None
-    );
-    let live_retry = events_until(&mut updates, Until::UndoFailure).await?;
-    assert!(!any_event(&live_retry, |kind| matches!(
-        kind,
-        EventKind::UndoStarted { .. } | EventKind::UndoHistoryRestored { .. }
-    )));
-    assert_undo_blocks(&phone, continued(session)).await?;
-    let second = restart(first, &data, address, &phone, &mut updates).await?;
-    assert_undo_blocks(&phone, message(session, "blocked after restart"))
-        .await?;
-    assert_undo_blocks(&phone, undo_turn(session, retained.id)).await?;
-    std::fs::remove_file(&lock)?;
-    accepted(&phone, undo).await?;
-    let recovered = events_until(&mut updates, Until::Undone).await?;
-    assert!(!any_event(&recovered, |kind| matches!(
-        kind,
-        EventKind::UndoHistoryRestored { .. }
-    )));
-    assert_restored_files(&worktree)?;
-    let restored = fold(second.history().await?);
-    assert_eq!(user_items(&restored, session), 1);
-    accepted(&phone, message(session, "retained prefix after recovery"))
-        .await?;
-    let after = events_until(&mut updates, Until::TurnEnd).await?;
-    assert_ne!(checkpoint(&after, proto::CheckpointId(3))?.id, retained.id);
-    assert_eq!(
-        assistant_messages(session, &after),
-        [reply("Retained turn one.")]
-    );
-    phone.stop().await?;
-    second.shutdown().await
-}
-
-async fn drive_materialization(path: &Path) -> std::io::Result<()> {
-    loop {
-        match tokio::fs::metadata(path).await {
-            Ok(_) => break Ok(()),
-            Err(error) => match error.kind() {
-                std::io::ErrorKind::NotFound => {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                _ => break Err(error),
-            },
-        }
-    }
-}
-
-/// The fork an undo restored history to.
-fn fork_target(undone: &[Event]) -> Fallible<String> {
-    Ok(undone
-        .iter()
-        .find_map(|event| match &event.kind {
-            EventKind::UndoHistoryRestored {
-                history: proto::HistoryAnchor::Fork { target, .. },
-                ..
-            } => Some(target.clone()),
-            _ => None,
-        })
-        .ok_or("expected a value")?)
-}
-
-/// The checkpoint recovery took of a turn whose start the host never saw:
-/// it holds the files, and can't be undone to.
-fn unknown_boundary(
-    recovery: &[Event],
-    worktree: &Path,
-) -> Fallible<proto::Checkpoint> {
-    let unknown = checkpoint(recovery, proto::CheckpointId(3))?;
-    assert_eq!(unknown.history, proto::HistoryAnchor::Unknown);
-    assert_ne!(
-        Some(&unknown.undo).filter(|undo| matches!(
-            undo,
-            proto::UndoAvailability::Unavailable { .. }
-        )),
-        None
-    );
-    assert_eq!(
-        git(
-            worktree,
-            &["show", &format!("{}:unnotified.txt", unknown.commit)]
-        )?,
-        "provider wrote before notification\n"
-    );
-    Ok(unknown)
-}
-
-/// The provider persisted the first post-undo input before it notified the
-/// daemon. After restart, resume that existing target instead of forking the
-/// older prefix again and silently discarding the newly persisted input.
-#[tokio::test]
-async fn a_materialized_fork_target_is_resumed_when_its_notification_was_lost()
--> Fallible {
-    let source = scratch("materialized-fork-crash", "claude-worktrees.jsonl")?;
-    let data = data_dir("materialized-fork-crash")?;
-    let first =
-        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
-    let address = first.address()?;
-    let (phone, mut updates) = first.connect().await?;
-    let TwoTurns {
-        session, worktree, ..
-    } = two_turns(&phone, &mut updates, &source).await?;
-    std::fs::copy(
-        recording_file("claude-worktrees-fork-held.jsonl"),
-        source.join("stdout.2.jsonl"),
-    )?;
-    accepted(&phone, undo_turn(session, proto::CheckpointId(2))).await?;
-    let undone = events_until(&mut updates, Until::Undone).await?;
-    let after_undo = undone.last().ok_or("expected a value")?.seq;
-    let target = fork_target(&undone)?;
-    accepted(&phone, message(session, "first post undo input")).await?;
-    tokio::time::timeout(
-        STEP,
-        drive_materialization(&source.join("fork-materialized")),
-    )
-    .await??;
-    let native_transcript =
-        std::fs::read_to_string(source.join(".fake-sessions").join(&target))?;
-    assert_ne!(native_transcript.find("first post undo input"), None);
-    let unnotified = first
-        .history()
-        .await?
-        .into_iter()
-        .filter(|event| event.seq > after_undo)
-        .collect::<Vec<_>>();
-    assert!(!any_event(&unnotified, |kind| matches!(
-        kind,
-        EventKind::NativeTurnStarted { .. }
-            | EventKind::HistoryMaterialized { .. }
-    )));
-    let before_runs = argv(&source)?.len();
-    let second = restart(first, &data, address, &phone, &mut updates).await?;
-    let recovery = second.history().await?;
-    let unknown = unknown_boundary(&recovery, &worktree)?;
-    assert_eq!(
-        send(&phone, undo_turn(session, unknown.id)).await?,
-        CommandResult::Rejected(Rejection::CheckpointUnavailable)
-    );
-    accepted(&phone, continued(session)).await?;
-    events_until(&mut updates, Until::Ready).await?;
-    let runs = argv(&source)?;
-    assert_eq!(
-        runs.len(),
-        before_runs.checked_add(1).ok_or("expected a value")?
-    );
-    let resumed = runs.last().ok_or("expected a value")?;
-    assert_eq!(
-        resumed
-            .iter()
-            .find(|arg| arg.starts_with("--resume="))
-            .cloned(),
-        Some(format!("--resume={target}"))
-    );
-    assert!(!resumed.iter().any(|arg| arg.as_str() == "--fork-session"));
-    std::fs::write(source.join("fork-release"), "")?;
-    let _ = send(&phone, message(session, "continue existing target")).await?;
-    let after = events_until(&mut updates, Until::TurnEnd).await?;
-    assert_eq!(
-        checkpoint(&after, proto::CheckpointId(4))?.history,
-        proto::HistoryAnchor::Messages {
-            conversation: target,
-            message: Some(String::from("00000000-0000-4000-8000-000000000204"))
-        }
-    );
-    phone.stop().await?;
-    second.shutdown().await
 }
 
 #[tokio::test]
@@ -5642,10 +5156,8 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
     let managed = workspace(&events_until(&mut updates, Until::Ready).await?)?;
     let worktree = PathBuf::from(&managed.worktree.0);
     let _ = send(&phone, message(session, "turn one")).await?;
-    let retained = checkpoint(
-        &events_until(&mut updates, Until::TurnEnd).await?,
-        proto::CheckpointId(1),
-    )?;
+    let (_, retained) =
+        checkpoint(&events_until(&mut updates, Until::TurnEnd).await?)?;
     git(&worktree, &["symbolic-ref", "HEAD", "refs/heads/unrelated"])?;
     let _ = send(&phone, message(session, "turn two")).await?;
     let failed = events_until(&mut updates, Until::TurnEnd).await?;
@@ -5691,7 +5203,7 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
     )?;
     accepted(&phone, continued(session)).await?;
     accepted(&phone, continued(session)).await?;
-    let recovered = checkpoint(&host.history().await?, proto::CheckpointId(5))?;
+    let (recovered_seq, recovered) = checkpoint(&host.history().await?)?;
     accepted(&phone, message(session, "turn three")).await?;
     let after = events_until(&mut updates, Until::TurnEnd).await?;
     let checkpoints = after
@@ -5710,18 +5222,17 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
     assert_eq!(checkpoints.len(), 2);
     assert_eq!(checkpoints.first(), Some(&recovered));
     let latest = checkpoints.last().ok_or("expected a value")?;
-    assert_eq!(recovered.parent, Some(retained.id));
-    let boundary = failed
+    assert_ne!(recovered.commit, retained.commit);
+    let failed_turn = failed
         .iter()
-        .find_map(|event| match &event.kind {
-            EventKind::HistoryMaterialized { history } => Some(history),
-            _ => None,
-        })
-        .ok_or("failed snapshot did not record the native boundary")?;
-    assert_eq!(&recovered.history, boundary);
-    assert_eq!(latest.parent, Some(recovered.id));
-    assert_eq!(latest.id, proto::CheckpointId(6));
-    let diff = get_diff(&phone, session, latest.id).await?;
+        .find(|event| matches!(event.kind, EventKind::UserMessage { .. }))
+        .ok_or("missing failed turn")?
+        .seq;
+    assert_eq!(recovered.turn_start, Some(failed_turn));
+    assert_ne!(latest.turn_start, recovered.turn_start);
+    let (latest_seq, _) = checkpoint(&after)?;
+    assert!(latest_seq > recovered_seq);
+    let diff = get_diff(&phone, session, latest_seq).await?;
     assert_eq!(
         diff.files
             .iter()
@@ -5731,24 +5242,6 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
     );
     phone.stop().await?;
     host.shutdown().await
-}
-
-fn assert_restored_files(worktree: &Path) -> Fallible {
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("changed.txt"))?,
-        "turn one\n"
-    );
-    assert_eq!(
-        std::fs::read_to_string(worktree.join("deleted.txt"))?,
-        "restore me\n"
-    );
-    assert_eq!(
-        std::fs::metadata(worktree.join("introduced.txt"))
-            .err()
-            .map(|error| error.kind()),
-        Some(std::io::ErrorKind::NotFound)
-    );
-    Ok(())
 }
 
 const fn set_effort(session: SessionId, effort: Effort) -> CommandBody {

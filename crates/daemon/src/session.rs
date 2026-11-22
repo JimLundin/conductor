@@ -8,7 +8,6 @@
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
-use std::fmt::Display;
 use std::path::Path;
 use std::time::Duration;
 
@@ -18,8 +17,8 @@ use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
 pub use host::serve::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    CheckpointId, ClientName, CommandId, CommandResult, EventKind, HostPath,
-    HostSeq, Models, SessionId, Workspace,
+    ClientName, CommandId, CommandResult, EventKind, HostPath, HostSeq, Models,
+    SessionId, Workspace,
 };
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -233,9 +232,7 @@ impl Actor {
                     Request::Relaunch(order, adapter, reservation) => {
                         self.runtime.get_or_insert_with(|| adapter.start());
                         self.reply = Some(reply);
-                        let input = Input::Order(
-                            order.session(uuid::Uuid::new_v4().to_string()),
-                        );
+                        let input = Input::Order(order.session());
                         let result = self.react(core, input).await;
                         drop(reservation);
                         return result;
@@ -245,7 +242,7 @@ impl Actor {
                     }
                 };
                 self.reply = Some(reply);
-                Input::Order(order.session(uuid::Uuid::new_v4().to_string()))
+                Input::Order(order.session())
             }
             Happening::Agent(Event::Step(step)) => Input::Step(step),
             Happening::Agent(Event::Outcome(outcome)) => Input::Agent(outcome),
@@ -496,21 +493,7 @@ impl Actor {
             Call::Record(kind) => {
                 Input::Recorded(self.log.record(self.id, kind).await?.seq)
             }
-            Call::History => Input::History(self.log.history().await?),
-            Call::Exists(path) => {
-                Input::Exists(std::fs::read_dir(&path.0).is_ok())
-            }
-            Call::Snapshot {
-                workspace,
-                checkpoint,
-                previous,
-            } => snapshot(workspace, self.id, checkpoint, previous).await,
-            Call::Preflight { workspace, commit } => {
-                done(workspace::preflight(&workspace, &commit).await)
-            }
-            Call::Restore { workspace, commit } => {
-                done(workspace::restore(&workspace, &commit).await)
-            }
+            Call::Snapshot(workspace) => snapshot(workspace, self.id).await,
             Call::Diff(compared) => diff(*compared).await,
             Call::Remove(workspace) => Input::Removed(
                 workspace::remove(&workspace)
@@ -600,32 +583,17 @@ fn watched(
     }
 }
 
-/// The outcome of a call that answers nothing else.
-fn done<T, E: Display>(called: Result<T, E>) -> Input {
-    Input::Done(called.map(drop).map_err(|err| err.to_string()))
-}
-
-async fn snapshot(
-    workspace: Workspace,
-    session: SessionId,
-    checkpoint: CheckpointId,
-    previous: Option<String>,
-) -> Input {
-    let taken = workspace::snapshot(
-        &workspace,
-        session,
-        checkpoint,
-        previous.as_deref(),
-    )
-    .await;
+async fn snapshot(workspace: Workspace, session: SessionId) -> Input {
+    let taken = workspace::snapshot(&workspace, session).await;
     Input::Snapshotted(taken.map_err(|err| err.to_string()))
 }
 
 async fn diff(compared: Compared) -> Input {
     let listed = workspace::diff(
         &compared.workspace,
-        &compared.checkpoint,
-        &compared.parent,
+        compared.checkpoint,
+        &compared.commit,
+        &compared.previous,
     )
     .await;
     Input::Diffed(listed.map_err(|err| err.to_string()))

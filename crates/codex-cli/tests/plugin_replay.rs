@@ -5,7 +5,7 @@ mod support;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agents::runtime::{Anchoring, Command, Event, Outcome, Start, Started};
+use agents::runtime::{Command, Event, Outcome, Start, Started};
 use agents::{NativeRequest, Reply, Step};
 use install::Home;
 use proto::{
@@ -144,7 +144,6 @@ async fn start(
             directory: HostPath(String::from("/tmp/s2-scratch")),
             model: Some(ModelId(String::from("gpt-6-luna"))),
             effort: Some(Effort::Low),
-            history: None,
             conversation: None,
             instructions: None,
         }))
@@ -153,7 +152,6 @@ async fn start(
         outcome(agent).await?,
         Outcome::Started(Ok(Started {
             conversation: String::from(conversation),
-            anchoring: Anchoring::Turns,
         }))
     );
     Ok(())

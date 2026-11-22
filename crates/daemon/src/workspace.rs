@@ -6,10 +6,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use host::workspace::{Answer, Output, Plan, Step};
-use proto::{
-    Checkpoint, CheckpointDiff, CheckpointId, HostPath, HostSeq, Kept,
-    SessionId, Workspace,
-};
+use proto::{CheckpointDiff, HostPath, HostSeq, Kept, SessionId, Workspace};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
 
@@ -163,36 +160,17 @@ pub async fn create(
 pub async fn snapshot(
     workspace: &Workspace,
     session: SessionId,
-    checkpoint: CheckpointId,
-    previous: Option<&str>,
 ) -> Result<String, GitError> {
-    run(
-        Plan::snapshot(workspace, session, checkpoint, previous),
-        None,
-    )
-    .await
-}
-
-pub async fn preflight(
-    workspace: &Workspace,
-    commit: &str,
-) -> Result<(), GitError> {
-    run(Plan::preflight(workspace, commit), None).await
-}
-
-pub async fn restore(
-    workspace: &Workspace,
-    commit: &str,
-) -> Result<(), GitError> {
-    run(Plan::restore(workspace, commit), None).await
+    run(Plan::snapshot(workspace, session), None).await
 }
 
 pub async fn diff(
     workspace: &Workspace,
-    checkpoint: &Checkpoint,
-    parent: &Checkpoint,
+    checkpoint: HostSeq,
+    commit: &str,
+    previous: &str,
 ) -> Result<CheckpointDiff, GitError> {
-    run(Plan::diff(workspace, checkpoint, parent), None).await
+    run(Plan::diff(workspace, checkpoint, commit, previous), None).await
 }
 
 pub async fn remove(workspace: &Workspace) -> Result<Kept, GitError> {
@@ -497,13 +475,9 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use super::{
-        GitError, create, diff, host, landing_receipt, remove, restore,
-        snapshot, text,
+        GitError, create, diff, host, landing_receipt, remove, snapshot, text,
     };
-    use proto::{
-        Checkpoint, CheckpointId, DiffExtent, FilePatch, HistoryAnchor,
-        HostSeq, Kept, SessionId, UndoAvailability, Workspace,
-    };
+    use proto::{DiffExtent, FilePatch, HostSeq, Kept, SessionId, Workspace};
     use std::path::{Path, PathBuf};
 
     struct Repository {
@@ -535,6 +509,90 @@ mod tests {
         let _ = text(&source, &["add", "-A"]).await?;
         let _ = text(&source, &["commit", "-qm", "Initial source"]).await?;
         Ok(Repository { root, source, data })
+    }
+
+    #[tokio::test]
+    async fn capture_retry_includes_work_after_an_unrecorded_capture()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let id = SessionId(ulid::Ulid::new().into());
+        let workspace =
+            create(&repo.data, &host(&repo.source)?, id, None).await?;
+        let root = Path::new(&workspace.worktree.0);
+        let _ = snapshot(&workspace, id).await?;
+        std::fs::write(root.join("retry.txt"), "first\n")?;
+        let first = snapshot(&workspace, id).await?;
+        std::fs::write(root.join("retry.txt"), "second\n")?;
+        let recovered = snapshot(&workspace, id).await?;
+        assert_ne!(first, recovered);
+        assert_eq!(
+            text(root, &["show", &format!("{recovered}:retry.txt")]).await?,
+            "second"
+        );
+        assert_eq!(text(root, &["rev-parse", "HEAD"]).await?, recovered);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn diffs_span_agent_commits_and_only_compare_this_sessions_recorded_commits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = repository().await?;
+        let id = SessionId(ulid::Ulid::new().into());
+        let workspace =
+            create(&repo.data, &host(&repo.source)?, id, None).await?;
+        let root = Path::new(&workspace.worktree.0);
+        let initial = snapshot(&workspace, id).await?;
+        for name in ["agent-one.txt", "agent-two.txt"] {
+            std::fs::write(root.join(name), name)?;
+            let _ = text(root, &["add", name]).await?;
+            let _ = text(root, &["commit", "-qm", name]).await?;
+        }
+        std::fs::write(root.join("remaining.txt"), "remaining\n")?;
+        let completed = snapshot(&workspace, id).await?;
+        let difference =
+            diff(&workspace, HostSeq(12), &completed, &initial).await?;
+        assert_eq!(
+            difference
+                .files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>(),
+            ["agent-one.txt", "agent-two.txt", "remaining.txt"]
+        );
+        assert_eq!(snapshot(&workspace, id).await?, completed);
+        assert_eq!(
+            diff(&workspace, HostSeq(15), &completed, &completed)
+                .await?
+                .files,
+            Vec::<proto::CheckpointFile>::new()
+        );
+        let foreign_id = SessionId(ulid::Ulid::new().into());
+        let foreign =
+            create(&repo.data, &host(&repo.source)?, foreign_id, None).await?;
+        let _ = snapshot(&foreign, foreign_id).await?;
+        assert!(
+            diff(&foreign, HostSeq(12), &completed, &initial)
+                .await
+                .is_err()
+        );
+        assert!(
+            diff(&workspace, HostSeq(12), "HEAD", &initial)
+                .await
+                .is_err()
+        );
+        let _ = text(root, &["reset", "--hard", &initial]).await?;
+        let reference =
+            format!("{}{completed}", host::workspace::checkpoints(&workspace)?);
+        assert_eq!(
+            text(root, &["rev-parse", "--verify", &reference]).await?,
+            completed
+        );
+        assert_eq!(remove(&workspace).await?, Kept::Local);
+        assert_eq!(
+            text(&repo.source, &["rev-parse", "--verify", &reference]).await?,
+            completed
+        );
+        Ok(())
     }
 
     #[tokio::test]
@@ -580,8 +638,7 @@ mod tests {
         let id = SessionId(u128::from(ulid::Ulid::new()));
         let original = super::host(&repo.source)?;
         let workspace = create(&repo.data, &original, id, None).await?;
-        let checkpointed =
-            snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let checkpointed = snapshot(&workspace, id).await?;
         let root = PathBuf::from(&workspace.worktree.0);
         std::fs::write(root.join("new.txt"), "left uncommitted\n")?;
         assert_eq!(remove(&workspace).await?, Kept::Pushed { remote: url });
@@ -594,7 +651,14 @@ mod tests {
             "left uncommitted"
         );
         let refs = host::workspace::checkpoints(&workspace)?;
-        assert_eq!(text(&repo.source, &["for-each-ref", &refs]).await?, "");
+        assert_eq!(
+            text(
+                &repo.source,
+                &["for-each-ref", "--format=%(objectname)", &refs]
+            )
+            .await?,
+            checkpointed
+        );
         assert!(
             text(&repo.source, &["cat-file", "-e", &checkpointed])
                 .await
@@ -619,7 +683,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn checkpoint_retry_syncs_an_index_that_was_locked_after_ref_update()
+    async fn capture_retry_after_a_locked_index_keeps_the_branch_and_files()
     -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await?;
         let id = SessionId(u128::from(ulid::Ulid::new()));
@@ -637,22 +701,24 @@ mod tests {
             ],
         )
         .await?;
+        let before = text(path, &["rev-parse", "HEAD"]).await?;
         std::fs::write(&lock, "")?;
-        let checkpoint = CheckpointId(4);
         assert!(
-            snapshot(&workspace, id, checkpoint, None)
+            snapshot(&workspace, id)
                 .await
                 .is_err_and(|error| error.to_string().contains("index.lock"))
         );
-        let committed = text(path, &["rev-parse", "HEAD"]).await?;
+        assert_eq!(text(path, &["rev-parse", "HEAD"]).await?, before);
+        assert_eq!(
+            std::fs::read_to_string(path.join("new.txt"))?,
+            "checkpointed\n"
+        );
+        std::fs::remove_file(lock)?;
+        let committed = snapshot(&workspace, id).await?;
+        assert_eq!(text(path, &["rev-parse", "HEAD"]).await?, committed);
         assert_eq!(
             text(path, &["show", "HEAD:new.txt"]).await?,
             "checkpointed"
-        );
-        std::fs::remove_file(lock)?;
-        assert_eq!(
-            snapshot(&workspace, id, checkpoint, None).await?,
-            committed
         );
         let _ = text(path, &["diff", "--cached", "--quiet"]).await?;
         Ok(())
@@ -665,7 +731,7 @@ mod tests {
         let id = SessionId(u128::from(ulid::Ulid::new()));
         let original = super::host(&repo.source)?;
         let workspace = create(&repo.data, &original, id, None).await?;
-        let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let initial = snapshot(&workspace, id).await?;
         let root = Path::new(&workspace.worktree.0);
         let file = root.join("deleted.txt");
         std::fs::write(&file, "staged only\n")?;
@@ -675,7 +741,7 @@ mod tests {
         let list_refs =
             ["for-each-ref", "--format=%(objectname) %(refname)", &refs];
         let before = text(&repo.source, &list_refs).await?;
-        assert_eq!(before, format!("{initial} {refs}0"));
+        assert_eq!(before, format!("{initial} {refs}{initial}"));
         assert!(remove(&workspace).await.is_err_and(|reason| {
             reason.to_string().contains("index contains changes")
         }));
@@ -827,17 +893,6 @@ mod tests {
         Ok(())
     }
 
-    fn checkpoint(id: u64, commit: String) -> Checkpoint {
-        Checkpoint {
-            id: CheckpointId(id),
-            parent: None,
-            turn_start: None,
-            commit,
-            history: HistoryAnchor::Fresh,
-            undo: UndoAvailability::Available,
-        }
-    }
-
     #[cfg(unix)]
     fn executable(path: &Path) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
@@ -849,23 +904,12 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
-    fn mode(path: &Path) -> std::io::Result<u32> {
-        use std::os::unix::fs::PermissionsExt;
-        Ok(std::fs::metadata(path)?.permissions().mode())
-    }
-
-    #[cfg(not(unix))]
-    fn mode(_path: &Path) -> std::io::Result<u32> {
-        Ok(0)
-    }
-
     /// A file name that isn't UTF-8 makes the diff fail.
     #[cfg(unix)]
     async fn assert_invalid_name_fails(
         workspace: &Workspace,
         id: SessionId,
-        many: &Checkpoint,
+        many: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::ffi::OsStringExt;
         let root = Path::new(&workspace.worktree.0);
@@ -873,14 +917,10 @@ mod tests {
             root.join(std::ffi::OsString::from_vec(Vec::from([255]))),
             "unsupported name\n",
         )?;
-        let unsupported = checkpoint(
-            3,
-            snapshot(workspace, id, CheckpointId(3), Some(&many.commit))
-                .await?,
-        );
+        let unsupported = snapshot(workspace, id).await?;
         assert_eq!(
             matches!(
-                diff(workspace, &unsupported, many).await,
+                diff(workspace, HostSeq(1), &unsupported, many).await,
                 Err(GitError::Failed(_))
             )
             .then_some(()),
@@ -893,7 +933,7 @@ mod tests {
     async fn assert_invalid_name_fails(
         _workspace: &Workspace,
         _id: SessionId,
-        _many: &Checkpoint,
+        _many: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -952,7 +992,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn snapshots_and_restore_preserve_source_index_head_and_ignored_files()
+    async fn snapshots_preserve_source_index_head_and_ignored_files()
     -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await?;
         let (source_index, source_head) = dirty_source(&repo).await?;
@@ -965,8 +1005,7 @@ mod tests {
             workspace
         );
         let root = Path::new(&workspace.worktree.0);
-        let original_mode = mode(&root.join("sub dir/original.txt"))?;
-        let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let initial = snapshot(&workspace, id).await?;
         assert_eq!(
             initial, source_head,
             "a checkpoint that changed nothing is the branch's tip"
@@ -981,12 +1020,8 @@ mod tests {
         std::fs::write(root.join("space 雪.txt"), "added\n")?;
         std::fs::write(root.join("binary.dat"), [0, 254, 2])?;
         std::fs::write(root.join("ignored.txt"), "private\n")?;
-        let changed =
-            snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?;
-        assert_eq!(
-            snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?,
-            changed
-        );
+        let changed = snapshot(&workspace, id).await?;
+        assert_eq!(snapshot(&workspace, id).await?, changed);
         assert_eq!(
             (
                 text(root, &["rev-parse", "HEAD"]).await?,
@@ -999,59 +1034,9 @@ mod tests {
             text(root, &["show", &format!("{changed}:space 雪.txt")]).await?,
             "added"
         );
-        std::fs::write(root.join("space 雪.txt"), "different\n")?;
-        assert_eq!(
-            matches!(
-                snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await,
-                Err(GitError::Failed(_))
-            )
-            .then_some(()),
-            Some(())
-        );
-        std::fs::write(root.join("after.txt"), "untracked after checkpoint\n")?;
-        for number in std::ops::RangeInclusive::new(0, 2000) {
-            std::fs::write(
-                root.join(format!(
-                    "untracked-with-long-removal-output-{number:05}-雪.txt"
-                )),
-                "cleanup\n",
-            )?;
-        }
-        restore(&workspace, &initial).await?;
-        assert_eq!(
-            std::fs::read_to_string(root.join("deleted.txt"))?,
-            "keep\n"
-        );
-        assert_eq!(
-            std::fs::read_to_string(root.join("sub dir/original.txt"))?,
-            "original\n"
-        );
-        assert_eq!(mode(&root.join("sub dir/original.txt"))?, original_mode);
-        assert_eq!(
-            std::fs::read(root.join("binary.dat"))?,
-            Vec::from([0, 255, 1])
-        );
-        assert_eq!(root.join("space 雪.txt").try_exists()?.then_some(()), None);
-        assert_eq!(root.join("after.txt").try_exists()?.then_some(()), None);
-        assert_eq!(
-            std::fs::read_dir(root)?
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .map(|entry| entry.file_name())
-                .any(|name| name
-                    .to_string_lossy()
-                    .starts_with("untracked-with-long"))
-                .then_some(()),
-            None
-        );
         assert_eq!(
             std::fs::read_to_string(root.join("ignored.txt"))?,
             "private\n"
-        );
-        assert_eq!(
-            text(root, &["rev-parse", "HEAD"]).await?,
-            source_head,
-            "undoing resets the session's branch"
         );
         assert_source_untouched(&repo, &source_index, &source_head).await
     }
@@ -1064,23 +1049,17 @@ mod tests {
         let workspace =
             create(&repo.data, &host(&repo.source)?, id, None).await?;
         let root = Path::new(&workspace.worktree.0);
-        let initial = checkpoint(
-            0,
-            snapshot(&workspace, id, CheckpointId(0), None).await?,
-        );
+        let initial = snapshot(&workspace, id).await?;
         std::fs::write(root.join("binary.dat"), [0, 254, 2])?;
         std::fs::write(root.join("large.txt"), "a".repeat(70000))?;
         std::fs::write(root.join("雪 space.txt"), "hello\n")?;
-        let changed = checkpoint(
-            1,
-            snapshot(&workspace, id, CheckpointId(1), Some(&initial.commit))
-                .await?,
-        );
+        let changed = snapshot(&workspace, id).await?;
         std::fs::write(
             root.join("雪 space.txt"),
             "live edit must not appear\n",
         )?;
-        let difference = diff(&workspace, &changed, &initial).await?;
+        let difference =
+            diff(&workspace, HostSeq(1), &changed, &initial).await?;
         assert_eq!(difference.extent, DiffExtent::Complete);
         assert_eq!(
             difference
@@ -1114,36 +1093,32 @@ mod tests {
         for number in std::ops::RangeInclusive::new(0, 110) {
             std::fs::write(root.join(format!("file-{number:03}.txt")), "a\n")?;
         }
-        let many = checkpoint(
-            2,
-            snapshot(&workspace, id, CheckpointId(2), Some(&changed.commit))
-                .await?,
-        );
-        let difference = diff(&workspace, &many, &changed).await?;
+        let many = snapshot(&workspace, id).await?;
+        let difference = diff(&workspace, HostSeq(1), &many, &changed).await?;
         assert_eq!(difference.extent, DiffExtent::Truncated);
         assert_eq!(difference.files.len(), 100);
         assert_invalid_name_fails(&workspace, id, &many).await
     }
 
     #[tokio::test]
-    async fn deleting_selected_directory_can_be_snapshotted_and_undone()
+    async fn deleting_selected_directory_can_be_snapshotted()
     -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await?;
         let id = SessionId(ulid::Ulid::new().into());
         let workspace =
             create(&repo.data, &host(&repo.source.join("sub dir"))?, id, None)
                 .await?;
-        let initial = snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let initial = snapshot(&workspace, id).await?;
         std::fs::remove_dir_all(&workspace.directory.0)?;
-        let deleted =
-            snapshot(&workspace, id, CheckpointId(1), Some(&initial)).await?;
+        let deleted = snapshot(&workspace, id).await?;
         assert_ne!(deleted, initial);
-        restore(&workspace, &initial).await?;
-        assert_eq!(
-            std::fs::read_to_string(
-                Path::new(&workspace.directory.0).join("original.txt")
-            )?,
-            "original\n"
+        assert!(
+            text(
+                Path::new(&workspace.worktree.0),
+                &["show", &format!("{deleted}:sub dir/original.txt")]
+            )
+            .await
+            .is_err()
         );
         Ok(())
     }
@@ -1182,6 +1157,8 @@ mod tests {
         let repo = repository().await?;
         let plain = repo.root.join("plain");
         std::fs::create_dir(&plain)?;
+        // TMPDIR can be inside another checkout; prevent ancestor discovery.
+        std::fs::write(plain.join(".git"), "gitdir: missing-repository\n")?;
         assert_eq!(
             matches!(
                 create(&repo.data, &host(&plain)?, SessionId(1), None).await,
@@ -1190,6 +1167,7 @@ mod tests {
             .then_some(()),
             Some(())
         );
+        std::fs::remove_file(plain.join(".git"))?;
         let _ = text(&plain, &["init", "-q"]).await?;
         assert_eq!(
             matches!(
@@ -1221,13 +1199,13 @@ mod tests {
         let id = SessionId(ulid::Ulid::new().into());
         let workspace =
             create(&repo.data, &host(&repo.source)?, id, None).await?;
-        let commit = snapshot(&workspace, id, CheckpointId(0), None).await?;
+        let commit = snapshot(&workspace, id).await?;
         let root = Path::new(&workspace.worktree.0);
         let _ = text(root, &["symbolic-ref", "HEAD", "refs/heads/unrelated"])
             .await?;
         assert_eq!(
             matches!(
-                restore(&workspace, &commit).await,
+                diff(&workspace, HostSeq(1), &commit, &commit).await,
                 Err(GitError::Failed(_))
             )
             .then_some(()),

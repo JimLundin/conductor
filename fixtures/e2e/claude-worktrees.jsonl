@@ -10,13 +10,18 @@
 {"fake": "await", "match": {"type": "user"}}
 {"type": "system", "subtype": "init", "session_id": "$session"}
 {"type": "user", "uuid": "00000000-0000-4000-8000-000000000102", "message": {"content": [{"type": "text", "text": "turn 2"}]}}
-{"fake": "files", "write": {"changed.txt": "turn two\ndiff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling \n", "introduced.txt": "remove on undo\n", "exec.sh": "#!/bin/sh\necho executable\n"}, "delete": ["deleted.txt"], "mode": {"exec.sh": 493}}
+{"fake": "files", "write": {"changed.txt": "turn two\ndiff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling \n", "introduced.txt": "introduced in turn two\n", "exec.sh": "#!/bin/sh\necho executable\n"}, "delete": ["deleted.txt"], "mode": {"exec.sh": 493}}
 {"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000302", "message": {"content": [{"type": "tool_use", "id": "toolu_todo_2", "name": "TodoWrite", "input": {"todos": [{"content": "turn one", "status": "completed", "activeForm": "Doing turn one"}, {"content": "turn two", "status": "in_progress", "activeForm": "Doing turn two"}]}}]}}
 {"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000202", "message": {"content": [{"type": "text", "text": "Completed turn 2."}]}}
 {"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}
 {"fake": "await", "match": {"type": "user"}}
 {"type": "system", "subtype": "init", "session_id": "$session"}
 {"type": "user", "uuid": "00000000-0000-4000-8000-000000000103", "message": {"content": [{"type": "text", "text": "turn 3"}]}}
-{"fake": "files", "write": {"later.txt": "later removed too\n", "changed.txt": "turn three\n"}}
+{"fake": "files", "write": {"later.txt": "later work\n", "changed.txt": "turn three\n"}}
 {"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000203", "message": {"content": [{"type": "text", "text": "Completed turn 3."}]}}
+{"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}
+{"fake": "await", "match": {"type": "user"}}
+{"type": "system", "subtype": "init", "session_id": "$session"}
+{"type": "user", "uuid": "00000000-0000-4000-8000-000000000104", "message": {"content": [{"type": "text", "text": "turn 4"}]}}
+{"type": "assistant", "uuid": "00000000-0000-4000-8000-000000000204", "message": {"content": [{"type": "text", "text": "Completed turn 4."}]}}
 {"type": "result", "subtype": "success", "is_error": false, "session_id": "$session"}

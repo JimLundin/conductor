@@ -390,65 +390,6 @@ mod tests {
     };
     use install::Home;
 
-    #[test]
-    fn prefix_fork_uses_inclusive_uuid_and_chosen_new_session()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let cmd = command(
-            &ClaudeOptions {
-                instructions: None,
-                claude_path: "/opt/claude".into(),
-                home: Home::User,
-                credential: None,
-                cwd: "/tmp".into(),
-                model: None,
-                effort: None,
-                permission_mode: PermissionMode::Default,
-                resume: Resume::Fork {
-                    session: SessionId(String::from("source")),
-                    through: claude::MessageId(String::from("assistant-uuid")),
-                    target: SessionId(String::from("new-session")),
-                },
-                project_name: None,
-                setting_sources: None,
-                stdout_log: None,
-                versions: VersionPolicy::SupportedOnly,
-            },
-            &SessionId(String::from("new-session")),
-            Sandbox::Missing,
-        );
-        let args = cmd
-            .as_std()
-            .get_args()
-            .map(|arg| arg.to_str())
-            .collect::<Option<Vec<&str>>>()
-            .ok_or("an argument is not UTF-8")?;
-        assert_eq!(
-            args,
-            Vec::from([
-                "--print",
-                "--verbose",
-                "--output-format",
-                "stream-json",
-                "--input-format",
-                "stream-json",
-                "--permission-mode",
-                "default",
-                "--resume=source",
-                "--resume-session-at=assistant-uuid",
-                "--fork-session",
-                "--session-id",
-                "new-session",
-                "--replay-user-messages",
-                "--include-partial-messages",
-                "--thinking-display",
-                "summarized",
-                "--permission-prompt-tool",
-                "stdio"
-            ])
-        );
-        Ok(())
-    }
-
     /// The variables the resume test checks, as the command sets them.
     fn checked_env(
         std: &std::process::Command,

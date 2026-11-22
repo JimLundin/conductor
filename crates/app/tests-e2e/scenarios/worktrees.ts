@@ -57,18 +57,11 @@ const changesByKeyboard = async (run: Run): Promise<void> => {
 	await page.keyboard.press("Enter");
 };
 
-/** The middle turn's diff, and an undo of it and every later turn. */
-const undoMiddleTurn = async (run: Run): Promise<void> => {
+const middleTurnChanges = async (run: Run): Promise<void> => {
 	const { page, out, patience } = run;
 	const { check, pane } = tools(run);
 	const diff = pane.locator(".turn-changes").nth(1).locator(".diff-panel");
 	await diff.waitFor({ timeout: patience });
-	check(
-		(await diff.locator(".undo-scope").innerText()).includes(
-			"every later turn",
-		),
-		"full undo scope visible before action",
-	);
 	const preview = diff.locator(".diff-files");
 	check(
 		(
@@ -87,28 +80,41 @@ const undoMiddleTurn = async (run: Run): Promise<void> => {
 	}
 	check(await isWithinWidth(page), "no page overflow at phone width");
 	await page.screenshot({ path: out, fullPage: true });
-	await diff
-		.getByRole("button", { name: "Undo this turn", exact: true })
-		.focus();
-	await page.keyboard.press("Enter");
-	await pane
-		.getByRole("status")
-		.filter({
-			hasText: "Turn and all later file and conversation changes undone.",
-		})
-		.waitFor({ timeout: patience });
-	await page.waitForFunction(() =>
-		document.activeElement?.matches(
-			".composer textarea:not(:disabled), .undo-status",
-		),
+	check(
+		(await pane.getByRole("button", { name: /undo/i }).count()) === 0,
+		"historical undo is unavailable",
 	);
-	check(true, "undo moves keyboard focus to surviving composer or status");
+};
+
+const unchangedTurn = async (run: Run): Promise<void> => {
+	const { patience } = run;
+	const { check, pane, send } = tools(run);
+	const turns = pane.locator(".turn-changes");
+	const changed = turns.nth(1);
+	const unchanged = turns.nth(TURNS);
+	await send("turn four without file changes");
+	await unchanged.waitFor({ timeout: patience });
+	const changedId = await turns
+		.nth(TURNS - 1)
+		.locator(".show-changes")
+		.getAttribute("id");
+	const unchangedId = await unchanged
+		.locator(".show-changes")
+		.getAttribute("id");
+	check(changedId !== unchangedId, "shared commit has distinct turn controls");
+	await unchanged.getByRole("button", { name: "Changes", exact: true }).tap();
+	await unchanged
+		.getByText("No file changes in this turn.", { exact: true })
+		.waitFor({ timeout: patience });
+	check(
+		(await changed.locator(".diff-panel").count()) === 1,
+		"opening the unchanged turn preserves the previous preview",
+	);
 };
 
 export const worktrees = async (run: Run): Promise<void> => {
 	const { page, patience } = run;
 	const { check, pane, waitFor } = tools(run);
-	// Harness provides one idle session with three completed checkpointed turns.
 	await page.locator(".session-row").first().tap();
 	await pane
 		.locator(".turn-changes")
@@ -116,7 +122,7 @@ export const worktrees = async (run: Run): Promise<void> => {
 		.waitFor({ timeout: patience });
 	check(
 		(await pane.locator(".user").count()) === TURNS,
-		"three turns before undo",
+		"three recorded turns",
 	);
 	check(
 		(await pane.locator(".workspace-branch").innerText()).startsWith(
@@ -143,21 +149,22 @@ export const worktrees = async (run: Run): Promise<void> => {
 	await directory.locator("summary").tap();
 	await dismissFailedChanges(run);
 	await changesByKeyboard(run);
-	await undoMiddleTurn(run);
+	await middleTurnChanges(run);
+	await unchangedTurn(run);
 	check(
-		(await pane.locator(".user").count()) === 1,
-		"selected and later conversation turns removed",
+		(await pane.locator(".user").count()) === TURNS + 1,
+		"viewing diffs keeps every conversation turn",
 	);
 	check(
-		(await pane.locator(".turn-changes").count()) === 1,
-		"selected and later checkpoint controls removed",
+		(await pane.locator(".turn-changes").count()) === TURNS + 1,
+		"each turn keeps its changes control",
 	);
 	await page.reload();
 	await waitFor(LIVE);
 	await page.locator(".session-row").first().tap();
-	await pane.locator(".user").waitFor();
+	await pane.locator(".turn-changes").nth(TURNS).waitFor();
 	check(
-		(await pane.locator(".user").count()) === 1,
-		"undo survives reconnect and durable replay",
+		(await pane.locator(".user").count()) === TURNS + 1,
+		"all turns survive reconnect and durable replay",
 	);
 };

@@ -6,11 +6,11 @@ use alloc::collections::BTreeMap;
 use crate::prelude::*;
 use client::host_view::{
     self, EmptyTranscript, Interrupt, Item, Resume, SessionView, StatusLabel,
-    UndoState, Working,
+    Working,
 };
 use proto::{
     Answer, Availability, Catalog, ChecklistEntry, ChecklistStatus,
-    CheckpointId, CloseReason, CommandBody, CommandResult, Decision, Effort,
+    CloseReason, CommandBody, CommandResult, Decision, Effort, HostSeq,
     Instances, Models, Question, RequestId, Selection, SessionId,
 };
 
@@ -47,10 +47,8 @@ pub enum SessionIntent {
         text: String,
     },
     SendAnswer(RequestId),
-    ShowChanges(CheckpointId),
-    CloseChanges(CheckpointId),
-    /// Undo this turn and every later one, or retry an undo that failed.
-    Undo(CheckpointId),
+    ShowChanges(HostSeq),
+    CloseChanges(HostSeq),
     Mounted(Mount),
 }
 
@@ -58,8 +56,6 @@ pub enum SessionIntent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mount {
     Composer,
-    /// The note that a turn was undone.
-    Undone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +73,6 @@ pub struct SessionPane {
     /// since it last finished, so it can finish.
     pub finish: bool,
     pub workspace: WorkspaceContext,
-    pub undo: UndoNote,
     pub tasks: Option<Tasks>,
     /// What an empty transcript says.
     pub empty: Option<String>,
@@ -102,21 +97,6 @@ pub enum EffortControl {
 pub enum WorkspaceContext {
     Plain(&'static str),
     Branch { branch: String, directory: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum UndoNote {
-    Hidden,
-    Undoing(&'static str),
-    /// The undo failed; retrying sends the same checkpoint.
-    Failed {
-        text: String,
-        checkpoint: CheckpointId,
-    },
-    Undone {
-        key: String,
-        text: &'static str,
-    },
 }
 
 /// The agent's checklist.
@@ -169,7 +149,7 @@ pub struct Pane {
     pending_message: Option<String>,
     refused_messages: Vec<String>,
     answers: BTreeMap<RequestId, Draft>,
-    diffs: BTreeMap<CheckpointId, DiffState>,
+    diffs: BTreeMap<HostSeq, DiffState>,
     /// Numbers each diff request, so only the latest one's answer shows.
     requests: u64,
     /// Continue took the button away; the composer that replaces it takes
@@ -257,16 +237,6 @@ impl Pane {
             SessionIntent::CloseChanges(checkpoint) => {
                 self.close_diff(checkpoint)
             }
-            SessionIntent::Undo(checkpoint) => (
-                self,
-                Vec::from([notify(
-                    CommandBody::UndoTurn {
-                        session: id,
-                        checkpoint,
-                    },
-                    at,
-                )]),
-            ),
             SessionIntent::Mounted(mount) => self.mounted(mount),
         }
     }
@@ -364,7 +334,7 @@ impl Pane {
             })
     }
 
-    fn close_diff(self, checkpoint: CheckpointId) -> (Self, Vec<Effect>) {
+    fn close_diff(self, checkpoint: HostSeq) -> (Self, Vec<Effect>) {
         let mut diffs = self.diffs;
         diffs.insert(checkpoint, DiffState::Hidden);
         (
@@ -385,9 +355,6 @@ impl Pane {
                 Vec::from([Effect::Focus(Focus::Composer)]),
             ),
             Mount::Composer => (self, Vec::new()),
-            Mount::Undone => {
-                (self, Vec::from([Effect::Focus(Focus::AfterUndo)]))
-            }
         }
     }
 
@@ -429,7 +396,7 @@ impl Pane {
     fn load_diff(
         self,
         session: SessionId,
-        checkpoint: CheckpointId,
+        checkpoint: HostSeq,
         at: At,
     ) -> (Self, Vec<Effect>) {
         if let Some(DiffState::Loading(_)) = self.diffs.get(&checkpoint) {
@@ -460,7 +427,7 @@ impl Pane {
     /// A diff's answer, unless a later request or a close replaced it.
     pub fn diffed(
         self,
-        checkpoint: CheckpointId,
+        checkpoint: HostSeq,
         request: u64,
         answer: Result<CommandResult, String>,
         host: &str,
@@ -502,14 +469,13 @@ impl Pane {
             finish: controls.finish,
             workspace: session.workspace.as_ref().map_or(
                 WorkspaceContext::Plain(
-                    "This session has no worktree checkpoints.",
+                    "This session has no workspace snapshots.",
                 ),
                 |workspace| WorkspaceContext::Branch {
                     branch: format!("Branch: {}", workspace.branch),
                     directory: workspace.directory.0.clone(),
                 },
             ),
-            undo: undo_note(id, &session.undo),
             tasks: tasks(&session.tasks),
             empty: session
                 .empty_transcript()
@@ -568,7 +534,6 @@ impl Pane {
     }
 
     fn entries(&self, session: &SessionView) -> Vec<Entry> {
-        let composer = session.controls().composer;
         let mut checkpoints = BTreeMap::new();
         for turn in &session.checkpoints {
             checkpoints.entry(turn.end).or_insert(turn);
@@ -591,12 +556,7 @@ impl Pane {
                         .collect()
                 }),
                 changes: checkpoints.get(&index).map(|turn| {
-                    checkpoints::changes(
-                        turn,
-                        self.diffs.get(&turn.checkpoint),
-                        composer,
-                        session.can_view_changes(),
-                    )
+                    checkpoints::changes(turn, self.diffs.get(&turn.checkpoint))
                 }),
             })
             .collect()
@@ -624,25 +584,6 @@ fn effort_control(effort: Option<Effort>, offered: &[Effort]) -> EffortControl {
             });
             EffortControl::Picker(unset.into_iter().chain(listed).collect())
         }
-    }
-}
-
-fn undo_note(id: SessionId, undo: &UndoState) -> UndoNote {
-    match undo {
-        UndoState::Undoing(_) => UndoNote::Undoing(
-            "Undoing this turn and all later file and conversation changes…",
-        ),
-        UndoState::Failed { checkpoint, reason } => UndoNote::Failed {
-            text: format!(
-                "Undo needs recovery: {reason}. Other actions are blocked until recovery finishes."
-            ),
-            checkpoint: *checkpoint,
-        },
-        UndoState::Undone => UndoNote::Undone {
-            key: format!("undo-done-{}", id.0),
-            text: "Turn and all later file and conversation changes undone.",
-        },
-        UndoState::Ready => UndoNote::Hidden,
     }
 }
 
@@ -693,8 +634,6 @@ pub const fn status_text(label: StatusLabel) -> &'static str {
         StatusLabel::Idle => "idle",
         StatusLabel::Running => "running",
         StatusLabel::Closed => "closed",
-        StatusLabel::Undoing => "undoing",
-        StatusLabel::RecoveryNeeded => "recovery needed",
     }
 }
 

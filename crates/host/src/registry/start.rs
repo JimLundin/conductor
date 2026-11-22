@@ -4,9 +4,9 @@ use core::ops::ControlFlow::{self, Break, Continue};
 
 use home::Placement;
 use proto::{
-    Checkpoint, CheckpointId, ClientName, CommandResult, Effort, Event,
-    EventKind, HistoryAnchor, HostPath, InstanceId, IssueId, ModelId, Models,
-    Provider, Rejection, SessionId, UndoAvailability, Workspace,
+    Checkpoint, ClientName, CommandResult, Effort, Event, EventKind, HostPath,
+    InstanceId, IssueId, ModelId, Models, Provider, Rejection, SessionId,
+    Workspace,
 };
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
@@ -33,7 +33,6 @@ pub enum StartEffect<S, H> {
     Snapshot {
         session: SessionId,
         workspace: Workspace,
-        id: CheckpointId,
     },
     Record {
         session: SessionId,
@@ -108,8 +107,6 @@ pub struct StartSession<S, H> {
 }
 
 type Planned<S, H> = (Phase<S, H>, StartEffect<S, H>);
-
-const INITIAL: CheckpointId = CheckpointId(0);
 
 impl StartRequest {
     pub fn placed<S, H>(
@@ -272,11 +269,7 @@ fn snapshotting<S, H>(
 ) -> Planned<S, H> {
     (
         Phase::Snapshot(session, launch, workspace.clone()),
-        StartEffect::Snapshot {
-            session,
-            workspace,
-            id: INITIAL,
-        },
+        StartEffect::Snapshot { session, workspace },
     )
 }
 
@@ -301,14 +294,8 @@ fn opening<S, H>(
         .as_ref()
         .map(|on| EventKind::OnIssue { issue: on.issue });
     let checkpoint = Checkpoint {
-        id: INITIAL,
-        parent: None,
         turn_start: None,
         commit,
-        history: HistoryAnchor::Fresh,
-        undo: UndoAvailability::Unavailable {
-            reason: String::from("initial checkpoint has no turn"),
-        },
     };
     StartEffect::Record {
         session,

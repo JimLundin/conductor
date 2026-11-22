@@ -60,7 +60,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/29";
+pub const ALPN: &[u8] = b"conductor/30";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -486,12 +486,7 @@ pub enum CommandBody {
     /// A bounded diff between this checkpoint and its predecessor.
     GetDiff {
         session: SessionId,
-        checkpoint: CheckpointId,
-    },
-    /// Removes this turn and every later turn, restoring its predecessor.
-    UndoTurn {
-        session: SessionId,
-        checkpoint: CheckpointId,
+        checkpoint: HostSeq,
     },
     /// Sets the effort of the session's later turns, one its model lists.
     /// A running turn keeps its effort: the next turn the user starts, or
@@ -656,10 +651,6 @@ pub enum Rejection {
     },
     NotGitRepository,
     CheckpointUnavailable,
-    UndoInProgress,
-    UndoFailed {
-        reason: String,
-    },
     WorkspaceFailure {
         reason: String,
     },
@@ -740,10 +731,7 @@ impl Rejection {
                 String::from("choose a Git repository with a committed HEAD")
             }
             Self::CheckpointUnavailable => {
-                String::from("this checkpoint cannot be undone")
-            }
-            Self::UndoInProgress => {
-                String::from("finish recovering the interrupted undo first")
+                String::from("this snapshot has no available comparison")
             }
             Self::SignInRunning => String::from(
                 "a sign-in is already running on it; cancel it to start again",
@@ -778,7 +766,6 @@ impl Rejection {
             ),
             Self::NotOffered { reason }
             | Self::WrongReply { reason }
-            | Self::UndoFailed { reason }
             | Self::WorkspaceFailure { reason } => reason.clone(),
         }
     }
@@ -796,7 +783,7 @@ pub struct Event {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventKind {
     /// `model` and `effort` are what the agent runs with; `None` is the
-    /// CLI's own default. A `Continue` and an undo run on `instance` again;
+    /// CLI's own default. A `Continue` runs on `instance` again;
     /// `provider` is its provider, which outlives the instance.
     SessionCreated {
         instance: InstanceId,
@@ -888,36 +875,7 @@ pub enum EventKind {
     CheckpointCreated {
         checkpoint: Checkpoint,
     },
-    /// Durable intent before changing either files or provider history.
-    UndoStarted {
-        checkpoint: CheckpointId,
-        restore: CheckpointId,
-        history: HistoryAnchor,
-    },
-    UndoFailed {
-        checkpoint: CheckpointId,
-        reason: String,
-    },
-    /// Successful native-history phase; the new conversation is the resume target.
-    UndoHistoryRestored {
-        checkpoint: CheckpointId,
-        history: HistoryAnchor,
-    },
-    /// Both files and native history were restored; remove this turn and later.
-    TurnsUndone {
-        checkpoint: CheckpointId,
-        restored: CheckpointId,
-    },
-    /// Reserves an ID before a filesystem snapshot; failed snapshots never reuse refs.
-    CheckpointReserved {
-        checkpoint: CheckpointId,
-    },
-    /// A prepared native history descriptor has materialized on an actual turn.
-    HistoryMaterialized {
-        history: HistoryAnchor,
-    },
     NativeTurnStarted {
-        history: HistoryAnchor,
         turn_start: Option<HostSeq>,
     },
     ChecklistChanged {
@@ -951,11 +909,6 @@ pub enum EventKind {
     FinishStarted,
     /// A restarted host can resume the interrupted landing.
     FinishInterrupted,
-    /// The native rollback may execute. Until verified, recovery reads
-    /// native history without sending the rollback again.
-    UndoRevertDispatched {
-        checkpoint: CheckpointId,
-    },
 }
 
 /// Where a session on an issue stands with finishing, as its events say:
@@ -1079,28 +1032,6 @@ pub enum ChecklistStatus {
     Completed,
 }
 
-/// Monotonic per session, including discarded checkpoints; zero is initial.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-)]
-pub struct CheckpointId(pub u64);
-
-impl CheckpointId {
-    #[must_use]
-    pub const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workspace {
     pub repository: HostPath,
@@ -1126,53 +1057,14 @@ pub enum Kept {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checkpoint {
-    pub id: CheckpointId,
-    pub parent: Option<CheckpointId>,
     /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
     pub turn_start: Option<HostSeq>,
     pub commit: String,
-    /// Opaque provider metadata; clients never present these IDs as controls.
-    pub history: HistoryAnchor,
-    pub undo: UndoAvailability,
-}
-
-/// A point in an agent's own history, by the provider's ids. How an agent
-/// anchors its history decides the shape: at the last message a turn ended
-/// on, or at each turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HistoryAnchor {
-    Fresh,
-    /// The conversation through its message `message`, once one is seen.
-    Messages {
-        conversation: String,
-        message: Option<String>,
-    },
-    /// The conversation as of its turn `turn`, once one is seen.
-    Turns {
-        conversation: String,
-        turn: Option<String>,
-    },
-    /// A new conversation `target` with `source`'s messages through
-    /// `through`. Starting the agent alone may not create the target yet.
-    Fork {
-        source: String,
-        through: String,
-        target: String,
-    },
-    /// Files may have changed before an actual native turn boundary was observed.
-    Unknown,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum UndoAvailability {
-    Available,
-    Unavailable { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckpointDiff {
-    pub checkpoint: CheckpointId,
-    pub parent: CheckpointId,
+    pub checkpoint: HostSeq,
     pub files: Vec<CheckpointFile>,
     pub extent: DiffExtent,
 }

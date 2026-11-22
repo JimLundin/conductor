@@ -12,9 +12,7 @@ BUILDERS = ("build-claude.py", "build-codex.py")
 MANUAL_RECORDINGS = {
     "claude-feed.jsonl",
     "claude-refresh-exit.jsonl",
-    "claude-worktrees-fork-held.jsonl",
-    "claude-worktrees-fork-refused.jsonl",
-    "claude-worktrees-fork.jsonl",
+    "claude-worktrees-continued.jsonl",
     "claude-worktrees.jsonl",
 }
 

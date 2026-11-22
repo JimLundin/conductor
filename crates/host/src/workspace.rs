@@ -8,8 +8,8 @@ use alloc::format;
 use alloc::string::ToString;
 
 use proto::{
-    Change, CheckpointFile, CheckpointId, DiffExtent, FilePatch, HostPath,
-    Kept, SessionId, Workspace,
+    Change, CheckpointFile, DiffExtent, FilePatch, HostPath, Kept, SessionId,
+    Workspace,
 };
 
 use crate::prelude::*;
@@ -199,18 +199,6 @@ pub fn checkpoints(workspace: &Workspace) -> Result<String, GitError> {
     Ok(format!("refs/conductor/{session}/"))
 }
 
-/// The checkpoint's ref.
-///
-/// # Errors
-///
-/// When Conductor doesn't own the branch.
-fn reference(
-    workspace: &Workspace,
-    checkpoint: CheckpointId,
-) -> Result<String, GitError> {
-    Ok(format!("{}{}", checkpoints(workspace)?, checkpoint.0))
-}
-
 /// The object a selected subdirectory must be a tree in, at `head`; `None`
 /// for the repository's root.
 #[must_use]
@@ -218,55 +206,13 @@ fn subtree(head: &str, relative: &HostPath) -> Option<String> {
     (!relative.0.is_empty()).then(|| format!("{head}:{}", relative.0))
 }
 
-/// `refs` are the objects `for-each-ref` lists among the workspace's
-/// checkpoints at `commit`.
-///
-/// # Errors
-///
-/// When none is `commit`, so it isn't one of the workspace's checkpoints.
-fn owned(refs: &str, commit: &str) -> Result<(), GitError> {
-    refs.lines()
-        .any(|oid| oid == commit)
-        .then_some(())
-        .ok_or_else(|| {
-            failure(
-                "checkpoint",
-                "commit is not an immutable checkpoint of this workspace",
-            )
-        })
-}
-
-/// The commit a checkpoint's ref already names, or `None` when Git found
-/// no such ref and the checkpoint is new.
-///
-/// # Errors
-///
-/// When Git's answer can't be read.
-fn existing(output: Output) -> Result<Option<String>, GitError> {
-    if output.success {
-        utf8(
-            checked(output, "existing checkpoint")?,
-            "existing checkpoint",
-        )
-        .map(|commit| Some(commit.trim().to_owned()))
-    } else {
-        Ok(None)
+fn reference(workspace: &Workspace, commit: &str) -> Result<String, GitError> {
+    if !matches!(commit.len(), 40 | 64)
+        || !commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return Err(failure("checkpoint", "expected a full commit object ID"));
     }
-}
-
-/// A checkpoint id is immutable: taken again, it must record the same
-/// tree. Its parent is the branch's tip when it was first taken, which a
-/// retry after a crash may find the branch already past.
-///
-/// # Errors
-///
-/// When the recorded tree differs.
-fn reuse(recorded_tree: &str, tree: &str) -> Result<(), GitError> {
-    same(
-        recorded_tree,
-        tree,
-        "checkpoint id already records a different tree",
-    )
+    Ok(format!("{}{commit}", checkpoints(workspace)?))
 }
 
 /// A turn's checkpoint is a commit on the session's branch: a new one on
@@ -286,37 +232,6 @@ fn turn(tip_tree: &str, tree: &str) -> Turn {
     } else {
         Turn::Commit
     }
-}
-
-/// What becomes of the session's branch, at `tip`, once checkpoint
-/// `commit`, made on `parent`, is taken: it moves on from the parent, or
-/// is there already after a retry.
-///
-/// # Errors
-///
-/// When the branch moved elsewhere since, so moving it would drop
-/// commits.
-fn settle(
-    tip: &str,
-    commit: &str,
-    parent: Option<&str>,
-) -> Result<bool, GitError> {
-    if tip == commit {
-        Ok(false)
-    } else if parent == Some(tip) {
-        Ok(true)
-    } else {
-        Err(failure(
-            "checkpoint",
-            "the session's branch moved on since the checkpoint was taken",
-        ))
-    }
-}
-
-/// The message of a turn's commit on the session's branch.
-#[must_use]
-fn message(checkpoint: CheckpointId) -> String {
-    format!("Conductor: checkpoint {} of the session", checkpoint.0)
 }
 
 /// The files to patch from `git diff --name-status -z`, at most

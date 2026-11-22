@@ -5,7 +5,7 @@
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use client::host_view::{ListStatus, SessionView, StatusLabel};
+use client::host_view::{ListStatus, SessionView};
 use proto::{Catalog, HostPath, Instances, Project, SessionId};
 
 use crate::Place;
@@ -99,11 +99,7 @@ fn row(
     let (status, text, badge) = match session.list_status() {
         ListStatus::Session(label) => {
             let text = crate::session::status_text(label);
-            let status = match label {
-                StatusLabel::RecoveryNeeded => "recovering",
-                _ => text,
-            };
-            (String::from(status), String::from(text), String::new())
+            (String::from(text), String::from(text), String::new())
         }
         ListStatus::Requests(1) => (
             String::from("approval"),

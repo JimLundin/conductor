@@ -5,10 +5,9 @@
 use std::sync::Arc;
 
 use agents::Configuration;
-use agents::runtime::NOT_RUNNING;
+use codex::ThreadId;
 use codex::hub::Routed;
 use codex::runtime::{Call, Effect, Input, Open};
-use codex::{ThreadId, TurnId};
 use proto::Credential;
 use runtime::agent::{self, Agent, Performed};
 use runtime::{Configuring, ProviderInstance, Runtime};
@@ -66,14 +65,13 @@ impl Agent<Input, Effect> for Task {
     async fn perform(&mut self, effect: Effect) -> Performed<Input> {
         let feedback = match effect {
             Effect::Open(open) => Input::Opened(self.open(open).await),
-            Effect::Call { call, then } => match self.call(call).await {
-                Err(Error::MutationUnknown(_)) => Input::RevertUnknown,
-                outcome => Input::Called {
-                    then,
-                    outcome: outcome.map_err(|error| error.to_string()),
-                },
+            Effect::Call { call, then } => Input::Called {
+                then,
+                outcome: self
+                    .call(call)
+                    .await
+                    .map_err(|error| error.to_string()),
             },
-            Effect::Turns => Input::Listed(self.turns().await),
             Effect::Runtime(report) => return Performed::Report(report),
         };
         Performed::Feedback(feedback)
@@ -111,17 +109,6 @@ impl Task {
                 target.id = child.unwrap_or(target.id);
                 target.respond(id, decision).await
             }
-            Call::Revert(turn) => thread.revert(turn).await,
         }
-    }
-
-    async fn turns(&self) -> Result<Vec<TurnId>, String> {
-        let Some((thread, _)) = &self.thread else {
-            return Err(String::from(NOT_RUNNING));
-        };
-        thread
-            .history_turns()
-            .await
-            .map_err(|error| error.to_string())
     }
 }

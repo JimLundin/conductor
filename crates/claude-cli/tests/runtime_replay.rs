@@ -97,7 +97,6 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
             directory: HostPath(fake.to_string_lossy().into_owned()),
             model: None,
             effort: None,
-            history: None,
             conversation: None,
             instructions: None,
         }))

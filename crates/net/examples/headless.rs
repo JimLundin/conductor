@@ -2,8 +2,6 @@
 //!
 //! `--register env` sets the host's credential from the client environment.
 //! `--then-continue` sends a second prompt after the agent exits and resumes.
-//! `--then-undo` edits on a second turn, checks its diff, undoes it, and checks
-//! the retained amber/discarded unknown codeword history.
 
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -13,14 +11,13 @@ use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use client::host_fold::HostFold;
 use client::host_view::{
-    Approval, Attention, Composer, Interrupt, Item, ReplyState, Resume,
-    UndoState,
+    Approval, Attention, Composer, Interrupt, Item, Resume,
 };
 use net::{HostLink, LinkOptions, LinkState, Status, Target, Update};
 use proto::{
-    Answer, Change, CheckpointId, ClientName, CommandBody, CommandResult,
-    Credential, Decision, Event, EventKind, Feed, HostPath, InstanceId,
-    Provider, RequestId, SessionId, StartAt, Ticket, TurnOutcome,
+    Answer, ClientName, CommandBody, CommandResult, Credential, Decision,
+    Event, EventKind, Feed, HostPath, InstanceId, Provider, RequestId,
+    SessionId, StartAt, Ticket, TurnOutcome,
 };
 use tokio::sync::mpsc;
 
@@ -61,9 +58,6 @@ struct Args {
     /// Continue the session after it closes and send this prompt.
     #[arg(long)]
     then_continue: Option<String>,
-    /// Send this second turn, undo it, then check retained conversation history.
-    #[arg(long, conflicts_with = "then_continue")]
-    then_undo: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -74,8 +68,6 @@ enum Stage {
     /// `Continue` sent; waiting for `SessionReady`.
     Continuing,
     SecondTurn,
-    Undoing,
-    VerifyTurn,
 }
 
 /// Whether to set the provider's credential on the host before the session.
@@ -390,18 +382,8 @@ impl Session {
             }
             return Ok(Flow::Next);
         }
-        match (&self.stage, &view.undo, controls.composer) {
-            (Stage::Undoing, UndoState::Failed { reason, .. }, _) => {
-                anyhow::bail!("{reason}")
-            }
-            (Stage::Undoing, UndoState::Undone, Composer::Open) => {
-                self.stage = Stage::VerifyTurn;
-                let text = String::from(
-                    "What are my retained and discarded codewords? If a codeword was never supplied, use unknown. Reply with exactly retained=WORD discarded=WORD, lowercase, no other text, and use no tools.",
-                );
-                self.message(session, text).await?;
-            }
-            (Stage::Continuing, _, Composer::Open) => {
+        match (&self.stage, controls.composer) {
+            (Stage::Continuing, Composer::Open) => {
                 self.stage = Stage::SecondTurn;
                 let text = self
                     .args
@@ -410,12 +392,8 @@ impl Session {
                     .context("no continuation prompt")?;
                 self.message(session, text).await?;
             }
-            (
-                Stage::FirstTurn | Stage::SecondTurn | Stage::VerifyTurn,
-                _,
-                Composer::Open,
-            ) => {
-                return self.completed(session).await;
+            (Stage::FirstTurn | Stage::SecondTurn, Composer::Open) => {
+                return self.completed(session);
             }
             _ => {}
         }
@@ -489,7 +467,7 @@ impl Session {
         Ok(())
     }
 
-    async fn completed(&mut self, session: SessionId) -> anyhow::Result<Flow> {
+    fn completed(&mut self, session: SessionId) -> anyhow::Result<Flow> {
         let view = self
             .host
             .view
@@ -507,43 +485,7 @@ impl Session {
         {
             self.log(&format!("workspace {}", workspace.directory.0))?;
         }
-        if let Some(then) = &self.args.then_undo {
-            anyhow::ensure!(
-                *turn.outcome == TurnOutcome::Completed,
-                "the undo smoke turn did not complete"
-            );
-            match self.stage {
-                Stage::FirstTurn => {
-                    self.stage = Stage::SecondTurn;
-                    self.message(session, then.clone()).await?;
-                }
-                Stage::SecondTurn => {
-                    if let Some(checkpoint) = turn.checkpoint {
-                        self.undo(session, checkpoint).await?;
-                    }
-                }
-                Stage::VerifyTurn => {
-                    let reply = turn
-                        .items
-                        .iter()
-                        .filter_map(|item| match item {
-                            Item::Reply {
-                                text,
-                                state: ReplyState::Done,
-                            } => Some(text.as_str()),
-                            _ => None,
-                        })
-                        .collect::<String>();
-                    anyhow::ensure!(
-                        reply.trim() == "retained=amber discarded=unknown",
-                        "undo history check failed: {reply}"
-                    );
-                    self.log("undo verified retained history")?;
-                    return Ok(Flow::Finished);
-                }
-                _ => {}
-            }
-        } else if matches!(self.stage, Stage::FirstTurn)
+        if matches!(self.stage, Stage::FirstTurn)
             && self.args.then_continue.is_some()
         {
             self.stage = Stage::Open;
@@ -575,48 +517,6 @@ impl Session {
             .await?;
         self.log(&format!("message {text:?} -> {result:?}"))?;
         accepted(&result)
-    }
-
-    async fn undo(
-        &mut self,
-        session: SessionId,
-        checkpoint: CheckpointId,
-    ) -> anyhow::Result<()> {
-        let result = self
-            .link
-            .send(CommandBody::GetDiff {
-                session,
-                checkpoint,
-            })
-            .await?;
-        let CommandResult::Diff(diff) = result else {
-            anyhow::bail!("diff failed: {result:?}");
-        };
-        anyhow::ensure!(
-            diff.files.iter().any(|file| file.path == "undo.txt"),
-            "the second turn diff has no undo.txt"
-        );
-        anyhow::ensure!(
-            diff.files
-                .iter()
-                .any(|file| file.path == "discarded-only.txt"
-                    && matches!(file.change, Change::Write)),
-            "the second turn diff has no added discarded-only.txt"
-        );
-        self.log(&format!(
-            "undo diff checkpoint={} files={:?}",
-            checkpoint.0, diff.files
-        ))?;
-        let result = self
-            .link
-            .send(CommandBody::UndoTurn {
-                session,
-                checkpoint,
-            })
-            .await?;
-        accepted(&result)?;
-        self.stage = Stage::Undoing;
-        Ok(())
     }
 
     async fn interrupt(&self, session: SessionId) -> anyhow::Result<()> {

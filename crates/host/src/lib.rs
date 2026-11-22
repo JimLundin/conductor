@@ -1,5 +1,5 @@
 //! The host's decisions, kept apart from its I/O: each session's state
-//! machine, what its events say about its checkpoints and undo, how its
+//! machine, what its events say about its commit snapshots, how its
 //! tasks follow the agent's checklist, the protocol's rules on a
 //! connection, the event log's, those of each session's Git worktree, the
 //! registry of sessions and providers, how each provider's CLI starts and

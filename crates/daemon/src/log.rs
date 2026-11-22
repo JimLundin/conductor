@@ -231,7 +231,7 @@ impl Log {
         .await
     }
 
-    /// Undo's durable intent/phase boundary before external Git/provider effects.
+    /// Commits pending events before external workspace changes.
     /// Keeps the command active, but commits its explicit recovery state now.
     pub(crate) async fn barrier(&self) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Barrier { reply }).await
@@ -916,19 +916,17 @@ mod durability_tests {
     }
 
     #[tokio::test]
-    async fn cancelled_undo_preserves_committed_intent_but_rolls_back_its_suffix()
+    async fn cancelled_capture_preserves_the_turn_start_but_rolls_back_its_suffix()
     -> Result<(), Box<dyn std::error::Error>> {
         let path = std::env::temp_dir().join(format!(
-            "conductor-undo-barrier-{}.redb",
+            "conductor-capture-barrier-{}.redb",
             std::process::id()
         ));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path)?;
         let command = lease(&log, 9).await?;
-        let started = EventKind::UndoStarted {
-            checkpoint: proto::CheckpointId(2),
-            restore: proto::CheckpointId(1),
-            history: proto::HistoryAnchor::Fresh,
+        let started = EventKind::NativeTurnStarted {
+            turn_start: Some(HostSeq(4)),
         };
         log.append(SessionId(1), started.clone()).await?;
         log.barrier().await?;
@@ -943,9 +941,11 @@ mod durability_tests {
         );
         log.append(
             SessionId(1),
-            EventKind::UndoHistoryRestored {
-                checkpoint: proto::CheckpointId(2),
-                history: proto::HistoryAnchor::Fresh,
+            EventKind::CheckpointCreated {
+                checkpoint: proto::Checkpoint {
+                    turn_start: Some(HostSeq(4)),
+                    commit: String::from("captured"),
+                },
             },
         )
         .await?;

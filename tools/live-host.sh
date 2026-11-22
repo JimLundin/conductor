@@ -5,7 +5,7 @@
 # turns and continues the session. It costs a few cents of API use, so it is
 # not part of tools/check.sh. The crash scenario uses Linux pidfds.
 #
-#   tools/live-host.sh [--provider claude|codex] [--register] [--model MODEL] [--undo] [--data-dir DIR] [log-dir]
+#   tools/live-host.sh [--provider claude|codex] [--register] [--model MODEL] [--data-dir DIR] [log-dir]
 #
 # The host runs the pinned CLIs in its private homes, so it needs a
 # credential or a sign-in there. --register sends the credentials this
@@ -19,8 +19,6 @@
 # helper binaries in CODEX_HOME.
 #
 # --model requests a model listed by the chosen instance for every session.
-# --undo adds two edit/codeword turns, reads the second diff, undoes that
-# turn, and checks restored files plus retained conversation history.
 #
 # Prints one RESULT line. Exits non-zero on a failed check. Each run's output
 # and the host's own log are kept in log-dir (default: a temp dir).
@@ -29,14 +27,12 @@ cd "$(dirname "$0")/.."
 provider=claude
 data_dir=
 register=keep
-undo_check=no
 session_model=
 while [ $# -gt 0 ]; do
   case $1 in
     --provider) provider=$2; shift 2 ;;
     --register) register=env; shift ;;
     --model) session_model=$2; shift 2 ;;
-    --undo) undo_check=yes; shift ;;
     --data-dir) data_dir=$2; shift 2 ;;
     *) break ;;
   esac
@@ -205,24 +201,14 @@ approve_workspace=$(workspace "$logs/approve.out")
 file=missing
 [ -f "$approve_workspace/a.txt" ] && file="present:$(tr -d '\n' <"$approve_workspace/a.txt")"
 case "$file" in present:hello) ;; *) approve=fail ;; esac
-undo=skipped
-if [ "$undo_check" = yes ]; then
-  undo=$(turn undo Completed --timeout-secs 300 \
-    --prompt "My retained codeword is amber. Create undo.txt containing exactly retained, in the current directory. Then reply done." \
-    --then-undo "My discarded codeword is cobalt. Replace undo.txt with exactly discarded and create discarded-only.txt containing exactly discarded, in the current directory. Then reply done.")
-  grep -q 'undo verified retained history' "$logs/undo.out" || undo=fail
-  grep -v '(history)' "$logs/undo.out" | grep -q 'TurnsUndone' || undo=fail
-  undo_workspace=$(workspace "$logs/undo.out")
-  [ "$(cat "$undo_workspace/undo.txt" 2>/dev/null)" = retained ] || undo=fail
-  [ ! -e "$undo_workspace/discarded-only.txt" ] || undo=fail
-fi
+
 source=pass
 [ -z "$(git -C "$scratch" status --porcelain)" ] || source=fail
 [ "$(git -C "$scratch" hash-object .git/index)" = "$source_index" ] || source=fail
 interrupt=direct
 grep -q 'holding the interrupt until the turn starts' "$logs/host.log" && interrupt=held
 grep -q 'holding the interrupt' "$logs/host.log" && ! grep -q 'sending the held interrupt' "$logs/host.log" && at_send=fail
-echo "RESULT provider=$provider register=$register instance=$selected approve=$approve first-delta=$delta at-send=$at_send continue=$continued leak=$leak leak-counts=${leak_counts// /,} undo=$undo source=$source source-repo=$scratch a.txt=$file interrupt-at-send=$interrupt logs=$logs"
+echo "RESULT provider=$provider register=$register instance=$selected approve=$approve first-delta=$delta at-send=$at_send continue=$continued leak=$leak leak-counts=${leak_counts// /,} source=$source source-repo=$scratch a.txt=$file interrupt-at-send=$interrupt logs=$logs"
 case $approve$delta$at_send$continued:$leak in passpasspasspass:pass | passpasspasspass:unprotected) ;; *) exit 1 ;; esac
 
-case $undo:$source in skipped:pass | pass:pass) ;; *) exit 1 ;; esac
+[ "$source" = pass ] || exit 1

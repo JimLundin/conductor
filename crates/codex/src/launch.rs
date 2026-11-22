@@ -1,14 +1,13 @@
 //! How the `codex app-server` starts, as data: its command line, its
 //! environment and the provider in a private home's `config.toml` (§6.3).
-//! Also the version its handshake reports and the paging through a
-//! thread's history.
+//! Also the version its handshake reports.
 
 use agents::pin::Cli;
 use agents::{Config, HomeKind, Invocation, Profile, Reported, Var};
 use proto::Provider;
 
+use crate::CodexCredential;
 use crate::prelude::*;
-use crate::{CodexCredential, TurnId};
 
 /// Our provider's id in `model_providers`.
 const PROVIDER_ID: &str = "conductor";
@@ -191,66 +190,13 @@ fn provider_edits(name: &str, base_url: &str) -> Vec<Edit> {
     ])
 }
 
-/// The pages of a thread's history a check reads at most.
-const PAGE_LIMIT: usize = 100;
-
-/// A thread's native turns, read page by page.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct History {
-    turns: Vec<TurnId>,
-    pages: usize,
-    cursor: Option<String>,
-}
-
-/// Where reading a history stands.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Paging {
-    /// Fetch the page at the history's cursor.
-    Fetch(History),
-    /// Every turn, in chronological order.
-    Done(Vec<TurnId>),
-    /// The history runs past a hundred pages; a partial one would
-    /// pass an undo check it should fail.
-    Limit,
-}
-
-impl History {
-    #[must_use]
-    pub fn start() -> Paging {
-        Paging::Fetch(Self::default())
-    }
-
-    /// Where the next page starts.
-    #[must_use]
-    pub fn cursor(&self) -> Option<String> {
-        self.cursor.clone()
-    }
-
-    #[must_use]
-    pub fn add(mut self, turns: Vec<TurnId>, cursor: Option<String>) -> Paging {
-        self.turns.extend(turns);
-        self.pages = self.pages.saturating_add(1);
-        match (cursor, self.pages) {
-            (None, _) => Paging::Done(self.turns),
-            (Some(_), PAGE_LIMIT) => Paging::Limit,
-            (next, _) => Paging::Fetch(Self {
-                cursor: next,
-                ..self
-            }),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Var};
     use proto::Provider;
 
-    use super::{
-        Edit, History, Paging, app_server, cli, config_edits, login, profile,
-        version,
-    };
-    use crate::{CodexCredential, TurnId};
+    use super::{Edit, app_server, cli, config_edits, login, profile, version};
+    use crate::CodexCredential;
 
     #[test]
     fn the_profile_runs_codex_in_its_private_home() {
@@ -399,54 +345,6 @@ mod tests {
                     ])),
                 ][..],
             )
-        );
-    }
-
-    fn turns(ids: &[&str]) -> Vec<TurnId> {
-        ids.iter().map(|id| TurnId(String::from(*id))).collect()
-    }
-
-    /// The page after `paging`, with `turns` and `cursor`.
-    fn next(
-        paging: Paging,
-        turns: Vec<TurnId>,
-        cursor: Option<&str>,
-    ) -> Paging {
-        match paging {
-            Paging::Fetch(history) => {
-                history.add(turns, cursor.map(String::from))
-            }
-            other => other,
-        }
-    }
-
-    fn pages(count: usize) -> Paging {
-        (0..count).fold(History::start(), |paging, _| {
-            next(paging, turns(&["t"]), Some("more"))
-        })
-    }
-
-    #[test]
-    fn a_history_reads_pages_until_its_cursor_runs_out() {
-        let second = next(History::start(), turns(&["t1", "t2"]), Some("c1"));
-        let cursor = match &second {
-            Paging::Fetch(history) => history.cursor(),
-            Paging::Done(_) | Paging::Limit => None,
-        };
-        assert_eq!(
-            (cursor, next(second, turns(&["t3"]), None)),
-            (
-                Some(String::from("c1")),
-                Paging::Done(turns(&["t1", "t2", "t3"]))
-            )
-        );
-    }
-
-    #[test]
-    fn a_history_past_a_hundred_pages_is_refused() {
-        assert_eq!(
-            (pages(100), next(pages(99), Vec::new(), None)),
-            (Paging::Limit, Paging::Done(turns(&["t"; 99])))
         );
     }
 }

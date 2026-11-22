@@ -1,13 +1,12 @@
-use agents::runtime::{Anchoring, Command, Outcome, Start, Started};
+use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
-    Answer, ChecklistEntry, ChecklistStatus, Checkpoint, CheckpointId,
-    ClientName, CloseReason, CommandResult, Decision, Effort, Event, EventKind,
-    HistoryAnchor, HostPath, HostSeq, InstanceId, Kept, ModelChoice, ModelId,
-    Models, Provider, Question, Rejection, RequestId, Resolution, Selection,
-    SessionId, SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome,
-    ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
-    UndoAvailability, Workspace,
+    Answer, ChecklistEntry, ChecklistStatus, Checkpoint, ClientName,
+    CloseReason, CommandResult, Decision, Effort, Event, EventKind, HostPath,
+    HostSeq, Kept, ModelChoice, ModelId, Models, Question, Rejection,
+    RequestId, Resolution, Selection, SessionId, SubagentActivity,
+    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
@@ -59,26 +58,20 @@ fn agent(command: Command) -> Effect {
     Effect::Call(Call::Agent(command))
 }
 
-fn launching(
-    directory: &str,
-    history: Option<HistoryAnchor>,
-    conversation: Option<&str>,
-) -> Effect {
+fn launching(directory: &str, conversation: Option<&str>) -> Effect {
     agent(Command::Start(Start {
         instructions: None,
         session: SessionId(1),
         directory: HostPath(text(directory)),
         model: None,
         effort: None,
-        history,
         conversation: conversation.map(String::from),
     }))
 }
 
-fn started(conversation: &str, anchoring: Anchoring) -> Input {
+fn started(conversation: &str) -> Input {
     Input::Agent(Outcome::Started(Ok(Started {
         conversation: text(conversation),
-        anchoring,
     })))
 }
 
@@ -131,10 +124,6 @@ fn saved() -> Effect {
     Effect::Conversation(text("conv"))
 }
 
-fn ok() -> Input {
-    Input::Done(Ok(()))
-}
-
 fn accepted() -> Effect {
     Effect::Reply(CommandResult::Accepted)
 }
@@ -147,9 +136,9 @@ fn ready() -> Session {
     expect(
         restored(&[], None),
         Vec::from([
-            (start(), Vec::from([launching("/work", None, None)])),
+            (start(), Vec::from([launching("/work", None)])),
             (
-                started("conv", Anchoring::Messages),
+                started("conv"),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -218,9 +207,9 @@ fn a_message_the_agent_never_got_fails_the_turn() {
     let _ = expect(
         restored(&in_workspace(), None),
         Vec::from([
-            (start(), Vec::from([launching("/work", None, None)])),
+            (start(), Vec::from([launching("/work", None)])),
             (
-                started("conv", Anchoring::Messages),
+                started("conv"),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -248,56 +237,29 @@ fn a_message_the_agent_never_got_fails_the_turn() {
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::NativeTurnStarted {
-                        history: HistoryAnchor::Messages {
-                            conversation: text("conv"),
-                            message: None,
-                        },
                         turn_start: Some(HostSeq(7)),
                     }),
                 ]),
             ),
             (
-                Input::Step(Step::HistoryBoundary(Some(text("message")))),
-                Vec::from([Effect::Emit(EventKind::HistoryMaterialized {
-                    history: HistoryAnchor::Messages {
-                        conversation: text("conv"),
-                        message: Some(text("message")),
-                    },
-                })]),
-            ),
-            (
                 turn_ended(),
                 Vec::from([
-                    Effect::Emit(EventKind::CheckpointReserved {
-                        checkpoint: CheckpointId(1),
-                    }),
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot {
-                        workspace: workspace(),
-                        checkpoint: CheckpointId(1),
-                        previous: Some(text("c0")),
-                    }),
+                    Effect::Call(Call::Snapshot(workspace())),
                 ]),
             ),
             (
                 Input::Snapshotted(Ok(text("c1"))),
-                Vec::from([
-                    Effect::Emit(EventKind::CheckpointCreated {
+                Vec::from([Effect::Call(Call::Record(
+                    EventKind::CheckpointCreated {
                         checkpoint: Checkpoint {
-                            id: CheckpointId(1),
-                            parent: Some(CheckpointId(0)),
                             turn_start: Some(HostSeq(7)),
                             commit: text("c1"),
-                            history: HistoryAnchor::Messages {
-                                conversation: text("conv"),
-                                message: Some(text("message")),
-                            },
-                            undo: UndoAvailability::Available,
                         },
-                    }),
-                    completed(),
-                ]),
+                    },
+                ))]),
             ),
+            (Input::Recorded(HostSeq(11)), Vec::from([completed()])),
         ]),
     );
 }
@@ -667,9 +629,9 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
                 })]),
             ),
             (send("hi"), Vec::from([rejected(Rejection::SessionClosed)])),
-            (start(), Vec::from([launching("/work", None, Some("conv"))])),
+            (start(), Vec::from([launching("/work", Some("conv"))])),
             (
-                started("conv", Anchoring::Messages),
+                started("conv"),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -685,71 +647,20 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
 }
 
 #[test]
-fn a_start_asks_for_the_history_to_restore_and_one_that_fails_closes() {
-    let anchored = HistoryAnchor::Messages {
-        conversation: text("conv"),
-        message: None,
-    };
-    let history = [event(EventKind::HistoryMaterialized {
-        history: anchored.clone(),
-    })];
+fn a_start_resumes_the_saved_conversation_and_one_that_fails_closes() {
     let _ = expect(
-        restored(&history, Some("conv")),
+        restored(&[], Some("saved")),
         Vec::from([
+            (start(), Vec::from([launching("/work", Some("saved"))])),
             (
-                start(),
-                Vec::from([launching("/work", Some(anchored), Some("conv"))]),
-            ),
-            (
-                Input::Agent(Outcome::Started(Err(text("missing")))),
+                Input::Agent(Outcome::Started(Err(text("missing executable")))),
                 Vec::from([
                     Effect::Emit(EventKind::SessionClosed {
                         reason: CloseReason::FailedToStart {
-                            message: text("missing"),
+                            message: text("missing executable"),
                         },
                     }),
                     accepted(),
-                ]),
-            ),
-            (send("hi"), Vec::from([rejected(Rejection::SessionClosed)])),
-        ]),
-    );
-}
-
-#[test]
-fn an_agent_anchored_at_turns_materializes_its_history_as_each_starts() {
-    let thread = |turn: Option<&str>| HistoryAnchor::Turns {
-        conversation: text("thread"),
-        turn: turn.map(String::from),
-    };
-    let _ = expect(
-        restored(
-            &[event(EventKind::WorkspaceCreated {
-                workspace: workspace(),
-            })],
-            None,
-        ),
-        Vec::from([
-            (start(), Vec::from([launching("/work", None, None)])),
-            (
-                started("thread", Anchoring::Turns),
-                Vec::from([
-                    Effect::Conversation(text("thread")),
-                    Effect::Emit(EventKind::SessionReady),
-                    accepted(),
-                ]),
-            ),
-            (
-                Input::Step(Step::TurnStarted(NativeTurn(text("t1")))),
-                Vec::from([
-                    Effect::Conversation(text("thread")),
-                    Effect::Emit(EventKind::HistoryMaterialized {
-                        history: thread(Some("t1")),
-                    }),
-                    Effect::Emit(EventKind::NativeTurnStarted {
-                        history: thread(Some("t1")),
-                        turn_start: None,
-                    }),
                 ]),
             ),
         ]),
@@ -766,453 +677,11 @@ fn workspace() -> Workspace {
     }
 }
 
-fn checkpoint(
-    id: u64,
-    history: HistoryAnchor,
-    undo: UndoAvailability,
-) -> Event {
-    event(EventKind::CheckpointCreated {
-        checkpoint: Checkpoint {
-            id: CheckpointId(id),
-            parent: id.checked_sub(1).map(CheckpointId),
-            turn_start: Some(HostSeq(id)),
-            commit: format!("c{id}"),
-            history,
-            undo,
-        },
-    })
-}
-
-fn undo() -> Input {
-    Input::Order(Order::Undo {
-        checkpoint: CheckpointId(1),
-        fork: text("fork"),
-    })
-}
-
-fn restore() -> Effect {
-    Effect::Call(Call::Restore {
-        workspace: workspace(),
-        commit: text("c0"),
-    })
-}
-
-fn preflight() -> Effect {
-    Effect::Call(Call::Preflight {
-        workspace: workspace(),
-        commit: text("c0"),
-    })
-}
-
-fn undone() -> Vec<Effect> {
-    Vec::from([
-        Effect::Emit(EventKind::TurnsUndone {
-            checkpoint: CheckpointId(1),
-            restored: CheckpointId(0),
-        }),
-        accepted(),
-    ])
-}
-
-fn history_restored(history: HistoryAnchor) -> Effect {
-    Effect::Emit(EventKind::UndoHistoryRestored {
-        checkpoint: CheckpointId(1),
-        history,
-    })
-}
-
-#[test]
-fn an_undo_restores_history_then_files_and_resumes_after_a_failure() {
-    let history = [
-        event(EventKind::WorkspaceCreated {
-            workspace: workspace(),
-        }),
-        checkpoint(0, HistoryAnchor::Fresh, UndoAvailability::Available),
-        checkpoint(
-            1,
-            HistoryAnchor::Messages {
-                conversation: text("conv"),
-                message: Some(text("m1")),
-            },
-            UndoAvailability::Available,
-        ),
-    ];
-    let _ = expect(
-        restored(&history, None),
-        Vec::from([
-            (undo(), Vec::from([preflight()])),
-            (
-                ok(),
-                Vec::from([
-                    Effect::Emit(EventKind::UndoStarted {
-                        checkpoint: CheckpointId(1),
-                        restore: CheckpointId(0),
-                        history: HistoryAnchor::Fresh,
-                    }),
-                    Effect::Barrier,
-                    Effect::Call(Call::Exists(HostPath(text("/work")))),
-                ]),
-            ),
-            (Input::Exists(true), Vec::from([agent(Command::Shutdown)])),
-            (
-                Input::Agent(Outcome::ShutDown(Ok(()))),
-                Vec::from([launching(
-                    "/work",
-                    Some(HistoryAnchor::Fresh),
-                    None,
-                )]),
-            ),
-            (
-                started("new", Anchoring::Messages),
-                Vec::from([
-                    Effect::Conversation(text("new")),
-                    history_restored(HistoryAnchor::Fresh),
-                    Effect::Call(Call::History),
-                ]),
-            ),
-            (
-                Input::History(Vec::new()),
-                Vec::from([Effect::Barrier, restore()]),
-            ),
-            (
-                Input::Done(Err(text("dirty"))),
-                Vec::from([
-                    Effect::Emit(EventKind::UndoFailed {
-                        checkpoint: CheckpointId(1),
-                        reason: text("dirty"),
-                    }),
-                    rejected(Rejection::UndoFailed {
-                        reason: text("dirty"),
-                    }),
-                ]),
-            ),
-            (send("hi"), Vec::from([rejected(Rejection::UndoInProgress)])),
-            (
-                Input::Order(Order::Undo {
-                    checkpoint: CheckpointId(0),
-                    fork: text("fork"),
-                }),
-                Vec::from([rejected(Rejection::UndoInProgress)]),
-            ),
-            (undo(), Vec::from([restore()])),
-            (ok(), undone()),
-            (
-                undo(),
-                Vec::from([rejected(Rejection::CheckpointUnavailable)]),
-            ),
-        ]),
-    );
-}
-
-fn thread(turn: &str) -> HistoryAnchor {
-    HistoryAnchor::Turns {
-        conversation: text("thread"),
-        turn: Some(text(turn)),
-    }
-}
-
-fn turns(listed: &[&str]) -> Input {
-    Input::Agent(Outcome::Turns(Ok(listed
-        .iter()
-        .copied()
-        .map(String::from)
-        .collect())))
-}
-
-/// A session anchored at turns whose directory is gone, on its way to
-/// undo checkpoint 1 in the worktree once it lists its turns.
-fn dispatch_revert() -> Vec<Effect> {
-    Vec::from([
-        Effect::Emit(EventKind::UndoRevertDispatched {
-            checkpoint: CheckpointId(1),
-        }),
-        Effect::Barrier,
-        agent(Command::Revert(text("t1"))),
-    ])
-}
-
-fn reverting() -> Session {
-    let history = [
-        event(EventKind::WorkspaceCreated {
-            workspace: workspace(),
-        }),
-        checkpoint(0, thread("t0"), UndoAvailability::Available),
-        checkpoint(1, thread("t1"), UndoAvailability::Available),
-    ];
-    expect(
-        restored(&history, None),
-        Vec::from([
-            (undo(), Vec::from([preflight()])),
-            (
-                ok(),
-                Vec::from([
-                    Effect::Emit(EventKind::UndoStarted {
-                        checkpoint: CheckpointId(1),
-                        restore: CheckpointId(0),
-                        history: thread("t1"),
-                    }),
-                    Effect::Barrier,
-                    Effect::Call(Call::Exists(HostPath(text("/work")))),
-                ]),
-            ),
-            (
-                Input::Exists(false),
-                Vec::from([launching(
-                    "/worktree",
-                    Some(HistoryAnchor::Turns {
-                        conversation: text("thread"),
-                        turn: None,
-                    }),
-                    None,
-                )]),
-            ),
-            (
-                started("thread", Anchoring::Turns),
-                Vec::from([agent(Command::Turns)]),
-            ),
-        ]),
-    )
-}
-
-#[test]
-fn an_undo_in_a_gone_directory_reverts_the_turns_in_the_worktree() {
-    let _ = expect(
-        reverting(),
-        Vec::from([
-            (turns(&["t0", "t1"]), dispatch_revert()),
-            (
-                Input::Agent(Outcome::Reverted(Ok(()))),
-                Vec::from([agent(Command::Turns)]),
-            ),
-            (turns(&["t0"]), Vec::from([agent(Command::Shutdown)])),
-            (
-                Input::Agent(Outcome::ShutDown(Ok(()))),
-                Vec::from([
-                    history_restored(thread("t0")),
-                    Effect::Call(Call::History),
-                ]),
-            ),
-            (
-                Input::History(Vec::new()),
-                Vec::from([Effect::Barrier, restore()]),
-            ),
-            (
-                ok(),
-                Vec::from([launching("/work", Some(thread("t0")), None)]),
-            ),
-            (started("thread", Anchoring::Turns), undone()),
-        ]),
-    );
-}
-
-#[test]
-fn an_unknown_rollback_reopens_and_verifies_history_before_continuing() {
-    let _ = expect(
-        reverting(),
-        Vec::from([
-            (turns(&["t0", "t1"]), dispatch_revert()),
-            (
-                Input::Agent(Outcome::RevertUnknown),
-                Vec::from([launching(
-                    "/worktree",
-                    Some(HistoryAnchor::Turns {
-                        conversation: text("thread"),
-                        turn: None,
-                    }),
-                    None,
-                )]),
-            ),
-            (
-                started("thread", Anchoring::Turns),
-                Vec::from([agent(Command::Turns)]),
-            ),
-            (turns(&["t0"]), Vec::from([agent(Command::Shutdown)])),
-            (
-                Input::Agent(Outcome::ShutDown(Ok(()))),
-                Vec::from([
-                    history_restored(thread("t0")),
-                    Effect::Call(Call::History),
-                ]),
-            ),
-        ]),
-    );
-}
-
-#[test]
-fn a_replayed_unverified_rollback_reads_history_without_sending_again() {
-    let session = restored(
-        &[
-            event(EventKind::WorkspaceCreated {
-                workspace: workspace(),
-            }),
-            checkpoint(0, thread("t0"), UndoAvailability::Available),
-            checkpoint(1, thread("t1"), UndoAvailability::Available),
-            event(EventKind::UndoStarted {
-                checkpoint: CheckpointId(1),
-                restore: CheckpointId(0),
-                history: thread("t1"),
-            }),
-            event(EventKind::UndoRevertDispatched {
-                checkpoint: CheckpointId(1),
-            }),
-        ],
-        None,
-    );
-    let verify = || {
-        Vec::from([
-            (
-                undo(),
-                Vec::from([Effect::Call(Call::Exists(HostPath(text(
-                    "/work",
-                ))))]),
-            ),
-            (
-                Input::Exists(true),
-                Vec::from([launching(
-                    "/work",
-                    Some(HistoryAnchor::Turns {
-                        conversation: text("thread"),
-                        turn: None,
-                    }),
-                    None,
-                )]),
-            ),
-            (
-                started("thread", Anchoring::Turns),
-                Vec::from([agent(Command::Turns)]),
-            ),
-        ])
-    };
-    let checking = expect(session, verify());
-    let unresolved = expect(
-        checking,
-        Vec::from([(
-            turns(&["t0", "t1"]),
-            Vec::from([
-                Effect::Emit(EventKind::Error {
-                    message: text(
-                        "could not verify the native rollback outcome: native history does not match the retained turn prefix",
-                    ),
-                }),
-                rejected(Rejection::UndoInProgress),
-            ]),
-        )]),
-    );
-    let retry = expect(unresolved, verify());
-    let _ = expect(
-        retry,
-        Vec::from([(
-            turns(&["t0"]),
-            Vec::from([
-                history_restored(thread("t0")),
-                Effect::Call(Call::History),
-            ]),
-        )]),
-    );
-}
-
-/// A retried undo whose turn the agent already reverted only checks the
-/// turns left.
-#[test]
-fn an_undo_does_not_revert_a_turn_the_agent_no_longer_lists() {
-    let _ = expect(
-        reverting(),
-        Vec::from([
-            (turns(&["t0"]), Vec::from([agent(Command::Turns)])),
-            (turns(&["t0"]), Vec::from([agent(Command::Shutdown)])),
-        ]),
-    );
-}
-
-#[test]
-fn an_undo_to_a_message_forks_the_conversation_through_it() {
-    let message = |id: &str| HistoryAnchor::Messages {
-        conversation: text("conv"),
-        message: Some(text(id)),
-    };
-    let fork = HistoryAnchor::Fork {
-        source: text("conv"),
-        through: text("m0"),
-        target: text("fork"),
-    };
-    let history = [
-        event(EventKind::WorkspaceCreated {
-            workspace: workspace(),
-        }),
-        checkpoint(0, message("m0"), UndoAvailability::Available),
-        checkpoint(1, message("m1"), UndoAvailability::Available),
-    ];
-    let _ = expect(
-        restored(&history, None),
-        Vec::from([
-            (undo(), Vec::from([preflight()])),
-            (
-                ok(),
-                Vec::from([
-                    Effect::Emit(EventKind::UndoStarted {
-                        checkpoint: CheckpointId(1),
-                        restore: CheckpointId(0),
-                        history: fork.clone(),
-                    }),
-                    Effect::Barrier,
-                    Effect::Call(Call::Exists(HostPath(text("/work")))),
-                ]),
-            ),
-            (Input::Exists(true), Vec::from([agent(Command::Shutdown)])),
-            (
-                Input::Agent(Outcome::ShutDown(Ok(()))),
-                Vec::from([launching("/work", Some(fork), None)]),
-            ),
-        ]),
-    );
-}
-
 fn tasks(label: &str, status: ChecklistStatus) -> Vec<ChecklistEntry> {
     Vec::from([ChecklistEntry {
         text: text(label),
         status,
     }])
-}
-
-/// An undo restores the session's tasks as they were when the checkpoint
-/// it goes back to was taken.
-#[test]
-fn the_tasks_before_a_checkpoint_are_the_session_s_last_before_it() {
-    let at = |seq, session, kind| Event {
-        seq: HostSeq(seq),
-        session: SessionId(session),
-        kind,
-    };
-    let changed = |seq, session, label| {
-        at(
-            seq,
-            session,
-            EventKind::ChecklistChanged {
-                tasks: tasks(label, ChecklistStatus::Pending),
-            },
-        )
-    };
-    let taken = |seq, session, id| Event {
-        session: SessionId(session),
-        seq: HostSeq(seq),
-        ..checkpoint(id, HistoryAnchor::Fresh, UndoAvailability::Available)
-    };
-    let history = [
-        changed(1, 1, "first"),
-        taken(2, 2, 1),
-        changed(3, 1, "second"),
-        changed(4, 2, "another session's"),
-        taken(5, 1, 1),
-        changed(6, 1, "after"),
-    ];
-    assert_eq!(
-        [CheckpointId(1), CheckpointId(9)].map(|id| super::tasks_before(
-            &history,
-            SessionId(1),
-            id
-        )),
-        [tasks("second", ChecklistStatus::Pending), Vec::new()]
-    );
 }
 
 #[test]
@@ -1447,9 +916,9 @@ fn a_restored_session_keeps_its_request_ids_and_who_answered_them() {
     let _ = expect(
         restored(&history, None),
         Vec::from([
-            (start(), Vec::from([launching("/work", None, None)])),
+            (start(), Vec::from([launching("/work", None)])),
             (
-                started("conv", Anchoring::Messages),
+                started("conv"),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -1507,7 +976,6 @@ fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
             directory: HostPath(text("/work")),
             model: model(id),
             effort: None,
-            history: None,
             conversation: None,
         }))
     };
@@ -1543,9 +1011,9 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
     let _ = expect(
         restored(&in_workspace(), None),
         Vec::from([
-            (start(), Vec::from([launching("/work", None, None)])),
+            (start(), Vec::from([launching("/work", None)])),
             (
-                started("conv", Anchoring::Messages),
+                started("conv"),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),
@@ -1561,10 +1029,6 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::NativeTurnStarted {
-                        history: HistoryAnchor::Messages {
-                            conversation: text("conv"),
-                            message: None,
-                        },
                         turn_start: Some(HostSeq(4)),
                     }),
                 ]),
@@ -1573,15 +1037,8 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
             (
                 turn_ended(),
                 Vec::from([
-                    Effect::Emit(EventKind::CheckpointReserved {
-                        checkpoint: CheckpointId(1),
-                    }),
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot {
-                        workspace: workspace(),
-                        checkpoint: CheckpointId(1),
-                        previous: Some(text("c0")),
-                    }),
+                    Effect::Call(Call::Snapshot(workspace())),
                 ]),
             ),
             (
@@ -1596,15 +1053,8 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
             (
                 start(),
                 Vec::from([
-                    Effect::Emit(EventKind::CheckpointReserved {
-                        checkpoint: CheckpointId(2),
-                    }),
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot {
-                        workspace: workspace(),
-                        checkpoint: CheckpointId(2),
-                        previous: Some(text("c0")),
-                    }),
+                    Effect::Call(Call::Snapshot(workspace())),
                 ]),
             ),
             (
@@ -1614,61 +1064,6 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
                 })]),
             ),
         ]),
-    );
-}
-
-#[test]
-fn a_restored_session_resumes_the_fork_or_the_conversation_saved_after_it() {
-    let created = event(EventKind::SessionCreated {
-        instance: InstanceId::own(Provider::Claude),
-        provider: Provider::Claude,
-        directory: HostPath(text("/work")),
-        by: phone(),
-        model: None,
-        effort: None,
-    });
-    let user = event(EventKind::UserMessage {
-        text: text("edit"),
-        by: phone(),
-    });
-    let unknown = checkpoint(
-        1,
-        HistoryAnchor::Unknown,
-        UndoAvailability::Unavailable {
-            reason: text("boundary not observed"),
-        },
-    );
-    let fork = HistoryAnchor::Fork {
-        source: text("source"),
-        through: text("boundary"),
-        target: text("target"),
-    };
-    let forked = restored(
-        &[
-            created.clone(),
-            event(EventKind::UndoHistoryRestored {
-                checkpoint: CheckpointId(2),
-                history: fork.clone(),
-            }),
-            user.clone(),
-            unknown.clone(),
-        ],
-        Some("target"),
-    );
-    assert_eq!(forked.book.resume(true), Some(fork));
-    assert_eq!(forked.conversation, Some(text("target")));
-    let fresh = event(EventKind::UndoHistoryRestored {
-        checkpoint: CheckpointId(2),
-        history: HistoryAnchor::Fresh,
-    });
-    let unsent = restored(&[created.clone(), fresh.clone()], Some("new-id"));
-    assert_eq!(unsent.book.resume(true), Some(HistoryAnchor::Fresh));
-    let _ = expect(
-        restored(&[created, fresh, user, unknown], Some("new-id")),
-        Vec::from([(
-            start(),
-            Vec::from([launching("/work", None, Some("new-id"))]),
-        )]),
     );
 }
 
@@ -1725,7 +1120,12 @@ fn in_workspace() -> [Event; 2] {
         event(EventKind::WorkspaceCreated {
             workspace: workspace(),
         }),
-        checkpoint(0, HistoryAnchor::Fresh, UndoAvailability::Available),
+        event(EventKind::CheckpointCreated {
+            checkpoint: Checkpoint {
+                turn_start: None,
+                commit: text("c0"),
+            },
+        }),
     ]
 }
 
@@ -1734,9 +1134,9 @@ fn removing_stops_the_agent_between_turns_then_removes_the_workspace() {
     let up = expect(
         restored(&in_workspace(), None),
         Vec::from([
-            (start(), Vec::from([launching("/work", None, None)])),
+            (start(), Vec::from([launching("/work", None)])),
             (
-                started("conv", Anchoring::Messages),
+                started("conv"),
                 Vec::from([
                     saved(),
                     Effect::Emit(EventKind::SessionReady),

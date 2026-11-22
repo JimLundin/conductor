@@ -1,4 +1,4 @@
-//! Per-turn changes and undo.
+//! Per-turn changes.
 
 #![expect(
     clippy::disallowed_types,
@@ -20,7 +20,7 @@
 use std::rc::Rc;
 
 use dioxus::prelude::*;
-use proto::CheckpointId;
+use proto::HostSeq;
 use ui::{DiffPanel, Intent, Patch, SessionIntent};
 
 use crate::Shell;
@@ -48,14 +48,14 @@ pub fn TurnChanges(changes: ui::TurnChanges) -> Element {
                     p { class: "error", role: "alert", "{reason}" }
                     CloseDiff { checkpoint }
                 },
-                DiffPanel::Loaded(diff) => rsx! { Diff { checkpoint, diff } },
+                DiffPanel::Loaded(preview) => rsx! { Diff { checkpoint, preview } },
             }
         }
     }
 }
 
 #[component]
-fn CloseDiff(checkpoint: CheckpointId) -> Element {
+fn CloseDiff(checkpoint: HostSeq) -> Element {
     let shell = use_context::<Shell>();
     rsx! {
         button {
@@ -67,23 +67,14 @@ fn CloseDiff(checkpoint: CheckpointId) -> Element {
 }
 
 #[component]
-fn Diff(checkpoint: CheckpointId, diff: ui::Diff) -> Element {
-    let shell = use_context::<Shell>();
+fn Diff(checkpoint: HostSeq, preview: Rc<ui::Preview>) -> Element {
     rsx! {
         div { class: "diff-panel", "aria-label": "Changes for this turn",
             div { class: "diff-heading",
                 h2 { "Changes for this turn" }
                 CloseDiff { checkpoint }
             }
-            Preview { preview: diff.preview }
-            p { class: "undo-scope", "Undo removes this turn and every later turn from the conversation, and restores files to before this turn." }
-            button {
-                class: "undo-turn",
-                disabled: diff.undo_disabled,
-                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::Undo(checkpoint))),
-                "Undo this turn"
-            }
-            p { class: "undo-hint", "{diff.undo_hint}" }
+            Preview { preview }
         }
     }
 }

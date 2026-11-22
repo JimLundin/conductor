@@ -11,8 +11,8 @@ use serde_json::Value;
 
 use crate::prelude::*;
 use crate::{
-    ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
-    PermissionDecision, PermissionRequestId, encode, parse_line,
+    ClaudeEvent, ControlCall, Inbound, Open, Outbound, PermissionDecision,
+    PermissionRequestId, encode, parse_line,
 };
 
 /// What a handle asks of the session.
@@ -82,8 +82,7 @@ const FAILURE_TEXT: FailureText = FailureText {
 };
 
 /// The session's state: our control requests awaiting a `control_response`,
-/// the `can_use_tool` requests not yet answered, the last message of the
-/// running turn, and the sub-agents the process started.
+/// the `can_use_tool` requests not yet answered, and the sub-agents the process started.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session<R> {
     /// How the process ended, once it has.
@@ -93,7 +92,6 @@ pub struct Session<R> {
     /// What an answer to each open `can_use_tool` request needs.
     open: BTreeMap<PermissionRequestId, Open>,
     next_request: u64,
-    last_message: Option<MessageId>,
     /// Every task the CLI reported as a sub-agent. A task's end doesn't
     /// say what the task was.
     subagents: BTreeMap<String, String>,
@@ -107,7 +105,6 @@ impl<R> Default for Session<R> {
             pending: BTreeMap::new(),
             open: BTreeMap::new(),
             next_request: 0,
-            last_message: None,
             subagents: BTreeMap::new(),
             subagent_tools: BTreeMap::new(),
         }
@@ -213,33 +210,6 @@ impl<R> Session<R> {
     /// is no sub-agent, such as a background command, is `Unknown`.
     fn event(&mut self, received: ClaudeEvent) -> ClaudeEvent {
         match received {
-            ClaudeEvent::Message {
-                role,
-                content,
-                uuid,
-            } => {
-                self.last_message.clone_from(&uuid);
-                ClaudeEvent::Message {
-                    role,
-                    content,
-                    uuid,
-                }
-            }
-            ClaudeEvent::TurnFinished {
-                subtype,
-                outcome,
-                terminal_reason,
-                session_id,
-                errors,
-                last_message: _,
-            } => ClaudeEvent::TurnFinished {
-                subtype,
-                outcome,
-                terminal_reason,
-                session_id,
-                errors,
-                last_message: self.last_message.clone(),
-            },
             ClaudeEvent::PermissionCancelled { id } => {
                 self.open.remove(&id);
                 ClaudeEvent::PermissionCancelled { id }
@@ -405,8 +375,7 @@ impl<R> Session<R> {
         outcome: Result<(), E>,
     ) -> Vec<Effect<R, S, E>> {
         match (then, outcome) {
-            (Then::User(reply), Ok(())) => {
-                self.last_message = None;
+            (Then::User(reply) | Then::Answer(reply), Ok(())) => {
                 Vec::from([Effect::Reply(reply, Ok(Value::Null))])
             }
             (
@@ -419,9 +388,6 @@ impl<R> Session<R> {
             ) => {
                 self.pending.insert(request_id, (call, reply));
                 Vec::new()
-            }
-            (Then::Answer(reply), Ok(())) => {
-                Vec::from([Effect::Reply(reply, Ok(Value::Null))])
             }
             (Then::Refusal { .. }, Ok(())) => Vec::new(),
             (unwritten, Err(error)) => failed(unwritten, Failure::Io(error)),
@@ -487,7 +453,7 @@ mod tests {
         Problem, Session, Then,
     };
     use crate::{
-        ClaudeEvent, ControlCall, MessageId, Outbound, PermissionDecision,
+        ClaudeEvent, ControlCall, Outbound, PermissionDecision,
         PermissionRequestId, encode,
     };
 
@@ -883,50 +849,6 @@ mod tests {
             (
                 Some(Some(Then::Answer(1))),
                 &[unknown("perm_1", 2), unknown("perm_2", 3)][..],
-            )
-        );
-    }
-
-    #[test]
-    fn a_result_carries_the_last_message_since_the_user_wrote() {
-        let mut session = Session::<u8>::default();
-        let assistant = json!({
-            "type": "assistant",
-            "uuid": "m1",
-            "message": { "role": "assistant", "content": [] },
-        });
-        let result = json!({
-            "type": "result",
-            "subtype": "success",
-            "is_error": false,
-            "session_id": "s1",
-        });
-        let last = |effects: &[Step]| match effects {
-            [
-                Effect::Emit(ClaudeEvent::TurnFinished {
-                    last_message, ..
-                }),
-            ] => Some(last_message.clone()),
-            _ => None,
-        };
-        let seen = walk(
-            &mut session,
-            Vec::from([
-                line(&assistant),
-                line(&result),
-                Input::Wrote {
-                    then: Then::User(1),
-                    outcome: Ok(()),
-                },
-                line(&result),
-            ]),
-        );
-        assert_eq!(
-            (last(&seen[1]), &seen[2], last(&seen[3])),
-            (
-                Some(Some(MessageId(String::from("m1")))),
-                &Vec::from([Effect::Reply(1, Ok(Value::Null))]),
-                Some(None),
             )
         );
     }

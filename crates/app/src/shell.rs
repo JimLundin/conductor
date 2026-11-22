@@ -194,9 +194,6 @@ fn script(focus: &Focus) -> String {
         Focus::NextFrame(id) => format!(
             "requestAnimationFrame(() => document.getElementById('{id}')?.focus())"
         ),
-        Focus::AfterUndo => String::from(
-            "requestAnimationFrame(() => (document.querySelector('.composer textarea:not(:disabled)') || document.querySelector('.undo-status'))?.focus())",
-        ),
         // The composer can mount disabled while the agent starts, and is
         // enabled in place once it takes messages.
         Focus::Composer => String::from(

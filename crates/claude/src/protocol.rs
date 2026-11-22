@@ -19,11 +19,6 @@ use crate::prelude::*;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(pub String);
 
-/// A top-level transcript-entry UUID, accepted by `--resume-session-at`.
-/// This is not the API's `message.id` (`msg_…`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MessageId(pub String);
-
 /// The CLI's `request_id` for a `can_use_tool` request.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PermissionRequestId(pub String);
@@ -137,7 +132,6 @@ pub enum ClaudeEvent {
     Message {
         role: Role,
         content: Vec<Block>,
-        uuid: Option<MessageId>,
     },
     /// A piece of assistant text as it streams (`--include-partial-messages`).
     /// The whole text follows in a `Message`.
@@ -184,9 +178,6 @@ pub enum ClaudeEvent {
         /// Why the CLI could not run the turn, as `No conversation found
         /// with session ID: …` for a `--resume` with no transcript.
         errors: Vec<String>,
-        /// Last top-level user or assistant entry of this turn, including
-        /// an interrupted marker. None means no safe retained prefix is known.
-        last_message: Option<MessageId>,
     },
     /// The `Agent` call `tool_use_id` started the sub-agent `agent`
     /// (`system/task_started` of a `local_agent`).
@@ -320,7 +311,6 @@ const LOCAL_AGENT: &str = "local_agent";
 #[derive(Deserialize)]
 struct Entry {
     message: Message,
-    uuid: Option<String>,
     parent_tool_use_id: Option<String>,
     agent_id: Option<String>,
 }
@@ -621,7 +611,6 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
             terminal_reason,
             session_id: SessionId(session_id),
             errors: errors.unwrap_or_default(),
-            last_message: None,
         }),
         Frame::ControlRequest {
             request_id,
@@ -790,7 +779,7 @@ fn system_event(system: System, raw: Value) -> ClaudeEvent {
 /// A sub-agent's entry that names no sub-agent is `Unknown`.
 fn entry_event(role: Role, entry: Entry) -> Inbound {
     match (entry.parent_tool_use_id, entry.agent_id) {
-        (None, _) => message_event(role, entry.message, entry.uuid),
+        (None, _) => message_event(role, entry.message),
         (Some(_), Some(agent)) => {
             Inbound::Event(ClaudeEvent::SubagentMessage {
                 agent,
@@ -808,14 +797,9 @@ fn entry_event(role: Role, entry: Entry) -> Inbound {
     }
 }
 
-fn message_event(
-    role: Role,
-    message: Message,
-    uuid: Option<String>,
-) -> Inbound {
+fn message_event(role: Role, message: Message) -> Inbound {
     Inbound::Event(ClaudeEvent::Message {
         role,
-        uuid: uuid.map(MessageId),
         content: message.content.into_iter().map(block).collect(),
     })
 }
@@ -1183,7 +1167,7 @@ mod tests {
     };
 
     use super::{
-        Block, ClaudeEvent, ControlCall, Inbound, MessageId, Open, Outbound,
+        Block, ClaudeEvent, ControlCall, Inbound, Open, Outbound,
         PermissionDecision, PermissionMode, PermissionRequestId, Role, encode,
         parse_line,
     };
@@ -1234,58 +1218,6 @@ mod tests {
     const BASH: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"touch t1.txt","description":"Create empty file t1.txt"},"description":"Create empty file t1.txt","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch t1.txt"}],"behavior":"allow","destination":"localSettings"},{"type":"addDirectories","directories":["/tmp/s1-scratch"],"destination":"session"},{"type":"setMode","mode":"acceptEdits","destination":"session"}],"blocked_path":"/tmp/s1-scratch/t1.txt","tool_use_id":"toolu_1"}}"#;
 
     const WRITE: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/a.txt","content":"hi"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_2"}}"#;
-
-    #[test]
-    fn message_boundaries_read_transcript_uuid_not_api_message_id()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let cases = Vec::from([
-            (
-                r#"{"type":"assistant","uuid":"assistant-entry","message":{"id":"msg_api","content":[]}}"#,
-                Some(MessageId(String::from("assistant-entry"))),
-            ),
-            (
-                r#"{"type":"user","uuid":"user-entry","message":{"content":[]}}"#,
-                Some(MessageId(String::from("user-entry"))),
-            ),
-            (
-                r#"{"type":"assistant","message":{"id":"msg_api","content":[]}}"#,
-                None,
-            ),
-            (
-                r#"{"type":"assistant","uuid":"nested-entry","parent_tool_use_id":"toolu_agent","message":{"content":[]}}"#,
-                None,
-            ),
-        ]);
-        assert_eq!(
-            cases
-                .into_iter()
-                .map(|(line, expected)| {
-                    let actual = match parse_line(line)? {
-                        Inbound::Event(ClaudeEvent::Message {
-                            uuid, ..
-                        }) => uuid,
-                        Inbound::Event(
-                            ClaudeEvent::Unknown(_)
-                            | ClaudeEvent::UnidentifiedSubagentMessage { .. },
-                        ) => None,
-                        frame => {
-                            assert_eq!(
-                                format!("{frame:?}"),
-                                "expected message boundary"
-                            );
-                            None
-                        }
-                    };
-                    Ok::<_, Box<dyn std::error::Error>>((actual, expected))
-                })
-                .collect::<Result<Vec<_>, _>>()?
-                .into_iter()
-                .all(|(actual, expected)| actual == expected)
-                .then_some(()),
-            Some(())
-        );
-        Ok(())
-    }
 
     #[test]
     fn task_and_nested_frames_read_as_sub_agents() -> TestResult<()> {

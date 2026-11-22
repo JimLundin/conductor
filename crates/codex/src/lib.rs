@@ -25,8 +25,8 @@ pub use credentials::{
 };
 pub use driver::{CallRequest, Effect, Failure, Input, Problem, Server, Then};
 pub use launch::{
-    Edit, History, KEY_VAR, Paging, app_server, cli, config_edits, login,
-    login_status, profile, version,
+    Edit, KEY_VAR, app_server, cli, config_edits, login, login_status, profile,
+    version,
 };
 pub use mapping::{codex_answer, codex_steps};
 pub use protocol::{
@@ -34,7 +34,7 @@ pub use protocol::{
     ChildActivity, ChildEvent, ChildState, ChildStatus, CodexEvent, Decision,
     INITIALIZE, Inbound, Outbound, PermissionAsk, RequestId, ResponseError,
     Sandbox, SpawnCall, ThreadEvent, ThreadId, ThreadOptions, ThreadSettings,
-    TurnId, answer, encode, history_page, models, parse_line, thread_started,
-    turn_id, user_agent,
+    TurnId, answer, encode, models, parse_line, thread_started, turn_id,
+    user_agent,
 };
 pub use sign_in::sign_in;

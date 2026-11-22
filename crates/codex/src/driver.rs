@@ -646,7 +646,7 @@ mod tests {
                 wrote(sent(1, "initialize", 1)),
                 wrote(sent(2, "model/list", 2)),
                 wrote(sent(3, "model/list", 3)),
-                wrote(sent(4, "thread/revert", 4)),
+                wrote(sent(4, "turn/interrupt", 4)),
                 line(&json!({"id": 1})),
                 line(
                     &json!({"id": 2, "error": {"code": "wrong", "message": "bad"}}),
@@ -663,7 +663,7 @@ mod tests {
                 "model/list",
                 "malformed JSON-RPC error response",
             ),
-            (&seen[7], 4, "thread/revert", "malformed JSON-RPC response"),
+            (&seen[7], 4, "turn/interrupt", "malformed JSON-RPC response"),
         ] {
             assert_eq!(
                 effects.as_slice(),

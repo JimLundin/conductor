@@ -1074,58 +1074,6 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
     Ok(())
 }
 
-async fn drive_boundary(
-    events: &mut mpsc::Receiver<ClaudeEvent>,
-) -> TestResult<Option<claude::MessageId>> {
-    loop {
-        if let ClaudeEvent::TurnFinished { last_message, .. } =
-            tokio::time::timeout(Duration::from_secs(20), events.recv())
-                .await?
-                .ok_or("event stream ended early")?
-        {
-            break Ok(last_message);
-        }
-    }
-}
-
-#[tokio::test]
-async fn turn_boundaries_reset_ignore_subagents_and_include_interrupted_users()
--> TestResult<()> {
-    let dir = test_dir("native-boundaries")?;
-    let recording = Vec::from([
-        INITIALIZED,
-        r#"{"fake":"await","match":{"type":"user"}}"#,
-        r#"{"type":"assistant","uuid":"retained","message":{"id":"msg_wrong","content":[{"type":"text","text":"retained"}]}}"#,
-        r#"{"type":"assistant","uuid":"nested","parent_tool_use_id":"toolu_agent","message":{"content":[{"type":"text","text":"nested"}]}}"#,
-        r#"{"type":"result","subtype":"success","session_id":"native"}"#,
-        r#"{"fake":"await","match":{"type":"user"}}"#,
-        r#"{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"native"}"#,
-        r#"{"fake":"await","match":{"type":"user"}}"#,
-        r#"{"type":"user","uuid":"prompt","message":{"content":[{"type":"text","text":"request"}]}}"#,
-        r#"{"type":"user","uuid":"interrupted","message":{"content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#,
-        r#"{"type":"result","subtype":"error_during_execution","is_error":true,"terminal_reason":"aborted_streaming","session_id":"native"}"#,
-    ]).join("\n");
-    std::fs::write(dir.join("stdout.jsonl"), recording)?;
-    let (session, mut events) = ClaudeSession::spawn(options(&dir)).await?;
-    session.send_user(String::from("first")).await?;
-    let first = drive_boundary(&mut events).await?;
-    session.send_user(String::from("second")).await?;
-    let second = drive_boundary(&mut events).await?;
-    session.send_user(String::from("third")).await?;
-    let third = drive_boundary(&mut events).await?;
-    assert_eq!(
-        Vec::from([first, second, third]),
-        Vec::from([
-            Some(claude::MessageId(String::from("retained"))),
-            None,
-            Some(claude::MessageId(String::from("interrupted")))
-        ])
-    );
-    let _ = session.shutdown().await?;
-    std::fs::remove_dir_all(dir)?;
-    Ok(())
-}
-
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()

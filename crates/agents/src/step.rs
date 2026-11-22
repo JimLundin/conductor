@@ -52,7 +52,6 @@ pub enum Step {
     Withdraw(NativeRequest),
     /// The session goes idle and logs `TurnCompleted`.
     TurnEnded(TurnOutcome),
-    HistoryBoundary(Option<String>),
     /// The session runs the turn, and sends an interrupt it held.
     TurnStarted(NativeTurn),
     /// The agent process is gone: the session logs this and waits for a
