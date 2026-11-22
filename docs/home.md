@@ -43,8 +43,8 @@ by the owner, so it is part of the instance's key.
 | Node | `NodeId` (its public key) | name, relay, ticket | home sync state | fleet config |
 | Harness | `HarnessId` (`claude`, `codex`) | name, pinned version | credential forms | the binary (plugin data) |
 | Instance | (node, harness, account) | credential, model, CLI path | | a node's store |
-| Project | ULID | name (unique), title, root commit (unique), remote, profiles | | home `projects/<id>/project.toml` |
-| Issue | ULID | project, title, body, status, priority, labels, branch | notes, checklist | home `projects/<project>/issues/<id>.md` |
+| Project | 6 random base 32 digits | name (unique), title, root commit (unique), remote, profiles | | home `projects/<id>/project.toml` |
+| Issue | 8 base 32 digits: 6 of time, 2 random | project, title, body, status, priority, labels, branch | notes, checklist | home `projects/<project>/issues/<id>.md` |
 | Session | (issue, instance) | status, model, effort | workspace, transcript | a node's log |
 
 Two relations carry data of their own and are keyed by what they join:
@@ -287,8 +287,11 @@ Each step is usable on its own and keeps the gate green.
 ## 9. Decisions
 
 - **Nothing that can be renamed is a key.** Ids never change; names do.
-- **Issue ids** are global ULIDs, unique across every project and node; the
-  app shows an issue by its title.
+- **Issue ids** are 8 lowercase base 32 digits, global across every
+  project and node: 6 count the seconds since 2026-01-01T00:00:00Z, so ids
+  sort by creation, and 2 are random, drawn again when the home already
+  has the id. A project id is 6 random digits. Any other form is a
+  structural problem. The app shows an issue by its title.
 - **The home is `JimLundin/home`.**
 - **Conductor is the tracker.** It is the only place issues are written. A
   one-way mirror to GitHub issues may come later, but nothing is read back

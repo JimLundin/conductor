@@ -508,7 +508,7 @@ pub fn list(
         .map(|((id, _), (_, picked))| {
             Intent::NewIssue(NewIssueIntent::Create(
                 id,
-                project.id.clone(),
+                project.id,
                 String::from(picked),
             ))
         });
@@ -526,7 +526,7 @@ pub fn list(
             .and_then(|(id, known)| Some((id, flow_of(known)?)))
             .map_or_else(Vec::new, |(id, flow)| groups(id, flow, project)),
         new_title,
-        project: project.id.clone(),
+        project: project.id,
         create,
     }
 }
@@ -605,9 +605,9 @@ fn detail(flow: &Flow, issue: &Issue) -> String {
         .join(" · ")
 }
 
-/// An issue's id in hex, which keys it in the page.
+/// An issue's id, which keys it in the page.
 fn key_of(id: IssueId) -> String {
-    format!("{:032x}", id.0)
+    id.to_string()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

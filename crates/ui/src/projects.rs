@@ -2,6 +2,7 @@
 //! project the homes list, with its checkouts on each host that lists it.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use crate::prelude::*;
 use proto::{
@@ -105,21 +106,21 @@ pub fn screen(
             .as_ref()
             .map_or(&[][..], |home| &home.projects)
         {
-            rows.entry(project.id.clone())
+            rows.entry(project.id)
                 .or_default()
                 .push(row(*id, host, project));
             let better = read.get(&project.id).is_none_or(|(_, first, _)| {
                 host.fold.live() && !first.fold.live()
             });
             if better {
-                read.insert(project.id.clone(), (*id, host, project));
+                read.insert(project.id, (*id, host, project));
             }
         }
     }
     let projects = read
         .into_iter()
         .map(|(key, (id, host, project))| ProjectGroup {
-            key: key.0.clone(),
+            key: key.to_string(),
             title: project.title.clone(),
             detail: detail(project),
             hosts: rows.remove(&key).unwrap_or_default(),
@@ -215,10 +216,7 @@ fn row(id: HostId, host: &Host, project: &proto::Project) -> CheckoutRow {
         key: id.key(),
         paths: project.checkouts.iter().map(path).collect(),
         clone: (offered && host.fold.live()).then(|| CloneButton {
-            intent: Intent::Project(
-                id,
-                ProjectIntent::Clone(project.id.clone()),
-            ),
+            intent: Intent::Project(id, ProjectIntent::Clone(project.id)),
             label: format!("Clone {} on {name}", project.title),
         }),
         host: name,

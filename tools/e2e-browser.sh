@@ -374,14 +374,14 @@ two_hosts() {
   expect_commands laptop 1 start_session started
 }
 
-# listed <home> <id> <remote> <source>: the project's project.toml in the
-# home, named and titled as its id, with the source's root commit.
+# listed <home> <id> <name> <remote> <source>: the project's project.toml in
+# the home, named and titled <name>, with the source's root commit.
 listed() {
   local root
-  root=$(git -C "$4" rev-list --max-parents=0 HEAD)
+  root=$(git -C "$5" rev-list --max-parents=0 HEAD)
   mkdir -p "$1/projects/$2"
   printf 'name = "%s"\ntitle = "%s"\nremote = "%s"\nroot = "%s"\nprofiles = ["rust"]\n' \
-    "$2" "$2" "$3" "$root" >"$1/projects/$2/project.toml"
+    "$3" "$3" "$4" "$root" >"$1/projects/$2/project.toml"
 }
 
 projects_scenario() {
@@ -400,8 +400,8 @@ projects_scenario() {
   cp "$recordings/claude-approve.jsonl" "$at/roots/alpha/stdout.jsonl"
   mkdir -p "$at/sources/home"
   git -C "$at/sources/home" init -q
-  listed "$at/sources/home" alpha "file://$at/alpha-remote.git" "$at/sources/alpha"
-  listed "$at/sources/home" beta "file://$at/beta-remote.git" "$at/sources/beta"
+  listed "$at/sources/home" a1pha0 alpha "file://$at/alpha-remote.git" "$at/sources/alpha"
+  listed "$at/sources/home" beta00 beta "file://$at/beta-remote.git" "$at/sources/beta"
   # The tests' own flow, which the issues follow.
   mkdir -p "$at/sources/home/docs/agents"
   cp crates/home/src/flow/test-flow.toml "$at/sources/home/docs/agents/flow.toml"
@@ -422,7 +422,7 @@ projects_scenario() {
   [ -n "$(git -C "$at/roots/alpha" for-each-ref 'refs/heads/issue/')" ] ||
     { echo "FAILED: host projects-host: the checkout has no issue branch"; return 1; }
   echo "ok: host projects-host: the issue's branch is in the checkout"
-  [ -e "$scratch/projects-host/projects/beta/.git" ] || { echo "FAILED: host projects-host: beta was not cloned into the data dir"; return 1; }
+  [ -e "$scratch/projects-host/projects/beta00/.git" ] || { echo "FAILED: host projects-host: beta was not cloned into the data dir"; return 1; }
   echo "ok: host projects-host: beta was cloned into the data dir"
   [ -z "$(git -C "$at/roots/alpha" status --porcelain --untracked-files=no)" ] ||
     { echo "FAILED: host projects-host: the person's checkout changed"; return 1; }

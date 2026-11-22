@@ -5,7 +5,7 @@ use proto::{
 
 use super::{Assigned, Assignment, assigned};
 
-const ISSUE: IssueId = IssueId(3);
+const ISSUE: IssueId = IssueId::new(0, 3);
 
 fn event(session: u128, kind: EventKind) -> Event {
     Event {
@@ -82,7 +82,7 @@ fn a_session_is_on_an_issue_in_its_instance_only() {
         event(1, EventKind::OnIssue { issue: ISSUE }),
     ]);
     assert!(on.is(ISSUE, &own()));
-    assert!(!on.is(IssueId(4), &own()));
+    assert!(!on.is(IssueId::new(0, 4), &own()));
     assert!(!on.is(ISSUE, &InstanceId::named(Provider::Claude, "https://gw")));
 }
 

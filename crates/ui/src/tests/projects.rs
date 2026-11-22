@@ -33,6 +33,21 @@ fn laptop() -> Ticket {
     }
 }
 
+/// The id of the project the tests call `name`, in the same order.
+pub(super) fn pid(name: &str) -> ProjectId {
+    const IDS: [(&str, &str); 5] = [
+        ("alpha", "a1pha0"),
+        ("beta", "beta00"),
+        ("delta", "de1ta0"),
+        ("gamma", "gamma0"),
+        ("local", "n0ca10"),
+    ];
+    IDS.iter()
+        .find(|(known, _)| *known == name)
+        .and_then(|(_, id)| ProjectId::parse(id))
+        .unwrap_or(ProjectId::new(0))
+}
+
 fn project(
     name: &str,
     remote: Option<&str>,
@@ -40,7 +55,7 @@ fn project(
     cloning: Cloning,
 ) -> Project {
     Project {
-        id: ProjectId(text(name)),
+        id: pid(name),
         name: text(name),
         title: format!("Project {name}"),
         remote: remote.map(text),
@@ -178,7 +193,7 @@ fn no_issues(name: &str) -> IssueList {
             selected: true,
         }]),
         fields: ["priority", "labels", "branch", "created"].map(text).into(),
-        project: ProjectId(text(name)),
+        project: pid(name),
         create: None,
     }
 }
@@ -275,10 +290,7 @@ fn the_projects_view_shows_each_hosts_home_and_how_it_syncs() {
 fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
     let clone =
         |host: crate::HostId, name: &str, on: &str| crate::CloneButton {
-            intent: Intent::Project(
-                host,
-                ProjectIntent::Clone(ProjectId(text(name))),
-            ),
+            intent: Intent::Project(host, ProjectIntent::Clone(pid(name))),
             label: format!("Clone Project {name} on {on}"),
         };
     assert_eq!(
@@ -286,7 +298,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
         Some((
             Vec::from([
                 ProjectGroup {
-                    key: text("alpha"),
+                    key: pid("alpha").to_string(),
                     title: text("Project alpha"),
                     detail: text("alpha · rust"),
                     issues: no_issues("alpha"),
@@ -311,7 +323,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     ]),
                 },
                 ProjectGroup {
-                    key: text("beta"),
+                    key: pid("beta").to_string(),
                     title: text("Project beta"),
                     detail: text("beta · rust"),
                     issues: no_issues("beta"),
@@ -327,7 +339,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     }]),
                 },
                 ProjectGroup {
-                    key: text("delta"),
+                    key: pid("delta").to_string(),
                     title: text("Project delta"),
                     detail: text("delta · rust"),
                     issues: no_issues("delta"),
@@ -343,7 +355,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     }]),
                 },
                 ProjectGroup {
-                    key: text("gamma"),
+                    key: pid("gamma").to_string(),
                     title: text("Project gamma"),
                     detail: text("gamma · rust"),
                     issues: no_issues("gamma"),
@@ -356,7 +368,7 @@ fn each_project_lists_its_checkouts_on_each_host_that_lists_it() {
                     )]),
                 },
                 ProjectGroup {
-                    key: text("local"),
+                    key: pid("local").to_string(),
                     title: text("Project local"),
                     detail: text("local · rust"),
                     issues: no_issues("local"),
@@ -510,10 +522,7 @@ fn sync_and_clone_send_their_commands_and_a_refusal_is_the_notice() {
         shown,
         Vec::from([
             Intent::Project(HOST, ProjectIntent::Sync),
-            Intent::Project(
-                HOST,
-                ProjectIntent::Clone(ProjectId(text("beta"))),
-            ),
+            Intent::Project(HOST, ProjectIntent::Clone(pid("beta"))),
         ]),
     );
     assert_eq!(
@@ -521,7 +530,7 @@ fn sync_and_clone_send_their_commands_and_a_refusal_is_the_notice() {
         [
             CommandBody::SyncHome,
             CommandBody::CloneProject {
-                project: ProjectId(text("beta")),
+                project: pid("beta"),
             },
         ]
     );
@@ -578,7 +587,7 @@ fn a_session_starts_in_a_checked_out_project_picked_in_the_form() {
     let (picked, started) = run(
         shown.clone(),
         Vec::from([
-            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            Intent::Form(FormIntent::PickProject(pid("alpha").to_string())),
             Intent::Form(FormIntent::Start),
         ]),
     );
@@ -605,7 +614,7 @@ fn a_session_starts_in_a_checked_out_project_picked_in_the_form() {
         sent(&started),
         [CommandBody::StartSession {
             instance: id("claude"),
-            at: StartAt::Project(ProjectId(text("alpha"))),
+            at: StartAt::Project(pid("alpha")),
             model: None,
             effort: None,
         }]
@@ -613,7 +622,7 @@ fn a_session_starts_in_a_checked_out_project_picked_in_the_form() {
     let (back, directory) = run(
         shown,
         Vec::from([
-            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            Intent::Form(FormIntent::PickProject(pid("alpha").to_string())),
             Intent::Form(FormIntent::PickProject(String::new())),
             Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
             Intent::Form(FormIntent::Start),
@@ -643,7 +652,7 @@ fn a_removed_project_stays_selected_until_the_directory_is_explicitly_chosen() {
             connection(HOST, LinkState::Live, None),
             Intent::Show(Place::NewSession),
             Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
-            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            Intent::Form(FormIntent::PickProject(pid("alpha").to_string())),
         ]),
     );
     assert_eq!(form(&picked).map(|drawn| drawn.start_disabled), Some(false));
@@ -673,8 +682,8 @@ fn a_removed_project_stays_selected_until_the_directory_is_explicitly_chosen() {
                     disabled: false,
                 },
                 crate::Choice {
-                    value: text("alpha"),
-                    label: text("alpha (no longer listed)"),
+                    value: pid("alpha").to_string(),
+                    label: format!("{} (no longer listed)", pid("alpha")),
                     selected: true,
                     disabled: true,
                 },
@@ -716,7 +725,7 @@ fn a_project_stays_selected_across_hosts_and_needs_a_checkout_there() {
         Vec::from([
             Intent::Show(Place::NewSession),
             Intent::Form(FormIntent::TypeDirectory(text("/src/x"))),
-            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            Intent::Form(FormIntent::PickProject(pid("alpha").to_string())),
             Intent::Form(FormIntent::PickHost(OTHER.key())),
             Intent::Form(FormIntent::Start),
         ]),
@@ -733,7 +742,7 @@ fn a_project_stays_selected_across_hosts_and_needs_a_checkout_there() {
         )),
         Some((
             Some(crate::Choice {
-                value: text("alpha"),
+                value: pid("alpha").to_string(),
                 label: text("Project alpha (not checked out)"),
                 selected: true,
                 disabled: true,
@@ -763,8 +772,8 @@ fn a_project_stays_selected_across_hosts_and_needs_a_checkout_there() {
         )),
         Some((
             Some(crate::Choice {
-                value: text("alpha"),
-                label: text("alpha (no longer listed)"),
+                value: pid("alpha").to_string(),
+                label: format!("{} (no longer listed)", pid("alpha")),
                 selected: true,
                 disabled: true,
             }),
@@ -781,7 +790,7 @@ fn a_project_stays_selected_across_hosts_and_needs_a_checkout_there() {
     assert!(effects.iter().any(|effect| matches!(
         effect,
         Effect::Send { host, body: CommandBody::StartSession { at: StartAt::Project(id), .. }, .. }
-        if *host == HOST && id.0 == "alpha"
+        if *host == HOST && *id == pid("alpha")
     )));
 }
 
@@ -852,13 +861,13 @@ fn a_time_is_a_utc_date_and_minute() {
     );
 }
 
-const OPENED: IssueId = IssueId(1);
-const CLOSED: IssueId = IssueId(2);
+const OPENED: IssueId = IssueId::new(0, 1);
+const CLOSED: IssueId = IssueId::new(0, 2);
 
 fn issue(id: IssueId, title: &str, status: &str) -> Issue {
     Issue {
         id,
-        project: ProjectId(text("alpha")),
+        project: pid("alpha"),
         title: text(title),
         kind: text("task"),
         status: text(status),
@@ -931,12 +940,12 @@ fn reply_of(effects: &[Effect]) -> Option<crate::Reply> {
 #[test]
 fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
 -> Result<(), &'static str> {
-    let alpha = || ProjectId(text("alpha"));
+    let alpha = || pid("alpha");
     let listed = projects(&with_issues())
         .and_then(|screen| screen.projects.into_iter().next())
         .map(|group| group.issues);
     let row = |id: IssueId, title: &str| IssueRow {
-        key: format!("{:032x}", id.0),
+        key: id.to_string(),
         title: text(title),
         detail: text("high · app · 1/2 done"),
         open: Intent::Show(Place::Issue(HOST, id)),
@@ -1511,7 +1520,7 @@ fn a_project_shared_by_live_hosts_opens_its_issues_on_the_first() {
     let (typed, _) = run(
         two_homes(),
         Vec::from([Intent::NewIssue(NewIssueIntent::TypeTitle(
-            ProjectId(text("alpha")),
+            pid("alpha"),
             text("Remove"),
         ))]),
     );
@@ -1521,7 +1530,7 @@ fn a_project_shared_by_live_hosts_opens_its_issues_on_the_first() {
             .and_then(|group| group.issues.create),
         Some(Intent::NewIssue(NewIssueIntent::Create(
             HOST,
-            ProjectId(text("alpha")),
+            pid("alpha"),
             text("task"),
         )))
     );
@@ -1530,7 +1539,7 @@ fn a_project_shared_by_live_hosts_opens_its_issues_on_the_first() {
 #[test]
 fn a_refused_issue_is_the_notice_and_keeps_its_title()
 -> Result<(), &'static str> {
-    let alpha = || ProjectId(text("alpha"));
+    let alpha = || pid("alpha");
     let (typed, effects) = run(
         with_issues(),
         Vec::from([
@@ -1567,7 +1576,7 @@ fn a_refused_issue_is_the_notice_and_keeps_its_title()
 #[test]
 fn a_late_created_reply_cannot_open_an_issue_or_clear_a_new_title()
 -> Result<(), &'static str> {
-    let alpha = || ProjectId(text("alpha"));
+    let alpha = || pid("alpha");
     let (typed, effects) = run(
         with_issues(),
         Vec::from([
@@ -1798,7 +1807,7 @@ fn a_new_kind_and_field_bring_their_own_label_and_pickers()
 
 #[test]
 fn a_new_kind_is_offered_when_opening_an_issue_with_its_own_fields() {
-    let alpha = || ProjectId(text("alpha"));
+    let alpha = || pid("alpha");
     let mut grown = flow();
     grown.kinds.insert(
         0,

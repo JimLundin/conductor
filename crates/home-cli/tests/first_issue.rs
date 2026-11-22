@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
-const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
+const FOLDER: &str = "7w85je";
 
 struct Scratch(PathBuf);
 
@@ -37,6 +37,11 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
     assert!(ran.status.success(), "{said}");
     let written: Vec<_> = fs::read_dir(project.join("issues"))?.collect();
     assert_eq!(written.len(), 1, "{said}");
-    assert!(said.starts_with("wrote home/"), "{said}");
+    let id = said
+        .trim_end()
+        .strip_prefix("wrote home/")
+        .unwrap_or_default();
+    assert_eq!(id.len(), 8, "{said}");
+    assert!(project.join("issues").join(format!("{id}.md")).is_file());
     Ok(())
 }

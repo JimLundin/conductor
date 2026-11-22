@@ -82,7 +82,7 @@ fn each_pick_marks_its_choice_and_an_earlier_pick_goes_back_to_default() {
         Vec::from([
             FormIntent::PickModel(text("opus")),
             FormIntent::PickEffort(text("high")),
-            FormIntent::PickProject(text("alpha")),
+            FormIntent::PickProject(super::projects::pid("alpha").to_string()),
         ])
     };
     let then = |pick: FormIntent| {
@@ -145,8 +145,10 @@ fn a_model_keeps_only_an_effort_it_offers() {
 #[test]
 fn a_project_needs_a_checkout_before_it_can_start() {
     let place = |project: &str| {
-        picked(Vec::from([FormIntent::PickProject(text(project))]))
-            .map(|shown| (shown.directory_shown, shown.start_disabled))
+        picked(Vec::from([FormIntent::PickProject(
+            super::projects::pid(project).to_string(),
+        )]))
+        .map(|shown| (shown.directory_shown, shown.start_disabled))
     };
     assert_eq!(
         [place("alpha"), place("beta"), place("zeta")],
@@ -475,7 +477,9 @@ fn refusals_remain_visible_alongside_current_start_blocks() {
     let (project, _) = run(
         pending.clone(),
         Vec::from([
-            Intent::Form(FormIntent::PickProject(text("alpha"))),
+            Intent::Form(FormIntent::PickProject(
+                super::projects::pid("alpha").to_string(),
+            )),
             super::answer(
                 &sent,
                 Ok(proto::CommandResult::Rejected(

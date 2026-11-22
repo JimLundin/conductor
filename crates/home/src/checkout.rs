@@ -5,6 +5,7 @@
 //! project's checkouts have no `origin`.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use proto::{Checkout, HostPath, Origin, ProjectId};
 
@@ -52,7 +53,7 @@ pub fn candidates(
 /// Where the host clones `project`: `<clones>/<project>`.
 #[must_use]
 pub fn clone_path(clones: &str, project: &ProjectId) -> String {
-    join(clones, &project.0)
+    join(clones, &project.to_string())
 }
 
 fn join(directory: &str, name: &str) -> String {
@@ -120,7 +121,7 @@ pub fn matched(
                     }
                     found
                 });
-            (project.id.clone(), found)
+            (project.id, found)
         })
         .filter(|(_, found)| !found.is_empty())
         .collect()

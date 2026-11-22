@@ -7,6 +7,7 @@
 //! A shell lists the folders and reads the files these name, and [`inputs`]
 //! makes the home's [`Inputs`] of what it read.
 
+use alloc::string::ToString;
 use proto::ProjectId;
 
 use crate::flow::graph::File;
@@ -34,7 +35,7 @@ pub fn project_file(folder: &str) -> String {
 /// Where a project keeps its issues, from the home's root.
 #[must_use]
 pub fn issues(of: &ProjectId) -> String {
-    format!("{}/issues", project(&of.0))
+    format!("{}/issues", project(&of.to_string()))
 }
 
 /// An issue's file, by its name without `.md`, from the home's root.
@@ -71,7 +72,7 @@ pub fn issue_files(
         .iter()
         .filter_map(|name| issue_stem(name))
         .map(|stem| IssueLocation {
-            project: of.clone(),
+            project: *of,
             stem: String::from(stem),
             path: issue_file(of, stem),
         })

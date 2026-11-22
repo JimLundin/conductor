@@ -5,6 +5,7 @@
 //! and those it provides. Its
 //! default branch is Git's, not the home's.
 
+use alloc::string::ToString;
 use proto::ProjectId;
 use serde::Deserialize;
 
@@ -65,7 +66,7 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
             (projects, problems)
         },
     );
-    projects.sort_by(|one, other| one.id.cmp(&other.id));
+    projects.sort_by_key(|project| project.id);
     let (unique, shared): (Vec<Project>, Vec<Project>) =
         projects.iter().cloned().partition(|project| {
             projects
@@ -77,7 +78,7 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
     problems.extend(shared.iter().map(|project| {
         format!(
             "{}: another project is also called {:?}",
-            layout::project(&project.id.0),
+            layout::project(&project.id.to_string()),
             project.name
         )
     }));
@@ -107,19 +108,13 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
     })
 }
 
-/// A project's id is its folder's name: lower-case letters, digits and
-/// dashes, so it is safe as a path and in a branch name.
+/// A project's id is its folder's name.
 fn slug(folder: &str) -> Result<ProjectId, String> {
-    let fits = folder
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-    (fits && !folder.is_empty() && !folder.starts_with('-'))
-        .then(|| ProjectId(folder.to_owned()))
-        .ok_or_else(|| {
-            String::from(
-                "the folder's name is not lower-case letters, digits and dashes",
-            )
-        })
+    ProjectId::parse(folder).ok_or_else(|| {
+        String::from(
+            "the folder's name is not a project id of 6 base 32 digits",
+        )
+    })
 }
 
 /// A commit id: 40 or 64 hex digits, in lower case as Git prints it.

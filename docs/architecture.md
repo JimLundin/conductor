@@ -624,8 +624,8 @@ standards and issues, cloned on every host. Built so far are home steps
 3, 4 and 6: the clone, its sync, each project's checkouts, and issues.
 
 - **The home's files.** `projects/<id>/project.toml` lists each project
-  under a folder named by its id, a lowercase ULID, which is the
-  `ProjectId`. It gives its `name`, unique in the home and what a person
+  under a folder named by its id, 6 random lowercase base 32 digits, which
+  is the `ProjectId`. It gives its `name`, unique in the home and what a person
   types to name it, its `title`, which the app shows, its `remote` (absent
   when local only), its `root` (the first commit of its first-parent
   history) and its `profiles`; other keys are ignored, `branch` among
@@ -676,8 +676,9 @@ standards and issues, cloned on every host. Built so far are home steps
   `WorkspaceCreated` records, is the checkout, and the app finds the
   project from it (home §2.2).
 - **Issues** (home step 6). `projects/<project>/issues/<id>.md`, one file
-  per issue in the format of home §3, its name the issue's lowercase ULID
-  (`IssueId`); `home::issue` reads it and lists a project's issues in
+  per issue in the format of home §3, its name the issue's id (`IssueId`):
+  8 lowercase base 32 digits, the seconds since 2026-01-01T00:00:00Z and 2
+  random, so they list in creation order; `home::issue` reads it and lists a project's issues in
   `Project.issues`. The app and the `home` command line share one edit
   vocabulary, defined in `proto`: `CreateIssue(NewIssue)` is
   `home issue new` (project, kind, title, `<field>=<value>` fields), with

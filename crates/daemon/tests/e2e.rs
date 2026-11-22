@@ -6028,14 +6028,27 @@ fn rooted(dir: &Path) -> Fallible<String> {
 const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
 
 /// A project's `project.toml` in the home at `home`.
-fn listed_project(home: &Path, id: &str, fields: (&str, &str)) -> Fallible {
+/// Alpha's issues, from the home's root.
+const ALPHA_ISSUES: &str = "projects/a1pha0/issues";
+
+/// The id of the project the tests call `name`; gamma is listed nowhere.
+fn project_id(name: &str) -> ProjectId {
+    let id = match name {
+        "alpha" => "a1pha0",
+        "beta" => "beta00",
+        _ => "gamma0",
+    };
+    ProjectId::parse(id).unwrap_or(ProjectId::new(0))
+}
+
+fn listed_project(home: &Path, name: &str, fields: (&str, &str)) -> Fallible {
     let (remote, root) = fields;
-    let folder = home.join("projects").join(id);
+    let folder = home.join("projects").join(project_id(name).to_string());
     std::fs::create_dir_all(&folder)?;
     std::fs::write(
         folder.join("project.toml"),
         format!(
-            "name = \"{id}\"\ntitle = \"{id}\"\nremote = \"{remote}\"\n\
+            "name = \"{name}\"\ntitle = \"{name}\"\nremote = \"{remote}\"\n\
              root = \"{root}\"\nprofiles = [\"rust\"]\n"
         ),
     )?;
@@ -6056,10 +6069,10 @@ async fn home_until(
     }
 }
 
-fn checkouts_of(home: &proto::Home, id: &str) -> Vec<proto::Checkout> {
+fn checkouts_of(home: &proto::Home, name: &str) -> Vec<proto::Checkout> {
     home.projects
         .iter()
-        .find(|project| project.id.0 == id)
+        .find(|project| project.id == project_id(name))
         .map_or_else(Vec::new, |project| project.checkouts.clone())
 }
 
@@ -6156,7 +6169,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>",
 
 fn clone_project(id: &str) -> CommandBody {
     CommandBody::CloneProject {
-        project: ProjectId(String::from(id)),
+        project: project_id(id),
     }
 }
 
@@ -6174,7 +6187,7 @@ async fn clones_beta(
     assert_eq!(
         checkouts_of(&cloned, "beta"),
         [found(
-            &data.join("projects").join("beta"),
+            &data.join("projects").join(project_id("beta").to_string()),
             proto::Origin::Cloned
         )?]
     );
@@ -6194,7 +6207,7 @@ async fn starts_in_alpha(
 ) -> Fallible {
     let in_project = |id: &str| CommandBody::StartSession {
         instance: instance(Provider::Claude),
-        at: StartAt::Project(ProjectId(String::from(id))),
+        at: StartAt::Project(project_id(id)),
         model: None,
         effort: None,
     };
@@ -6255,7 +6268,10 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
         (
             synced.remote.as_str(),
             synced.synced.is_some(),
-            data.join("home-repo/projects/alpha/project.toml").exists(),
+            data.join("home-repo/projects")
+                .join(project_id("alpha").to_string())
+                .join("project.toml")
+                .exists(),
         ),
         (land.home_url.as_str(), true, true)
     );
@@ -6293,17 +6309,17 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
 fn alpha_issues(home: &proto::Home) -> Vec<proto::Issue> {
     home.projects
         .iter()
-        .find(|project| project.id.0 == "alpha")
+        .find(|project| project.id == project_id("alpha"))
         .map_or_else(Vec::new, |project| project.issues.clone())
 }
 
 fn issue_name(issue: proto::IssueId) -> String {
-    ulid::Ulid::from(issue.0).to_string().to_lowercase()
+    issue.to_string()
 }
 
 /// The issue's file as the home's remote has it.
 fn pushed_issue(land: &Homeland, issue: proto::IssueId) -> Fallible<String> {
-    let path = format!("HEAD:projects/alpha/issues/{}.md", issue_name(issue));
+    let path = format!("HEAD:{ALPHA_ISSUES}/{}.md", issue_name(issue));
     git(&land.home_bare, &["show", &path])
 }
 
@@ -6329,7 +6345,7 @@ fn noted_by_hand(land: &Homeland, issue: proto::IssueId) -> Fallible {
         ],
     )?;
     let file = person
-        .join("projects/alpha/issues")
+        .join(ALPHA_ISSUES)
         .join(format!("{}.md", issue_name(issue)));
     let text = std::fs::read_to_string(&file)?;
     std::fs::write(&file, format!("{text}\n## Notes\n- by hand\n"))?;
@@ -6344,7 +6360,7 @@ fn create_issue(title: &str) -> CommandBody {
 
 fn create_issue_in(project: &str, title: &str) -> CommandBody {
     CommandBody::CreateIssue(proto::NewIssue {
-        project: proto::ProjectId(String::from(project)),
+        project: project_id(project),
         kind: String::from("task"),
         title: String::from(title),
         fields: Vec::from([(
@@ -6560,7 +6576,7 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
     let saved = std::fs::read(&state)?;
     land.go_online()?;
 
-    let obstruction = writer.join("projects/alpha/issues");
+    let obstruction = writer.join(ALPHA_ISSUES);
     std::fs::write(
         &obstruction,
         "The issue directory is blocked by this file.",
@@ -6569,8 +6585,11 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
     accepted(&link, CommandBody::SyncHome).await?;
     let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
     assert_ne!(std::fs::read(&state)?, saved);
-    let other_file =
-        format!("HEAD:projects/beta/issues/{}.md", issue_name(other));
+    let other_file = format!(
+        "HEAD:projects/{}/issues/{}.md",
+        project_id("beta"),
+        issue_name(other)
+    );
     assert!(
         git(&land.home_bare, &["show", &other_file])?
             .contains(": independent note")
@@ -6612,7 +6631,7 @@ async fn a_pending_note_preserves_the_tail_of_a_large_upstream_issue()
     land.go_online()?;
 
     let file = writer
-        .join("projects/alpha/issues")
+        .join(ALPHA_ISSUES)
         .join(format!("{}.md", issue_name(issue)));
     let upstream = ": large upstream note\n  ".to_owned()
         + &"x".repeat(80_000)
@@ -6643,7 +6662,7 @@ async fn a_pending_note_waits_for_a_readable_issue() -> Fallible {
     let issue = opens_an_issue(&link, &mut updates, &land).await?;
     let writer = home_writer(&land)?;
     let file = writer
-        .join("projects/alpha/issues")
+        .join(ALPHA_ISSUES)
         .join(format!("{}.md", issue_name(issue)));
     let original = std::fs::read(&file)?;
     land.go_offline()?;
@@ -6700,7 +6719,7 @@ async fn a_stale_queue_does_not_recreate_an_issue_deleted_upstream() -> Fallible
     let writer = home_writer(&land)?;
     std::fs::remove_file(
         writer
-            .join("projects/alpha/issues")
+            .join(ALPHA_ISSUES)
             .join(format!("{}.md", issue_name(issue))),
     )?;
     push_home_edit(&writer)?;
@@ -6740,7 +6759,7 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
             "checkout",
             "HEAD",
             "--",
-            &format!("projects/alpha/issues/{}.md", issue_name(issue)),
+            &format!("{ALPHA_ISSUES}/{}.md", issue_name(issue)),
         ],
     )?;
 
@@ -6939,10 +6958,7 @@ async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
         Some(issue)
     );
     let checkout = data.join("home-repo");
-    assert_eq!(
-        git(&checkout, &["ls-files", "--", "projects/alpha/issues"])?,
-        ""
-    );
+    assert_eq!(git(&checkout, &["ls-files", "--", ALPHA_ISSUES])?, "");
     link.stop().await?;
     fx.shutdown().await?;
     std::fs::remove_file(&lock)?;
@@ -7001,7 +7017,7 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
         write.commit()?;
     }
     let writer = home_writer(&land)?;
-    let relative = format!("projects/alpha/issues/{}.md", issue_name(issue));
+    let relative = format!("{ALPHA_ISSUES}/{}.md", issue_name(issue));
     std::fs::write(writer.join(relative), "Unparseable issue document")?;
     push_home_edit(&writer)?;
 
@@ -7159,7 +7175,10 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
     assert_eq!(
         send(
             &link,
-            change(proto::IssueId(7), IssueChange::Note(String::from("x")))
+            change(
+                proto::IssueId::new(0, 7),
+                IssueChange::Note(String::from("x"))
+            )
         )
         .await?,
         CommandResult::Rejected(Rejection::UnknownIssue)

@@ -9,15 +9,15 @@ use super::{
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
-use crate::flow::graph::{File, id_of, one};
+use crate::flow::graph::{File, one};
 use crate::flow::load;
 use crate::flow::snapshot::{Inputs, Snapshot};
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
-const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
-const SPEC: &str = "01m7ztr3ha005c92e0ykb9q429";
-const TASK: &str = "01m7zxfbp2qygtekcr6b6ndg28";
+const FOLDER: &str = "7w85je";
+const SPEC: &str = "0tm7zt01";
+const TASK: &str = "0tm7zx0d";
 /// 2026-11-22T12:00:00Z.
 const NOW: u64 = 1_795_348_800_000;
 
@@ -27,7 +27,7 @@ fn words(text: &str) -> Vec<String> {
 
 fn issue(id: &str, front: &str, body: &str) -> File {
     File {
-        project: ProjectId(String::from(FOLDER)),
+        project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
         stem: String::from(id),
         text: format!("+++\nid = \"{id}\"\n{front}+++\n\n{body}"),
     }
@@ -62,19 +62,20 @@ fn home() -> Inputs {
 }
 
 fn id(stem: &str) -> IssueId {
-    id_of(stem).unwrap_or(IssueId(0))
+    IssueId::parse(stem).unwrap_or(IssueId::new(0, 0))
 }
 
 /// What the command line `line` asks of the home `inputs` holds.
 fn asked(inputs: &Inputs, line: &str) -> Command {
-    command(&words(line), &Snapshot::of(inputs.clone()), fresh(NOW, 7))
+    let home = Snapshot::of(inputs.clone());
+    command(&words(line), &home, fresh(&home, NOW, &[7]))
 }
 
 /// What saying `line` to the home `inputs` holds writes and says.
 fn ran(inputs: &Inputs, line: &str) -> Outcome {
     let home = Snapshot::of(inputs.clone());
     run(
-        command(&words(line), &home, fresh(NOW, 7)),
+        command(&words(line), &home, fresh(&home, NOW, &[7])),
         None,
         &home,
         &context(),
@@ -104,7 +105,7 @@ fn after(inputs: &Inputs, outcome: &Outcome) -> Inputs {
         .cloned()
         .collect();
     issues.extend(outcome.writes.iter().map(|write| File {
-        project: write.project.clone(),
+        project: write.project,
         stem: write.stem.clone(),
         text: write.text.clone(),
     }));
@@ -126,9 +127,9 @@ fn a_new_issue_takes_the_fresh_id() {
     assert_eq!(
         asked(&home(), &format!("issue new home task Do-it parent={SPEC}")),
         Command::Edit(Edit::New {
-            id: fresh(NOW, 7),
+            id: id("0tt82007"),
             issue: NewIssue {
-                project: ProjectId(String::from(FOLDER)),
+                project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
                 kind: String::from("task"),
                 title: String::from("Do-it"),
                 fields: Vec::from([(
@@ -138,6 +139,34 @@ fn a_new_issue_takes_the_fresh_id() {
             },
         })
     );
+}
+
+#[test]
+fn a_new_issue_s_id_sorts_after_every_issue_made_before_it() {
+    let home = Snapshot::of(home());
+    let fresh = fresh(&home, NOW, &[7]);
+    assert!(fresh.is_some());
+    assert!(
+        home.graph()
+            .issues
+            .iter()
+            .all(|issue| Some(issue.id) < fresh)
+    );
+    assert!(fresh < super::fresh(&home, NOW + 1000, &[0]));
+}
+
+#[test]
+fn a_new_issue_draws_again_for_an_id_the_home_has() {
+    let mut held = home();
+    held.issues
+        .push(issue("0tt82007", "title = \"Taken\"\n", ""));
+    let home = Snapshot::of(held);
+    assert_eq!(fresh(&home, NOW, &[7, 7, 9]), Some(id("0tt82009")));
+    assert_eq!(fresh(&home, NOW, &[7]), None);
+    assert!(matches!(
+        command(&words("issue new home task T"), &home, None),
+        Command::Wrong(reason) if reason.starts_with("no issue id is free")
+    ));
 }
 
 #[test]
@@ -358,7 +387,7 @@ fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
         .writes
         .first()
         .map_or_else(String::new, |write| write.stem.clone());
-    assert_eq!(id.len(), 26);
+    assert_eq!(id, "0tt82007");
     assert_eq!(
         text(&outcome),
         format!(
@@ -378,13 +407,9 @@ fn a_structural_problem_refuses_the_write() {
         let outcome = ran(&home(), said);
         (outcome.failed && outcome.writes.is_empty(), outcome.output)
     };
-    let (dangling, output) =
-        refused("issue new home task T parent=01m7zxfbnrxa7106qn4dx9f0jx");
+    let (dangling, output) = refused("issue new home task T parent=0tm7zx0a");
     assert!(dangling);
-    assert!(
-        output.contains("parent: 01m7zxfbnrxa7106qn4dx9f0jx is no issue"),
-        "{output}"
-    );
+    assert!(output.contains("parent: 0tm7zx0a is no issue"), "{output}");
     let (undeclared, said) = refused("issue new home task T severity=high");
     assert!(undeclared);
     assert!(
@@ -547,7 +572,7 @@ fn graph_reads(stem: &str, text: &str) -> Result<Issue, String> {
     one(
         &flow,
         &File {
-            project: ProjectId(String::from(FOLDER)),
+            project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
             stem: String::from(stem),
             text: String::from(text),
         },

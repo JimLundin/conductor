@@ -7,6 +7,10 @@ const SIGNED_NOTE =
 	/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ conductor·iPhone note: from the phone$/u;
 const ISSUE_SESSION = /^Claude Code on conductor · /u;
 
+/** The ids `tools/e2e-browser.sh` lists alpha and beta by. */
+const ALPHA = "a1pha0";
+const BETA = "beta00";
+
 const projectOf =
 	(run: Run) =>
 	(id: string): Locator =>
@@ -15,7 +19,7 @@ const projectOf =
 const blockedIssueStart = async (run: Run): Promise<void> => {
 	const { page, patience } = run;
 	const { back, check } = tools(run);
-	const beta = projectOf(run)("beta");
+	const beta = projectOf(run)(BETA);
 	await beta.locator('input[name="issue-title"]').fill("Check beta");
 	await beta.getByRole("button", { name: "Open", exact: true }).click();
 	await page
@@ -46,25 +50,24 @@ const checkouts = async (run: Run): Promise<void> => {
 	const home = await page.locator(".home-line .home-state").innerText();
 	check(SYNCED.test(home), `the host's home is synced ("${home}")`);
 	check(
-		(await project("alpha")
+		(await project(ALPHA)
 			.locator('.checkout[data-checkout="checked-out"] .checkout-path')
 			.innerText()) === `${dir}/roots/alpha`,
 		"alpha's checkout was found in the search root, by its root commit and remote",
 	);
 	check(
-		(await project("beta")
-			.locator(".checkout")
-			.getAttribute("data-checkout")) === "missing",
+		(await project(BETA).locator(".checkout").getAttribute("data-checkout")) ===
+			"missing",
 		"beta is not checked out",
 	);
 	await blockedIssueStart(run);
 	await page.getByRole("button", { name: "Clone beta on conductor" }).click();
-	await project("beta")
+	await project(BETA)
 		.locator('.checkout[data-checkout="checked-out"]')
 		.waitFor({ timeout: patience });
-	const cloned = await project("beta").locator(".checkout-path").innerText();
+	const cloned = await project(BETA).locator(".checkout-path").innerText();
 	check(
-		cloned.endsWith("/projects-host/projects/beta (cloned here)"),
+		cloned.endsWith(`/projects-host/projects/${BETA} (cloned here)`),
 		`beta was cloned into the host's data dir ("${cloned}")`,
 	);
 	await page.screenshot({ path: out });
@@ -75,7 +78,7 @@ const checkouts = async (run: Run): Promise<void> => {
 const issue = async (run: Run): Promise<void> => {
 	const { page, out, patience } = run;
 	const { check, settled } = tools(run);
-	const alpha = projectOf(run)("alpha");
+	const alpha = projectOf(run)(ALPHA);
 	await alpha.locator('input[name="issue-title"]').fill("Remove sessions");
 	await alpha.getByRole("button", { name: "Open", exact: true }).click();
 	const pane = page.locator(".issue-pane");
@@ -168,7 +171,7 @@ const projectSession = async (run: Run): Promise<void> => {
 const issueSession = async (run: Run): Promise<void> => {
 	const { page, patience } = run;
 	const { check, pane, back } = tools(run);
-	const alpha = projectOf(run)("alpha");
+	const alpha = projectOf(run)(ALPHA);
 	const openIssue = async (): Promise<void> => {
 		await page.getByRole("button", { name: "Projects", exact: true }).click();
 		await alpha.locator(".issue-row", { hasText: "Remove sessions" }).click();

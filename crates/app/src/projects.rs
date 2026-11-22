@@ -93,8 +93,7 @@ fn Project(project: ui::ProjectGroup) -> Element {
 #[component]
 fn Issues(list: ui::IssueList) -> Element {
     let shell = use_context::<Shell>();
-    let project = list.project.clone();
-    let picking = list.project.clone();
+    let project = list.project;
     let create = list.create.clone();
     rsx! {
         div { class: "issues",
@@ -128,12 +127,12 @@ fn Issues(list: ui::IssueList) -> Element {
                     placeholder: "New issue",
                     "aria-label": "New issue's title",
                     value: "{list.new_title}",
-                    oninput: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::TypeTitle(project.clone(), event.value()))),
+                    oninput: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::TypeTitle(project, event.value()))),
                 }
                 select {
                     name: "issue-kind",
                     "aria-label": "New issue's kind",
-                    onchange: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::PickKind(picking.clone(), event.value()))),
+                    onchange: move |event| shell.dispatch(Intent::NewIssue(NewIssueIntent::PickKind(project, event.value()))),
                     for pick in list.kinds {
                         option { value: pick.word, selected: pick.selected, "{pick.label}" }
                     }

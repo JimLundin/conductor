@@ -4,7 +4,7 @@ use super::{Own, Sources, compose, project_of};
 
 fn project(checkouts: &[&str]) -> Project {
     Project {
-        id: ProjectId(String::from("01J")),
+        id: ProjectId::new(1),
         name: String::from("conductor"),
         title: String::from("Conductor"),
         remote: None,

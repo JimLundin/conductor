@@ -11,39 +11,7 @@ use core::fmt;
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ProjectId;
-
-/// A ULID, unique across every project and node, as its 128 bits. Its file
-/// and its branch name it in lower case, as `Display` writes it.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-)]
-pub struct IssueId(pub u128);
-
-impl fmt::Display for IssueId {
-    /// Crockford's base 32 in 26 digits, the first carrying the top 3 bits.
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-        (0..26u32).rev().try_for_each(|place| {
-            let digit = (self.0 >> (place * 5)) & 31;
-            let byte = usize::try_from(digit)
-                .ok()
-                .and_then(|at| DIGITS.get(at))
-                .copied()
-                .unwrap_or(b'0');
-            fmt::Write::write_char(out, char::from(byte))
-        })
-    }
-}
+use crate::{IssueId, ProjectId};
 
 /// An issue as the flow reads its file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

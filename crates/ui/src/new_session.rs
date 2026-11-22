@@ -3,6 +3,7 @@
 //! or a directory there; or, opened from an issue, the issue.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use crate::prelude::*;
 use proto::{
@@ -209,7 +210,7 @@ impl Form {
             ),
             FormIntent::PickProject(id) => (
                 Self {
-                    project: (!id.is_empty()).then_some(ProjectId(id)),
+                    project: ProjectId::parse(&id),
                     ..self
                 },
                 Vec::new(),
@@ -583,10 +584,7 @@ fn issue_title(hosts: &BTreeMap<HostId, Host>, id: IssueId) -> String {
     hosts
         .values()
         .find_map(|host| crate::issues::find(host, id))
-        .map_or_else(
-            || format!("{:032x}", id.0),
-            |(_, issue)| issue.title.clone(),
-        )
+        .map_or_else(|| id.to_string(), |(_, issue)| issue.title.clone())
 }
 
 /// A directory first, then each project the home lists; one with no
@@ -604,9 +602,9 @@ fn project_choices(
     let projects = home.into_iter().flat_map(|known| &known.projects);
     let missing = picked
         .filter(|id| !projects.clone().any(|project| &project.id == *id))
-        .map(|id| missing_choice(&id.0, "no longer listed"));
+        .map(|id| missing_choice(&id.to_string(), "no longer listed"));
     let listed = projects.map(|project| Choice {
-        value: project.id.0.clone(),
+        value: project.id.to_string(),
         label: if project.checkouts.is_empty() {
             format!("{} (not checked out)", project.title)
         } else {
@@ -760,7 +758,7 @@ impl From<Destination<'_>> for StartAt {
             Destination::Directory(path) => {
                 Self::Directory(HostPath(path.to_owned()))
             }
-            Destination::Project(id) => Self::Project(id.clone()),
+            Destination::Project(id) => Self::Project(*id),
             Destination::Issue(id) => Self::Issue(id),
         }
     }

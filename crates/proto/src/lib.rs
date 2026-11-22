@@ -26,6 +26,7 @@ pub mod fleet;
 pub mod flow;
 mod frame;
 mod home;
+mod id;
 mod instance;
 mod issue;
 mod sign_in;
@@ -45,15 +46,14 @@ pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
-pub use home::{
-    Checkout, Cloning, Home, HomeSync, Origin, Project, ProjectId, StartAt,
-};
+pub use home::{Checkout, Cloning, Home, HomeSync, Origin, Project, StartAt};
+pub use id::{IssueId, ProjectId};
 pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };
 pub use issue::{
-    ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, IssueId,
-    Item, LogEvent, NewIssue, Part, Section,
+    ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, Item,
+    LogEvent, NewIssue, Part, Section,
 };
 pub use sign_in::{SignIn, SignInCode, SignInStep};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
@@ -61,7 +61,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/36";
+pub const ALPN: &[u8] = b"conductor/37";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1345,20 +1345,6 @@ mod tests {
             all.map(Some)
         );
         assert_eq!(Effort::parse("minimal"), None);
-    }
-
-    #[test]
-    fn an_issue_id_reads_as_its_lower_case_ulid() {
-        use super::IssueId;
-        assert_eq!(
-            [IssueId(0), IssueId(1), IssueId(u128::MAX)]
-                .map(|id| id.to_string()),
-            [
-                "00000000000000000000000000",
-                "00000000000000000000000001",
-                "7zzzzzzzzzzzzzzzzzzzzzzzzz",
-            ]
-        );
     }
 
     #[test]

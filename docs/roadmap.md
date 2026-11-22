@@ -11,6 +11,12 @@ What is built and what comes next. Update it in the commit that changes it.
   Codex calls without duplicate parameter records and uses the provider's
   parser in the headless client. The browser lint suite also checks `ui`
   without a separate lint-suppression script.
+- **Short issue and project ids.** An issue id is 8 lowercase base 32
+  digits, the seconds since 2026-01-01T00:00:00Z then 2 random, drawn
+  again when the home has it, so issues list in creation order; a project
+  id is 6 random digits. `proto::IssueId` and `proto::ProjectId` mint,
+  parse and print them, the `home` command and the app mint the same way,
+  and a 26-character id is a structural problem (ALPN `conductor/37`).
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
@@ -163,7 +169,7 @@ What is built and what comes next. Update it in the commit that changes it.
   pairing a host again replaces its ticket. No protocol change.
 - **The home and its projects** (home steps 3 and 4, architecture §5.4).
   The home repository `JimLundin/home` lists each project in
-  `projects/<id>/project.toml`, its folder named by the project's ULID
+  `projects/<id>/project.toml`, its folder named by the project's id
   (name, title, remote, root commit, profiles), which its `repos.sh` and
   `AGENTS.md` table now read. A name is unique, and the app shows the
   title; renaming a project is an edit of its file, and it keeps its

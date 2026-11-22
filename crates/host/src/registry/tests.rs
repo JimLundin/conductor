@@ -1140,7 +1140,7 @@ fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
 
 #[test]
 fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
-    let issue = proto::IssueId(5);
+    let issue = proto::IssueId::new(0, 5);
     let event = |session: u128, kind: EventKind| Event {
         seq: HostSeq(1),
         session: SessionId(session),
@@ -1172,7 +1172,10 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
         },
     );
     assert_eq!(super::on_issue(&history, issue, &other), None);
-    assert_eq!(super::on_issue(&history, proto::IssueId(6), &own), None);
+    assert_eq!(
+        super::on_issue(&history, proto::IssueId::new(0, 6), &own),
+        None
+    );
     let removed = [
         history,
         Vec::from([event(1, EventKind::SessionRemoved { kept: None })]),
@@ -1227,7 +1230,7 @@ fn placement(on_issue: bool) -> home::Placement {
     home::Placement {
         directory: directory.clone(),
         on: on_issue.then(|| home::issue::Start {
-            issue: proto::IssueId(5),
+            issue: proto::IssueId::new(0, 5),
             checkout: directory,
             branch: text("refs/heads/issue/5"),
             brief: text("Implement the issue"),
@@ -1448,7 +1451,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
                 effort: None,
             },
             EventKind::OnIssue {
-                issue: proto::IssueId(5)
+                issue: proto::IssueId::new(0, 5)
             },
         ]
     );
@@ -1501,7 +1504,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
     assert_eq!(done.result, CommandResult::Started { session });
     assert_eq!(
         done.progress,
-        Some((proto::IssueId(5), ClientName(text("phone"))))
+        Some((proto::IssueId::new(0, 5), ClientName(text("phone"))))
     );
     Ok(())
 }

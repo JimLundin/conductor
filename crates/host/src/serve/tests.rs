@@ -155,7 +155,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 #[test]
 fn issue_commands_keep_a_receipt_and_name_their_client() {
     let new = NewIssue {
-        project: proto::ProjectId(String::from("conductor")),
+        project: proto::ProjectId::new(1),
         kind: String::from("task"),
         title: String::from("Remove sessions"),
         fields: Vec::new(),
@@ -164,7 +164,7 @@ fn issue_commands_keep_a_receipt_and_name_their_client() {
     let routed = [
         CommandBody::CreateIssue(new.clone()),
         CommandBody::ChangeIssue {
-            issue: IssueId(1),
+            issue: IssueId::new(0, 1),
             change: note.clone(),
         },
     ]
@@ -177,14 +177,14 @@ fn issue_commands_keep_a_receipt_and_name_their_client() {
         routed,
         [
             Route::Home(HomeOrder::Create(new, phone())),
-            Route::Home(HomeOrder::Change(IssueId(1), note, phone())),
+            Route::Home(HomeOrder::Change(IssueId::new(0, 1), note, phone())),
         ]
     );
 }
 
 #[test]
 fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
-    let project = || proto::ProjectId(String::from("conductor"));
+    let project = || proto::ProjectId::new(1);
     let routed = [
         CommandBody::SyncHome,
         CommandBody::CloneProject { project: project() },

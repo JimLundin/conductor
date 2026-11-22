@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use home::checkout::{Probe, Root};
+use home::flow::command::{DRAWS, fresh};
 use home::flow::graph::File;
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
@@ -621,7 +622,14 @@ impl Actor {
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
-        let issue = IssueId(ulid::Ulid::new().0);
+        let draws: Vec<u16> =
+            std::iter::repeat_with(draw).take(DRAWS).collect();
+        let issue = fresh(&self.home, now().saturating_mul(1000), &draws)
+            .ok_or_else(|| {
+                IssueError::Retryable(String::from(
+                    "no issue id is free this second",
+                ))
+            })?;
         let request =
             self.issue_context(command).open(issue, new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
@@ -861,7 +869,7 @@ impl Actor {
         self.fresh().await;
         let remote = home::remote_of(self.home.projects(), &project);
         if let Ok(from) = &remote {
-            self.cloning.insert(project.clone(), Cloning::Running);
+            self.cloning.insert(project, Cloning::Running);
             self.publish();
             let target = home::checkout::clone_path(&self.clones, &project);
             let outcome = clone(&self.data_dir, from, Path::new(&target)).await;
@@ -1463,6 +1471,13 @@ fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
+}
+
+/// The randomness of a new issue's id, drawn again on a clash.
+fn draw() -> u16 {
+    let mut bytes = [0_u8; 2];
+    let _filled = getrandom::fill(&mut bytes);
+    u16::from_le_bytes(bytes)
 }
 
 #[cfg(test)]

@@ -1947,7 +1947,7 @@ fn a_session_on_an_issue_finishes_and_says_what_landed() {
     let (on_issue, _) = opened(Vec::from([event(
         3,
         EventKind::OnIssue {
-            issue: proto::IssueId(5),
+            issue: proto::IssueId::new(0, 5),
         },
     )]));
     assert_eq!(pane(&on_issue).map(|shown| shown.finish), Some(true));

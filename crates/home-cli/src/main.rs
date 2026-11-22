@@ -5,12 +5,15 @@
 use std::env;
 use std::fs;
 use std::io::Write as _;
+use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::flow::PATH;
-use home::flow::command::{Context, Write, command, fresh, homeless, run};
+use home::flow::command::{
+    Context, DRAWS, Write, command, fresh, homeless, run,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -18,7 +21,9 @@ fn main() -> ExitCode {
     let (text, code) = root.as_deref().map_or_else(homeless, |home| {
         let snapshot = home_files::read(home);
         let context = context();
-        let asked = command(&args, &snapshot, fresh(context.now, random()));
+        let draws: Vec<u16> = iter::repeat_with(random).take(DRAWS).collect();
+        let fresh = fresh(&snapshot, context.now, &draws);
+        let asked = command(&args, &snapshot, fresh);
         let file = asked.file().map(|path| read(Path::new(path)));
         let outcome = run(asked, file, &snapshot, &context);
         let saved = outcome
@@ -59,11 +64,11 @@ fn context() -> Context {
     }
 }
 
-/// The randomness of the id a new issue takes.
-fn random() -> u128 {
-    let mut bytes = [0_u8; 16];
+/// The randomness of the id a new issue takes, drawn again on a clash.
+fn random() -> u16 {
+    let mut bytes = [0_u8; 2];
     let _filled = getrandom::fill(&mut bytes);
-    u128::from_le_bytes(bytes)
+    u16::from_le_bytes(bytes)
 }
 
 fn read(path: &Path) -> Result<String, String> {

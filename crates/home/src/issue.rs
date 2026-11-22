@@ -36,14 +36,14 @@ use crate::prelude::*;
 /// Why the flow can't read the file.
 fn read(
     flow: &Flow,
-    project: &ProjectId,
+    project: ProjectId,
     id: IssueId,
     text: &str,
 ) -> Result<(Issue, Document), String> {
     graph::parsed(
         flow,
         &File {
-            project: project.clone(),
+            project,
             stem: id.to_string(),
             text: String::from(text),
         },
@@ -171,7 +171,7 @@ fn was(
     let issue = flow
         .zip(current)
         .and_then(|(read_flow, text)| {
-            read(read_flow, &edit.project, edit.issue(), text).ok()
+            read(read_flow, edit.project, edit.issue(), text).ok()
         })
         .map(|(issue, _)| issue);
     values(issue.as_ref(), &edit.edit)
@@ -316,7 +316,7 @@ fn apply(
     let readable = |text: &str| {
         home.flow()
             .map_err(String::from)
-            .and_then(|flow| read(flow, &data.project, data.issue(), text))
+            .and_then(|flow| read(flow, data.project, data.issue(), text))
     };
     let (changes, text) = match (&data.edit, current) {
         (command::Edit::New { .. }, Some(text)) => {
@@ -381,7 +381,7 @@ fn written(
         || home.clone(),
         |text| {
             home.with(File {
-                project: data.project.clone(),
+                project: data.project,
                 stem: data.issue().to_string(),
                 text: String::from(text),
             })

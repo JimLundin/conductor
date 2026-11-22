@@ -1,14 +1,18 @@
 use alloc::collections::BTreeMap;
 
-use proto::{ChecklistItem, Datum, Entry, LogEvent, ProjectId, Section};
+use proto::{
+    ChecklistItem, Datum, Entry, IssueId, LogEvent, ProjectId, Section,
+};
 
-use super::{File, Graph, Problem, id_of, read};
+use super::{File, Graph, Problem, read};
 use crate::flow::load;
 use proto::flow::Flow;
 
-const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
-const TASK: &str = "01m7zxfbnt3hsv50a6078gek37";
-const DECISION: &str = "01m7zxfbnrxa7106qn4dx9f0jx";
+const SPEC: &str = "0tm7zt00";
+const TASK: &str = "0tm7zx0b";
+const DECISION: &str = "0tm7zx0a";
+const HOME: &str = "hme000";
+const CONDUCTOR: &str = "cnd000";
 
 fn flow() -> Flow {
     load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
@@ -24,7 +28,7 @@ fn flow() -> Flow {
 
 fn file(project: &str, id: &str, front: &str, body: &str) -> File {
     File {
-        project: ProjectId(String::from(project)),
+        project: ProjectId::parse(project).unwrap_or(ProjectId::new(0)),
         stem: String::from(id),
         text: format!("+++\nid = \"{id}\"\n{front}+++\n\n{body}"),
     }
@@ -32,7 +36,7 @@ fn file(project: &str, id: &str, front: &str, body: &str) -> File {
 
 fn spec() -> File {
     file(
-        "conductor",
+        CONDUCTOR,
         SPEC,
         "title = \"Interpret the flow\"\nkind = \"spec\"\nstage = \"build\"\n\
          status = \"active\"\npriority = \"high\"\nlabels = [\"home\"]\n\
@@ -89,7 +93,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
         &flow(),
         &[
             spec(),
-            task("home", &format!("parent = \"{SPEC}\"\nblocked_by = []\n")),
+            task(HOME, &format!("parent = \"{SPEC}\"\nblocked_by = []\n")),
         ],
     );
     assert_eq!(problems(&graph), Vec::new());
@@ -176,7 +180,10 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
         graph.issues.get(1).map(|issue| issue.links.clone()),
         Some(BTreeMap::from([
             (String::from("blocked_by"), Vec::new()),
-            (String::from("parent"), id_of(SPEC).into_iter().collect()),
+            (
+                String::from("parent"),
+                IssueId::parse(SPEC).into_iter().collect()
+            ),
         ]))
     );
 }
@@ -196,7 +203,7 @@ fn an_issue_keeps_its_body_before_the_checklist_and_the_log() {
 #[test]
 fn a_problem_says_what_is_wrong_after_the_field_that_causes_it() {
     let at = |field: Option<&str>| Problem {
-        issue: format!("conductor/{TASK}"),
+        issue: format!("{CONDUCTOR}/{TASK}"),
         field: field.map(String::from),
         message: String::from("is missing"),
     };
@@ -206,11 +213,11 @@ fn a_problem_says_what_is_wrong_after_the_field_that_causes_it() {
 
 #[test]
 fn a_target_that_is_no_id_is_no_issue() {
-    let graph = read(&flow(), &[task("home", "parent = \"nothing\"\n")]);
+    let graph = read(&flow(), &[task(HOME, "parent = \"nothing\"\n")]);
     assert_eq!(
         problems(&graph),
         Vec::from([problem(
-            &format!("home/{TASK}"),
+            &format!("{HOME}/{TASK}"),
             "parent",
             "nothing is no issue"
         )])
@@ -222,7 +229,7 @@ fn an_issue_without_a_kind_reads_as_the_default_kind() {
     let graph = read(
         &flow(),
         &[file(
-            "conductor",
+            CONDUCTOR,
             TASK,
             "title = \"Old\"\nstatus = \"open\"\n",
             "Body.\n",
@@ -238,38 +245,35 @@ fn an_issue_without_a_kind_reads_as_the_default_kind() {
 fn a_reference_may_cross_projects_but_must_reach_an_issue_of_its_kind() {
     let crossing = read(
         &flow(),
-        &[spec(), task("home", &format!("parent = \"{SPEC}\"\n"))],
+        &[spec(), task(HOME, &format!("parent = \"{SPEC}\"\n"))],
     );
     assert_eq!(problems(&crossing), Vec::new());
     let dangling = read(
         &flow(),
-        &[task("home", &format!("parent = \"{DECISION}\"\n"))],
+        &[task(HOME, &format!("parent = \"{DECISION}\"\n"))],
     );
     assert_eq!(
         problems(&dangling),
         Vec::from([problem(
-            &format!("home/{TASK}"),
+            &format!("{HOME}/{TASK}"),
             "parent",
             &format!("{DECISION} is no issue")
         )])
     );
     let decision = file(
-        "home",
+        HOME,
         DECISION,
         "title = \"Which?\"\nkind = \"decision\"\nstatus = \"open\"\n",
         "## Question\n",
     );
     let wrong = read(
         &flow(),
-        &[
-            decision,
-            task("home", &format!("parent = \"{DECISION}\"\n")),
-        ],
+        &[decision, task(HOME, &format!("parent = \"{DECISION}\"\n"))],
     );
     assert_eq!(
         problems(&wrong),
         Vec::from([problem(
-            &format!("home/{TASK}"),
+            &format!("{HOME}/{TASK}"),
             "parent",
             &format!("{DECISION} is a decision, which parent can't point to"),
         )])
@@ -287,7 +291,7 @@ fn a_reference_to_an_issue_that_has_its_own_problem_is_left_to_it() {
         &[
             broken,
             task(
-                "home",
+                HOME,
                 &format!(
                     "parent = \"{SPEC}\"
 "
@@ -298,7 +302,7 @@ fn a_reference_to_an_issue_that_has_its_own_problem_is_left_to_it() {
     assert_eq!(
         problems(&graph),
         Vec::from([problem(
-            &format!("conductor/{SPEC}"),
+            &format!("{CONDUCTOR}/{SPEC}"),
             "status",
             "no status is called \"in-progress\"",
         )])
@@ -307,9 +311,9 @@ fn a_reference_to_an_issue_that_has_its_own_problem_is_left_to_it() {
 
 #[test]
 fn a_cycle_where_the_relation_forbids_one_is_a_problem() {
-    let one = task("home", &format!("blocked_by = [\"{DECISION}\"]\n"));
+    let one = task(HOME, &format!("blocked_by = [\"{DECISION}\"]\n"));
     let other = file(
-        "home",
+        HOME,
         DECISION,
         &format!(
             "title = \"Which?\"\nkind = \"decision\"\nstatus = \"open\"\nblocked_by = [\"{TASK}\"]\n"
@@ -321,7 +325,7 @@ fn a_cycle_where_the_relation_forbids_one_is_a_problem() {
         problems(&graph),
         [TASK, DECISION]
             .map(|member| problem(
-                &format!("home/{member}"),
+                &format!("{HOME}/{member}"),
                 "blocked_by",
                 &format!(
                     "is part of a cycle: {DECISION} → {TASK} → {DECISION}"
@@ -356,16 +360,16 @@ fn an_undeclared_key_or_value_is_a_problem_naming_its_field() {
         ),
     ];
     for (front, field, message) in cases {
-        let graph = read(&flow(), &[spec(), task("home", front)]);
+        let graph = read(&flow(), &[spec(), task(HOME, front)]);
         assert_eq!(
             problems(&graph),
-            Vec::from([problem(&format!("home/{TASK}"), field, message)])
+            Vec::from([problem(&format!("{HOME}/{TASK}"), field, message)])
         );
     }
     let unknown = read(
         &flow(),
         &[file(
-            "home",
+            HOME,
             TASK,
             "title = \"T\"\nkind = \"chore\"\nstatus = \"open\"\n",
             "",
@@ -374,7 +378,7 @@ fn an_undeclared_key_or_value_is_a_problem_naming_its_field() {
     assert_eq!(
         problems(&unknown),
         Vec::from([problem(
-            &format!("home/{TASK}"),
+            &format!("{HOME}/{TASK}"),
             "kind",
             "no kind is called \"chore\""
         )])
@@ -382,7 +386,7 @@ fn an_undeclared_key_or_value_is_a_problem_naming_its_field() {
     let renamed = read(
         &flow(),
         &[file(
-            "home",
+            HOME,
             TASK,
             "title = \"T\"\nstatus = \"in-progress\"\n",
             "",
@@ -391,7 +395,7 @@ fn an_undeclared_key_or_value_is_a_problem_naming_its_field() {
     assert_eq!(
         problems(&renamed),
         Vec::from([problem(
-            &format!("home/{TASK}"),
+            &format!("{HOME}/{TASK}"),
             "status",
             "no status is called \"in-progress\""
         )])
@@ -400,14 +404,14 @@ fn an_undeclared_key_or_value_is_a_problem_naming_its_field() {
 
 #[test]
 fn an_id_is_its_file_s_name() {
-    let mut moved = task("home", "");
+    let mut moved = task(HOME, "");
     moved.stem = String::from(SPEC);
     assert_eq!(
         problems(&read(&flow(), &[moved])),
         Vec::from([problem(
-            &format!("home/{SPEC}"),
+            &format!("{HOME}/{SPEC}"),
             "id",
-            "is not its file's name, a lower-case ULID",
+            "is not its file's name, an issue id",
         )])
     );
 }
@@ -431,13 +435,13 @@ fn an_issue_lands_on_the_branch_its_branch_field_names_whatever_it_is_called()
         ("name = \"branch\"", "name = \"lands_on\""),
         ("\"branch\"]", "\"lands_on\"]"),
     ])?;
-    let graph = read(&renamed, &[task("home", "lands_on = \"feature/x\"\n")]);
+    let graph = read(&renamed, &[task(HOME, "lands_on = \"feature/x\"\n")]);
     assert_eq!(
         graph.issues.first().map(|issue| issue.branch.as_str()),
         Some("feature/x")
     );
     let roleless = flow_with(&[("role = \"branch\"\n", "")])?;
-    let graph = read(&roleless, &[task("home", "branch = \"feature/x\"\n")]);
+    let graph = read(&roleless, &[task(HOME, "branch = \"feature/x\"\n")]);
     assert_eq!(
         graph.issues.first().map(|issue| issue.branch.clone()),
         Some(format!("issue/{TASK}"))

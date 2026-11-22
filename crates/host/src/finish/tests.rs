@@ -12,7 +12,7 @@ use crate::assignment::Assignment;
 use crate::session::Order;
 
 const SESSION: SessionId = SessionId(1);
-const ISSUE: IssueId = IssueId(9);
+const ISSUE: IssueId = IssueId::new(0, 9);
 
 fn text(value: &str) -> String {
     String::from(value)

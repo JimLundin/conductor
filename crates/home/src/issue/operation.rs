@@ -290,7 +290,7 @@ impl Context<'_> {
             .projects()
             .iter()
             .find(|known| known.id == new.project)
-            .map(|known| known.id.clone())
+            .map(|known| known.id)
             .ok_or(Rejection::UnknownProject)?;
         Ok(self.record(
             project,
@@ -317,7 +317,7 @@ impl Context<'_> {
         let project = self
             .home
             .issue(issue)
-            .map(|known| known.project.clone())
+            .map(|known| known.project)
             .ok_or(Rejection::UnknownIssue)?;
         Ok(self.record(
             project,
@@ -355,8 +355,8 @@ impl Record {
     }
 
     #[must_use]
-    pub fn project(&self) -> ProjectId {
-        self.data.project.clone()
+    pub const fn project(&self) -> ProjectId {
+        self.data.project
     }
 
     /// Decides the commit and what to keep and deliver, among the home's
@@ -411,7 +411,7 @@ fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
 impl EditData {
     fn read(&self) -> Read {
         Read {
-            project: self.project.clone(),
+            project: self.project,
             issue: self.issue(),
             path: layout::issue_file(&self.project, &self.issue().to_string()),
         }
@@ -625,6 +625,6 @@ impl Listing {
 
     #[must_use]
     pub fn created_from_path(path: &str) -> Option<IssueId> {
-        layout::issue_stem(path).and_then(crate::flow::graph::id_of)
+        layout::issue_stem(path).and_then(IssueId::parse)
     }
 }

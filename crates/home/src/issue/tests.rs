@@ -18,8 +18,8 @@ use crate::flow::load;
 use crate::flow::snapshot::{Inputs, Snapshot};
 use crate::layout;
 
-/// 01JD0000000000000000000001 as its bits.
-const ID: IssueId = IssueId(2_093_793_708_204_169_241_204_922_644_758_003_713);
+/// 00000001.
+const ID: IssueId = IssueId::new(0, 1);
 /// 2026-11-18T10:12:00Z.
 const OPENED: u64 = 1_794_996_720;
 /// How the log signs and dates what the edits here write.
@@ -30,7 +30,7 @@ fn text(value: &str) -> String {
 }
 
 fn project() -> ProjectId {
-    ProjectId(text("01m7r5n23kp17wyfj138e0bcnf"))
+    ProjectId::parse("7r5n23").unwrap_or(ProjectId::new(0))
 }
 
 /// The home with the project `project()` and the issue files `files`.
@@ -38,7 +38,7 @@ fn snapshot_of(files: &[File]) -> Snapshot {
     Snapshot::of(Inputs {
         flow: Ok(text(include_str!("../flow/test-flow.toml"))),
         projects: Vec::from([(
-            project().0,
+            project().to_string(),
             Ok(text(
                 "name = \"conductor\"\ntitle = \"Conductor\"\n\
                  root = \"e22b7f7b2976650400965d4147ba771675f96076\"\n",
@@ -90,7 +90,7 @@ fn among<T>(files: &[File], within: impl FnOnce(&Snapshot) -> T) -> T {
 
 /// The issue `text` holds, as the flow reads it.
 fn parse(text: &str) -> Result<Issue, String> {
-    read(&flow(), &project(), ID, text).map(|(issue, _)| issue)
+    read(&flow(), project(), ID, text).map(|(issue, _)| issue)
 }
 
 fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
@@ -409,14 +409,14 @@ fn an_item_is_checked_and_removed_by_its_place() -> Result<(), String> {
 
 #[test]
 fn an_issue_id_its_file_and_its_status_must_agree() {
-    assert_eq!(ID.to_string(), "01jd0000000000000000000001");
+    assert_eq!(ID.to_string(), "00000001");
     assert_eq!(
         layout::issue_file(&project(), &ID.to_string()),
-        "projects/01m7r5n23kp17wyfj138e0bcnf/issues/01jd0000000000000000000001.md"
+        "projects/7r5n23/issues/00000001.md"
     );
     assert_eq!(
-        read(&flow(), &project(), IssueId(2), &written()).map(|_| ()),
-        Err(text("id: is not its file's name, a lower-case ULID"))
+        read(&flow(), project(), IssueId::new(0, 2), &written()).map(|_| ()),
+        Err(text("id: is not its file's name, an issue id"))
     );
     assert_eq!(
         parse(&written().replace("active", "doing")).map(|_| ()),
@@ -591,7 +591,7 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
             .open(
                 ID,
                 NewIssue {
-                    project: ProjectId(text("gone")),
+                    project: ProjectId::new(1),
                     ..wanted()
                 },
                 "iPhone"
@@ -630,7 +630,7 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
     );
     assert_eq!(
         listed
-            .edit(IssueId(7), IssueChange::Note(text("x")), "iPhone")
+            .edit(IssueId::new(0, 7), IssueChange::Note(text("x")), "iPhone")
             .map(|_| ()),
         Err(Rejection::UnknownIssue)
     );
@@ -737,7 +737,7 @@ fn moved(
     status: &str,
     blocker: Option<&str>,
 ) -> Option<String> {
-    let blocking = IssueId(ID.0 + 1);
+    let blocking = IssueId::new(0, 2);
     let mut files = Vec::from([filed(
         ID,
         status,
@@ -1097,7 +1097,7 @@ fn what_a_client_writes_is_signed_by_the_host_and_the_client_as_one_word() {
 #[test]
 fn an_issues_branch_is_the_one_the_home_lists_for_it() {
     let other = Issue {
-        id: IssueId(1),
+        id: IssueId::new(0, 9),
         branch: text("issue/other"),
         ..issue()
     };
@@ -1417,25 +1417,25 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 /// The home the `home` command line's own tests use: a spec, and a task
 /// under it that lacks a section.
 mod as_the_command_line {
-    use proto::{CommandId, IssueChange, ProjectId, Rejection};
+    use proto::{CommandId, IssueChange, IssueId, ProjectId, Rejection};
 
     use proto::Datum;
 
     use super::super::{Context, PendingEdits};
     use crate::flow::command::{self, command, fresh, run};
-    use crate::flow::graph::{File, id_of};
+    use crate::flow::graph::File;
     use crate::flow::snapshot::{Inputs, Snapshot};
 
     const FLOW: &str = include_str!("../flow/test-flow.toml");
-    const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
-    const SPEC: &str = "01m7ztr3ha005c92e0ykb9q429";
-    const TASK: &str = "01m7zxfbp2qygtekcr6b6ndg28";
+    const FOLDER: &str = "7w85je";
+    const SPEC: &str = "0tm7zt01";
+    const TASK: &str = "0tm7zx0d";
     /// 2026-11-22T12:00:00Z, in seconds.
     const NOW: u64 = 1_795_348_800;
 
     fn issue(id: &str, front: &str, body: &str) -> File {
         File {
-            project: ProjectId(String::from(FOLDER)),
+            project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
             stem: String::from(id),
             text: format!("+++\nid = \"{id}\"\n{front}+++\n\n{body}"),
         }
@@ -1474,7 +1474,7 @@ mod as_the_command_line {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
         let home = Snapshot::of(inputs());
         let outcome = run(
-            command(&words, &home, fresh(NOW * 1000, 7)),
+            command(&words, &home, fresh(&home, NOW * 1000, &[7])),
             None,
             &home,
             &command::Context {
@@ -1505,7 +1505,7 @@ mod as_the_command_line {
     fn by_app(change: IssueChange) -> Result<Vec<String>, Rejection> {
         let inputs = inputs();
         let home = Snapshot::of(inputs.clone());
-        let task = id_of(TASK).ok_or(Rejection::UnknownIssue)?;
+        let task = IssueId::parse(TASK).ok_or(Rejection::UnknownIssue)?;
         let current = inputs
             .issues
             .iter()
@@ -1544,7 +1544,7 @@ mod as_the_command_line {
 
     #[test]
     fn an_edit_the_command_line_refuses_is_refused_with_its_reason() {
-        let dangling = "01m7zxfbnrxa7106qn4dx9f0jx";
+        let dangling = "0tm7zx0a";
         for (said, change) in [
             (
                 format!("issue set {TASK} priority=someday"),
@@ -1604,21 +1604,22 @@ mod as_the_command_line {
             mark: None,
         };
         let typed = run(
-            command(&said, &home, fresh(NOW * 1000, 7)),
+            command(&said, &home, fresh(&home, NOW * 1000, &[7])),
             None,
             &home,
             &by,
         );
-        let made = id_of(TASK).ok_or_else(String::new).and_then(|id| {
-            command::write(
-                &home,
-                &command::Edit::Change {
-                    id,
-                    changes: Vec::from([set("priority", word("high"))]),
-                },
-                &by,
-            )
-        });
+        let made =
+            IssueId::parse(TASK).ok_or_else(String::new).and_then(|id| {
+                command::write(
+                    &home,
+                    &command::Edit::Change {
+                        id,
+                        changes: Vec::from([set("priority", word("high"))]),
+                    },
+                    &by,
+                )
+            });
         assert_eq!(
             typed.writes.first().map(|write| write.text.clone()),
             made.map(|written| written.write.text).ok()

@@ -24,7 +24,8 @@ pub fn read(root: &Path) -> Snapshot {
             .collect(),
         folders
             .iter()
-            .flat_map(|folder| issues(root, &ProjectId(folder.clone())))
+            .filter_map(|folder| ProjectId::parse(folder))
+            .flat_map(|project| issues(root, project))
             .collect(),
     ))
 }
@@ -32,12 +33,12 @@ pub fn read(root: &Path) -> Snapshot {
 /// Each issue file of `project`, with its text or why it couldn't be read.
 fn issues(
     root: &Path,
-    project: &ProjectId,
+    project: ProjectId,
 ) -> Vec<(IssueLocation, Result<String, String>)> {
-    let names = entries(&root.join(layout::issues(project)))
+    let names = entries(&root.join(layout::issues(&project)))
         .map(|(name, _)| name)
         .collect();
-    layout::issue_files(project, names)
+    layout::issue_files(&project, names)
         .into_iter()
         .map(|file| {
             let read = text(root, &file.path);
@@ -94,7 +95,7 @@ mod tests {
             std::env::temp_dir()
                 .join(format!("home-files-{}", std::process::id())),
         );
-        let issues = scratch.0.join("projects/alpha/issues");
+        let issues = scratch.0.join("projects/a1b2c3/issues");
         fs::create_dir_all(&issues)?;
         fs::write(issues.join("one.md"), "+++\n+++\n")?;
         fs::write(issues.join("notes.txt"), "not an issue")?;
@@ -105,7 +106,7 @@ mod tests {
         assert!(
             home.listing_problems()
                 .iter()
-                .any(|problem| problem.starts_with("projects/alpha: ")),
+                .any(|problem| problem.starts_with("projects/a1b2c3: ")),
             "{:?}",
             home.listing_problems()
         );

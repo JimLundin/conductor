@@ -83,7 +83,7 @@ pub fn check(home: &Snapshot) -> Report {
     let project_names: BTreeMap<String, String> = home
         .projects()
         .iter()
-        .map(|project| (project.id.0.clone(), project.name.clone()))
+        .map(|project| (project.id.to_string(), project.name.clone()))
         .collect();
     let mut findings: Vec<Finding> = home
         .listing_problems()
@@ -113,7 +113,7 @@ pub fn check(home: &Snapshot) -> Report {
     }));
     let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
-        let subject = named(&format!("{}/{}", issue.project.0, issue.id));
+        let subject = named(&format!("{}/{}", issue.project, issue.id));
         findings.extend(of_issue(
             flow,
             &issues,

@@ -8,8 +8,8 @@ use crate::flow::snapshot::{Inputs, Snapshot};
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
-const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
-const REVIEW: &str = "01m7zxfbp14y19v9kwp1sjc862";
+const SPEC: &str = "0tm7zt00";
+const REVIEW: &str = "0tm7zx0c";
 
 fn project(
     folder: &str,
@@ -26,7 +26,7 @@ fn project(
 
 fn issue(id: &str, front: &str, body: &str) -> File {
     File {
-        project: ProjectId(String::from("01m7r5n23kp17wyfj138e0bcnf")),
+        project: ProjectId::parse("7r5n23").unwrap_or(ProjectId::new(0)),
         stem: String::from(id),
         text: format!("+++\nid = \"{id}\"\n{front}+++\n\n{body}"),
     }
@@ -35,11 +35,7 @@ fn issue(id: &str, front: &str, body: &str) -> File {
 fn inputs(flow: &str, review_status: &str) -> Inputs {
     Inputs {
         flow: Ok(String::from(flow)),
-        projects: Vec::from([project(
-            "01m7r5n23kp17wyfj138e0bcnf",
-            "conductor",
-            "",
-        )]),
+        projects: Vec::from([project("7r5n23", "conductor", "")]),
         issues: Vec::from([
             issue(
                 SPEC,
@@ -101,16 +97,10 @@ fn a_broken_rule_reports_at_its_severity_with_its_explanation() {
 #[test]
 fn structural_problems_fail_the_check() {
     let mut broken = inputs(FLOW, "in-progress");
-    broken.projects.push(project(
-        "01m800gjwy7bxvghqzsxnemss1",
-        "standards",
-        "\"rust\"",
-    ));
-    broken.projects.push(project(
-        "01m8000000000000000000000a",
-        "other",
-        "\"rust\"",
-    ));
+    broken
+        .projects
+        .push(project("m800gj", "standards", "\"rust\""));
+    broken.projects.push(project("m80000", "other", "\"rust\""));
     let report = check(&broken);
     assert!(report.failed());
     assert_eq!(

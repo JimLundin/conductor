@@ -92,7 +92,7 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
 ///
 /// What is structurally wrong with it.
 pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
-    let place = format!("{}/{}", file.project.0, file.stem);
+    let place = format!("{}/{}", file.project, file.stem);
     let fail = |field: Option<&str>, message: String| Problem {
         issue: place.clone(),
         field: field.map(ToOwned::to_owned),
@@ -106,11 +106,11 @@ pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
     let id = front
         .id
         .filter(|id| *id == file.stem)
-        .and_then(|id| id_of(&id))
+        .and_then(|id| IssueId::parse(&id))
         .ok_or_else(|| {
             fail(
                 Some(ID),
-                String::from("is not its file's name, a lower-case ULID"),
+                String::from("is not its file's name, an issue id"),
             )
         })?;
     let title = front
@@ -163,7 +163,7 @@ pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
     );
     let issue = Issue {
         id,
-        project: file.project.clone(),
+        project: file.project,
         title,
         kind,
         status,
@@ -186,15 +186,6 @@ pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
     declared.map_or_else(|| format!("issue/{id}"), String::from)
 }
 
-/// The id a lower-case ULID names.
-#[must_use]
-pub fn id_of(name: &str) -> Option<IssueId> {
-    ulid::Ulid::from_string(name)
-        .ok()
-        .map(|ulid| IssueId(ulid.0))
-        .filter(|id| id.to_string() == name)
-}
-
 /// The value an issue gives a field, read by serde from its TOML and
 /// then checked against the field's type.
 fn datum(field: &Field, value: Value) -> Result<Datum, String> {
@@ -206,7 +197,7 @@ fn datum(field: &Field, value: Value) -> Result<Datum, String> {
 fn targets(relation: &Relation, value: Value) -> Result<Vec<IssueId>, String> {
     let id = |value: Value| match value {
         Value::String(name) => {
-            id_of(&name).ok_or_else(|| format!("{name} is no issue"))
+            IssueId::parse(&name).ok_or_else(|| format!("{name} is no issue"))
         }
         _ => Err(String::from("is not a list of ids")),
     };
@@ -256,7 +247,7 @@ fn references(
                     Some(_) => None,
                 };
                 problems.extend(message.map(|text| Problem {
-                    issue: format!("{}/{}", issue.project.0, issue.id),
+                    issue: format!("{}/{}", issue.project, issue.id),
                     field: Some(name.clone()),
                     message: text,
                 }));
@@ -270,9 +261,9 @@ fn references(
 /// naming the whole cycle, so an edit to any issue on it sees the problem
 /// as its own.
 fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
-    let projects: BTreeMap<IssueId, &str> = issues
+    let projects: BTreeMap<IssueId, ProjectId> = issues
         .iter()
-        .map(|issue| (issue.id, issue.project.0.as_str()))
+        .map(|issue| (issue.id, issue.project))
         .collect();
     let mut problems = Vec::new();
     for relation in flow.relations.iter().filter(|relation| !relation.cycles) {

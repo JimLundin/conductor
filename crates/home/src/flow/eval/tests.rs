@@ -29,7 +29,10 @@ const NAMES: [&str; 10] = [
 
 fn id(name: &str) -> IssueId {
     let place = NAMES.iter().position(|known| *known == name);
-    IssueId(place.map_or(0, |at| u128::try_from(at).unwrap_or_default() + 1))
+    IssueId::new(
+        0,
+        place.map_or(0, |at| u64::try_from(at).unwrap_or_default() + 1),
+    )
 }
 
 fn step(via: &str, name: &str) -> Step {
@@ -46,7 +49,7 @@ fn terminal() -> Predicate {
 fn issue(name: &str, kind: &str, status: &str) -> Issue {
     Issue {
         id: id(name),
-        project: ProjectId(String::from("home")),
+        project: ProjectId::new(1),
         title: String::from(name),
         kind: String::from(kind),
         status: String::from(status),
