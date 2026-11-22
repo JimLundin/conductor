@@ -258,11 +258,15 @@ fn a_cycle_where_the_relation_forbids_one_is_a_problem() {
     let graph = read(&flow(), &[one, other]);
     assert_eq!(
         problems(&graph),
-        Vec::from([problem(
-            &format!("home/{DECISION}"),
-            "blocked_by",
-            &format!("is part of a cycle: {DECISION} → {TASK} → {DECISION}"),
-        )])
+        [TASK, DECISION]
+            .map(|member| problem(
+                &format!("home/{member}"),
+                "blocked_by",
+                &format!(
+                    "is part of a cycle: {DECISION} → {TASK} → {DECISION}"
+                ),
+            ))
+            .to_vec()
     );
 }
 

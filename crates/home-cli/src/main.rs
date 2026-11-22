@@ -1,41 +1,42 @@
-//! `home`: the home's command line. `home check` checks every project's
-//! issues against the flow (`home::flow::check`), from anywhere in the home.
+//! `home`: the home's command line (`home::flow::command`), run from
+//! anywhere in the home. It reads the home's files, the clock and some
+//! randomness, and writes the issues the command returns.
 
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use home::flow::check::{Inputs, check};
+use home::flow::check::Inputs;
+use home::flow::command::{Context, Write, command, run};
 use home::flow::graph::File;
 use proto::ProjectId;
 
 const FLOW: &str = "docs/agents/flow.toml";
-const USAGE: &str = "usage: home check\n";
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    match args.as_slice() {
-        [command] if command == "check" => run_check(),
-        _ => say(USAGE, ExitCode::from(2)),
-    }
-}
-
-fn run_check() -> ExitCode {
     let Some(root) = root() else {
         return say(
             "home: no home here: no folder above holds docs/agents/flow.toml\n",
             ExitCode::from(2),
         );
     };
-    let report = check(&inputs(&root));
-    let code = if report.failed() {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    };
-    say(&report.text(), code)
+    let outcome = run(&command(&args), &inputs(&root), &context());
+    let written = outcome
+        .writes
+        .iter()
+        .try_for_each(|write| save(&root, write));
+    let text = written.as_ref().map_or_else(
+        |err| format!("{}home: {err}\n", outcome.output),
+        |()| outcome.output.clone(),
+    );
+    match (written.is_ok(), outcome.failed) {
+        (true, false) => say(&text, ExitCode::SUCCESS),
+        _ => say(&text, ExitCode::FAILURE),
+    }
 }
 
 /// The nearest folder at or above this one that holds the flow.
@@ -45,6 +46,26 @@ fn root() -> Option<PathBuf> {
         .ancestors()
         .find(|folder| folder.join(FLOW).is_file())
         .map(Path::to_path_buf)
+}
+
+/// Now, a random number for a new id, and who signs the log: `HOME_BY`,
+/// else this host's name and `cli`.
+fn context() -> Context {
+    let mut random = [0_u8; 16];
+    let _filled = getrandom::fill(&mut random);
+    let host = env::var("COMPUTERNAME")
+        .or_else(|_| env::var("HOSTNAME"))
+        .unwrap_or_else(|_| String::from("host"))
+        .to_lowercase();
+    Context {
+        now: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            }),
+        random: u128::from_le_bytes(random),
+        by: env::var("HOME_BY").unwrap_or_else(|_| format!("{host}·cli")),
+    }
 }
 
 fn inputs(root: &Path) -> Inputs {
@@ -93,6 +114,16 @@ fn entries(folder: &Path) -> Vec<(String, PathBuf)> {
 
 fn read(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))
+}
+
+fn save(root: &Path, write: &Write) -> Result<(), String> {
+    let path = root
+        .join("projects")
+        .join(&write.project.0)
+        .join("issues")
+        .join(format!("{}.md", write.stem));
+    fs::write(&path, &write.text)
+        .map_err(|err| format!("{}: {err}", path.display()))
 }
 
 fn say(text: &str, code: ExitCode) -> ExitCode {

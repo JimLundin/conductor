@@ -50,13 +50,13 @@ fn folder(project: &ProjectId) -> String {
 /// A file as lines: its front matter's, between the `+++` lines, and the
 /// rest's. Windows line ends read as Unix ones.
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Lines {
+pub(crate) struct Lines {
     front: Vec<String>,
     rest: Vec<String>,
 }
 
 impl Lines {
-    fn of(text: &str) -> Result<Self, String> {
+    pub(crate) fn of(text: &str) -> Result<Self, String> {
         let unix = text.replace("\r\n", "\n");
         let (front, rest) = unix
             .strip_prefix("+++\n")
@@ -70,7 +70,7 @@ impl Lines {
         })
     }
 
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         let rest = self
             .rest
             .iter()
@@ -87,7 +87,7 @@ impl Lines {
             .map_err(|err| format!("front matter: {err}"))
     }
 
-    fn set(&mut self, key: &str, value: &str) -> Option<()> {
+    pub(crate) fn set(&mut self, key: &str, value: &str) -> Option<()> {
         let mut front = self.front.join("\n");
         let spans =
             toml::from_str::<BTreeMap<String, Spanned<Value>>>(&front).ok()?;
@@ -173,7 +173,7 @@ impl Lines {
     /// Adds `lines` after the last line with text of the section under
     /// `heading`, or as a new section: before the one under `before`, or
     /// at the end.
-    fn append(
+    pub(crate) fn append(
         &mut self,
         heading: &str,
         before: Option<&str>,
