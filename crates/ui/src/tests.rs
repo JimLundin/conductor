@@ -28,8 +28,7 @@ use crate::{
     Effect, EffortControl, Focus, Footer, FormIntent, Hint, HostId,
     HostsScreen, Intent, Keystroke, Listing, Mount, NewSessionForm, Opening,
     Patch, Place, Preview, QuestionBody, Row, Saved, Screen, SessionIntent,
-    SessionPane, State, Stored, ToolDetail, ToolLine, TurnChanges, sends,
-    update, view,
+    SessionPane, State, ToolDetail, ToolLine, TurnChanges, sends, update, view,
 };
 
 const SESSION: SessionId = SessionId(7);
@@ -50,7 +49,7 @@ fn ticket() -> Ticket {
 /// The app opened on a join link, with nothing saved.
 fn joined(link: Result<Ticket, TicketError>) -> State {
     State::new(Opening {
-        stored: Stored::default(),
+        saved: Vec::new(),
         joined: Some(link),
     })
 }
@@ -142,7 +141,6 @@ fn event(seq: u64, kind: EventKind) -> Intent {
 fn created() -> EventKind {
     EventKind::SessionCreated {
         instance: id("claude"),
-        provider: Provider::Claude,
         directory: HostPath(text("/home/me/conductor")),
         by: ClientName(text("desk")),
         model: None,

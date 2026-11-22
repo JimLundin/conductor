@@ -125,7 +125,7 @@ mod tests {
         Snapshot,
     };
     use proto::{AuthToken, Ticket};
-    use ui::{HostId, Saved, Stored};
+    use ui::{HOST_KEY, HostId, Saved};
 
     use super::Fleet;
 
@@ -176,30 +176,25 @@ mod tests {
     }
 
     #[test]
-    fn reload_filters_only_revoked_standalone_records_and_keeps_legacy_migration()
-     {
+    fn reload_filters_only_revoked_standalone_records() {
         let unrelated = standalone(STANDALONE);
         let revoked = standalone(REVOKED);
-        let legacy = Stored {
-            hosts: None,
-            ticket: Some(unrelated.ticket.to_text()),
-        };
-        let saved = Stored {
-            hosts: Some(ui::encode(&[unrelated.clone(), revoked])),
-            ticket: None,
-        };
+        let saved = [unrelated.clone(), revoked].map(|host| {
+            (
+                format!("{HOST_KEY}{}", HostId::of(&host.ticket).key()),
+                ui::encode(&[host]),
+            )
+        });
         let fleet = fleet();
-        let reload = |stored| fleet.restored(ui::restored(stored, Vec::new()));
         let expected =
             [unrelated, standalone(ROOT)].map(|host| HostId::of(&host.ticket));
-        for record in [&legacy, &saved, &saved] {
-            assert_eq!(
-                reload(record)
-                    .iter()
-                    .map(|host| HostId::of(&host.ticket))
-                    .collect::<Vec<_>>(),
-                expected
-            );
-        }
+        assert_eq!(
+            fleet
+                .restored(ui::restored(saved.into()))
+                .iter()
+                .map(|host| HostId::of(&host.ticket))
+                .collect::<Vec<_>>(),
+            expected
+        );
     }
 }

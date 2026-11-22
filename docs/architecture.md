@@ -305,7 +305,7 @@ in a `daemon::Plugins` map keyed by `Provider`.
   (`claude::profile`, `codex::profile`): the `Provider`; its
   `proto::ProviderInfo` (the label the app shows, a note for the
   new-session form, and the credential forms of §6.3); the pinned build
-  (`agents::pin::Cli`); the config its private home starts with; and the
+  (selected by `proto::Provider`); the config its private home starts with; and the
   `--version`, sign-in check and `login` runs as `agents::Invocation`s.
 - `settings: runtime::Settings`: the CLI path and the model the command
   line gave it.
@@ -368,7 +368,7 @@ each instance has its own CLI sign-in and config, its own agents and
 credential, and each Codex instance its own app-server (below). Whatever
 is per account is keyed by `InstanceId`: the registry's launchers,
 availability, models, refreshes and sessions, `Welcome.instances`,
-`StartSession { instance }`, and `SessionCreated { instance, provider }`,
+`StartSession { instance }`, and `SessionCreated { instance, .. }`,
 so `Continue` runs on the session's own instance. What the plugin
 describes stays keyed by `Provider`: the catalog's label, note and
 credential forms. The app shows an instance by its account, and the own
@@ -511,11 +511,11 @@ until someone re-records them by hand (§6.2).
 
 - **Store (built):** `<data>/conductor.redb`, with typed redb table constants
   and postcard values (storage option C). Its `metadata` records the log
-  format, 7 since snapshots became commit records and historical undo was
-  removed. A database of another format doesn't open and is moved aside
+  format, 8 since sessions derive their provider from their instance instead
+  of storing it twice. A database of another format doesn't open and is moved aside
   to start over. The tables are `events`,
-  `command_receipts`, `pending_requests`, `conversations` and `metadata`.
-  Sessions, their model choices and resolved requests are reconstructed from
+  `command_receipts`, `conversations` and `metadata`.
+  Sessions, their model choices and requests are reconstructed from
   the event log; the native conversation id has its own table. A cursor is
   `(epoch, seq)`; the epoch is created with the database, so wiping the
   database makes clients start over. The ticket token and host key also
@@ -524,7 +524,7 @@ until someone re-records them by hand (§6.2).
 - **Idempotent commands (built):** receipts are keyed by fleet-unique
   `CommandId`s (128 random bits), so a hedge onto a new transport identity
   still finds the same receipt. One command at a time stages its durable
-  events and conversation/request writes, then commits them with its receipt
+  events and conversation writes, then commits them with its receipt
   before replying. Ordinary commands use one transaction. Snapshot capture
   keeps enough durable intent to recover work left by an interrupted turn.
   A retry with a completed receipt returns its stored result. If
@@ -1704,10 +1704,11 @@ ticket.
   checkout there disabled, or a directory; a picked project hides the
   directory. A session whose worktree's repository is a project's checkout
   is listed by the project's name.
-- **Storage.** Local storage keeps `conductor.hosts`, a JSON object keyed
-  by each host's endpoint id in hex, holding its ticket text and name
-  (`ui::encode`, `ui::decode`). The first launch after the single-host app
-  takes its `conductor.ticket` into the list and removes it.
+- **Storage.** Local storage keeps a record per host under
+  `conductor.host.<endpoint id>`, with names under `conductor.name.<endpoint id>`.
+  Independent pairing writes survive concurrent tabs, and name refreshes
+  cannot resurrect a forgotten host. Only these records are read; older
+  single-ticket and shared-map storage stays untouched and requires pairing again.
 
 We port T3 Code's designs, not its code (`apps/web/src/components/`):
 

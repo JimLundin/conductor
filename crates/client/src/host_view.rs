@@ -8,7 +8,7 @@ use core::cmp::Reverse;
 use proto::{
     ChecklistEntry, ClientName, CloseReason, Effort, Event, EventKind,
     FinishState, Finished, HostPath, HostSeq, InstanceId, IssueId, ModelId,
-    Provider, Question, RequestId, Resolution, SessionId, SubagentActivity,
+    Question, RequestId, Resolution, SessionId, SubagentActivity,
     SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
     ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
@@ -20,9 +20,7 @@ pub struct HostView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionView {
-    /// The instance it runs on, and that instance's provider.
     pub instance: InstanceId,
-    pub provider: Provider,
     pub directory: HostPath,
     /// What the agent runs with; `None` is the CLI's own default.
     pub model: Option<ModelId>,
@@ -314,7 +312,6 @@ impl HostView {
                 _,
                 EventKind::SessionCreated {
                     instance,
-                    provider,
                     directory,
                     model,
                     effort,
@@ -322,7 +319,6 @@ impl HostView {
                 },
             ) => Some(SessionView {
                 instance,
-                provider,
                 directory,
                 model,
                 effort,
@@ -1278,7 +1274,6 @@ mod tests {
     fn created(directory: &str) -> EventKind {
         EventKind::SessionCreated {
             instance: InstanceId::own(Provider::Claude),
-            provider: Provider::Claude,
             directory: HostPath(text(directory)),
             by: ClientName(text("desk")),
             model: None,
@@ -1421,7 +1416,6 @@ mod tests {
                 SessionId(1),
                 SessionView {
                     instance: InstanceId::own(Provider::Claude),
-                    provider: Provider::Claude,
                     directory: HostPath(text("/a")),
                     model: None,
                     effort: None,
@@ -1488,7 +1482,6 @@ mod tests {
                 SessionId(2),
                 SessionView {
                     instance: InstanceId::own(Provider::Claude),
-                    provider: Provider::Claude,
                     directory: HostPath(text("/b")),
                     model: None,
                     effort: None,

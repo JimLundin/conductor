@@ -11,8 +11,8 @@
 use alloc::format;
 
 use proto::{
-    CloseReason, Event, EventKind, HostPath, InstanceId, Provider, RequestId,
-    Resolution, SessionId, TurnOutcome,
+    CloseReason, Event, EventKind, HostPath, InstanceId, RequestId, Resolution,
+    SessionId, TurnOutcome,
 };
 
 use crate::checkpoints::Book;
@@ -25,7 +25,6 @@ use crate::session::Choice;
 pub struct Created {
     pub session: SessionId,
     pub instance: InstanceId,
-    pub provider: Provider,
     pub directory: HostPath,
     pub choice: Choice,
 }
@@ -38,7 +37,6 @@ pub fn created(history: &[Event]) -> Vec<Created> {
         .filter_map(|event| match &event.kind {
             EventKind::SessionCreated {
                 instance,
-                provider,
                 directory,
                 model,
                 effort,
@@ -46,7 +44,6 @@ pub fn created(history: &[Event]) -> Vec<Created> {
             } => Some(Created {
                 session: event.session,
                 instance: instance.clone(),
-                provider: *provider,
                 directory: directory.clone(),
                 choice: Choice {
                     model: model.clone(),
@@ -281,7 +278,6 @@ mod tests {
     fn started() -> EventKind {
         EventKind::SessionCreated {
             instance: InstanceId::named(Provider::Codex, "https://gw.example"),
-            provider: Provider::Codex,
             directory: HostPath(String::from("/work")),
             by: ClientName(String::from("phone")),
             model: None,
@@ -341,7 +337,6 @@ mod tests {
                     Provider::Codex,
                     "https://gw.example"
                 ),
-                provider: Provider::Codex,
                 directory: HostPath(String::from("/work")),
                 choice: choice.clone(),
             })

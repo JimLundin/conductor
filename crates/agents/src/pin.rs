@@ -3,26 +3,11 @@
 //! install leaves behind.
 
 use alloc::format;
+use proto::Provider;
 
 use crate::prelude::*;
 
 pub mod pins;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Cli {
-    Claude,
-    Codex,
-}
-
-impl Cli {
-    #[must_use]
-    pub const fn name(&self) -> &str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-        }
-    }
-}
 
 /// How a download becomes the install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,7 +33,7 @@ pub struct Pin {
 /// `arch` describe, whose executables end in `exe`.
 #[must_use]
 pub fn pin(
-    cli: Cli,
+    cli: Provider,
     os: &str,
     arch: &str,
     exe: &str,
@@ -56,7 +41,7 @@ pub fn pin(
 ) -> Option<Pin> {
     let Platform { claude, codex } = platform(os, arch, musl)?;
     Some(match cli {
-        Cli::Claude => Pin {
+        Provider::Claude => Pin {
             version: String::from(pins::CLAUDE_VERSION),
             url: format!(
                 "https://downloads.claude.ai/claude-code-releases/{}/{claude}/claude{exe}",
@@ -66,7 +51,7 @@ pub fn pin(
             package: Package::Binary,
             binary: format!("claude{exe}"),
         },
-        Cli::Codex => Pin {
+        Provider::Codex => Pin {
             version: String::from(pins::CODEX_VERSION),
             url: format!(
                 "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-{codex}.tar.gz",
@@ -147,7 +132,7 @@ pub fn verify(found: String, expected: &str) -> Result<(), Mismatch> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Cli, Mismatch, Package, Pin, kept, pin, pins, platform, verify,
+        Mismatch, Package, Pin, Provider, kept, pin, pins, platform, verify,
     };
 
     const SUPPORTED: [(&str, &str); 6] = [
@@ -221,22 +206,14 @@ mod tests {
     }
 
     #[test]
-    fn each_cli_is_named_as_its_binary() {
-        assert_eq!(
-            [Cli::Claude.name(), Cli::Codex.name()],
-            ["claude", "codex"]
-        );
-    }
-
-    #[test]
     fn each_cli_downloads_its_pinned_build_for_the_platform() {
-        let claude = pin(Cli::Claude, "windows", "x86_64", ".exe", false);
-        let codex = pin(Cli::Codex, "linux", "aarch64", "", false);
+        let claude = pin(Provider::Claude, "windows", "x86_64", ".exe", false);
+        let codex = pin(Provider::Codex, "linux", "aarch64", "", false);
         assert_eq!(
             [
                 claude,
                 codex,
-                pin(Cli::Codex, "freebsd", "x86_64", "", false)
+                pin(Provider::Codex, "freebsd", "x86_64", "", false)
             ],
             [
                 Some(Pin {

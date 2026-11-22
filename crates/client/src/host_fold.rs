@@ -148,7 +148,6 @@ mod tests {
             session: SessionId(1),
             kind: EventKind::SessionCreated {
                 instance: InstanceId::own(Provider::Claude),
-                provider: Provider::Claude,
                 directory: HostPath(String::from("/project")),
                 by: ClientName(String::from("desk")),
                 model: None,

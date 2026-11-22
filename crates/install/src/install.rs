@@ -13,8 +13,8 @@ use std::process::{Child, Command, ExitStatus};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
-pub use agents::pin::Cli;
 use agents::pin::{Mismatch, Package, Pin};
+use proto::Provider;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -57,8 +57,8 @@ fn unpinned() -> InstallError {
     }
 }
 
-fn pin(cli: Cli) -> Result<Pin, InstallError> {
-    if cli == Cli::Claude
+fn pin(cli: Provider) -> Result<Pin, InstallError> {
+    if cli == Provider::Claude
         && cfg!(target_os = "linux")
         && !cfg!(any(target_env = "gnu", target_env = "musl"))
     {
@@ -82,7 +82,7 @@ fn pin(cli: Cli) -> Result<Pin, InstallError> {
 /// Fails when the CLI has no pin for this platform, or the download,
 /// verification or install fails.
 pub async fn install(
-    cli: Cli,
+    cli: Provider,
     data_dir: &Path,
 ) -> Result<PathBuf, InstallError> {
     put(

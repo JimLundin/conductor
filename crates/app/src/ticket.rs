@@ -1,12 +1,7 @@
 //! Where the hosts' tickets come from: a join link, then local storage.
 
 use proto::{Ticket, TicketError};
-use ui::{HOST_KEY, HostId, NAME_KEY, Opening, Saved, State, Stored};
-
-/// The paired hosts, as `ui::encode` writes them.
-const HOSTS: &str = "conductor.hosts";
-/// The one ticket an app from before several hosts saved.
-const TICKET: &str = "conductor.ticket";
+use ui::{HOST_KEY, HostId, NAME_KEY, Opening, Saved, State};
 
 /// Accepts what a person pastes: the whole join link, or the bare ticket.
 pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
@@ -16,8 +11,6 @@ pub fn parse_join(text: &str) -> Result<Ticket, TicketError> {
         .map_or(trimmed, |(_, ticket)| ticket);
     net::parse(ticket)
 }
-
-const MIGRATED: &str = "conductor.migrated-ticket";
 
 fn local() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|window| window.local_storage().ok().flatten())
@@ -37,7 +30,7 @@ pub fn pair(saved: Saved) -> bool {
 pub fn forget(host: HostId) -> bool {
     let key = host.key();
     local().is_some_and(|storage| {
-        let hidden = storage.set_item(&format!("{HOST_KEY}{key}"), "").is_ok();
+        let hidden = storage.remove_item(&format!("{HOST_KEY}{key}")).is_ok();
         if hidden {
             let _ = storage.remove_item(&format!("{NAME_KEY}{key}"));
         }
@@ -52,35 +45,12 @@ pub fn name(saved: Saved) {
     }
 }
 
-fn saved_hosts(
-    storage: &web_sys::Storage,
-    legacy: Option<String>,
-) -> Vec<Saved> {
-    let stored = Stored {
-        hosts: get(storage, HOSTS),
-        ticket: legacy,
-    };
+fn saved_hosts(storage: &web_sys::Storage) -> Vec<Saved> {
     let entries = (0..storage.length().unwrap_or_default())
         .filter_map(|index| storage.key(index).ok().flatten())
         .filter(|key| ui::host_storage_key(key))
         .filter_map(|key| get(storage, &key).map(|value| (key, value)));
-    ui::restored(&stored, entries.collect())
-}
-
-fn load_hosts(storage: &web_sys::Storage) -> (Vec<Saved>, bool) {
-    let legacy = get(storage, TICKET);
-    let failed = ui::legacy_to_migrate(legacy.as_deref())
-        .is_some_and(|ticket| !migrate(storage, ticket));
-    let hosts = saved_hosts(storage, legacy.or_else(|| get(storage, MIGRATED)));
-    (hosts, failed)
-}
-
-fn migrate(storage: &web_sys::Storage, ticket: &str) -> bool {
-    let saved = storage.set_item(MIGRATED, ticket).is_ok();
-    if saved {
-        let _ = storage.remove_item(TICKET);
-    }
-    saved
+    ui::restored(entries.collect())
 }
 
 fn pair_from_hash(window: Option<&web_sys::Window>, saved: Saved) -> bool {
@@ -98,9 +68,7 @@ pub fn open() -> (State, bool) {
         .and_then(|shown| shown.location().hash().ok())
         .unwrap_or_default();
     let joined = hash.strip_prefix("#join=").map(net::parse);
-    let (standalone, migration_failed) = local()
-        .as_ref()
-        .map_or_else(|| (Vec::new(), false), load_hosts);
+    let standalone = local().as_ref().map_or_else(Vec::new, saved_hosts);
     let hosts = match crate::fleet::Fleet::load() {
         Some(fleet) => fleet.restored(standalone),
         None => standalone,
@@ -112,15 +80,12 @@ pub fn open() -> (State, bool) {
             !pair_from_hash(window.as_ref(), ui::joined_host(&hosts, ticket))
         });
     let state = State::new(Opening {
-        stored: Stored {
-            hosts: Some(ui::encode(&hosts)),
-            ticket: None,
-        },
+        saved: hosts,
         joined,
     });
     (
         open_push_target(state, &hash, window.as_ref()),
-        migration_failed || pairing_failed,
+        pairing_failed,
     )
 }
 

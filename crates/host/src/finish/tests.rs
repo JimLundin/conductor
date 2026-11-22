@@ -46,7 +46,6 @@ fn started() -> Vec<Event> {
             1,
             EventKind::SessionCreated {
                 instance: instance(),
-                provider: Provider::Claude,
                 directory: HostPath(text("/src")),
                 by: ClientName(text("phone")),
                 model: None,

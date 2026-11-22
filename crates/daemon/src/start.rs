@@ -160,7 +160,7 @@ impl Providers {
             prepare(&self.plugins, isolated.path(), id, instance).ok()?;
         let path = provider_program(
             prepared.settings.path,
-            prepared.plugin.profile.pin,
+            prepared.plugin.profile.provider,
             &self.data_dir,
         )
         .await
@@ -189,7 +189,7 @@ impl Providers {
         } = prepare(&self.plugins, &self.data_dir, id, instance)?;
         let profile = plugin.profile;
         let program =
-            provider_program(settings.path, profile.pin, &self.data_dir)
+            provider_program(settings.path, profile.provider, &self.data_dir)
                 .await?;
         Ok(Signing {
             program,
@@ -529,12 +529,14 @@ fn prepare(
 
 async fn provider_program(
     configured: Option<PathBuf>,
-    pin: agents::pin::Cli,
+    provider: Provider,
     data_dir: &Path,
 ) -> Result<PathBuf, String> {
     match configured {
         Some(path) => Ok(path),
-        None => install(pin, data_dir).await.map_err(|err| err.to_string()),
+        None => install(provider, data_dir)
+            .await
+            .map_err(|err| err.to_string()),
     }
 }
 
@@ -561,7 +563,7 @@ async fn run(
     loop {
         next = match next {
             Next::Install(installing) => installing.installed(
-                install(profile.pin, data_dir)
+                install(profile.provider, data_dir)
                     .await
                     .map_err(|err| err.to_string()),
             ),

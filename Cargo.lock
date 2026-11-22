@@ -175,7 +175,6 @@ dependencies = [
  "qrcode",
  "serde",
  "tokio",
- "tracing",
  "ui",
  "url",
  "web-sys",
@@ -2500,7 +2499,6 @@ dependencies = [
  "getrandom 0.4.3",
  "home",
  "home-files",
- "proto",
 ]
 
 [[package]]
@@ -2829,6 +2827,7 @@ dependencies = [
  "claude",
  "data-encoding",
  "n0-future",
+ "proto",
  "reqwest 0.13.5",
  "rustls",
  "serde_json",

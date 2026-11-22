@@ -2,7 +2,6 @@
 //! environment and the provider in a private home's `config.toml` (§6.3).
 //! Also the version its handshake reports.
 
-use agents::pin::Cli;
 use agents::{Config, HomeKind, Invocation, Profile, Reported, Var};
 use proto::Provider;
 
@@ -53,7 +52,6 @@ pub fn profile() -> Profile {
     Profile {
         provider: Provider::Codex,
         info: crate::info(),
-        pin: Cli::Codex,
         instructions_file: String::from("AGENTS.md"),
         config: Config {
             file: String::from("config.toml"),

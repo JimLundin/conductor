@@ -202,7 +202,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
                     session,
                     directory: placed.directory.clone(),
                     choice: launch.choice,
-                    provider: launch.provider,
+                    provider: request.instance.provider,
                     agent: (launch.start, launch.offered),
                     history,
                 },
@@ -283,7 +283,6 @@ fn opening<S, H>(
 ) -> StartEffect<S, H> {
     let created = EventKind::SessionCreated {
         instance: request.instance.clone(),
-        provider: launch.provider,
         directory: placed.directory.clone(),
         by: request.by.clone(),
         model: launch.choice.model.clone(),

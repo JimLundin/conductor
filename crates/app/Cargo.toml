@@ -17,7 +17,6 @@ proto = { path = "../proto" }
 serde.workspace = true
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
-tracing = { workspace = true, features = ["std"] }
 ui = { path = "../ui" }
 url = "2.5.8"
 web-sys = { version = "0.3.107", features = ["Window", "Location", "Storage", "History"] }

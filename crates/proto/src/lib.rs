@@ -61,7 +61,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/34";
+pub const ALPN: &[u8] = b"conductor/35";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -789,11 +789,9 @@ pub struct Event {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EventKind {
     /// `model` and `effort` are what the agent runs with; `None` is the
-    /// CLI's own default. A `Continue` runs on `instance` again;
-    /// `provider` is its provider, which outlives the instance.
+    /// CLI's own default. A `Continue` runs on `instance` again.
     SessionCreated {
         instance: InstanceId,
-        provider: Provider,
         directory: HostPath,
         by: ClientName,
         model: Option<ModelId>,

@@ -435,7 +435,6 @@ struct Launch<S> {
     start: S,
     choice: Choice,
     offered: Models,
-    provider: Provider,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -557,7 +556,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         if self.roster.of(instance).is_none() {
             return Err(Rejection::UnknownInstance);
         }
-        let provider = instance.provider;
         let (start, _, offered) = self.ready(instance).map_err(unavailable)?;
         let choice = choose(&offered, model, effort)
             .map_err(|reason| Rejection::NotOffered { reason })?;
@@ -565,7 +563,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             start,
             choice,
             offered,
-            provider,
         })
     }
 

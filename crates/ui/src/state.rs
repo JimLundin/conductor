@@ -15,7 +15,7 @@ use crate::host::{Host, HostId, by_name};
 use crate::issues::{self, IssueDraft, IssueScreen, Shown, Titles};
 use crate::new_session::{Form, NewSessionForm};
 use crate::projects::{self, ProjectsScreen};
-use crate::saved::{Saved, decode};
+use crate::saved::Saved;
 use crate::session::{Pane, SessionPane};
 use crate::sessions::{self, SessionList};
 use crate::{
@@ -107,8 +107,6 @@ pub enum Detail {
 }
 
 impl State {
-    /// The saved hosts, an older app's single ticket among them, and a
-    /// host the join link pairs.
     #[must_use]
     pub fn new(opening: Opening) -> Self {
         let first_error = opening
@@ -116,7 +114,8 @@ impl State {
             .as_ref()
             .and_then(|joined| joined.as_ref().err())
             .map(invalid);
-        let hosts: BTreeMap<_, _> = decode(&opening.stored)
+        let hosts: BTreeMap<_, _> = opening
+            .saved
             .into_iter()
             .map(|saved| {
                 (

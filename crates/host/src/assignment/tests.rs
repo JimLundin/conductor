@@ -20,7 +20,6 @@ fn created(session: u128, instance: InstanceId) -> Event {
         session,
         EventKind::SessionCreated {
             instance,
-            provider: Provider::Claude,
             directory: HostPath(String::from("/src")),
             by: ClientName(String::from("phone")),
             model: None,

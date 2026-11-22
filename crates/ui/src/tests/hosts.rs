@@ -6,7 +6,7 @@ use alloc::collections::BTreeMap;
 use client::link::{LinkState, Update};
 use proto::{
     AuthToken, ClientName, CommandBody, CommandResult, Event, EventKind, Feed,
-    HostPath, HostSeq, Instances, Provider, SessionId, StartAt, Ticket,
+    HostPath, HostSeq, Instances, SessionId, StartAt, Ticket,
 };
 
 use super::{
@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     Detail, Effect, FormIntent, Intent, Listing, Place, Saved, Screen,
-    SessionIntent, State, Stored, decode, encode, view,
+    SessionIntent, State, decode, encode, view,
 };
 
 const OTHER: crate::HostId = crate::HostId([7; 32]);
@@ -47,7 +47,6 @@ fn on(
             session,
             kind: EventKind::SessionCreated {
                 instance: id("codex"),
-                provider: Provider::Codex,
                 directory: HostPath(text(directory)),
                 by: ClientName(text("desk")),
                 model: None,
@@ -407,15 +406,7 @@ fn a_new_session_picks_a_host_then_one_of_its_instances() {
 }
 
 #[test]
-fn the_single_saved_ticket_moves_into_the_list() {
-    let single = Stored {
-        hosts: None,
-        ticket: Some(ticket().to_text()),
-    };
-    let migrated = State::new(crate::Opening {
-        stored: single,
-        joined: None,
-    });
+fn saved_hosts_round_trip_and_a_join_link_keeps_one_entry_per_host() {
     let both = Vec::from([
         Saved {
             ticket: other(),
@@ -426,43 +417,74 @@ fn the_single_saved_ticket_moves_into_the_list() {
             name: None,
         },
     ]);
-    let listed = Stored {
-        hosts: Some(encode(&both)),
-        ticket: Some(ticket().to_text()),
-    };
-    let broken = Stored {
-        hosts: Some(text(r#"{"00": {"ticket": "not a ticket"}}"#)),
-        ticket: None,
-    };
     let joined_too = joined(Ok(other()));
     assert_eq!(
         (
-            migrated.saved(),
-            screen(&migrated).map(|shown| shown.links.len()),
-            decode(&listed),
+            decode(&encode(&both)),
             encode(&both)
                 .starts_with(&format!("{{\"{}\":{{\"ticket\":", OTHER.key())),
-            decode(&broken),
-            decode(&Stored::default()),
+            decode(r#"{"00": {"ticket": "not a ticket"}}"#),
+            decode(""),
+            decode(&ticket().to_text()),
             joined_too.saved().len(),
             listing(&State::new(crate::Opening {
-                stored: listed,
+                saved: decode(&encode(&both)),
                 joined: Some(Ok(other())),
             })),
         ),
         (
-            Vec::from([Saved {
-                ticket: ticket(),
-                name: None,
-            }]),
-            Some(1),
             both,
             true,
+            Vec::new(),
             Vec::new(),
             Vec::new(),
             1,
             Some(Listing::Empty(text("No sessions on host 09090909 yet."))),
         )
+    );
+}
+
+#[test]
+fn current_host_records_ignore_obsolete_storage_and_orphaned_names() {
+    let saved = Saved {
+        ticket: ticket(),
+        name: Some(text("before")),
+    };
+    let unrelated = Saved {
+        ticket: other(),
+        name: None,
+    };
+    let entries = Vec::from([
+        (
+            format!("{}{key}", crate::HOST_KEY, key = HOST.key()),
+            encode(core::slice::from_ref(&saved)),
+        ),
+        (
+            format!("{}{key}", crate::NAME_KEY, key = HOST.key()),
+            text("desk"),
+        ),
+        (
+            text("conductor.hosts"),
+            encode(core::slice::from_ref(&unrelated)),
+        ),
+        (text("conductor.ticket"), other().to_text()),
+        (text("conductor.migrated-ticket"), other().to_text()),
+        (
+            format!("{}{key}", crate::HOST_KEY, key = OTHER.key()),
+            String::new(),
+        ),
+        (
+            format!("{}{key}", crate::NAME_KEY, key = OTHER.key()),
+            text("orphan"),
+        ),
+        (format!("{}wrong", crate::HOST_KEY), encode(&[unrelated])),
+    ]);
+    assert_eq!(
+        crate::restored(entries),
+        [Saved {
+            name: Some(text("desk")),
+            ..saved
+        }]
     );
 }
 

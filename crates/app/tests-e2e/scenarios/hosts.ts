@@ -225,6 +225,12 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 			},
 		});
 	}, ticket);
+	await page.goto(`${url.origin}${url.pathname}${url.search}`);
+	await page.locator("form.pair input").waitFor({ timeout: run.patience });
+	check(
+		(await savedHosts(page)).length === 0,
+		"legacy tickets require pairing again",
+	);
 	await page.goto(url.href);
 	const storageError = page.locator(".storage-error");
 	await storageError.waitFor({ timeout: run.patience });
@@ -239,7 +245,7 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 			(legacy) => localStorage.getItem("conductor.ticket") === legacy,
 			ticket,
 		),
-		"failed legacy migration keeps the original saved ticket",
+		"pairing leaves obsolete storage untouched",
 	);
 	await page.evaluate(() => localStorage.removeItem("test.deny-writes"));
 	await page.reload();
@@ -251,18 +257,21 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 	);
 	check(
 		await page.evaluate(
-			() => localStorage.getItem("conductor.ticket") === null,
+			(legacy) => localStorage.getItem("conductor.ticket") === legacy,
+			ticket,
 		),
-		"successful migration retires the legacy ticket",
+		"successful pairing does not migrate obsolete storage",
 	);
 	await page.evaluate(() => {
 		const record = Object.keys(localStorage).find((key) =>
 			key.startsWith("conductor.host."),
 		);
-		const healthy = record === undefined ? null : localStorage.getItem(record);
-		localStorage.clear();
+		if (record === undefined) {
+			throw new Error("FAILED: paired host record is missing");
+		}
+		const healthy = localStorage.getItem(record);
 		localStorage.setItem(
-			"conductor.hosts",
+			record,
 			`{${healthy?.slice(1, -1) ?? ""},"malformed":{"ticket":42}}`,
 		);
 	});

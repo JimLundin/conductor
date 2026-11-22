@@ -50,8 +50,8 @@ pub use projects::{
     ProjectsScreen, when,
 };
 pub use saved::{
-    HOST_KEY, NAME_KEY, Saved, Stored, decode, encode, host_storage_key,
-    joined_host, legacy_to_migrate, restored,
+    HOST_KEY, NAME_KEY, Saved, decode, encode, host_storage_key, joined_host,
+    restored,
 };
 pub use session::{
     Composer, EffortControl, Entry, Footer, Mount, SessionIntent, SessionPane,
@@ -71,7 +71,7 @@ use credentials::{Done, Subject};
 /// the address bar, if any.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Opening {
-    pub stored: Stored,
+    pub saved: Vec<Saved>,
     pub joined: Option<Result<Ticket, TicketError>>,
 }
 

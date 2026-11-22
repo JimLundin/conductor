@@ -6,7 +6,6 @@
 
 use proto::{Provider, ProviderInfo};
 
-use crate::pin::Cli;
 use crate::prelude::*;
 use crate::{Invocation, SignIn};
 
@@ -33,7 +32,6 @@ pub struct Profile {
     pub provider: Provider,
     /// What the host tells the app about the provider.
     pub info: ProviderInfo,
-    pub pin: Cli,
     pub config: Config,
     /// The instructions file its CLI reads by itself in its working
     /// directory, which a session's instructions then leave out.

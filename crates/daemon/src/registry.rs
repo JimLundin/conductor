@@ -868,7 +868,6 @@ impl RegistryActor {
         let Created {
             session: id,
             instance,
-            provider,
             directory,
             choice,
         } = created;
@@ -880,7 +879,7 @@ impl RegistryActor {
             self.log.append(id, EventKind::FinishInterrupted).await?;
         }
         let recovered = events_of(id, &self.log.history().await?);
-        let told = self.told(provider);
+        let told = self.told(instance.provider);
         let session = Session::restore(
             id,
             directory,

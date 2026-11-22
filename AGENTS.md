@@ -30,10 +30,13 @@ Home Screen. The design is in
   crates (`app`, `ui`, `net`, `proto`, `client`) or the script change, and
   at `release`. It then runs the standard's `typescript/check.sh` on that
   suite, `crates/app/tests-e2e`, whose exceptions live in its own
-  `exceptions.toml`. Run `commit` before
-  each commit and `step` (the default) before merging a task branch;
-  `release` adds mutation testing and the slow checks, only in CI or when
-  asked. It checks only what changed since the merge base with `main`
+  `exceptions.toml`. Use `commit` for local validation when the environment
+  is available. If validation is unavailable or stalls, commit and push the
+  task branch with the commands, results and outstanding checks recorded
+  in the commit message and handoff. Saving work requires no validation
+  waiver. A passing `step` run in CI is required before merging;
+  `release` adds mutation testing and the slow checks, also in CI.
+  It checks only what changed since the merge base with `main`
   (`--all` checks everything) and reports `cached` for a tree that already
   passed. The standards come from a WSL clone of the standards project,
   `~/projects/tools/standards`, kept fresh by the script; set `STANDARDS` to try

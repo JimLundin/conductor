@@ -786,10 +786,12 @@ mod durability_tests {
         let storage = super::Storage::open(&path)?;
         let transaction = storage.begin()?;
         for id in 1..=64 {
-            super::storage::receipt(
+            super::storage::write(
                 &transaction,
-                CommandId(id),
-                &CommandResult::Accepted,
+                &host::log::Write::Receipt(
+                    CommandId(id),
+                    CommandResult::Accepted,
+                ),
             )?;
         }
         transaction.commit()?;

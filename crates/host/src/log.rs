@@ -18,9 +18,9 @@ use proto::{
 
 use crate::prelude::*;
 
-/// Format 7 stores commits without checkpoint identities or historical undo. A database of another
-/// format does not open.
-pub const FORMAT: u32 = 7;
+/// Format 8 derives each session's provider from its instance. A database
+/// of another format does not open.
+pub const FORMAT: u32 = 8;
 
 /// Whether a database opens, and whether its format is to be written: a
 /// `created` one takes [`FORMAT`], and one whose `stored` format is another

@@ -1,7 +1,6 @@
 //! The paired hosts as local storage keeps them: a JSON object keyed by
 //! each host's endpoint id in hex, holding its ticket and the name from its
-//! last `Welcome`. An app from before several hosts kept one bare ticket;
-//! the first launch since takes it into the list.
+//! last `Welcome`.
 
 use alloc::collections::BTreeMap;
 
@@ -15,15 +14,6 @@ use crate::host::HostId;
 pub struct Saved {
     pub ticket: Ticket,
     pub name: Option<String>,
-}
-
-/// What local storage holds.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Stored {
-    /// The list, as [`encode`] wrote it.
-    pub hosts: Option<String>,
-    /// The single ticket an older app saved.
-    pub ticket: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -50,41 +40,26 @@ pub fn encode(hosts: &[Saved]) -> String {
     serde_json::to_string(&entries).unwrap_or_default()
 }
 
-/// The saved hosts: the list once there is one, else the older app's
-/// ticket. A ticket that no longer parses is dropped.
+/// Invalid entries do not discard healthy neighbors. A ticket must match
+/// the host key it was saved under.
 #[must_use]
-pub fn decode(stored: &Stored) -> Vec<Saved> {
-    let listed = stored.hosts.as_deref().and_then(|text| {
-        serde_json::from_str::<BTreeMap<String, serde_json::Value>>(text).ok()
-    });
-    listed.map_or_else(
-        || {
-            stored
-                .ticket
-                .as_deref()
-                .and_then(|text| Ticket::parse(text).ok())
-                .map(|ticket| Saved { ticket, name: None })
-                .into_iter()
-                .collect()
-        },
-        |entries| {
-            entries
-                .into_iter()
-                .filter_map(|(key, value)| {
-                    let entry = serde_json::from_value::<Entry>(value).ok()?;
-                    let ticket = Ticket::parse(&entry.ticket).ok()?;
-                    (HostId::of(&ticket).key() == key).then_some(Saved {
-                        ticket,
-                        name: entry.name,
-                    })
-                })
-                .collect()
-        },
-    )
+pub fn decode(text: &str) -> Vec<Saved> {
+    serde_json::from_str::<BTreeMap<String, serde_json::Value>>(text)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|(key, value)| {
+            let entry = serde_json::from_value::<Entry>(value).ok()?;
+            let ticket = Ticket::parse(&entry.ticket).ok()?;
+            (HostId::of(&ticket).key() == key).then_some(Saved {
+                ticket,
+                name: entry.name,
+            })
+        })
+        .collect()
 }
 
-// Per-host overrides cover removals from the old shared map. Only explicit
-// pairing can replace a removal marker.
+// Separate host keys let concurrent tabs pair independently. Names can
+// refresh without overwriting a pairing or resurrecting a forgotten host.
 pub const HOST_KEY: &str = "conductor.host.";
 pub const NAME_KEY: &str = "conductor.name.";
 
@@ -94,22 +69,14 @@ pub fn host_storage_key(key: &str) -> bool {
 }
 
 #[must_use]
-pub fn restored(stored: &Stored, entries: Vec<(String, String)>) -> Vec<Saved> {
-    let mut hosts = decode(stored)
-        .into_iter()
-        .map(|saved| (HostId::of(&saved.ticket).key(), saved))
-        .collect::<BTreeMap<_, _>>();
+pub fn restored(entries: Vec<(String, String)>) -> Vec<Saved> {
+    let mut hosts = BTreeMap::new();
     let mut names = BTreeMap::new();
     for (key, value) in entries {
         if let Some(id) = key.strip_prefix(HOST_KEY) {
-            if value.is_empty() {
-                hosts.remove(id);
-            } else if let Some(saved) = decode(&Stored {
-                hosts: Some(value),
-                ticket: None,
-            })
-            .into_iter()
-            .find(|saved| HostId::of(&saved.ticket).key() == id)
+            if let Some(saved) = decode(&value)
+                .into_iter()
+                .find(|saved| HostId::of(&saved.ticket).key() == id)
             {
                 hosts.insert(id.to_owned(), saved);
             }
@@ -124,11 +91,6 @@ pub fn restored(stored: &Stored, entries: Vec<(String, String)>) -> Vec<Saved> {
             ..saved
         })
         .collect()
-}
-
-#[must_use]
-pub fn legacy_to_migrate(text: Option<&str>) -> Option<&str> {
-    text.filter(|ticket| Ticket::parse(ticket).is_ok())
 }
 
 #[must_use]

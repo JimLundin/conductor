@@ -311,7 +311,6 @@ fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
                 effort: Some(Effort::High),
             },
             offered: listed(),
-            provider: Provider::Claude,
         })
     );
 }
@@ -498,17 +497,14 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
     let started = |registry: &Test, id: &InstanceId| {
         registry
             .launch_session(id, true, None, None)
-            .map(|launch| (launch.start, launch.provider))
+            .map(|launch| launch.start)
     };
     assert_eq!(
         [
             started(&registry, &own(Provider::Claude)),
             started(&registry, &api())
         ],
-        [
-            Ok(("claude", Provider::Claude)),
-            Ok(("api", Provider::Claude))
-        ]
+        [Ok("claude"), Ok("api")]
     );
 }
 
@@ -764,7 +760,6 @@ fn continue_reopens_a_closed_session_for_instance_removal_checks() {
             1,
             EventKind::SessionCreated {
                 instance: own(Provider::Claude),
-                provider: Provider::Claude,
                 directory: HostPath(text("/work")),
                 by: ClientName(text("phone")),
                 model: None,
@@ -1156,7 +1151,6 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
             session,
             EventKind::SessionCreated {
                 instance,
-                provider: Provider::Claude,
                 directory: HostPath(String::from("/src")),
                 by: ClientName(String::from("phone")),
                 model: None,
@@ -1448,7 +1442,6 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
         [
             EventKind::SessionCreated {
                 instance: start_request().instance,
-                provider: Provider::Claude,
                 directory: HostPath(text("/src")),
                 by: ClientName(text("phone")),
                 model: Some(model("big")),

@@ -415,7 +415,6 @@ async fn events_through(
 
 fn legacy_created(instance: InstanceId, directory: &Path) -> EventKind {
     EventKind::SessionCreated {
-        provider: instance.provider,
         instance,
         directory: HostPath(directory.display().to_string()),
         by: test_client(),
@@ -768,7 +767,7 @@ async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() -> Fallibl
         .sessions
         .get(&session)
         .ok_or("missing replayed session")?;
-    assert_eq!(found.provider, Provider::Claude);
+    assert_eq!(found.instance.provider, Provider::Claude);
     assert_eq!(found.directory.0, source.display().to_string());
     assert_eq!(found.activity, head);
     assert_eq!(found.status_label(), StatusLabel::Idle);
@@ -1054,7 +1053,6 @@ fn opening(provider: Provider, directory: &Path) -> Vec<EventKind> {
     Vec::from([
         EventKind::SessionCreated {
             instance: instance(provider),
-            provider,
             directory: HostPath(directory.display().to_string()),
             by: test_client(),
             model: Some(ModelId(String::from("big"))),
@@ -1904,7 +1902,6 @@ async fn a_missing_claude_binary_closes_the_session() -> Fallible {
         [
             EventKind::SessionCreated {
                 instance: instance(Provider::Claude),
-                provider: Provider::Claude,
                 directory: HostPath(dir.display().to_string()),
                 by: test_client(),
                 model: Some(ModelId(String::from("big"))),
@@ -2349,7 +2346,7 @@ fn count(path: &Path, text: &str) -> Fallible<usize> {
 }
 
 async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
-    install_fake(data, agents::pin::Cli::Claude, &fake_claude())?;
+    install_fake(data, Provider::Claude, &fake_claude())?;
     probe(data, &instance(Provider::Claude), PROBED)?;
     probe(data, &api(Provider::Claude), PROBED)?;
     serve(
@@ -2360,7 +2357,7 @@ async fn claude_host_in(data: &Path) -> Fallible<Fixture> {
     .await
 }
 
-fn install_fake(data: &Path, cli: agents::pin::Cli, fake: &Path) -> Fallible {
+fn install_fake(data: &Path, cli: Provider, fake: &Path) -> Fallible {
     let pin = agents::pin::pin(
         cli,
         std::env::consts::OS,
@@ -2633,7 +2630,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
     let (log, logging) = capture_log("codex-provider")?;
     let codex_api = api(Provider::Codex);
     seed(&data, std::slice::from_ref(&codex_api), &[Provider::Codex])?;
-    install_fake(&data, agents::pin::Cli::Codex, &fake_codex())?;
+    install_fake(&data, Provider::Codex, &fake_codex())?;
     let server =
         codex_server(&data, &codex_api, "codex-two-threads-listed.jsonl")?;
     let fx = serve(
@@ -3049,7 +3046,6 @@ fn created_with(
 ) -> EventKind {
     EventKind::SessionCreated {
         instance: instance(provider),
-        provider,
         directory: HostPath(directory.display().to_string()),
         by: test_client(),
         model: Some(ModelId(String::from(model))),
@@ -5605,7 +5601,7 @@ async fn app_sign_in(
 }
 
 fn sign_in_home(data: &Path, id: &InstanceId) -> Fallible<PathBuf> {
-    install_fake(data, agents::pin::Cli::Claude, &fake_claude())?;
+    install_fake(data, Provider::Claude, &fake_claude())?;
     let home = dir_of(data, "home", id);
     std::fs::create_dir_all(&home)?;
     probe(data, id, PROBED)?;

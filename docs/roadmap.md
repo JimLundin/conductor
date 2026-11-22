@@ -4,6 +4,16 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **One provider identity and current storage only.** Pin selection and
+  installation use `Provider`, and sessions derive their provider from their
+  instance throughout the event log, recovery and client view (ALPN
+  `conductor/35`, log format 8). Requests have one durable source, the event
+  log; the write-only request table is gone. Browser pairing reads only
+  current per-host records, keeping concurrent-tab writes and fleet revocation
+  without single-ticket or shared-map migrations. Older session databases
+  must be set aside; browsers with only obsolete pairing records must pair
+  again. Historical review reports remain in Git history.
+
 - **CLI pins shipped with Conductor.** Every host uses the CLI versions verified
   with its Conductor release. Removed fleet revision publishing, separate
   fleet installs and revision-driven instance reconfiguration. Host and

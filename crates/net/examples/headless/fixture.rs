@@ -184,7 +184,6 @@ async fn respond(
 fn created() -> EventKind {
     EventKind::SessionCreated {
         instance: InstanceId::own(Provider::Claude),
-        provider: Provider::Claude,
         directory: HostPath(String::from("/fixture")),
         by: ClientName(String::from("fixture")),
         model: None,

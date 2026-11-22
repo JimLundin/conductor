@@ -2,7 +2,6 @@
 //! decides: its command line, its environment and whether its version
 //! runs.
 
-use agents::pin::Cli;
 use agents::{Config, HomeKind, Invocation, Note, Profile, Reported, Var};
 use proto::{Effort, Provider};
 use serde_json::Value;
@@ -176,7 +175,6 @@ pub fn profile() -> Profile {
     Profile {
         provider: Provider::Claude,
         info: crate::info(),
-        pin: Cli::Claude,
         instructions_file: String::from("CLAUDE.md"),
         config: Config {
             file: String::from("settings.json"),

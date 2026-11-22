@@ -318,8 +318,16 @@ fn a_new_database_takes_the_format_and_another_format_does_not_open() {
             opens(false, None),
             opens(false, Some(2)),
             opens(false, Some(3)),
+            opens(false, Some(7)),
         ],
-        [Ok(true), Ok(false), refused(1), refused(2), refused(3)]
+        [
+            Ok(true),
+            Ok(false),
+            refused(1),
+            refused(2),
+            refused(3),
+            refused(7)
+        ]
     );
 }
 
