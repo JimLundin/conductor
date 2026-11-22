@@ -27,13 +27,12 @@ use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
     ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
-    Credential, Decision, Effort, Entry, Epoch, Event, EventKind, Feed,
-    FileChange, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
-    IssueChange, IssueId, Kept, ModelChoice, ModelId, Models, ProjectId,
-    Provider, Question, QuestionOption, Rejection, RequestId, Resolution,
-    Roster, Selection, SessionId, StartAt, SubagentActivity, SubagentEvent,
-    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome,
+    Credential, Decision, Effort, Epoch, Event, EventKind, Feed, FileChange,
+    HostPath, HostSeq, InstanceId, InstanceStatus, Instances, IssueChange,
+    IssueId, Kept, ModelChoice, ModelId, Models, ProjectId, Provider, Question,
+    QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
+    SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
+    SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
@@ -6414,7 +6413,7 @@ async fn lands_an_offline_note(
             .flat_map(|shown| shown
                 .log
                 .iter()
-                .map(Entry::line)
+                .map(home::flow::file::log_line)
                 .collect::<Vec<_>>())
             .any(|note| note.ends_with(&signed)),
         "the clone has the note, signed by the host and the client, before the remote does"
@@ -7371,7 +7370,7 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
     let notes = alpha_issues(&reviewed)
         .into_iter()
         .flat_map(|shown| shown.log)
-        .map(|entry| entry.line())
+        .map(|entry| home::flow::file::log_line(&entry))
         .collect::<Vec<String>>();
     assert!(
         !notes.iter().any(|note| note.contains("Done: turn one.")),
@@ -7382,7 +7381,11 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
             .iter()
             .rev()
             .take(2)
-            .map(|note| note.split_once(' ').map_or("", |(_, rest)| rest))
+            .map(|note| {
+                note.strip_prefix("- ")
+                    .and_then(|line| line.split_once(' '))
+                    .map_or("", |(_, rest)| rest)
+            })
             .collect::<Vec<&str>>(),
         [
             "test-host·claude status active→review: a session on it landed work",

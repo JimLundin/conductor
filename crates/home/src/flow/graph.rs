@@ -5,15 +5,15 @@
 //! Anything else is a structural problem, as is a reference to no issue,
 //! a target of a kind the relation doesn't allow, and a cycle where the
 //! relation forbids one. Ids are global, so a relation may cross projects.
+//! The file's parts are as [`super::file`] reads them.
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
-use proto::{
-    ChecklistItem, Datum, Entry, Issue, IssueId, LogEvent, ProjectId, Section,
-};
+use proto::{Datum, Issue, IssueId, ProjectId};
 use toml::{Table, Value};
 
+use super::file::Document;
 use super::{Field, FieldType, Flow, Relation};
 use crate::prelude::*;
 
@@ -76,11 +76,9 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         field: field.map(ToOwned::to_owned),
         message,
     };
-    let unix = file.text.replace("\r\n", "\n");
-    let (front, body) = split(&unix).ok_or_else(|| {
-        fail(None, String::from("it has no +++ front matter"))
-    })?;
-    let mut table = toml::from_str::<Table>(front)
+    let document =
+        Document::of(&file.text).map_err(|message| fail(None, message))?;
+    let mut table = toml::from_str::<Table>(&document.front())
         .map_err(|err| fail(None, format!("its front matter: {err}")))?;
     let id = text(&mut table, "id")
         .filter(|id| *id == file.stem)
@@ -140,8 +138,7 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
             ));
         }
     }
-    let (sections, checklist, log) = body_of(body);
-    let branch = crate::issue::branch_of(
+    let branch = branch_of(
         id,
         fields.get("branch").and_then(|datum| match datum {
             Datum::Text(declared) => Some(declared.as_str()),
@@ -157,20 +154,18 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         stage,
         fields,
         links,
-        sections,
-        checklist,
-        log,
+        sections: document.sections(),
+        checklist: document.checklist(),
+        log: document.log(),
         branch,
     })
 }
 
-/// The front matter between the `+++` lines, and the body after them.
-fn split(text: &str) -> Option<(&str, &str)> {
-    let rest = text.trim_start_matches('\u{feff}').strip_prefix("+++\n")?;
-    let end = rest.find("\n+++")?;
-    let front = rest.get(..=end)?;
-    let after = rest.get(end + 4..)?;
-    Some((front, after.strip_prefix('\n').unwrap_or(after)))
+/// The branch an issue's sessions land on: the one its file declares, else
+/// `issue/<id>`.
+#[must_use]
+pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
+    declared.map_or_else(|| format!("issue/{id}"), String::from)
 }
 
 /// The id a lower-case ULID names.
@@ -233,162 +228,6 @@ fn targets(relation: &Relation, value: Value) -> Result<Vec<String>, String> {
         }
         _ => Err(String::from("is not an id")),
     }
-}
-
-/// The body's sections, the checklist's items and the log, reading
-/// headings only outside code fences.
-fn body_of(body: &str) -> (Vec<Section>, Vec<ChecklistItem>, Vec<Entry>) {
-    let lines: Vec<String> = body.lines().map(ToOwned::to_owned).collect();
-    let mut sections: Vec<Section> = Vec::new();
-    let mut checklist = Vec::new();
-    let mut log: Vec<Entry> = Vec::new();
-    let mut part = Part::Section;
-    for (line, outside) in markdown(&lines) {
-        match (line.strip_prefix("## ").filter(|_| outside), part) {
-            (Some(heading), _) => {
-                part = match heading.trim() {
-                    "Notes" => Part::Log,
-                    "Checklist" => Part::Checklist,
-                    named => {
-                        sections.push(Section {
-                            heading: named.to_owned(),
-                            text: String::new(),
-                        });
-                        Part::Section
-                    }
-                };
-            }
-            (None, Part::Log) if outside => logged(&mut log, line),
-            (None, Part::Checklist) if outside => {
-                checklist.extend(item(line));
-            }
-            (None, Part::Log | Part::Checklist) => {}
-            (None, Part::Section) => written(&mut sections, line),
-        }
-    }
-    for section in &mut sections {
-        section.text = section.text.trim().to_owned();
-    }
-    sections.retain(|section| {
-        !section.heading.is_empty() || !section.text.is_empty()
-    });
-    (sections, checklist, log)
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Part {
-    Section,
-    Checklist,
-    Log,
-}
-
-fn written(sections: &mut Vec<Section>, line: &str) {
-    if sections.is_empty() {
-        sections.push(Section {
-            heading: String::new(),
-            text: String::new(),
-        });
-    }
-    if let Some(section) = sections.last_mut() {
-        section.text.push_str(line);
-        section.text.push('\n');
-    }
-}
-
-/// A log line, or the continuation of the last one when indented by two
-/// spaces.
-fn logged(log: &mut Vec<Entry>, line: &str) {
-    if let Some(entry) = line.strip_prefix("- ") {
-        log.push(entry_of(entry));
-    } else if let (Some(more), Some(last)) =
-        (line.strip_prefix("  "), log.last_mut())
-    {
-        last.text.push('\n');
-        last.text.push_str(more);
-    }
-}
-
-pub(crate) fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
-    let mut fence = None;
-    rest.iter().map(move |line| {
-        let previously_open = fence.is_some();
-        if let Some((marker, width, suffix)) = fence_line(line) {
-            match fence {
-                Some((open, minimum))
-                    if open == marker
-                        && width >= minimum
-                        && suffix.trim().is_empty() =>
-                {
-                    fence = None;
-                }
-                None if marker == b'~' || !suffix.contains('`') => {
-                    fence = Some((marker, width));
-                }
-                _ => {}
-            }
-        }
-        (line.as_str(), !previously_open && fence.is_none())
-    })
-}
-
-fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
-    let rest = line.trim_start_matches(' ');
-    if line.len() - rest.len() > 3 {
-        return None;
-    }
-    let marker = *rest.as_bytes().first()?;
-    let width = rest.bytes().take_while(|byte| *byte == marker).count();
-    if width < 3 || !matches!(marker, b'`' | b'~') {
-        return None;
-    }
-    Some((marker, width, rest.get(width..)?))
-}
-
-pub(crate) fn item(line: &str) -> Option<ChecklistItem> {
-    let (done, text) = line
-        .strip_prefix("- [x] ")
-        .or_else(|| line.strip_prefix("- [X] "))
-        .map(|text| (true, text))
-        .or_else(|| line.strip_prefix("- [ ] ").map(|text| (false, text)))?;
-    Some(ChecklistItem {
-        done,
-        text: String::from(text),
-    })
-}
-
-/// `<time> <who> <event>: <text>`, where the event is `note`,
-/// `stage <a>→<b>` or `status <a>→<b>`; any other line is a note as written.
-fn entry_of(line: &str) -> Entry {
-    let structured = line.split_once(": ").and_then(|(head, text)| {
-        let mut words = head.split(' ');
-        let at = words.next()?;
-        let by = words.next()?;
-        let event = match (words.next()?, words.next(), words.next()) {
-            ("note", None, _) => LogEvent::Note,
-            (name @ ("stage" | "status"), Some(change), None) => {
-                let (before, after) = change.split_once('→')?;
-                let (from, to) = (before.to_owned(), after.to_owned());
-                if name == "stage" {
-                    LogEvent::Stage { from, to }
-                } else {
-                    LogEvent::Status { from, to }
-                }
-            }
-            _ => return None,
-        };
-        at.contains('T').then(|| Entry {
-            at: Some(at.to_owned()),
-            by: Some(by.to_owned()),
-            event,
-            text: text.to_owned(),
-        })
-    });
-    structured.unwrap_or_else(|| Entry {
-        at: None,
-        by: None,
-        event: LogEvent::Note,
-        text: line.to_owned(),
-    })
 }
 
 /// Each reference to no issue, or to one of a kind its relation doesn't

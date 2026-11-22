@@ -12,6 +12,7 @@ use super::{
     SessionUpdate, branch, file, listed, message, read, start, startable,
 };
 use crate::flow::command::Issues;
+use crate::flow::file::log_line;
 use crate::flow::graph::File;
 use crate::flow::load;
 use crate::project::Project;
@@ -97,7 +98,15 @@ fn note(line: &str) -> Entry {
 }
 
 fn notes(issue: &Issue) -> Vec<String> {
-    issue.log.iter().map(Entry::line).collect()
+    issue
+        .log
+        .iter()
+        .map(|entry| {
+            let line = log_line(entry);
+            line.strip_prefix("- ")
+                .map_or_else(|| line.clone(), String::from)
+        })
+        .collect()
 }
 
 fn issue() -> Issue {
@@ -1743,4 +1752,39 @@ fn the_issue_branch_checks_origin_and_distinguishes_absence_from_failure() {
         read.after(Ok(text("abc"))),
         Observed(Remote::At(text("abc")))
     );
+}
+
+#[test]
+fn every_line_the_app_logs_or_briefs_is_the_one_log_line_of_its_entry()
+-> Result<(), String> {
+    for change in [
+        IssueChange::Note(text("first\nsecond")),
+        moving_to("review"),
+        setting("priority", "low"),
+    ] {
+        let edited = file_of(apply(
+            Some(&written()),
+            &changing_to(change.clone()),
+            Mode::Record,
+        ))?;
+        let last = parse(&edited)?
+            .log
+            .last()
+            .map_or_else(String::new, log_line);
+        assert!(
+            last.starts_with(&format!("- {SIGNED} "))
+                && edited.ends_with(&format!("\n{last}\n")),
+            "{change:?}: {last:?} in {edited}"
+        );
+    }
+    let brief = start(
+        Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
+        ID,
+    )
+    .map(|at| at.brief)
+    .map_err(|rejection| format!("{rejection:?}"))?;
+    for entry in &issue().log {
+        assert!(brief.contains(&log_line(entry)), "{brief}");
+    }
+    Ok(())
 }

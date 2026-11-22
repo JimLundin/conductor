@@ -1,11 +1,8 @@
 //! An issue's file in the home, `projects/<project>/issues/<id>.md`
 //! (docs/home.md §3), and the changes a host makes to it.
 //!
-//! A file is `+++` TOML front matter, then the body, then `## Checklist`
-//! and `## Notes`, read only by the flow's graph (`crate::flow::graph`). A
-//! change rewrites only the lines it is about, so what a person wrote
-//! anywhere else in the file stays as written: comments, sections of their
-//! own, and the order of it all. A change is written by
+//! The file's layout is `crate::flow::file`'s, and the flow's graph
+//! (`crate::flow::graph`) reads issues from it. A change is written by
 //! `crate::flow::command`, as the `home` command line's is, and read back
 //! against the flow before it is kept.
 //!
@@ -21,20 +18,16 @@ use alloc::string::ToString;
 
 use proto::flow::{Flow, Predicate, Quantifier, Role, Shape};
 use proto::{
-    ChecklistChange, ChecklistItem, CommandId, Datum, Home, HostPath, Issue,
-    IssueChange, IssueId, Item, NewIssue, Part, ProjectId, Rejection,
+    ChecklistChange, CommandId, Datum, Home, HostPath, Issue, IssueChange,
+    IssueId, Item, NewIssue, Part, ProjectId, Rejection,
 };
 use serde::{Deserialize, Serialize};
-use toml::{Spanned, Value};
-use toml_parser::{Source, lexer::TokenKind};
 
 use crate::flow::command::{self, Issues};
 use crate::flow::eval;
-use crate::flow::graph::{self, File, Graph, item, markdown};
+use crate::flow::file::{Document, checklist_line, log_line};
+use crate::flow::graph::{self, File, Graph, branch_of};
 use crate::prelude::*;
-
-const CHECKLIST: &str = "## Checklist";
-const NOTES: &str = "## Notes";
 
 /// The issue's file, from the home's root.
 #[must_use]
@@ -46,204 +39,6 @@ fn file(project: &ProjectId, id: IssueId) -> String {
 #[must_use]
 fn folder(project: &ProjectId) -> String {
     format!("projects/{}/issues", project.0)
-}
-
-/// A file as lines: its front matter's, between the `+++` lines, and the
-/// rest's. Windows line ends read as Unix ones.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Lines {
-    front: Vec<String>,
-    rest: Vec<String>,
-}
-
-impl Lines {
-    pub(crate) fn of(text: &str) -> Result<Self, String> {
-        let unix = text.replace("\r\n", "\n");
-        let (front, rest) = unix
-            .strip_prefix("+++\n")
-            .and_then(|after| after.split_once("\n+++\n"))
-            .ok_or_else(|| {
-                String::from("it does not start with +++ front matter")
-            })?;
-        Ok(Self {
-            front: front.split('\n').map(String::from).collect(),
-            rest: rest.lines().map(String::from).collect(),
-        })
-    }
-
-    pub(crate) fn text(&self) -> String {
-        let rest = self
-            .rest
-            .iter()
-            .fold(String::new(), |text, line| format!("{text}{line}\n"));
-        format!("+++\n{}\n+++\n{rest}", self.front.join("\n"))
-    }
-
-    fn has_marker(&self, marker: &str) -> bool {
-        self.front.iter().any(|line| line == marker)
-    }
-
-    pub(crate) fn set(&mut self, key: &str, value: &str) -> Option<()> {
-        let mut front = self.front.join("\n");
-        let spans =
-            toml::from_str::<BTreeMap<String, Spanned<Value>>>(&front).ok()?;
-        if let Some(found) = spans.get(key) {
-            let comments = array_with_comments(front.get(found.span())?, value);
-            front.replace_range(
-                found.span(),
-                comments.as_deref().unwrap_or(value),
-            );
-        } else {
-            let last_value = spans
-                .values()
-                .filter(|item| !item.get_ref().is_table())
-                .map(|item| item.span().end)
-                .max();
-            if let Some(end) = last_value {
-                let at = front
-                    .get(end..)?
-                    .find('\n')
-                    .map_or(front.len(), |offset| end + offset);
-                front.insert_str(at, &format!("\n{key} = {value}"));
-            } else {
-                front.insert_str(0, &format!("{key} = {value}\n"));
-            }
-        }
-        self.front = front.split('\n').map(String::from).collect();
-        Some(())
-    }
-
-    /// Where the body ends: at the checklist or the notes, whichever is
-    /// first.
-    fn body_end(&self) -> usize {
-        markdown(&self.rest)
-            .position(|(line, outside)| {
-                outside && matches!(line.trim_end(), CHECKLIST | NOTES)
-            })
-            .unwrap_or(self.rest.len())
-    }
-
-    pub(crate) fn body(&mut self, body: &str) {
-        let end = self.body_end();
-        let mut lines = Vec::from([String::new()]);
-        lines.extend(body.lines().map(String::from));
-        if end < self.rest.len() {
-            lines.push(String::new());
-        }
-        self.rest.splice(..end, lines);
-    }
-
-    /// The section under `heading`, from the heading's line to the next
-    /// heading or the end, if the file has one.
-    fn section(&self, heading: &str) -> Option<(usize, usize)> {
-        let body_end = self.body_end();
-        let mut headings = markdown(&self.rest)
-            .enumerate()
-            .skip(body_end)
-            .filter(|(_, (line, outside))| *outside && line.starts_with("## "));
-        let (start, _) =
-            headings.find(|(_, (line, _))| line.trim_end() == heading)?;
-        let end = headings.next().map_or(self.rest.len(), |(index, _)| index);
-        Some((start, end))
-    }
-
-    fn items(&self) -> impl Iterator<Item = (usize, ChecklistItem)> + '_ {
-        let mut checklist = false;
-        markdown(&self.rest).enumerate().filter_map(
-            move |(at, (line, outside))| {
-                if outside && line.starts_with("## ") {
-                    checklist = line.trim_end() == CHECKLIST;
-                }
-                (outside && checklist)
-                    .then(|| item(line))
-                    .flatten()
-                    .map(|found| (at, found))
-            },
-        )
-    }
-
-    pub(crate) fn add_item(&mut self, text: &str) {
-        let added = ChecklistItem {
-            done: false,
-            text: String::from(text),
-        };
-        self.append(CHECKLIST, Some(NOTES), Vec::from([item_line(&added)]));
-    }
-
-    /// Checks or unchecks the checklist's item at `index`.
-    pub(crate) fn check(&mut self, index: usize, done: bool) -> Option<()> {
-        let (at, found) = self.items().nth(index)?;
-        *self.rest.get_mut(at)? = item_line(&ChecklistItem {
-            done,
-            text: found.text,
-        });
-        Some(())
-    }
-
-    pub(crate) fn remove_item(&mut self, index: usize) -> Option<()> {
-        let (at, _) = self.items().nth(index)?;
-        self.rest.remove(at);
-        Some(())
-    }
-
-    /// Adds `lines` after the last line with text of the section under
-    /// `heading`, or as a new section: before the one under `before`, or
-    /// at the end.
-    pub(crate) fn append(
-        &mut self,
-        heading: &str,
-        before: Option<&str>,
-        lines: Vec<String>,
-    ) {
-        if let Some((start, end)) = self.section(heading) {
-            let last = (start..end)
-                .rev()
-                .find(|at| {
-                    self.rest
-                        .get(*at)
-                        .is_some_and(|line| !line.trim().is_empty())
-                })
-                .unwrap_or(start);
-            let after = last + 1;
-            self.rest.splice(after..after, lines);
-            return;
-        }
-        let mut section = Vec::from([String::from(heading)]);
-        section.extend(lines);
-        if let Some((at, _)) = before.and_then(|other| self.section(other)) {
-            section.push(String::new());
-            self.rest.splice(at..at, section);
-        } else {
-            if self.rest.last().is_some_and(|line| !line.trim().is_empty()) {
-                self.rest.push(String::new());
-            }
-            self.rest.extend(section);
-        }
-    }
-}
-
-fn array_with_comments(previous: &str, value: &str) -> Option<String> {
-    let elements = value.strip_prefix('[')?.strip_suffix(']')?;
-    let source = Source::new(previous);
-    let mut comments = String::new();
-    for token in source
-        .lex()
-        .filter(|token| token.kind() == TokenKind::Comment)
-    {
-        let comment = source.get(token)?;
-        comments.push_str("    ");
-        comments.push_str(comment.as_str());
-        comments.push('\n');
-    }
-    if comments.is_empty() {
-        return None;
-    }
-    if !elements.is_empty() {
-        comments.push_str("    ");
-        comments.push_str(elements);
-        comments.push('\n');
-    }
-    Some(format!("[\n{comments}]"))
 }
 
 /// Issue `id` of `project` in `text`, as the flow reads it.
@@ -271,24 +66,6 @@ fn read(
             |field| format!("{field}: {}", problem.message),
         )
     })
-}
-
-fn item_line(item: &ChecklistItem) -> String {
-    let mark = if item.done { 'x' } else { ' ' };
-    format!("- [{mark}] {}", item.text)
-}
-
-fn note_lines(note: &str) -> Vec<String> {
-    note.lines()
-        .enumerate()
-        .map(|(at, line)| {
-            if at == 0 {
-                format!("- {line}")
-            } else {
-                format!("  {line}")
-            }
-        })
-        .collect()
 }
 
 /// The name of the flow's first status of `role`.
@@ -571,9 +348,9 @@ fn apply(
         return Applied::Gone;
     };
     let issue = match read(home.flow, &data.project, data.issue, text)
-        .and_then(|issue| Lines::of(text).map(|lines| (issue, lines)))
+        .and_then(|issue| Document::of(text).map(|document| (issue, document)))
     {
-        Ok((_, lines)) if lines.has_marker(&marker) => {
+        Ok((_, document)) if document.has_comment(&marker) => {
             return Applied::AlreadyRecorded;
         }
         Ok((issue, _)) => issue,
@@ -601,16 +378,17 @@ fn apply(
     }
 }
 
+/// The front matter's comment that marks an edit as had.
 fn edit_marker(id: CommandId) -> String {
-    format!("# conductor-edit: {:032x}", id.0)
+    format!("conductor-edit: {:032x}", id.0)
 }
 
 /// The file as it is, marked as having had the edit.
 fn marked(text: &str, marker: &str) -> Applied {
-    Lines::of(text).map_or_else(Applied::Unreadable, |mut lines| {
-        lines.front.push(String::from(marker));
+    Document::of(text).map_or_else(Applied::Unreadable, |mut document| {
+        document.comment(marker);
         Applied::Write {
-            text: lines.text(),
+            text: document.text(),
             warnings: Vec::new(),
         }
     })
@@ -662,13 +440,6 @@ fn written(
         },
         Err(reason) => Applied::Refused(reason),
     }
-}
-
-/// The branch an issue's sessions land on: the one its file declares, else
-/// `issue/<id>`.
-#[must_use]
-pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
-    declared.map_or_else(|| format!("issue/{id}"), String::from)
 }
 
 /// What a session on an issue starts from.
@@ -790,13 +561,9 @@ fn brief(project: &str, issue: &Issue) -> String {
     let checklist = issue
         .checklist
         .iter()
-        .map(item_line)
+        .map(checklist_line)
         .collect::<Vec<String>>();
-    let notes = issue
-        .log
-        .iter()
-        .flat_map(|entry| note_lines(&entry.line()))
-        .collect::<Vec<String>>();
+    let notes = issue.log.iter().map(log_line).collect::<Vec<String>>();
     let section = |heading: &str, lines: &[String]| {
         if lines.is_empty() {
             String::new()

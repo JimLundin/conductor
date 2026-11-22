@@ -132,29 +132,6 @@ pub struct Entry {
     pub text: String,
 }
 
-impl Entry {
-    /// The entry as its line has it, without the list marker:
-    /// `<time> <who> <event>: <text>`, or the text alone.
-    #[must_use]
-    pub fn line(&self) -> String {
-        match (&self.at, &self.by) {
-            (Some(at), Some(by)) => {
-                let event = match &self.event {
-                    LogEvent::Note => String::from("note"),
-                    LogEvent::Stage { from, to } => {
-                        format!("stage {from}→{to}")
-                    }
-                    LogEvent::Status { from, to } => {
-                        format!("status {from}→{to}")
-                    }
-                };
-                format!("{at} {by} {event}: {}", self.text)
-            }
-            _ => self.text.clone(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LogEvent {
     Note,

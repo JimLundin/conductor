@@ -3,23 +3,23 @@
 //!
 //! The shell reads the files, the clock and some randomness, and writes
 //! what [`run`] returns. Every write, the command line's and the app's
-//! alike, is made by [`write`], which reads it back against the flow
+//! alike, is made by [`write()`], which reads it back against the flow
 //! before it's made: a structural problem or a broken `error` rule refuses
 //! it, and anything softer is written with a warning.
 
 use alloc::string::ToString;
 
 use proto::{
-    ChecklistChange, Issue, IssueChange, IssueId, Item, NewIssue, Part,
-    ProjectId,
+    ChecklistChange, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
+    NewIssue, Part, ProjectId,
 };
 use toml::Value;
 
 use super::check::{Finding, Inputs, check, of_issue};
 use super::eval::Move;
+use super::file::Document;
 use super::graph::{File, Graph, one, read};
 use super::{FieldType, Flow, Role, Severity, load};
-use crate::issue::Lines;
 use crate::prelude::*;
 use crate::project::{Project, listed};
 
@@ -36,8 +36,6 @@ pub const USAGE: &str = "usage:
 A list's value is comma-separated: blocked_by=<id>,<id>.
 A checklist's items are numbered from 1.
 ";
-
-const NOTES: &str = "## Notes";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -317,14 +315,14 @@ struct Signer {
 }
 
 impl Signer {
-    /// The log's lines for `event`: the first signed and dated, any more
-    /// of `text` indented under it.
-    fn lines(&self, event: &str, text: &str) -> Vec<String> {
-        let mut said = text.split('\n');
-        let first = said.next().unwrap_or_default();
-        core::iter::once(format!("- {} {} {event}: {first}", self.at, self.by))
-            .chain(said.map(|more| format!("  {more}")))
-            .collect()
+    /// The log's entry of `event`, signed and dated.
+    fn entry(&self, event: LogEvent, text: &str) -> Entry {
+        Entry {
+            at: Some(self.at.clone()),
+            by: Some(self.by.clone()),
+            event,
+            text: String::from(text),
+        }
     }
 }
 
@@ -443,35 +441,30 @@ fn opened(
         .map_or_else(String::new, |status| status.name.clone());
     let id = context.id.to_string();
     let mut front = Vec::from([
-        format!("id = {}", quoted(&id)),
-        format!("title = {}", quoted(title)),
-        format!("kind = {}", quoted(kind)),
-        format!("status = {}", quoted(&status)),
+        (String::from("id"), quoted(&id)),
+        (String::from("title"), quoted(title)),
+        (String::from("kind"), quoted(kind)),
+        (String::from("status"), quoted(&status)),
     ]);
     for pair in fields {
         let (key, raw) = pair_of(pair)?;
-        front.push(format!("{key} = {}", value(flow, kind, key, raw)?));
+        front.push((key.to_owned(), value(flow, kind, key, raw)?));
     }
     if flow
         .field("created")
         .is_some_and(|field| field.value == FieldType::Time)
     {
-        front.push(format!("created = {at}"));
+        front.push((String::from("created"), at.clone()));
     }
-    let sections = declared
-        .sections
-        .iter()
-        .map(|section| format!("## {section}\n\n"))
-        .collect::<Vec<String>>()
-        .concat();
+    let document = Document::new(
+        &front,
+        &declared.sections,
+        &sign.entry(LogEvent::Note, "opened."),
+    );
     Ok(File {
         project: folder,
         stem: id,
-        text: format!(
-            "+++\n{}\n+++\n\n{sections}{NOTES}\n\n{}\n",
-            front.join("\n"),
-            sign.lines("note", "opened.").concat()
-        ),
+        text: document.text(),
     })
 }
 
@@ -486,47 +479,49 @@ fn changed(
     let issue = one(flow, file).map_err(|_| {
         format!("{} has problems of its own; see home check", file.stem)
     })?;
-    let mut lines = Lines::of(&file.text)?;
+    let mut document = Document::of(&file.text)?;
     let mut set = Vec::new();
     for change in changes {
         match change {
             IssueChange::Move { part, to, reason } => {
-                shifted(flow, &issue, &mut lines, sign, (*part, to, reason))?;
+                let (key, event, said) =
+                    shifted(flow, &issue, (*part, to, reason))?;
+                document.set(key, &quoted(to)).ok_or_else(|| {
+                    String::from("its front matter doesn't read")
+                })?;
+                document.log_entry(&sign.entry(event, &said));
             }
             IssueChange::Set { field, value } => {
-                setting(flow, &issue.kind, &mut lines, field, value)?;
+                setting(flow, &issue.kind, &mut document, field, value)?;
                 set.push(format!("{field}={value}"));
             }
             IssueChange::Note(said) => {
                 let text = needs(said, "a note needs text")?;
-                lines.append(NOTES, None, sign.lines("note", text));
+                document.log_entry(&sign.entry(LogEvent::Note, text));
             }
-            IssueChange::Body(text) => lines.body(text.trim()),
+            IssueChange::Body(text) => document.body(text.trim()),
             IssueChange::Checklist(item) => {
-                checklist(&issue, &mut lines, item)?;
+                checklist(&issue, &mut document, item)?;
             }
         }
     }
     if !set.is_empty() {
-        lines.append(
-            NOTES,
-            None,
-            sign.lines("note", &format!("set {}.", set.join(", "))),
+        document.log_entry(
+            &sign.entry(LogEvent::Note, &format!("set {}.", set.join(", "))),
         );
     }
     Ok(File {
-        text: lines.text(),
+        text: document.text(),
         ..file.clone()
     })
 }
 
+/// The key a move sets, the log's event for it, and the log's text.
 fn shifted(
     flow: &Flow,
     current: &Issue,
-    lines: &mut Lines,
-    sign: &Signer,
     (part, to, reason): (Part, &str, &str),
-) -> Result<(), String> {
+) -> Result<(&'static str, LogEvent, String), String> {
     let (key, from, known, usual) = match part {
         Part::Stage => {
             let from = current.stage.clone();
@@ -546,23 +541,28 @@ fn shifted(
     if !known {
         return Err(format!("no {key} is called {to}"));
     }
-    lines
-        .set(key, &quoted(to))
-        .ok_or_else(|| String::from("its front matter doesn't read"))?;
-    let unusual = if usual { "" } else { " (unusual move)" };
-    let event = format!("{key} {}→{to}", from.as_deref().unwrap_or("none"));
-    lines.append(
-        NOTES,
-        None,
-        sign.lines(&event, &format!("{reason}{unusual}")),
+    let (before, after) = (
+        from.unwrap_or_else(|| String::from("none")),
+        String::from(to),
     );
-    Ok(())
+    let event = match part {
+        Part::Stage => LogEvent::Stage {
+            from: before,
+            to: after,
+        },
+        Part::Status => LogEvent::Status {
+            from: before,
+            to: after,
+        },
+    };
+    let unusual = if usual { "" } else { " (unusual move)" };
+    Ok((key, event, format!("{reason}{unusual}")))
 }
 
 fn setting(
     flow: &Flow,
     kind: &str,
-    lines: &mut Lines,
+    document: &mut Document,
     key: &str,
     given: &str,
 ) -> Result<(), String> {
@@ -575,28 +575,28 @@ fn setting(
     if key == "title" {
         needs(raw, "an issue needs a title")?;
     }
-    lines
+    document
         .set(key, &value(flow, kind, key, raw)?)
         .ok_or_else(|| String::from("its front matter doesn't read"))
 }
 
 fn checklist(
     issue: &Issue,
-    lines: &mut Lines,
+    document: &mut Document,
     change: &ChecklistChange,
 ) -> Result<(), String> {
     let missing = || String::from("its checklist doesn't read");
     match change {
         ChecklistChange::Add(text) => {
-            lines.add_item(needs(text, "a checklist item needs text")?);
+            document.add_item(needs(text, "a checklist item needs text")?);
             Ok(())
         }
-        ChecklistChange::Check { item, done } => {
-            lines.check(picked(issue, item)?, *done).ok_or_else(missing)
-        }
-        ChecklistChange::Remove(item) => {
-            lines.remove_item(picked(issue, item)?).ok_or_else(missing)
-        }
+        ChecklistChange::Check { item, done } => document
+            .check(picked(issue, item)?, *done)
+            .ok_or_else(missing),
+        ChecklistChange::Remove(item) => document
+            .remove_item(picked(issue, item)?)
+            .ok_or_else(missing),
     }
 }
 

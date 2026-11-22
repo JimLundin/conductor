@@ -1,8 +1,13 @@
-use proto::{ChecklistChange, IssueChange, Item, NewIssue, Part, ProjectId};
+use proto::{
+    ChecklistChange, ChecklistItem, Issue, IssueChange, Item, NewIssue, Part,
+    ProjectId,
+};
 
 use super::{Command, Context, Outcome, command, fresh, run, stamp};
 use crate::flow::check::{Inputs, check};
-use crate::flow::graph::File;
+use crate::flow::file::log_line;
+use crate::flow::graph::{File, one};
+use crate::flow::load;
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
@@ -380,4 +385,159 @@ fn a_note_of_several_lines_is_indented_under_its_first() {
     assert!(text(&outcome).ends_with(
         "- 2026-11-22T12:00:00Z laptop·claude note: first\n  second\n"
     ));
+}
+
+/// The home with the task's file holding `text`.
+fn with_task(text: &str) -> Inputs {
+    let mut inputs = home();
+    for file in &mut inputs.issues {
+        if file.stem == TASK {
+            file.text = String::from(text);
+        }
+    }
+    inputs
+}
+
+fn task_text() -> String {
+    home()
+        .issues
+        .iter()
+        .find(|file| file.stem == TASK)
+        .map_or_else(String::new, |file| file.text.clone())
+}
+
+/// The issue `text` holds as the graph reads it, filed as `stem`.
+fn graph_reads(stem: &str, text: &str) -> Result<Issue, String> {
+    let flow = load(FLOW)?;
+    one(
+        &flow,
+        &File {
+            project: ProjectId(String::from(FOLDER)),
+            stem: String::from(stem),
+            text: String::from(text),
+        },
+    )
+    .map_err(|problem| problem.message)
+}
+
+/// What `home check` says of the home with the task's file holding `text`,
+/// what the graph reads of the task, and what a note on it writes.
+fn read_and_written(
+    text_of_task: &str,
+) -> (String, Result<Issue, String>, String) {
+    let inputs = with_task(text_of_task);
+    let noted = run(
+        &command(&words(&format!("issue note {TASK} seen"))),
+        &inputs,
+        &context(),
+    );
+    (
+        check(&inputs).text(),
+        graph_reads(TASK, text_of_task),
+        text(&noted),
+    )
+}
+
+#[test]
+fn a_byte_order_mark_windows_line_ends_and_a_last_closing_line_read_alike_for_check_and_write()
+ {
+    let plain = task_text();
+    let bare = plain
+        .split_once("+++\n\n")
+        .map_or_else(String::new, |(front, _)| format!("{front}+++\n"));
+    let crlf = |text: &str| text.replace('\n', "\r\n");
+    for (base, variants) in [
+        (
+            plain.clone(),
+            [
+                format!("\u{feff}{plain}"),
+                crlf(&plain),
+                format!("\u{feff}{}", crlf(&plain)),
+            ],
+        ),
+        (
+            bare.clone(),
+            [
+                String::from(bare.trim_end()),
+                crlf(bare.trim_end()),
+                format!("\u{feff}{}", crlf(bare.trim_end())),
+            ],
+        ),
+    ] {
+        let expected = read_and_written(&base);
+        assert!(expected.1.is_ok() && !expected.2.is_empty(), "{expected:?}");
+        for variant in variants {
+            assert_eq!(read_and_written(&variant), expected, "{variant:?}");
+        }
+    }
+}
+
+#[test]
+fn a_checklist_edit_changes_the_item_the_graph_read_at_its_place() {
+    let listed = task_text().replace(
+        "## What\n\n",
+        "## What\n\n```\n## Checklist\n- [ ] an example\n```\n\n\
+         ##  Checklist \n- [ ] first\n~~~\n- [ ] fenced\n~~~\n- [ ] second\n\n",
+    );
+    let inputs = with_task(&listed);
+    let reread =
+        |text: &str| graph_reads(TASK, text).map(|issue| issue.checklist);
+    let item = |done, said: &str| ChecklistItem {
+        done,
+        text: String::from(said),
+    };
+    assert_eq!(
+        reread(&listed),
+        Ok(Vec::from([item(false, "first"), item(false, "second")]))
+    );
+    let checked = run(
+        &command(&words(&format!("issue checklist {TASK} check 2"))),
+        &inputs,
+        &context(),
+    );
+    assert!(!checked.failed, "{}", checked.output);
+    assert_eq!(
+        reread(&text(&checked)),
+        Ok(Vec::from([item(false, "first"), item(true, "second")]))
+    );
+    assert!(text(&checked).contains("- [ ] an example\n"));
+    assert!(text(&checked).contains("~~~\n- [ ] fenced\n~~~\n- [x] second\n"));
+    let removed = run(
+        &command(&words(&format!("issue checklist {TASK} remove 1"))),
+        &inputs,
+        &context(),
+    );
+    assert_eq!(
+        reread(&text(&removed)),
+        Ok(Vec::from([item(false, "second")]))
+    );
+    assert!(text(&removed).contains("- [ ] fenced\n"));
+}
+
+#[test]
+fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
+-> Result<(), String> {
+    let inputs = home();
+    for said in [
+        String::from("issue new home task Wire-it"),
+        format!("issue note {TASK} seen"),
+        format!("issue move {SPEC} stage slice signed off"),
+        format!("issue move {TASK} status ready"),
+        format!("issue set {TASK} title=Write-it-well"),
+    ] {
+        let outcome = run(&command(&words(&said)), &inputs, &context());
+        let stem = outcome
+            .writes
+            .first()
+            .map_or_else(String::new, |write| write.stem.clone());
+        let log = graph_reads(&stem, &text(&outcome))?.log;
+        let last = log.last().map_or_else(String::new, log_line);
+        assert!(
+            last.starts_with("- 2026-11-22T12:00:00Z laptop·claude ")
+                && text(&outcome).ends_with(&format!("\n{last}\n")),
+            "{said}: {last:?} in {}",
+            text(&outcome)
+        );
+    }
+    Ok(())
 }

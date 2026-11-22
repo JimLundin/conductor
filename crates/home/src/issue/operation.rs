@@ -621,7 +621,7 @@ impl Listing {
 
     #[must_use]
     pub fn creation_pattern(id: CommandId) -> String {
-        format!("^{}$", edit_marker(id))
+        format!("^{}$", crate::flow::file::comment_line(&edit_marker(id)))
     }
 
     #[must_use]
