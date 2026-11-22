@@ -1,6 +1,5 @@
-use alloc::{boxed::Box, collections::BTreeMap};
+use alloc::boxed::Box;
 
-use proto::flow::Flow;
 use proto::{
     CommandId, Issue, IssueChange, IssueId, NewIssue, Part, ProjectId,
     Rejection,
@@ -8,16 +7,16 @@ use proto::{
 
 use super::{
     Applied, Change, Edit, EditData, Mode, apply, edit_marker, file, folder,
-    locate, message, signer, was,
+    message, signer, was,
 };
-use crate::flow::command::Issues;
 use crate::flow::role;
+use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
-use crate::project::Project;
 
 /// The issue and file an operation reads before deciding what to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
+    pub project: ProjectId,
     pub issue: IssueId,
     pub path: String,
 }
@@ -201,7 +200,7 @@ impl PendingEdits {
     #[must_use]
     pub fn replay(
         &self,
-        home: &Issues<'_>,
+        home: &Snapshot,
         index: usize,
         current: Result<Option<&str>, String>,
         upstream_changed: Option<u64>,
@@ -265,8 +264,7 @@ impl Delivery {
 /// The facts shared by requests from the host.
 pub struct Context<'a> {
     pub remote: Option<&'a str>,
-    pub projects: &'a [Project],
-    pub issues: &'a BTreeMap<ProjectId, Vec<Issue>>,
+    pub home: &'a Snapshot,
     pub host: &'a str,
     pub at: u64,
     pub command: CommandId,
@@ -286,11 +284,10 @@ impl Context<'_> {
     ) -> Result<Record, Rejection> {
         crate::configured(self.remote)?;
         let project = self
-            .projects
+            .home
+            .projects()
             .iter()
-            .find(|known| {
-                known.name == new.project || known.id.0 == new.project
-            })
+            .find(|known| known.id == new.project)
             .map(|known| known.id.clone())
             .ok_or(Rejection::UnknownProject)?;
         Ok(self.record(
@@ -313,8 +310,11 @@ impl Context<'_> {
         client: &str,
     ) -> Result<Record, Rejection> {
         crate::configured(self.remote)?;
-        let project =
-            locate(self.issues, issue).ok_or(Rejection::UnknownIssue)?;
+        let project = self
+            .home
+            .issue(issue)
+            .map(|known| known.project.clone())
+            .ok_or(Rejection::UnknownIssue)?;
         Ok(self.record(
             project,
             issue,
@@ -350,7 +350,6 @@ impl Record {
         self.data.read()
     }
 
-    /// The project the issue is in.
     #[must_use]
     pub fn project(&self) -> ProjectId {
         self.data.project.clone()
@@ -366,10 +365,13 @@ impl Record {
     pub fn decide(
         mut self,
         current: Option<&str>,
-        home: &Issues<'_>,
+        home: &Snapshot,
         pending: &PendingEdits,
     ) -> Result<Recorded, Rejection> {
-        self.data.was = was(home.flow, current, &self.data);
+        self.data.was = home
+            .flow()
+            .ok()
+            .and_then(|flow| was(flow, current, &self.data));
         let edit = Edit {
             command: self.command,
             data: self.data,
@@ -408,6 +410,7 @@ fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
 impl EditData {
     fn read(&self) -> Read {
         Read {
+            project: self.project.clone(),
             issue: self.issue,
             path: file(&self.project, self.issue),
         }
@@ -430,7 +433,7 @@ impl Edit {
     #[must_use]
     pub fn replay(
         &self,
-        home: &Issues<'_>,
+        home: &Snapshot,
         current: Result<Option<&str>, String>,
         upstream_changed: Option<u64>,
     ) -> Write {
@@ -492,8 +495,7 @@ impl SessionUpdate {
     #[must_use]
     pub fn next(
         &mut self,
-        flow: &Flow,
-        issues: &BTreeMap<ProjectId, Vec<Issue>>,
+        home: &Snapshot,
         id: IssueId,
     ) -> Option<IssueChange> {
         let update = core::mem::replace(self, Self::Done);
@@ -510,8 +512,9 @@ impl SessionUpdate {
             }
             Self::Done => None,
             Self::Started | Self::Finished { summary: None, .. } => {
-                let all: Vec<&Issue> = issues.values().flatten().collect();
-                let issue = all.iter().find(|known| known.id == id)?;
+                let flow = home.flow().ok()?;
+                let all: Vec<&Issue> = home.graph().issues.iter().collect();
+                let issue = home.issue(id)?;
                 let (moved, reason) = match update {
                     Self::Started => (
                         role::started(flow, &all, issue),

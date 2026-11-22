@@ -6,7 +6,8 @@ use proto::{Datum, Issue, IssueId, ProjectId, Section};
 
 use super::{Failure, Move, holds};
 use crate::flow::graph::Graph;
-use crate::flow::{Flow, Literal, Predicate, Quantifier, Role, load};
+use crate::flow::load;
+use proto::flow::{Flow, Literal, Predicate, Quantifier, Role};
 
 fn flow() -> Flow {
     load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
@@ -46,6 +47,7 @@ fn issue(name: &str, kind: &str, status: &str) -> Issue {
         stage: None,
         fields: BTreeMap::new(),
         links: BTreeMap::new(),
+        body: String::new(),
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
@@ -56,7 +58,7 @@ fn issue(name: &str, kind: &str, status: &str) -> Issue {
 fn linked(mut issue: Issue, relation: &str, ids: &[&str]) -> Issue {
     issue.links.insert(
         String::from(relation),
-        ids.iter().map(|target| named(target)).collect(),
+        ids.iter().map(|target| id(target)).collect(),
     );
     issue
 }
@@ -223,7 +225,7 @@ fn meets(
                 };
                 from.links
                     .get(&relation.name)
-                    .is_some_and(|ids| ids.contains(&to.id.to_string()))
+                    .is_some_and(|ids| ids.contains(&to.id))
             })
             .collect()
     };
@@ -237,7 +239,7 @@ fn meets(
         }
         Predicate::Field { name, value } => {
             let default = flow
-                .field(name)
+                .field(&issue.kind, name)
                 .and_then(|field| field.default.clone())
                 .map(Datum::Text);
             match (issue.fields.get(name).cloned().or(default), value) {
@@ -343,11 +345,14 @@ fn issues() -> impl Strategy<Value = Vec<Issue>> {
                         (String::from("focus"), Datum::Text(word))
                     }));
                     made.links.extend(parent.map(|target| {
-                        (String::from("parent"), Vec::from([named(&target)]))
+                        (String::from("parent"), Vec::from([self::id(&target)]))
                     }));
                     made.links.insert(
                         String::from("blocked_by"),
-                        blockers.iter().map(|target| named(target)).collect(),
+                        blockers
+                            .iter()
+                            .map(|target| self::id(target))
+                            .collect(),
                     );
                     made.sections = sections
                         .into_iter()

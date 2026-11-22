@@ -1,4 +1,6 @@
-use super::{Literal, Predicate, Quantifier, Role, Severity, Shape, load};
+use proto::flow::{Literal, Predicate, Quantifier, Role, Severity, Shape};
+
+use super::load;
 
 /// A copy of the home's `docs/agents/flow.toml`.
 const FLOW: &str = include_str!("test-flow.toml");

@@ -2,8 +2,9 @@ use alloc::collections::BTreeMap;
 
 use proto::{ChecklistItem, Datum, Entry, LogEvent, ProjectId, Section};
 
-use super::{File, Graph, Problem, read};
-use crate::flow::{Flow, load};
+use super::{File, Graph, Problem, id_of, read};
+use crate::flow::load;
+use proto::flow::Flow;
 
 const SPEC: &str = "01m7ztr3gtvsnpcy98b3pzdsy0";
 const TASK: &str = "01m7zxfbnt3hsv50a6078gek37";
@@ -175,8 +176,44 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
         graph.issues.get(1).map(|issue| issue.links.clone()),
         Some(BTreeMap::from([
             (String::from("blocked_by"), Vec::new()),
-            (String::from("parent"), Vec::from([String::from(SPEC)])),
+            (String::from("parent"), id_of(SPEC).into_iter().collect()),
         ]))
+    );
+}
+
+#[test]
+fn an_issue_keeps_its_body_before_the_checklist_and_the_log() {
+    let graph = read(&flow(), &[spec()]);
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.body.as_str()),
+        Some(
+            "Opening words.\n\n## Problem\n\nWhy.\n\n```\n## not a heading\n```\n\n\
+             ## Acceptance\n\n- It works."
+        )
+    );
+}
+
+#[test]
+fn a_problem_says_what_is_wrong_after_the_field_that_causes_it() {
+    let at = |field: Option<&str>| Problem {
+        issue: format!("conductor/{TASK}"),
+        field: field.map(String::from),
+        message: String::from("is missing"),
+    };
+    assert_eq!(at(Some("title")).to_string(), "title: is missing");
+    assert_eq!(at(None).to_string(), "is missing");
+}
+
+#[test]
+fn a_target_that_is_no_id_is_no_issue() {
+    let graph = read(&flow(), &[task("home", "parent = \"nothing\"\n")]);
+    assert_eq!(
+        problems(&graph),
+        Vec::from([problem(
+            &format!("home/{TASK}"),
+            "parent",
+            "nothing is no issue"
+        )])
     );
 }
 

@@ -4,7 +4,6 @@
 //! and its fields and relations are the ones the flow declares.
 
 use alloc::collections::BTreeMap;
-use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -56,8 +55,10 @@ pub struct Issue {
     pub stage: Option<String>,
     /// The declared fields it gives, by name.
     pub fields: BTreeMap<String, Datum>,
-    /// The ids of the issues each relation from it points to, by relation.
-    pub links: BTreeMap<String, Vec<String>>,
+    /// The issues each relation from it points to, by relation.
+    pub links: BTreeMap<String, Vec<IssueId>>,
+    /// The body before the checklist and the log, as its file has it.
+    pub body: String,
     /// The body's sections in order, the text before the first heading
     /// as one with no heading; the checklist and the log aren't among them.
     pub sections: Vec<Section>,
@@ -70,24 +71,6 @@ pub struct Issue {
 }
 
 impl Issue {
-    /// The body as Markdown: its sections, each under its heading.
-    #[must_use]
-    pub fn body(&self) -> String {
-        self.sections
-            .iter()
-            .map(|section| {
-                if section.heading.is_empty() {
-                    section.text.clone()
-                } else if section.text.is_empty() {
-                    format!("## {}", section.heading)
-                } else {
-                    format!("## {}\n\n{}", section.heading, section.text)
-                }
-            })
-            .collect::<Vec<String>>()
-            .join("\n\n")
-    }
-
     /// The value of a field it gives as one word or text.
     #[must_use]
     pub fn text(&self, field: &str) -> Option<&str> {
@@ -145,14 +128,15 @@ pub struct ChecklistItem {
     pub text: String,
 }
 
-/// A new issue, as `home issue new` opens one: its project, by name or
-/// id, its kind, its title, and its fields as `<field>=<value>`.
+/// A new issue, as `home issue new` opens one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewIssue {
-    pub project: String,
+    pub project: ProjectId,
     pub kind: String,
     pub title: String,
-    pub fields: Vec<String>,
+    /// The fields and relations it starts with, each with its value, in
+    /// the order given.
+    pub fields: Vec<(String, Datum)>,
 }
 
 /// What a move changes.
@@ -172,11 +156,10 @@ pub enum IssueChange {
         to: String,
         reason: String,
     },
-    /// A field's value as `<field>=<value>` gives it; a list's is
-    /// comma-separated.
+    /// A field's or relation's value, the title among them.
     Set {
         field: String,
-        value: String,
+        value: Datum,
     },
     /// A note, which the writer signs and dates.
     Note(String),

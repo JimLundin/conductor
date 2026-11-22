@@ -861,6 +861,7 @@ fn issue(id: IssueId, title: &str, status: &str) -> Issue {
             (text("created"), Datum::Text(text("2026-11-18T10:12:00Z"))),
         ]),
         links: BTreeMap::new(),
+        body: text("Why it matters."),
         sections: Vec::from([Section {
             heading: String::new(),
             text: text("Why it matters."),
@@ -937,12 +938,10 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
         Some(Vec::from([
             StatusGroup {
                 status: text("open"),
-                label: text("open"),
                 rows: Vec::from([row(OPENED, "Sign in")]),
             },
             StatusGroup {
                 status: text("done"),
-                label: text("done"),
                 rows: Vec::from([row(CLOSED, "Pair")]),
             },
         ]))
@@ -964,7 +963,7 @@ fn a_project_lists_its_issues_by_status_and_a_new_one_opens_once_made()
     assert_eq!(
         sent(&effects),
         [CommandBody::CreateIssue(NewIssue {
-            project: text("alpha"),
+            project: alpha(),
             kind: text("task"),
             title: text("Remove"),
             fields: Vec::new(),
@@ -999,7 +998,14 @@ fn moving_to(status: &str) -> IssueChange {
 fn setting(field: &str, value: &str) -> IssueChange {
     IssueChange::Set {
         field: text(field),
-        value: text(value),
+        value: Datum::Text(text(value)),
+    }
+}
+
+fn labelling(labels: &[&str]) -> IssueChange {
+    IssueChange::Set {
+        field: text("labels"),
+        value: Datum::Texts(labels.iter().map(|label| text(label)).collect()),
     }
 }
 
@@ -1122,7 +1128,7 @@ fn editing_an_issue_sends_its_fields_once_saved() {
         sent(&effects),
         [
             change(setting("title", "Sign in from the app")),
-            change(setting("labels", "app, credentials,")),
+            change(labelling(&["app", "credentials"])),
         ],
         "the body didn't change, so it isn't sent"
     );
@@ -1167,10 +1173,7 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
             Intent::Issue(IssueIntent::Edit),
             Intent::Issue(IssueIntent::TypeTitle(text("New title"))),
             refresh_issue(|issue| {
-                issue.sections = Vec::from([Section {
-                    heading: String::new(),
-                    text: text("Remote body edit"),
-                }]);
+                issue.body = text("Remote body edit");
             }),
             Intent::Issue(IssueIntent::TypeLabels(text("new labels"))),
         ]),
@@ -1186,7 +1189,7 @@ fn only_edited_fields_are_sent_and_a_sibling_success_keeps_the_failure()
             },
             CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: setting("labels", "new labels"),
+                change: labelling(&["new labels"]),
             },
         ]
     );
@@ -1632,10 +1635,7 @@ fn an_issue_marks_a_fields_word_and_sends_only_a_new_one() {
             Some(Vec::from([text("high")])),
             Vec::from([CommandBody::ChangeIssue {
                 issue: OPENED,
-                change: IssueChange::Set {
-                    field: text("priority"),
-                    value: text("low"),
-                },
+                change: setting("priority", "low"),
             }]),
         )
     );
@@ -1702,15 +1702,12 @@ fn renamed_statuses_group_label_and_fill_the_picker_with_no_code_change()
                 .issues
                 .groups
                 .into_iter()
-                .map(|listed| (listed.status, listed.label, listed.rows.len()))
+                .map(|listed| (listed.status, listed.rows.len()))
                 .collect::<Vec<_>>()
         });
     assert_eq!(
         groups,
-        Some(Vec::from([
-            (text("blocked"), text("blocked"), 1),
-            (text("shipped"), text("shipped"), 1),
-        ])),
+        Some(Vec::from([(text("blocked"), 1), (text("shipped"), 1),])),
         "groups follow the flow's order, by its names"
     );
     let (on_issue, _) =

@@ -6315,7 +6315,7 @@ fn pushed_issue(land: &Homeland, issue: proto::IssueId) -> Fallible<String> {
 fn set(field: &str, value: &str) -> IssueChange {
     IssueChange::Set {
         field: String::from(field),
-        value: String::from(value),
+        value: proto::Datum::Text(String::from(value)),
     }
 }
 
@@ -6352,10 +6352,13 @@ fn create_issue(title: &str) -> CommandBody {
 
 fn create_issue_in(project: &str, title: &str) -> CommandBody {
     CommandBody::CreateIssue(proto::NewIssue {
-        project: String::from(project),
+        project: proto::ProjectId(String::from(project)),
         kind: String::from("task"),
         title: String::from(title),
-        fields: Vec::from([String::from("labels=app")]),
+        fields: Vec::from([(
+            String::from("labels"),
+            proto::Datum::Texts(Vec::from([String::from("app")])),
+        )]),
     })
 }
 

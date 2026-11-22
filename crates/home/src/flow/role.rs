@@ -9,7 +9,7 @@ use alloc::boxed::Box;
 use proto::Issue;
 
 use super::eval;
-use super::{Flow, Predicate, Quantifier, Role, Shape};
+use proto::flow::{Flow, Predicate, Quantifier, Role, Shape};
 
 /// The status that holds `role`: the first with it the flow declares.
 fn holding(flow: &Flow, role: Role) -> Option<&str> {

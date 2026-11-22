@@ -5,15 +5,17 @@
 //!
 //! The home's flow says what an issue holds: the statuses it groups by and
 //! offers, in the flow's order and by its names, and the fields whose
-//! values it offers. Nothing here names a status, a kind or a field's value.
+//! values it offers. Nothing here names a status, a kind or a field's value;
+//! the edit form's title and labels, and the time an issue was opened, are
+//! the fields it names.
 
 use alloc::collections::BTreeMap;
 
 use crate::prelude::*;
-use proto::flow::{Field, FieldType, Flow};
+use proto::flow::{FieldType, Flow};
 use proto::{
-    ChecklistChange, CommandBody, Entry, Issue, IssueChange, IssueId, Item,
-    NewIssue, Part, Project, ProjectId,
+    ChecklistChange, CommandBody, Datum, Entry, Issue, IssueChange, IssueId,
+    Item, LogEvent, NewIssue, Part, Project, ProjectId,
 };
 
 use crate::host::{Host, HostId, by_name};
@@ -142,7 +144,7 @@ impl Titles {
             return Vec::new();
         }
         let body = CommandBody::CreateIssue(NewIssue {
-            project: project.0,
+            project,
             kind,
             title: String::from(title),
             fields: Vec::new(),
@@ -176,7 +178,10 @@ impl IssueDraft {
                 let effects = if issue.text(&field) == Some(value.as_str()) {
                     Vec::new()
                 } else {
-                    change(IssueChange::Set { field, value })
+                    change(IssueChange::Set {
+                        field,
+                        value: Datum::Text(value),
+                    })
                 };
                 (self, effects)
             }
@@ -190,7 +195,7 @@ impl IssueDraft {
             IssueIntent::Edit => {
                 let fields = EditFields {
                     title: issue.title.clone(),
-                    body: issue.body(),
+                    body: issue.body.clone(),
                     labels: issue.texts(LABELS).join(", "),
                 };
                 (
@@ -269,7 +274,7 @@ impl IssueDraft {
                 (fields.title.trim() != original.title.trim()).then(|| {
                     IssueChange::Set {
                         field: String::from(TITLE),
-                        value: fields.title.clone(),
+                        value: Datum::Text(fields.title.clone()),
                     }
                 }),
             ),
@@ -283,7 +288,15 @@ impl IssueDraft {
                 (fields.labels.trim() != original.labels.trim()).then(|| {
                     IssueChange::Set {
                         field: String::from(LABELS),
-                        value: fields.labels.clone(),
+                        value: Datum::Texts(
+                            fields
+                                .labels
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|label| !label.is_empty())
+                                .map(String::from)
+                                .collect(),
+                        ),
                     }
                 }),
             ),
@@ -414,9 +427,8 @@ pub struct IssueList {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StatusGroup {
-    /// Also its `data-status`.
+    /// Its name in the flow, which labels it and is its `data-status`.
     pub status: String,
-    pub label: String,
     pub rows: Vec<IssueRow>,
 }
 
@@ -486,29 +498,17 @@ fn groups(host: HostId, flow: &Flow, project: &Project) -> Vec<StatusGroup> {
                 .collect::<Vec<IssueRow>>();
             (!rows.is_empty()).then(|| StatusGroup {
                 status: status.name.clone(),
-                label: status.name.clone(),
                 rows,
             })
         })
         .collect()
 }
 
-/// The fields every kind has, then those of the issue's own kind.
-fn fields<'flow>(
-    flow: &'flow Flow,
-    issue: &Issue,
-) -> impl Iterator<Item = &'flow Field> {
-    let own = flow
-        .kind(&issue.kind)
-        .map_or(&[][..], |kind| kind.fields.as_slice());
-    flow.fields.iter().chain(own)
-}
-
 fn detail(flow: &Flow, issue: &Issue) -> String {
     let done = issue.checklist.iter().filter(|item| item.done).count();
     let progress = (!issue.checklist.is_empty())
         .then(|| format!("{done}/{} done", issue.checklist.len()));
-    fields(flow, issue)
+    flow.fields_of(&issue.kind)
         .flat_map(|field| match field.value {
             FieldType::Enum(_) => issue
                 .text(&field.name)
@@ -648,7 +648,7 @@ pub fn screen(
             .collect(),
         fields: pickers(flow, issue),
         labels: issue.texts(LABELS).join(" · "),
-        body: issue.body(),
+        body: issue.body.clone(),
         detail: format!("{kind} · {}{opened}", issue.branch),
         checklist: issue
             .checklist
@@ -668,7 +668,7 @@ pub fn screen(
             })
             .collect(),
         item: drafts.item.clone(),
-        notes: issue.log.iter().map(Entry::line).collect(),
+        notes: issue.log.iter().map(note).collect(),
         note: drafts.note.clone(),
         item_pending: drafts.item_sent.is_some(),
         note_pending: drafts.note_sent.is_some(),
@@ -686,6 +686,22 @@ pub fn screen(
     })
 }
 
+/// A log entry as the issue's pane shows it: when, by whom and what
+/// happened, then its text; or the text alone when it says none of them.
+fn note(entry: &Entry) -> String {
+    match (&entry.at, &entry.by) {
+        (Some(at), Some(by)) => {
+            let event = match &entry.event {
+                LogEvent::Note => String::from("note"),
+                LogEvent::Stage { from, to } => format!("stage {from}→{to}"),
+                LogEvent::Status { from, to } => format!("status {from}→{to}"),
+            };
+            format!("{at} {by} {event}: {}", entry.text)
+        }
+        _ => entry.text.clone(),
+    }
+}
+
 /// The issue's item at `index`, as the person sees its checklist.
 fn picked(issue: &Issue, index: usize) -> Item {
     Item {
@@ -698,7 +714,7 @@ fn picked(issue: &Issue, index: usize) -> Item {
 /// words, each word as the flow lists it; the field's default is picked
 /// when the issue leaves it out.
 fn pickers(flow: &Flow, issue: &Issue) -> Vec<FieldPicker> {
-    fields(flow, issue)
+    flow.fields_of(&issue.kind)
         .filter_map(|field| {
             let FieldType::Enum(words) = &field.value else {
                 return None;

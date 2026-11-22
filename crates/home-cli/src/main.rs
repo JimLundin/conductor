@@ -9,40 +9,28 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use home::flow::check::Inputs;
-use home::flow::command::{Context, Write, command, fresh, run};
+use home::flow::PATH;
+use home::flow::command::{Context, Write, command, fresh, homeless, run};
 use home::flow::graph::File;
+use home::flow::snapshot::{Inputs, Snapshot};
 use proto::ProjectId;
 
-const FLOW: &str = "docs/agents/flow.toml";
-
 fn main() -> ExitCode {
-    let given: Vec<String> = env::args().skip(1).collect();
-    let Some(root) = root() else {
-        return say(
-            "home: no home here: no folder above holds docs/agents/flow.toml\n",
-            ExitCode::from(2),
-        );
-    };
-    let args = match with_file(given) {
-        Ok(read) => read,
-        Err(reason) => {
-            return say(&format!("home: {reason}\n"), ExitCode::FAILURE);
-        }
-    };
-    let outcome = run(&command(&args), &inputs(&root), &context());
-    let written = outcome
-        .writes
-        .iter()
-        .try_for_each(|write| save(&root, write));
-    let text = written.as_ref().map_or_else(
-        |err| format!("{}home: {err}\n", outcome.output),
-        |()| outcome.output.clone(),
-    );
-    match (written.is_ok(), outcome.failed) {
-        (true, false) => say(&text, ExitCode::SUCCESS),
-        _ => say(&text, ExitCode::FAILURE),
-    }
+    let args: Vec<String> = env::args().skip(1).collect();
+    let root = root();
+    let (text, code) = root.as_deref().map_or_else(homeless, |home| {
+        let snapshot = Snapshot::of(inputs(home));
+        let asked = command(&args, &snapshot);
+        let file = asked.file().map(|path| read(Path::new(path)));
+        let outcome = run(asked, file, &snapshot, &context());
+        let saved = outcome
+            .writes
+            .iter()
+            .try_for_each(|write| save(home, write));
+        outcome.ended(saved)
+    });
+    let _written = std::io::stdout().lock().write_all(text.as_bytes());
+    ExitCode::from(code)
 }
 
 /// The nearest folder at or above this one that holds the flow.
@@ -50,22 +38,8 @@ fn root() -> Option<PathBuf> {
     env::current_dir()
         .ok()?
         .ancestors()
-        .find(|folder| folder.join(FLOW).is_file())
+        .find(|folder| folder.join(PATH).is_file())
         .map(Path::to_path_buf)
-}
-
-/// The words, with the text of the file `home issue body <id> --file
-/// <path>` names in place of the flag and its path.
-fn with_file(args: Vec<String>) -> Result<Vec<String>, String> {
-    match args.as_slice() {
-        [issue, body, id, flag, path]
-            if issue == "issue" && body == "body" && flag == "--file" =>
-        {
-            let text = read(Path::new(path))?;
-            Ok(Vec::from([issue.clone(), body.clone(), id.clone(), text]))
-        }
-        _ => Ok(args),
-    }
 }
 
 /// Now, the id a new issue takes, and who signs the log: `HOME_BY`, else
@@ -91,30 +65,35 @@ fn context() -> Context {
 
 fn inputs(root: &Path) -> Inputs {
     let folders = entries(&root.join("projects"));
+    let (issues, unread): (Vec<_>, Vec<_>) = folders
+        .iter()
+        .flat_map(|(folder, path)| issues(folder, path))
+        .partition(Result::is_ok);
     Inputs {
-        flow: read(&root.join(FLOW)),
+        flow: fs::read_to_string(root.join(PATH))
+            .map_err(|err| err.to_string()),
         projects: folders
             .iter()
             .map(|(folder, path)| {
                 (folder.clone(), read(&path.join("project.toml")))
             })
             .collect(),
-        issues: folders
-            .iter()
-            .flat_map(|(folder, path)| issues(folder, path))
-            .collect(),
+        issues: issues.into_iter().filter_map(Result::ok).collect(),
+        unread: unread.into_iter().filter_map(Result::err).collect(),
     }
 }
 
-fn issues(folder: &str, path: &Path) -> Vec<File> {
+/// Each `.md` file of a project's issues, or why it couldn't be read.
+fn issues(folder: &str, path: &Path) -> Vec<Result<File, String>> {
     entries(&path.join("issues"))
         .into_iter()
         .filter_map(|(name, file)| {
-            Some(File {
+            let stem = name.strip_suffix(".md")?.to_owned();
+            Some(read(&file).map(|text| File {
                 project: ProjectId(folder.to_owned()),
-                stem: name.strip_suffix(".md")?.to_owned(),
-                text: fs::read_to_string(file).ok()?,
-            })
+                stem,
+                text,
+            }))
         })
         .collect()
 }
@@ -138,16 +117,7 @@ fn read(path: &Path) -> Result<String, String> {
 }
 
 fn save(root: &Path, write: &Write) -> Result<(), String> {
-    let path = root
-        .join("projects")
-        .join(&write.project.0)
-        .join("issues")
-        .join(format!("{}.md", write.stem));
+    let path = root.join(write.path());
     fs::write(&path, &write.text)
         .map_err(|err| format!("{}: {err}", path.display()))
-}
-
-fn say(text: &str, code: ExitCode) -> ExitCode {
-    let _written = std::io::stdout().lock().write_all(text.as_bytes());
-    code
 }

@@ -153,7 +153,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 #[test]
 fn issue_commands_keep_a_receipt_and_name_their_client() {
     let new = NewIssue {
-        project: String::from("conductor"),
+        project: proto::ProjectId(String::from("conductor")),
         kind: String::from("task"),
         title: String::from("Remove sessions"),
         fields: Vec::new(),

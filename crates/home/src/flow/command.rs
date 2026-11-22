@@ -9,20 +9,21 @@
 
 use alloc::string::ToString;
 
+use proto::flow::{FieldType, Flow, Severity};
 use proto::{
-    ChecklistChange, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
+    ChecklistChange, Datum, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
     NewIssue, Part, ProjectId,
 };
 use toml::Value;
 
-use super::check::{Finding, Inputs, check, of_issue};
+use super::PATH;
+use super::check::{Finding, check, of_issue};
 use super::eval::Move;
 use super::file::Document;
-use super::graph::{File, Graph, one, read};
+use super::graph::{File, id_of, one};
 use super::role::opening;
-use super::{FieldType, Flow, Severity, load};
+use super::snapshot::Snapshot;
 use crate::prelude::*;
-use crate::project::{Project, listed};
 
 pub const USAGE: &str = "usage:
   home check
@@ -41,15 +42,38 @@ A checklist's items are numbered from 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Check,
-    New(NewIssue),
-    /// Changes to the issue `id`, made in one write.
-    Change {
-        id: String,
-        changes: Vec<IssueChange>,
+    Edit(Edit),
+    /// The issue's body becomes the text of the file at `path`, from where
+    /// the command runs, once the shell has read it.
+    BodyFrom {
+        id: IssueId,
+        path: String,
     },
     /// Words that make no command, and why.
     Wrong(String),
     Usage,
+}
+
+impl Command {
+    /// The file the shell reads before running it.
+    #[must_use]
+    pub fn file(&self) -> Option<&str> {
+        match self {
+            Self::BodyFrom { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// An edit to the home's issues.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Edit {
+    New(NewIssue),
+    /// Changes to one issue, made in one write.
+    Change {
+        id: IssueId,
+        changes: Vec<IssueChange>,
+    },
 }
 
 /// What the shell knows that the core can't: when it is, the id a new
@@ -71,6 +95,14 @@ pub struct Write {
     pub text: String,
 }
 
+impl Write {
+    /// Where it is written, from the home's root.
+    #[must_use]
+    pub fn path(&self) -> String {
+        format!("{}/{}.md", crate::issue::folder(&self.project), self.stem)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub writes: Vec<Write>,
@@ -78,24 +110,33 @@ pub struct Outcome {
     pub failed: bool,
 }
 
-/// The home an edit is made in: its flow, its projects and every issue
-/// file.
-#[derive(Debug, Clone, Copy)]
-pub struct Issues<'a> {
-    pub flow: &'a Flow,
-    pub projects: &'a [Project],
-    pub files: &'a [File],
+impl Outcome {
+    /// What the command line says once the shell has saved the writes, or
+    /// failed to, and its exit code.
+    #[must_use]
+    pub fn ended(&self, saved: Result<(), String>) -> (String, u8) {
+        let code = u8::from(self.failed || saved.is_err());
+        let text = saved.map_or_else(
+            |reason| format!("{}{}", self.output, refusal(&reason)),
+            |()| self.output.clone(),
+        );
+        (text, code)
+    }
 }
 
-/// An edit to the home's issues.
-#[derive(Debug, Clone, Copy)]
-pub enum Edit<'a> {
-    New(&'a NewIssue),
-    /// To the issue whose file is called `id`.
-    Change {
-        id: &'a str,
-        changes: &'a [IssueChange],
-    },
+/// What the command line says, and its exit code, where no folder at or
+/// above holds a flow.
+#[must_use]
+pub fn homeless() -> (String, u8) {
+    (
+        refusal(&format!("no home here: no folder above holds {PATH}")),
+        2,
+    )
+}
+
+/// A reason as the command line says it.
+fn refusal(reason: &str) -> String {
+    format!("home: {reason}\n")
 }
 
 /// The file an edit writes, `<project name>/<id>` that names it, and what
@@ -114,32 +155,49 @@ pub const fn fresh(now: u64, random: u128) -> IssueId {
     IssueId(ulid::Ulid::from_parts(now, random).0)
 }
 
-/// The command `args` ask for, after the program's name.
+/// The command `args` ask for in `home`, after the program's name: a
+/// project by its name or id, and each `<field>=<value>` as a value of the
+/// field's type, a list where it takes several.
 #[must_use]
-pub fn command(args: &[String]) -> Command {
+pub fn command(args: &[String], home: &Snapshot) -> Command {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    let owned =
-        |words: &[&str]| words.iter().map(|word| (*word).to_owned()).collect();
     let joined = |first: &str, more: &[&str]| {
         core::iter::once(first)
             .chain(more.iter().copied())
             .collect::<Vec<&str>>()
             .join(" ")
     };
-    let changing = |id: &str, change| Command::Change {
-        id: id.to_owned(),
-        changes: Vec::from([change]),
-    };
     match words.as_slice() {
         ["check"] => Command::Check,
         ["issue", "new", project, kind, title, fields @ ..] => {
-            Command::New(NewIssue {
-                project: (*project).to_owned(),
-                kind: (*kind).to_owned(),
-                title: (*title).to_owned(),
-                fields: owned(fields),
+            opening_command(home, [project, kind, title], fields)
+        }
+        ["issue", "body", id, "--file", path] => {
+            named(id).map_or_else(Command::Wrong, |issue| Command::BodyFrom {
+                id: issue,
+                path: (*path).to_owned(),
             })
         }
+        ["issue", "set", id, pairs @ ..] if !pairs.is_empty() => {
+            setting_command(home, id, pairs)
+        }
+        ["issue", "note", id, first, more @ ..] => {
+            changing(id, IssueChange::Note(joined(first, more)))
+        }
+        ["issue", "body", id, first, more @ ..] => {
+            changing(id, IssueChange::Body(joined(first, more)))
+        }
+        ["issue", "checklist", id, "add", first, more @ ..] => changing(
+            id,
+            IssueChange::Checklist(ChecklistChange::Add(joined(first, more))),
+        ),
+        [
+            "issue",
+            "checklist",
+            id,
+            action @ ("check" | "uncheck" | "remove"),
+            number,
+        ] => checklist_command(id, action, number),
         [
             "issue",
             "move",
@@ -159,96 +217,182 @@ pub fn command(args: &[String]) -> Command {
                 reason: reason.join(" "),
             },
         ),
-        ["issue", "set", id, first, more @ ..] => core::iter::once(first)
-            .chain(more)
-            .map(|pair| {
-                pair_of(pair).map(|(field, value)| IssueChange::Set {
-                    field: field.to_owned(),
-                    value: value.to_owned(),
-                })
-            })
-            .collect::<Result<Vec<IssueChange>, String>>()
-            .map_or_else(Command::Wrong, |changes| Command::Change {
-                id: (*id).to_owned(),
-                changes,
-            }),
-        ["issue", "note", id, first, more @ ..] => {
-            changing(id, IssueChange::Note(joined(first, more)))
-        }
-        ["issue", "body", id, first, more @ ..] => {
-            changing(id, IssueChange::Body(joined(first, more)))
-        }
-        ["issue", "checklist", id, "add", first, more @ ..] => changing(
-            id,
-            IssueChange::Checklist(ChecklistChange::Add(joined(first, more))),
-        ),
-        [
-            "issue",
-            "checklist",
-            id,
-            action @ ("check" | "uncheck" | "remove"),
-            number,
-        ] => number
-            .parse::<usize>()
-            .ok()
-            .and_then(|from_one| from_one.checked_sub(1))
-            .map_or_else(
-                || {
-                    Command::Wrong(format!(
-                        "{number} is not an item's number, counted from 1"
-                    ))
-                },
-                |index| {
-                    let item = Item { index, seen: None };
-                    changing(
-                        id,
-                        IssueChange::Checklist(match *action {
-                            "remove" => ChecklistChange::Remove(item),
-                            done => ChecklistChange::Check {
-                                item,
-                                done: done == "check",
-                            },
-                        }),
-                    )
-                },
-            ),
         _ => Command::Usage,
     }
 }
 
-/// What doing `command` to the home `inputs` holds writes and says.
+/// The issue a command line's word names.
+fn named(word: &str) -> Result<IssueId, String> {
+    id_of(word).ok_or_else(|| format!("no issue is called {word}"))
+}
+
+fn changing(word: &str, change: IssueChange) -> Command {
+    named(word).map_or_else(Command::Wrong, |id| {
+        Command::Edit(Edit::Change {
+            id,
+            changes: Vec::from([change]),
+        })
+    })
+}
+
+fn opening_command(
+    home: &Snapshot,
+    [name, kind, title]: [&str; 3],
+    pairs: &[&str],
+) -> Command {
+    home.project(name)
+        .map(|known| known.id.clone())
+        .ok_or_else(|| format!("no project is called {name}"))
+        .and_then(|project| {
+            Ok(Edit::New(NewIssue {
+                project,
+                kind: String::from(kind),
+                title: String::from(title),
+                fields: settings(home, kind, pairs)?,
+            }))
+        })
+        .map_or_else(Command::Wrong, Command::Edit)
+}
+
+fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
+    named(word)
+        .and_then(|id| {
+            let kind = home.issue(id).map_or("", |issue| issue.kind.as_str());
+            let changes = settings(home, kind, pairs)?
+                .into_iter()
+                .map(|(field, value)| IssueChange::Set { field, value })
+                .collect();
+            Ok(Edit::Change { id, changes })
+        })
+        .map_or_else(Command::Wrong, Command::Edit)
+}
+
+fn checklist_command(id: &str, action: &str, number: &str) -> Command {
+    let place = number
+        .parse::<usize>()
+        .ok()
+        .and_then(|from_one| from_one.checked_sub(1));
+    place.map_or_else(
+        || {
+            Command::Wrong(format!(
+                "{number} is not an item's number, counted from 1"
+            ))
+        },
+        |index| {
+            let item = Item { index, seen: None };
+            changing(
+                id,
+                IssueChange::Checklist(match action {
+                    "remove" => ChecklistChange::Remove(item),
+                    done => ChecklistChange::Check {
+                        item,
+                        done: done == "check",
+                    },
+                }),
+            )
+        },
+    )
+}
+
+/// Each `<field>=<value>` of `pairs` as the field and its value, for an
+/// issue of `kind`.
+fn settings(
+    home: &Snapshot,
+    kind: &str,
+    pairs: &[&str],
+) -> Result<Vec<(String, Datum)>, String> {
+    let flow = home.flow()?;
+    pairs
+        .iter()
+        .map(|pair| {
+            let (field, raw) = pair
+                .split_once('=')
+                .ok_or_else(|| format!("{pair:?} is not <field>=<value>"))?;
+            Ok((String::from(field), typed(flow, kind, field, raw)?))
+        })
+        .collect()
+}
+
+/// `given` as the value of `field` on an issue of `kind`: a list where the
+/// field or relation takes several, a boolean where it takes one, else
+/// text.
+fn typed(
+    flow: &Flow,
+    kind: &str,
+    field: &str,
+    given: &str,
+) -> Result<Datum, String> {
+    let raw = given.trim();
+    let many = match flow.field(kind, field).map(|declared| &declared.value) {
+        Some(FieldType::Bool) => {
+            return match raw {
+                "true" => Ok(Datum::Bool(true)),
+                "false" => Ok(Datum::Bool(false)),
+                _ => Err(format!("{field} is true or false")),
+            };
+        }
+        Some(FieldType::Texts | FieldType::Refs(_)) => true,
+        Some(_) => false,
+        None => flow
+            .relations
+            .iter()
+            .any(|relation| relation.name == field && relation.many),
+    };
+    Ok(if many {
+        Datum::Texts(
+            raw.split(',')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(String::from)
+                .collect(),
+        )
+    } else {
+        Datum::Text(String::from(raw))
+    })
+}
+
+/// A value as the command line gives it, a list's comma-separated.
 #[must_use]
-pub fn run(command: &Command, inputs: &Inputs, context: &Context) -> Outcome {
+pub fn said(value: &Datum) -> String {
+    match value {
+        Datum::Text(text) => text.clone(),
+        Datum::Texts(texts) => texts.join(","),
+        Datum::Bool(flag) => flag.to_string(),
+    }
+}
+
+/// What doing `command` to `home` writes and says, given the text of the
+/// file it asked for, if it asked for one.
+#[must_use]
+pub fn run(
+    command: Command,
+    file: Option<Result<String, String>>,
+    home: &Snapshot,
+    context: &Context,
+) -> Outcome {
     let edit = match command {
         Command::Usage => return refused(String::from(USAGE)),
-        Command::Wrong(reason) => return refused(format!("home: {reason}\n")),
+        Command::Wrong(reason) => return refused(refusal(&reason)),
         Command::Check => {
-            let report = check(inputs);
+            let report = check(home);
             return Outcome {
                 writes: Vec::new(),
                 output: report.text(),
                 failed: report.failed(),
             };
         }
-        Command::New(new) => Edit::New(new),
-        Command::Change { id, changes } => Edit::Change { id, changes },
+        Command::BodyFrom { id, path } => {
+            match file.unwrap_or_else(|| Err(format!("{path} wasn't read"))) {
+                Ok(text) => Edit::Change {
+                    id,
+                    changes: Vec::from([IssueChange::Body(text)]),
+                },
+                Err(reason) => return refused(refusal(&reason)),
+            }
+        }
+        Command::Edit(edit) => edit,
     };
-    let written = inputs
-        .flow
-        .as_deref()
-        .map_err(Clone::clone)
-        .and_then(load)
-        .map_err(|problem| format!("docs/agents/flow.toml: {problem}"))
-        .and_then(|flow| {
-            let projects = listed(inputs.projects.clone()).projects;
-            let home = Issues {
-                flow: &flow,
-                projects: &projects,
-                files: &inputs.issues,
-            };
-            write(&home, edit, context)
-        });
-    match written {
+    match write(home, &edit, context) {
         Ok(Written {
             write,
             subject,
@@ -265,7 +409,7 @@ pub fn run(command: &Command, inputs: &Inputs, context: &Context) -> Outcome {
             writes: Vec::from([write]),
             failed: false,
         },
-        Err(reason) => refused(format!("home: {reason}\n")),
+        Err(reason) => refused(refusal(&reason)),
     }
 }
 
@@ -277,36 +421,38 @@ const fn refused(output: String) -> Outcome {
     }
 }
 
-/// What `edit` writes to the home's issues, read back against the flow
-/// among the others.
+/// What `edit` writes to `home`'s issues, read back against the flow among
+/// the others.
 ///
 /// # Errors
 ///
 /// Why the edit can't be made, or what the flow refuses it for.
 pub fn write(
-    home: &Issues<'_>,
-    edit: Edit<'_>,
+    home: &Snapshot,
+    edit: &Edit,
     context: &Context,
 ) -> Result<Written, String> {
+    let flow = home.flow()?;
     let sign = Signer {
         at: stamp(context.now),
         by: context.by.clone(),
     };
     let (file, moved) = match edit {
-        Edit::New(new) => (opened(home, context, &sign, new)?, false),
+        Edit::New(new) => (opened(home, flow, context, &sign, new)?, false),
         Edit::Change { id, changes } => {
+            let stem = id.to_string();
             let file = home
-                .files
+                .files()
                 .iter()
-                .find(|file| file.stem == id)
+                .find(|file| file.stem == stem)
                 .ok_or_else(|| format!("no issue is called {id}"))?;
             let moved = changes
                 .iter()
                 .any(|change| matches!(change, IssueChange::Move { .. }));
-            (changed(home.flow, file, changes, &sign)?, moved)
+            (changed(flow, file, changes, &sign)?, moved)
         }
     };
-    finished(home, file, moved)
+    finished(home, flow, file, moved)
 }
 
 /// Who writes a log line, and when.
@@ -330,24 +476,16 @@ impl Signer {
 /// The file read back among the others, refused on a structural problem
 /// or a broken `error` rule, else written with any warning.
 fn finished(
-    home: &Issues<'_>,
+    home: &Snapshot,
+    flow: &Flow,
     file: File,
     moved: bool,
 ) -> Result<Written, String> {
-    let flow = home.flow;
-    let mut files: Vec<File> = home
-        .files
-        .iter()
-        .filter(|other| {
-            other.project != file.project || other.stem != file.stem
-        })
-        .cloned()
-        .collect();
-    files.push(file.clone());
-    let graph = read(flow, &files);
+    let after = home.with(file.clone());
+    let graph = after.graph();
     let place = format!("{}/{}", file.project.0, file.stem);
     let name = home
-        .projects
+        .projects()
         .iter()
         .find(|project| project.id == file.project)
         .map_or_else(|| file.project.0.clone(), |project| project.name.clone());
@@ -356,18 +494,8 @@ fn finished(
         .problems
         .iter()
         .filter(|problem| problem.issue == place)
-        .map(|problem| {
-            problem.field.as_ref().map_or_else(
-                || problem.message.clone(),
-                |field| format!("{field}: {}", problem.message),
-            )
-        })
+        .map(ToString::to_string)
         .collect();
-    let before = if moved {
-        read(flow, home.files)
-    } else {
-        Graph::default()
-    };
     let findings: Vec<Finding> = graph
         .issues
         .iter()
@@ -375,12 +503,9 @@ fn finished(
             issue.project == file.project && issue.id.to_string() == file.stem
         })
         .map_or_else(Vec::new, |issue| {
-            let from = before.issues.iter().find(|old| {
-                (&old.project, &old.id) == (&issue.project, &issue.id)
-            });
             let moving = if moved {
                 Move {
-                    from,
+                    from: home.issue(issue.id),
                     to: Some(issue),
                 }
             } else {
@@ -413,7 +538,8 @@ fn finished(
 }
 
 fn opened(
-    home: &Issues<'_>,
+    home: &Snapshot,
+    flow: &Flow,
     context: &Context,
     sign: &Signer,
     new: &NewIssue,
@@ -424,14 +550,10 @@ fn opened(
         title: wanted,
         fields,
     } = new;
-    let flow = home.flow;
     let at = &sign.at;
-    let folder = home
-        .projects
-        .iter()
-        .find(|known| known.name == *project || known.id.0 == *project)
-        .map(|known| known.id.clone())
-        .ok_or_else(|| format!("no project is called {project}"))?;
+    if !home.projects().iter().any(|known| known.id == *project) {
+        return Err(format!("no project is called {}", project.0));
+    }
     let declared = flow
         .kind(kind)
         .ok_or_else(|| format!("no kind is called {kind}"))?;
@@ -444,12 +566,13 @@ fn opened(
         (String::from("kind"), quoted(kind)),
         (String::from("status"), quoted(&status)),
     ]);
-    for pair in fields {
-        let (key, raw) = pair_of(pair)?;
-        front.push((key.to_owned(), value(flow, kind, key, raw)?));
-    }
+    front.extend(
+        fields
+            .iter()
+            .map(|(key, value)| (key.clone(), toml_of(value))),
+    );
     if flow
-        .field("created")
+        .field(kind, "created")
         .is_some_and(|field| field.value == FieldType::Time)
     {
         front.push((String::from("created"), at.clone()));
@@ -460,7 +583,7 @@ fn opened(
         &sign.entry(LogEvent::Note, "opened."),
     );
     Ok(File {
-        project: folder,
+        project: project.clone(),
         stem: id,
         text: document.text(),
     })
@@ -482,19 +605,19 @@ fn changed(
     for change in changes {
         match change {
             IssueChange::Move { part, to, reason } => {
-                let (key, event, said) =
+                let (key, event, text) =
                     shifted(flow, &issue, (*part, to, reason))?;
                 document.set(key, &quoted(to)).ok_or_else(|| {
                     String::from("its front matter doesn't read")
                 })?;
-                document.log_entry(&sign.entry(event, &said));
+                document.log_entry(&sign.entry(event, &text));
             }
             IssueChange::Set { field, value } => {
-                setting(flow, &issue.kind, &mut document, field, value)?;
-                set.push(format!("{field}={value}"));
+                setting(&mut document, field, value)?;
+                set.push(format!("{field}={}", said(value)));
             }
-            IssueChange::Note(said) => {
-                let text = needs(said, "a note needs text")?;
+            IssueChange::Note(note) => {
+                let text = needs(note, "a note needs text")?;
                 document.log_entry(&sign.entry(LogEvent::Note, text));
             }
             IssueChange::Body(text) => document.body(text.trim()),
@@ -558,24 +681,38 @@ fn shifted(
 }
 
 fn setting(
-    flow: &Flow,
-    kind: &str,
     document: &mut Document,
     key: &str,
-    given: &str,
+    value: &Datum,
 ) -> Result<(), String> {
     if matches!(key, "id" | "kind" | "status" | "stage") {
         return Err(format!(
             "{key} isn't set this way; use home issue move for a stage or status"
         ));
     }
-    let raw = given.trim();
     if key == "title" {
-        needs(raw, "an issue needs a title")?;
+        needs(&said(value), "an issue needs a title")?;
     }
     document
-        .set(key, &value(flow, kind, key, raw)?)
+        .set(key, &toml_of(value))
         .ok_or_else(|| String::from("its front matter doesn't read"))
+}
+
+/// A value as TOML, its text trimmed and a list without empty items.
+fn toml_of(value: &Datum) -> String {
+    match value {
+        Datum::Text(text) => quoted(text.trim()),
+        Datum::Texts(texts) => Value::Array(
+            texts
+                .iter()
+                .map(|item| item.trim())
+                .filter(|item| !item.is_empty())
+                .map(|item| Value::String(item.to_owned()))
+                .collect(),
+        )
+        .to_string(),
+        Datum::Bool(flag) => Value::Boolean(*flag).to_string(),
+    }
 }
 
 fn checklist(
@@ -625,56 +762,6 @@ fn needs<'a>(text: &'a str, missing: &str) -> Result<&'a str, String> {
     } else {
         Ok(kept)
     }
-}
-
-fn pair_of(pair: &str) -> Result<(&str, &str), String> {
-    pair.split_once('=')
-        .ok_or_else(|| format!("{pair:?} is not <field>=<value>"))
-}
-
-/// `raw` as TOML for `key` on an issue of `kind`: a list where the field
-/// or relation takes several, a boolean where it takes one, else text.
-fn value(
-    flow: &Flow,
-    kind: &str,
-    key: &str,
-    raw: &str,
-) -> Result<String, String> {
-    let field = flow
-        .fields
-        .iter()
-        .chain(
-            flow.kind(kind)
-                .into_iter()
-                .flat_map(|declared| &declared.fields),
-        )
-        .find(|field| field.name == key);
-    let many = match field.map(|declared| &declared.value) {
-        Some(FieldType::Bool) => {
-            return match raw {
-                "true" | "false" => Ok(raw.to_owned()),
-                _ => Err(format!("home: {key} is true or false\n")),
-            };
-        }
-        Some(FieldType::Texts | FieldType::Refs(_)) => true,
-        Some(_) => false,
-        None => flow
-            .relations
-            .iter()
-            .any(|relation| relation.name == key && relation.many),
-    };
-    Ok(if many {
-        Value::Array(
-            raw.split(',')
-                .map(str::trim)
-                .filter(|item| !item.is_empty())
-                .map(|item| Value::String(item.to_owned()))
-                .collect(),
-        )
-        .to_string()
-    } else {
-        quoted(raw)
-    })
 }
 
 fn quoted(text: &str) -> String {

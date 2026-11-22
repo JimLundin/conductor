@@ -1,13 +1,16 @@
 use proto::{
-    ChecklistChange, ChecklistItem, Issue, IssueChange, Item, NewIssue, Part,
-    ProjectId,
+    ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, IssueId, Item,
+    NewIssue, Part, ProjectId,
 };
 
-use super::{Command, Context, Outcome, command, fresh, run, stamp};
-use crate::flow::check::{Inputs, check};
+use super::{
+    Command, Context, Edit, Outcome, command, fresh, homeless, run, stamp,
+};
+use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
-use crate::flow::graph::{File, one};
+use crate::flow::graph::{File, id_of, one};
 use crate::flow::load;
+use crate::flow::snapshot::{Inputs, Snapshot};
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
@@ -53,7 +56,27 @@ fn home() -> Inputs {
                 "## What\n\n## Notes\n\n- 2026-11-21T20:41:27Z laptop·claude note: sliced.\n",
             ),
         ]),
+        unread: Vec::new(),
     }
+}
+
+fn id(stem: &str) -> IssueId {
+    id_of(stem).unwrap_or(IssueId(0))
+}
+
+/// What the command line `line` asks of the home `inputs` holds.
+fn asked(inputs: &Inputs, line: &str) -> Command {
+    command(&words(line), &Snapshot::of(inputs.clone()))
+}
+
+/// What saying `line` to the home `inputs` holds writes and says.
+fn ran(inputs: &Inputs, line: &str) -> Outcome {
+    let home = Snapshot::of(inputs.clone());
+    run(command(&words(line), &home), None, &home, &context())
+}
+
+fn check(inputs: &Inputs) -> Report {
+    checked(&Snapshot::of(inputs.clone()))
 }
 
 fn context() -> Context {
@@ -94,22 +117,29 @@ fn text(outcome: &Outcome) -> String {
 
 #[test]
 fn the_words_name_a_command() {
-    assert_eq!(command(&words("check")), Command::Check);
+    let inputs = home();
+    let asked = |line: &str| asked(&inputs, line);
+    assert_eq!(asked("check"), Command::Check);
     assert_eq!(
-        command(&words("issue new home task Do-it parent=x")),
-        Command::New(NewIssue {
-            project: String::from("home"),
+        asked(&format!("issue new home task Do-it parent={SPEC}")),
+        Command::Edit(Edit::New(NewIssue {
+            project: ProjectId(String::from(FOLDER)),
             kind: String::from("task"),
             title: String::from("Do-it"),
-            fields: Vec::from([String::from("parent=x")]),
-        })
+            fields: Vec::from([(
+                String::from("parent"),
+                Datum::Text(String::from(SPEC)),
+            )]),
+        }))
     );
-    let changing = |change| Command::Change {
-        id: String::from("x"),
-        changes: Vec::from([change]),
+    let changing = |change| {
+        Command::Edit(Edit::Change {
+            id: id(TASK),
+            changes: Vec::from([change]),
+        })
     };
     assert_eq!(
-        command(&words("issue move x stage slice signed off")),
+        asked(&format!("issue move {TASK} stage slice signed off")),
         changing(IssueChange::Move {
             part: Part::Stage,
             to: String::from("slice"),
@@ -117,35 +147,39 @@ fn the_words_name_a_command() {
         })
     );
     assert_eq!(
-        command(&words("issue note x it works")),
+        asked(&format!("issue note {TASK} it works")),
         changing(IssueChange::Note(String::from("it works")))
     );
     assert_eq!(
-        command(&words("issue set x a=1 b=2")),
-        Command::Change {
-            id: String::from("x"),
+        asked("issue note x it works"),
+        Command::Wrong(String::from("no issue is called x"))
+    );
+    assert_eq!(
+        asked(&format!("issue set {TASK} a=1 b=2")),
+        Command::Edit(Edit::Change {
+            id: id(TASK),
             changes: Vec::from([
                 IssueChange::Set {
                     field: String::from("a"),
-                    value: String::from("1"),
+                    value: Datum::Text(String::from("1")),
                 },
                 IssueChange::Set {
                     field: String::from("b"),
-                    value: String::from("2"),
+                    value: Datum::Text(String::from("2")),
                 },
             ]),
-        }
+        })
     );
     assert_eq!(
-        command(&words("issue set x a")),
+        asked(&format!("issue set {TASK} a")),
         Command::Wrong(String::from("\"a\" is not <field>=<value>"))
     );
     assert_eq!(
-        command(&words("issue body x Why it matters.")),
+        asked(&format!("issue body {TASK} Why it matters.")),
         changing(IssueChange::Body(String::from("Why it matters.")))
     );
     assert_eq!(
-        command(&words("issue checklist x add the docs")),
+        asked(&format!("issue checklist {TASK} add the docs")),
         changing(IssueChange::Checklist(ChecklistChange::Add(String::from(
             "the docs"
         ))))
@@ -156,9 +190,9 @@ fn the_words_name_a_command() {
     };
     assert_eq!(
         [
-            command(&words("issue checklist x check 1")),
-            command(&words("issue checklist x uncheck 1")),
-            command(&words("issue checklist x remove 1")),
+            asked(&format!("issue checklist {TASK} check 1")),
+            asked(&format!("issue checklist {TASK} uncheck 1")),
+            asked(&format!("issue checklist {TASK} remove 1")),
         ],
         [
             changing(IssueChange::Checklist(ChecklistChange::Check {
@@ -173,24 +207,138 @@ fn the_words_name_a_command() {
         ]
     );
     assert_eq!(
-        command(&words("issue checklist x check 0")),
+        asked(&format!("issue checklist {TASK} check 0")),
         Command::Wrong(String::from(
             "0 is not an item's number, counted from 1"
         ))
     );
-    assert_eq!(command(&words("issue set x")), Command::Usage);
-    assert_eq!(command(&words("issue move x phase build")), Command::Usage);
+    assert_eq!(asked(&format!("issue set {TASK}")), Command::Usage);
+    assert_eq!(
+        asked(&format!("issue move {TASK} phase build")),
+        Command::Usage
+    );
+}
+
+#[test]
+fn a_project_is_named_by_its_name_or_its_id() {
+    let inputs = home();
+    assert_eq!(
+        asked(&inputs, &format!("issue new {FOLDER} task Do-it")),
+        asked(&inputs, "issue new home task Do-it")
+    );
+    assert_eq!(
+        asked(&inputs, "issue new elsewhere task Do-it"),
+        Command::Wrong(String::from("no project is called elsewhere"))
+    );
+}
+
+#[test]
+fn a_body_from_a_file_asks_the_shell_for_the_file() {
+    let inputs = home();
+    let from_file = asked(&inputs, &format!("issue body {TASK} --file why.md"));
+    assert_eq!(from_file.file(), Some("why.md"));
+    assert_eq!(
+        from_file,
+        Command::BodyFrom {
+            id: id(TASK),
+            path: String::from("why.md"),
+        }
+    );
+    assert_eq!(asked(&inputs, "check").file(), None);
+}
+
+#[test]
+fn a_value_is_read_as_its_field_takes_it() {
+    let inputs = home();
+    let set = |pair: &str| match asked(
+        &inputs,
+        &format!("issue set {TASK} {pair}"),
+    ) {
+        Command::Edit(Edit::Change { changes, .. }) => changes,
+        other => Vec::from([IssueChange::Note(format!("{other:?}"))]),
+    };
+    let value = |field: &str, value| {
+        Vec::from([IssueChange::Set {
+            field: String::from(field),
+            value,
+        }])
+    };
+    let texts = |items: &[&str]| {
+        Datum::Texts(items.iter().map(|item| String::from(*item)).collect())
+    };
+    assert_eq!(
+        set("labels=app,,ui"),
+        value("labels", texts(&["app", "ui"]))
+    );
+    assert_eq!(
+        set(&format!("blocked_by={SPEC},{TASK}")),
+        value("blocked_by", texts(&[SPEC, TASK]))
+    );
+    assert_eq!(
+        set("title=Read,-then-write"),
+        value("title", Datum::Text(String::from("Read,-then-write")))
+    );
+    assert_eq!(
+        set(&format!("parent={SPEC}")),
+        value("parent", Datum::Text(String::from(SPEC)))
+    );
+}
+
+#[test]
+fn a_body_from_a_file_is_the_text_the_shell_read() {
+    let inputs = home();
+    let home = Snapshot::of(inputs.clone());
+    let from_file =
+        || asked(&inputs, &format!("issue body {TASK} --file why.md"));
+    let written = run(
+        from_file(),
+        Some(Ok(String::from("Read from a file.\n"))),
+        &home,
+        &context(),
+    );
+    assert!(
+        text(&written).contains("+++\n\nRead from a file.\n\n## Notes\n"),
+        "{}",
+        written.output
+    );
+    let unread = run(
+        from_file(),
+        Some(Err(String::from("why.md: not found"))),
+        &home,
+        &context(),
+    );
+    assert_eq!(
+        (unread.failed, unread.output, unread.writes),
+        (true, String::from("home: why.md: not found\n"), Vec::new())
+    );
+}
+
+#[test]
+fn the_command_line_says_what_it_did_and_exits_by_how_it_went() {
+    let wrote = ran(&home(), &format!("issue note {TASK} seen"));
+    assert_eq!(wrote.ended(Ok(())).1, 0);
+    assert_eq!(
+        wrote.ended(Err(String::from("disk full"))),
+        (format!("{}home: disk full\n", wrote.output), 1)
+    );
+    assert_eq!(ran(&home(), "issue").ended(Ok(())).1, 1);
+    assert_eq!(
+        homeless(),
+        (
+            String::from(
+                "home: no home here: no folder above holds docs/agents/flow.toml\n"
+            ),
+            2
+        )
+    );
 }
 
 #[test]
 fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
     let inputs = home();
-    let outcome = run(
-        &command(&words(&format!(
-            "issue new home task Wire-it parent={SPEC} blocked_by={TASK}"
-        ))),
+    let outcome = ran(
         &inputs,
-        &context(),
+        &format!("issue new home task Wire-it parent={SPEC} blocked_by={TASK}"),
     );
     assert!(!outcome.failed, "{}", outcome.output);
     let id = outcome
@@ -214,7 +362,7 @@ fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
 #[test]
 fn a_structural_problem_refuses_the_write() {
     let refused = |said: &str| {
-        let outcome = run(&command(&words(said)), &home(), &context());
+        let outcome = ran(&home(), said);
         (outcome.failed && outcome.writes.is_empty(), outcome.output)
     };
     let (dangling, output) =
@@ -231,16 +379,11 @@ fn a_structural_problem_refuses_the_write() {
         "{said}"
     );
     let inputs = home();
-    let blocking = run(
-        &command(&words(&format!("issue set {SPEC} blocked_by={TASK}"))),
-        &inputs,
-        &context(),
-    );
+    let blocking = ran(&inputs, &format!("issue set {SPEC} blocked_by={TASK}"));
     assert!(!blocking.failed, "{}", blocking.output);
-    let cycle = run(
-        &command(&words(&format!("issue set {TASK} blocked_by={SPEC}"))),
+    let cycle = ran(
         &after(&inputs, &blocking),
-        &context(),
+        &format!("issue set {TASK} blocked_by={SPEC}"),
     );
     assert!(cycle.failed && cycle.writes.is_empty());
     assert!(
@@ -252,11 +395,7 @@ fn a_structural_problem_refuses_the_write() {
 
 #[test]
 fn a_missing_section_is_written_with_a_warning() {
-    let outcome = run(
-        &command(&words(&format!("issue note {TASK} checked"))),
-        &home(),
-        &context(),
-    );
+    let outcome = ran(&home(), &format!("issue note {TASK} checked"));
     assert!(!outcome.failed);
     assert_eq!(
         outcome.output,
@@ -272,39 +411,27 @@ fn a_missing_section_is_written_with_a_warning() {
 
 #[test]
 fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
-    let usual = run(
-        &command(&words(&format!("issue move {SPEC} stage slice signed off"))),
+    let usual = ran(
         &home(),
-        &context(),
+        &format!("issue move {SPEC} stage slice signed off"),
     );
     assert!(text(&usual).contains("stage = \"slice\"\n"));
     assert!(text(&usual).ends_with(
         "- 2026-11-22T12:00:00Z laptop·claude stage spec→slice: signed off\n"
     ));
-    let unusual = run(
-        &command(&words(&format!(
-            "issue move {SPEC} stage land skipping ahead"
-        ))),
+    let unusual = ran(
         &home(),
-        &context(),
+        &format!("issue move {SPEC} stage land skipping ahead"),
     );
     assert!(!unusual.failed);
     assert!(
         text(&unusual)
             .ends_with("stage spec→land: skipping ahead (unusual move)\n")
     );
-    let status = run(
-        &command(&words(&format!("issue move {TASK} status ready"))),
-        &home(),
-        &context(),
-    );
+    let status = ran(&home(), &format!("issue move {TASK} status ready"));
     assert!(text(&status).contains("status = \"ready\"\n"));
     assert!(text(&status).ends_with("status open→ready: \n"));
-    let unknown = run(
-        &command(&words(&format!("issue move {TASK} status started"))),
-        &home(),
-        &context(),
-    );
+    let unknown = ran(&home(), &format!("issue move {TASK} status started"));
     assert!(
         unknown.failed
             && unknown.output.contains("no status is called started")
@@ -313,11 +440,7 @@ fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
 
 #[test]
 fn a_stage_or_status_is_moved_not_set() {
-    let outcome = run(
-        &command(&words(&format!("issue set {TASK} status=done"))),
-        &home(),
-        &context(),
-    );
+    let outcome = ran(&home(), &format!("issue set {TASK} status=done"));
     assert!(outcome.failed && outcome.writes.is_empty());
 }
 
@@ -330,9 +453,7 @@ fn a_time_is_written_to_the_second_in_utc() {
 #[test]
 fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
     let inputs = home();
-    let said = |inputs: &Inputs, words_said: &str| {
-        run(&command(&words(words_said)), inputs, &context())
-    };
+    let said = |inputs: &Inputs, words_said: &str| ran(inputs, words_said);
     let described = said(&inputs, &format!("issue body {TASK} Wire it up."));
     assert!(!described.failed, "{}", described.output);
     assert!(
@@ -373,13 +494,14 @@ fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
 #[test]
 fn a_note_of_several_lines_is_indented_under_its_first() {
     let outcome = run(
-        &Command::Change {
-            id: String::from(TASK),
+        Command::Edit(Edit::Change {
+            id: id(TASK),
             changes: Vec::from([IssueChange::Note(String::from(
                 "first\nsecond",
             ))]),
-        },
-        &home(),
+        }),
+        None,
+        &Snapshot::of(home()),
         &context(),
     );
     assert!(text(&outcome).ends_with(
@@ -426,11 +548,7 @@ fn read_and_written(
     text_of_task: &str,
 ) -> (String, Result<Issue, String>, String) {
     let inputs = with_task(text_of_task);
-    let noted = run(
-        &command(&words(&format!("issue note {TASK} seen"))),
-        &inputs,
-        &context(),
-    );
+    let noted = ran(&inputs, &format!("issue note {TASK} seen"));
     (
         check(&inputs).text(),
         graph_reads(TASK, text_of_task),
@@ -490,11 +608,7 @@ fn a_checklist_edit_changes_the_item_the_graph_read_at_its_place() {
         reread(&listed),
         Ok(Vec::from([item(false, "first"), item(false, "second")]))
     );
-    let checked = run(
-        &command(&words(&format!("issue checklist {TASK} check 2"))),
-        &inputs,
-        &context(),
-    );
+    let checked = ran(&inputs, &format!("issue checklist {TASK} check 2"));
     assert!(!checked.failed, "{}", checked.output);
     assert_eq!(
         reread(&text(&checked)),
@@ -502,11 +616,7 @@ fn a_checklist_edit_changes_the_item_the_graph_read_at_its_place() {
     );
     assert!(text(&checked).contains("- [ ] an example\n"));
     assert!(text(&checked).contains("~~~\n- [ ] fenced\n~~~\n- [x] second\n"));
-    let removed = run(
-        &command(&words(&format!("issue checklist {TASK} remove 1"))),
-        &inputs,
-        &context(),
-    );
+    let removed = ran(&inputs, &format!("issue checklist {TASK} remove 1"));
     assert_eq!(
         reread(&text(&removed)),
         Ok(Vec::from([item(false, "second")]))
@@ -525,7 +635,7 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
         format!("issue move {TASK} status ready"),
         format!("issue set {TASK} title=Write-it-well"),
     ] {
-        let outcome = run(&command(&words(&said)), &inputs, &context());
+        let outcome = ran(&inputs, &said);
         let stem = outcome
             .writes
             .first()

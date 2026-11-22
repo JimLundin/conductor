@@ -12,7 +12,6 @@
 //! unless the edit is newer. Replay recognizes edits it already applied,
 //! even when a separately submitted note has the same text.
 
-use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use proto::flow::Flow;
@@ -22,9 +21,10 @@ use proto::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::flow::command::{self, Issues};
+use crate::flow::command::{self, said};
 use crate::flow::file::{Document, checklist_line, log_line};
 use crate::flow::graph::{self, File, branch_of};
+use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
 
 /// The issue's file, from the home's root.
@@ -35,7 +35,7 @@ fn file(project: &ProjectId, id: IssueId) -> String {
 
 /// Where a project keeps its issues, from the home's root.
 #[must_use]
-fn folder(project: &ProjectId) -> String {
+pub fn folder(project: &ProjectId) -> String {
     format!("projects/{}/issues", project.0)
 }
 
@@ -58,58 +58,7 @@ fn read(
             text: String::from(text),
         },
     )
-    .map_err(|problem| {
-        problem.field.map_or_else(
-            || problem.message.clone(),
-            |field| format!("{field}: {}", problem.message),
-        )
-    })
-}
-
-/// The issues the files hold, each `.md` file of a project by its name
-/// without the extension, by project and id; and why any file isn't one.
-#[must_use]
-pub fn listed(
-    flow: &Flow,
-    files: Vec<(ProjectId, String, Result<String, String>)>,
-) -> (BTreeMap<ProjectId, Vec<Issue>>, Vec<String>) {
-    let mut problems = Vec::new();
-    let mut read_files = Vec::new();
-    for (project, stem, contents) in files {
-        match contents {
-            Ok(text) => read_files.push(File {
-                project,
-                stem,
-                text,
-            }),
-            Err(problem) => problems
-                .push(format!("{}/{stem}.md: {problem}", folder(&project))),
-        }
-    }
-    let graph = graph::read(flow, &read_files);
-    problems.extend(graph.problems.into_iter().map(|problem| {
-        let cause = problem
-            .field
-            .map_or_else(String::new, |field| format!("{field}: "));
-        format!("{}: {cause}{}", problem.issue, problem.message)
-    }));
-    let mut issues: BTreeMap<ProjectId, Vec<Issue>> = BTreeMap::new();
-    for issue in graph.issues {
-        issues.entry(issue.project.clone()).or_default().push(issue);
-    }
-    (issues, problems)
-}
-
-/// The project whose issues include `id`.
-#[must_use]
-fn locate(
-    issues: &BTreeMap<ProjectId, Vec<Issue>>,
-    id: IssueId,
-) -> Option<ProjectId> {
-    issues
-        .iter()
-        .find(|(_, listed)| listed.iter().any(|issue| issue.id == id))
-        .map(|(project, _)| project.clone())
+    .map_err(|problem| problem.to_string())
 }
 
 /// The message of the commit an edit makes in the home.
@@ -124,7 +73,7 @@ fn message(edit: &EditData) -> String {
             format!("Move issue {id} to {to}")
         }
         Change::Issue(IssueChange::Set { field, value }) => {
-            format!("Set the {field} of issue {id} to {value}")
+            format!("Set the {field} of issue {id} to {}", said(value))
         }
         Change::Issue(IssueChange::Body(_)) => {
             format!("Describe issue {id} anew")
@@ -179,7 +128,7 @@ pub struct EditData {
     change: Change,
     /// The value the field it sets had when it was made, as [`was`] gives
     /// it, so a replay can tell whether someone else changed it since.
-    was: Option<String>,
+    was: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -220,7 +169,11 @@ enum Applied {
 /// The value the field the edit sets has in its issue's file as it is
 /// now: what [`Edit::was`] keeps.
 #[must_use]
-fn was(flow: &Flow, current: Option<&str>, edit: &EditData) -> Option<String> {
+fn was(
+    flow: &Flow,
+    current: Option<&str>,
+    edit: &EditData,
+) -> Option<Vec<String>> {
     let Change::Issue(sets) = &edit.change else {
         return None;
     };
@@ -229,47 +182,59 @@ fn was(flow: &Flow, current: Option<&str>, edit: &EditData) -> Option<String> {
         .and_then(|issue| field(&issue, sets))
 }
 
-fn field(issue: &Issue, change: &IssueChange) -> Option<String> {
+/// What the change sets has in `issue`, as words.
+fn field(issue: &Issue, change: &IssueChange) -> Option<Vec<String>> {
+    let one = |word: &str| words(&Datum::Text(String::from(word)));
     match change {
         IssueChange::Move {
             part: Part::Status, ..
-        } => Some(issue.status.clone()),
+        } => Some(one(&issue.status)),
         IssueChange::Move {
             part: Part::Stage, ..
-        } => Some(issue.stage.clone().unwrap_or_default()),
+        } => Some(one(issue.stage.as_deref().unwrap_or_default())),
         IssueChange::Set { field, .. } => Some(value_of(issue, field)),
-        IssueChange::Body(_) => Some(issue.body()),
+        IssueChange::Body(_) => Some(one(&issue.body)),
         IssueChange::Note(_) | IssueChange::Checklist(_) => None,
     }
 }
 
-/// A field's or relation's value as `<field>=<value>` would give it, the
-/// title among them.
-fn value_of(issue: &Issue, field: &str) -> String {
+/// A field's or relation's value, the title among them, as words.
+fn value_of(issue: &Issue, field: &str) -> Vec<String> {
     if field == "title" {
-        return issue.title.clone();
+        return words(&Datum::Text(issue.title.clone()));
     }
-    match issue.fields.get(field) {
-        Some(Datum::Text(text)) => text.clone(),
-        Some(Datum::Texts(texts)) => texts.join(","),
-        Some(Datum::Bool(flag)) => flag.to_string(),
-        None => issue
-            .links
-            .get(field)
-            .map_or_else(String::new, |ids| ids.join(",")),
+    issue.fields.get(field).map_or_else(
+        || {
+            issue
+                .links
+                .get(field)
+                .into_iter()
+                .flatten()
+                .map(ToString::to_string)
+                .collect()
+        },
+        words,
+    )
+}
+
+/// A value's words, trimmed, without empty ones, so one value and a list
+/// of it compare alike.
+fn words(value: &Datum) -> Vec<String> {
+    let kept = |text: &str| {
+        let trimmed = text.trim();
+        (!trimmed.is_empty()).then(|| String::from(trimmed))
+    };
+    match value {
+        Datum::Text(text) => kept(text).into_iter().collect(),
+        Datum::Texts(texts) => {
+            texts.iter().filter_map(|text| kept(text)).collect()
+        }
+        Datum::Bool(flag) => Vec::from([flag.to_string()]),
     }
 }
 
 /// The issue has what the change gives it already.
 fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
-    let list = |value: &str| {
-        value
-            .split(',')
-            .map(str::trim)
-            .filter(|item| !item.is_empty())
-            .map(String::from)
-            .collect::<Vec<String>>()
-    };
     match change {
         IssueChange::Move {
             part: Part::Status,
@@ -282,14 +247,9 @@ fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
             ..
         } => issue.stage.as_ref() == Some(to),
         IssueChange::Set { field, value } => {
-            match (issue.fields.get(field), issue.links.get(field)) {
-                (Some(Datum::Texts(texts)), _) | (None, Some(texts)) => {
-                    *texts == list(value)
-                }
-                _ => value_of(issue, field) == value.trim(),
-            }
+            value_of(issue, field) == words(value)
         }
-        IssueChange::Body(body) => issue.body() == body.trim(),
+        IssueChange::Body(body) => issue.body == body.trim(),
         IssueChange::Checklist(ChecklistChange::Check { item, done }) => {
             !stale(issue, item)
                 && issue
@@ -316,7 +276,7 @@ fn stale(issue: &Issue, item: &Item) -> bool {
 /// none, among the home's other issues.
 #[must_use]
 fn apply(
-    home: &Issues<'_>,
+    home: &Snapshot,
     current: Option<&str>,
     edit: &Edit,
     mode: Mode,
@@ -325,7 +285,11 @@ fn apply(
     let marker = edit_marker(edit.command);
     let text = match (&data.change, current) {
         (Change::Create(_), Some(text)) => {
-            return match read(home.flow, &data.project, data.issue, text) {
+            return match home
+                .flow()
+                .map_err(String::from)
+                .and_then(|flow| read(flow, &data.project, data.issue, text))
+            {
                 Ok(_) => Applied::AlreadyRecorded,
                 Err(reason) => Applied::Unreadable(reason),
             };
@@ -337,7 +301,10 @@ fn apply(
     let Change::Issue(change) = &data.change else {
         return Applied::Gone;
     };
-    let issue = match read(home.flow, &data.project, data.issue, text)
+    let issue = match home
+        .flow()
+        .map_err(String::from)
+        .and_then(|flow| read(flow, &data.project, data.issue, text))
         .and_then(|issue| Document::of(text).map(|document| (issue, document)))
     {
         Ok((_, document)) if document.has_comment(&marker) => {
@@ -387,40 +354,35 @@ fn marked(text: &str, marker: &str) -> Applied {
 /// What `home::flow::command` writes for the edit, among the home's other
 /// issues and the issue's file as it is now, marked as having had it.
 fn written(
-    home: &Issues<'_>,
+    home: &Snapshot,
     data: &EditData,
     current: Option<&str>,
     marker: &str,
 ) -> Applied {
     let stem = data.issue.to_string();
-    let mut files: Vec<File> = home
-        .files
-        .iter()
-        .filter(|file| file.project != data.project || file.stem != stem)
-        .cloned()
-        .collect();
-    files.extend(current.map(|text| File {
-        project: data.project.clone(),
-        stem: stem.clone(),
-        text: String::from(text),
-    }));
-    let among = Issues {
-        files: &files,
-        ..*home
-    };
+    let among = current.map_or_else(
+        || home.clone(),
+        |text| {
+            home.with(File {
+                project: data.project.clone(),
+                stem: stem.clone(),
+                text: String::from(text),
+            })
+        },
+    );
     let context = command::Context {
         now: data.at.saturating_mul(1000),
         id: data.issue,
         by: data.by.clone(),
     };
     let edit = match &data.change {
-        Change::Create(new) => command::Edit::New(new),
+        Change::Create(new) => command::Edit::New(new.clone()),
         Change::Issue(change) => command::Edit::Change {
-            id: &stem,
-            changes: core::slice::from_ref(change),
+            id: data.issue,
+            changes: Vec::from([change.clone()]),
         },
     };
-    match command::write(&among, edit, &context) {
+    match command::write(&among, &edit, &context) {
         Ok(made) => match marked(&made.write.text, marker) {
             Applied::Write { text, .. } => Applied::Write {
                 text,
@@ -505,7 +467,7 @@ fn brief(project: &str, issue: &Issue) -> String {
             format!("\n{heading}:\n{}\n", lines.join("\n"))
         }
     };
-    let body = issue.body();
+    let body = &issue.body;
     format!(
         "You are working on the issue \"{title}\" in {project}. You are on a branch cut from {branch}; commit your work on it as you go.\n\n{body}\n{checklist}{notes}\nWork through what is left. When you are done, or stuck, say so, and sum up what you did and what is left.",
         title = issue.title,
@@ -513,7 +475,7 @@ fn brief(project: &str, issue: &Issue) -> String {
         body = if body.is_empty() {
             "The issue has no description."
         } else {
-            &body
+            body
         },
         checklist = section("Its checklist", &checklist),
         notes = section("Its notes so far", &notes),

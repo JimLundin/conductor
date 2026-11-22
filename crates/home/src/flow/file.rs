@@ -158,6 +158,21 @@ impl Document {
         sections
     }
 
+    /// The body before the checklist and the log, as its lines have it.
+    #[must_use]
+    pub fn body_text(&self) -> String {
+        self.rest
+            .get(..self.body_end())
+            .map_or_else(String::new, |lines| {
+                lines.join(
+                    "
+",
+                )
+            })
+            .trim()
+            .to_owned()
+    }
+
     /// The checklist's items.
     #[must_use]
     pub fn checklist(&self) -> Vec<ChecklistItem> {

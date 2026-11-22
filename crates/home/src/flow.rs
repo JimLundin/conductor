@@ -22,11 +22,15 @@ pub mod eval;
 pub mod file;
 pub mod graph;
 pub mod role;
+pub mod snapshot;
 
-pub use proto::flow::{
+use proto::flow::{
     Field, FieldType, Flow, Kind, Literal, Predicate, Quantifier, Relation,
     Role, Rule, Severity, Shape, Stage, Status,
 };
+
+/// Where the flow is, from the home's root.
+pub const PATH: &str = "docs/agents/flow.toml";
 
 /// The flow `text` declares.
 ///
@@ -408,8 +412,7 @@ fn field_refers(flow: &Flow, at: &At, field: &Field) -> Result<(), String> {
 /// Whether the app can show `name` on an issue of `kind`.
 fn shown(flow: &Flow, kind: &Kind, name: &str) -> bool {
     matches!(name, "status" | "stage")
-        || flow.fields.iter().any(|field| field.name == name)
-        || kind.fields.iter().any(|field| field.name == name)
+        || flow.field(&kind.name, name).is_some()
         || flow.relations.iter().any(|relation| {
             relation.name == name
                 && (relation.from.is_empty()
@@ -466,7 +469,7 @@ fn predicate(flow: &Flow, at: &At, value: &Value) -> Result<Predicate, String> {
         "status_role" => role_of(&here, inner).map(Predicate::StatusRole),
         "has" => declared(&here, inner, "field or relation", |name| {
             name == "stage"
-                || flow.field(name).is_some()
+                || some_field(flow, name).is_some()
                 || flow.relations.iter().any(|relation| relation.name == name)
         })
         .map(Predicate::Has),
@@ -532,7 +535,7 @@ fn field_atom(
         return at.fail("names exactly one field");
     };
     let here = at.key(name);
-    let Some(field) = flow.field(name) else {
+    let Some(field) = some_field(flow, name) else {
         return here.fail("no field is called that");
     };
     let value = match (&field.value, literal) {
@@ -550,6 +553,14 @@ fn field_atom(
         name: name.clone(),
         value,
     })
+}
+
+/// The field called `name` of whichever kind has one: a predicate may
+/// name any kind's.
+fn some_field<'flow>(flow: &'flow Flow, name: &str) -> Option<&'flow Field> {
+    flow.kinds
+        .iter()
+        .find_map(|kind| flow.field(&kind.name, name))
 }
 
 /// `all` or `any` of a list, or `any`, `all` or `none` of a relation's

@@ -9,13 +9,12 @@ use proto::{
 
 use super::{
     Applied, Branch, Change, Edit, EditData, Mode, Move, PendingEdits, Remote,
-    SessionUpdate, branch, file, listed, message, read, start,
+    SessionUpdate, branch, file, message, read, start,
 };
-use crate::flow::command::Issues;
 use crate::flow::file::log_line;
 use crate::flow::graph::File;
 use crate::flow::load;
-use crate::project::Project;
+use crate::flow::snapshot::{Inputs, Snapshot};
 
 /// 01JD0000000000000000000001 as its bits.
 const ID: IssueId = IssueId(2_093_793_708_204_169_241_204_922_644_758_003_713);
@@ -32,16 +31,41 @@ fn project() -> ProjectId {
     ProjectId(text("01m7r5n23kp17wyfj138e0bcnf"))
 }
 
-fn projects() -> Vec<Project> {
-    Vec::from([Project {
-        id: project(),
-        name: text("conductor"),
-        title: text("Conductor"),
-        remote: None,
-        root: text("e22b7f7b2976650400965d4147ba771675f96076"),
-        profiles: Vec::new(),
-        provides: Vec::new(),
-    }])
+/// The home with the project `project()` and the issue files `files`.
+fn snapshot_of(files: &[File]) -> Snapshot {
+    Snapshot::of(Inputs {
+        flow: Ok(text(include_str!("../flow/test-flow.toml"))),
+        projects: Vec::from([(
+            project().0,
+            Ok(text(
+                "name = \"conductor\"\ntitle = \"Conductor\"\n\
+                 root = \"e22b7f7b2976650400965d4147ba771675f96076\"\n",
+            )),
+        )]),
+        issues: files.to_vec(),
+        unread: Vec::new(),
+    })
+}
+
+/// The issue's file as `id`, in `status`, with `more` front matter.
+fn filed(id: IssueId, status: &str, more: &str) -> File {
+    File {
+        project: project(),
+        stem: id.to_string(),
+        text: written().replace(&ID.to_string(), &id.to_string()).replace(
+            "status = \"active\"\n",
+            &format!("status = \"{status}\"\n{more}"),
+        ),
+    }
+}
+
+/// The issue's file, holding [`written`].
+fn issue_file() -> File {
+    File {
+        project: project(),
+        stem: ID.to_string(),
+        text: written(),
+    }
 }
 
 /// The flow Conductor's own home declares.
@@ -58,14 +82,8 @@ fn flow() -> Flow {
 }
 
 /// What `within` makes of the home whose issue files are `files`.
-fn among<T>(files: &[File], within: impl FnOnce(&Issues<'_>) -> T) -> T {
-    let flow = flow();
-    let projects = projects();
-    within(&Issues {
-        flow: &flow,
-        projects: &projects,
-        files,
-    })
+fn among<T>(files: &[File], within: impl FnOnce(&Snapshot) -> T) -> T {
+    within(&snapshot_of(files))
 }
 
 /// The issue `text` holds, as the flow reads it.
@@ -77,7 +95,7 @@ fn apply(current: Option<&str>, edit: &Edit, mode: Mode) -> Applied {
     among(&[], |home| super::apply(home, current, edit, mode))
 }
 
-fn was(current: Option<&str>, change: Change) -> Option<String> {
+fn was(current: Option<&str>, change: Change) -> Option<Vec<String>> {
     super::was(
         &flow(),
         current,
@@ -127,6 +145,7 @@ fn issue() -> Issue {
             (text("created"), Datum::Text(text("2026-11-18T10:12:00Z"))),
         ]),
         links: BTreeMap::new(),
+        body: text("What to build and why."),
         sections: Vec::from([Section {
             heading: String::new(),
             text: text("What to build and why."),
@@ -252,7 +271,14 @@ fn moving_to(status: &str) -> IssueChange {
 fn setting(field: &str, value: &str) -> IssueChange {
     IssueChange::Set {
         field: text(field),
-        value: text(value),
+        value: Datum::Text(text(value)),
+    }
+}
+
+fn listing(field: &str, values: &[&str]) -> IssueChange {
+    IssueChange::Set {
+        field: text(field),
+        value: Datum::Texts(values.iter().map(|value| text(value)).collect()),
     }
 }
 
@@ -291,7 +317,7 @@ fn a_change_rewrites_only_its_own_lines_of_a_hand_edited_file()
     ))?;
     let labelled = file_of(apply(
         Some(&noted),
-        &changing_to(setting("labels", "app")),
+        &changing_to(listing("labels", &["app"])),
         Mode::Record,
     ))?;
     assert_eq!(
@@ -313,19 +339,14 @@ fn a_change_rewrites_only_its_own_lines_of_a_hand_edited_file()
     let read = parse(&hand_edited()).map(|issue| {
         (
             issue.status.clone(),
-            issue.body(),
+            issue.body.clone(),
             issue.checklist.len(),
             notes(&issue),
         )
     });
     assert_eq!(
         read,
-        Ok((
-            text("open"),
-            text("Why.\n\n## Design\n\nKept as written."),
-            1,
-            Vec::from([text("first")])
-        ))
+        Ok((text("open"), text("Why."), 1, Vec::from([text("first")])))
     );
     Ok(())
 }
@@ -388,30 +409,15 @@ fn an_issue_id_its_file_and_its_status_must_agree() {
     );
 }
 
-#[test]
-fn a_project_lists_its_issues_by_id_and_says_why_one_is_skipped() {
-    let (issues, problems) = listed(
-        &flow(),
-        Vec::from([
-            (project(), text("not-an-issue"), Ok(text("+++\n+++\n"))),
-            (project(), ID.to_string(), Ok(written())),
-            (
-                project(),
-                text("unreadable"),
-                Err(text("permission denied")),
-            ),
-        ]),
-    );
-    assert_eq!(issues, BTreeMap::from([(project(), Vec::from([issue()]))]));
-    assert_eq!(problems.len(), 2);
-}
-
 fn wanted() -> NewIssue {
     NewIssue {
-        project: text("conductor"),
+        project: project(),
         kind: text("task"),
         title: text("  Sign in  "),
-        fields: Vec::from([text("labels=app")]),
+        fields: Vec::from([(
+            text("labels"),
+            Datum::Texts(Vec::from([text("app")])),
+        )]),
     }
 }
 
@@ -500,7 +506,7 @@ fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
         },
         ..changing_to(moving_to("done"))
     };
-    assert_eq!(done.data.was, Some(text("active")));
+    assert_eq!(done.data.was, Some(Vec::from([text("active")])));
     let reviewed = written().replace("\"active\"", "\"review\"");
     let after = Mode::Replay {
         changed: OPENED + 60,
@@ -538,15 +544,10 @@ fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
     );
 }
 
-fn context<'a>(
-    projects: &'a [Project],
-    issues: &'a BTreeMap<ProjectId, Vec<Issue>>,
-    command: CommandId,
-) -> super::Context<'a> {
+fn context(home: &Snapshot, command: CommandId) -> super::Context<'_> {
     super::Context {
         remote: Some("origin"),
-        projects,
-        issues,
+        home,
         host: "stone",
         at: OPENED,
         command,
@@ -556,12 +557,11 @@ fn context<'a>(
 #[test]
 fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
 -> Result<(), Rejection> {
-    let projects = projects();
-    let issues = BTreeMap::new();
-    let listed = context(&projects, &issues, CommandId(1));
+    let home = snapshot_of(&[]);
+    let listed = context(&home, CommandId(1));
     let nowhere = super::Context {
         remote: None,
-        ..context(&projects, &issues, CommandId(1))
+        ..context(&home, CommandId(1))
     };
     assert_eq!(
         nowhere.open(ID, wanted(), "iPhone").map(|_| ()),
@@ -572,7 +572,7 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
             .open(
                 ID,
                 NewIssue {
-                    project: text("gone"),
+                    project: ProjectId(text("gone")),
                     ..wanted()
                 },
                 "iPhone"
@@ -596,28 +596,13 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
             reason: text("an issue needs a title")
         })
     );
-    assert_eq!(
-        listed
-            .open(
-                ID,
-                NewIssue {
-                    project: project().0,
-                    ..wanted()
-                },
-                "iPhone"
-            )
-            .map(|record| record.project()),
-        Ok(project()),
-        "a project is named by its name or its id"
-    );
     Ok(())
 }
 
 #[test]
 fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
-    let projects = projects();
-    let issues = BTreeMap::from([(project(), Vec::from([issue()]))]);
-    let listed = context(&projects, &issues, CommandId(1));
+    let home = snapshot_of(&[issue_file()]);
+    let listed = context(&home, CommandId(1));
     assert_eq!(
         listed
             .edit(ID, IssueChange::Note(text("x")), "iPhone")
@@ -734,20 +719,13 @@ fn moved(
     blocker: Option<&str>,
 ) -> Option<String> {
     let blocking = IssueId(ID.0 + 1);
-    let mut known = issue();
-    known.status = text(status);
-    known
-        .links
-        .insert(text("blocked_by"), Vec::from([blocking.to_string()]));
-    let mut issues = Vec::from([known]);
-    issues.extend(blocker.map(|status| {
-        let mut other = issue();
-        other.id = blocking;
-        other.status = text(status);
-        other
-    }));
-    let listing = BTreeMap::from([(project(), issues)]);
-    match update.next(&flow(), &listing, ID) {
+    let mut files = Vec::from([filed(
+        ID,
+        status,
+        &format!("blocked_by = [\"{blocking}\"]\n"),
+    )]);
+    files.extend(blocker.map(|other| filed(blocking, other, "")));
+    match update.next(&snapshot_of(&files), ID) {
         Some(IssueChange::Move {
             part: Part::Status,
             to,
@@ -868,8 +846,8 @@ fn setting_a_field_to_its_value_changes_nothing_and_to_another_writes_it()
     let current = issue();
     for same in [
         setting("title", &current.title),
-        IssueChange::Body(current.body()),
-        setting("labels", "app, credentials"),
+        IssueChange::Body(current.body.clone()),
+        listing("labels", &["app", "credentials"]),
         setting("priority", "high"),
         moving_to(&current.status),
     ] {
@@ -931,7 +909,7 @@ fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
 -> Result<(), String> {
     let done = Edit {
         data: EditData {
-            was: Some(text("active")),
+            was: Some(Vec::from([text("active")])),
             ..changing_to(moving_to("done")).data
         },
         ..changing_to(moving_to("done"))
@@ -1009,7 +987,7 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
         );
     let labelled = file_of(apply(
         Some(&original),
-        &changing_to(setting("labels", "new")),
+        &changing_to(listing("labels", &["new"])),
         Mode::Record,
     ))?;
     assert_eq!(
@@ -1029,8 +1007,8 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
     assert_eq!(reread.texts("labels"), [text("new")]);
     assert_eq!(notes(&reread).first(), Some(&text("Real note")));
     assert_eq!(reread.checklist.len(), 1);
-    assert!(reread.body().contains("## Checklist"));
-    assert!(reread.body().contains("## Notes"));
+    assert!(reread.body.contains("## Checklist"));
+    assert!(reread.body.contains("## Notes"));
     assert!(titled.contains("'title' = \"New title\" # Keep title comment"));
     Ok(())
 }
@@ -1039,7 +1017,7 @@ fn an_edit_preserves_quoted_keys_comments_and_fenced_examples()
 fn a_newer_label_list_with_a_comma_is_a_distinct_snapshot() {
     let original = written()
         .replace("[\"app\", \"credentials\"]", "[\"app, credentials\"]");
-    let change = Change::Issue(setting("labels", "queued"));
+    let change = Change::Issue(listing("labels", &["queued"]));
     let original_snapshot = was(Some(&original), change.clone());
     assert_ne!(original_snapshot, was(Some(&written()), change.clone()));
     let queued = Edit {
@@ -1123,9 +1101,8 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
 -> Result<(), Rejection> {
     use super::{Delivery, RecordEffect, Write};
 
-    let projects = projects();
-    let issues = BTreeMap::new();
-    let context = context(&projects, &issues, CommandId(1));
+    let home = snapshot_of(&[]);
+    let context = context(&home, CommandId(1));
     let request = context.open(ID, wanted(), "laptop")?;
     let target = request.read();
     assert_eq!(target.path, file(&project(), ID));
@@ -1213,10 +1190,8 @@ fn recorded(
 ) -> Result<(Edit, super::Commit), Rejection> {
     use super::RecordEffect;
 
-    let projects = projects();
-    let issues = BTreeMap::from([(project(), vec![issue()])]);
-    let request =
-        context(&projects, &issues, command).edit(ID, change, "laptop")?;
+    let home = snapshot_of(&[issue_file()]);
+    let request = context(&home, command).edit(ID, change, "laptop")?;
     let mut recorded = among(&[], |home| {
         request.decide(Some(current), home, &PendingEdits::default())
     })?;
@@ -1245,7 +1220,7 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     let changes = [
         (setting("title", "New title"), "Set the title of issue"),
         (IssueChange::Body(text("New body")), "Describe issue"),
-        (setting("labels", "new"), "Set the labels of issue"),
+        (listing("labels", &["new"]), "Set the labels of issue"),
         (setting("priority", "low"), "Set the priority of issue"),
         (moving_to("review"), "Move issue"),
         (adding("Test the change"), "Add an item"),
@@ -1317,10 +1292,8 @@ fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection
     else {
         return Err(unexpected_effect());
     };
-    let projects = projects();
-    let issues = BTreeMap::from([(project(), vec![issue()])]);
-    let again =
-        context(&projects, &issues, CommandId(1)).edit(ID, note(), "laptop")?;
+    let home = snapshot_of(&[issue_file()]);
+    let again = context(&home, CommandId(1)).edit(ID, note(), "laptop")?;
     assert_eq!(
         among(&[], |home| again.decide(
             Some(&first_commit.text),
@@ -1350,58 +1323,54 @@ fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection
 
 #[test]
 fn a_session_updates_its_issue_using_the_listing_after_the_note() {
-    let flow = flow();
-    let mut known = issue();
-    known.status = text("open");
-    let open = BTreeMap::from([(project(), vec![known.clone()])]);
+    let open = snapshot_of(&[filed(ID, "open", "")]);
     let mut start = SessionUpdate::Started;
     assert_eq!(
-        start.next(&flow, &open, ID),
+        start.next(&open, ID),
         Some(IssueChange::Move {
             part: Part::Status,
             to: text("active"),
             reason: text("a session started on it"),
         })
     );
-    assert_eq!(start.next(&flow, &open, ID), None);
+    assert_eq!(start.next(&open, ID), None);
 
     let mut finish = SessionUpdate::Finished {
         summary: Some(text("Summary")),
         landed: 1,
     };
     assert_eq!(
-        finish.next(&flow, &open, ID),
+        finish.next(&open, ID),
         Some(IssueChange::Note(text("Summary")))
     );
-    known.status = text("done");
-    let closed = BTreeMap::from([(project(), vec![known])]);
-    assert_eq!(finish.next(&flow, &closed, ID), None);
+    let closed = snapshot_of(&[filed(ID, "done", "")]);
+    assert_eq!(finish.next(&closed, ID), None);
 
     let mut finish = SessionUpdate::Finished {
         summary: None,
         landed: 1,
     };
     assert_eq!(
-        finish.next(&flow, &open, ID),
+        finish.next(&open, ID),
         Some(IssueChange::Move {
             part: Part::Status,
             to: text("review"),
             reason: text("a session on it landed work"),
         })
     );
-    assert_eq!(finish.next(&flow, &open, ID), None);
+    assert_eq!(finish.next(&open, ID), None);
 }
 
 #[test]
 fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 -> Result<(), String> {
-    let listing = BTreeMap::from([(project(), vec![issue()])]);
+    let listing = snapshot_of(&[issue_file()]);
     let mut finish = SessionUpdate::Finished {
         summary: None,
         landed: 1,
     };
     let change = finish
-        .next(&flow(), &listing, ID)
+        .next(&listing, ID)
         .ok_or_else(|| text("expected a move"))?;
     let finishing = Edit {
         data: EditData {
@@ -1431,12 +1400,12 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 mod as_the_command_line {
     use proto::{CommandId, IssueChange, ProjectId, Rejection};
 
-    use super::super::{Context, PendingEdits, listed};
-    use crate::flow::check::Inputs;
-    use crate::flow::command::{self, Issues, command, fresh, run};
+    use proto::Datum;
+
+    use super::super::{Context, PendingEdits};
+    use crate::flow::command::{self, command, fresh, run};
     use crate::flow::graph::{File, id_of};
-    use crate::flow::load;
-    use crate::project;
+    use crate::flow::snapshot::{Inputs, Snapshot};
 
     const FLOW: &str = include_str!("../flow/test-flow.toml");
     const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
@@ -1476,6 +1445,7 @@ mod as_the_command_line {
                     "## What\n\n## Notes\n",
                 ),
             ]),
+            unread: Vec::new(),
         }
     }
 
@@ -1483,9 +1453,11 @@ mod as_the_command_line {
     /// warnings, as the app would be told them.
     fn by_command_line(said: &str) -> Result<Vec<String>, String> {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
+        let home = Snapshot::of(inputs());
         let outcome = run(
-            &command(&words),
-            &inputs(),
+            command(&words, &home),
+            None,
+            &home,
             &command::Context {
                 now: NOW * 1000,
                 id: fresh(NOW * 1000, 7),
@@ -1512,33 +1484,17 @@ mod as_the_command_line {
 
     /// What the app is told of `change` to the task.
     fn by_app(change: IssueChange) -> Result<Vec<String>, Rejection> {
-        let home = inputs();
-        let flow =
-            load(FLOW).map_err(|reason| Rejection::IssueNotSaved { reason })?;
-        let projects = project::listed(home.projects.clone()).projects;
-        let (issues, _) = listed(
-            &flow,
-            home.issues
-                .iter()
-                .map(|file| {
-                    (
-                        file.project.clone(),
-                        file.stem.clone(),
-                        Ok(file.text.clone()),
-                    )
-                })
-                .collect(),
-        );
+        let inputs = inputs();
+        let home = Snapshot::of(inputs.clone());
         let task = id_of(TASK).ok_or(Rejection::UnknownIssue)?;
-        let current = home
+        let current = inputs
             .issues
             .iter()
             .find(|file| file.stem == TASK)
             .map(|file| file.text.clone());
         let record = Context {
             remote: Some("origin"),
-            projects: &projects,
-            issues: &issues,
+            home: &home,
             host: "laptop",
             at: NOW,
             command: CommandId(1),
@@ -1546,21 +1502,25 @@ mod as_the_command_line {
         .edit(task, change, "iPhone")?;
         let recorded = record.decide(
             current.as_deref(),
-            &Issues {
-                flow: &flow,
-                projects: &projects,
-                files: &home.issues,
-            },
+            &home,
             &PendingEdits::default(),
         )?;
         Ok(recorded.warnings().to_vec())
     }
 
-    fn set(field: &str, value: &str) -> IssueChange {
+    fn set(field: &str, value: Datum) -> IssueChange {
         IssueChange::Set {
             field: String::from(field),
-            value: String::from(value),
+            value,
         }
+    }
+
+    fn word(value: &str) -> Datum {
+        Datum::Text(String::from(value))
+    }
+
+    fn words(values: &[&str]) -> Datum {
+        Datum::Texts(values.iter().map(|value| String::from(*value)).collect())
     }
 
     #[test]
@@ -1569,15 +1529,15 @@ mod as_the_command_line {
         for (said, change) in [
             (
                 format!("issue set {TASK} priority=someday"),
-                set("priority", "someday"),
+                set("priority", word("someday")),
             ),
             (
                 format!("issue set {TASK} blocked_by={dangling}"),
-                set("blocked_by", dangling),
+                set("blocked_by", words(&[dangling])),
             ),
             (
                 format!("issue set {TASK} blocked_by={TASK}"),
-                set("blocked_by", TASK),
+                set("blocked_by", words(&[TASK])),
             ),
         ] {
             let refused = by_command_line(&said);
@@ -1614,10 +1574,8 @@ mod as_the_command_line {
 
     #[test]
     fn the_app_and_the_command_line_write_the_same_file() {
-        let home = inputs();
-        let flow = load(FLOW).unwrap_or_else(|_| super::flow());
-        let projects = project::listed(home.projects.clone()).projects;
-        let words: Vec<String> = format!("issue set {TASK} priority=high")
+        let home = Snapshot::of(inputs());
+        let said: Vec<String> = format!("issue set {TASK} priority=high")
             .split(' ')
             .map(String::from)
             .collect();
@@ -1626,19 +1584,17 @@ mod as_the_command_line {
             id: fresh(NOW * 1000, 7),
             by: String::from("laptop·iPhone"),
         };
-        let typed = run(&command(&words), &home, &by);
-        let made = command::write(
-            &Issues {
-                flow: &flow,
-                projects: &projects,
-                files: &home.issues,
-            },
-            command::Edit::Change {
-                id: TASK,
-                changes: &[set("priority", "high")],
-            },
-            &by,
-        );
+        let typed = run(command(&said, &home), None, &home, &by);
+        let made = id_of(TASK).ok_or_else(String::new).and_then(|id| {
+            command::write(
+                &home,
+                &command::Edit::Change {
+                    id,
+                    changes: Vec::from([set("priority", word("high"))]),
+                },
+                &by,
+            )
+        });
         assert_eq!(
             typed.writes.first().map(|write| write.text.clone()),
             made.map(|written| written.write.text).ok()

@@ -233,13 +233,16 @@ impl Flow {
         })
     }
 
-    /// The field called `name`: one every kind has, else the first kind's
-    /// that has it.
+    /// The fields an issue of `kind` has: those every kind has, then the
+    /// kind's own.
+    pub fn fields_of(&self, kind: &str) -> impl Iterator<Item = &Field> {
+        let own = self.kind(kind).map_or(&[][..], |declared| &declared.fields);
+        self.fields.iter().chain(own)
+    }
+
+    /// The field called `name` of an issue of `kind`.
     #[must_use]
-    pub fn field(&self, name: &str) -> Option<&Field> {
-        self.fields
-            .iter()
-            .chain(self.kinds.iter().flat_map(|kind| &kind.fields))
-            .find(|field| field.name == name)
+    pub fn field(&self, kind: &str, name: &str) -> Option<&Field> {
+        self.fields_of(kind).find(|field| field.name == name)
     }
 }

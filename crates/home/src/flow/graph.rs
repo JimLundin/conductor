@@ -9,12 +9,13 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
+use core::fmt;
 
+use proto::flow::{Field, FieldType, Flow, Relation};
 use proto::{Datum, Issue, IssueId, ProjectId};
 use toml::{Table, Value};
 
 use super::file::Document;
-use super::{Field, FieldType, Flow, Relation};
 use crate::prelude::*;
 
 /// An issue file: the project it's in, its name without `.md`, its text.
@@ -39,6 +40,16 @@ pub struct Problem {
     pub issue: String,
     pub field: Option<String>,
     pub message: String,
+}
+
+impl fmt::Display for Problem {
+    /// What is wrong, after the field that causes it.
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.field {
+            Some(field) => write!(out, "{field}: {}", self.message),
+            None => write!(out, "{}", self.message),
+        }
+    }
 }
 
 /// The issues `files` hold, as `flow` declares them, and what's
@@ -93,9 +104,9 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         .ok_or_else(|| fail(Some("title"), String::from("is missing")))?;
     let kind =
         text(&mut table, "kind").unwrap_or_else(|| flow.default_kind.clone());
-    let declared = flow.kind(&kind).ok_or_else(|| {
-        fail(Some("kind"), format!("no kind is called {kind:?}"))
-    })?;
+    if flow.kind(&kind).is_none() {
+        return Err(fail(Some("kind"), format!("no kind is called {kind:?}")));
+    }
     let status = text(&mut table, "status")
         .ok_or_else(|| fail(Some("status"), String::from("is missing")))?;
     if flow.status(&status).is_none() {
@@ -115,12 +126,7 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
     let mut fields = BTreeMap::new();
     let mut links = BTreeMap::new();
     for (key, value) in table {
-        if let Some(field) = flow
-            .fields
-            .iter()
-            .chain(&declared.fields)
-            .find(|field| field.name == key)
-        {
+        if let Some(field) = flow.field(&kind, &key) {
             let datum = datum(field, value)
                 .map_err(|message| fail(Some(&key), message))?;
             fields.insert(key, datum);
@@ -154,6 +160,7 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
         stage,
         fields,
         links,
+        body: document.body_text(),
         sections: document.sections(),
         checklist: document.checklist(),
         log: document.log(),
@@ -213,16 +220,18 @@ fn datum(field: &Field, value: Value) -> Result<Datum, String> {
     }
 }
 
-fn targets(relation: &Relation, value: Value) -> Result<Vec<String>, String> {
+fn targets(relation: &Relation, value: Value) -> Result<Vec<IssueId>, String> {
+    let id = |value: Value| match value {
+        Value::String(name) => {
+            id_of(&name).ok_or_else(|| format!("{name} is no issue"))
+        }
+        _ => Err(String::from("is not a list of ids")),
+    };
     match (relation.many, value) {
-        (_, Value::String(id)) => Ok(Vec::from([id])),
-        (true, Value::Array(values)) => values
-            .into_iter()
-            .map(|value| match value {
-                Value::String(id) => Ok(id),
-                _ => Err(String::from("is not a list of ids")),
-            })
-            .collect(),
+        (_, Value::String(name)) => {
+            id(Value::String(name)).map(|one| Vec::from([one]))
+        }
+        (true, Value::Array(values)) => values.into_iter().map(id).collect(),
         (false, Value::Array(_)) => {
             Err(String::from("points to one issue, not a list"))
         }
@@ -238,10 +247,8 @@ fn references(
     issues: &[Issue],
     unread: &BTreeSet<&str>,
 ) -> Vec<Problem> {
-    let by_id: BTreeMap<String, &Issue> = issues
-        .iter()
-        .map(|issue| (issue.id.to_string(), issue))
-        .collect();
+    let by_id: BTreeMap<IssueId, &Issue> =
+        issues.iter().map(|issue| (issue.id, issue)).collect();
     let mut problems = Vec::new();
     for issue in issues {
         for (name, ids) in &issue.links {
@@ -252,7 +259,7 @@ fn references(
                 .map_or(&[][..], |relation| relation.to.as_slice());
             for id in ids {
                 let message = match by_id.get(id) {
-                    None if unread.contains(id.as_str()) => None,
+                    None if unread.contains(id.to_string().as_str()) => None,
                     None => Some(format!("{id} is no issue")),
                     Some(target)
                         if !allowed.is_empty()
@@ -280,33 +287,35 @@ fn references(
 /// naming the whole cycle, so an edit to any issue on it sees the problem
 /// as its own.
 fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
-    let names: Vec<String> =
-        issues.iter().map(|issue| issue.id.to_string()).collect();
-    let projects: BTreeMap<&str, &str> = names
+    let projects: BTreeMap<IssueId, &str> = issues
         .iter()
-        .zip(issues)
-        .map(|(name, issue)| (name.as_str(), issue.project.0.as_str()))
+        .map(|issue| (issue.id, issue.project.0.as_str()))
         .collect();
     let mut problems = Vec::new();
     for relation in flow.relations.iter().filter(|relation| !relation.cycles) {
-        let edges: BTreeMap<&str, &[String]> = names
+        let edges: BTreeMap<IssueId, &[IssueId]> = issues
             .iter()
-            .zip(issues)
-            .filter_map(|(name, issue)| {
+            .filter_map(|issue| {
                 issue
                     .links
                     .get(&relation.name)
-                    .map(|ids| (name.as_str(), ids.as_slice()))
+                    .map(|ids| (issue.id, ids.as_slice()))
             })
             .collect();
-        let mut done: BTreeSet<&str> = BTreeSet::new();
-        for name in &names {
+        let mut done: BTreeSet<IssueId> = BTreeSet::new();
+        for issue in issues {
             let mut path = Vec::new();
-            if let Some(cycle) = walk(&edges, name, &mut path, &mut done) {
-                let message =
-                    format!("is part of a cycle: {}", cycle.join(" → "));
+            if let Some(cycle) = walk(&edges, issue.id, &mut path, &mut done) {
+                let message = format!(
+                    "is part of a cycle: {}",
+                    cycle
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join(" → ")
+                );
                 let members = cycle.iter().skip(1).filter_map(|id| {
-                    projects.get(id.as_str()).map(|project| (*project, id))
+                    projects.get(id).map(|project| (*project, id))
                 });
                 problems.extend(members.map(|(project, id)| Problem {
                     issue: format!("{project}/{id}"),
@@ -321,19 +330,15 @@ fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
 
 /// A cycle reached from `id`, as the ids around it, unless every issue on
 /// the way was already walked.
-fn walk<'a>(
-    edges: &BTreeMap<&'a str, &'a [String]>,
-    id: &'a str,
-    path: &mut Vec<&'a str>,
-    done: &mut BTreeSet<&'a str>,
-) -> Option<Vec<String>> {
+fn walk(
+    edges: &BTreeMap<IssueId, &[IssueId]>,
+    id: IssueId,
+    path: &mut Vec<IssueId>,
+    done: &mut BTreeSet<IssueId>,
+) -> Option<Vec<IssueId>> {
     if let Some(start) = path.iter().position(|seen| *seen == id) {
-        let mut cycle: Vec<String> = path
-            .get(start..)?
-            .iter()
-            .map(|seen| (*seen).to_owned())
-            .collect();
-        cycle.push(id.to_owned());
+        let mut cycle = path.get(start..)?.to_vec();
+        cycle.push(id);
         return Some(cycle);
     }
     if !done.insert(id) {
@@ -341,10 +346,10 @@ fn walk<'a>(
     }
     path.push(id);
     let found = edges
-        .get(id)
+        .get(&id)
         .into_iter()
         .flat_map(|ids| ids.iter())
-        .find_map(|next| walk(edges, next, path, done));
+        .find_map(|next| walk(edges, *next, path, done));
     path.pop();
     found
 }

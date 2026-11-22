@@ -9,8 +9,8 @@ use alloc::string::ToString;
 
 use proto::{Datum, Issue};
 
-use super::{Flow, Literal, Predicate, Quantifier};
 use crate::prelude::*;
+use proto::flow::{Flow, Literal, Predicate, Quantifier};
 
 /// The issue as it was and as it would be, while a move is weighed.
 #[derive(Debug, Clone, Copy, Default)]
@@ -186,23 +186,20 @@ impl Walk<'_> {
                 .into_iter()
                 .flatten()
                 .filter_map(|id| {
-                    self.issues
-                        .iter()
-                        .copied()
-                        .find(|other| other.id.to_string() == *id)
+                    self.issues.iter().copied().find(|other| other.id == *id)
                 })
                 .collect(),
-            Some((relation, true)) => {
-                self.issues
-                    .iter()
-                    .copied()
-                    .filter(|other| {
-                        other.links.get(&relation.name).is_some_and(|ids| {
-                            ids.contains(&issue.id.to_string())
-                        })
-                    })
-                    .collect()
-            }
+            Some((relation, true)) => self
+                .issues
+                .iter()
+                .copied()
+                .filter(|other| {
+                    other
+                        .links
+                        .get(&relation.name)
+                        .is_some_and(|ids| ids.contains(&issue.id))
+                })
+                .collect(),
         }
     }
 
@@ -232,7 +229,7 @@ impl Walk<'_> {
     fn field(&self, issue: &Issue, name: &str, value: &Literal) -> bool {
         let given = issue.fields.get(name).cloned().or_else(|| {
             self.flow
-                .field(name)
+                .field(&issue.kind, name)
                 .and_then(|field| field.default.clone())
                 .map(Datum::Text)
         });

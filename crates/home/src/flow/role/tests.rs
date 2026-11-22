@@ -3,7 +3,8 @@ use alloc::collections::BTreeMap;
 use proto::{Issue, IssueId, ProjectId};
 
 use super::{can_start, landed, opening, started};
-use crate::flow::{Flow, Role, Status, load};
+use crate::flow::load;
+use proto::flow::{Flow, Role, Status};
 
 fn text(value: &str) -> String {
     String::from(value)
@@ -63,6 +64,7 @@ fn issue(id: IssueId, status: &str) -> Issue {
         stage: None,
         fields: BTreeMap::new(),
         links: BTreeMap::new(),
+        body: String::new(),
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
@@ -94,7 +96,7 @@ fn an_issue_blocked_by_one_not_yet_built_is_not_startable() {
     let mut waiting = issue(WAITING, "queued");
     waiting
         .links
-        .insert(text("blocked_by"), Vec::from([BLOCKER.to_string()]));
+        .insert(text("blocked_by"), Vec::from([BLOCKER]));
     let offered = |status: &str| {
         let blocking = issue(BLOCKER, status);
         let issues = [&waiting, &blocking];

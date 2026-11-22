@@ -99,7 +99,7 @@ fn Issues(list: ui::IssueList) -> Element {
         div { class: "issues",
             for group in list.groups {
                 div { class: "issue-group", "data-status": group.status,
-                    h3 { "{group.label}" }
+                    h3 { "{group.status}" }
                     ul {
                         for row in group.rows {
                             li { key: "{row.key}",
