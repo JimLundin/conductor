@@ -1,0 +1,205 @@
+# The step gate's units on the checkout in `conductor`, shared by check.yml
+# and queue.yml so the toolchain and tools are set up in one place:
+# tools/check.sh skips each unit whose key has a pass recorded on
+# refs/notes/checks and pushes the passes it records, which needs the
+# caller's checkout to persist a token with contents: write. On a failure
+# the job summary names the failing units with the tail of their logs.
+name: Run the units without a recorded pass
+description: Set up the toolchain and tools, then run tools/check.sh step
+
+outputs:
+  failing:
+    description: The failing units, space-separated
+    value: ${{ steps.summary.outputs.failing }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set the build environment
+      shell: bash
+      run: |
+        {
+          echo CARGO_INCREMENTAL=0
+          echo CARGO_TERM_COLOR=never
+          echo RUSTC_WRAPPER=sccache
+          echo SCCACHE_GHA_ENABLED=true
+          echo "STANDARDS=$GITHUB_WORKSPACE/standards"
+        } >>"$GITHUB_ENV"
+
+    - name: Free disk space for the debug, wasm and release builds
+      shell: bash
+      run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+    - name: Fetch the recorded passes
+      shell: bash
+      working-directory: conductor
+      run: |
+        git fetch -q origin '+refs/notes/checks:refs/notes/checks' ||
+          echo "no passes recorded on origin yet"
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+    # Beside the checkout, so the standards' files are not untracked files
+    # of Conductor's checkout, which every unit's key reads.
+    - uses: actions/checkout@v7
+      with:
+        repository: JimLundin/standards
+        ref: main
+        path: standards
+        persist-credentials: false
+
+    - name: Install the toolchain from rust-toolchain.toml
+      shell: bash
+      working-directory: conductor
+      run: |
+        rustup toolchain install
+        rustc -Vv
+
+    - name: Size the build to the runner, about 3 GiB of memory a job
+      shell: bash
+      run: |
+        cpus=$(nproc)
+        gib=$(awk '/^MemTotal/ { print int($2 / 1048576) }' /proc/meminfo)
+        jobs=$((gib / 3 < cpus ? gib / 3 : cpus))
+        echo "CARGO_BUILD_JOBS=$((jobs > 0 ? jobs : 1))" | tee -a "$GITHUB_ENV"
+
+    - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      with:
+        workspaces: conductor
+        cache-targets: false
+        cache-bin: false
+
+    - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+      with:
+        version: v0.19.0
+
+    - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
+      with:
+        tool: nextest@0.9.152
+
+    - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
+      with:
+        version: v1.27.0
+
+    - name: Install dx 0.7.10
+      shell: bash
+      working-directory: conductor
+      run: cargo binstall dioxus-cli@0.7.10 --no-confirm
+
+    - id: decisions
+      uses: actions/cache@v6
+      with:
+        path: ~/.ci-tools
+        key: rust-decisions-${{ hashFiles('standards/rust/measure/**', 'conductor/rust-toolchain.toml') }}
+
+    - name: Install rust-decisions from the standards
+      if: steps.decisions.outputs.cache-hit != 'true'
+      shell: bash
+      working-directory: conductor
+      run: cargo install --locked --path "$STANDARDS/rust/measure" --root ~/.ci-tools
+
+    - shell: bash
+      run: echo ~/.ci-tools/bin >>"$GITHUB_PATH"
+
+    - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+      with:
+        version: 0.13.8
+        enable-cache: true
+        cache-dependency-glob: standards/checks/uv.lock
+
+    - uses: actions/setup-python@v7
+      with:
+        python-version: "3.14"
+
+    # The TypeScript units' keys read `node --version`, so this is the
+    # WSL host's node, whose passes then hold here.
+    - uses: actions/setup-node@v7
+      with:
+        node-version: 26.13.1
+
+    - uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ hashFiles('conductor/crates/app/tests-e2e/package-lock.json') }}
+
+    - name: Install the browser suite's dependencies and its Playwright browsers
+      shell: bash
+      working-directory: conductor
+      run: |
+        source tools/e2e-common.sh
+        install_browser_dependencies
+        cd crates/app/tests-e2e
+        npx --no-install playwright install --with-deps chromium webkit
+
+    - id: check
+      name: Run tools/check.sh step
+      shell: bash
+      working-directory: conductor
+      run: tools/check.sh step 2>&1 | tee "$RUNNER_TEMP/check.txt"
+
+    # Each standard's run ends with `tier: <tier>, logs: <dir>`, after the
+    # unit lines of that run; a failing unit's log is <dir>/<unit>.log.
+    - id: summary
+      name: Summarize the units, with the tail of each failing unit's log
+      if: always() && steps.check.outcome != 'skipped'
+      shell: bash
+      run: |
+        kept=$RUNNER_TEMP/check-logs
+        mkdir -p "$kept"
+        output=$(sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/check.txt")
+        failing=$(awk '$2 == "FAIL" { print $1 }' <<<"$output" | paste -sd ' ' -)
+        echo "failing=$failing" >>"$GITHUB_OUTPUT"
+        {
+          if [ -n "$failing" ]; then
+            echo "## Failing units: $failing"
+          else
+            echo "## No unit failed"
+          fi
+          echo
+          echo '```text'
+          awk '$2 ~ /^(ok|FAIL|flaky|skip|-)$/ || /^tier: /' <<<"$output"
+          echo '```'
+        } >>"$GITHUB_STEP_SUMMARY"
+        tails() {
+          local name
+          for name in "${pending[@]}"; do
+            echo
+            echo "### $name"
+            echo
+            echo '````text'
+            if [ -f "$1/$name.log" ]; then
+              sed 's/\x1b\[[0-9;]*m//g' "$1/$name.log" | tail -n 80
+            else
+              grep -E "^$name +FAIL " <<<"$output" || true
+            fi
+            echo '````'
+          done >>"$GITHUB_STEP_SUMMARY"
+          pending=()
+        }
+        pending=()
+        while read -r name outcome rest; do
+          [ "$outcome" != FAIL ] || pending+=("$name")
+          if [ "$name" = tier: ]; then
+            logs=${rest#logs: }
+            cp -r "$logs" "$kept/" 2>/dev/null || true
+            tails "$logs"
+          fi
+        done <<<"$output"
+        tails /nonexistent
+
+    - name: Keep the failing run's logs
+      if: always() && steps.check.outcome == 'failure'
+      uses: actions/upload-artifact@v7
+      with:
+        name: check-logs
+        path: |
+          ${{ runner.temp }}/check-logs
+          conductor/target/e2e-browser/browser-run.txt
+          conductor/target/e2e-failures
+        if-no-files-found: ignore
+        retention-days: 14
+
+    - name: Show sccache's hits
+      if: always() && steps.check.outcome != 'skipped'
+      shell: bash
+      run: sccache --show-stats

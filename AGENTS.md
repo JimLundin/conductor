@@ -34,20 +34,27 @@ Home Screen. The design is in
   is available. If validation is unavailable or stalls, commit and push the
   task branch with the commands, results and outstanding checks recorded
   in the commit message and handoff. Saving work requires no validation
-  waiver. A passing `step` run in CI is required before merging;
-  `release` adds mutation testing and the slow checks, also in CI.
+  waiver. `release` adds mutation testing and the slow checks, in CI.
   It runs as units, each a check of one scope, and skips a unit whose key
   already has a pass recorded on `refs/notes/checks`, which it fetches
   from and pushes to `origin` (`--no-cache` runs every unit). CI,
   `.github/workflows/check.yml`, runs `step` on every pushed branch other
-  than `main`, so only units without a recorded pass run there; on a
-  failure its job summary names the failing units with the tail of their
-  logs. It needs a `STANDARDS_TOKEN` secret, a fine-grained token with
-  Contents: Read-only on `JimLundin/standards` alone, and pushes the notes
-  with its own `contents: write` token. The standards come from a WSL
-  clone of the standards project,
-  `~/projects/tools/standards`, kept fresh by the script; set `STANDARDS` to try
-  unpushed standards from another checkout.
+  than `main` and `queue/*`, so only units without a recorded pass run
+  there; on a failure its job summary names the failing units with the
+  tail of their logs. The standards come from a WSL clone of the
+  standards project, `~/projects/tools/standards`, kept fresh by the
+  script; set `STANDARDS` to try unpushed standards from another checkout.
+- **Landing.** Never push `main`; land a branch with
+  `git push origin <branch>:refs/heads/queue/<branch>`, which returns at
+  once. `.github/workflows/queue.yml` takes queued branches one at a time
+  in push order, rebases each onto `main`, runs `step`, and fast-forwards
+  `main` when it passes. Either way it deletes the queue ref and sets the
+  commit status `queue` on the pushed commit; read it with
+  `gh api repos/JimLundin/conductor/commits/<sha>/status --jq '.statuses[] | select(.context == "queue") | [.state, .description, .target_url] | join(" ")'`:
+  nothing while it waits, `pending` while it checks, `success` with
+  `landed at <sha>`, or `failure` naming the failing units, a conflict or a
+  moved `main`, linking the run whose summary holds the log tails. It
+  needs the `QUEUE_TOKEN` secret its header describes.
 - **Toolchain.** Nightly, pinned in `rust-toolchain.toml`.
 - **One build directory per checkout.** Each worktree builds in its own
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo
