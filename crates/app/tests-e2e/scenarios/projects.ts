@@ -108,8 +108,7 @@ const issue = async (run: Run): Promise<void> => {
 	const active = alpha.locator('.issue-group[data-status="active"]');
 	await active.locator(".issue-title").waitFor({ timeout: patience });
 	check(
-		(await active.locator(".issue-detail").innerText()) ===
-			"normal · 0/1 done",
+		(await active.locator(".issue-detail").innerText()) === "normal · 0/1 done",
 		"the project lists the issue under its status, with its checklist",
 	);
 };
