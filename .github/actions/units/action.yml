@@ -25,6 +25,7 @@ runs:
           echo SCCACHE_GHA_ENABLED=true
           echo "SCCACHE_ERROR_LOG=$RUNNER_TEMP/sccache.log"
           echo "SCCACHE_LOG=warn,sccache::server=debug"
+          echo SCCACHE_GHA_VERSION=cold-diagnosis-1
           echo "STANDARDS=$GITHUB_WORKSPACE/standards"
         } >>"$GITHUB_ENV"
 
@@ -208,4 +209,4 @@ runs:
         sccache --show-stats
         log=$RUNNER_TEMP/sccache.log
         grep -c "Error executing cache write" "$log" || true
-        grep -E "Error executing cache write|write failed|ERROR" "$log" | sed "s/[0-9a-f]\{64\}/<hash>/g" | sort | uniq -c | sort -rn | head -n 40 || true
+        grep -E "Error executing cache write|write failed" "$log" | sed -E "s/^\[[^ ]+ //; s/[0-9a-f]{64}/<hash>/g; s/written=[0-9]+ size=[0-9]+//; s/\"x-ms-request-id[^,]*,//g; s/\"date\"[^,]*,//g" | cut -c1-400 | sort | uniq -c | sort -rn | head -n 20 || true
