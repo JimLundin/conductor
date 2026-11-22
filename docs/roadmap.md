@@ -7,7 +7,7 @@ What is built and what comes next. Update it in the commit that changes it.
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
   instance throughout the event log, recovery and client view (ALPN
-  `conductor/35`, log format 8). Requests have one durable source, the event
+  `conductor/36`, log format 8). Requests have one durable source, the event
   log; the write-only request table is gone. Browser pairing reads only
   current per-host records, keeping concurrent-tab writes and fleet revocation
   without single-ticket or shared-map migrations. Older session databases

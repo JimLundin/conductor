@@ -9,7 +9,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use proto::Issue;
-use proto::flow::{Flow, Severity};
+use proto::flow::{Flow, Literal, Predicate, Quantifier, Severity};
 
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
@@ -140,7 +140,8 @@ pub(crate) fn of_issue(
     let mut findings: Vec<Finding> = expected
         .iter()
         .filter(|section| {
-            !issue.sections.iter().any(|had| had.heading == **section)
+            let has = Predicate::HasSection((*section).clone());
+            holds(flow, issues, issue, moving, &has).is_err()
         })
         .map(|section| Finding {
             severity: Severity::Warn,
@@ -186,9 +187,78 @@ fn explain(failure: &Failure) -> String {
     let path = if failure.path.is_empty() {
         String::new()
     } else {
-        format!(" (via {})", failure.path.join(", "))
+        format!(
+            " (via {})",
+            failure
+                .path
+                .iter()
+                .map(|step| format!("{} {}", step.via, step.issue))
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
     };
-    format!("{} fails on {}{path}", failure.atom, failure.issue)
+    format!(
+        "{} fails on {}{path}",
+        describe(&failure.predicate),
+        failure.issue
+    )
+}
+
+/// The predicate as the flow writes it.
+#[must_use]
+fn describe(predicate: &Predicate) -> String {
+    let list = |word: &str, parts: &[Predicate]| {
+        format!(
+            "{{ {word} = [{}] }}",
+            parts
+                .iter()
+                .map(describe)
+                .collect::<Vec<String>>()
+                .join(", ")
+        )
+    };
+    let boxed = |word: &str, inner: &Predicate| {
+        format!("{{ {word} = {} }}", describe(inner))
+    };
+    match predicate {
+        Predicate::Kind(kind) => format!("{{ kind = {kind:?} }}"),
+        Predicate::Stage(stage) => format!("{{ stage = {stage:?} }}"),
+        Predicate::StatusRole(role) => {
+            format!("{{ status_role = {:?} }}", role.word())
+        }
+        Predicate::Field { name, value } => match value {
+            Literal::Text(text) => {
+                format!("{{ field = {{ {name} = {text:?} }} }}")
+            }
+            Literal::Bool(flag) => {
+                format!("{{ field = {{ {name} = {flag} }} }}")
+            }
+        },
+        Predicate::Has(name) => format!("{{ has = {name:?} }}"),
+        Predicate::HasSection(section) => {
+            format!("{{ has_section = {section:?} }}")
+        }
+        Predicate::From(inner) => boxed("from", inner),
+        Predicate::To(inner) => boxed("to", inner),
+        Predicate::Not(inner) => boxed("not", inner),
+        Predicate::All(parts) => list("all", parts),
+        Predicate::Any(parts) => list("any", parts),
+        Predicate::Across {
+            quantifier,
+            via,
+            condition,
+        } => {
+            let word = match quantifier {
+                Quantifier::Any => "any",
+                Quantifier::All => "all",
+                Quantifier::None => "none",
+            };
+            format!(
+                "{{ {word} = {{ via = {via:?}, where = {} }} }}",
+                describe(condition)
+            )
+        }
+    }
 }
 
 #[cfg(test)]

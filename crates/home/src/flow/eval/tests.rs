@@ -4,7 +4,7 @@ use alloc::collections::BTreeMap;
 use proptest::prelude::*;
 use proto::{Datum, Issue, IssueId, ProjectId, Section};
 
-use super::{Failure, Move, holds};
+use super::{Failure, Move, Step, holds};
 use crate::flow::graph::Graph;
 use crate::flow::load;
 use proto::flow::{Flow, Literal, Predicate, Quantifier, Role};
@@ -32,9 +32,15 @@ fn id(name: &str) -> IssueId {
     IssueId(place.map_or(0, |at| u128::try_from(at).unwrap_or_default() + 1))
 }
 
-/// The issue's id as a relation and a failure name it.
-fn named(name: &str) -> String {
-    id(name).to_string()
+fn step(via: &str, name: &str) -> Step {
+    Step {
+        via: String::from(via),
+        issue: id(name),
+    }
+}
+
+fn terminal() -> Predicate {
+    Predicate::StatusRole(Role::Terminal)
 }
 
 fn issue(name: &str, kind: &str, status: &str) -> Issue {
@@ -96,9 +102,9 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
             &rule(&flow, 0)
         ),
         Err(Failure {
-            atom: String::from("{ status_role = \"terminal\" }"),
-            issue: named("review"),
-            path: Vec::from([format!("children {}", named("review"))]),
+            predicate: terminal(),
+            issue: id("review"),
+            path: Vec::from([step("children", "review")]),
         })
     );
     review.status = String::from("done");
@@ -129,8 +135,8 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
             &rule(&flow, 0)
         ),
         Err(Failure {
-            atom: String::from("children reaches no issue"),
-            issue: named("spec"),
+            predicate: rule(&flow, 0),
+            issue: id("spec"),
             path: Vec::new(),
         })
     );
@@ -154,9 +160,9 @@ fn blocking_holds_until_every_blocker_is_finished_and_ends_on_a_cycle() {
             &rule(&flow, 1)
         ),
         Err(Failure {
-            atom: String::from("{ status_role = \"terminal\" }"),
-            issue: named("two"),
-            path: Vec::from([format!("blocked_by {}", named("two"))]),
+            predicate: terminal(),
+            issue: id("two"),
+            path: Vec::from([step("blocked_by", "two")]),
         })
     );
 }
@@ -184,8 +190,10 @@ fn a_move_is_weighed_from_and_to() {
     assert_eq!(
         holds(&flow, &among(&graph), &after, Move::default(), &leaving),
         Err(Failure {
-            atom: String::from("from: no move is being weighed"),
-            issue: named("spec"),
+            predicate: Predicate::From(Box::new(Predicate::Stage(
+                String::from("spec")
+            ))),
+            issue: id("spec"),
             path: Vec::new(),
         })
     );
@@ -200,6 +208,41 @@ fn a_field_left_out_has_its_default() {
         value: Literal::Text(String::from("normal")),
     };
     assert_eq!(holds(&flow, &[], &task, Move::default(), &normal), Ok(()));
+}
+
+#[test]
+fn a_bool_time_or_text_default_matches_on_its_typed_value() {
+    let typed = load(&include_str!("../test-flow.toml").replacen(
+        "[[kind]]",
+        "[[field]]\nname = \"flagged\"\ntype = \"bool\"\ndefault = true\n\n\
+         [[field]]\nname = \"due\"\ntype = \"time\"\ndefault = 2026-11-22T00:00:00Z\n\n\
+         [[field]]\nname = \"note\"\ntype = \"text\"\ndefault = \"none\"\n\n[[kind]]",
+        1,
+    ));
+    assert!(typed.is_ok(), "{typed:?}");
+    let Ok(flow) = typed else {
+        return;
+    };
+    let task = issue("task", "task", "open");
+    let field = |name: &str, value: Literal| Predicate::Field {
+        name: String::from(name),
+        value,
+    };
+    let text = |word: &str| Literal::Text(String::from(word));
+    for (predicate, meets) in [
+        (field("flagged", Literal::Bool(true)), true),
+        (field("flagged", Literal::Bool(false)), false),
+        (field("due", text("2026-11-22T00:00:00Z")), true),
+        (field("due", text("2026-11-23T00:00:00Z")), false),
+        (field("note", text("none")), true),
+        (field("note", text("true")), false),
+    ] {
+        assert_eq!(
+            holds(&flow, &[], &task, Move::default(), &predicate).is_ok(),
+            meets,
+            "{predicate:?}"
+        );
+    }
 }
 
 /// The predicate's meaning, written directly: no explanations.
@@ -240,8 +283,7 @@ fn meets(
         Predicate::Field { name, value } => {
             let default = flow
                 .field(&issue.kind, name)
-                .and_then(|field| field.default.clone())
-                .map(Datum::Text);
+                .and_then(|field| field.default.clone());
             match (issue.fields.get(name).cloned().or(default), value) {
                 (Some(Datum::Text(text)), Literal::Text(wanted)) => {
                     text == *wanted
@@ -441,11 +483,14 @@ proptest! {
         let evaluated = holds(&flow, &among(&graph), subject, moving, &predicate);
         prop_assert_eq!(evaluated.is_ok(), meets(&flow, &graph, subject, moving, &predicate));
         if let Err(failure) = evaluated {
-            prop_assert!(!failure.atom.is_empty());
-            prop_assert!(graph.issues.iter().any(|issue| issue.id.to_string() == failure.issue));
+            let failed = graph.issues.iter().find(|issue| issue.id == failure.issue);
+            let fails_there = failed.is_some_and(|issue| {
+                !meets(&flow, &graph, issue, moving, &failure.predicate)
+            });
+            prop_assert!(fails_there);
             for step in &failure.path {
-                let reached = step.split_once(' ').map(|(_, id)| id);
-                prop_assert!(graph.issues.iter().any(|issue| Some(issue.id.to_string().as_str()) == reached));
+                prop_assert!(flow.relation(&step.via).is_some());
+                prop_assert!(graph.issues.iter().any(|issue| issue.id == step.issue));
             }
         }
     }

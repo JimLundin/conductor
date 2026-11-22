@@ -11,8 +11,9 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use core::fmt;
 
-use proto::flow::{Field, FieldRole, FieldType, Flow, Relation};
+use proto::flow::{Field, FieldRole, Flow, Relation};
 use proto::{Datum, Issue, IssueId, ProjectId};
+use serde::Deserialize;
 use toml::Value;
 
 use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
@@ -158,10 +159,7 @@ pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
         id,
         flow.field_with(&kind, FieldRole::Branch)
             .and_then(|field| fields.get(&field.name))
-            .and_then(|datum| match datum {
-                Datum::Text(declared) => Some(declared.as_str()),
-                Datum::Texts(_) | Datum::Bool(_) => None,
-            }),
+            .and_then(Datum::text),
     );
     let issue = Issue {
         id,
@@ -197,33 +195,12 @@ pub fn id_of(name: &str) -> Option<IssueId> {
         .filter(|id| id.to_string() == name)
 }
 
+/// The value an issue gives a field, read by serde from its TOML and
+/// then checked against the field's type.
 fn datum(field: &Field, value: Value) -> Result<Datum, String> {
-    match (&field.value, value) {
-        (FieldType::Enum(words), Value::String(word)) => {
-            if words.contains(&word) {
-                Ok(Datum::Text(word))
-            } else {
-                Err(format!("{word:?} is not one of {}", words.join(", ")))
-            }
-        }
-        (FieldType::Text | FieldType::Ref(_), Value::String(word)) => {
-            Ok(Datum::Text(word))
-        }
-        (FieldType::Time, Value::Datetime(at)) => {
-            Ok(Datum::Text(at.to_string()))
-        }
-        (FieldType::Time, Value::String(at)) => Ok(Datum::Text(at)),
-        (FieldType::Bool, Value::Boolean(flag)) => Ok(Datum::Bool(flag)),
-        (FieldType::Texts | FieldType::Refs(_), Value::Array(values)) => values
-            .into_iter()
-            .map(|value| match value {
-                Value::String(word) => Ok(word),
-                _ => Err(String::from("is not a list of text")),
-            })
-            .collect::<Result<Vec<String>, String>>()
-            .map(Datum::Texts),
-        _ => Err(String::from("is not a value of its type")),
-    }
+    let read =
+        Datum::deserialize(value).map_err(|err| String::from(err.message()))?;
+    super::admitted(&field.value, &read).map(|()| read)
 }
 
 fn targets(relation: &Relation, value: Value) -> Result<Vec<IssueId>, String> {

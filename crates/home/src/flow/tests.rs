@@ -143,10 +143,74 @@ fn a_relation_points_only_at_declared_kinds() {
 }
 
 #[test]
-fn a_field_has_a_known_type() {
-    assert!(failure("type = \"texts\"", "type = \"tree\"").starts_with(
-        "field[1].type: \"tree\" is not a field type; the types are enum"
-    ));
+fn a_field_has_a_known_type_and_a_reference_is_a_relation() {
+    for word in ["tree", "ref", "refs"] {
+        assert_eq!(
+            failure("type = \"texts\"", &format!("type = \"{word}\"")),
+            format!(
+                "field[1]: unknown variant `{word}`, expected one of `enum`, \
+                 `text`, `texts`, `time`, `bool`, in `type`"
+            )
+        );
+    }
+}
+
+#[test]
+fn a_default_is_a_value_of_its_field_s_type() {
+    let typed = |default: &str| {
+        failure(
+            "name = \"branch\"\ntype = \"text\"\n",
+            &format!(
+                "name = \"branch\"\ntype = \"text\"\ndefault = {default}\n"
+            ),
+        )
+    };
+    assert_eq!(typed("true"), "field[2].default: is not text");
+    assert_eq!(typed("[\"a\"]"), "field[2].default: is not text");
+    assert_eq!(
+        typed("3"),
+        "field[2]: invalid type: integer `3`, expected text, a list of text, \
+         true or false, or a time, in `default`"
+    );
+    assert_eq!(
+        failure(
+            "name = \"labels\"\ntype = \"texts\"\n",
+            "name = \"labels\"\ntype = \"texts\"\ndefault = \"app\"\n"
+        ),
+        "field[1].default: is not a list of text"
+    );
+    assert!(
+        edited(
+            "name = \"created\"\ntype = \"time\"\n",
+            "name = \"created\"\ntype = \"time\"\ndefault = 2026-11-22T00:00:00Z\n"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn only_a_rule_s_when_weighs_a_move() {
+    for word in ["from", "to"] {
+        assert_eq!(
+            failure(
+                "require = { has_section = \"Answer\" }",
+                &format!(
+                    "require = {{ {word} = {{ has_section = \"Answer\" }} }}"
+                )
+            ),
+            format!("rule[2].require.{word}: only a rule's when weighs a move")
+        );
+    }
+    assert_eq!(
+        edited(
+            "when = { all = [{ kind = \"decision\" }, { status_role = \"terminal\" }] }",
+            "when = { from = { kind = \"decision\" } }"
+        )
+        .map(|flow| flow.rules.get(2).map(|rule| rule.when.clone())),
+        Ok(Some(Predicate::From(Box::new(Predicate::Kind(String::from(
+            "decision"
+        ))))))
+    );
 }
 
 #[test]
@@ -187,9 +251,10 @@ fn a_predicate_names_the_path_of_what_it_gets_wrong() {
 
 #[test]
 fn unknown_keys_and_duplicate_names_are_refused() {
-    assert!(
-        failure("name = \"intake\"\n", "name = \"intake\"\nskill = \"x\"\n")
-            .starts_with("stage[0].skill: is not a key here")
+    assert_eq!(
+        failure("name = \"intake\"\n", "name = \"intake\"\nskill = \"x\"\n"),
+        "stage[0]: unknown field `skill`, expected one of `name`, `skills`, \
+         `next`, `sign_off`"
     );
     assert_eq!(
         failure("name = \"slice\"", "name = \"shape\""),
@@ -221,7 +286,7 @@ fn references_between_parts_must_resolve() {
     );
     assert_eq!(
         failure("default = \"normal\"", "default = \"meh\""),
-        "field[0].default: \"meh\" is not one of its values"
+        "field[0].default: \"meh\" is not one of low, normal, high, urgent"
     );
 }
 
@@ -244,8 +309,8 @@ fn a_field_s_role_is_read_with_it() {
 fn a_field_role_is_known_held_once_and_of_its_type() {
     assert_eq!(
         failure("role = \"labels\"", "role = \"tags\""),
-        "field[1].role: \"tags\" is not a field role; the field roles are \
-         labels, branch, created"
+        "field[1]: unknown variant `tags`, expected one of `labels`, `branch`, \
+         `created`, in `role`"
     );
     assert_eq!(
         failure("role = \"created\"", "role = \"branch\""),

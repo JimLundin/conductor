@@ -593,16 +593,12 @@ fn detail(flow: &Flow, issue: &Issue) -> String {
         .flat_map(|field| match field.value {
             FieldType::Enum(_) => issue
                 .text(&field.name)
-                .or(field.default.as_deref())
+                .or_else(|| field.default.as_ref().and_then(Datum::text))
                 .map(String::from)
                 .into_iter()
                 .collect(),
             FieldType::Texts => issue.texts(&field.name).to_vec(),
-            FieldType::Ref(_)
-            | FieldType::Refs(_)
-            | FieldType::Text
-            | FieldType::Time
-            | FieldType::Bool => Vec::new(),
+            FieldType::Text | FieldType::Time | FieldType::Bool => Vec::new(),
         })
         .chain(progress)
         .collect::<Vec<String>>()
@@ -787,7 +783,9 @@ fn pickers(flow: &Flow, issue: &Issue) -> Vec<FieldPicker> {
             let FieldType::Enum(words) = &field.value else {
                 return None;
             };
-            let current = issue.text(&field.name).or(field.default.as_deref());
+            let current = issue
+                .text(&field.name)
+                .or_else(|| field.default.as_ref().and_then(Datum::text));
             Some(FieldPicker {
                 field: field.name.clone(),
                 picks: words

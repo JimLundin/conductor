@@ -11,6 +11,8 @@ use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
+use crate::Datum;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Flow {
     /// The kind of an issue that names none.
@@ -25,6 +27,7 @@ pub struct Flow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Status {
     pub name: String,
     pub role: Role,
@@ -35,6 +38,7 @@ pub struct Status {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum Role {
     /// Waiting to be taken up.
     Idle,
@@ -71,19 +75,14 @@ impl Role {
             Self::Dropped => "dropped",
         }
     }
-
-    #[must_use]
-    pub fn named(word: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|role| role.word() == word)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Field {
     pub name: String,
     pub value: FieldType,
-    /// What an issue that leaves it out has.
-    pub default: Option<String>,
+    /// What an issue that leaves it out has, of its type.
+    pub default: Option<Datum>,
     pub role: Option<FieldRole>,
 }
 
@@ -92,6 +91,7 @@ pub struct Field {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
+#[serde(rename_all = "snake_case")]
 pub enum FieldRole {
     /// The words the app shows on an issue and edits beside its title.
     Labels,
@@ -113,11 +113,6 @@ impl FieldRole {
         }
     }
 
-    #[must_use]
-    pub fn named(word: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|role| role.word() == word)
-    }
-
     /// The type its field has.
     #[must_use]
     pub const fn takes(self) -> FieldType {
@@ -133,10 +128,6 @@ impl FieldRole {
 pub enum FieldType {
     /// One of these words.
     Enum(Vec<String>),
-    /// The id of an issue of one of these kinds, or of any kind when empty.
-    Ref(Vec<String>),
-    /// Ids of issues, as for [`FieldType::Ref`].
-    Refs(Vec<String>),
     Text,
     Texts,
     Time,
@@ -158,13 +149,18 @@ pub struct Kind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Relation {
     pub name: String,
     /// The kinds it may start from; any kind when empty.
+    #[serde(default)]
     pub from: Vec<String>,
     /// The kinds it may point to; any kind when empty.
+    #[serde(default)]
     pub to: Vec<String>,
+    #[serde(default)]
     pub many: bool,
+    #[serde(default)]
     pub cycles: bool,
     pub shape: Shape,
     /// Its name followed backwards, from the issue it points to.
@@ -172,6 +168,7 @@ pub struct Relation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Shape {
     /// Drawn as a tree.
     Hierarchy,
@@ -180,13 +177,17 @@ pub enum Shape {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Stage {
     pub name: String,
     /// The skills that serve it, the first one leading.
+    #[serde(default)]
     pub skills: Vec<String>,
     /// The stages it usually moves to; any other move is unusual.
+    #[serde(default)]
     pub next: Vec<String>,
     /// Whether the owner signs off before work moves on.
+    #[serde(default)]
     pub sign_off: bool,
 }
 
@@ -201,6 +202,7 @@ pub struct Rule {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Severity {
     Warn,
     Error,
@@ -219,9 +221,11 @@ pub enum Predicate {
     /// It has this field, this relation, or a stage.
     Has(String),
     HasSection(String),
-    /// While a move is weighed: the issue as it was.
+    /// While a move is weighed: the issue as it was. Only a rule's
+    /// `when` has it.
     From(Box<Self>),
-    /// While a move is weighed: the issue as it would be.
+    /// While a move is weighed: the issue as it would be. Only a rule's
+    /// `when` has it.
     To(Box<Self>),
     All(Vec<Self>),
     Any(Vec<Self>),

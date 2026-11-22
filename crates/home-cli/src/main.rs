@@ -72,6 +72,7 @@ fn read(path: &Path) -> Result<String, String> {
 
 fn save(root: &Path, write: &Write) -> Result<(), String> {
     let path = root.join(write.path());
-    fs::write(&path, &write.text)
+    fs::create_dir_all(root.join(write.folder()))
+        .and_then(|()| fs::write(&path, &write.text))
         .map_err(|err| format!("{}: {err}", path.display()))
 }

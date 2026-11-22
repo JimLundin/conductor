@@ -332,7 +332,7 @@ fn the_command_line_says_what_it_did_and_exits_by_how_it_went() {
     assert_eq!(wrote.ended(Ok(())).1, 0);
     assert_eq!(
         wrote.ended(Err(String::from("disk full"))),
-        (format!("{}home: disk full\n", wrote.output), 1)
+        (String::from("home: disk full\n"), 1)
     );
     assert_eq!(ran(&home(), "issue").ended(Ok(())).1, 1);
     assert_eq!(
