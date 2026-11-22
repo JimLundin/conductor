@@ -287,7 +287,7 @@ Each item ends in something to try. The fleet design is
    models without a restart. The credentials screen also accepts direct
    Anthropic and OpenAI API keys and a Claude setup token obtained
    separately. The host supports macOS Keychain, Windows Credential
-   Manager and Linux Secret Service. See [credential store migration and
+   Manager and Linux Secret Service. See [credential store backup and
    recovery](credential-store.md). The Claude setup-token form can also run
    the CLI on the host. Open the provider page and submit its return code
    on the same paired phone. Token revocation and native keystore verification

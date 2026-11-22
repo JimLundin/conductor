@@ -1,69 +1,48 @@
 # Credential store backup and recovery
 
-Conductor chooses the keystore for the OS user that runs the daemon or
-`conductord login`. Use the same account for both. macOS uses that user's
-default Keychain, Windows uses that user's Credential Manager with
-local-machine persistence, and Linux uses an unlocked default Secret
-Service collection on the user's session bus. For example, a headless
-Linux or WSL host may have no accessible Secret Service. A store that has
-yet to migrate uses the private `store.key` file there. The headless
-fallback is reported in the host log.
+The credentials in `<data>/credentials` are sealed under a 32-byte store
+key. Conductor chooses where that key lives once, when it creates the
+store, and keeps it there:
 
-## Moving an existing installation to its native keystore
+- **The OS keystore**, for the OS user that runs the daemon or
+  `conductord login` (use the same account for both). macOS uses that
+  user's default Keychain, Windows that user's Credential Manager with
+  local-machine persistence, and Linux an unlocked default Secret Service
+  collection on the user's session bus. The entry is labelled `Conductor
+  credential store`; its account is the random identifier in
+  `<data>/store.key.slot` (on Windows, part of the target name; on Linux,
+  the `store` attribute). It holds 32 binary bytes.
+- **The private file `<data>/store.key`**, 64 hexadecimal digits readable
+  by the owner only, when no keystore is usable as the store is created
+  (a headless Linux or WSL host often has no Secret Service) or when an
+  empty `<data>/store.key.file` asks for it. The host log reports the
+  file fallback.
 
-1. Stop the daemon and any `conductord login` process. Back up the data
-   directory and the original `store.key` to private storage independent
-   of the host. Keep a copy of the key separate from ordinary data backups.
-2. Upgrade and start Conductor under the account that will run it. On
-   Linux, start it with access to the unlocked Secret Service session.
-   Conductor imports the existing key, reads it back, then records a
-   random keyring account identifier in `store.key.slot` and a key
-   fingerprint in `store.key.native`. The slot is created before the
-   import so an interrupted import can find the same entry. The
-   encrypted credentials and pairing keys remain intact.
-3. On the next successful open, Conductor verifies the marker and the
-   original native key again before removing the leftover `store.key`.
-   Verify that the expected instances are present and that the plaintext
-   file is gone. Avoid starting an older daemon against this migrated
-   directory. To roll back, restore the matching backup and key first.
+A store never moves between the two. To change where the key lives, set
+the data directory's `credentials`, `store.key` and `store.key.slot`
+aside and enter the credentials again.
 
-Only the native entry contains the decryption key after migration.
-`store.key.slot` identifies the item in the OS vault. The vault entry is
-labelled `Conductor credential store` and contains the slot as the
-account, as part of the target name on Windows, or as the `store`
-attribute on Linux. Protect the OS vault backup and preserve both
-non-secret marker files alongside the data directory backup. A vault
-entry contains 32 binary bytes. A `store.key` backup holds the same 32
-bytes encoded as 64 hexadecimal digits.
+## Backing up
+
+For a keystore store, back up the OS vault and keep `store.key.slot`
+with the data directory backup: the slot names the entry. For a file
+store, back up `store.key` to private storage apart from ordinary data
+backups. Either key alone cannot decrypt anything without
+`credentials`, and `credentials` cannot be decrypted without its key.
 
 ## Recovering access
 
-- If a previously usable keyring is unavailable or locked, run Conductor
-  under the original user with the original vault unlocked. On Linux,
-  ensure the daemon has access to the right session bus and collection.
-  A daemon started by a system service or a different login may see a
-  different vault.
-- If the native entry was deleted, restore it from the OS vault backup
-  under the original slot with its original value. The daemon compares the
-  recovered value with the fingerprint in `store.key.native`. If a
-  surviving plaintext `store.key` disagrees with the native entry, both
-  copies are preserved for inspection.
-- To start without the original vault when you have the original
-  `store.key` backup, stop all Conductor processes. Back up the current
-  data directory and install the original key as `store.key` with mode
-  0600 on Unix or a user-only ACL on Windows. Leave the migration markers
-  in place, then create an empty `store.key.file` to select file storage.
-  Conductor checks the restored key against the recorded fingerprint
-  before it opens the store. Remove the file-storage marker once the
-  original vault is accessible again. The marker is also available for a
-  fresh installation that deliberately runs without a native vault.
-- If you have neither the original key nor a backup of the OS vault, the
-  sealed credentials cannot be decrypted. Preserve the old directory
-  and credentials for recovery. You can configure new credentials in a
-  fresh data directory. Do not create a replacement key for encrypted
-  files you still need.
+- If the keystore is locked or unreachable, run Conductor under the
+  original user with the vault unlocked. On Linux, make sure the daemon
+  can reach the right session bus and collection; a daemon started by a
+  system service or another login may see a different vault. Conductor
+  does not fall back to a file for a store whose key is in the keystore.
+- If the keystore entry was deleted, restore it from the vault backup
+  under the account in `store.key.slot`, with its original value.
+- If the key is lost, the sealed credentials cannot be decrypted. Conductor
+  refuses to create a new key beside existing `credentials`; set the
+  credential files aside and enter the credentials again.
 
-The keyring protects the key at rest under the OS account's security
-boundary. On a host using the file fallback, host permissions protect
-the key and encryption protects copies of the credentials file that
-travel separately from it.
+The keystore protects the key at rest under the OS account's security
+boundary. On a host using the file, host permissions protect the key, and
+encryption protects copies of `credentials` that travel without it.

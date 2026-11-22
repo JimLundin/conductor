@@ -1,12 +1,16 @@
+//! Where the credential store's key lives, chosen once when the store is
+//! created: an entry in the OS user's keystore, named by the random account
+//! in `store.key.slot`, or, where no keystore is usable or `store.key.file`
+//! asks for it, the private file `store.key`.
+
 use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
 use host::secret::Secret;
 
-const LEGACY: &str = "store.key";
+const FILE: &str = "store.key";
 const SLOT: &str = "store.key.slot";
-const NATIVE: &str = "store.key.native";
 const FILE_ONLY: &str = "store.key.file";
 
 type Key = [u8; 32];
@@ -24,166 +28,82 @@ trait Vault {
 }
 
 pub(super) fn open(dir: &Path) -> anyhow::Result<Key> {
-    let active = read_file(dir, NATIVE)?;
-    let file_only = exists(dir, FILE_ONLY)?;
-    if file_only {
-        return open_file(dir, active);
-    }
-    open_with(dir, &mut platform::Native, active)
+    open_with(dir, &mut platform::Native)
 }
 
-fn open_file(dir: &Path, active: Option<Key>) -> anyhow::Result<Key> {
-    let legacy = read_file(dir, LEGACY)?;
-    if let Some(fingerprint) = active {
-        let key = legacy.context("restore the original store.key before selecting file storage for this migrated store")?;
-        verify_native_key(&key, &fingerprint)?;
+fn open_with(dir: &Path, vault: &mut impl Vault) -> anyhow::Result<Key> {
+    if let Some(slot) = read_file(dir, SLOT)? {
+        return open_native(vault, &slot);
+    }
+    if let Some(key) = read_file(dir, FILE)? {
         return Ok(key);
     }
-    file_key(dir, legacy)
-}
-
-fn verify_native_key(key: &Key, fingerprint: &Key) -> anyhow::Result<()> {
-    ensure!(
-        blake3::hash(key).as_bytes() == fingerprint,
-        "the credential store key differs from the migration fingerprint; recover the original key before starting Conductor"
-    );
-    Ok(())
-}
-
-fn open_with(
-    dir: &Path,
-    vault: &mut impl Vault,
-    active: Option<Key>,
-) -> anyhow::Result<Key> {
-    let legacy = read_file(dir, LEGACY)?;
-    let Some(fingerprint) = active else {
-        return migrate(dir, vault, legacy);
-    };
-    open_native(dir, vault, &fingerprint, legacy)
-}
-
-fn open_native(
-    dir: &Path,
-    vault: &impl Vault,
-    fingerprint: &Key,
-    legacy: Option<Key>,
-) -> anyhow::Result<Key> {
-    let slot = read_file(dir, SLOT)?.context(
-        "the native credential store slot is missing; see credential recovery",
-    )?;
-    let account = data_encoding::HEXLOWER.encode(&slot);
-    let Read::Found(key) = vault.read(&account)? else {
-        bail!(
-            "the native credential store key is missing or inaccessible; open the original user keystore or recover the original store key"
-        );
-    };
-    verify_native_key(&key, fingerprint)?;
-    if let Some(file_key) = legacy {
-        ensure!(
-            file_key == key,
-            "the file and native credential store keys differ; both have been preserved"
-        );
-        std::fs::remove_file(dir.join(LEGACY))
-            .context("removing the migrated store.key")?;
-        crate::sync_dir(dir).context("syncing credential key migration")?;
-    }
-    Ok(key)
-}
-
-fn migrate(
-    dir: &Path,
-    vault: &mut impl Vault,
-    legacy: Option<Key>,
-) -> anyhow::Result<Key> {
-    let known_slot = read_file(dir, SLOT)?;
-    let slot = known_slot.map_or_else(crate::random_key, Ok)?;
-    let account = data_encoding::HEXLOWER.encode(&slot);
-    let key = match vault.read(&account)? {
-        #[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
-        Read::Unavailable => {
-            ensure!(
-                known_slot.is_none() || legacy.is_some(),
-                "credential key migration is awaiting its original native keystore"
-            );
-            tracing::warn!(
-                "native credential keystore unavailable; using the private store.key file"
-            );
-            return file_key(dir, legacy);
-        }
-        Read::Found(key) => {
-            ensure!(
-                known_slot.is_some(),
-                "a new credential key slot is already occupied"
-            );
-            ensure!(
-                legacy.is_none_or(|file_key| file_key == key),
-                "the file and native credential store keys differ; both have been preserved"
-            );
-            key
-        }
-        Read::Missing => install_native(dir, vault, &slot, known_slot, legacy)?,
-    };
-    record_marker(dir, NATIVE, blake3::hash(&key).as_bytes())?;
-    // Leave the legacy file through the first open so a restart can verify
-    // the persisted marker and native entry before deleting the only file copy.
-    Ok(key)
-}
-
-fn install_native(
-    dir: &Path,
-    vault: &mut impl Vault,
-    slot: &Key,
-    known_slot: Option<Key>,
-    legacy: Option<Key>,
-) -> anyhow::Result<Key> {
-    let key = legacy.map_or_else(|| new_key(dir), Ok)?;
-    if known_slot.is_none() {
-        record_marker(dir, SLOT, slot)?;
-    }
-    let account = data_encoding::HEXLOWER.encode(slot);
-    vault.insert(&account, &key)?;
-    ensure!(
-        matches!(vault.read(&account)?, Read::Found(saved) if saved == key),
-        "the native credential store key could not be verified"
-    );
-    Ok(key)
-}
-
-fn record_marker(dir: &Path, name: &str, value: &Key) -> anyhow::Result<()> {
-    let text = data_encoding::HEXLOWER.encode(value);
-    let next = dir.join(format!("{name}.new"));
-    crate::write_private(&next, text.as_bytes())
-        .with_context(|| format!("writing {name}"))?;
-    let linked = crate::link_new(&next, &dir.join(name));
-    let _ = std::fs::remove_file(next);
-    ensure!(
-        linked.with_context(|| format!("recording {name}"))?,
-        "the credential key migration marker {name} changed"
-    );
-    crate::sync_dir(dir).context("syncing credential key migration")
-}
-
-fn file_key(dir: &Path, file: Option<Key>) -> anyhow::Result<Key> {
-    if let Some(key) = file {
-        return Ok(key);
-    }
-    can_create_key(dir)?;
-    crate::load_or_create_secret(dir, LEGACY)
-}
-
-fn new_key(dir: &Path) -> anyhow::Result<Key> {
-    can_create_key(dir)?;
-    crate::random_key()
-}
-
-fn can_create_key(dir: &Path) -> anyhow::Result<()> {
     ensure!(
         !exists(dir, "credentials")?
             && !exists(dir, "credentials.new")?
             && !exists(dir, "credentials.unreadable")?,
-        "credential files exist without a store key; recover the original store key before starting Conductor"
+        "credential files exist without a store key; restore the original store key before starting Conductor"
     );
-    Ok(())
+    if exists(dir, FILE_ONLY)? {
+        return crate::load_or_create_secret(dir, FILE);
+    }
+    create(dir, vault)
+}
+
+fn open_native(vault: &impl Vault, slot: &Key) -> anyhow::Result<Key> {
+    let Read::Found(key) = vault.read(&account(slot))? else {
+        bail!(
+            "the native credential store key is missing or inaccessible; open the original user keystore or restore its entry (docs/credential-store.md)"
+        );
+    };
+    Ok(key)
+}
+
+/// A new store's key: saved in the keystore and read back before the slot
+/// that names it is recorded, so an interrupted save leaves no slot and the
+/// next start begins again.
+fn create(dir: &Path, vault: &mut impl Vault) -> anyhow::Result<Key> {
+    let slot = crate::random_key()?;
+    let account = account(&slot);
+    match vault.read(&account)? {
+        #[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
+        Read::Unavailable => {
+            tracing::warn!(
+                "native credential keystore unavailable; using the private store.key file"
+            );
+            crate::load_or_create_secret(dir, FILE)
+        }
+        Read::Found(_) => {
+            bail!("a new credential key slot is already occupied")
+        }
+        Read::Missing => {
+            let key = crate::random_key()?;
+            vault.insert(&account, &key)?;
+            ensure!(
+                matches!(vault.read(&account)?, Read::Found(saved) if saved == key),
+                "the native credential store key could not be verified"
+            );
+            record_slot(dir, &slot)?;
+            Ok(key)
+        }
+    }
+}
+
+fn account(slot: &Key) -> String {
+    data_encoding::HEXLOWER.encode(slot)
+}
+
+fn record_slot(dir: &Path, slot: &Key) -> anyhow::Result<()> {
+    let next = dir.join(format!("{SLOT}.new"));
+    crate::write_private(&next, account(slot).as_bytes())
+        .with_context(|| format!("writing {SLOT}"))?;
+    let linked = crate::link_new(&next, &dir.join(SLOT));
+    let _ = std::fs::remove_file(next);
+    ensure!(
+        linked.with_context(|| format!("recording {SLOT}"))?,
+        "{SLOT} appeared while the store was created"
+    );
+    crate::sync_dir(dir).with_context(|| format!("syncing {SLOT}"))
 }
 
 fn exists(dir: &Path, name: &str) -> anyhow::Result<bool> {

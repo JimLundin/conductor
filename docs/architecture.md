@@ -1309,10 +1309,11 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   the login Keychain. On Windows it is a user-private generic credential
   in Credential Manager with local-machine persistence. On Linux it
   goes in the user's unlocked default Secret Service collection over an
-  encrypted D-Bus session. If Linux has no usable service, new and
-  existing file-backed stores use `<data>/store.key` (mode 0600 on
-  Unix). An existing native-backed store requires its original native
-  key, even if the keyring is temporarily unavailable. The separate
+  encrypted D-Bus session. Where no keystore is usable when the store
+  is created, or `<data>/store.key.file` asks for it, the key is the
+  owner-only file `<data>/store.key` (mode 0600 on Unix) instead. A store
+  keeps the place chosen at its creation; one in a keystore requires that
+  entry, even if the keyring is temporarily unavailable. The separate
   `<data>/host.key` and `<data>/auth.key` still hold the iroh and pairing
   keys. See [credential store backup and recovery](credential-store.md).
 - The credentials are one value, `proto::Roster`, the host's instances
@@ -1329,10 +1330,9 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   `SetCredential` is refused then, so nothing overwrites it. A
   `RemoveInstance` for any of them moves it to
   `<data>/credentials.unreadable` and starts a store of the own
-  instances, which is the recovery from the phone. A missing, changed or
-  inaccessible active native key stops the host before it opens the
-  encrypted store. An existing encrypted store without its file key
-  also requires recovery before startup.
+  instances, which is the recovery from the phone. A missing or
+  inaccessible keystore entry stops the host before it opens the
+  encrypted store, and so does an encrypted store without its key file.
 - A Claude environment credential is kept from Claude's commands only where
   Claude's sandbox runs, which on Linux and WSL2 is the optional
   `sudo apt install bubblewrap socat` of §6.2. The Codex key is kept from
