@@ -74,7 +74,7 @@ fn enumerated(name: &str, words: &[&str], default: Option<&str>) -> Field {
     Field {
         name: text(name),
         value: FieldType::Enum(words.iter().copied().map(text).collect()),
-        default: default.map(text),
+        default: default.map(|word| Datum::Text(text(word))),
         role: None,
     }
 }

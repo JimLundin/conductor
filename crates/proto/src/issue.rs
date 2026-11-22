@@ -8,7 +8,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, SeqAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::ProjectId;
 
@@ -74,10 +75,7 @@ impl Issue {
     /// The value of a field it gives as one word or text.
     #[must_use]
     pub fn text(&self, field: &str) -> Option<&str> {
-        match self.fields.get(field) {
-            Some(Datum::Text(text)) => Some(text),
-            _ => None,
-        }
+        self.fields.get(field).and_then(Datum::text)
     }
 
     /// The values of a field it gives as a list.
@@ -98,11 +96,111 @@ pub struct Section {
 }
 
 /// A field's value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// A human-readable format, as TOML is, writes it as its value: text, a
+/// list of text or a boolean, and reads a time as its text. The wire's
+/// format is not self-describing, so there it is tagged.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Datum {
     Text(String),
     Texts(Vec<String>),
     Bool(bool),
+}
+
+impl Datum {
+    /// The value as one word or text.
+    #[must_use]
+    pub fn text(&self) -> Option<&str> {
+        match self {
+            Self::Text(text) => Some(text),
+            Self::Texts(_) | Self::Bool(_) => None,
+        }
+    }
+}
+
+/// [`Datum`] as the wire writes it.
+#[derive(Serialize)]
+#[serde(rename = "Datum")]
+enum TaggedRef<'a> {
+    Text(&'a str),
+    Texts(&'a [String]),
+    Bool(bool),
+}
+
+/// [`Datum`] as the wire reads it.
+#[derive(Deserialize)]
+#[serde(rename = "Datum")]
+enum Tagged {
+    Text(String),
+    Texts(Vec<String>),
+    Bool(bool),
+}
+
+impl Serialize for Datum {
+    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        if out.is_human_readable() {
+            match self {
+                Self::Text(text) => out.serialize_str(text),
+                Self::Texts(texts) => texts.serialize(out),
+                Self::Bool(flag) => out.serialize_bool(*flag),
+            }
+        } else {
+            match self {
+                Self::Text(text) => TaggedRef::Text(text),
+                Self::Texts(texts) => TaggedRef::Texts(texts),
+                Self::Bool(flag) => TaggedRef::Bool(*flag),
+            }
+            .serialize(out)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Datum {
+    fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        if input.is_human_readable() {
+            input.deserialize_any(Plain)
+        } else {
+            Tagged::deserialize(input).map(|tagged| match tagged {
+                Tagged::Text(text) => Self::Text(text),
+                Tagged::Texts(texts) => Self::Texts(texts),
+                Tagged::Bool(flag) => Self::Bool(flag),
+            })
+        }
+    }
+}
+
+/// A [`Datum`] written as its value.
+struct Plain;
+
+impl<'de> Visitor<'de> for Plain {
+    type Value = Datum;
+
+    fn expecting(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("text, a list of text, true or false, or a time")
+    }
+
+    fn visit_bool<E: de::Error>(self, flag: bool) -> Result<Datum, E> {
+        Ok(Datum::Bool(flag))
+    }
+
+    fn visit_str<E: de::Error>(self, text: &str) -> Result<Datum, E> {
+        Ok(Datum::Text(String::from(text)))
+    }
+
+    fn visit_string<E: de::Error>(self, text: String) -> Result<Datum, E> {
+        Ok(Datum::Text(text))
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(
+        self,
+        mut items: A,
+    ) -> Result<Datum, A::Error> {
+        let mut texts = Vec::new();
+        while let Some(text) = items.next_element::<String>()? {
+            texts.push(text);
+        }
+        Ok(Datum::Texts(texts))
+    }
 }
 
 /// A line of an issue's log.
@@ -253,7 +351,27 @@ pub struct Item {
 mod tests {
     use alloc::string::{String, ToString};
 
-    use super::{Entry, LogEvent};
+    use alloc::vec::Vec;
+
+    use super::{Datum, Entry, LogEvent};
+
+    #[test]
+    fn a_datum_crosses_the_wire_tagged_and_reads_back_as_written() {
+        for datum in [
+            Datum::Text(String::from("high")),
+            Datum::Texts(Vec::from([String::from("app")])),
+            Datum::Texts(Vec::new()),
+            Datum::Bool(true),
+        ] {
+            let bytes = postcard::to_allocvec(&datum);
+            assert_eq!(
+                bytes.and_then(|written| postcard::from_bytes::<Datum>(
+                    &written
+                )),
+                Ok(datum)
+            );
+        }
+    }
 
     fn entry(event: LogEvent, text: &str) -> Entry {
         Entry {

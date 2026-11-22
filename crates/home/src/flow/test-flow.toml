@@ -39,10 +39,11 @@ role = "dropped"
 colour = "grey"
 
 # Fields every kind has, beyond id, title, kind, status, stage and the log.
-# A type is enum (with values), ref or refs (with the kinds they point to),
-# text, texts, time or bool. Conductor keys on a field's role, never its
-# name: labels (texts) are shown and edited beside the title, branch (text)
-# is where sessions land, created (time) is written when an issue opens.
+# A type is enum (with values), text, texts, time or bool; a reference to
+# another issue is a relation. A default is a value of the field's type.
+# Conductor keys on a field's role, never its name: labels (texts) are
+# shown and edited beside the title, branch (text) is where sessions land,
+# created (time) is written when an issue opens.
 [[field]]
 name = "priority"
 type = "enum"
@@ -165,9 +166,10 @@ sign_off = true
 next = []
 
 # Rules. A predicate is an inline table of one key: an atom (`kind`,
-# `stage`, `status_role`, `field`, `has`, `has_section`, and `from`/`to`
-# while a move is weighed), `all`/`any` of a list, `not`, or `any`/`all`/
-# `none` of `{ via = <relation or its reverse>, where = <predicate> }`.
+# `stage`, `status_role`, `field`, `has`, `has_section`, and in a rule's
+# `when` `from`/`to` while a move is weighed), `all`/`any` of a list,
+# `not`, or `any`/`all`/`none` of
+# `{ via = <relation or its reverse>, where = <predicate> }`.
 [[rule]]
 message = "A spec is done only after a design review"
 severity = "warn"

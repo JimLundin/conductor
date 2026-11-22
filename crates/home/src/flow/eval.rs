@@ -5,9 +5,9 @@
 //! one step along a relation, so it ends however the issues link, cycles
 //! included.
 
-use alloc::string::ToString;
+use alloc::boxed::Box;
 
-use proto::{Datum, Issue};
+use proto::{Datum, Issue, IssueId};
 
 use crate::prelude::*;
 use proto::flow::{Flow, Literal, Predicate, Quantifier};
@@ -19,14 +19,25 @@ pub struct Move<'a> {
     pub to: Option<&'a Issue>,
 }
 
-/// Why a predicate failed: the atom that didn't hold, on which issue, and
-/// the relations followed to reach it.
+/// Why a predicate failed: the predicate that didn't hold, on which issue,
+/// and the relations followed to reach it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
-    pub atom: String,
-    pub issue: String,
-    /// Each step as `<relation> <id>`, from the issue evaluated.
-    pub path: Vec<String>,
+    /// An atom; or, where nothing smaller decides it, the `not`, the empty
+    /// `any`, the relation that reaches no issue or the move not being
+    /// weighed; for `none`, `not` of the condition an issue reached meets.
+    pub predicate: Predicate,
+    pub issue: IssueId,
+    /// From the issue evaluated.
+    pub path: Vec<Step>,
+}
+
+/// One relation followed, and the issue it reached.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    /// The relation, or its reverse.
+    pub via: String,
+    pub issue: IssueId,
 }
 
 /// Whether `issue` meets `predicate` among `issues`, the issues its
@@ -63,11 +74,11 @@ impl Walk<'_> {
         &self,
         issue: &Issue,
         predicate: &Predicate,
-        path: &[String],
+        path: &[Step],
     ) -> Result<(), Failure> {
-        let fail = |atom: String| Failure {
-            atom,
-            issue: issue.id.to_string(),
+        let fail = |failed: &Predicate| Failure {
+            predicate: failed.clone(),
+            issue: issue.id,
             path: path.to_vec(),
         };
         match predicate {
@@ -84,65 +95,60 @@ impl Walk<'_> {
                         }
                     }
                 }
-                Err(first
-                    .unwrap_or_else(|| fail(String::from("any of nothing"))))
+                Err(first.unwrap_or_else(|| fail(predicate)))
             }
             Predicate::Not(inner) => match self.holds(issue, inner, path) {
-                Ok(()) => Err(fail(format!("not {}", describe(inner)))),
+                Ok(()) => Err(fail(predicate)),
                 Err(_) => Ok(()),
             },
-            Predicate::From(inner) => {
-                self.moved(self.moving.from, "from", inner, path, fail)
-            }
-            Predicate::To(inner) => {
-                self.moved(self.moving.to, "to", inner, path, fail)
-            }
+            Predicate::From(inner) => self.moving.from.map_or_else(
+                || Err(fail(predicate)),
+                |from| self.holds(from, inner, path),
+            ),
+            Predicate::To(inner) => self.moving.to.map_or_else(
+                || Err(fail(predicate)),
+                |to| self.holds(to, inner, path),
+            ),
             Predicate::Across {
                 quantifier,
                 via,
                 condition,
-            } => self.across(issue, *quantifier, via, condition, path),
+            } => self
+                .across(issue, *quantifier, via, condition, path)
+                .map_err(|reached| reached.unwrap_or_else(|| fail(predicate))),
             atom => {
                 if self.atom(issue, atom) {
                     Ok(())
                 } else {
-                    Err(fail(describe(atom)))
+                    Err(fail(atom))
                 }
             }
         }
     }
 
-    fn moved(
-        &self,
-        side: Option<&Issue>,
-        word: &str,
-        inner: &Predicate,
-        path: &[String],
-        fail: impl Fn(String) -> Failure,
-    ) -> Result<(), Failure> {
-        side.map_or_else(
-            || Err(fail(format!("{word}: no move is being weighed"))),
-            |issue| self.holds(issue, inner, path),
-        )
-    }
-
+    /// Whether the issues reached meet the condition as `quantifier`
+    /// asks; when they don't, the failure on an issue reached, or none
+    /// when none was reached.
     fn across(
         &self,
         issue: &Issue,
         quantifier: Quantifier,
         via: &str,
         condition: &Predicate,
-        path: &[String],
-    ) -> Result<(), Failure> {
+        path: &[Step],
+    ) -> Result<(), Option<Failure>> {
         let reached = self.reached(issue, via);
         let step = |target: &Issue| {
             let mut longer = path.to_vec();
-            longer.push(format!("{via} {}", target.id));
+            longer.push(Step {
+                via: String::from(via),
+                issue: target.id,
+            });
             longer
         };
         match quantifier {
             Quantifier::All => reached.iter().try_for_each(|target| {
-                self.holds(target, condition, &step(target))
+                self.holds(target, condition, &step(target)).map_err(Some)
             }),
             Quantifier::Any => {
                 let mut first = None;
@@ -154,11 +160,7 @@ impl Walk<'_> {
                         }
                     }
                 }
-                Err(first.unwrap_or_else(|| Failure {
-                    atom: format!("{via} reaches no issue"),
-                    issue: issue.id.to_string(),
-                    path: path.to_vec(),
-                }))
+                Err(first)
             }
             Quantifier::None => reached
                 .iter()
@@ -166,11 +168,11 @@ impl Walk<'_> {
                     self.holds(target, condition, &step(target)).is_ok()
                 })
                 .map_or(Ok(()), |target| {
-                    Err(Failure {
-                        atom: format!("not {}", describe(condition)),
-                        issue: target.id.to_string(),
+                    Err(Some(Failure {
+                        predicate: Predicate::Not(Box::new(condition.clone())),
+                        issue: target.id,
                         path: step(target),
-                    })
+                    }))
                 }),
         }
     }
@@ -231,7 +233,6 @@ impl Walk<'_> {
             self.flow
                 .field(&issue.kind, name)
                 .and_then(|field| field.default.clone())
-                .map(Datum::Text)
         });
         match (given, value) {
             (Some(Datum::Text(text)), Literal::Text(wanted)) => text == *wanted,
@@ -240,63 +241,6 @@ impl Walk<'_> {
             }
             (Some(Datum::Bool(flag)), Literal::Bool(wanted)) => flag == *wanted,
             _ => false,
-        }
-    }
-}
-
-/// The predicate as the flow writes it.
-#[must_use]
-pub fn describe(predicate: &Predicate) -> String {
-    let list = |word: &str, parts: &[Predicate]| {
-        format!(
-            "{{ {word} = [{}] }}",
-            parts
-                .iter()
-                .map(describe)
-                .collect::<Vec<String>>()
-                .join(", ")
-        )
-    };
-    let boxed = |word: &str, inner: &Predicate| {
-        format!("{{ {word} = {} }}", describe(inner))
-    };
-    match predicate {
-        Predicate::Kind(kind) => format!("{{ kind = {kind:?} }}"),
-        Predicate::Stage(stage) => format!("{{ stage = {stage:?} }}"),
-        Predicate::StatusRole(role) => {
-            format!("{{ status_role = {:?} }}", role.word())
-        }
-        Predicate::Field { name, value } => match value {
-            Literal::Text(text) => {
-                format!("{{ field = {{ {name} = {text:?} }} }}")
-            }
-            Literal::Bool(flag) => {
-                format!("{{ field = {{ {name} = {flag} }} }}")
-            }
-        },
-        Predicate::Has(name) => format!("{{ has = {name:?} }}"),
-        Predicate::HasSection(section) => {
-            format!("{{ has_section = {section:?} }}")
-        }
-        Predicate::From(inner) => boxed("from", inner),
-        Predicate::To(inner) => boxed("to", inner),
-        Predicate::Not(inner) => boxed("not", inner),
-        Predicate::All(parts) => list("all", parts),
-        Predicate::Any(parts) => list("any", parts),
-        Predicate::Across {
-            quantifier,
-            via,
-            condition,
-        } => {
-            let word = match quantifier {
-                Quantifier::Any => "any",
-                Quantifier::All => "all",
-                Quantifier::None => "none",
-            };
-            format!(
-                "{{ {word} = {{ via = {via:?}, where = {} }} }}",
-                describe(condition)
-            )
         }
     }
 }

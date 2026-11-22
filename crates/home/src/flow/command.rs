@@ -354,7 +354,7 @@ fn typed(
                 _ => Err(format!("{field} is true or false")),
             };
         }
-        Some(FieldType::Texts | FieldType::Refs(_)) => true,
+        Some(FieldType::Texts) => true,
         Some(_) => false,
         None => flow
             .relations
