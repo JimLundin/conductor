@@ -23,7 +23,6 @@ fn instance(dir: &Path) -> Instance {
         path: fake_cli_path(),
         home: Home::User,
         work: dir.to_path_buf(),
-        fleet_flags: None,
     })
 }
 

@@ -491,7 +491,6 @@ mod tests {
 
     fn task() -> Task {
         let mut task = Task::new(ServerOptions {
-            analytics: None,
             codex_path: "codex".into(),
             home: Home::User,
             credential: None,
@@ -687,7 +686,6 @@ mod backpressure_tests {
             .push_str(&"{\"method\":\"conductor/testUnknown\"}\n".repeat(4097));
         std::fs::write(cwd.join("stdout.jsonl"), frames)?;
         let options = ServerOptions {
-            analytics: None,
             codex_path: fake_cli_path(),
             home: Home::User,
             credential: None,

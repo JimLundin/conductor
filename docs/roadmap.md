@@ -4,6 +4,15 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **CLI pins shipped with Conductor.** Every host uses the CLI versions verified
+  with its Conductor release. Removed fleet revision publishing, separate
+  fleet installs and revision-driven instance reconfiguration. Host and
+  instance model defaults and session selection remain; Codex analytics
+  stays off. Fleet membership, shared credentials and credential refresh
+  remain, with fleet protocol `conductor-fleet/2`. Previous sealed fleet
+  state and backups must be set aside before re-enrollment
+  (`docs/fleet.md`).
+
 - **Sessions stay on their starting host.** Removed cross-host session
   migration, branch bundles, transcript archives, ownership recovery and
   move controls. Fleet membership, pairing, credentials and independent
@@ -283,7 +292,7 @@ Each item ends in something to try. The fleet design is
 6. **Fleet and pairing** (#14) (§6.1, §6.4 to §6.6). A fleet root key signs
    device and host certificates and replaces the shared ticket token;
    `conductord join` and *Add host*; a signed fleet config with the roster,
-   pins, settings, API keys and the Claude token, served by any host; a
+   API keys and the Claude token, served by any host; a
    per-host Codex ChatGPT sign-in after a join. The app already holds
    several hosts, each paired by its own ticket. *Try:* add a second host from the phone and run a Claude
    session on it with the fleet's token, without signing in again.

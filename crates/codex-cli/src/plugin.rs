@@ -27,9 +27,5 @@ fn instance(launch: Launch) -> Instance {
         home: launch.home,
         credential: None,
         cwd: launch.work,
-        analytics: launch
-            .fleet_flags
-            .as_ref()
-            .map(|flags| flags.get("analytics").copied().unwrap_or(false)),
     }))
 }

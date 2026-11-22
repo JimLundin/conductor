@@ -225,43 +225,6 @@ pub async fn export(
     local(&data_dir)?.export_config(output, passphrase).await
 }
 
-/// Prints a JSON revision template from this host's signed configuration.
-///
-/// # Errors
-///
-/// If the configuration cannot be read or printed.
-pub async fn revision(data: Option<PathBuf>) -> anyhow::Result<()> {
-    let data_dir = crate::start::data_dir_or_default(data)?;
-    let revision = local(&data_dir)?.revision().await;
-    let mut out = std::io::stdout().lock();
-    serde_json::to_writer_pretty(&mut out, &revision)?;
-    writeln!(out)?;
-    Ok(())
-}
-
-/// Publishes root-reviewed provider pins and fleet-wide preferences.
-///
-/// # Errors
-///
-/// If the revision is invalid, the root is unavailable, or the state cannot be saved.
-pub async fn publish(data: Option<PathBuf>, file: &Path) -> anyhow::Result<()> {
-    use std::io::Read;
-
-    let data_dir = crate::start::data_dir_or_default(data)?;
-    let _exclusive = exclusive(&data_dir)?;
-    let mut bytes = Vec::new();
-    std::fs::File::open(file)?
-        .take(64 * 1024 + 1)
-        .read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() <= 64 * 1024,
-        "fleet revision file exceeds 64 KiB"
-    );
-    let revision = serde_json::from_slice(&bytes)
-        .context("invalid fleet revision JSON")?;
-    local(&data_dir)?.publish(revision).await
-}
-
 fn local(data: &Path) -> anyhow::Result<Membership> {
     let host = crate::load_or_create_key(data)?;
     Membership::open(data, host.public())?.context("this host has no fleet")

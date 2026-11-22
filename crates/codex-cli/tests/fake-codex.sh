@@ -6,4 +6,4 @@
 # `login` signs the private home in (fixtures/fake-login.py).
 [ "$1" = login ] && exec /usr/bin/python3 -I "$(dirname "$0")/../../../fixtures/fake-login.py" codex "$@"
 # The arguments name the variables it records (fixtures/fake-cli.py).
-exec /usr/bin/python3 -I "$(dirname "$0")/../../../fixtures/fake-cli.py" CODEX_HOME CONDUCTOR_CODEX_KEY
+exec /usr/bin/python3 -I "$(dirname "$0")/../../../fixtures/fake-cli.py" CODEX_HOME CONDUCTOR_CODEX_KEY -- "$@"

@@ -77,14 +77,30 @@ Choose **Approve new browser** and paste the signed reply back into the
 browser that generated the request. The root signs the reply while it is
 online.
 
-## Change CLI pins and settings
+## Update provider CLIs
 
-Use `conductord fleet revision` to print a JSON template with the current
-provider-keyed versions and platform SHA-256 digests, default models and
-provider settings. Codex reads its own analytics setting and defaults it off.
-After verifying a new release's digests against the vendor's published
-artifacts, stop the root and run `conductord fleet publish <revision.json>`.
-Restart the root. Members verify the configuration signature before
-applying it. Each uses the signed native digest to install only the
-corresponding version from the vendor's release URLs. Previous installs
-remain available to sessions that started before the update.
+CLI versions and platform SHA-256 digests are part of each Conductor
+release. Update the compiled pins together with protocol support and
+recorded fixtures, then deploy that tested release to each host. Each host
+downloads and verifies its pinned binaries when needed. An explicit
+`--cli <provider>=<path>` remains available for tests and development.
+
+Choose a session's model in the app or set the host's default with
+`--model <provider>=<model>`. Instance-specific preferences still take
+precedence over host defaults. Codex analytics stays disabled. Fleet
+configuration carries membership and shared credentials; it does not
+select CLI versions or publish provider settings.
+
+## Fleet format changes
+
+This release uses `conductor-fleet/2` and new signing and encryption
+contexts for full configurations, local fleet state and root backups.
+Hosts must support the same fleet protocol version to synchronize.
+Certificate and public roster formats are unchanged.
+
+Previous `fleet.sealed` files and root backups cannot be opened by this
+release. A host with unreadable fleet state refuses to start; it does not
+fall back to standalone ticket authentication. Stop the affected hosts,
+set the old fleet state and backups aside, and initialize and enroll the
+fleet again with fresh backups. Pair the apps again with the new root,
+which has a new signing key. There is no conversion of old state.

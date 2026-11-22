@@ -437,32 +437,6 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
         proto::CommandResult::Rejected(proto::Rejection::FleetUnavailable)
     ));
 
-    let mut revision = root.revision().await;
-    revision.settings.models.insert(
-        proto::Provider::Codex,
-        proto::ModelId(String::from("fixture-model")),
-    );
-    revision.settings.flags.insert(
-        proto::Provider::Codex,
-        [(String::from("fixture-option"), true)].into(),
-    );
-    let mut incomplete = revision.clone();
-    incomplete
-        .pins
-        .0
-        .get_mut(&proto::Provider::Codex)
-        .ok_or_else(|| anyhow::anyhow!("missing test provider pin"))?
-        .digests
-        .clear();
-    assert!(root.publish(incomplete).await.is_err());
-    root.publish(revision.clone()).await?;
-    let root_router = Router::builder(root_endpoint.clone())
-        .accept(proto::fleet::ALPN, Protocol::for_member(root.clone()))
-        .spawn();
-    sync(&target, &member, &root_endpoint).await?;
-    assert_eq!(member.revision().await, revision);
-
-    root_router.shutdown().await?;
     target_router.shutdown().await?;
     std::fs::remove_dir_all(path)?;
     Ok(())

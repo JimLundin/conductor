@@ -305,7 +305,6 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 async fn spawn(name: &str) -> TestResult<Recorder> {
     let cwd = fake_codex_dir(&fixture(name), "driver")?;
     let (server, events) = CodexServer::spawn(ServerOptions {
-        analytics: None,
         codex_path: fake_cli_path(),
         home: Home::User,
         credential: None,
@@ -742,7 +741,6 @@ fn refusal_options(name: &str, recording: &str) -> TestResult<ServerOptions> {
     std::fs::create_dir_all(&cwd)?;
     std::fs::write(cwd.join("stdout.jsonl"), recording)?;
     Ok(ServerOptions {
-        analytics: None,
         codex_path: fake_cli_path(),
         home: Home::User,
         credential: None,

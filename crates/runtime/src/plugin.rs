@@ -31,7 +31,6 @@ pub struct Launch {
     pub path: PathBuf,
     pub home: Home,
     pub work: PathBuf,
-    pub fleet_flags: Option<proto::fleet::Flags>,
 }
 
 /// The outer error is a credential refusal. A configured instance reports

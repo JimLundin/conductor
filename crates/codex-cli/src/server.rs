@@ -35,7 +35,6 @@ pub struct ServerOptions {
     pub credential: Option<CodexCredential>,
     /// The app-server's own working directory; each thread sets its `cwd`.
     pub cwd: PathBuf,
-    pub analytics: Option<bool>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -279,14 +278,8 @@ async fn request(
 }
 
 fn command(opts: &ServerOptions) -> Command {
-    let mut invocation =
+    let invocation =
         codex::app_server(opts.home.kind(), opts.credential.as_ref());
-    if let Some(enabled) = opts.analytics {
-        drop(invocation.args.splice(
-            ..0,
-            [String::from("-c"), format!("analytics.enabled={enabled}")],
-        ));
-    }
     let mut cmd =
         install::process::command(&opts.codex_path, &opts.home, invocation);
     cmd.current_dir(&opts.cwd);
@@ -320,7 +313,6 @@ mod tests {
     #[test]
     fn app_server_argv() -> Result<(), Box<dyn std::error::Error>> {
         let cmd = command(&ServerOptions {
-            analytics: None,
             codex_path: "/opt/codex".into(),
             home: Home::User,
             credential: None,
@@ -334,7 +326,16 @@ mod tests {
             .ok_or("an argument is not UTF-8")?;
         assert_eq!(std.get_program(), "/opt/codex");
         assert_eq!(std.get_current_dir(), Some(Path::new("/tmp")));
-        assert_eq!(args, ["app-server", "--listen", "stdio://"]);
+        assert_eq!(
+            args,
+            [
+                "-c",
+                "analytics.enabled=false",
+                "app-server",
+                "--listen",
+                "stdio://"
+            ]
+        );
         Ok(())
     }
 }

@@ -1,15 +1,14 @@
 //! Signed fleet membership and configuration shared by the app and hosts.
 
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ModelId, Provider, Roster};
+use crate::Roster;
 
-pub const ALPN: &[u8] = b"conductor-fleet/1";
+pub const ALPN: &[u8] = b"conductor-fleet/2";
 pub const SNAPSHOT_DOMAIN: &[u8] = b"conductor fleet snapshot v1";
 pub const CERTIFICATE_DOMAIN: &[u8] = b"conductor fleet certificate v1";
 
@@ -44,48 +43,6 @@ pub struct HostEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pins(pub BTreeMap<Provider, Pin>);
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Pin {
-    pub version: String,
-    pub digests: BTreeMap<String, String>,
-}
-
-impl Pins {
-    #[must_use]
-    pub fn get(&self, provider: Provider) -> Option<&Pin> {
-        self.0.get(&provider)
-    }
-
-    #[must_use]
-    pub fn version(&self, provider: Provider) -> Option<&str> {
-        self.get(provider).map(|pin| pin.version.as_str())
-    }
-}
-
-pub type Flags = BTreeMap<String, bool>;
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Settings {
-    pub models: BTreeMap<Provider, ModelId>,
-    pub flags: BTreeMap<Provider, Flags>,
-}
-
-impl Settings {
-    #[must_use]
-    pub fn provider_flags(&self, provider: Provider) -> Flags {
-        self.flags.get(&provider).cloned().unwrap_or_default()
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Revision {
-    pub pins: Pins,
-    pub settings: Settings,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub fleet: NodeId,
     pub root: NodeId,
@@ -97,8 +54,6 @@ pub struct Snapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Configuration {
     pub snapshot: Snapshot,
-    pub pins: Pins,
-    pub settings: Settings,
     pub instances: Roster,
 }
 

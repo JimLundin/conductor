@@ -35,6 +35,7 @@ cleanup_browser() {
 
 init_browser_scratch() {
   scratch=$(mktemp -d "$target/e2e.XXXXXX")
+  scratch=$(cd "$scratch" && pwd -P)
   server=
   trap cleanup_browser EXIT
   trap 'exit 130' INT

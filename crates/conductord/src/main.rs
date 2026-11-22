@@ -63,7 +63,6 @@ enum FleetCommand {
         backup: PathBuf,
     },
     Status,
-    Revision,
     Revoke {
         node: String,
     },
@@ -78,9 +77,6 @@ enum FleetCommand {
         configuration: Option<PathBuf>,
         #[arg(long, conflicts_with = "configuration")]
         initial_only: bool,
-    },
-    Publish {
-        revision: PathBuf,
     },
     ExportConfiguration {
         #[arg(long)]
@@ -201,12 +197,8 @@ async fn fleet(args: FleetArgs) -> anyhow::Result<()> {
             )
         }
         FleetCommand::Status => daemon::fleet::status(args.data_dir).await,
-        FleetCommand::Revision => daemon::fleet::revision(args.data_dir).await,
         FleetCommand::Revoke { node } => {
             daemon::fleet::revoke(args.data_dir, &node).await
-        }
-        FleetCommand::Publish { revision } => {
-            daemon::fleet::publish(args.data_dir, &revision).await
         }
         FleetCommand::ExportConfiguration { output } => {
             let passphrase = zeroize::Zeroizing::new(
@@ -260,5 +252,31 @@ fn fleet_sharing(
         (Provider::Claude | Provider::Codex, "api_key") => Sharing::Shared,
         (Provider::Claude, "setup_token") => Sharing::OnePerProvider,
         _ => Sharing::Local,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::Args;
+
+    #[test]
+    fn fleet_commands_exclude_release_management() {
+        assert!(
+            Args::try_parse_from(["conductord", "fleet", "status"]).is_ok()
+        );
+        assert!(
+            Args::try_parse_from(["conductord", "fleet", "revision"]).is_err()
+        );
+        assert!(
+            Args::try_parse_from([
+                "conductord",
+                "fleet",
+                "publish",
+                "release.json"
+            ])
+            .is_err()
+        );
     }
 }

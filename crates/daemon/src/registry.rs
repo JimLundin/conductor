@@ -92,9 +92,6 @@ enum RegistryMsg {
     Instances {
         reply: oneshot::Sender<(Instances, Catalog)>,
     },
-    ReconfigureFleet {
-        reply: oneshot::Sender<bool>,
-    },
     Configure {
         configure: Configure,
         id: CommandId,
@@ -241,11 +238,6 @@ impl Registry {
         .await
     }
 
-    pub(crate) async fn reconfigure_fleet(&self) -> Result<bool, Stopped> {
-        self.ask(|reply| RegistryMsg::ReconfigureFleet { reply })
-            .await
-    }
-
     /// Starts, answers or cancels an instance's sign-in.
     ///
     /// # Errors
@@ -386,16 +378,6 @@ impl RegistryActor {
             RegistryMsg::Instances { reply } => {
                 let _ = reply
                     .send((self.core.instances(), self.core.catalog().clone()));
-            }
-            RegistryMsg::ReconfigureFleet { reply } => {
-                let settled = self.core.offers_settled();
-                if settled {
-                    let starts = self.core.boot();
-                    self.perform(
-                        starts.into_iter().map(Effect::Start).collect(),
-                    );
-                }
-                let _ = reply.send(settled);
             }
             RegistryMsg::Configure {
                 configure,

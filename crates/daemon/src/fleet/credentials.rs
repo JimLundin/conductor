@@ -117,7 +117,6 @@ pub fn follow_credentials(
     plugins: Plugins,
     log: crate::log::Log,
 ) {
-    let initially_enrolled = slot.borrow().is_some();
     tokio::spawn(async move {
         let mut observed = slot.subscribe();
         let joined = tokio::select! {
@@ -127,7 +126,7 @@ pub fn follow_credentials(
         let Some(fleet) = joined else {
             return;
         };
-        reconcile(&registry, &fleet, &plugins, &log, initially_enrolled).await;
+        reconcile(&registry, &fleet, &plugins, &log).await;
     });
 }
 
@@ -136,13 +135,10 @@ async fn reconcile(
     fleet: &Membership,
     plugins: &Plugins,
     log: &crate::log::Log,
-    initially_enrolled: bool,
 ) {
-    let mut revision = initial_revision(fleet, initially_enrolled).await;
     let mut versions = fleet.versions();
     let mut applied = Roster::default();
     loop {
-        update_revision(registry, fleet, &mut revision).await;
         let mut known = fleet.applied().await;
         let current = active_credentials(fleet).await;
         apply(registry, plugins, &mut applied, &mut known, current).await;
@@ -150,30 +146,6 @@ async fn reconcile(
         if !wait(&mut versions, log).await {
             return;
         }
-    }
-}
-
-async fn initial_revision(
-    fleet: &Membership,
-    enrolled: bool,
-) -> Option<proto::fleet::Revision> {
-    if enrolled {
-        Some(fleet.revision().await)
-    } else {
-        None
-    }
-}
-
-async fn update_revision(
-    registry: &Registry,
-    fleet: &Membership,
-    applied: &mut Option<proto::fleet::Revision>,
-) {
-    let revision = fleet.revision().await;
-    if applied.as_ref() != Some(&revision)
-        && matches!(registry.reconfigure_fleet().await, Ok(true))
-    {
-        *applied = Some(revision);
     }
 }
 

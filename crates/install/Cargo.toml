@@ -9,7 +9,6 @@ publish = false
 layer = "shell"
 
 [dependencies]
-proto = { path = "../proto" }
 agents = { path = "../agents" }
 data-encoding.workspace = true
 # The pinned CLIs' downloads (`install`). iroh already builds both, with ring.

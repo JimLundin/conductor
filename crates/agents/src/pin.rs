@@ -4,8 +4,6 @@
 
 use alloc::format;
 
-use proto::{Provider, fleet};
-
 use crate::prelude::*;
 
 pub mod pins;
@@ -22,14 +20,6 @@ impl Cli {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
-        }
-    }
-
-    #[must_use]
-    pub const fn provider(self) -> Provider {
-        match self {
-            Self::Claude => Provider::Claude,
-            Self::Codex => Provider::Codex,
         }
     }
 }
@@ -87,138 +77,6 @@ pub fn pin(
             binary: format!("bin/codex{exe}"),
         },
     })
-}
-
-const CLAUDE_PLATFORMS: [&str; 8] = [
-    "darwin-arm64",
-    "darwin-x64",
-    "linux-arm64",
-    "linux-x64",
-    "linux-arm64-musl",
-    "linux-x64-musl",
-    "win32-x64",
-    "win32-arm64",
-];
-const CODEX_PLATFORMS: [&str; 6] = [
-    "x86_64-unknown-linux-musl",
-    "aarch64-unknown-linux-musl",
-    "x86_64-apple-darwin",
-    "aarch64-apple-darwin",
-    "x86_64-pc-windows-msvc",
-    "aarch64-pc-windows-msvc",
-];
-
-#[must_use]
-pub fn fleet_defaults() -> fleet::Pins {
-    fleet::Pins(
-        [
-            (
-                Provider::Claude,
-                default_pin(
-                    pins::CLAUDE_VERSION,
-                    &CLAUDE_PLATFORMS,
-                    pins::claude_sha256,
-                ),
-            ),
-            (
-                Provider::Codex,
-                default_pin(
-                    pins::CODEX_VERSION,
-                    &CODEX_PLATFORMS,
-                    pins::codex_sha256,
-                ),
-            ),
-        ]
-        .into(),
-    )
-}
-
-fn default_pin(
-    version: &str,
-    targets: &[&str],
-    sha256: fn(&str) -> Option<String>,
-) -> fleet::Pin {
-    fleet::Pin {
-        version: String::from(version),
-        digests: targets
-            .iter()
-            .filter_map(|target| {
-                sha256(target).map(|digest| (String::from(*target), digest))
-            })
-            .collect(),
-    }
-}
-
-#[must_use]
-pub fn valid_fleet_pins(pins: &fleet::Pins) -> bool {
-    [
-        (Provider::Claude, CLAUDE_PLATFORMS.as_slice()),
-        (Provider::Codex, CODEX_PLATFORMS.as_slice()),
-    ]
-    .into_iter()
-    .all(|(provider, targets)| {
-        pins.get(provider).is_some_and(|pin| {
-            valid_version(&pin.version)
-                && targets.iter().all(|target| {
-                    pin.digests
-                        .get(*target)
-                        .is_some_and(|digest| valid_digest(digest))
-                })
-        })
-    })
-}
-
-fn valid_version(text: &str) -> bool {
-    text.len() <= 32
-        && text.split('.').count() == 3
-        && text.split('.').all(|part| {
-            !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())
-        })
-}
-
-fn valid_digest(text: &str) -> bool {
-    text.len() == 64
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
-#[must_use]
-pub fn fleet_pin(
-    cli: Cli,
-    os: &str,
-    arch: &str,
-    exe: &str,
-    musl: bool,
-    pins: &fleet::Pins,
-) -> Option<Pin> {
-    if !valid_fleet_pins(pins) {
-        return None;
-    }
-    let platform = platform(os, arch, musl)?;
-    let pin = pins.get(cli.provider())?;
-    match cli {
-        Cli::Claude => Some(Pin {
-            version: pin.version.clone(),
-            url: format!(
-                "https://downloads.claude.ai/claude-code-releases/{}/{}/claude{exe}",
-                pin.version, platform.claude
-            ),
-            sha256: pin.digests.get(platform.claude)?.clone(),
-            package: Package::Binary,
-            binary: format!("claude{exe}"),
-        }),
-        Cli::Codex => Some(Pin {
-            version: pin.version.clone(),
-            url: format!(
-                "https://github.com/openai/codex/releases/download/rust-v{}/codex-package-{}.tar.gz",
-                pin.version, platform.codex
-            ),
-            sha256: pin.digests.get(platform.codex)?.clone(),
-            package: Package::Archive,
-            binary: format!("bin/codex{exe}"),
-        }),
-    }
 }
 
 /// Whether the entry `name` of a CLI's directory stays when `keep` is the

@@ -44,7 +44,7 @@ class ToolingTests(unittest.TestCase):
     def setUp(self):
         target = ROOT / "target"
         target.mkdir(exist_ok=True)
-        self.scratch = Path(self.enterContext(tempfile.TemporaryDirectory(dir=target)))
+        self.scratch = Path(self.enterContext(tempfile.TemporaryDirectory(dir=target))).resolve()
 
     def test_scrub_compressed_ipv6(self):
         self.assertEqual(

@@ -7,8 +7,8 @@ use anyhow::{Context, ensure};
 use iroh::{EndpointId, PublicKey, SecretKey};
 use proto::fleet::{
     Certificate, Configuration, DeviceHello, HostEntry, Identity, Invite,
-    InviteSecret, NodeId, Peer, Pins, Role, Settings, SignedConfiguration,
-    SignedSnapshot, Snapshot,
+    InviteSecret, NodeId, Peer, Role, SignedConfiguration, SignedSnapshot,
+    Snapshot,
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -181,11 +181,6 @@ impl Membership {
             snapshot: state.current.config.snapshot.clone(),
             signature: state.current.public_signature.clone(),
         }
-    }
-
-    #[must_use]
-    pub async fn pins(&self) -> Pins {
-        self.state.read().await.current.config.pins.clone()
     }
 
     pub async fn peer(&self) -> Peer {
@@ -505,39 +500,6 @@ impl Membership {
         Ok(())
     }
 
-    pub(crate) async fn revision(&self) -> proto::fleet::Revision {
-        let state = self.state.read().await;
-        proto::fleet::Revision {
-            pins: state.current.config.pins.clone(),
-            settings: state.current.config.settings.clone(),
-        }
-    }
-
-    pub(super) async fn publish(
-        &self,
-        revision: proto::fleet::Revision,
-    ) -> anyhow::Result<()> {
-        ensure!(
-            agents::pin::valid_fleet_pins(&revision.pins),
-            "the revision needs a valid pin and SHA-256 for every supported platform"
-        );
-        let mut state = self.state.write().await;
-        let key = root(&state)?;
-        let mut config = next_config(&state)?;
-        if config.pins == revision.pins && config.settings == revision.settings
-        {
-            return Ok(());
-        }
-        config.pins = revision.pins;
-        config.settings = revision.settings;
-        let mut updated = state.clone();
-        updated.current = crypto::sign_config(&key, config)?;
-        self.persist(&updated)?;
-        self.replace(&mut state, updated);
-        drop(state);
-        Ok(())
-    }
-
     pub(super) async fn credentials(&self) -> proto::Roster {
         self.state.read().await.current.config.instances.clone()
     }
@@ -627,8 +589,6 @@ impl Membership {
                 hosts: vec![host],
                 revoked: Vec::new(),
             },
-            pins: agents::pin::fleet_defaults(),
-            settings: Settings::default(),
             instances: proto::Roster::default(),
         };
         let state = State {

@@ -79,7 +79,13 @@ pub fn app_server(
     });
     Invocation::of(
         cli(home).env.into_iter().chain(key).collect(),
-        &["app-server", "--listen", "stdio://"],
+        &[
+            "-c",
+            "analytics.enabled=false",
+            "app-server",
+            "--listen",
+            "stdio://",
+        ],
     )
 }
 
@@ -252,11 +258,23 @@ mod tests {
                         Var::Home(String::from("CODEX_HOME")),
                         Var::set("CONDUCTOR_CODEX_KEY", "sk-1"),
                     ]),
-                    args: path(&["app-server", "--listen", "stdio://"]),
+                    args: path(&[
+                        "-c",
+                        "analytics.enabled=false",
+                        "app-server",
+                        "--listen",
+                        "stdio://"
+                    ]),
                 },
                 Invocation {
                     env: Vec::new(),
-                    args: path(&["app-server", "--listen", "stdio://"]),
+                    args: path(&[
+                        "-c",
+                        "analytics.enabled=false",
+                        "app-server",
+                        "--listen",
+                        "stdio://"
+                    ]),
                 },
                 path(&["login", "--device-auth"]),
             )

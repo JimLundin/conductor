@@ -13,9 +13,9 @@ use zeroize::Zeroizing;
 
 use proto::fleet::CERTIFICATE_DOMAIN;
 pub(super) use proto::fleet::SNAPSHOT_DOMAIN;
-const CONFIGURATION: &[u8] = b"conductor fleet configuration v1";
-const STORE: &[u8] = b"conductor fleet local store v1";
-const BACKUP: &[u8] = b"conductor fleet root backup v1";
+const CONFIGURATION: &[u8] = b"conductor fleet configuration v2";
+const STORE: &[u8] = b"conductor fleet local store v2";
+const BACKUP: &[u8] = b"conductor fleet root backup v2";
 
 pub(super) fn sign_identity(
     key: &SecretKey,
@@ -197,4 +197,39 @@ pub(super) fn create_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     })?;
     crate::sync_dir(dir)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Context;
+
+    #[test]
+    fn previous_fleet_store_context_is_rejected() -> anyhow::Result<()> {
+        let key = [17; 32];
+        let old =
+            super::encrypt(&key, b"conductor fleet local store v1", &[7])?;
+        assert!(super::unseal::<u8>(&key, &old).is_err());
+        assert_eq!(super::unseal::<u8>(&key, &super::seal(&key, &7u8)?)?, 7);
+        Ok(())
+    }
+
+    #[test]
+    fn previous_fleet_backup_context_is_rejected() -> anyhow::Result<()> {
+        let binary = std::env::current_exe()?;
+        let directory = tempfile::tempdir_in(
+            binary.parent().context("test binary parent")?,
+        )?;
+        let path = directory.path().join("backup");
+        let phrase = b"synthetic test passphrase";
+        let salt = [18; 16];
+        let key = super::backup_key(phrase, &salt)?;
+        let old =
+            super::encrypt(&key, b"conductor fleet root backup v1", &[7])?;
+        std::fs::write(&path, salt.into_iter().chain(old).collect::<Vec<_>>())?;
+        assert!(super::recover::<u8>(&path, phrase).is_err());
+        let current = directory.path().join("current-backup");
+        super::backup(&current, phrase, &7u8)?;
+        assert_eq!(super::recover::<u8>(&current, phrase)?, 7);
+        Ok(())
+    }
 }

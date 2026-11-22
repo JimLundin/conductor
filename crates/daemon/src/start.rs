@@ -120,12 +120,7 @@ impl Providers {
         mode: Mode,
     ) -> Launcher {
         let span = tracing::info_span!("instance", id = %id);
-        let membership = self.fleet.borrow().clone();
-        let revision = match membership {
-            Some(fleet) => Some(fleet.revision().await),
-            None => None,
-        };
-        match prepare(&self.plugins, &self.data_dir, id, &instance, revision) {
+        match prepare(&self.plugins, &self.data_dir, id, &instance) {
             Ok(prepared) => {
                 run(prepared, &self.data_dir, instance, mode)
                     .instrument(span)
@@ -160,21 +155,13 @@ impl Providers {
         let proto::Account::Named(label) = &target.destination.account else {
             return None;
         };
-        let member = self.fleet.borrow().clone();
-        let revision = match member {
-            Some(fleet) => Some(fleet.revision().await),
-            None => None,
-        };
         let isolated = credential_home(&self.data_dir).ok()?;
         let prepared =
-            prepare(&self.plugins, isolated.path(), id, instance, revision)
-                .ok()?;
-        let provider = prepared.plugin.profile.provider;
+            prepare(&self.plugins, isolated.path(), id, instance).ok()?;
         let path = provider_program(
             prepared.settings.path,
             prepared.plugin.profile.pin,
             &self.data_dir,
-            prepared.revision.as_ref(),
         )
         .await
         .ok()?;
@@ -182,10 +169,6 @@ impl Providers {
             path,
             home: prepared.home,
             work: prepared.work,
-            fleet_flags: prepared
-                .revision
-                .as_ref()
-                .map(|fleet| fleet.settings.provider_flags(provider)),
         });
         runtime
             .credential_sign_in(&target.kind, label.clone(), link, code)?
@@ -198,26 +181,16 @@ impl Providers {
         id: &InstanceId,
         instance: &Instance,
     ) -> Result<Signing, String> {
-        let member = self.fleet.borrow().clone();
-        let preferences = match member {
-            Some(fleet) => Some(fleet.revision().await),
-            None => None,
-        };
         let Prepared {
             plugin,
             settings,
             home,
             work: _,
-            revision,
-        } = prepare(&self.plugins, &self.data_dir, id, instance, preferences)?;
+        } = prepare(&self.plugins, &self.data_dir, id, instance)?;
         let profile = plugin.profile;
-        let program = provider_program(
-            settings.path,
-            profile.pin,
-            &self.data_dir,
-            revision.as_ref(),
-        )
-        .await?;
+        let program =
+            provider_program(settings.path, profile.pin, &self.data_dir)
+                .await?;
         Ok(Signing {
             program,
             home,
@@ -517,7 +490,6 @@ struct Prepared {
     settings: Settings,
     home: Home,
     work: PathBuf,
-    revision: Option<proto::fleet::Revision>,
 }
 
 fn prepare(
@@ -525,7 +497,6 @@ fn prepare(
     data_dir: &Path,
     id: &InstanceId,
     instance: &Instance,
-    revision: Option<proto::fleet::Revision>,
 ) -> Result<Prepared, String> {
     let plugin = plugins
         .0
@@ -546,12 +517,6 @@ fn prepare(
             .model
             .as_ref()
             .map(|model| model.0.clone())
-            .or_else(|| {
-                revision
-                    .as_ref()
-                    .and_then(|fleet| fleet.settings.models.get(&id.provider))
-                    .map(|model| model.0.clone())
-            })
             .or_else(|| plugin.settings.model.clone()),
     };
     Ok(Prepared {
@@ -559,7 +524,6 @@ fn prepare(
         settings,
         home,
         work,
-        revision,
     })
 }
 
@@ -567,24 +531,11 @@ async fn provider_program(
     configured: Option<PathBuf>,
     pin: agents::pin::Cli,
     data_dir: &Path,
-    revision: Option<&proto::fleet::Revision>,
 ) -> Result<PathBuf, String> {
     match configured {
         Some(path) => Ok(path),
-        None => installed_program(pin, data_dir, revision).await,
+        None => install(pin, data_dir).await.map_err(|err| err.to_string()),
     }
-}
-
-async fn installed_program(
-    pin: agents::pin::Cli,
-    data_dir: &Path,
-    revision: Option<&proto::fleet::Revision>,
-) -> Result<PathBuf, String> {
-    match revision {
-        Some(fleet) => install::install_fleet(pin, data_dir, &fleet.pins).await,
-        None => install(pin, data_dir).await,
-    }
-    .map_err(|err| err.to_string())
 }
 
 /// Runs each step of `host::start` for the instance's CLI: the one its
@@ -600,7 +551,6 @@ async fn run(
         settings,
         home,
         work,
-        revision,
     } = prepared;
     let profile = plugin.profile;
     let mut next = host::start::start(
@@ -611,17 +561,15 @@ async fn run(
     loop {
         next = match next {
             Next::Install(installing) => installing.installed(
-                installed_program(profile.pin, data_dir, revision.as_ref())
-                    .await,
+                install(profile.pin, data_dir)
+                    .await
+                    .map_err(|err| err.to_string()),
             ),
             Next::Probe(path, probing) => {
                 let start = (plugin.instance)(Launch {
                     path: path.clone(),
                     home: home.clone(),
                     work: work.clone(),
-                    fleet_flags: revision.as_ref().map(|fleet| {
-                        fleet.settings.provider_flags(profile.provider)
-                    }),
                 });
                 let program = path.display().to_string();
                 let ran =

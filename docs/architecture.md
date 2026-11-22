@@ -776,11 +776,13 @@ standards and issues, cloned on every host. Built so far are home steps
 
 ## 6. Planned: the fleet
 
-The goal is one setup running in several places. Every host runs the same
-pinned Claude Code and Codex, installed and owned by `conductord`, with the
-same settings and the same credentials, except a Codex ChatGPT login,
-which each host signs in to once (§6.6). A host that joins the fleet can
-run independent sessions without a manual setup.
+The goal is one setup running in several places. Every host runs the
+Claude Code and Codex versions pinned by its Conductor release, installed
+and owned by `conductord`. The fleet shares credentials, except a Codex
+ChatGPT login, which each host signs in to once (§6.6). Model defaults are
+local to each host and instance; sessions can choose their own models.
+A host that joins the fleet can run independent sessions without manually
+copying the shared credentials.
 
 D4 still holds. A session belongs to its starting host for its lifetime,
 and its events are in that host's log. What the fleet shares is configuration, not sessions.
@@ -897,6 +899,11 @@ that:
 1. runs `tools/pin` for the new version;
 2. widens `SUPPORTED_VERSIONS` and `check_version`
    (`crates/claude/src/protocol.rs`) to include it.
+
+Deploy that tested Conductor release to each host to update its CLIs.
+Fleet configuration does not carry pins or provider settings, so there is
+one normal installation path for standalone and fleet hosts. Existing
+explicit CLI paths for tests and development still override the pin.
 
 `fixtures/claude` and `fixtures/codex` are recordings of the real CLIs, and
 the replay tests run against them. No tool in the repo re-records them, so a
@@ -1376,15 +1383,13 @@ FleetConfig {
     version: u64,                 // +1 on every change
     roster: Vec<HostEntry>,       // node id, name, home relay, added_at
     revoked: Vec<NodeId>,         // devices and hosts
-    pins: Pins,                   // §6.2
-    settings: FleetSettings,      // default models, effort, permission modes
     instances: Roster,            // with their API keys and Claude token; sent only to hosts
 }
 SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root key
 ```
 
 - **One writer.** Only the root host signs, so versions never fork and there
-  is nothing to merge. A change from the app (a new credential, a pin bump, a
+  is nothing to merge. A change from the app (a new credential or a
   new host) is a command to the root host, which applies it, bumps the
   version, signs and stores it.
 - **Any host serves it.** Every host keeps the newest valid config it has
@@ -1394,7 +1399,7 @@ SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root k
   pushes each new version to every host it can reach.
 - **An offline host catches up** the next time it reaches any other host,
   whether that is the root host or not. A host that comes back after a long
-  time adopts the newest version, installs any new pin and drops revoked
+  time adopts the newest version, applies shared credentials and drops revoked
   devices before it accepts a client.
 - **Only hosts get the credentials.** The whole config goes only to peers with a
   `Host` certificate, on the authenticated, encrypted `conductor-fleet`
@@ -1407,6 +1412,14 @@ The config is small (a few kilobytes) and changes rarely, so whole-document
 transfer is enough. There is no gossip protocol, CRDT or per-field merge.
 The single writer costs nothing extra here, because a signature from one key
 is already what makes the roster trustworthy.
+
+The fleet exchange uses `conductor-fleet/2`. Full configuration signatures,
+local sealed state and root backups use version 2 contexts; certificate
+and public snapshot contexts are unchanged. An unreadable `fleet.sealed`
+stops startup rather than switching the host to ticket authentication.
+Previous state and backups are set aside before initializing and enrolling
+a fresh fleet, as described in `docs/fleet.md`; no old format is decoded
+or converted.
 
 ### 6.6 Which subscriptions a fleet can share
 
@@ -1563,10 +1576,11 @@ record scope changes.
 | F6 | 2026-11-12 | **Codex device-code sign-in is on.** The owner enables it in ChatGPT's security settings. Without it, a ChatGPT login on a headless host needs an SSH tunnel to port 1455, which the phone can't open. |
 | F7 | 2026-11-12 | **Retired by F12.** Session transfers used Git bundles over iroh to avoid remote branch and CI side effects. |
 | F8 | 2026-11-12 | **Retired by F12.** Session transfers required matching CLI pins because transcript formats are internal. |
-| F9 | 2026-11-12 | **Codex analytics are off** (`analytics.enabled = false` in the hosts' private `config.toml`, [codex-src], verified), as a fleet setting the owner can change. |
+| F9 | 2026-11-12 | **Codex analytics are off** (`analytics.enabled = false`, [codex-src], verified). F13 removes the fleet override; every app-server launch supplies this setting. |
 | F10 | 2026-11-12 | **Retired by F12.** Session migration was sequenced after durability, worktrees, fleet and push. |
 | F11 | 2026-11-12 | **Experiments E1 to E5 may run** in the phase that needs each, in scratch config directories only, with the owner told before each run (§6.9). |
 | F12 | 2026-11-22 | **Sessions belong to their starting host for their lifetime.** Remove cross-host continuation, branch bundles, transcript archives and ownership transfer to reduce coordination and interface surface. Continue work elsewhere in a new session using the issue and its remote branch (§6.8). |
+| F13 | 2026-11-22 | **Provider CLI upgrades ship with tested Conductor releases.** Remove fleet pin/settings publishing and its alternate install and reconfiguration paths. Keep local model defaults, session choices, verified managed installs and shared credentials. Codex analytics stays off without a fleet override. |
 
 ### 6.11 Sources
 

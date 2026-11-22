@@ -2821,7 +2821,6 @@ dependencies = [
  "claude",
  "data-encoding",
  "n0-future",
- "proto",
  "reqwest 0.13.5",
  "rustls",
  "serde_json",
