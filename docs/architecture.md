@@ -695,7 +695,7 @@ standards and issues, cloned on every host. Built so far are home steps
   `<host>·<client>`. A change rewrites only its own lines of the file, so
   comments, keys, tables and sections a person added stay as written
   (Windows line ends become Unix ones). Both commands use
-  `Ledger::Receipt`, so a retry returns the saved response. A local
+  `host::log::Kind::Receipt`, so a retry returns the saved response. A local
   storage failure returns `IssueNotSaved` without keeping a receipt, so
   the same command identity can retry when storage recovers. When the host dies after safely recording a new
   issue and before committing its receipt, a retry recovers its original
@@ -1267,7 +1267,7 @@ paste }`, `Finishing`, `SignedIn`, `Failed { reason }` and
 beside its events. They are not events: the log neither stores nor replays
 them, and a new subscription starts with the sign-ins running then, taken
 in the same registry turn as the feed of later steps. The sign-in commands
-keep no receipt (`Ledger::Unrecorded`), and their answers are `Accepted`
+keep no receipt (`Route::ledger()` returns `None`), and their answers are `Accepted`
 or a rejection, so nothing in the ledger holds a code. The command log
 records the operation and command ID on receipt, and the ID and result
 category on completion. The host logs each step's name and a failure's

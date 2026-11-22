@@ -1213,8 +1213,14 @@ impl Call {
             }),
             Self::ModelList => json!({}),
             Self::ThreadStart(opts) => thread_params(None, opts),
-            Self::ThreadResume(thread, opts) => thread_params(Some(thread), opts),
-            Self::TurnStart { thread, text, effort } => {
+            Self::ThreadResume(thread, opts) => {
+                thread_params(Some(thread), opts)
+            }
+            Self::TurnStart {
+                thread,
+                text,
+                effort,
+            } => {
                 let mut params = json!({
                     "threadId": thread.0, "input": [{"type": "text", "text": text}],
                 });

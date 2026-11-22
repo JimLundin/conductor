@@ -374,7 +374,8 @@ fn form(
                             pressed: chosen.contains(&option.label),
                         })
                         .collect(),
-                    typed: draft.map_or_else(String::new, |kept| kept.typed(index)),
+                    typed: draft
+                        .map_or_else(String::new, |kept| kept.typed(index)),
                 }
             })
             .collect(),

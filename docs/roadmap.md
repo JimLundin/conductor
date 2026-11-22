@@ -163,8 +163,8 @@ What is built and what comes next. Update it in the commit that changes it.
   iPhone: session list, new session, session pane, phone layout. Browser e2e
   on the real daemon with fake CLIs. See [verification boundaries](verification.md).
 - **Several hosts in one app** (home step 2, architecture §8). The app keeps
-  every paired host in local storage (`conductor.hosts`, keyed by endpoint
-  id, with each host's name) and a live link to each at once. Obsolete
+  every paired host in its own local-storage record (`conductor.host.<id>`,
+  with each host's name) and a live link to each at once. Obsolete
   single-ticket records require pairing again. The list groups sessions by host
   under each one's name and link state, the credentials screen has a
   section per host with *Forget this host*, and a new session picks a host,
