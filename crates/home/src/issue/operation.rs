@@ -619,13 +619,6 @@ pub struct Listing {
 
 impl Listing {
     #[must_use]
-    pub fn for_project(project: &ProjectId) -> Self {
-        Self {
-            path: layout::issues(project),
-        }
-    }
-
-    #[must_use]
     pub fn creation_pattern(id: CommandId) -> String {
         format!("^{}$", crate::flow::file::comment_line(&edit_marker(id)))
     }

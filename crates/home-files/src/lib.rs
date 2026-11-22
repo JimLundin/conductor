@@ -7,7 +7,7 @@ use std::path::Path;
 
 use home::flow::PATH;
 use home::flow::snapshot::Snapshot;
-use home::layout::{self, IssuePath};
+use home::layout::{self, IssueLocation};
 use proto::ProjectId;
 
 /// The home whose root is `root`.
@@ -33,7 +33,7 @@ pub fn read(root: &Path) -> Snapshot {
 fn issues(
     root: &Path,
     project: &ProjectId,
-) -> Vec<(IssuePath, Result<String, String>)> {
+) -> Vec<(IssueLocation, Result<String, String>)> {
     let names = entries(&root.join(layout::issues(project)))
         .map(|(name, _)| name)
         .collect();

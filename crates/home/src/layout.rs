@@ -51,7 +51,7 @@ pub fn issue_stem(path: &str) -> Option<&str> {
 
 /// An issue file for a shell to read.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IssuePath {
+pub struct IssueLocation {
     pub project: ProjectId,
     /// Its name without `.md`.
     pub stem: String,
@@ -62,12 +62,15 @@ pub struct IssuePath {
 /// The issue files among the `names` in the issues folder of `project`, by
 /// name.
 #[must_use]
-pub fn issue_files(of: &ProjectId, mut names: Vec<String>) -> Vec<IssuePath> {
+pub fn issue_files(
+    of: &ProjectId,
+    mut names: Vec<String>,
+) -> Vec<IssueLocation> {
     names.sort();
     names
         .iter()
         .filter_map(|name| issue_stem(name))
-        .map(|stem| IssuePath {
+        .map(|stem| IssueLocation {
             project: of.clone(),
             stem: String::from(stem),
             path: issue_file(of, stem),
@@ -82,7 +85,7 @@ pub fn issue_files(of: &ProjectId, mut names: Vec<String>) -> Vec<IssuePath> {
 pub fn inputs(
     flow: Result<String, String>,
     projects: Vec<(String, Result<String, String>)>,
-    issues: Vec<(IssuePath, Result<String, String>)>,
+    issues: Vec<(IssueLocation, Result<String, String>)>,
 ) -> Inputs {
     let (files, unread) = issues.into_iter().fold(
         (Vec::new(), Vec::new()),

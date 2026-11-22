@@ -624,7 +624,7 @@ impl Actor {
         let issue = IssueId(ulid::Ulid::new().0);
         let request =
             self.issue_context(command).open(issue, new, &client.0)?;
-        let issue_dir = Listing::for_project(&request.project()).path;
+        let issue_dir = home::layout::issues(&request.project());
         if let Some(opened) = self.created(&issue_dir, command).await? {
             return Ok((opened, Vec::new()));
         }

@@ -1,6 +1,6 @@
 use proto::ProjectId;
 
-use super::{IssuePath, inputs, issue_files, issue_stem, project_file};
+use super::{IssueLocation, inputs, issue_files, issue_stem, project_file};
 use crate::flow::graph::File;
 
 fn alpha() -> ProjectId {
@@ -20,12 +20,12 @@ fn only_md_files_of_a_project_s_issues_folder_are_issues_by_name() {
     assert_eq!(
         issue_files(&alpha(), names),
         [
-            IssuePath {
+            IssueLocation {
                 project: alpha(),
                 stem: String::from("a"),
                 path: String::from("projects/alpha/issues/a.md"),
             },
-            IssuePath {
+            IssueLocation {
                 project: alpha(),
                 stem: String::from("b"),
                 path: String::from("projects/alpha/issues/b.md"),
@@ -42,7 +42,7 @@ fn an_issue_s_stem_is_its_file_s_name_without_md() {
 
 #[test]
 fn an_issue_file_that_couldn_t_be_read_is_unread_by_its_path() {
-    let [read, failed] = ["a", "b"].map(|stem| IssuePath {
+    let [read, failed] = ["a", "b"].map(|stem| IssueLocation {
         project: alpha(),
         stem: String::from(stem),
         path: format!("projects/alpha/issues/{stem}.md"),
