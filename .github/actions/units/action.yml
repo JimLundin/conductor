@@ -48,6 +48,12 @@ runs:
         path: standards
         persist-credentials: false
 
+    # Units' keys hold the versions of the tools they run, so every tool
+    # below installs the standards' pin, and a pass recorded elsewhere holds.
+    - name: Pin the tools to the standards' tools.env
+      shell: bash
+      run: grep -E '^[A-Z_]+=' standards/tools.env | tee -a "$GITHUB_ENV"
+
     - name: Install the toolchain from rust-toolchain.toml
       shell: bash
       working-directory: conductor
@@ -71,20 +77,13 @@ runs:
 
     - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       with:
-        version: v0.19.0
+        version: v${{ env.SCCACHE }}
 
+    # install-action installs tools it doesn't know, such as dioxus-cli,
+    # through cargo-binstall.
     - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
       with:
-        tool: nextest@0.9.152
-
-    - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
-      with:
-        version: v1.27.0
-
-    - name: Install dx 0.7.10
-      shell: bash
-      working-directory: conductor
-      run: cargo binstall dioxus-cli@0.7.10 --no-confirm
+        tool: nextest@${{ env.NEXTEST }},dioxus-cli@${{ env.DX }}
 
     - id: decisions
       uses: actions/cache@v6
@@ -103,19 +102,17 @@ runs:
 
     - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
       with:
-        version: 0.13.8
+        version: ${{ env.UV }}
         enable-cache: true
         cache-dependency-glob: standards/checks/uv.lock
 
     - uses: actions/setup-python@v7
       with:
-        python-version: "3.14"
+        python-version: ${{ env.PYTHON }}
 
-    # The TypeScript units' keys read `node --version`, so this is the
-    # WSL host's node, whose passes then hold here.
     - uses: actions/setup-node@v7
       with:
-        node-version: 26.13.1
+        node-version: ${{ env.NODE }}
 
     - uses: actions/cache@v6
       with:
