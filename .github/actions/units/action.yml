@@ -208,4 +208,4 @@ runs:
         sccache --show-stats
         log=$RUNNER_TEMP/sccache.log
         grep -c "Error executing cache write" "$log" || true
-        grep -E "Error executing cache write|WARN|ERROR" "$log" | head -n 40 || true
+        grep -E "Error executing cache write|write failed|ERROR" "$log" | sed "s/[0-9a-f]\{64\}/<hash>/g" | sort | uniq -c | sort -rn | head -n 40 || true
