@@ -16,6 +16,7 @@ use toml::{Table, Value};
 
 use crate::prelude::*;
 
+pub mod eval;
 pub mod graph;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
