@@ -86,14 +86,18 @@ pub struct Problem {
 pub fn read(flow: &Flow, files: &[File]) -> Graph {
     let mut issues = Vec::new();
     let mut problems = Vec::new();
+    let mut unread = BTreeSet::new();
     for file in files {
         match issue(flow, file) {
             Ok(read_issue) => issues.push(read_issue),
-            Err(problem) => problems.push(problem),
+            Err(problem) => {
+                unread.insert(file.stem.as_str());
+                problems.push(problem);
+            }
         }
     }
     issues.sort_by(|one, other| one.id.cmp(&other.id));
-    problems.extend(references(flow, &issues));
+    problems.extend(references(flow, &issues, &unread));
     problems.extend(cycles(flow, &issues));
     Graph { issues, problems }
 }
@@ -310,8 +314,13 @@ fn entry_of(line: &str) -> Entry {
 }
 
 /// Each reference to no issue, or to one of a kind its relation doesn't
-/// allow.
-fn references(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
+/// allow. An issue whose file has a problem of its own still exists, so a
+/// reference to it is left to that problem.
+fn references(
+    flow: &Flow,
+    issues: &[Issue],
+    unread: &BTreeSet<&str>,
+) -> Vec<Problem> {
     let by_id: BTreeMap<&str, &Issue> = issues
         .iter()
         .map(|issue| (issue.id.as_str(), issue))
@@ -326,6 +335,7 @@ fn references(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
                 .map_or(&[][..], |relation| relation.to.as_slice());
             for id in ids {
                 let message = match by_id.get(id.as_str()) {
+                    None if unread.contains(id.as_str()) => None,
                     None => Some(format!("{id} is no issue")),
                     Some(target)
                         if !allowed.is_empty()

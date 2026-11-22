@@ -216,6 +216,35 @@ fn a_reference_may_cross_projects_but_must_reach_an_issue_of_its_kind() {
 }
 
 #[test]
+fn a_reference_to_an_issue_that_has_its_own_problem_is_left_to_it() {
+    let mut broken = spec();
+    broken.text = broken
+        .text
+        .replace("status = \"active\"", "status = \"in-progress\"");
+    let graph = read(
+        &flow(),
+        &[
+            broken,
+            task(
+                "home",
+                &format!(
+                    "parent = \"{SPEC}\"
+"
+                ),
+            ),
+        ],
+    );
+    assert_eq!(
+        problems(&graph),
+        Vec::from([problem(
+            &format!("conductor/{SPEC}"),
+            "status",
+            "no status is called \"in-progress\"",
+        )])
+    );
+}
+
+#[test]
 fn a_cycle_where_the_relation_forbids_one_is_a_problem() {
     let one = task("home", &format!("blocked_by = [\"{DECISION}\"]\n"));
     let other = file(
