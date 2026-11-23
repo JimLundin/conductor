@@ -41,4 +41,3 @@ jobs:
       - uses: ./conductor/.github/actions/units
         with:
           check-args: ${{ inputs.check-args }}
-          standards-ref: earned-passes
