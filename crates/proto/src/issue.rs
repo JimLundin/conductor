@@ -27,21 +27,11 @@ use crate::ProjectId;
     Serialize,
     Deserialize,
 )]
-pub struct IssueId(pub u128);
+pub struct IssueId(#[serde(with = "crate::json::ulid")] pub u128);
 
 impl fmt::Display for IssueId {
-    /// Crockford's base 32 in 26 digits, the first carrying the top 3 bits.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-        (0..26u32).rev().try_for_each(|place| {
-            let digit = (self.0 >> (place * 5)) & 31;
-            let byte = usize::try_from(digit)
-                .ok()
-                .and_then(|at| DIGITS.get(at))
-                .copied()
-                .unwrap_or(b'0');
-            fmt::Write::write_char(out, char::from(byte))
-        })
+        crate::json::ulid::write(self.0, out)
     }
 }
 

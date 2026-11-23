@@ -7,25 +7,53 @@ use chacha20poly1305::{
     aead::{Aead, KeyInit, Payload},
 };
 use iroh::{PublicKey, SecretKey, Signature};
-use proto::fleet::{Certificate, Configuration, Identity, SignedConfiguration};
+use proto::fleet::{
+    Certificate, Configuration, Identity, Signed, SignedConfiguration,
+};
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
 
-use proto::fleet::CERTIFICATE_DOMAIN;
-pub(super) use proto::fleet::SNAPSHOT_DOMAIN;
-const CONFIGURATION: &[u8] = b"conductor fleet configuration v2";
-const STORE: &[u8] = b"conductor fleet local store v2";
-const BACKUP: &[u8] = b"conductor fleet root backup v2";
+const CONFIGURATION: &[u8] = b"conductor fleet configuration v3";
+const STORE: &[u8] = b"conductor fleet local store v3";
+const BACKUP: &[u8] = b"conductor fleet root backup v3";
 
 pub(super) fn sign_identity(
     key: &SecretKey,
-    identity: Identity,
+    identity: &Identity,
 ) -> anyhow::Result<Certificate> {
-    let signature = sign(key, CERTIFICATE_DOMAIN, &identity)?;
-    Ok(Certificate {
-        identity,
-        signature,
-    })
+    sign_payload(key, identity)
+}
+
+/// `value` as JSON, signed by `key` over its domain then those bytes.
+fn sign_payload<T: proto::fleet::Payload>(
+    key: &SecretKey,
+    value: &T,
+) -> anyhow::Result<Signed<T>> {
+    let payload = serde_json::to_vec(value)?;
+    let signature = key.sign(&message::<T>(&payload)).to_bytes().to_vec();
+    Ok(Signed::new(payload, signature))
+}
+
+/// The value `signed` holds, parsed only once its signature by `key`
+/// verifies over the bytes it carries.
+pub(super) fn open<T: proto::fleet::Payload>(
+    key: PublicKey,
+    signed: &Signed<T>,
+) -> anyhow::Result<T> {
+    let signature = Signature::from_bytes(
+        signed
+            .signature
+            .as_slice()
+            .try_into()
+            .context("invalid signature length")?,
+    );
+    key.verify(&message::<T>(&signed.payload), &signature)
+        .context("the signature does not verify")?;
+    Ok(serde_json::from_slice(&signed.payload)?)
+}
+
+fn message<T: proto::fleet::Payload>(payload: &[u8]) -> Vec<u8> {
+    T::DOMAIN.iter().chain(payload).copied().collect()
 }
 
 pub(super) fn sign_config(
@@ -37,24 +65,12 @@ pub(super) fn sign_config(
         "fleet configuration is too large"
     );
     let signature = sign(key, CONFIGURATION, &config)?;
-    let public_signature = sign(key, SNAPSHOT_DOMAIN, &config.snapshot)?;
+    let public = sign_payload(key, &config.snapshot)?;
     Ok(SignedConfiguration {
         config,
         signature,
-        public_signature,
+        public,
     })
-}
-
-pub(super) fn verify_identity(
-    key: PublicKey,
-    certificate: &Certificate,
-) -> anyhow::Result<()> {
-    verify(
-        key,
-        CERTIFICATE_DOMAIN,
-        &certificate.identity,
-        &certificate.signature,
-    )
 }
 
 pub(super) fn verify_config(
@@ -62,12 +78,11 @@ pub(super) fn verify_config(
     signed: &SignedConfiguration,
 ) -> anyhow::Result<()> {
     verify(key, CONFIGURATION, &signed.config, &signed.signature)?;
-    verify(
-        key,
-        SNAPSHOT_DOMAIN,
-        &signed.config.snapshot,
-        &signed.public_signature,
-    )
+    ensure!(
+        open(key, &signed.public)? == signed.config.snapshot,
+        "the public snapshot is not the configuration's"
+    );
+    Ok(())
 }
 
 fn sign<T: Serialize>(
@@ -79,7 +94,7 @@ fn sign<T: Serialize>(
     Ok(key.sign(&bytes).to_bytes().to_vec())
 }
 
-pub(super) fn verify<T: Serialize>(
+fn verify<T: Serialize>(
     key: PublicKey,
     domain: &[u8],
     value: &T,
@@ -202,12 +217,104 @@ pub(super) fn create_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
+    use iroh::SecretKey;
+    use proto::fleet::{HostEntry, Identity, Role, Snapshot};
+
+    use super::{open, sign_identity, sign_payload};
+
+    fn key() -> SecretKey {
+        SecretKey::from_bytes(&[3; 32])
+    }
+
+    /// The same payload with one byte changed, here a letter of the name.
+    fn changed(payload: &[u8], from: &[u8], to: u8) -> anyhow::Result<Vec<u8>> {
+        let at = payload
+            .windows(from.len())
+            .position(|bytes| bytes == from)
+            .context("the payload holds the text")?;
+        let mut changed = payload.to_vec();
+        *changed.get_mut(at).context("in range")? = to;
+        Ok(changed)
+    }
+
+    #[test]
+    fn a_browser_certificate_verifies_over_the_json_it_was_signed_as()
+    -> anyhow::Result<()> {
+        let identity = Identity {
+            fleet: [1; 32],
+            device: [2; 32],
+            name: String::from("phone"),
+            role: Role::Owner,
+        };
+        let certificate = sign_identity(&key(), &identity)?;
+        let ones = ["1"; 32].join(",");
+        let twos = ["2"; 32].join(",");
+        assert_eq!(
+            String::from_utf8(certificate.payload.clone())?,
+            format!(
+                r#"{{"fleet":[{ones}],"device":[{twos}],"name":"phone","role":"Owner"}}"#
+            )
+        );
+        assert_eq!(open(key().public(), &certificate)?, identity);
+
+        let mut renamed = certificate.clone();
+        renamed.payload = changed(&certificate.payload, b"phone", b'P')?;
+        assert_eq!(
+            open(key().public(), &renamed).map_err(|error| error.to_string()),
+            Err(String::from("the signature does not verify"))
+        );
+        let mut spaced = certificate.clone();
+        spaced.payload =
+            b" ".iter().chain(&certificate.payload).copied().collect();
+        assert!(open(key().public(), &spaced).is_err());
+        let other = SecretKey::from_bytes(&[4; 32]).public();
+        assert!(open(other, &certificate).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_fleet_snapshot_verifies_over_the_json_it_was_signed_as()
+    -> anyhow::Result<()> {
+        let snapshot = Snapshot {
+            fleet: [1; 32],
+            root: [2; 32],
+            version: 7,
+            hosts: Vec::from([HostEntry {
+                node: [2; 32],
+                name: String::from("desk"),
+                relay: String::from("https://relay.example/"),
+                added_at: 9,
+            }]),
+            revoked: Vec::new(),
+        };
+        let signed = sign_payload(&key(), &snapshot)?;
+        assert_eq!(open(key().public(), &signed)?, snapshot);
+        let mut renamed = signed.clone();
+        renamed.payload = changed(&signed.payload, b"desk", b'D')?;
+        assert_eq!(
+            open(key().public(), &renamed).map_err(|error| error.to_string()),
+            Err(String::from("the signature does not verify"))
+        );
+        let certificate = sign_identity(
+            &key(),
+            &Identity {
+                fleet: [1; 32],
+                device: [2; 32],
+                name: String::from("desk"),
+                role: Role::Host,
+            },
+        )?;
+        let mut posing = signed;
+        posing.signature = certificate.signature;
+        assert!(open(key().public(), &posing).is_err());
+        Ok(())
+    }
 
     #[test]
     fn previous_fleet_store_context_is_rejected() -> anyhow::Result<()> {
         let key = [17; 32];
         let old =
-            super::encrypt(&key, b"conductor fleet local store v1", &[7])?;
+            super::encrypt(&key, b"conductor fleet local store v2", &[7])?;
         assert!(super::unseal::<u8>(&key, &old).is_err());
         assert_eq!(super::unseal::<u8>(&key, &super::seal(&key, &7u8)?)?, 7);
         Ok(())
@@ -224,7 +331,7 @@ mod tests {
         let salt = [18; 16];
         let key = super::backup_key(phrase, &salt)?;
         let old =
-            super::encrypt(&key, b"conductor fleet root backup v1", &[7])?;
+            super::encrypt(&key, b"conductor fleet root backup v2", &[7])?;
         std::fs::write(&path, salt.into_iter().chain(old).collect::<Vec<_>>())?;
         assert!(super::recover::<u8>(&path, phrase).is_err());
         let current = directory.path().join("current-backup");

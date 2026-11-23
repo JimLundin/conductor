@@ -90,7 +90,7 @@ async fn loopback_join_replays_for_one_host_and_propagates_revocations()
     )
     .await?;
 
-    let hello = check_owner_proof(
+    let (hello, owner) = check_owner_proof(
         &root,
         &member,
         &root_public,
@@ -109,7 +109,7 @@ async fn loopback_join_replays_for_one_host_and_propagates_revocations()
         &root_endpoint,
         &member_endpoint,
         &outsider,
-        hello.certificate.identity.device,
+        owner,
     )
     .await?;
     assert!(member.admit_device(outsider.id(), &hello).await.is_err());
@@ -245,7 +245,7 @@ async fn check_owner_proof(
     root_id: EndpointId,
     member_id: EndpointId,
     outsider: EndpointId,
-) -> anyhow::Result<DeviceHello> {
+) -> anyhow::Result<(DeviceHello, proto::fleet::NodeId)> {
     let owner = SecretKey::from_bytes(&[4; 32]);
     let owner_cert = root
         .sign_owner(*owner.public().as_bytes(), "phone".into())
@@ -259,9 +259,19 @@ async fn check_owner_proof(
         certificate: owner_cert,
         proof: owner.sign(&proof).to_bytes().to_vec(),
     };
-    member.admit_device(outsider, &hello).await?;
+    let admitted = member.admit_device(outsider, &hello).await?;
+    assert_eq!(admitted.name, "phone");
     assert!(member.admit_device(root_id, &hello).await.is_err());
-    Ok(hello)
+    let mut renamed = hello.clone();
+    let at = renamed
+        .certificate
+        .payload
+        .windows(b"phone".len())
+        .position(|bytes| bytes == b"phone")
+        .context("the certificate's JSON names the browser")?;
+    renamed.certificate.payload[at] = b'P';
+    assert!(member.admit_device(outsider, &renamed).await.is_err());
+    Ok((hello, admitted.device))
 }
 
 async fn start_witness(

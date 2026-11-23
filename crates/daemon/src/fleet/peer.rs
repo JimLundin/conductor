@@ -479,9 +479,7 @@ fn validate_host(host: &HostEntry) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn read<T: serde::de::DeserializeOwned>(
-    recv: &mut RecvStream,
-) -> anyhow::Result<T> {
+async fn read<T: proto::Frame>(recv: &mut RecvStream) -> anyhow::Result<T> {
     wire::read_bounded(recv, MAX_FRAME)
         .await?
         .context("fleet stream closed before its reply")

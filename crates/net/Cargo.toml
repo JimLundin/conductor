@@ -15,7 +15,6 @@ iroh = { workspace = true, features = ["tls-ring"] }
 iroh-base.workspace = true
 n0-future.workspace = true
 proto = { path = "../proto" }
-serde.workspace = true
 thiserror.workspace = true
 tokio = { version = "1.54.1", default-features = false, features = ["sync", "macros"] }
 tracing = { workspace = true, features = ["std"] }

@@ -8,13 +8,13 @@
 //! closes. A [`Open::Subscribe`] stream then carries [`Feed`] frames, the
 //! events and the sign-ins, until either side closes it.
 //!
-//! Frame bodies are postcard, which is not self-describing. A variant is
-//! its index and a field is its position, so a reordered enum or struct
-//! decodes as the wrong value with no error, and a variant added at the end
-//! fails an old peer mid-stream. So any change to a type reachable from
-//! [`Open`], [`HelloReply`], [`CommandResult`] or [`Feed`] bumps [`ALPN`],
-//! including a variant added at the end. Renaming a variant or a field
-//! doesn't change the bytes and needs no bump.
+//! Frame bodies on this link are JSON (`frame`), which names each variant
+//! and field: a renamed, added or removed one fails an older peer. So any
+//! change to a type reachable from [`Open`], [`HelloReply`],
+//! [`CommandResult`] or [`Feed`] bumps [`ALPN`], so that peer fails at the
+//! handshake instead of mid-stream. Host stores and traffic between hosts
+//! are postcard, where a variant is its index and a field its position, so
+//! there a reordered type decodes as the wrong value with no error.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -28,6 +28,7 @@ mod frame;
 mod home;
 mod instance;
 mod issue;
+mod json;
 mod sign_in;
 mod ticket;
 
@@ -44,7 +45,9 @@ pub use calendar::civil;
 pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
-pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
+pub use frame::{
+    Codec, Frame, FrameError, HEADER_LEN, body_len, decode, encode,
+};
 pub use home::{
     Checkout, Cloning, Home, HomeSync, Origin, Project, ProjectId, StartAt,
 };
@@ -61,7 +64,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/36";
+pub const ALPN: &[u8] = b"conductor/37";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,7 +101,7 @@ impl HostSeq {
 /// Identifies one incarnation of a host's event log. A cursor from another
 /// epoch is meaningless, so the client starts over from seq 0 (§8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Epoch(pub u64);
+pub struct Epoch(#[serde(with = "json::decimal")] pub u64);
 
 /// A client-generated, fleet-unique 128-bit random id for idempotent retries.
 #[derive(
@@ -113,7 +116,7 @@ pub struct Epoch(pub u64);
     Serialize,
     Deserialize,
 )]
-pub struct CommandId(pub u128);
+pub struct CommandId(#[serde(with = "json::ulid")] pub u128);
 
 /// An approval request or a question, assigned by the host per session, in
 /// order.
@@ -375,7 +378,7 @@ pub struct Subscribe {
     Serialize,
     Deserialize,
 )]
-pub struct SessionId(pub u128);
+pub struct SessionId(#[serde(with = "json::ulid")] pub u128);
 
 /// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

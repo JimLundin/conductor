@@ -1,10 +1,10 @@
-//! Frame I/O on iroh streams, with this crate's codec.
+//! Frame I/O on iroh streams, each message in its link's codec
+//! ([`proto::Frame`]).
 
 use iroh::endpoint::{
     ClosedStream, ReadExactError, RecvStream, SendStream, WriteError,
 };
-use serde::Serialize;
-use serde::de::DeserializeOwned;
+use proto::Frame;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {
@@ -28,7 +28,7 @@ pub enum WireError {
 ///
 /// [`WireError::Frame`] when `msg` doesn't encode, and
 /// [`WireError::Write`] when the stream fails.
-pub async fn write<T: Serialize + Sync>(
+pub async fn write<T: Frame + Sync>(
     send: &mut SendStream,
     msg: &T,
 ) -> Result<(), WireError> {
@@ -42,7 +42,7 @@ pub async fn write<T: Serialize + Sync>(
 ///
 /// [`WireError::Read`] when the stream fails or ends inside a frame, and
 /// [`WireError::Frame`] when the frame doesn't decode.
-pub async fn read<T: DeserializeOwned>(
+pub async fn read<T: Frame>(
     recv: &mut RecvStream,
 ) -> Result<Option<T>, WireError> {
     read_bounded(recv, usize::MAX).await
@@ -54,7 +54,7 @@ pub async fn read<T: DeserializeOwned>(
 ///
 /// Returns the read or decoding error, or rejects an oversized frame before
 /// allocating its body.
-pub async fn read_bounded<T: DeserializeOwned>(
+pub async fn read_bounded<T: Frame>(
     recv: &mut RecvStream,
     limit: usize,
 ) -> Result<Option<T>, WireError> {

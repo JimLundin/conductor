@@ -111,11 +111,14 @@ impl Membership {
         certificate: &Certificate,
     ) -> anyhow::Result<()> {
         let state = self.state.read().await;
+        let identity =
+            admit(&state.current.config.snapshot, certificate, Role::Host)?;
+        drop(state);
         ensure!(
-            certificate.identity.device == *remote.as_bytes(),
+            identity.device == *remote.as_bytes(),
             "certificate does not name the peer"
         );
-        admit(&state.current.config.snapshot, certificate, Role::Host)
+        Ok(())
     }
 
     #[must_use]
@@ -135,23 +138,25 @@ impl Membership {
     ) -> anyhow::Result<()> {
         let state = self.state.read().await;
         admit(&state.current.config.snapshot, certificate, Role::Owner)
+            .map(drop)
     }
 
+    /// The browser's identity, once its certificate and its proof for this
+    /// connection verify.
     pub(crate) async fn admit_device(
         &self,
         remote: EndpointId,
         hello: &DeviceHello,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Identity> {
         use iroh::Signature;
 
         let state = self.state.read().await;
         let snapshot = &state.current.config.snapshot;
         ensure!(self.fresh(), "waiting to check fleet configuration");
         ensure!(state.revoked.is_none(), "host membership has been revoked");
-        admit(snapshot, &state.certificate, Role::Host)?;
-        admit(snapshot, &hello.certificate, Role::Owner)?;
+        let host = admit(snapshot, &state.certificate, Role::Host)?.device;
+        let owner = admit(snapshot, &hello.certificate, Role::Owner)?;
         let fleet = snapshot.fleet;
-        let host = state.certificate.identity.device;
         drop(state);
         let proof =
             proto::fleet::device_proof(&fleet, &host, remote.as_bytes());
@@ -162,9 +167,8 @@ impl Membership {
                 .try_into()
                 .context("invalid device proof")?,
         );
-        PublicKey::from_bytes(&hello.certificate.identity.device)?
-            .verify(&proof, &signature)?;
-        Ok(())
+        PublicKey::from_bytes(&owner.device)?.verify(&proof, &signature)?;
+        Ok(owner)
     }
 
     #[must_use]
@@ -174,13 +178,21 @@ impl Membership {
 
     pub(super) async fn public_snapshot(&self) -> SignedSnapshot {
         let state = self.state.read().await;
-        if let Some(revoked) = &state.revoked {
-            return revoked.clone();
-        }
-        SignedSnapshot {
-            snapshot: state.current.config.snapshot.clone(),
-            signature: state.current.public_signature.clone(),
-        }
+        state
+            .revoked
+            .as_ref()
+            .unwrap_or(&state.current.public)
+            .clone()
+    }
+
+    /// This host's identity in the fleet.
+    ///
+    /// # Errors
+    ///
+    /// If its stored certificate no longer verifies.
+    pub async fn identity(&self) -> anyhow::Result<Identity> {
+        let state = self.state.read().await;
+        local(&state)
     }
 
     pub async fn peer(&self) -> Peer {
@@ -199,25 +211,16 @@ impl Membership {
         let state = self.state.read().await;
         let config = &state.current;
         let snapshot = &config.config.snapshot;
-        let identity = &certificate.identity;
-        if identity.device != *remote.as_bytes()
-            || identity.fleet != snapshot.fleet
-            || identity.role != Role::Host
-            || !snapshot.revoked.contains(remote.as_bytes())
-        {
-            return None;
-        }
-        let signed = SignedSnapshot {
-            snapshot: snapshot.clone(),
-            signature: config.public_signature.clone(),
-        };
+        let fleet = PublicKey::from_bytes(&snapshot.fleet).ok()?;
+        let revoked = snapshot.revoked.contains(remote.as_bytes());
+        let public = config.public.clone();
         drop(state);
-        crypto::verify_identity(
-            PublicKey::from_bytes(&signed.snapshot.fleet).ok()?,
-            certificate,
-        )
-        .ok()?;
-        Some(signed)
+        let identity = crypto::open(fleet, certificate).ok()?;
+        (revoked
+            && identity.device == *remote.as_bytes()
+            && identity.fleet == *fleet.as_bytes()
+            && identity.role == Role::Host)
+            .then_some(public)
     }
 
     pub(super) async fn adopt_revocation(
@@ -226,22 +229,16 @@ impl Membership {
     ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         let current = &state.current.config.snapshot;
-        let snapshot = &revoked.snapshot;
+        let snapshot =
+            crypto::open(PublicKey::from_bytes(&current.fleet)?, &revoked)?;
+        let device = local(&state)?.device;
         ensure!(
             current.fleet == snapshot.fleet
                 && current.root == snapshot.root
                 && snapshot.version > current.version
-                && snapshot
-                    .revoked
-                    .contains(&state.certificate.identity.device),
+                && snapshot.revoked.contains(&device),
             "invalid fleet revocation"
         );
-        crypto::verify(
-            PublicKey::from_bytes(&current.fleet)?,
-            crypto::SNAPSHOT_DOMAIN,
-            snapshot,
-            &revoked.signature,
-        )?;
         let mut updated = state.clone();
         updated.revoked = Some(revoked);
         self.persist(&updated)?;
@@ -340,7 +337,12 @@ impl Membership {
             .context("invitation disappeared")?;
         if let Some(existing) = &entry.admitted {
             ensure!(
-                existing.identity.device == host.node,
+                crypto::open(
+                    PublicKey::from_bytes(&snapshot.fleet)?,
+                    existing
+                )?
+                .device
+                    == host.node,
                 "invitation was already used"
             );
             return Ok((existing.clone(), state.current.clone()));
@@ -351,7 +353,7 @@ impl Membership {
         );
         let certificate = crypto::sign_identity(
             &key,
-            Identity {
+            &Identity {
                 fleet: snapshot.fleet,
                 device: host.node,
                 name: host.name.clone(),
@@ -397,7 +399,7 @@ impl Membership {
         }
         let certificate = crypto::sign_identity(
             &key,
-            Identity {
+            &Identity {
                 fleet: snapshot.fleet,
                 device: host.node,
                 name: host.name.clone(),
@@ -443,10 +445,10 @@ impl Membership {
             &signed,
         )?;
         ensure!(
-            certificate.identity.device == *local.as_bytes(),
+            admit(snapshot, &certificate, Role::Host)?.device
+                == *local.as_bytes(),
             "certificate does not name this host"
         );
-        admit(snapshot, &certificate, Role::Host)?;
         Self::install(
             data,
             State {
@@ -552,7 +554,7 @@ impl Membership {
         PublicKey::from_bytes(&device)?;
         crypto::sign_identity(
             &key,
-            Identity {
+            &Identity {
                 fleet,
                 device,
                 name,
@@ -592,7 +594,7 @@ impl Membership {
             instances: proto::Roster::default(),
         };
         let state = State {
-            certificate: crypto::sign_identity(&root, identity)?,
+            certificate: crypto::sign_identity(&root, &identity)?,
             current: crypto::sign_config(&root, config)?,
             root_key: Some(*seed),
             invites: Vec::new(),
@@ -622,10 +624,10 @@ impl Membership {
         );
         crypto::verify_config(PublicKey::from_bytes(&invite.fleet)?, &signed)?;
         ensure!(
-            certificate.identity.device == *local.as_bytes(),
+            admit(snapshot, &certificate, Role::Host)?.device
+                == *local.as_bytes(),
             "certificate does not name this host"
         );
-        admit(snapshot, &certificate, Role::Host)?;
         Self::install(
             data,
             State {
@@ -669,7 +671,7 @@ impl Membership {
             .context("missing root host")?;
         let certificate = crypto::sign_identity(
             &root,
-            Identity {
+            &Identity {
                 fleet: snapshot.fleet,
                 device: snapshot.root,
                 name: host.name.clone(),
@@ -731,12 +733,15 @@ impl Membership {
     }
 
     fn replace(&self, state: &mut State, updated: State) {
+        let current = &updated.current.config.snapshot;
         let version = updated
             .revoked
             .as_ref()
-            .map_or(updated.current.config.snapshot.version, |revoked| {
-                revoked.snapshot.version
-            });
+            .and_then(|revoked| {
+                let key = PublicKey::from_bytes(&current.fleet).ok()?;
+                crypto::open(key, revoked).ok()
+            })
+            .map_or(current.version, |revoked| revoked.version);
         *state = updated;
         self.versions.send_if_modified(|observed| {
             if *observed == version {
@@ -761,13 +766,20 @@ fn verify_local(state: &State, local: EndpointId) -> anyhow::Result<()> {
     let snapshot = &state.current.config.snapshot;
     let root = PublicKey::from_bytes(&snapshot.fleet)?;
     crypto::verify_config(root, &state.current)?;
-    crypto::verify_identity(root, &state.certificate)?;
-    let identity = &state.certificate.identity;
+    let identity = crypto::open(root, &state.certificate)?;
     ensure!(
-        local_identity(identity, snapshot, local),
+        local_identity(&identity, snapshot, local),
         "fleet membership belongs to another host"
     );
-    verify_root(state, root)
+    verify_root(state, root, &identity)
+}
+
+/// This host's identity, from its certificate.
+fn local(state: &State) -> anyhow::Result<Identity> {
+    crypto::open(
+        PublicKey::from_bytes(&state.current.config.snapshot.fleet)?,
+        &state.certificate,
+    )
 }
 
 fn local_identity(
@@ -780,12 +792,16 @@ fn local_identity(
         && identity.role == Role::Host
 }
 
-fn verify_root(state: &State, expected: PublicKey) -> anyhow::Result<()> {
+fn verify_root(
+    state: &State,
+    expected: PublicKey,
+    identity: &Identity,
+) -> anyhow::Result<()> {
     if let Some(seed) = state.root_key {
         let snapshot = &state.current.config.snapshot;
         ensure!(
             SecretKey::from_bytes(&seed).public() == expected
-                && snapshot.root == state.certificate.identity.device,
+                && snapshot.root == identity.device,
             "invalid local root key"
         );
     }
@@ -870,12 +886,15 @@ fn store_key(data: &Path) -> anyhow::Result<Zeroizing<[u8; 32]>> {
     crate::load_or_create_secret(data, "fleet-store.key").map(Zeroizing::new)
 }
 
+/// The identity `certificate` holds, once it verifies against the fleet
+/// and names a current member of `role`.
 fn admit(
     snapshot: &Snapshot,
     certificate: &Certificate,
     role: Role,
-) -> anyhow::Result<()> {
-    let identity = &certificate.identity;
+) -> anyhow::Result<Identity> {
+    let identity =
+        crypto::open(PublicKey::from_bytes(&snapshot.fleet)?, certificate)?;
     ensure!(
         identity.fleet == snapshot.fleet && identity.role == role,
         "wrong fleet or role"
@@ -893,10 +912,7 @@ fn admit(
             "host is outside the roster"
         );
     }
-    crypto::verify_identity(
-        PublicKey::from_bytes(&snapshot.fleet)?,
-        certificate,
-    )
+    Ok(identity)
 }
 
 fn root(state: &State) -> anyhow::Result<SecretKey> {

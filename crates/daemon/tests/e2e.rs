@@ -481,6 +481,36 @@ fn models() -> Models {
     }
 }
 
+/// The ALPN before the current one: the same name, one version lower.
+fn previous_alpn() -> Fallible<Vec<u8>> {
+    let (name, version) = std::str::from_utf8(proto::ALPN)?
+        .rsplit_once('/')
+        .ok_or("the ALPN has no version")?;
+    let previous = version
+        .parse::<u32>()?
+        .checked_sub(1)
+        .ok_or("the ALPN has no previous version")?;
+    Ok(format!("{name}/{previous}").into_bytes())
+}
+
+#[tokio::test]
+async fn a_client_offering_the_previous_alpn_fails_the_handshake() -> Fallible {
+    let fx = host().await?;
+    let endpoint = endpoint().await?;
+    let previous = previous_alpn()?;
+    assert_ne!(previous, proto::ALPN);
+    assert!(
+        endpoint
+            .connect(fx.target.addr.clone(), &previous)
+            .await
+            .is_err()
+    );
+    let (current, _updates) = fx.connect().await?;
+    current.stop().await?;
+    endpoint.close().await;
+    fx.shutdown().await
+}
+
 #[tokio::test]
 async fn incomplete_hello_expires_while_established_clients_keep_working()
 -> Fallible {

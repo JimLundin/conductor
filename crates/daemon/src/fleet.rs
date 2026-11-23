@@ -62,11 +62,13 @@ async fn approve(
     ensure!((1..=128).contains(&name.len()), "invalid device name");
     let certificate = membership.sign_owner(device, name).await?;
     let signed = membership.public_snapshot().await;
-    let root = signed
-        .snapshot
+    let fleet =
+        iroh::PublicKey::from_bytes(&membership.snapshot().await.fleet)?;
+    let snapshot = crypto::open(fleet, &signed)?;
+    let root = snapshot
         .hosts
         .iter()
-        .find(|host| host.node == signed.snapshot.root)
+        .find(|host| host.node == snapshot.root)
         .context("fleet has no root host")?
         .clone();
     Ok(Pairing {
@@ -155,7 +157,7 @@ pub async fn status(data: Option<PathBuf>) -> anyhow::Result<()> {
     let data_dir = crate::start::data_dir_or_default(data)?;
     let state = local(&data_dir)?;
     let snapshot = state.snapshot().await;
-    let local = state.peer().await.certificate.identity.device;
+    let local = state.identity().await?.device;
     let mut out = std::io::stdout().lock();
     let fleet = data_encoding::HEXLOWER.encode(&snapshot.fleet);
     let role = if snapshot.root == local {

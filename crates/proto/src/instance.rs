@@ -53,7 +53,9 @@ pub struct Instance {
 ///
 /// This is the unit the fleet config (§6.5) carries to every host.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Roster(pub BTreeMap<InstanceId, Instance>);
+pub struct Roster(
+    #[serde(with = "crate::json::pairs")] pub BTreeMap<InstanceId, Instance>,
+);
 
 /// What a client learns of one instance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -63,7 +65,10 @@ pub struct InstanceStatus {
 
 /// Whether the host can run each of its instances, and how each signs in.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Instances(pub BTreeMap<InstanceId, InstanceStatus>);
+pub struct Instances(
+    #[serde(with = "crate::json::pairs")]
+    pub  BTreeMap<InstanceId, InstanceStatus>,
+);
 
 impl InstanceId {
     /// The provider's own sign-in.

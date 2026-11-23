@@ -177,15 +177,20 @@ async fn admit_fleet(
     peer: iroh::EndpointId,
     first: Option<Open>,
 ) -> (Admission, Option<proto::fleet::Certificate>) {
-    match first {
-        Some(Open::FleetHello(hello))
-            if fleet.admit_device(peer, &hello).await.is_ok() =>
-        {
-            let certificate = hello.certificate;
-            let name = ClientName(certificate.identity.name.clone());
-            (Admission::Admitted(name), Some(certificate))
-        }
-        _ => (
+    let admitted = match first {
+        Some(Open::FleetHello(hello)) => fleet
+            .admit_device(peer, &hello)
+            .await
+            .ok()
+            .map(|owner| (owner, hello.certificate)),
+        _ => None,
+    };
+    match admitted {
+        Some((owner, certificate)) => (
+            Admission::Admitted(ClientName(owner.name)),
+            Some(certificate),
+        ),
+        None => (
             Admission::Refused {
                 reason: String::from(
                     "a current fleet device certificate is required",

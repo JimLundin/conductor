@@ -93,10 +93,11 @@ select CLI versions or publish provider settings.
 
 ## Fleet format changes
 
-This release uses `conductor-fleet/2` and new signing and encryption
+This release uses `conductor-fleet/3` and new signing and encryption
 contexts for full configurations, local fleet state and root backups.
 Hosts must support the same fleet protocol version to synchronize.
-Certificate and public roster formats are unchanged.
+Certificates and the public roster are now signed over their JSON bytes
+and carried as those bytes, so earlier certificates no longer verify.
 
 Previous `fleet.sealed` files and root backups cannot be opened by this
 release. A host with unreadable fleet state refuses to start; it does not

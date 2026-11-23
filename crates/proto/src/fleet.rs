@@ -3,14 +3,15 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt;
+use core::marker::PhantomData;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::Roster;
 
-pub const ALPN: &[u8] = b"conductor-fleet/2";
-pub const SNAPSHOT_DOMAIN: &[u8] = b"conductor fleet snapshot v1";
-pub const CERTIFICATE_DOMAIN: &[u8] = b"conductor fleet certificate v1";
+pub const ALPN: &[u8] = b"conductor-fleet/3";
 
 pub type NodeId = [u8; 32];
 
@@ -28,10 +29,74 @@ pub struct Identity {
     pub role: Role,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Certificate {
-    pub identity: Identity,
+/// A value signed over the exact JSON bytes it was written as, and
+/// carried as those bytes.
+///
+/// JSON has no canonical form, so nothing re-encodes it to verify it: a
+/// verifier checks `signature` over [`Payload::DOMAIN`] then `payload`,
+/// and only then parses `payload`.
+#[derive(Serialize, Deserialize)]
+#[serde(bound = "")]
+pub struct Signed<T> {
+    pub payload: Vec<u8>,
     pub signature: Vec<u8>,
+    #[serde(skip)]
+    kind: PhantomData<fn() -> T>,
+}
+
+impl<T> Signed<T> {
+    #[must_use]
+    pub const fn new(payload: Vec<u8>, signature: Vec<u8>) -> Self {
+        Self {
+            payload,
+            signature,
+            kind: PhantomData,
+        }
+    }
+}
+
+/// What a fleet signs, under a domain of its own so that a signature over
+/// one kind never verifies as another.
+pub trait Payload: Serialize + DeserializeOwned {
+    const DOMAIN: &'static [u8];
+}
+
+impl Payload for Identity {
+    const DOMAIN: &'static [u8] = b"conductor fleet certificate v2";
+}
+
+impl Payload for Snapshot {
+    const DOMAIN: &'static [u8] = b"conductor fleet snapshot v2";
+}
+
+pub type Certificate = Signed<Identity>;
+pub type SignedSnapshot = Signed<Snapshot>;
+
+impl<T> Clone for Signed<T> {
+    fn clone(&self) -> Self {
+        Self {
+            payload: self.payload.clone(),
+            signature: self.signature.clone(),
+            kind: PhantomData,
+        }
+    }
+}
+
+impl<T> PartialEq for Signed<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.payload == other.payload && self.signature == other.signature
+    }
+}
+
+impl<T> Eq for Signed<T> {}
+
+impl<T> fmt::Debug for Signed<T> {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.debug_struct("Signed")
+            .field("payload", &self.payload)
+            .field("signature", &self.signature)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,14 +125,10 @@ pub struct Configuration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedConfiguration {
     pub config: Configuration,
+    /// Over the configuration's postcard, which only hosts read.
     pub signature: Vec<u8>,
-    pub public_signature: Vec<u8>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SignedSnapshot {
-    pub snapshot: Snapshot,
-    pub signature: Vec<u8>,
+    /// `config.snapshot` as clients get it.
+    pub public: SignedSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -138,20 +199,6 @@ pub struct Pairing {
     pub certificate: Certificate,
     pub root: HostEntry,
     pub signed: SignedSnapshot,
-}
-
-impl Pairing {
-    #[must_use]
-    pub fn matches_owner_browser(&self, device: NodeId) -> bool {
-        let identity = &self.certificate.identity;
-        let snapshot = &self.signed.snapshot;
-        identity.device == device
-            && identity.role == Role::Owner
-            && snapshot.fleet == identity.fleet
-            && snapshot.root == self.root.node
-            && snapshot.hosts.contains(&self.root)
-            && !snapshot.revoked.contains(&device)
-    }
 }
 
 #[must_use]
