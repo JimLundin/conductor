@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -160,10 +157,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Available": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -212,10 +203,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Available": {
@@ -248,9 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -263,10 +249,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-exit.jsonl/work/codex",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Codex"
-						},
+						"instance": { "account": "Own", "provider": "Codex" },
 						"model": "big"
 					}
 				},
@@ -329,9 +312,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000002"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000002" } }
 		},
 		"stream": "command"
 	},
@@ -344,10 +325,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-exit.jsonl/work/codex",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Codex"
-						},
+						"instance": { "account": "Own", "provider": "Codex" },
 						"model": "big"
 					}
 				},
@@ -413,11 +391,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Exited": {
-								"status": "exit status: 0"
-							}
-						}
+						"reason": { "Exited": { "status": "exit status: 0" } }
 					}
 				},
 				"seq": 9,
@@ -432,11 +406,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Exited": {
-								"status": "exit status: 0"
-							}
-						}
+						"reason": { "Exited": { "status": "exit status: 0" } }
 					}
 				},
 				"seq": 10,
@@ -447,17 +417,13 @@
 	},
 	{
 		"connection": 0,
-		"frame": {
-			"Rejected": "SessionClosed"
-		},
+		"frame": { "Session": { "Refused": "SessionClosed" } },
 		"stream": "command"
 	},
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000003"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000003" } }
 		},
 		"stream": "command"
 	},
@@ -470,10 +436,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-exit.jsonl/work/codex",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Codex"
-						},
+						"instance": { "account": "Own", "provider": "Codex" },
 						"model": "big"
 					}
 				},

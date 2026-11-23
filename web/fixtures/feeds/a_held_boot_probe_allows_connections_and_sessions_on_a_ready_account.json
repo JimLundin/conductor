@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -178,9 +175,7 @@
 					],
 					[
 						{
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "Claude"
 						},
 						{
@@ -203,10 +198,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -225,10 +217,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -256,9 +245,7 @@
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Claude"
 					},
 					{
@@ -281,10 +268,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -300,9 +284,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -315,10 +297,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-held-boot-probe",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -526,38 +505,26 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
-								"Unavailable": {
-									"reason": "starting the instance's CLI"
-								}
+								"Unavailable": { "reason": "starting the instance's CLI" }
 							}
 						}
 					],
 					[
 						{
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "Claude"
 						},
 						{
 							"availability": {
-								"Unavailable": {
-									"reason": "starting the instance's CLI"
-								}
+								"Unavailable": { "reason": "starting the instance's CLI" }
 							}
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -580,10 +547,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-held-boot-probe",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -649,11 +613,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Stopped": {
-								"reason": "the host restarted"
-							}
-						}
+						"reason": { "Stopped": { "reason": "the host restarted" } }
 					}
 				},
 				"seq": 5,
@@ -667,38 +627,26 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "starting the instance's CLI"
-							}
+							"Unavailable": { "reason": "starting the instance's CLI" }
 						}
 					}
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Claude"
 					},
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "starting the instance's CLI"
-							}
+							"Unavailable": { "reason": "starting the instance's CLI" }
 						}
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -716,10 +664,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -747,24 +692,17 @@
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Claude"
 					},
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "starting the instance's CLI"
-							}
+							"Unavailable": { "reason": "starting the instance's CLI" }
 						}
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -777,11 +715,7 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 1,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 1, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 1,
 		"frame": {
@@ -796,9 +730,7 @@
 	{
 		"connection": 1,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000002"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000002" } }
 		},
 		"stream": "command"
 	},
@@ -811,10 +743,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-held-boot-other",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -879,10 +808,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -910,9 +836,7 @@
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Claude"
 					},
 					{
@@ -935,10 +859,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -951,9 +872,5 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 1,
-		"frame": "Accepted",
-		"stream": "command"
-	}
+	{ "connection": 1, "frame": { "Session": "Accepted" }, "stream": "command" }
 ]

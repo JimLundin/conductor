@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,22 +236,14 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Rejected": "TurnInProgress"
-		},
+		"frame": { "Session": { "Refused": "TurnInProgress" } },
 		"stream": "command"
 	},
 	{
@@ -275,10 +255,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-approve",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -343,10 +320,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "create a.txt"
-					}
+					"UserMessage": { "by": "test-client", "text": "create a.txt" }
 				},
 				"seq": 5,
 				"session": "00000000000000000000000001"
@@ -358,11 +332,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -381,10 +351,7 @@
 								"tool": {
 									"FileChange": {
 										"files": [
-											{
-												"change": "Write",
-												"path": "/tmp/s1-scratch/a.txt"
-											}
+											{ "change": "Write", "path": "/tmp/s1-scratch/a.txt" }
 										]
 									}
 								}
@@ -411,10 +378,7 @@
 						"tool": {
 							"FileChange": {
 								"files": [
-									{
-										"change": "Write",
-										"path": "/tmp/s1-scratch/a.txt"
-									}
+									{ "change": "Write", "path": "/tmp/s1-scratch/a.txt" }
 								]
 							}
 						}
@@ -574,10 +538,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -604,10 +565,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -630,10 +588,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-approve",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -698,10 +653,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "create a.txt"
-					}
+					"UserMessage": { "by": "test-client", "text": "create a.txt" }
 				},
 				"seq": 5,
 				"session": "00000000000000000000000001"
@@ -713,11 +665,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -736,10 +684,7 @@
 								"tool": {
 									"FileChange": {
 										"files": [
-											{
-												"change": "Write",
-												"path": "/tmp/s1-scratch/a.txt"
-											}
+											{ "change": "Write", "path": "/tmp/s1-scratch/a.txt" }
 										]
 									}
 								}
@@ -766,10 +711,7 @@
 						"tool": {
 							"FileChange": {
 								"files": [
-									{
-										"change": "Write",
-										"path": "/tmp/s1-scratch/a.txt"
-									}
+									{ "change": "Write", "path": "/tmp/s1-scratch/a.txt" }
 								]
 							}
 						}
@@ -786,10 +728,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -816,10 +755,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -832,27 +768,17 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 1,
 		"frame": {
-			"Rejected": {
-				"AlreadyResolved": {
-					"by": "test-client"
-				}
-			}
+			"Session": { "Refused": { "AlreadyResolved": { "by": "test-client" } } }
 		},
 		"stream": "command"
 	},
 	{
 		"connection": 0,
-		"frame": {
-			"Rejected": "UnknownRequest"
-		},
+		"frame": { "Session": { "Refused": "UnknownRequest" } },
 		"stream": "command"
 	},
 	{
@@ -863,10 +789,7 @@
 					"RequestResolved": {
 						"request": 1,
 						"resolution": {
-							"Decided": {
-								"by": "test-client",
-								"decision": "Approve"
-							}
+							"Decided": { "by": "test-client", "decision": "Approve" }
 						}
 					}
 				},
@@ -883,11 +806,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 10,
@@ -900,11 +819,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "I"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "I" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -915,11 +830,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " created `a.txt` in"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " created `a.txt` in" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -930,11 +841,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " `/tmp/s1"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " `/tmp/s1" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -945,11 +852,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "-scratch` with the content"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "-scratch` with the content" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -960,11 +863,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " `hello from s1`."
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " `hello from s1`." } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -1008,11 +907,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}

@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,9 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -263,10 +249,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-snapshot-retry",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -326,21 +309,12 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn one"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn one" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -368,12 +338,7 @@
 			"Event": {
 				"kind": {
 					"ChecklistChanged": {
-						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							}
-						]
+						"checklist": [{ "status": "Completed", "text": "turn one" }]
 					}
 				},
 				"seq": 7,
@@ -386,11 +351,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 1."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -419,32 +380,19 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn two"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn two" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -455,11 +403,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 11
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 11 } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -473,14 +417,8 @@
 				"kind": {
 					"ChecklistChanged": {
 						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							},
-							{
-								"status": "InProgress",
-								"text": "turn two"
-							}
+							{ "status": "Completed", "text": "turn one" },
+							{ "status": "InProgress", "text": "turn two" }
 						]
 					}
 				},
@@ -494,11 +432,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 2."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -524,11 +458,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}
@@ -683,10 +613,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -713,10 +640,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -739,10 +663,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-snapshot-retry",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -806,12 +727,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn one"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn one" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -822,11 +738,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -839,12 +751,7 @@
 			"Event": {
 				"kind": {
 					"ChecklistChanged": {
-						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							}
-						]
+						"checklist": [{ "status": "Completed", "text": "turn one" }]
 					}
 				},
 				"seq": 7,
@@ -857,11 +764,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 1."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -890,11 +793,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -905,12 +804,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn two"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn two" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -921,11 +815,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 11
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 11 } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -939,14 +829,8 @@
 				"kind": {
 					"ChecklistChanged": {
 						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							},
-							{
-								"status": "InProgress",
-								"text": "turn two"
-							}
+							{ "status": "Completed", "text": "turn one" },
+							{ "status": "InProgress", "text": "turn two" }
 						]
 					}
 				},
@@ -960,11 +844,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 2."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -990,11 +870,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}
@@ -1006,10 +882,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -1036,10 +909,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -1055,9 +925,9 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"WorkspaceFailure": {
-					"reason": "owned branch: metadata differs"
+			"Session": {
+				"Refused": {
+					"WorkspaceFailure": { "reason": "owned branch: metadata differs" }
 				}
 			}
 		},
@@ -1066,9 +936,9 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"WorkspaceFailure": {
-					"reason": "owned branch: metadata differs"
+			"Session": {
+				"Refused": {
+					"WorkspaceFailure": { "reason": "owned branch: metadata differs" }
 				}
 			}
 		},
@@ -1222,10 +1092,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -1252,10 +1119,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -1278,10 +1142,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-snapshot-retry",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -1345,12 +1206,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn one"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn one" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -1361,11 +1217,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1378,12 +1230,7 @@
 			"Event": {
 				"kind": {
 					"ChecklistChanged": {
-						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							}
-						]
+						"checklist": [{ "status": "Completed", "text": "turn one" }]
 					}
 				},
 				"seq": 7,
@@ -1396,11 +1243,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 1."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -1429,11 +1272,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -1444,12 +1283,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn two"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn two" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -1460,11 +1294,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 11
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 11 } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1478,14 +1308,8 @@
 				"kind": {
 					"ChecklistChanged": {
 						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							},
-							{
-								"status": "InProgress",
-								"text": "turn two"
-							}
+							{ "status": "Completed", "text": "turn one" },
+							{ "status": "InProgress", "text": "turn two" }
 						]
 					}
 				},
@@ -1499,11 +1323,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 2."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -1529,11 +1349,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}
@@ -1545,10 +1361,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -1575,10 +1388,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -1591,16 +1401,8 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 3,
 		"frame": {
@@ -1749,10 +1551,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -1779,10 +1578,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -1805,10 +1601,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-snapshot-retry",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -1872,12 +1665,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn one"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn one" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -1888,11 +1676,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1905,12 +1689,7 @@
 			"Event": {
 				"kind": {
 					"ChecklistChanged": {
-						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							}
-						]
+						"checklist": [{ "status": "Completed", "text": "turn one" }]
 					}
 				},
 				"seq": 7,
@@ -1923,11 +1702,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 1."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -1956,11 +1731,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -1971,12 +1742,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn two"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "turn two" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -1987,11 +1753,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 11
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 11 } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -2005,14 +1767,8 @@
 				"kind": {
 					"ChecklistChanged": {
 						"checklist": [
-							{
-								"status": "Completed",
-								"text": "turn one"
-							},
-							{
-								"status": "InProgress",
-								"text": "turn two"
-							}
+							{ "status": "Completed", "text": "turn one" },
+							{ "status": "InProgress", "text": "turn two" }
 						]
 					}
 				},
@@ -2026,11 +1782,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 2."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -2056,11 +1808,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}
@@ -2090,10 +1838,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -2120,10 +1865,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -2136,11 +1878,7 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -2164,10 +1902,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "turn three"
-					}
+					"UserMessage": { "by": "test-client", "text": "turn three" }
 				},
 				"seq": 18,
 				"session": "00000000000000000000000001"
@@ -2179,11 +1914,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 18
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 18 } },
 				"seq": 19,
 				"session": "00000000000000000000000001"
 			}
@@ -2194,11 +1925,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Completed turn 3."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Completed turn 3." } },
 				"seq": 20,
 				"session": "00000000000000000000000001"
 			}
@@ -2227,11 +1954,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 22,
 				"session": "00000000000000000000000001"
 			}
@@ -2241,25 +1964,27 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Diff": {
-				"extent": "Complete",
-				"files": [
-					{
-						"change": "Edit",
-						"patch": {
-							"Text": "diff --git a/changed.txt b/changed.txt\nindex 07f76c7..96e1efb 100644\n--- a/changed.txt\n+++ b/changed.txt\n@@ -1,2 +1 @@\n-turn two\n-diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling \n+turn three\n"
+			"Session": {
+				"Diff": {
+					"extent": "Complete",
+					"files": [
+						{
+							"change": "Edit",
+							"patch": {
+								"Text": "diff --git a/changed.txt b/changed.txt\nindex 07f76c7..96e1efb 100644\n--- a/changed.txt\n+++ b/changed.txt\n@@ -1,2 +1 @@\n-turn two\n-diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling diff horizontal scrolling \n+turn three\n"
+							},
+							"path": "changed.txt"
 						},
-						"path": "changed.txt"
-					},
-					{
-						"change": "Write",
-						"patch": {
-							"Text": "diff --git a/later.txt b/later.txt\nnew file mode 100644\nindex 0000000..2cb0e89\n--- /dev/null\n+++ b/later.txt\n@@ -0,0 +1 @@\n+later work\n"
-						},
-						"path": "later.txt"
-					}
-				],
-				"snapshot": 21
+						{
+							"change": "Write",
+							"patch": {
+								"Text": "diff --git a/later.txt b/later.txt\nnew file mode 100644\nindex 0000000..2cb0e89\n--- /dev/null\n+++ b/later.txt\n@@ -0,0 +1 @@\n+later work\n"
+							},
+							"path": "later.txt"
+						}
+					],
+					"snapshot": 21
+				}
 			}
 		},
 		"stream": "command"

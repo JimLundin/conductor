@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,9 +236,9 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"NotOffered": {
-					"reason": "this host doesn't offer the model huge"
+			"Session": {
+				"Refused": {
+					"NotOffered": { "reason": "this host doesn't offer the model huge" }
 				}
 			}
 		},
@@ -259,9 +247,9 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"NotOffered": {
-					"reason": "Small doesn't take the effort high"
+			"Session": {
+				"Refused": {
+					"NotOffered": { "reason": "Small doesn't take the effort high" }
 				}
 			}
 		},
@@ -270,9 +258,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -285,10 +271,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-chosen",
 						"effort": "Low",
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "small"
 					}
 				},

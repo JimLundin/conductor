@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-reasoning",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -335,12 +314,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "sheep?"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "sheep?" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -366,11 +336,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "\""
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "\"" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -381,11 +347,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "All"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "All" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -396,11 +358,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " but "
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " but " } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -411,11 +369,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "9 "
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "9 " } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -426,11 +380,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "run"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "run" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -441,11 +391,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " away\" means 9"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " away\" means 9" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -456,11 +402,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " stay, so he"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " stay, so he" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -471,11 +413,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " buys double"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " buys double" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -486,11 +424,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " that,"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " that," } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -501,11 +435,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " 18, b"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " 18, b" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -516,11 +446,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "ringing the total to 27,"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "ringing the total to 27," } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -531,11 +457,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " then sells a"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " then sells a" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -546,11 +468,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": " third ("
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": " third (" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -561,11 +479,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "9), leaving 18 "
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "9), leaving 18 " } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -576,11 +490,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"ReasoningDelta": {
-						"text": "sheep.\n\n"
-					}
-				},
+				"kind": { "ReasoningDelta": { "text": "sheep.\n\n" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -606,11 +516,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "18"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "18" } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -621,11 +527,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "18"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "18" } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -654,11 +556,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -813,10 +711,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -843,10 +738,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -869,10 +761,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-reasoning",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -936,12 +825,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "sheep?"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "sheep?" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -952,11 +836,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -982,11 +862,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "18"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "18" } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -1015,11 +891,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -1031,10 +903,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -1061,10 +930,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {

@@ -6,13 +6,13 @@ import type { Session } from "../fold/session.ts";
 import type { Approval } from "../fold/transcript.ts";
 import type {
 	Answer,
-	CommandBody,
+	Command,
 	CommandResult,
 	Decision,
 	Question,
-	Rejection,
 	RequestId,
 	SessionId,
+	SessionRefusal,
 } from "../proto/index.ts";
 
 type Send = HostLink["send"];
@@ -22,26 +22,26 @@ type Tone = "Primary" | "Plain" | "Danger";
 interface Offer {
 	readonly label: string;
 	readonly tone: Tone;
-	readonly body: CommandBody;
+	readonly body: Command;
 }
 
 type Asked = Extract<Approval, { readonly _tag: "Asked" }>;
 
-const message = (session: SessionId, text: string): CommandBody => ({
-	SendMessage: { session, text },
+const message = (session: SessionId, text: string): Command => ({
+	Session: { SendMessage: { session, text } },
 });
 
 const answer = (
 	session: SessionId,
 	request: RequestId,
 	answers: readonly Answer[],
-): CommandBody => ({ Answer: { session, request, answers } });
+): Command => ({ Session: { Answer: { session, request, answers } } });
 
 const resolve = (
 	session: SessionId,
 	request: RequestId,
 	decision: Decision,
-): CommandBody => ({ Resolve: { session, request, decision } });
+): Command => ({ Session: { Resolve: { session, request, decision } } });
 
 // What a session offers besides its composer: stopping a turn, continuing a closed agent and
 // finishing on its issue, exactly as its controls allow.
@@ -53,7 +53,7 @@ const sessionOffers = (id: SessionId, session: Session): readonly Offer[] => {
 					{
 						label: "Stop",
 						tone: "Danger",
-						body: { Interrupt: { session: id } },
+						body: { Session: { Interrupt: { session: id } } },
 					} as const,
 				]
 			: []),
@@ -62,7 +62,7 @@ const sessionOffers = (id: SessionId, session: Session): readonly Offer[] => {
 					{
 						label: "Continue",
 						tone: "Primary",
-						body: { Continue: { session: id } },
+						body: { Session: { Continue: { session: id } } },
 					} as const,
 				]
 			: []),
@@ -71,7 +71,7 @@ const sessionOffers = (id: SessionId, session: Session): readonly Offer[] => {
 					{
 						label: "Finish",
 						tone: "Plain",
-						body: { FinishSession: { session: id } },
+						body: { Session: { Finish: { session: id } } },
 					} as const,
 				]
 			: []),
@@ -126,7 +126,7 @@ const sentence = (name: string): string => {
 	return `${words.charAt(0)}${words.slice(1).toLowerCase()}`;
 };
 
-const rejected = (rejection: Rejection): string => {
+const rejected = (rejection: SessionRefusal): string => {
 	if (typeof rejection === "string") {
 		return sentence(rejection);
 	}
@@ -141,8 +141,10 @@ const rejected = (rejection: Rejection): string => {
 // What the person is told after a command: nothing once the host takes it, since its log shows
 // what follows.
 const notice = (result: CommandResult): string | null =>
-	typeof result === "object" && "Rejected" in result
-		? `The host refused: ${rejected(result.Rejected)}.`
+	"Session" in result &&
+	typeof result.Session === "object" &&
+	"Refused" in result.Session
+		? `The host refused: ${rejected(result.Session.Refused)}.`
 		: null;
 
 const failed = (error: SendError): string =>

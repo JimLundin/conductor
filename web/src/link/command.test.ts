@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { fakeHost } from "../fake-pipe.ts";
 import { link } from "../link.ts";
 import type { Connection } from "../pipe.ts";
-import type { CommandBody } from "../proto/index.ts";
+import type { Command } from "../proto/index.ts";
 import {
 	client,
 	dialing,
@@ -17,8 +17,8 @@ import {
 
 const turn = scenario("a_claude_turn_streams_asks_and_finishes");
 
-const interrupt: CommandBody = {
-	Interrupt: { session: "00000000000000000000000001" },
+const interrupt: Command = {
+	Session: { Interrupt: { session: "00000000000000000000000001" } },
 } as const;
 
 const ulid = /^[0-7][0-9a-hjkmnp-tv-z]{25}$/u;

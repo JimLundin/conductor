@@ -147,10 +147,17 @@
 				"host": "test-host",
 				"instances": [
 					[
+						{ "account": "Own", "provider": "Claude" },
 						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					],
+					[
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -161,29 +168,12 @@
 					],
 					[
 						{
-							"account": "Own",
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "Codex"
 						},
 						{
 							"availability": {
-								"Unavailable": {
-									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-								}
-							}
-						}
-					],
-					[
-						{
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
-							"provider": "Codex"
-						},
-						{
-							"availability": {
-								"Unavailable": {
-									"reason": "no credential configured"
-								}
+								"Unavailable": { "reason": "no credential configured" }
 							}
 						}
 					]
@@ -197,10 +187,17 @@
 		"frame": {
 			"Instances": [
 				[
+					{ "account": "Own", "provider": "Claude" },
 					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -211,29 +208,12 @@
 				],
 				[
 					{
-						"account": "Own",
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Codex"
 					},
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				],
-				[
-					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
-						"provider": "Codex"
-					},
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "no credential configured"
-							}
+							"Unavailable": { "reason": "no credential configured" }
 						}
 					}
 				]
@@ -241,17 +221,11 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Instance": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -260,10 +234,17 @@
 		"frame": {
 			"Instances": [
 				[
+					{ "account": "Own", "provider": "Claude" },
 					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -274,29 +255,12 @@
 				],
 				[
 					{
-						"account": "Own",
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Codex"
 					},
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				],
-				[
-					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
-						"provider": "Codex"
-					},
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "refreshing the instance's models"
-							}
+							"Unavailable": { "reason": "refreshing the instance's models" }
 						}
 					}
 				]
@@ -309,10 +273,17 @@
 		"frame": {
 			"Instances": [
 				[
+					{ "account": "Own", "provider": "Claude" },
 					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -323,22 +294,7 @@
 				],
 				[
 					{
-						"account": "Own",
-						"provider": "Codex"
-					},
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				],
-				[
-					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Codex"
 					},
 					{
@@ -469,9 +425,7 @@
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-provider/work/codex-3246069328e412fa",
 						"effort": null,
 						"instance": {
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "Codex"
 						},
 						"model": "conductor-test-model"
@@ -533,20 +487,23 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Instances": [
 				[
+					{ "account": "Own", "provider": "Claude" },
 					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -557,29 +514,12 @@
 				],
 				[
 					{
-						"account": "Own",
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Codex"
 					},
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				],
-				[
-					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
-						"provider": "Codex"
-					},
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "refreshing the instance's models"
-							}
+							"Unavailable": { "reason": "refreshing the instance's models" }
 						}
 					}
 				]
@@ -593,11 +533,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Stopped": {
-								"reason": "new Codex credential"
-							}
-						}
+						"reason": { "Stopped": { "reason": "new Codex credential" } }
 					}
 				},
 				"seq": 5,
@@ -609,9 +545,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000002"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000002" } }
 		},
 		"stream": "command"
 	},
@@ -620,10 +554,17 @@
 		"frame": {
 			"Instances": [
 				[
+					{ "account": "Own", "provider": "Claude" },
 					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -634,22 +575,7 @@
 				],
 				[
 					{
-						"account": "Own",
-						"provider": "Codex"
-					},
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				],
-				[
-					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "Codex"
 					},
 					{
@@ -780,9 +706,7 @@
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-provider/work/codex-3246069328e412fa",
 						"effort": null,
 						"instance": {
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "Codex"
 						},
 						"model": "conductor-test-model"

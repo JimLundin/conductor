@@ -30,7 +30,7 @@ test("the session route shows the store's session, and its approval follows the 
 			yield* serve(fake, {
 				reply: { Welcome: welcome },
 				feed: recordedSpan(0, 8),
-				results: ["Accepted"],
+				results: [{ Session: "Accepted" }],
 				answers: [recordedSpan(9, 13)],
 			});
 			const store = yield* makeStore(
@@ -40,7 +40,7 @@ test("the session route shows the store's session, and its approval follows the 
 			store.show(Route.Session({ host, session }));
 			const shown = renderToStaticMarkup(<Root store={store} />);
 			yield* store.send(host, {
-				Resolve: { session, request: 1, decision: "Approve" },
+				Session: { Resolve: { session, request: 1, decision: "Approve" } },
 			});
 			yield* when(store, (next) => waiting(next) === 0);
 			return {

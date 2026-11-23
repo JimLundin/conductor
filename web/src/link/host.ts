@@ -11,7 +11,7 @@ import {
 import type { Connection, Pipe } from "../pipe.ts";
 import type {
 	ClientName,
-	CommandBody,
+	Command,
 	CommandResult,
 	Epoch,
 	Feed,
@@ -50,7 +50,7 @@ interface HostLink {
 	readonly updates: Stream.Stream<Update>;
 	// Runs one command on its own stream. Waits while the link connects and fails at once while
 	// it is down; the caller decides whether to retry.
-	readonly send: (body: CommandBody) => Effect.Effect<CommandResult, SendError>;
+	readonly send: (body: Command) => Effect.Effect<CommandResult, SendError>;
 	// Drops the connection and connects again at once, as after a network change.
 	readonly reconnect: Effect.Effect<void>;
 }

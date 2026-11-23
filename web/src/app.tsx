@@ -3,7 +3,7 @@ import { type ReactElement, useId, useState } from "react";
 import { type ListStatus, listStatus } from "./fold/offers.ts";
 import type { Session } from "./fold/session.ts";
 import type { LinkState, Status } from "./link/host.ts";
-import type { CommandBody, SessionId } from "./proto/index.ts";
+import type { Command, SessionId } from "./proto/index.ts";
 import { fragmentOf, Route } from "./route.ts";
 import { NewSession } from "./session/new-session.tsx";
 import { SessionView } from "./session/session-view.tsx";
@@ -245,7 +245,7 @@ const NewSessionPane = ({ host }: { readonly host: HostKey }): ReactElement => {
 		key: paired.key,
 		name: nameOf(paired),
 		host: paired.fold,
-		send: (body: CommandBody): ReturnType<Store["send"]> =>
+		send: (body: Command): ReturnType<Store["send"]> =>
 			store.send(paired.key, body),
 	}));
 	return (

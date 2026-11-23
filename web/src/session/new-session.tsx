@@ -159,8 +159,12 @@ export const NewSession = ({
 				event.preventDefault();
 				if (paired !== undefined && start !== null) {
 					sending.run(paired.send, start, (result) => {
-						if (typeof result === "object" && "Started" in result) {
-							started(paired.key, result.Started.session);
+						if (
+							"Session" in result &&
+							typeof result.Session === "object" &&
+							"Started" in result.Session
+						) {
+							started(paired.key, result.Session.Started.session);
 						}
 					});
 				}

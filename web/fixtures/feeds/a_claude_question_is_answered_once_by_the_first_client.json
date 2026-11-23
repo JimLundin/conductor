@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-question",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -335,12 +314,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "ask me"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "ask me" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -542,10 +512,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "Claude"
-						},
+						{ "account": "Own", "provider": "Claude" },
 						{
 							"availability": {
 								"Available": {
@@ -572,10 +539,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "Codex"
-						},
+						{ "account": "Own", "provider": "Codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -598,10 +562,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-question",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "Claude"
-						},
+						"instance": { "account": "Own", "provider": "Claude" },
 						"model": "big"
 					}
 				},
@@ -665,12 +626,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "ask me"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "ask me" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -681,11 +637,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -729,10 +681,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "Claude"
-					},
+					{ "account": "Own", "provider": "Claude" },
 					{
 						"availability": {
 							"Available": {
@@ -759,10 +708,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "Codex"
-					},
+					{ "account": "Own", "provider": "Codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -778,9 +724,9 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"WrongReply": {
-					"reason": "a question takes answers, not a decision"
+			"Session": {
+				"Refused": {
+					"WrongReply": { "reason": "a question takes answers, not a decision" }
 				}
 			}
 		},
@@ -789,27 +735,17 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"WrongReply": {
-					"reason": "0 answers for 1 questions"
-				}
+			"Session": {
+				"Refused": { "WrongReply": { "reason": "0 answers for 1 questions" } }
 			}
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 1,
 		"frame": {
-			"Rejected": {
-				"AlreadyResolved": {
-					"by": "test-client"
-				}
-			}
+			"Session": { "Refused": { "AlreadyResolved": { "by": "test-client" } } }
 		},
 		"stream": "command"
 	},
@@ -821,10 +757,7 @@
 					"RequestResolved": {
 						"request": 1,
 						"resolution": {
-							"Answered": {
-								"answers": [["Blue"]],
-								"by": "test-client"
-							}
+							"Answered": { "answers": [["Blue"]], "by": "test-client" }
 						}
 					}
 				},
@@ -841,11 +774,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "toolu_bdrk_01CcDpZHC4vQ3AZi8neyebkS",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 9,
@@ -858,11 +787,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Blue"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Blue" } },
 				"seq": 9,
 				"session": "00000000000000000000000001"
 			}
@@ -873,11 +798,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Blue"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Blue" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -906,11 +827,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}

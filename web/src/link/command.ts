@@ -1,11 +1,7 @@
 // A command on its own stream, with its result for the caller.
 import { Data, Effect, Random } from "effect";
 import type { Connection } from "../pipe.ts";
-import {
-	type CommandBody,
-	type CommandId,
-	CommandResult,
-} from "../proto/index.ts";
+import { type Command, type CommandId, CommandResult } from "../proto/index.ts";
 import { closing, described, open, read, write } from "./frames.ts";
 
 type SendError = Data.TaggedEnum<{
@@ -42,7 +38,7 @@ const commandId: Effect.Effect<CommandId> = Effect.all([
 
 const answer = (
 	connection: Connection,
-	body: CommandBody,
+	body: Command,
 ): Effect.Effect<CommandResult | undefined, string> =>
 	Effect.gen(function* rpc() {
 		const id = yield* commandId;
@@ -63,7 +59,7 @@ const resulted = (
 
 const command = (
 	connection: Connection,
-	body: CommandBody,
+	body: Command,
 ): Effect.Effect<CommandResult, SendError> =>
 	Effect.raceFirst(answer(connection, body), closing(connection)).pipe(
 		Effect.mapError((reason) => SendError.Wire({ reason })),

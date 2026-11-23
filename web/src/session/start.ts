@@ -2,7 +2,7 @@
 // efforts, and its projects and directories.
 import type { Host } from "../fold/host.ts";
 import type {
-	CommandBody,
+	Command,
 	Effort,
 	InstanceId,
 	ModelChoice,
@@ -95,17 +95,19 @@ const orNull = <T extends string>(value: string): T | null =>
 
 // The command that starts the session the draft describes on `host`, once it names an
 // available instance and a place.
-const startOf = (host: Host, draft: Draft): CommandBody | null => {
+const startOf = (host: Host, draft: Draft): Command | null => {
 	const chosen = choosable(host).find((one) => one.key === draft.instance);
 	const at = placeOf(draft);
 	return chosen === undefined || at === null
 		? null
 		: {
-				StartSession: {
-					instance: chosen.instance,
-					at,
-					model: orNull<ModelId>(draft.model),
-					effort: orNull<Effort>(draft.effort),
+				Session: {
+					Start: {
+						instance: chosen.instance,
+						at,
+						model: orNull<ModelId>(draft.model),
+						effort: orNull<Effort>(draft.effort),
+					},
 				},
 			};
 };

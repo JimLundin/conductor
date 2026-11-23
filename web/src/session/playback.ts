@@ -16,6 +16,7 @@ import {
 	client,
 	scenario,
 	scoped,
+	type Sent,
 	serve,
 	throughFeed,
 	ticket,
@@ -23,7 +24,6 @@ import {
 import { link } from "../link.ts";
 import type {
 	Command,
-	CommandBody,
 	CommandResult,
 	EventKind,
 	Feed,
@@ -60,16 +60,13 @@ interface Play {
 
 interface Played {
 	readonly before: Host;
-	readonly commands: readonly CommandBody[];
+	readonly commands: readonly Command[];
 	readonly result: CommandResult | SendError;
 	readonly after: Host;
 }
 
 // Plays `play`, sending the command `act` picks from what the app folded before it.
-const played = (
-	play: Play,
-	act: (before: Host) => CommandBody,
-): Promise<Played> =>
+const played = (play: Play, act: (before: Host) => Command): Promise<Played> =>
 	scoped(
 		Effect.gen(function* playing() {
 			const fake = yield* Effect.promise(fakeHost);
@@ -96,7 +93,7 @@ const played = (
 			const commands = yield* Ref.get(served.commands);
 			return {
 				before,
-				commands: commands.map((command: Command) => command.body),
+				commands: commands.map((command: Sent) => command.body),
 				result: sent,
 				after: hostOf([...caughtUp, ...answered]),
 			};
