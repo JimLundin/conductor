@@ -17,6 +17,8 @@ pub mod issue;
 pub mod layout;
 mod prelude;
 pub mod project;
+pub mod repos;
+pub mod skills;
 pub mod sync;
 
 use alloc::boxed::Box;
@@ -65,9 +67,9 @@ impl Stored {
             checkouts: found
                 .iter()
                 .flat_map(|(project, checkouts)| {
-                    checkouts.iter().map(|checkout| {
-                        (checkout.path.0.clone(), project.clone())
-                    })
+                    checkouts
+                        .iter()
+                        .map(|checkout| (checkout.path.0.clone(), *project))
                 })
                 .collect(),
         }
@@ -110,7 +112,7 @@ pub fn view(
         projects: projects
             .iter()
             .map(|project| proto::Project {
-                id: project.id.clone(),
+                id: project.id,
                 name: project.name.clone(),
                 title: project.title.clone(),
                 remote: project.remote.as_deref().map(checkout::display),

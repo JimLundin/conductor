@@ -11,8 +11,8 @@ use alloc::string::ToString;
 
 use proto::flow::{FieldRole, FieldType, Flow, Severity};
 use proto::{
-    ChecklistChange, Datum, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
-    NewIssue, Part, ProjectId,
+    ChecklistChange, Datum, Draws, Entry, Issue, IssueChange, IssueId, Item,
+    LogEvent, NewIssue, Part, ProjectId,
 };
 use serde::{Deserialize, Serialize};
 use toml::Value;
@@ -21,7 +21,7 @@ use super::PATH;
 use super::check::{Finding, check, of_issue};
 use super::eval::Move;
 use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
-use super::graph::{File, id_of, parsed};
+use super::graph::{File, parsed};
 use super::role::opening;
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -36,9 +36,33 @@ pub const USAGE: &str = "usage:
   home issue body <id> --file <path>
   home issue checklist <id> add <text>...
   home issue checklist <id> check|uncheck|remove <n>
+  home repos [sync|scan]
+  home skills
 A list's value is comma-separated: blocked_by=<id>,<id>.
 A checklist's items are numbered from 1.
 ";
+
+/// What the command line's words ask for: a command on the home's issues,
+/// or one the shell does in the home's folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    Flow(Command),
+    Local(Local),
+}
+
+/// What the shell does in the home's folder, among its repositories and
+/// skills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Local {
+    /// `home repos`: each project's checkouts here and their state.
+    Status,
+    /// `home repos sync`: clones each project not checked out here.
+    Sync,
+    /// `home repos scan`: registers each repository no project has.
+    Scan,
+    /// `home skills`: copies the home's skills into each harness's folder.
+    Skills,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -167,20 +191,48 @@ pub struct Written {
     pub warnings: Vec<String>,
 }
 
-/// The id a new issue made at `now`, in milliseconds since the Unix epoch,
-/// takes.
+/// The id a new issue made at `now`, in seconds since the Unix epoch,
+/// takes: the first of `draws` that gives one the home has no file of.
 #[must_use]
-pub const fn fresh(now: u64, random: u128) -> IssueId {
-    IssueId(ulid::Ulid::from_parts(now, random).0)
+pub fn fresh(home: &Snapshot, now: u64, draws: &Draws) -> Option<IssueId> {
+    let held: Vec<IssueId> = home
+        .files()
+        .iter()
+        .filter_map(|file| IssueId::parse(&file.stem))
+        .collect();
+    IssueId::mint(now, draws, &held)
+}
+
+/// What `args`, after the program's name, ask of `home`: what [`command`]
+/// makes of them, unless they ask for something the shell does in the
+/// home's folder.
+#[must_use]
+pub fn asked(
+    args: &[String],
+    home: &Snapshot,
+    fresh: Option<IssueId>,
+) -> Asked {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    match words.as_slice() {
+        ["repos"] => Asked::Local(Local::Status),
+        ["repos", "sync"] => Asked::Local(Local::Sync),
+        ["repos", "scan"] => Asked::Local(Local::Scan),
+        ["skills"] => Asked::Local(Local::Skills),
+        _ => Asked::Flow(command(args, home, fresh)),
+    }
 }
 
 /// The command `args` ask for in `home`, after the program's name.
 ///
 /// A project is named by its name or id, each `<field>=<value>` is a value
 /// of the field's type, a list where it takes several, and a new issue
-/// takes the id `fresh`.
+/// takes the id `fresh`, if there is one.
 #[must_use]
-pub fn command(args: &[String], home: &Snapshot, fresh: IssueId) -> Command {
+pub fn command(
+    args: &[String],
+    home: &Snapshot,
+    fresh: Option<IssueId>,
+) -> Command {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     let joined = |first: &str, more: &[&str]| {
         core::iter::once(first)
@@ -244,7 +296,7 @@ pub fn command(args: &[String], home: &Snapshot, fresh: IssueId) -> Command {
 
 /// The issue a command line's word names.
 fn named(word: &str) -> Result<IssueId, String> {
-    id_of(word).ok_or_else(|| format!("no issue is called {word}"))
+    IssueId::parse(word).ok_or_else(|| format!("no issue is called {word}"))
 }
 
 fn changing(word: &str, change: IssueChange) -> Command {
@@ -258,14 +310,19 @@ fn changing(word: &str, change: IssueChange) -> Command {
 
 fn opening_command(
     home: &Snapshot,
-    id: IssueId,
+    fresh: Option<IssueId>,
     [name, kind, title]: [&str; 3],
     pairs: &[&str],
 ) -> Command {
     home.project(name)
-        .map(|known| known.id.clone())
+        .map(|known| known.id)
         .ok_or_else(|| format!("no project is called {name}"))
         .and_then(|project| {
+            let id = fresh.ok_or_else(|| {
+                String::from(
+                    "no issue id is free: the clock is before 2026, or every draw is taken",
+                )
+            })?;
             Ok(Edit::New {
                 id,
                 issue: NewIssue {
@@ -523,17 +580,21 @@ fn finished(
 ) -> Result<Written, String> {
     let after = home.with(file.clone());
     let graph = after.graph();
-    let place = format!("{}/{}", file.project.0, file.stem);
     let name = home
         .projects()
         .iter()
         .find(|project| project.id == file.project)
-        .map_or_else(|| file.project.0.clone(), |project| project.name.clone());
+        .map_or_else(
+            || file.project.to_string(),
+            |project| project.name.clone(),
+        );
     let subject = format!("{name}/{}", file.stem);
     let mut problems: Vec<String> = graph
         .problems
         .iter()
-        .filter(|problem| problem.issue == place)
+        .filter(|problem| {
+            problem.project == file.project && problem.stem == file.stem
+        })
         .map(ToString::to_string)
         .collect();
     let findings: Vec<Finding> = graph
@@ -592,7 +653,7 @@ fn opened(
     } = new;
     let at = &sign.at;
     if !home.projects().iter().any(|known| known.id == *project) {
-        return Err(format!("no project is called {}", project.0));
+        return Err(format!("no project is called {project}"));
     }
     let declared = flow
         .kind(kind)
@@ -620,7 +681,7 @@ fn opened(
         &sign.entry(LogEvent::Note, "opened."),
     );
     Ok(File {
-        project: project.clone(),
+        project: *project,
         stem,
         text: sign.text(document),
     })

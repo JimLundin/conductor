@@ -8,8 +8,8 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::Issue;
 use proto::flow::{Flow, Literal, Predicate, Quantifier, Severity};
+use proto::{Issue, ProjectId};
 
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
@@ -80,10 +80,10 @@ pub fn check(home: &Snapshot) -> Report {
             };
         }
     };
-    let project_names: BTreeMap<String, String> = home
+    let project_names: BTreeMap<ProjectId, &str> = home
         .projects()
         .iter()
-        .map(|project| (project.id.0.clone(), project.name.clone()))
+        .map(|project| (project.id, project.name.as_str()))
         .collect();
     let mut findings: Vec<Finding> = home
         .listing_problems()
@@ -97,23 +97,21 @@ pub fn check(home: &Snapshot) -> Report {
             .map(|message| error(None, message)),
     );
     let graph = home.graph();
-    let named = |place: &str| {
-        place.split_once('/').map_or_else(
-            || place.to_owned(),
-            |(project, issue)| {
-                format!(
-                    "{}/{issue}",
-                    project_names.get(project).map_or(project, String::as_str)
-                )
-            },
+    let named = |project: ProjectId, stem: &str| {
+        project_names.get(&project).map_or_else(
+            || format!("{project}/{stem}"),
+            |name| format!("{name}/{stem}"),
         )
     };
     findings.extend(graph.problems.iter().map(|problem| {
-        error(Some(named(&problem.issue)), problem.to_string())
+        error(
+            Some(named(problem.project, &problem.stem)),
+            problem.to_string(),
+        )
     }));
     let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
-        let subject = named(&format!("{}/{}", issue.project.0, issue.id));
+        let subject = named(issue.project, &issue.id.to_string());
         findings.extend(of_issue(
             flow,
             &issues,

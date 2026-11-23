@@ -1,6 +1,7 @@
 //! `home`: the home's command line (`home::flow::command`), run from
 //! anywhere in the home. It reads the home's files, the clock and some
-//! randomness, and writes the issues the command returns.
+//! randomness, and writes the issues the command returns; `home repos` and
+//! `home skills` are in [`local`].
 
 use std::env;
 use std::fs;
@@ -10,25 +11,49 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::flow::PATH;
-use home::flow::command::{Context, Write, command, fresh, homeless, run};
+use home::flow::command::{
+    Asked, Command, Context, Write, asked, fresh, homeless, run,
+};
+use home::flow::snapshot::Snapshot;
+use proto::Draws;
+
+mod local;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let root = root();
-    let (text, code) = root.as_deref().map_or_else(homeless, |home| {
-        let snapshot = home_files::read(home);
-        let context = context();
-        let asked = command(&args, &snapshot, fresh(context.now, random()));
-        let file = asked.file().map(|path| read(Path::new(path)));
-        let outcome = run(asked, file, &snapshot, &context);
-        let saved = outcome
-            .writes
-            .iter()
-            .try_for_each(|write| save(home, write));
-        outcome.ended(saved)
-    });
+    let (text, code) = root
+        .as_deref()
+        .map_or_else(homeless, |home| answered(home, &args));
     let _written = std::io::stdout().lock().write_all(text.as_bytes());
     ExitCode::from(code)
+}
+
+/// What `args` ask of the home at `home`, done.
+fn answered(home: &Path, args: &[String]) -> (String, u8) {
+    let snapshot = home_files::read(home);
+    let context = context();
+    let fresh = fresh(&snapshot, context.now / 1000, &draws());
+    match asked(args, &snapshot, fresh) {
+        Asked::Local(local) => local::run(home, local, &snapshot),
+        Asked::Flow(command) => issues(home, command, &snapshot, &context),
+    }
+}
+
+/// The flow's `command`, on the home's issues.
+fn issues(
+    home: &Path,
+    asked: Command,
+    snapshot: &Snapshot,
+    context: &Context,
+) -> (String, u8) {
+    let file = asked.file().map(|path| read(Path::new(path)));
+    let outcome = run(asked, file, snapshot, context);
+    let saved = outcome
+        .writes
+        .iter()
+        .try_for_each(|write| save(home, write));
+    outcome.ended(saved)
 }
 
 /// The nearest folder at or above this one that holds the flow.
@@ -59,11 +84,9 @@ fn context() -> Context {
     }
 }
 
-/// The randomness of the id a new issue takes.
-fn random() -> u128 {
-    let mut bytes = [0_u8; 16];
-    let _filled = getrandom::fill(&mut bytes);
-    u128::from_le_bytes(bytes)
+/// The randomness a new issue's or project's id is minted with.
+fn draws() -> Draws {
+    core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
 }
 
 fn read(path: &Path) -> Result<String, String> {

@@ -11,29 +11,7 @@ use core::fmt;
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ProjectId;
-
-/// A ULID, unique across every project and node, as its 128 bits. Its file
-/// and its branch name it in lower case, as `Display` writes it.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-)]
-pub struct IssueId(#[serde(with = "crate::json::ulid")] pub u128);
-
-impl fmt::Display for IssueId {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        crate::json::ulid::write(self.0, out)
-    }
-}
+use crate::{IssueId, ProjectId};
 
 /// An issue as the flow reads its file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

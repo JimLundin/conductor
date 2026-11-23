@@ -4,12 +4,12 @@ use super::{Inputs, Snapshot};
 use crate::flow::graph::File;
 
 const FLOW: &str = include_str!("../test-flow.toml");
-const FOLDER: &str = "01m7w85jegh2zxfrxb37dadxnk";
-const TASK: &str = "01m7zxfbp2qygtekcr6b6ndg28";
+const FOLDER: &str = "7w85je";
+const TASK: &str = "0tm7zx0d";
 
 fn task(status: &str) -> File {
     File {
-        project: ProjectId(String::from(FOLDER)),
+        project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
         stem: String::from(TASK),
         text: format!(
             "+++\nid = \"{TASK}\"\ntitle = \"Write it\"\nkind = \"task\"\n\
@@ -49,17 +49,16 @@ fn a_home_reads_its_projects_and_issues_and_says_what_it_could_not_read() {
     let home = Snapshot::of(inputs(Ok(FLOW)));
     let named = |name: &str| {
         home.project(name)
-            .map(|project| (project.id.0.as_str(), project.name.as_str()))
+            .map(|project| (project.id.to_string(), project.name.as_str()))
     };
-    assert_eq!(named("home"), Some((FOLDER, "home")));
-    assert_eq!(named(FOLDER), Some((FOLDER, "home")));
+    assert_eq!(named("home"), Some((String::from(FOLDER), "home")));
+    assert_eq!(named(FOLDER), Some((String::from(FOLDER), "home")));
     assert_eq!(named("Bad"), None);
     assert_eq!(statuses(&home), ["open"]);
     assert_eq!(
         home.problems(),
         [
-            "projects/Bad: the folder's name is not lower-case letters, \
-             digits and dashes",
+            "projects/Bad: the folder's name is not a project id of 6 base 32 digits",
             "projects/x/issues/y.md: denied",
         ]
     );

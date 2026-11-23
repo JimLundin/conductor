@@ -2717,7 +2717,7 @@ mod tests {
             (EventKind::SessionReady, StatusLabel::Idle, false),
             (
                 EventKind::OnIssue {
-                    issue: proto::IssueId(7),
+                    issue: proto::IssueId::new(0, 7),
                 },
                 StatusLabel::Idle,
                 true,
@@ -2780,7 +2780,7 @@ mod tests {
             (
                 1,
                 EventKind::OnIssue {
-                    issue: proto::IssueId(7),
+                    issue: proto::IssueId::new(0, 7),
                 },
             ),
             (1, EventKind::FinishStarted),
@@ -2793,7 +2793,7 @@ mod tests {
         assert_eq!(
             (session.issue, session.finish, session.items.clone()),
             (
-                Some(proto::IssueId(7)),
+                Some(proto::IssueId::new(0, 7)),
                 FinishState::Finishing,
                 Vec::from([Item::Finishing])
             )

@@ -1,10 +1,12 @@
-//! A home read from a folder on disk, as `home::layout` lays it out: the
-//! one reading of the home's files that the `home` command line and the
-//! host's clone share.
+//! A home read from a folder on disk, as `home::layout` lays it out, and
+//! the repositories on this machine as Git describes them: the one reading
+//! of each that the `home` command line and the host share.
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
+use home::checkout::{self, Probe, Root};
 use home::flow::PATH;
 use home::flow::snapshot::Snapshot;
 use home::layout::{self, IssueLocation};
@@ -24,20 +26,98 @@ pub fn read(root: &Path) -> Snapshot {
             .collect(),
         folders
             .iter()
-            .flat_map(|folder| issues(root, &ProjectId(folder.clone())))
+            .filter_map(|folder| ProjectId::parse(folder))
+            .flat_map(|project| issues(root, project))
             .collect(),
     ))
+}
+
+/// A search root with the folders in it and in each of those that isn't
+/// hidden, so a checkout one level down is found too.
+#[must_use]
+pub fn root(path: &Path) -> Root {
+    let mut entries: Vec<String> = folders(path)
+        .into_iter()
+        .flat_map(|name| {
+            let deeper = if name.starts_with('.') {
+                Vec::new()
+            } else {
+                folders(&path.join(&name))
+            };
+            let inner: Vec<String> = deeper
+                .into_iter()
+                .map(|inner| format!("{name}/{inner}"))
+                .collect();
+            core::iter::once(name).chain(inner)
+        })
+        .collect();
+    entries.sort();
+    Root {
+        path: path.to_string_lossy().into_owned(),
+        entries,
+    }
+}
+
+/// The repository at each of `paths` that is the top of one, as
+/// [`checkout::probed`] reads it, Git run with std's processes.
+#[must_use]
+pub fn probes(paths: &[String]) -> Vec<Probe> {
+    paths
+        .iter()
+        .filter_map(|path| probe(Path::new(path)))
+        .collect()
+}
+
+/// What Git says of the repository at `path`, by its canonical path.
+fn probe(path: &Path) -> Option<Probe> {
+    let at = fs::canonicalize(path).ok()?;
+    let [top, roots, remote] = checkout::ASKED.map(|args| git(&at, args));
+    checkout::probed(
+        at.to_str()?,
+        top.as_deref(),
+        roots.as_deref(),
+        remote.as_deref(),
+    )
+}
+
+/// What Git printed in `at`, if it succeeded, with no `GIT_` variable of
+/// this process's to point it elsewhere.
+#[must_use]
+pub fn git(at: &Path, args: &[&str]) -> Option<String> {
+    let mut command = Command::new("git");
+    command
+        .arg("-C")
+        .arg(at)
+        .args(["-c", "core.fsmonitor=false"])
+        .args(args);
+    std::env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| key.to_string_lossy().starts_with("GIT_"))
+        .for_each(|key| {
+            command.env_remove(key);
+        });
+    command
+        .output()
+        .ok()
+        .filter(|ran| ran.status.success())
+        .and_then(|ran| String::from_utf8(ran.stdout).ok())
+}
+
+/// The names in the folder at `path`, none when it can't be read.
+#[must_use]
+pub fn names(path: &Path) -> Vec<String> {
+    entries(path).map(|(name, _)| name).collect()
 }
 
 /// Each issue file of `project`, with its text or why it couldn't be read.
 fn issues(
     root: &Path,
-    project: &ProjectId,
+    project: ProjectId,
 ) -> Vec<(IssueLocation, Result<String, String>)> {
-    let names = entries(&root.join(layout::issues(project)))
+    let names = entries(&root.join(layout::issues(&project)))
         .map(|(name, _)| name)
         .collect();
-    layout::issue_files(project, names)
+    layout::issue_files(&project, names)
         .into_iter()
         .map(|file| {
             let read = text(root, &file.path);
@@ -94,7 +174,7 @@ mod tests {
             std::env::temp_dir()
                 .join(format!("home-files-{}", std::process::id())),
         );
-        let issues = scratch.0.join("projects/alpha/issues");
+        let issues = scratch.0.join("projects/a1b2c3/issues");
         fs::create_dir_all(&issues)?;
         fs::write(issues.join("one.md"), "+++\n+++\n")?;
         fs::write(issues.join("notes.txt"), "not an issue")?;
@@ -105,10 +185,97 @@ mod tests {
         assert!(
             home.listing_problems()
                 .iter()
-                .any(|problem| problem.starts_with("projects/alpha: ")),
+                .any(|problem| problem.starts_with("projects/a1b2c3: ")),
             "{:?}",
             home.listing_problems()
         );
+        Ok(())
+    }
+
+    /// What Git printed running `args` in `at`, dated `date` if given.
+    fn git(
+        at: &std::path::Path,
+        args: &[&str],
+        date: Option<&str>,
+    ) -> std::io::Result<String> {
+        let mut command = std::process::Command::new("git");
+        command
+            .arg("-C")
+            .arg(at)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args);
+        if let Some(when) = date {
+            command
+                .env("GIT_AUTHOR_DATE", when)
+                .env("GIT_COMMITTER_DATE", when);
+        }
+        let ran = command.output()?;
+        Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
+    }
+
+    /// A repository at `at` with one commit, and that commit.
+    fn committed(at: &std::path::Path) -> std::io::Result<String> {
+        fs::create_dir_all(at.join("inner"))?;
+        fs::write(at.join("README.md"), "")?;
+        git(at, &["init", "-q", "-b", "main"], None)?;
+        git(at, &["add", "."], None)?;
+        git(at, &["commit", "-qm", "first"], None)?;
+        git(at, &["rev-parse", "HEAD"], None)
+    }
+
+    #[test]
+    fn a_repository_s_root_is_the_first_commit_of_its_first_parent_history()
+    -> std::io::Result<()> {
+        let scratch = Scratch(
+            std::env::temp_dir()
+                .join(format!("home-files-roots-{}", std::process::id())),
+        );
+        let at = &scratch.0;
+        let first = committed(at)?;
+        git(at, &["checkout", "-q", "--orphan", "older"], None)?;
+        fs::write(at.join("older.md"), "")?;
+        git(at, &["add", "."], None)?;
+        git(
+            at,
+            &["commit", "-qm", "older"],
+            Some("2000-01-01T00:00:00Z"),
+        )?;
+        git(at, &["checkout", "-q", "main"], None)?;
+        git(
+            at,
+            &[
+                "merge",
+                "-q",
+                "--allow-unrelated-histories",
+                "-m",
+                "in",
+                "older",
+            ],
+            None,
+        )?;
+        let found = super::probes(&[at.display().to_string()]);
+        let roots: Vec<&[String]> =
+            found.iter().map(|probe| probe.roots.as_slice()).collect();
+        assert_eq!(roots, [[first]]);
+        Ok(())
+    }
+
+    #[test]
+    fn only_the_top_of_a_repository_outside_a_set_aside_folder_is_found()
+    -> std::io::Result<()> {
+        let scratch = Scratch(
+            std::env::temp_dir()
+                .join(format!("home-files-probes-{}", std::process::id())),
+        );
+        committed(&scratch.0.join("apps/one"))?;
+        committed(&scratch.0.join("_old/two"))?;
+        let at = fs::canonicalize(&scratch.0)?;
+        let paths = home::checkout::candidates(&[super::root(&at)], &[]);
+        let found: Vec<String> = super::probes(&paths)
+            .into_iter()
+            .map(|probe| probe.path)
+            .collect();
+        assert_eq!(found, [at.join("apps/one").display().to_string()]);
         Ok(())
     }
 }

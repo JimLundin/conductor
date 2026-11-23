@@ -111,9 +111,10 @@ impl Snapshot {
     /// The project called `name`, or whose id it is.
     #[must_use]
     pub fn project(&self, name: &str) -> Option<&Project> {
+        let id = ProjectId::parse(name);
         self.projects()
             .iter()
-            .find(|project| project.name == name || project.id.0 == name)
+            .find(|project| project.name == name || Some(project.id) == id)
     }
 
     /// Every issue file that could be read.
@@ -137,10 +138,7 @@ impl Snapshot {
     pub fn issues(&self) -> BTreeMap<ProjectId, Vec<Issue>> {
         let mut issues: BTreeMap<ProjectId, Vec<Issue>> = BTreeMap::new();
         for issue in &self.graph.issues {
-            issues
-                .entry(issue.project.clone())
-                .or_default()
-                .push(issue.clone());
+            issues.entry(issue.project).or_default().push(issue.clone());
         }
         issues
     }
@@ -169,12 +167,9 @@ impl Snapshot {
             .into_iter()
             .chain(self.listing.problems.iter().cloned())
             .chain(self.unread.iter().cloned())
-            .chain(
-                self.graph
-                    .problems
-                    .iter()
-                    .map(|problem| format!("{}: {problem}", problem.issue)),
-            )
+            .chain(self.graph.problems.iter().map(|problem| {
+                format!("{}/{}: {problem}", problem.project, problem.stem)
+            }))
             .collect()
     }
 }

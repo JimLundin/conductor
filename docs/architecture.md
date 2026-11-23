@@ -214,8 +214,9 @@ client:
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, a live-only `SignIn` step (§6.3), the current `Home`, or the current `Instances` offer. A cursor from another epoch is refused. |
 
 Each frame is a big-endian `u32` length and a JSON body written by serde.
-A 128-bit id (`SessionId`, `CommandId`, `IssueId`) is its 26-character
-lower-case ULID text and an `Epoch` its decimal digits, since JavaScript's
+A 128-bit id (`SessionId`, `CommandId`) is its 26-character lower-case ULID
+text, an `IssueId` or `ProjectId` its short text (`proto::id`), and an
+`Epoch` its decimal digits, since JavaScript's
 numbers are exact only to 2^53; `Instances` and `Roster` are lists of
 `[InstanceId, value]` pairs, since a JSON key is only a string; bytes are
 arrays of integers. Stores and host-to-host frames stay postcard, whose
@@ -630,8 +631,8 @@ standards and issues, cloned on every host. Built so far are home steps
 3, 4 and 6: the clone, its sync, each project's checkouts, and issues.
 
 - **The home's files.** `projects/<id>/project.toml` lists each project
-  under a folder named by its id, a lowercase ULID, which is the
-  `ProjectId`. It gives its `name`, unique in the home and what a person
+  under a folder named by its id, 6 random lowercase base 32 digits, which
+  is the `ProjectId`. It gives its `name`, unique in the home and what a person
   types to name it, its `title`, which the app shows, its `remote` (absent
   when local only), its `root` (the first commit of its first-parent
   history) and its `profiles`; other keys are ignored, `branch` among
@@ -665,11 +666,16 @@ standards and issues, cloned on every host. Built so far are home steps
   history has the project's root commit and its `origin` is the project's
   remote, compared without scheme, user, `.git` or case; a local-only
   project's checkouts have no `origin`. The host probes, in order, the
-  checkouts it found before (host-local, in `<data>/home.state`), then in
-  each search root (`--projects <dir>`, repeatable) each directory and each
-  directory in those, skipping hidden ones, then its own clones, running `rev-parse --show-toplevel`, `rev-list --max-parents=0
-  HEAD` and `remote get-url origin` in each; the decisions are
-  `home::checkout`. A project may have several checkouts on a host
+  checkouts it found before (host-local, in `<data>/home.state`) and its
+  own clones, then in each search root (`--projects <dir>`, repeatable)
+  each directory and each directory in those, skipping hidden ones and
+  those in `_old` or `Archives`, running in each what
+  `home::checkout::ASKED` lists (`rev-parse --show-toplevel`, `rev-list
+  --max-parents=0 --first-parent HEAD` and `remote get-url origin`) with
+  its time-limited Git runner; the decisions and the reading of Git's
+  answers are `home::checkout`, the walk is `home-files`, and `home repos`
+  does the same with the home's folder as its one root, running Git with
+  std's processes. A project may have several checkouts on a host
   (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in
   `<data>/home.state`. `CloneProject` clones a project with a remote into
   `<data>/projects/<project>` (`Project.cloning` is `Running`, then `Idle`
@@ -682,8 +688,9 @@ standards and issues, cloned on every host. Built so far are home steps
   `WorkspaceCreated` records, is the checkout, and the app finds the
   project from it (home §2.2).
 - **Issues** (home step 6). `projects/<project>/issues/<id>.md`, one file
-  per issue in the format of home §3, its name the issue's lowercase ULID
-  (`IssueId`); `home::issue` reads it and lists a project's issues in
+  per issue in the format of home §3, its name the issue's id (`IssueId`):
+  8 lowercase base 32 digits, the seconds since 2026-01-01T00:00:00Z and 2
+  random, so they list in creation order; `home::issue` reads it and lists a project's issues in
   `Project.issues`. The app and the `home` command line share one edit
   vocabulary, defined in `proto`: `CreateIssue(NewIssue)` is
   `home issue new` (project, kind, title, `<field>=<value>` fields), with

@@ -8,14 +8,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 use crate::flow::Flow;
-use crate::{HostPath, Issue, IssueId};
-
-/// A project by its folder's name in the home's `projects/`, a lowercase
-/// ULID. Its name and title may change; its id never does.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
-)]
-pub struct ProjectId(pub String);
+use crate::{HostPath, Issue, IssueId, ProjectId};
 
 /// The host's clone of the home, and the projects it lists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

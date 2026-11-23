@@ -5,6 +5,7 @@
 //! project's checkouts have no `origin`.
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use proto::{Checkout, HostPath, Origin, ProjectId};
 
@@ -19,26 +20,25 @@ pub struct Root {
     pub entries: Vec<String>,
 }
 
-/// The paths to look for checkouts at, each once: those found before, then
-/// each directory in each root that isn't hidden or in a hidden one, then
-/// the host's own clones.
+/// The folders in a root whose repositories are set aside.
+const SET_ASIDE: [&str; 2] = ["_old", "Archives"];
+
+/// The paths to look for checkouts at, each once: the `known` ones, then
+/// each directory in each root that isn't hidden, in a hidden one or in
+/// one set aside.
 #[must_use]
-pub fn candidates(
-    roots: &[Root],
-    projects: &[Project],
-    known: &[String],
-    clones: &str,
-) -> Vec<String> {
+pub fn candidates(roots: &[Root], known: &[String]) -> Vec<String> {
     let searched = roots.iter().flat_map(|root| {
         root.entries
             .iter()
-            .filter(|entry| !entry.split('/').any(|name| name.starts_with('.')))
+            .filter(|entry| {
+                !entry.split('/').any(|name| name.starts_with('.'))
+                    && !SET_ASIDE
+                        .contains(&entry.split('/').next().unwrap_or_default())
+            })
             .map(|entry| join(&root.path, entry))
     });
-    let own = projects
-        .iter()
-        .map(|project| clone_path(clones, &project.id));
-    known.iter().cloned().chain(searched).chain(own).fold(
+    known.iter().cloned().chain(searched).fold(
         Vec::new(),
         |mut listed, path| {
             if !listed.contains(&path) {
@@ -49,10 +49,19 @@ pub fn candidates(
     )
 }
 
+/// Where the host clones each of `projects`, as [`clone_path`] says.
+#[must_use]
+pub fn clone_paths(clones: &str, projects: &[Project]) -> Vec<String> {
+    projects
+        .iter()
+        .map(|project| clone_path(clones, &project.id))
+        .collect()
+}
+
 /// Where the host clones `project`: `<clones>/<project>`.
 #[must_use]
 pub fn clone_path(clones: &str, project: &ProjectId) -> String {
-    join(clones, &project.0)
+    join(clones, &project.to_string())
 }
 
 fn join(directory: &str, name: &str) -> String {
@@ -63,17 +72,25 @@ fn join(directory: &str, name: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
     pub path: String,
-    /// The root commits of its `HEAD`'s history.
+    /// The root commit of its `HEAD`'s first-parent history.
     pub roots: Vec<String>,
     pub remote: Option<String>,
 }
 
+/// What a shell asks Git at a candidate path, in [`probed`]'s order: the
+/// top of the repository there, the root of its `HEAD`'s first-parent
+/// history, and its `origin`.
+pub const ASKED: [&[&str]; 3] = [
+    &["rev-parse", "--show-toplevel"],
+    &["rev-list", "--max-parents=0", "--first-parent", "HEAD"],
+    &["remote", "get-url", "origin"],
+];
+
 /// The repository at `path`, if it is the top of one.
 ///
-/// `top` is what `git rev-parse --show-toplevel` printed there, `roots`
-/// what `git rev-list --max-parents=0 HEAD` did, and `remote` what `git
-/// remote get-url origin` did, each `None` if it failed. A directory
-/// inside another repository, or one with no commit, is none.
+/// `top`, `roots` and `remote` are what Git printed for each of [`ASKED`]
+/// there, each `None` if it failed. A directory inside another repository,
+/// or one with no commit, is none.
 #[must_use]
 pub fn probed(
     path: &str,
@@ -120,13 +137,15 @@ pub fn matched(
                     }
                     found
                 });
-            (project.id.clone(), found)
+            (project.id, found)
         })
         .filter(|(_, found)| !found.is_empty())
         .collect()
 }
 
-fn is_checkout(project: &Project, probe: &Probe) -> bool {
+/// Whether the repository `probe` is a checkout of `project`.
+#[must_use]
+pub fn is_checkout(project: &Project, probe: &Probe) -> bool {
     probe.roots.contains(&project.root)
         && project.remote.as_deref().map(normal)
             == probe.remote.as_deref().map(normal)

@@ -1610,7 +1610,6 @@ dependencies = [
  "serde_json",
  "toml",
  "toml_parser",
- "ulid",
 ]
 
 [[package]]
@@ -1620,6 +1619,7 @@ dependencies = [
  "getrandom 0.4.3",
  "home",
  "home-files",
+ "proto",
 ]
 
 [[package]]

@@ -9,6 +9,22 @@ What is built and what comes next. Update it in the commit that changes it.
   Their completed cuts remain in place. Remaining cleanup borrows question
   and credential drafts, uses the log's command kind for routing, encodes
   Codex calls without duplicate parameter records.
+- **`home repos` and `home skills`.** The `home` command takes over the
+  home's `repos.sh`: `home repos` shows each project's checkouts under the
+  home's folder, the home among them, by root commit and remote, with each
+  one's branch and changes; `sync` clones a project with a remote and no
+  checkout into `<home>/<name>`; `scan` registers each repository matching
+  no project under a fresh `ProjectId` and rewrites the `AGENTS.md` table;
+  `home skills` copies the home's `skills/` to `~/.claude/skills` and
+  `~/.agents/skills`. `home::repos` and `home::skills` decide; the shell
+  runs only Git.
+
+- **Short issue and project ids.** An issue id is 8 lowercase base 32
+  digits, the seconds since 2026-01-01T00:00:00Z then 2 random, drawn
+  again when the home has it, so issues list in creation order; a project
+  id is 6 random digits. `proto::IssueId` and `proto::ProjectId` mint,
+  parse and print them, the `home` command and the daemon mint the same way,
+  and a 26-character id is a structural problem (ALPN `conductor/38`).
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
@@ -161,9 +177,9 @@ What is built and what comes next. Update it in the commit that changes it.
   pairing a host again replaces its ticket. No protocol change.
 - **The home and its projects** (home steps 3 and 4, architecture §5.4).
   The home repository `JimLundin/home` lists each project in
-  `projects/<id>/project.toml`, its folder named by the project's ULID
-  (name, title, remote, root commit, profiles), which its `repos.sh` and
-  `AGENTS.md` table now read. A name is unique, and the app shows the
+  `projects/<id>/project.toml`, its folder named by the project's id
+  (name, title, remote, root commit, profiles), which `home repos` and
+  the `AGENTS.md` table now read. A name is unique, and the app shows the
   title; renaming a project is an edit of its file, and it keeps its
   checkouts and sessions. A host
   given `--home <remote>` (stored, so given once) clones it into

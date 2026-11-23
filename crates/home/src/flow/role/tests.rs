@@ -51,13 +51,13 @@ const RENAMED: [&str; 7] = [
     "pairing",
 ];
 
-const WAITING: IssueId = IssueId(1);
-const BLOCKER: IssueId = IssueId(2);
+const WAITING: IssueId = IssueId::new(0, 1);
+const BLOCKER: IssueId = IssueId::new(0, 2);
 
 fn issue(id: IssueId, status: &str) -> Issue {
     Issue {
         id,
-        project: ProjectId(text("home")),
+        project: ProjectId::new(1),
         title: text("an issue"),
         kind: text("task"),
         status: text(status),

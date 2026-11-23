@@ -5,7 +5,9 @@ use proto::{
     StartAt,
 };
 
-use crate::checkout::{Probe, Root, candidates, matched, normal, probed};
+use crate::checkout::{
+    Probe, Root, candidates, clone_paths, matched, normal, probed,
+};
 use crate::project::{Listing, Project, listed, parse};
 use crate::sync::{Git, Sync, next};
 use crate::{Found, Stored, cloned, place, remote_of, view};
@@ -14,9 +16,25 @@ const ROOT: &str = "fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5";
 const OTHER: &str = "d2cef7849f3ce7cc16f17979e0acb8c21d9aed2a";
 const REMOTE: &str = "https://github.com/JimLundin/conductor.git";
 
+/// The id of the project the tests call `name`, or the id `name` is.
 fn id(name: &str) -> ProjectId {
-    ProjectId(String::from(name))
+    const IDS: [(&str, &str); 8] = [
+        ("conductor", "cnd000"),
+        ("sop", "s0p000"),
+        ("other", "0th000"),
+        ("nope", "n0pe00"),
+        ("a", "a00000"),
+        ("b", "b00000"),
+        ("zeta", "zeta00"),
+        ("alpha", "a1fa00"),
+    ];
+    let known = IDS.iter().find(|(known, _)| *known == name);
+    ProjectId::parse(known.map_or(name, |(_, id)| id))
+        .unwrap_or(ProjectId::new(0))
 }
+
+/// A folder that is a project id, for when its name isn't the point.
+const X: &str = "x00000";
 
 fn project(name: &str, remote: Option<&str>) -> Project {
     Project {
@@ -47,7 +65,7 @@ fn probe(path: &str, roots: &[&str], remote: Option<&str>) -> Probe {
 
 #[test]
 fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
-    let folder = "01m7r5n23kp17wyfj138e0bcnf";
+    let folder = "7r5n23";
     let text = format!(
         "name = \"conductor\"\ntitle = \"Conductor\"\nremote = \"{REMOTE}\"\n\
          root = \"{ROOT}\"\nbranch = \"main\"\nprofiles = [\"rust\"]\n\
@@ -64,7 +82,7 @@ fn a_project_toml_gives_every_field_and_skips_ones_it_doesnt_know() {
     let local =
         format!("name = \"sop\"\ntitle = \"The sop\"\nroot = \"{ROOT}\"\n");
     assert_eq!(
-        parse("sop", &local),
+        parse("s0p000", &local),
         Ok(Project {
             profiles: Vec::new(),
             provides: Vec::new(),
@@ -81,17 +99,19 @@ fn a_project_toml_that_wont_do_says_why() {
     let good = fields(ROOT);
     assert_eq!(
         [
-            parse("Sales", &good),
+            parse("Sales0", &good),
             parse("", &good),
-            parse("-x", &good),
-            parse("a.b", &good),
-            parse("x", "name = \"x\"\n"),
-            parse("x", &fields("FC27E50EFB661D7EF4A45D3EDBE0234FF0A6FBD5")),
-            parse("x", &fields("fc27e50")),
-            parse("x", &fields(&"g".repeat(40))),
+            parse("x-2000", &good),
+            parse("x0000", &good),
+            parse("01m7r5n23kp17wyfj138e0bcnf", &good),
+            parse(X, "name = \"x\"\n"),
+            parse(X, &fields("FC27E50EFB661D7EF4A45D3EDBE0234FF0A6FBD5")),
+            parse(X, &fields("fc27e50")),
+            parse(X, &fields(&"g".repeat(40))),
         ]
         .map(|parsed| parsed.err().map(|err| first_words(&err))),
         [
+            Some(String::from("the folder's name")),
             Some(String::from("the folder's name")),
             Some(String::from("the folder's name")),
             Some(String::from("the folder's name")),
@@ -102,8 +122,8 @@ fn a_project_toml_that_wont_do_says_why() {
             Some(String::from("root is not")),
         ]
     );
-    assert!(parse("x-2", &good).is_ok());
-    assert!(parse("x", &fields(&"a".repeat(64))).is_ok());
+    assert!(parse(X, &good).is_ok());
+    assert!(parse(X, &fields(&"a".repeat(64))).is_ok());
 }
 
 fn first_words(text: &str) -> String {
@@ -116,27 +136,29 @@ fn a_listing_is_by_id_and_names_the_folders_that_arent_projects() {
         format!("name = \"{name}\"\ntitle = \"{name}\"\nroot = \"{ROOT}\"\n")
     };
     let Listing { projects, problems } = listed(Vec::from([
-        (String::from("zeta"), Ok(text("zeta"))),
-        (String::from("alpha"), Ok(text("alpha"))),
+        (String::from("zeta00"), Ok(text("zeta"))),
+        (String::from("a1fa00"), Ok(text("alpha"))),
         (String::from("Bad"), Ok(text("bad"))),
-        (String::from("gone"), Err(String::from("no project.toml"))),
-        (String::from("one"), Ok(text("same"))),
-        (String::from("two"), Ok(text("same"))),
+        (String::from("01m7r5n23kp17wyfj138e0bcnf"), Ok(text("old"))),
+        (String::from("g0ne00"), Err(String::from("no project.toml"))),
+        (String::from("000001"), Ok(text("same"))),
+        (String::from("000002"), Ok(text("same"))),
     ]));
     assert_eq!(
         projects
             .iter()
-            .map(|known| known.id.0.as_str())
+            .map(|known| known.name.as_str())
             .collect::<Vec<_>>(),
         ["alpha", "zeta"]
     );
     assert_eq!(
         problems,
         [
-            "projects/Bad: the folder's name is not lower-case letters, digits and dashes",
-            "projects/gone: no project.toml",
-            "projects/one: another project is also called \"same\"",
-            "projects/two: another project is also called \"same\"",
+            "projects/Bad: the folder's name is not a project id of 6 base 32 digits",
+            "projects/01m7r5n23kp17wyfj138e0bcnf: the folder's name is not a project id of 6 base 32 digits",
+            "projects/g0ne00: no project.toml",
+            "projects/000001: another project is also called \"same\"",
+            "projects/000002: another project is also called \"same\"",
         ]
     );
 }
@@ -145,7 +167,7 @@ fn a_listing_is_by_id_and_names_the_folders_that_arent_projects() {
 /// checkouts, which are kept by id, stay its own.
 #[test]
 fn a_renamed_project_keeps_its_id_and_its_checkouts() {
-    let folder = "01m7r5n23kp17wyfj138e0bcnf";
+    let folder = "7r5n23";
     let renamed = parse(
         folder,
         &format!(
@@ -196,9 +218,7 @@ fn a_renamed_project_keeps_its_id_and_its_checkouts() {
 }
 
 #[test]
-fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once()
- {
-    let projects = [project("conductor", Some(REMOTE)), project("sop", None)];
+fn candidates_are_known_paths_then_each_root_s_directories_each_once() {
     let roots = [
         Root {
             path: String::from("/home/me/projects/"),
@@ -209,6 +229,9 @@ fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once
                 String::from("apps/.git"),
                 String::from("apps/conductor"),
                 String::from("conductor"),
+                String::from("_old"),
+                String::from("_old/conductor"),
+                String::from("Archives/sop"),
             ]),
         },
         Root {
@@ -219,18 +242,27 @@ fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once
     assert_eq!(
         candidates(
             &roots,
-            &projects,
-            &[String::from("/home/me/projects/conductor")],
-            "/data/projects",
+            &[
+                String::from("/home/me/projects/conductor"),
+                String::from("/data/projects/cnd000"),
+            ],
         ),
         [
             "/home/me/projects/conductor",
+            "/data/projects/cnd000",
             "/home/me/projects/apps",
             "/home/me/projects/apps/conductor",
             "/srv/sop",
-            "/data/projects/conductor",
-            "/data/projects/sop",
         ]
+    );
+}
+
+#[test]
+fn the_host_clones_each_project_into_a_folder_of_its_id() {
+    let projects = [project("conductor", Some(REMOTE)), project("sop", None)];
+    assert_eq!(
+        clone_paths("/data/projects/", &projects),
+        ["/data/projects/cnd000", "/data/projects/s0p000"]
     );
 }
 
@@ -290,8 +322,8 @@ fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
         ),
         probe("/e", &[ROOT], None),
         probe("/a", &[ROOT], Some(REMOTE)),
-        probe("/data/projects/conductor", &[ROOT], Some(REMOTE)),
-        probe("/data/projects/sop", &[OTHER], None),
+        probe("/data/projects/cnd000", &[ROOT], Some(REMOTE)),
+        probe("/data/projects/s0p000", &[OTHER], None),
     ];
     assert_eq!(
         matched(&projects, &probes, "/data/projects"),
@@ -301,7 +333,7 @@ fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
                 Vec::from([
                     checkout("/a", Origin::Found),
                     checkout("/b", Origin::Found),
-                    checkout("/data/projects/conductor", Origin::Cloned),
+                    checkout("/data/projects/cnd000", Origin::Cloned),
                 ])
             ),
             (id("sop"), Vec::from([checkout("/e", Origin::Found)])),
