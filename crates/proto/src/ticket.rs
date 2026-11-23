@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use data_encoding::BASE64URL_NOPAD;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 
@@ -19,7 +20,7 @@ const VERSION: u8 = 0;
 const ID_LEN: usize = 32;
 const TOKEN_LEN: usize = 16;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Ticket {
     pub host: [u8; ID_LEN],
     pub relay: String,
@@ -28,7 +29,7 @@ pub struct Ticket {
 
 /// S3 placeholder for the fleet certificates of §4: a random secret the host
 /// prints in its ticket and requires in every `Hello`.
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthToken([u8; TOKEN_LEN]);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

@@ -5,13 +5,14 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::flow::Flow;
 use crate::{HostPath, Issue, IssueId, ProjectId};
 
 /// The host's clone of the home, and the projects it lists.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Home {
     /// The home's remote, as the host was given it.
     pub remote: String,
@@ -28,7 +29,7 @@ pub struct Home {
     pub projects: Vec<Project>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum HomeSync {
     /// The first clone is under way.
     Syncing,
@@ -42,7 +43,7 @@ pub enum HomeSync {
 }
 
 /// A project as the home describes it, and its checkouts on this host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Project {
     pub id: ProjectId,
     /// Unique in the home: what a person types to name it.
@@ -66,13 +67,15 @@ pub struct Project {
 /// A repository on this host whose root commit and remote are a project's.
 /// A session's project follows from its worktree's repository, which is
 /// one of these.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Checkout {
     pub path: HostPath,
     pub origin: Origin,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Origin {
     /// Found in a directory the host searches.
     Found,
@@ -81,7 +84,7 @@ pub enum Origin {
 }
 
 /// Where the host's own clone of a project stands, after "Clone here".
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Cloning {
     Idle,
     Running,
@@ -90,7 +93,7 @@ pub enum Cloning {
 
 /// Where a new session runs: a directory, a project's checkout, or an
 /// issue's project's checkout on a branch cut from the issue's.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StartAt {
     Directory(HostPath),
     Project(ProjectId),

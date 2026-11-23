@@ -9,11 +9,12 @@ use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::Datum;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Flow {
     /// The kind of an issue that names none.
     pub default_kind: String,
@@ -26,7 +27,7 @@ pub struct Flow {
     pub rules: Vec<Rule>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Status {
     pub name: String,
@@ -36,7 +37,16 @@ pub struct Status {
 
 /// What a status means to Conductor, whatever the flow calls it.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -77,7 +87,8 @@ impl Role {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "FlowField")]
 pub struct Field {
     pub name: String,
     pub value: FieldType,
@@ -89,7 +100,16 @@ pub struct Field {
 /// What a field means to Conductor, whatever the flow calls it. At most
 /// one field has each.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum FieldRole {
@@ -124,7 +144,7 @@ impl FieldRole {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum FieldType {
     /// One of these words.
     Enum(Vec<String>),
@@ -134,7 +154,7 @@ pub enum FieldType {
     Bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Kind {
     pub name: String,
     pub label: String,
@@ -148,7 +168,7 @@ pub struct Kind {
     pub order: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Relation {
     pub name: String,
@@ -167,7 +187,9 @@ pub struct Relation {
     pub reverse: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Shape {
     /// Drawn as a tree.
@@ -176,7 +198,7 @@ pub enum Shape {
     Dependency,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Stage {
     pub name: String,
@@ -191,7 +213,7 @@ pub struct Stage {
     pub sign_off: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Rule {
     pub message: String,
     pub severity: Severity,
@@ -201,7 +223,9 @@ pub struct Rule {
     pub require: Predicate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     Warn,
@@ -209,7 +233,7 @@ pub enum Severity {
 }
 
 /// A condition on an issue, among the issues it relates to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Predicate {
     Kind(String),
     Stage(String),
@@ -239,13 +263,15 @@ pub enum Predicate {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Literal {
     Text(String),
     Bool(bool),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Quantifier {
     Any,
     All,

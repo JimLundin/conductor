@@ -1,0 +1,26 @@
+[package]
+name = "web-iroh"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.standards]
+layer = "shell"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+iroh = { workspace = true, features = ["tls-ring"] }
+proto = { path = "../proto" }
+thiserror.workspace = true
+tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
+wasm-bindgen = "0.2.130"
+wasm-bindgen-futures = "0.4.80"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[lints]
+workspace = true

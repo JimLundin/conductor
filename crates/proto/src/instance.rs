@@ -5,8 +5,10 @@
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{Availability, Credential, HostPath, ModelId, Provider};
@@ -15,7 +17,16 @@ use crate::{Availability, Credential, HostPath, ModelId, Provider};
 /// node). The provider names the account, not the owner, so it never
 /// changes and the instance is never renamed.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 pub struct InstanceId {
     pub provider: Provider,
@@ -24,7 +35,16 @@ pub struct InstanceId {
 
 /// Who the provider says an instance signs in as.
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 pub enum Account {
     /// The provider's own sign-in before it has named an account: where a
@@ -37,7 +57,9 @@ pub enum Account {
 }
 
 /// An instance as its host keeps it.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Instance {
     /// `None` leaves the CLI to sign in on its own, in the instance's home.
     pub credential: Option<Credential>,
@@ -52,22 +74,29 @@ pub struct Instance {
 /// The instances a host has, with their credentials.
 ///
 /// This is the unit the fleet config (§6.5) carries to every host.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Roster(
-    #[serde(with = "crate::json::pairs")] pub BTreeMap<InstanceId, Instance>,
+    #[serde(with = "crate::json::pairs")]
+    #[schemars(with = "Vec<(InstanceId, Instance)>")]
+    pub BTreeMap<InstanceId, Instance>,
 );
 
 /// What a client learns of one instance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct InstanceStatus {
     pub availability: Availability,
 }
 
 /// Whether the host can run each of its instances, and how each signs in.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Instances(
     #[serde(with = "crate::json::pairs")]
-    pub  BTreeMap<InstanceId, InstanceStatus>,
+    #[schemars(with = "Vec<(InstanceId, InstanceStatus)>")]
+    pub BTreeMap<InstanceId, InstanceStatus>,
 );
 
 impl InstanceId {

@@ -2,10 +2,14 @@
 //! alone: lower-case base 32 digits, the most significant first, so text
 //! order is number order. A shell gives the clock and the randomness.
 
+use alloc::borrow::Cow;
+use alloc::string::String;
 use core::fmt;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value};
 
 const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
@@ -140,9 +144,24 @@ fn read(text: &str, places: u32) -> Option<u64> {
     })
 }
 
-/// Serde writes an id as its text, in every format.
+/// Serde writes an id as its text, in every format, and its schema is that
+/// text's.
 macro_rules! textual {
     ($id:ident, $expecting:literal) => {
+        impl JsonSchema for $id {
+            fn schema_name() -> Cow<'static, str> {
+                Cow::Borrowed(stringify!($id))
+            }
+
+            fn json_schema(_: &mut SchemaGenerator) -> Schema {
+                Schema::from(Map::from_iter([
+                    (String::from("type"), Value::from("string")),
+                    (String::from("minLength"), Value::from($id::DIGITS)),
+                    (String::from("maxLength"), Value::from($id::DIGITS)),
+                ]))
+            }
+        }
+
         impl Serialize for $id {
             fn serialize<S: Serializer>(
                 &self,

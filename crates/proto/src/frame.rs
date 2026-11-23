@@ -49,15 +49,23 @@ pub fn encode<T: Frame>(msg: &T) -> Result<Vec<u8>, FrameError> {
         Codec::Json => serde_json::to_vec(msg)?,
         Codec::Postcard => postcard::to_allocvec(msg)?,
     };
-    match u32::try_from(body.len()) {
-        Ok(len @ ..=MAX_FRAME_LEN) => Ok(len
-            .to_be_bytes()
-            .into_iter()
-            .chain(body)
-            .collect::<Vec<u8>>()),
-        Ok(_) | Err(_) => Err(FrameError::TooLarge(
-            u64::try_from(body.len()).unwrap_or(u64::MAX),
-        )),
+    Ok(header(body.len())?
+        .into_iter()
+        .chain(body)
+        .collect::<Vec<u8>>())
+}
+
+/// The header that announces a body of `len` bytes.
+///
+/// # Errors
+///
+/// [`FrameError::TooLarge`] when `len` exceeds the 16 MiB limit.
+pub fn header(len: usize) -> Result<[u8; HEADER_LEN], FrameError> {
+    match u32::try_from(len) {
+        Ok(announced @ ..=MAX_FRAME_LEN) => Ok(announced.to_be_bytes()),
+        Ok(_) | Err(_) => {
+            Err(FrameError::TooLarge(u64::try_from(len).unwrap_or(u64::MAX)))
+        }
     }
 }
 
@@ -120,7 +128,7 @@ impl Frame for crate::fleet::SignedConfiguration {
 mod tests {
     use alloc::collections::BTreeMap;
 
-    use super::{HEADER_LEN, body_len, decode, encode};
+    use super::{HEADER_LEN, body_len, decode, encode, header};
     use crate::{
         Auth, AuthToken, Availability, Catalog, ClientName, Command,
         CommandBody, CommandId, CommandResult, Credential, Decision, Effort,
@@ -410,6 +418,20 @@ mod tests {
             ))
         );
         assert_eq!(body_len([0x01, 0x00, 0x00, 0x00])?, 16_777_216);
+        Ok(())
+    }
+
+    #[test]
+    fn a_header_announces_its_body_length_big_endian()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(header(0x0001_0203)?, [0x00, 0x01, 0x02, 0x03]);
+        assert_eq!(header(16_777_216)?, [0x01, 0x00, 0x00, 0x00]);
+        assert_eq!(
+            header(16_777_217).map_err(|error| error.to_string()),
+            Err(String::from(
+                "frame of 16777217 bytes exceeds the 16777216-byte limit"
+            ))
+        );
         Ok(())
     }
 

@@ -57,3 +57,11 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+
+# web-iroh's wasm, which wasm-pack builds into web/ (`npm run pipe` there):
+# small over fast, as n0 builds its browser examples.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = true
+codegen-units = 1

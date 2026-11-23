@@ -29,6 +29,26 @@ tools = ["PYTHON"]
 tier = "commit"
 paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
 
+# The browser's iroh, the only crate built for wasm, under clippy on its
+# target; the workspace's lint checks it on the host's.
+[[suite]]
+name = "wasm-clippy"
+command = "cargo clippy --target wasm32-unknown-unknown -p web-iroh --lib"
+[[suite.when]]
+tier = "commit"
+packages = ["web-iroh"]
+
+# The app's Effect Schemas in web/src/proto/, generated from proto's
+# JSON Schema (ADR 0002): regenerates them and fails on any difference.
+[[suite]]
+name = "schemas"
+command = "cd web && npm ci --no-fund --no-audit --silent && ../tools/schemas.sh --check"
+tools = ["NODE", "BIOME"]
+[[suite.when]]
+tier = "commit"
+paths = ["crates/proto/**", "web/src/proto/**", "web/scripts/schemas.ts", "web/package-lock.json", "web/biome.json", "tools/schemas.sh"]
+packages = ["proto"]
+
 # The host feeds the web app's tests replay, rerun from their daemon e2e
 # scenarios. It builds the daemon's e2e, so it runs with the tests.
 [[suite]]
@@ -44,20 +64,22 @@ packages = ["daemon"]
 
 # The web app, under the shared TypeScript standard, which keys and records
 # its own checks. Its key holds no tier, so the commit checks and the step's
-# tests are two suites. `web-step`'s Vitest run also replays the host feeds,
-# which the standard's keys, read from web/ alone, miss, so it runs every
-# check afresh.
+# tests are two suites. Both first build web-iroh into web/web-iroh, whose
+# declarations the app type-checks against. The standard keys its checks by
+# web/'s files alone, which misses web-iroh and the host feeds the Vitest
+# run replays, so both run every check afresh.
 [[suite]]
 name = "web"
-command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" commit"
+command = "cd web && npm ci --no-fund --no-audit --silent && npm run build --silent && \"$STANDARDS/typescript/check.sh\" commit --no-cache"
 tools = ["NODE"]
 [[suite.when]]
 tier = "commit"
 paths = ["web/**"]
+packages = ["web-iroh"]
 
 [[suite]]
 name = "web-step"
-command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" step --no-cache"
+command = "cd web && npm ci --no-fund --no-audit --silent && npm run pipe --silent && \"$STANDARDS/typescript/check.sh\" step --no-cache"
 tools = ["NODE"]
 [[suite.when]]
 tier = "step"
