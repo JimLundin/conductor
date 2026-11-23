@@ -1,6 +1,7 @@
+use home::IssueId;
 use proto::{
-    ClientName, Event, EventKind, HostPath, HostSeq, InstanceId, IssueId,
-    Provider, SessionId,
+    ClientName, Event, EventKind, HostPath, HostSeq, InstanceId, Provider,
+    SessionId,
 };
 
 use super::{Assigned, Assignment, assigned};

@@ -1,8 +1,9 @@
+use home::issue::{EditId, IssueChange, NewIssue};
+use home::{HomeCommand, IssueId};
 use proto::{
-    AuthToken, ClientName, Command, CommandId, Effort, Epoch, Hello,
-    HomeCommand, HostSeq, InstanceCommand, InstanceId, IssueChange, IssueId,
-    Models, NewIssue, Open, Provider, SessionCommand, SessionId, SignInCode,
-    SignInCommand, Subscribe,
+    AuthToken, ClientName, Command, CommandId, Effort, Epoch, Hello, HostSeq,
+    InstanceCommand, InstanceId, Models, Open, Provider, SessionCommand,
+    SessionId, SignInCode, SignInCommand, Subscribe,
 };
 
 use crate::log::Kind;
@@ -140,14 +141,18 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 #[test]
 fn issue_commands_keep_a_receipt() {
     let new = NewIssue {
-        project: proto::ProjectId::new(1),
+        project: home::ProjectId::new(1),
         kind: String::from("task"),
         title: String::from("Remove sessions"),
         fields: Vec::new(),
     };
     let recorded = [
-        HomeCommand::CreateIssue(new),
+        HomeCommand::CreateIssue {
+            edit: EditId(1),
+            issue: new,
+        },
         HomeCommand::ChangeIssue {
+            edit: EditId(2),
             issue: IssueId::new(0, 1),
             change: IssueChange::Note(String::from("done")),
         },
@@ -158,7 +163,7 @@ fn issue_commands_keep_a_receipt() {
 
 #[test]
 fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
-    let project = || proto::ProjectId::new(1);
+    let project = || home::ProjectId::new(1);
     let run = [HomeCommand::Sync, HomeCommand::Clone { project: project() }]
         .map(|command| ledger(&Command::Home(command)));
     assert_eq!(run, [None; 2]);

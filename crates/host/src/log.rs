@@ -11,8 +11,9 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
 use core::mem;
 
+use home::Home;
 use proto::{
-    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
+    Catalog, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
 };
 

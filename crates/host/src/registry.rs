@@ -33,10 +33,11 @@ use agents::Configuration;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 
+use home::IssueId;
 use proto::{
     Account, Auth, Availability, Catalog, Credential, Effort, Event, Instance,
     InstanceId, InstanceRefusal, InstanceResult, InstanceStatus, Instances,
-    IssueId, ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
+    ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
     SessionResult,
 };
 use serde::{Deserialize, Serialize};
@@ -1151,8 +1152,8 @@ fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {
 
 mod start;
 pub use start::{
-    StartDecision, StartEffect, StartEnd, StartOutcome, StartReport,
-    StartRequest, StartSession, StartStep, brief_sent,
+    Placement, StartDecision, StartEffect, StartEnd, StartOutcome, StartReport,
+    StartRequest, StartSession, StartStep, brief_sent, path_of, place,
 };
 
 #[cfg(test)]

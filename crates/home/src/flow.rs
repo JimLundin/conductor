@@ -26,12 +26,14 @@ pub mod file;
 pub mod graph;
 pub mod role;
 pub mod snapshot;
+mod vocabulary;
 
-use proto::Datum;
-use proto::flow::{
+pub use vocabulary::{
     Field, FieldRole, FieldType, Flow, Kind, Literal, Predicate, Quantifier,
-    Relation, Role, Rule, Severity, Stage, Status,
+    Relation, Role, Rule, Severity, Shape, Stage, Status,
 };
+
+use crate::issue::Datum;
 
 /// Where the flow is, from the home's root.
 pub const PATH: &str = "docs/agents/flow.toml";

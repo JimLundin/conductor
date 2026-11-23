@@ -34,16 +34,17 @@ use home::issue::{
     Commit, Context, Delivery, Edit, Listing, PendingEdits, Record,
     RecordEffect, RemoteProbe, SessionUpdate, Write,
 };
+use home::issue::{EditId, IssueChange, NewIssue};
 use home::skills;
 use home::sync::{self, Git, Sync};
+use home::{
+    Checkout, Cloning, Home, HomeCommand, HomeRefusal, HomeResult, HomeSync,
+    IssueId, ProjectId,
+};
 use home::{Found, Stored};
 use host::log::Completion;
 use issue_file::{read_issue, write_issue};
-use proto::{
-    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeCommand,
-    HomeRefusal, HomeResult, HomeSync, HostPath, IssueChange, IssueId,
-    NewIssue, ProjectId, SessionRefusal, StartAt,
-};
+use proto::{ClientName, CommandResult, HostPath, SessionRefusal, StartAt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -80,7 +81,7 @@ pub struct HomeClone {
     clone: PathBuf,
 }
 
-pub use home::Placement;
+pub use host::registry::Placement;
 
 type Placed = Result<Placement, HomeRefusal>;
 
@@ -124,7 +125,6 @@ enum Msg {
     Command {
         command: HomeCommand,
         by: ClientName,
-        id: CommandId,
         reply: oneshot::Sender<Completion>,
     },
     Place {
@@ -145,7 +145,7 @@ enum Msg {
         summary: Option<String>,
         client: ClientName,
         landed: u64,
-        note_id: Option<CommandId>,
+        note_id: Option<EditId>,
         reply: oneshot::Sender<()>,
     },
 }
@@ -228,15 +228,8 @@ impl HomeClone {
         &self,
         command: HomeCommand,
         by: ClientName,
-        id: CommandId,
     ) -> Result<Completion, Stopped> {
-        self.ask(|reply| Msg::Command {
-            command,
-            by,
-            id,
-            reply,
-        })
-        .await
+        self.ask(|reply| Msg::Command { command, by, reply }).await
     }
 
     /// Where a session starts: a directory as it is, or a project's or an
@@ -300,7 +293,7 @@ impl HomeClone {
         summary: Option<String>,
         client: ClientName,
         landed: u64,
-        note_id: Option<CommandId>,
+        note_id: Option<EditId>,
     ) -> Result<(), Stopped> {
         self.ask(|reply| Msg::Finished {
             issue,
@@ -403,18 +396,13 @@ impl Actor {
     async fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Tick => self.refresh().await,
-            Msg::Command {
-                command,
-                by,
-                id,
-                reply,
-            } => {
-                let _ = reply.send(self.command(command, &by, id).await);
+            Msg::Command { command, by, reply } => {
+                let _ = reply.send(self.command(command, &by).await);
             }
             Msg::Place { at, reply } => {
                 self.fresh().await;
                 let shown = self.shown.borrow().clone();
-                let _ = reply.send(home::place(at, shown.as_ref()));
+                let _ = reply.send(host::registry::place(at, shown.as_ref()));
             }
             Msg::Ready { start, reply } => {
                 let readied = ready_branch(&start).await.map_err(|reason| {
@@ -461,13 +449,13 @@ impl Actor {
         issue: IssueId,
         client: &ClientName,
         mut update: SessionUpdate,
-        note_id: Option<CommandId>,
+        note_id: Option<EditId>,
     ) {
         while let Some(change) =
             self.next_session_change(&mut update, issue).await
         {
-            let id = SessionUpdate::command_for(&change, note_id)
-                .unwrap_or_else(|| CommandId(ulid::Ulid::new().0));
+            let id = SessionUpdate::edit_for(&change, note_id)
+                .unwrap_or_else(|| EditId(ulid::Ulid::new().0));
             if let Err(error) = self.change(issue, change, client, id).await {
                 let answer = error.completion().into_result();
                 tracing::warn!(target: "home", ?answer, "a session's issue update was rejected");
@@ -491,21 +479,24 @@ impl Actor {
         &mut self,
         command: HomeCommand,
         by: &ClientName,
-        id: CommandId,
     ) -> Completion {
         match command {
             HomeCommand::Sync => home(self.pull_now().await),
             HomeCommand::Clone { project } => {
                 home(self.clone_project(project).await)
             }
-            HomeCommand::CreateIssue(new) => self
-                .create(new, by, id)
+            HomeCommand::CreateIssue { edit, issue: new } => self
+                .create(new, by, edit)
                 .await
                 .map_or_else(IssueError::completion, |(issue, warnings)| {
                     home(HomeResult::IssueWritten { issue, warnings })
                 }),
-            HomeCommand::ChangeIssue { issue, change } => self
-                .change(issue, change, by, id)
+            HomeCommand::ChangeIssue {
+                edit,
+                issue,
+                change,
+            } => self
+                .change(issue, change, by, edit)
                 .await
                 .map_or_else(IssueError::completion, |warnings| {
                     home(HomeResult::IssueWritten { issue, warnings })
@@ -653,10 +644,10 @@ impl Actor {
         &mut self,
         new: NewIssue,
         client: &ClientName,
-        command: CommandId,
+        edit: EditId,
     ) -> Result<(IssueId, Vec<String>), IssueError> {
         self.load_current_edits().await?;
-        if let Some(kept) = self.kept_issue(command) {
+        if let Some(kept) = self.kept_issue(edit) {
             return kept.map(|issue| (issue, Vec::new()));
         }
         self.fresh().await;
@@ -666,10 +657,9 @@ impl Actor {
                 "no issue id is free this second",
             ))
         })?;
-        let request =
-            self.issue_context(command).open(issue, new, &client.0)?;
+        let request = self.issue_context(edit).open(issue, new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
-        if let Some(opened) = self.created(&issue_dir, command).await? {
+        if let Some(opened) = self.created(&issue_dir, edit).await? {
             return Ok((opened, Vec::new()));
         }
         let warnings = self.record(request).await?;
@@ -679,12 +669,12 @@ impl Actor {
     async fn created(
         &self,
         path: &str,
-        command: CommandId,
+        edit: EditId,
     ) -> Result<Option<IssueId>, IssueError> {
         if !cloned(&self.clone) {
             return Ok(None);
         }
-        let pattern = Listing::creation_pattern(command);
+        let pattern = Listing::creation_pattern(edit);
         let paths = text(
             &self.clone,
             &[
@@ -712,20 +702,20 @@ impl Actor {
         issue: IssueId,
         change: IssueChange,
         client: &ClientName,
-        command: CommandId,
+        edit: EditId,
     ) -> Result<Vec<String>, IssueError> {
         self.load_current_edits().await?;
-        if let Some(kept) = self.kept_issue(command) {
+        if let Some(kept) = self.kept_issue(edit) {
             return kept.map(|_| Vec::new());
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
         let request =
-            self.issue_context(command).edit(issue, change, &client.0)?;
+            self.issue_context(edit).edit(issue, change, &client.0)?;
         self.record(request).await
     }
 
-    fn kept_issue(&self, id: CommandId) -> Option<Result<IssueId, IssueError>> {
+    fn kept_issue(&self, id: EditId) -> Option<Result<IssueId, IssueError>> {
         let issue = self.edits.issue_for(id)?;
         Some(
             self.sync_edits()
@@ -735,13 +725,13 @@ impl Actor {
     }
 
     /// What an issue change is decided against.
-    fn issue_context(&self, command: CommandId) -> Context<'_> {
+    fn issue_context(&self, edit: EditId) -> Context<'_> {
         Context {
             remote: self.remote.as_deref(),
             home: &self.home,
             host: &self.host,
             at: now(),
-            command,
+            edit,
         }
     }
 
@@ -1470,7 +1460,7 @@ fn now() -> u64 {
 }
 
 /// The randomness a new issue's id is minted with.
-fn draws() -> proto::Draws {
+fn draws() -> home::Draws {
     core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
 }
 

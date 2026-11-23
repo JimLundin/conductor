@@ -8,12 +8,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use home::ProjectId;
 use home::checkout::{self, Probe, Root};
 use home::flow::PATH;
 use home::flow::snapshot::Snapshot;
 use home::layout::{self, IssueLocation};
 use home::skills;
-use proto::ProjectId;
 
 /// The home whose root is `root`.
 #[must_use]

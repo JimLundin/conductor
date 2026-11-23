@@ -10,7 +10,6 @@ layer = "shell"
 
 [dependencies]
 home = { path = "../home" }
-proto = { path = "../proto" }
 
 [lints]
 workspace = true

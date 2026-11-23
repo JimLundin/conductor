@@ -11,12 +11,13 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::Path;
 
+use home::Home;
 use host::log::{
     Begun, Completion, Effect, FreshRequest, Kind, Log as Core, Ticket,
 };
 use proto::{
-    Catalog, CommandId, CommandResult, Event, EventKind, Home, HostSeq,
-    Instances, SessionId, Subscribe, Welcome,
+    Catalog, CommandId, CommandResult, Event, EventKind, HostSeq, Instances,
+    SessionId, Subscribe, Welcome,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 

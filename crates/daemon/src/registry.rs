@@ -19,11 +19,12 @@ use host::registry::{
 };
 use host::restore::{Created, Recovery, Step, events_of};
 
+use home::HomeRefusal;
 use host::sign_in::{CredentialTarget, Effect as SignInEffect, Key, SignIns};
 use proto::{
     Catalog, ClientName, CommandId, Credential, Effort, Event, EventKind,
-    HomeRefusal, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
-    Instances, ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
+    InstanceCommand, InstanceId, InstanceRefusal, InstanceResult, Instances,
+    ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
     SessionResult, SignIn, SignInCommand, SignInRefusal, SignInResult, StartAt,
 };
 use runtime::Instance;

@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/39",
+			"const": "conductor/40",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
@@ -229,11 +229,15 @@
 					"$ref": "#/$defs/Origin"
 				},
 				"path": {
-					"$ref": "#/$defs/HostPath"
+					"$ref": "#/$defs/CheckoutLocation"
 				}
 			},
 			"required": ["path", "origin"],
 			"type": "object"
+		},
+		"CheckoutLocation": {
+			"description": "Where a project is checked out on a host, as the host's OS spells it.\nOnly the host reads it: a browser on a phone can't know a Windows\npath's rules.",
+			"type": "string"
 		},
 		"ClientName": {
 			"description": "The name a client gave in `Hello`. Shown as \"by\" on a resolution and a\nuser message.",
@@ -544,6 +548,9 @@
 		},
 		"DiffExtent": {
 			"enum": ["Complete", "Truncated"],
+			"type": "string"
+		},
+		"EditId": {
 			"type": "string"
 		},
 		"Effort": {
@@ -1608,10 +1615,19 @@
 				},
 				{
 					"additionalProperties": false,
-					"description": "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
+					"description": "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.\n\nThe app mints `edit` once per edit and sends it again with each\nretry, so the home writes the edit once.",
 					"properties": {
 						"CreateIssue": {
-							"$ref": "#/$defs/NewIssue"
+							"properties": {
+								"edit": {
+									"$ref": "#/$defs/EditId"
+								},
+								"issue": {
+									"$ref": "#/$defs/NewIssue"
+								}
+							},
+							"required": ["edit", "issue"],
+							"type": "object"
 						}
 					},
 					"required": ["CreateIssue"],
@@ -1626,11 +1642,14 @@
 								"change": {
 									"$ref": "#/$defs/IssueChange"
 								},
+								"edit": {
+									"$ref": "#/$defs/EditId"
+								},
 								"issue": {
 									"$ref": "#/$defs/IssueId"
 								}
 							},
-							"required": ["issue", "change"],
+							"required": ["edit", "issue", "change"],
 							"type": "object"
 						}
 					},

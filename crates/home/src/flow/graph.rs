@@ -12,8 +12,9 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use core::fmt;
 
-use proto::flow::{Field, FieldRole, Flow, Relation};
-use proto::{Datum, Issue, IssueId, ProjectId};
+use crate::flow::{Field, FieldRole, Flow, Relation};
+use crate::issue::{Datum, Issue};
+use crate::{IssueId, ProjectId};
 use serde::Deserialize;
 use toml::Value;
 

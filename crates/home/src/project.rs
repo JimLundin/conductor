@@ -5,8 +5,8 @@
 //! and those it provides. Its
 //! default branch is Git's, not the home's.
 
+use crate::ProjectId;
 use alloc::string::ToString;
-use proto::ProjectId;
 use serde::Deserialize;
 
 use crate::layout::{self, PROJECT_FILE};

@@ -10,8 +10,11 @@
 
 extern crate alloc;
 
+mod calendar;
 pub mod checkout;
 pub mod flow;
+mod home;
+mod id;
 pub mod instructions;
 pub mod issue;
 pub mod layout;
@@ -24,15 +27,16 @@ pub mod sync;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
-use proto::flow::Flow;
-use proto::{
-    Checkout, Cloning, Home, HomeRefusal, HomeResult, HostPath, Issue,
-    ProjectId, StartAt,
+pub use home::{
+    Checkout, CheckoutLocation, Cloning, Home, HomeCommand, HomeRefusal,
+    HomeResult, HomeSync, Origin, Project,
 };
+pub use id::{DRAWS, Draws, IssueId, ProjectId};
 use serde::{Deserialize, Serialize};
 
+use crate::flow::Flow;
+use crate::issue::Issue;
 use crate::prelude::*;
-use crate::project::Project;
 use crate::sync::Sync;
 
 /// What the host keeps of its home between runs: the remote it was given,
@@ -93,7 +97,7 @@ pub struct Found<'host> {
 pub fn view(
     remote: &str,
     sync: &Sync,
-    projects: &[Project],
+    projects: &[project::Project],
     found: Found<'_>,
 ) -> Home {
     let Found {
@@ -111,7 +115,7 @@ pub fn view(
         flow: flow.cloned().map(Box::new),
         projects: projects
             .iter()
-            .map(|project| proto::Project {
+            .map(|project| Project {
                 id: project.id,
                 name: project.name.clone(),
                 title: project.title.clone(),
@@ -132,51 +136,27 @@ pub fn view(
     }
 }
 
-/// The directory a session starts in: the one given, or the first
-/// checkout of a project or an issue's project. The session's project follows from its worktree's repository,
-/// so it isn't kept apart.
+/// Where a session on project `id` starts: its first checkout.
 ///
 /// # Errors
 ///
 /// The host has no home, its home lists no such project, or the project
 /// has no checkout on the host.
-pub fn place(
-    at: StartAt,
+pub fn first_checkout(
     home: Option<&Home>,
-) -> Result<Placement, HomeRefusal> {
-    match at {
-        StartAt::Directory(directory) => Ok(Placement {
-            directory,
-            on: None,
-        }),
-        StartAt::Project(id) => {
-            let known = home.ok_or(HomeRefusal::NoHome)?;
-            let project = known
-                .projects
-                .iter()
-                .find(|project| project.id == id)
-                .ok_or(HomeRefusal::UnknownProject)?;
-            let checkout = project
-                .checkouts
-                .first()
-                .ok_or(HomeRefusal::NotCheckedOut)?;
-            Ok(Placement {
-                directory: checkout.path.clone(),
-                on: None,
-            })
-        }
-        StartAt::Issue(id) => issue::start(home, id).map(|on| Placement {
-            directory: on.checkout.clone(),
-            on: Some(on),
-        }),
-    }
-}
-
-/// Where a session starts, and the issue it works on, if any.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Placement {
-    pub directory: HostPath,
-    pub on: Option<issue::Start>,
+    id: ProjectId,
+) -> Result<CheckoutLocation, HomeRefusal> {
+    let known = home.ok_or(HomeRefusal::NoHome)?;
+    let project = known
+        .projects
+        .iter()
+        .find(|project| project.id == id)
+        .ok_or(HomeRefusal::UnknownProject)?;
+    project
+        .checkouts
+        .first()
+        .map(|checkout| checkout.path.clone())
+        .ok_or(HomeRefusal::NotCheckedOut)
 }
 
 /// The remote to clone a project from.
@@ -185,7 +165,7 @@ pub struct Placement {
 ///
 /// The home lists no such project, or it is local only.
 pub fn remote_of(
-    projects: &[Project],
+    projects: &[project::Project],
     id: &ProjectId,
 ) -> Result<String, HomeRefusal> {
     projects

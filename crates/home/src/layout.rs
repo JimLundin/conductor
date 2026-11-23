@@ -9,8 +9,8 @@
 //! issue's file walks its path with [`IssuePath`], [`issue_parent`] and
 //! [`issue_leaf`], so no link leads it out of the home.
 
+use crate::ProjectId;
 use alloc::string::ToString;
-use proto::ProjectId;
 
 use crate::flow::graph::File;
 use crate::flow::snapshot::Inputs;

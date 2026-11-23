@@ -1,10 +1,11 @@
 use alloc::collections::BTreeMap;
 
-use proto::{Issue, IssueId, ProjectId};
+use crate::issue::Issue;
+use crate::{IssueId, ProjectId};
 
 use super::{can_start, landed, opening, started};
 use crate::flow::load;
-use proto::flow::{Flow, Role, Status};
+use crate::flow::{Flow, Role, Status};
 
 fn text(value: &str) -> String {
     String::from(value)

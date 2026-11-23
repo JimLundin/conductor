@@ -4,7 +4,7 @@
 //! project's profiles are checked out on this host, and the project's own rules when the session's
 //! CLI doesn't read them itself.
 
-use proto::{Checkout, Project};
+use crate::{Checkout, Project};
 
 use crate::prelude::*;
 

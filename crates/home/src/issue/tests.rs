@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
-use proto::flow::Flow;
-use proto::{
-    ChecklistChange, ChecklistItem, Checkout, Cloning, CommandId, Datum, Entry,
-    Home, HomeRefusal, HomeSync, HostPath, Issue, IssueChange, IssueId, Item,
-    LogEvent, NewIssue, Origin, Part, ProjectId, Section,
+use crate::flow::Flow;
+use crate::issue::{
+    ChecklistChange, ChecklistItem, Datum, EditId, Entry, Issue, IssueChange,
+    Item, LogEvent, NewIssue, Part, Section,
+};
+use crate::{
+    Checkout, CheckoutLocation, Cloning, Home, HomeRefusal, HomeSync, IssueId,
+    Origin, ProjectId,
 };
 
 use super::{
@@ -222,17 +225,17 @@ fn hand_edited() -> String {
     .replace('\n', "\r\n")
 }
 
-/// A command id of its own for each change, so no edit here finds
+/// An edit id of its own for each change, so no edit here finds
 /// another's mark.
-fn command_of(change: &command::Edit) -> CommandId {
-    CommandId(format!("{change:?}").bytes().fold(1_000, |hash, byte| {
+fn edit_of(change: &command::Edit) -> EditId {
+    EditId(format!("{change:?}").bytes().fold(1_000, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(u128::from(byte))
     }))
 }
 
 fn edit(change: command::Edit) -> Edit {
     Edit {
-        command: command_of(&change),
+        id: edit_of(&change),
         data: EditData {
             project: project(),
             at: OPENED,
@@ -491,7 +494,7 @@ fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
         return Err(text("expected a file"));
     };
     let again = Edit {
-        command: CommandId(2),
+        id: EditId(2),
         ..note()
     };
     let twice = file_of(apply(Some(&once), &again, Mode::Record))?;
@@ -564,13 +567,13 @@ fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
     );
 }
 
-fn context(home: &Snapshot, command: CommandId) -> super::Context<'_> {
+fn context(home: &Snapshot, edit: EditId) -> super::Context<'_> {
     super::Context {
         remote: Some("origin"),
         home,
         host: "stone",
         at: OPENED,
-        command,
+        edit,
     }
 }
 
@@ -578,10 +581,10 @@ fn context(home: &Snapshot, command: CommandId) -> super::Context<'_> {
 fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
 -> Result<(), HomeRefusal> {
     let home = snapshot_of(&[]);
-    let listed = context(&home, CommandId(1));
+    let listed = context(&home, EditId(1));
     let nowhere = super::Context {
         remote: None,
-        ..context(&home, CommandId(1))
+        ..context(&home, EditId(1))
     };
     assert_eq!(
         nowhere.open(ID, wanted(), "iPhone").map(|_| ()),
@@ -622,7 +625,7 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
 #[test]
 fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
     let home = snapshot_of(&[issue_file()]);
-    let listed = context(&home, CommandId(1));
+    let listed = context(&home, EditId(1));
     assert_eq!(
         listed
             .edit(ID, IssueChange::Note(text("x")), "iPhone")
@@ -672,7 +675,7 @@ fn home(checkouts: Vec<Checkout>, issues: Vec<Issue>) -> Home {
         sync: HomeSync::Synced,
         unpushed: 0,
         flow: Some(Box::new(flow())),
-        projects: Vec::from([proto::Project {
+        projects: Vec::from([crate::Project {
             id: project(),
             name: text("conductor"),
             title: text("Conductor"),
@@ -688,7 +691,7 @@ fn home(checkouts: Vec<Checkout>, issues: Vec<Issue>) -> Home {
 
 fn checkout() -> Checkout {
     Checkout {
-        path: HostPath(text("/src/conductor")),
+        path: CheckoutLocation(text("/src/conductor")),
         origin: Origin::Found,
     }
 }
@@ -704,7 +707,7 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
             .as_ref()
             .map(|at| (at.checkout.clone(), at.branch.clone())),
         Ok((
-            HostPath(text("/src/conductor")),
+            CheckoutLocation(text("/src/conductor")),
             format!("refs/heads/issue/{ID}"),
         ))
     );
@@ -1149,7 +1152,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     use super::{Delivery, RecordEffect, Write};
 
     let home = snapshot_of(&[]);
-    let context = context(&home, CommandId(1));
+    let context = context(&home, EditId(1));
     let request = context.open(ID, wanted(), "laptop")?;
     let target = request.read();
     assert_eq!(target.path, layout::issue_file(&project(), &ID.to_string()));
@@ -1189,7 +1192,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         recorded.next(Ok(()))?,
         Some(RecordEffect::Deliver {
             delivery: Delivery::Push { retry: true },
-            id: Some(context.command),
+            id: Some(context.edit),
         })
     );
     assert_eq!(
@@ -1209,12 +1212,9 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         super::Listing::created_from_path(&commit.target.path),
         Some(ID)
     );
-    assert!(
-        commit.text.contains(
-            super::Listing::creation_pattern(context.command)
-                .trim_matches(['^', '$'])
-        )
-    );
+    assert!(commit.text.contains(
+        super::Listing::creation_pattern(context.edit).trim_matches(['^', '$'])
+    ));
     let existing = context.open(ID, wanted(), "laptop")?;
     assert_eq!(
         among(&[], |home| existing.decide(
@@ -1228,17 +1228,17 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     Ok(())
 }
 
-/// What recording `change` as command `command` on the file `current`
+/// What recording `change` as edit `edit` on the file `current`
 /// keeps, and the commit it makes.
 fn recorded(
     change: IssueChange,
-    command: CommandId,
+    edit: EditId,
     current: &str,
 ) -> Result<(Edit, super::Commit), HomeRefusal> {
     use super::RecordEffect;
 
     let home = snapshot_of(&[issue_file()]);
-    let request = context(&home, command).edit(ID, change, "laptop")?;
+    let request = context(&home, edit).edit(ID, change, "laptop")?;
     let mut recorded = among(&[], |home| {
         request.decide(Some(current), home, &PendingEdits::default())
     })?;
@@ -1286,8 +1286,7 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     ];
     let mut current = written();
     for (index, (change, message)) in changes.into_iter().enumerate() {
-        let (edit, commit) =
-            recorded(change, CommandId(index as u128), &current)?;
+        let (edit, commit) = recorded(change, EditId(index as u128), &current)?;
         assert!(commit.message.starts_with(message), "{}", commit.message);
         assert_eq!(
             replay(&edit, Some(&current), Some(OPENED)),
@@ -1305,8 +1304,7 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
         current = commit.text;
     }
     assert!(current.contains("stone·laptop note: Summary"));
-    let (edit, _) =
-        recorded(retitling("Older edit"), CommandId(100), &written())?;
+    let (edit, _) = recorded(retitling("Older edit"), EditId(100), &written())?;
     let Write::Commit(resolved) =
         replay(&edit, Some(&current), Some(OPENED + 1))
     else {
@@ -1326,6 +1324,38 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     Ok(())
 }
 
+/// A retry reaches the home under a new command id, which the home never
+/// sees, carrying the edit id the app minted for the edit.
+#[test]
+fn an_edit_retried_with_its_edit_id_under_a_new_command_is_applied_once()
+-> Result<(), HomeRefusal> {
+    use super::Write;
+
+    let retried = EditId(7);
+    let change = || IssueChange::Note(text("Retried note"));
+    let (kept, first) = recorded(change(), retried, &written())?;
+    let pending = PendingEdits::loaded(Vec::from([kept.clone()]));
+    assert_eq!(pending.issue_for(retried), Some(ID));
+    assert_eq!(pending.issue_for(EditId(8)), None);
+    let home = snapshot_of(&[issue_file()]);
+    let again = context(&home, retried).edit(ID, change(), "laptop")?;
+    assert_eq!(
+        among(&[], |home| again.decide(
+            Some(&first.text),
+            home,
+            &PendingEdits::default()
+        ))?
+        .next(Ok(()))?,
+        None
+    );
+    assert_eq!(
+        replay(&kept, Some(&first.text), Some(OPENED)),
+        Write::Unchanged
+    );
+    assert_eq!(first.text.matches(": Retried note").count(), 1);
+    Ok(())
+}
+
 #[test]
 fn replay_preserves_separate_notes_with_identical_text()
 -> Result<(), HomeRefusal> {
@@ -1333,14 +1363,14 @@ fn replay_preserves_separate_notes_with_identical_text()
 
     let note = || IssueChange::Note(text("Same note"));
     let original = written();
-    let (first, _) = recorded(note(), CommandId(1), &original)?;
+    let (first, _) = recorded(note(), EditId(1), &original)?;
     let Write::Commit(first_commit) =
         replay(&first, Some(&original), Some(OPENED))
     else {
         return Err(unexpected_effect());
     };
     let home = snapshot_of(&[issue_file()]);
-    let again = context(&home, CommandId(1)).edit(ID, note(), "laptop")?;
+    let again = context(&home, EditId(1)).edit(ID, note(), "laptop")?;
     assert_eq!(
         among(&[], |home| again.decide(
             Some(&first_commit.text),
@@ -1350,7 +1380,7 @@ fn replay_preserves_separate_notes_with_identical_text()
         .next(Ok(()))?,
         None
     );
-    let (second, _) = recorded(note(), CommandId(2), &first_commit.text)?;
+    let (second, _) = recorded(note(), EditId(2), &first_commit.text)?;
     let Write::Commit(second_commit) =
         replay(&second, Some(&first_commit.text), Some(OPENED))
     else {
@@ -1447,9 +1477,10 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 /// The home the `home` command line's own tests use: a spec, and a task
 /// under it that lacks a section.
 mod as_the_command_line {
-    use proto::{CommandId, HomeRefusal, IssueChange, IssueId, ProjectId};
+    use crate::issue::{EditId, IssueChange};
+    use crate::{HomeRefusal, IssueId, ProjectId};
 
-    use proto::Datum;
+    use crate::issue::Datum;
 
     use super::super::{Context, PendingEdits};
     use crate::flow::command::{self, command, fresh, run};
@@ -1504,7 +1535,7 @@ mod as_the_command_line {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
         let home = Snapshot::of(inputs());
         let outcome = run(
-            command(&words, &home, fresh(&home, NOW, &[7; proto::DRAWS])),
+            command(&words, &home, fresh(&home, NOW, &[7; crate::DRAWS])),
             None,
             &home,
             &command::Context {
@@ -1546,7 +1577,7 @@ mod as_the_command_line {
             home: &home,
             host: "laptop",
             at: NOW,
-            command: CommandId(1),
+            edit: EditId(1),
         }
         .edit(task, change, "iPhone")?;
         let recorded = record.decide(
@@ -1634,7 +1665,7 @@ mod as_the_command_line {
             mark: None,
         };
         let typed = run(
-            command(&said, &home, fresh(&home, NOW, &[7; proto::DRAWS])),
+            command(&said, &home, fresh(&home, NOW, &[7; crate::DRAWS])),
             None,
             &home,
             &by,

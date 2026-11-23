@@ -1,4 +1,4 @@
-use proto::ProjectId;
+use crate::ProjectId;
 
 use super::{IssueLocation, inputs, issue_files, issue_stem, project_file};
 use crate::flow::graph::File;

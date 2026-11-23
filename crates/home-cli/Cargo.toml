@@ -15,7 +15,6 @@ path = "src/main.rs"
 [dependencies]
 home = { path = "../home" }
 home-files = { path = "../home-files" }
-proto = { path = "../proto" }
 getrandom.workspace = true
 
 [lints]

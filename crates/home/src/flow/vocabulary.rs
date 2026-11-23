@@ -2,8 +2,8 @@
 //!
 //! The kinds of issue and their fields, how issues relate, their statuses
 //! and stages, and the rules they should meet (the home's ADR 0001). This
-//! is the one definition, as data; the home crate loads, reads and
-//! evaluates it.
+//! is the one definition, as data; the rest of `crate::flow` loads, reads
+//! and evaluates it.
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::Datum;
+use crate::issue::Datum;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Flow {

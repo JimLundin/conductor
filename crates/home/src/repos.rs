@@ -9,7 +9,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::{Draws, ProjectId};
+use crate::{Draws, ProjectId};
 use serde::Serialize;
 
 use crate::checkout::{Probe, is_checkout};

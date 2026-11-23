@@ -218,8 +218,8 @@ client:
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, a live-only `SignIn` step (§6.3), the current `Home`, or the current `Instances` offer. A cursor from another epoch is refused. |
 
 Each frame is a big-endian `u32` length and a JSON body written by serde.
-A 128-bit id (`SessionId`, `CommandId`) is its 26-character lower-case ULID
-text, an `IssueId` or `ProjectId` its short text (`proto::id`), and an
+A 128-bit id (`SessionId`, `CommandId`, `EditId`) is its 26-character
+lower-case ULID text, an `IssueId` or `ProjectId` its short text (`home`), and an
 `Epoch` its decimal digits, since JavaScript's
 numbers are exact only to 2^53; `Instances` and `Roster` are lists of
 `[InstanceId, value]` pairs, since a JSON key is only a string; bytes are
@@ -662,7 +662,7 @@ standards and issues, cloned on every host. Built so far are home steps
   that stops is aborted) every five minutes, on `Home::Sync`, and before a
   read that needs it (a session started in a project, a clone) unless it
   tried within 30 seconds. A failure is state, not an error:
-  `proto::HomeSync` is `Syncing` (first clone), `Synced`, `Behind` (a
+  `home::HomeSync` is `Syncing` (first clone), `Synced`, `Behind` (a
   clone, but the last pull failed) or `Failed` (no clone), with
   `Home.synced`, the last successful sync. What the home looks like now is
   on a watch channel, so `Welcome.home` never waits on a pull, and each
@@ -681,8 +681,8 @@ standards and issues, cloned on every host. Built so far are home steps
   answers are `home::checkout`, the walk is `home-files`, and `home repos`
   does the same with the home's folder as its one root, running Git with
   std's processes. A project may have several checkouts on a host
-  (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in
-  `<data>/home.state`. `Home::Clone` clones a project with a remote into
+  (`home::Checkout { path, origin: Found | Cloned }`, its path a
+  `home::CheckoutLocation`), kept by path in `<data>/home.state`. `Home::Clone` clones a project with a remote into
   `<data>/projects/<project>` (`Project.cloning` is `Running`, then `Idle`
   or `Failed`). The host only reads the checkouts it finds; sessions run in
   worktrees made from them (§5.3).
@@ -697,9 +697,10 @@ standards and issues, cloned on every host. Built so far are home steps
   8 lowercase base 32 digits, the seconds since 2026-01-01T00:00:00Z and 2
   random, so they list in creation order; `home::issue` reads it and lists a project's issues in
   `Project.issues`. The app and the `home` command line share one edit
-  vocabulary, defined in `proto`: `CreateIssue(NewIssue)` is
-  `home issue new` (project, kind, title, `<field>=<value>` fields), with
-  an id the host mints, and `ChangeIssue { issue, change }` makes one
+  vocabulary, defined in `home`: `CreateIssue { edit, issue: NewIssue }`
+  is `home issue new` (project, kind, title, `<field>=<value>` fields),
+  with an id the host mints, and `ChangeIssue { edit, issue, change }`
+  makes one
   `IssueChange`: a `Move` of the stage or status with a reason, a `Set`
   of a field (the title among them), a `Note`, a new `Body`, or a
   `Checklist` item added, or checked, unchecked or removed by its place
@@ -714,11 +715,13 @@ standards and issues, cloned on every host. Built so far are home steps
   (Windows line ends become Unix ones). Both commands use
   `host::log::Kind::Receipt`, so a retry returns the saved response. A local
   storage failure returns `IssueNotSaved` without keeping a receipt, so
-  the same command identity can retry when storage recovers. When the host dies after safely recording a new
+  the same edit can retry when storage recovers. An edit is known by its
+  `EditId`, which the app mints once per edit and sends again with each
+  retry under a new command id, so the home applies it once. When the host dies after safely recording a new
   issue and before committing its receipt, a retry recovers its original
   ID from the queue or the commit that added the issue file, even if the
   current document is missing or malformed. Before acknowledging a
-  change, the host saves its stable command identity and the previous field value in
+  change, the host saves its edit id and the previous field value in
   `<data>/home-edits.state`. The host writes and commits the issue file
   locally, then attempts to push. If the queue cannot be saved, the
   command returns `IssueNotSaved`; if a later commit or push fails,

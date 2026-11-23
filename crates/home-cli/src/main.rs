@@ -10,12 +10,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use home::Draws;
 use home::flow::PATH;
 use home::flow::command::{
     Asked, Command, Context, Write, asked, fresh, homeless, run,
 };
 use home::flow::snapshot::Snapshot;
-use proto::Draws;
 
 mod local;
 

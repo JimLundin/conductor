@@ -1,7 +1,8 @@
-use proto::{
-    ChecklistChange, ChecklistItem, DRAWS, Datum, Draws, Issue, IssueChange,
-    IssueId, Item, NewIssue, Part, ProjectId,
+use crate::issue::{
+    ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, Item, NewIssue,
+    Part,
 };
+use crate::{DRAWS, Draws, IssueId, ProjectId};
 
 use super::{
     Asked, Command, Context, Edit, Local, Outcome, asked as dispatched,

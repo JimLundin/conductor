@@ -3,11 +3,12 @@
 //! log records, and what a session command asks of the host.
 
 use agents::Reply;
+use home::HomeCommand;
 use proto::fleet::FleetCommand;
 use proto::{
-    AuthToken, ClientName, Command, CommandId, Effort, HomeCommand,
-    InstanceCommand, InstanceId, ModelId, Models, Open, PushCommand,
-    SessionCommand, SessionId, SignInCommand, StartAt, Subscribe,
+    AuthToken, ClientName, Command, CommandId, Effort, InstanceCommand,
+    InstanceId, ModelId, Models, Open, PushCommand, SessionCommand, SessionId,
+    SignInCommand, StartAt, Subscribe,
 };
 
 use crate::log::Kind;
@@ -80,7 +81,7 @@ pub const fn ledger(command: &Command) -> Option<Kind> {
         Command::Instance(_)
         | Command::Session(SessionCommand::Finish { .. })
         | Command::Home(
-            HomeCommand::CreateIssue(_) | HomeCommand::ChangeIssue { .. },
+            HomeCommand::CreateIssue { .. } | HomeCommand::ChangeIssue { .. },
         ) => Some(Kind::Receipt),
         Command::Session(_) => Some(Kind::Session),
     }
@@ -116,7 +117,7 @@ pub const fn operation(command: &Command) -> &'static str {
         Command::Home(asked) => match asked {
             HomeCommand::Sync => "sync_home",
             HomeCommand::Clone { .. } => "clone_project",
-            HomeCommand::CreateIssue(_) => "create_issue",
+            HomeCommand::CreateIssue { .. } => "create_issue",
             HomeCommand::ChangeIssue { .. } => "change_issue",
         },
         Command::Push(asked) => match asked {

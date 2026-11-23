@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use proto::{
-    Checkout, Cloning, Home, HomeRefusal, HomeSync, HostPath, Origin,
-    ProjectId, StartAt,
+use crate::{
+    Checkout, CheckoutLocation, Cloning, Home, HomeRefusal, HomeSync, Origin,
+    ProjectId,
 };
 
 use crate::checkout::{
@@ -10,7 +10,7 @@ use crate::checkout::{
 };
 use crate::project::{Listing, Project, listed, parse};
 use crate::sync::{Git, Sync, next};
-use crate::{Found, Stored, cloned, place, remote_of, view};
+use crate::{Found, Stored, cloned, first_checkout, remote_of, view};
 
 const ROOT: &str = "fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5";
 const OTHER: &str = "d2cef7849f3ce7cc16f17979e0acb8c21d9aed2a";
@@ -50,7 +50,7 @@ fn project(name: &str, remote: Option<&str>) -> Project {
 
 fn checkout(path: &str, origin: Origin) -> Checkout {
     Checkout {
-        path: HostPath(String::from(path)),
+        path: CheckoutLocation(String::from(path)),
         origin,
     }
 }
@@ -498,7 +498,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
     assert_eq!(
         shown.projects,
         [
-            proto::Project {
+            crate::Project {
                 id: id("conductor"),
                 name: String::from("conductor"),
                 title: String::from("The conductor"),
@@ -512,7 +512,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
                 cloning: Cloning::Idle,
                 issues: Vec::new(),
             },
-            proto::Project {
+            crate::Project {
                 id: id("sop"),
                 name: String::from("sop"),
                 title: String::from("The sop"),
@@ -530,22 +530,18 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
 }
 
 #[test]
-fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
-    let directory = HostPath(String::from("/work"));
+fn a_session_on_a_project_starts_in_its_first_checkout() {
     let shown = home(&["/a", "/b"]);
     let unchecked = home(&[]);
     assert_eq!(
         [
-            place(StartAt::Directory(directory.clone()), None),
-            place(StartAt::Project(id("conductor")), Some(&shown)),
-            place(StartAt::Project(id("conductor")), None),
-            place(StartAt::Project(id("nope")), Some(&shown)),
-            place(StartAt::Project(id("conductor")), Some(&unchecked)),
-        ]
-        .map(|placed| placed.map(|at| at.directory)),
+            first_checkout(Some(&shown), id("conductor")),
+            first_checkout(None, id("conductor")),
+            first_checkout(Some(&shown), id("nope")),
+            first_checkout(Some(&unchecked), id("conductor")),
+        ],
         [
-            Ok(directory),
-            Ok(HostPath(String::from("/a"))),
+            Ok(CheckoutLocation(String::from("/a"))),
             Err(HomeRefusal::NoHome),
             Err(HomeRefusal::UnknownProject),
             Err(HomeRefusal::NotCheckedOut),

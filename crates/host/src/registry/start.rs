@@ -2,17 +2,62 @@ use alloc::boxed::Box;
 use alloc::string::ToString;
 use core::ops::ControlFlow::{self, Break, Continue};
 
-use home::Placement;
+use home::{CheckoutLocation, Home, HomeRefusal, IssueId};
 use proto::{
-    ClientName, Effort, Event, EventKind, HomeRefusal, HostPath, InstanceId,
-    IssueId, ModelId, Models, Provider, SessionId, SessionRefusal,
-    SessionResult, Snapshot, Workspace,
+    ClientName, Effort, Event, EventKind, HostPath, InstanceId, ModelId,
+    Models, Provider, SessionId, SessionRefusal, SessionResult, Snapshot,
+    StartAt, Workspace,
 };
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;
 use crate::session::Choice;
 use crate::workspace::GitError;
+
+/// Where a session starts, and the issue it works on, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Placement {
+    pub directory: HostPath,
+    pub on: Option<home::issue::Start>,
+}
+
+/// The directory a session starts in: the one given, or the first
+/// checkout of a project or an issue's project. The session's project
+/// follows from its worktree's repository, so it isn't kept apart.
+///
+/// # Errors
+///
+/// The host has no home, its home lists no such project or issue, or the
+/// project has no checkout on the host.
+pub fn place(
+    at: StartAt,
+    home: Option<&Home>,
+) -> Result<Placement, HomeRefusal> {
+    match at {
+        StartAt::Directory(directory) => Ok(Placement {
+            directory,
+            on: None,
+        }),
+        StartAt::Project(id) => {
+            home::first_checkout(home, id).map(|checkout| Placement {
+                directory: path_of(checkout),
+                on: None,
+            })
+        }
+        StartAt::Issue(id) => {
+            home::issue::start(home, id).map(|on| Placement {
+                directory: path_of(on.checkout.clone()),
+                on: Some(on),
+            })
+        }
+    }
+}
+
+/// The host path a checkout is at.
+#[must_use]
+pub fn path_of(checkout: CheckoutLocation) -> HostPath {
+    HostPath(checkout.0)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartRequest {

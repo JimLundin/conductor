@@ -4,9 +4,8 @@
 use alloc::collections::BTreeMap;
 use alloc::format;
 
-use proto::{
-    Account, ClientName, Event, EventKind, InstanceId, IssueId, SessionId,
-};
+use home::IssueId;
+use proto::{Account, ClientName, Event, EventKind, InstanceId, SessionId};
 
 use crate::prelude::*;
 

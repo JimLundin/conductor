@@ -15,18 +15,21 @@
 
 use alloc::string::ToString;
 
-use proto::flow::Flow;
-use proto::{
-    ChecklistChange, CommandId, Datum, Home, HomeRefusal, HostPath, Issue,
-    IssueChange, IssueId, Item, Part, ProjectId,
-};
 use serde::{Deserialize, Serialize};
 
+pub use edit_id::EditId;
+pub use model::{
+    ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, Item,
+    LogEvent, NewIssue, Part, Section,
+};
+
+use crate::flow::Flow;
 use crate::flow::command::{self, said};
 use crate::flow::file::{Document, checklist_line, log_line};
 use crate::flow::graph::{self, File, branch_of};
 use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
+use crate::{CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId};
 
 /// Issue `id` of `project` in `text`, as the flow reads it, with the
 /// document it was read from.
@@ -104,11 +107,11 @@ fn signer(host: &str, client: &str) -> String {
     format!("{}·{}", word(host), word(client))
 }
 
-/// A change a host made to an issue, kept until the remote has it, by the
-/// command that asked for it.
+/// A change a host made to an issue, kept until the remote has it, by its
+/// edit id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
-    command: CommandId,
+    id: EditId,
     data: EditData,
 }
 
@@ -312,7 +315,7 @@ fn apply(
     mode: Mode,
 ) -> Applied {
     let data = &edit.data;
-    let marker = edit_marker(edit.command);
+    let marker = edit_marker(edit.id);
     let readable = |text: &str| {
         home.flow()
             .map_err(String::from)
@@ -356,7 +359,7 @@ fn apply(
 }
 
 /// The front matter's comment that marks an edit as had.
-fn edit_marker(id: CommandId) -> String {
+fn edit_marker(id: EditId) -> String {
     format!("conductor-edit: {:032x}", id.0)
 }
 
@@ -406,7 +409,7 @@ fn written(
 pub struct Start {
     pub issue: IssueId,
     /// The project's checkout the session's worktree is made from.
-    pub checkout: HostPath,
+    pub checkout: CheckoutLocation,
     /// The issue's branch, as a full ref, which the session's is cut from.
     pub branch: String,
     /// The agent's first message.
@@ -599,5 +602,7 @@ impl Branch {
 #[cfg(test)]
 mod tests;
 
+mod edit_id;
+mod model;
 mod operation;
 pub use operation::*;

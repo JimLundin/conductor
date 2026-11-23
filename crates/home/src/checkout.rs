@@ -7,7 +7,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::{Checkout, HostPath, Origin, ProjectId};
+use crate::{Checkout, CheckoutLocation, Origin, ProjectId};
 
 use crate::prelude::*;
 use crate::project::Project;
@@ -127,7 +127,7 @@ pub fn matched(
                 .fold(Vec::<Checkout>::new(), |mut found, probe| {
                     if found.iter().all(|seen| seen.path.0 != probe.path) {
                         found.push(Checkout {
-                            path: HostPath(probe.path.clone()),
+                            path: CheckoutLocation(probe.path.clone()),
                             origin: if probe.path == own {
                                 Origin::Cloned
                             } else {

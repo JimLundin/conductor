@@ -7,10 +7,11 @@
 
 use alloc::boxed::Box;
 
-use proto::{Datum, Issue, IssueId};
+use crate::IssueId;
+use crate::issue::{Datum, Issue};
 
+use crate::flow::{Flow, Literal, Predicate, Quantifier};
 use crate::prelude::*;
-use proto::flow::{Flow, Literal, Predicate, Quantifier};
 
 /// The issue as it was and as it would be, while a move is weighed: an
 /// edit, a session starting on it, or for `home check` the issue standing

@@ -4,12 +4,12 @@
 //! on, and where a session moves its issue: Conductor asks these, never a
 //! role or a status's name.
 
-use proto::Issue;
+use crate::issue::Issue;
 
 use super::check::broken;
 use super::eval::Move;
+use crate::flow::{Flow, Role};
 use crate::prelude::*;
-use proto::flow::{Flow, Role};
 
 /// The status that holds `role`: the first with it the flow declares.
 fn holding(flow: &Flow, role: Role) -> Option<&str> {

@@ -1,6 +1,6 @@
-use proto::ProjectId;
+use crate::ProjectId;
 
-use proto::flow::Severity;
+use crate::flow::Severity;
 
 use super::{Finding, check as checked};
 use crate::flow::graph::File;

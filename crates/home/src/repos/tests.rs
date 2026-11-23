@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use proto::{Draws, ProjectId};
+use crate::{Draws, ProjectId};
 
 use super::{
     Fetch, New, Scanning, local, placed, profiles, regenerated, report, scan,

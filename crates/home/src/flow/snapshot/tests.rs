@@ -1,4 +1,4 @@
-use proto::ProjectId;
+use crate::ProjectId;
 
 use super::{Inputs, Snapshot};
 use crate::flow::graph::File;

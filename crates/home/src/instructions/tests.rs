@@ -1,4 +1,4 @@
-use proto::{Checkout, Cloning, HostPath, Origin, Project, ProjectId};
+use crate::{Checkout, CheckoutLocation, Cloning, Origin, Project, ProjectId};
 
 use super::{Own, Sources, compose, project_of};
 
@@ -13,7 +13,7 @@ fn project(checkouts: &[&str]) -> Project {
         checkouts: checkouts
             .iter()
             .map(|path| Checkout {
-                path: HostPath(String::from(*path)),
+                path: CheckoutLocation(String::from(*path)),
                 origin: Origin::Found,
             })
             .collect(),

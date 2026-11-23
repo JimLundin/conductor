@@ -21,15 +21,10 @@
 
 extern crate alloc;
 
-mod calendar;
 mod credential;
 pub mod fleet;
-pub mod flow;
 mod frame;
-mod home;
-mod id;
 mod instance;
-mod issue;
 mod json;
 mod push;
 #[cfg(test)]
@@ -41,28 +36,19 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use home::{Home, HomeCommand, HomeRefusal, HomeResult, IssueId, ProjectId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use calendar::civil;
 pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
 pub use frame::{
     Codec, Frame, FrameError, HEADER_LEN, body_len, decode, encode, header,
 };
-pub use home::{
-    Checkout, Cloning, Home, HomeCommand, HomeRefusal, HomeResult, HomeSync,
-    Origin, Project, StartAt,
-};
-pub use id::{DRAWS, Draws, IssueId, ProjectId};
 pub use instance::{
     Account, Instance, InstanceCommand, InstanceId, InstanceRefusal,
     InstanceResult, InstanceStatus, Instances, Roster,
-};
-pub use issue::{
-    ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, Item,
-    LogEvent, NewIssue, Part, Section,
 };
 pub use push::{PushCommand, PushResult, PushSubscription};
 pub use sign_in::{
@@ -73,7 +59,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/39";
+pub const ALPN: &[u8] = b"conductor/40";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -423,6 +409,15 @@ pub struct ToolCallId(pub String);
 /// interprets it: a browser on a phone can't know a Windows path's rules.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HostPath(pub String);
+
+/// Where a new session runs: a directory, a project's checkout, or an
+/// issue's project's checkout on a branch cut from the issue's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum StartAt {
+    Directory(HostPath),
+    Project(ProjectId),
+    Issue(IssueId),
+}
 
 /// The name a client gave in `Hello`. Shown as "by" on a resolution and a
 /// user message.

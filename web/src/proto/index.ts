@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/39";
+export type Alpn = "conductor/40";
 
-export const Alpn = Schema.Literal("conductor/39").annotate({
+export const Alpn = Schema.Literal("conductor/40").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -364,19 +364,22 @@ export const Origin = Schema.Union(
 	{ mode: "oneOf" },
 ).annotate({ identifier: "Origin" });
 
-export type HostPath = string;
+export type CheckoutLocation = string;
 
-export const HostPath = Schema.String.annotate({
+export const CheckoutLocation = Schema.String.annotate({
 	description:
-		"A path on the host, as the host's OS spells it. The client never\ninterprets it: a browser on a phone can't know a Windows path's rules.",
-	identifier: "HostPath",
+		"Where a project is checked out on a host, as the host's OS spells it.\nOnly the host reads it: a browser on a phone can't know a Windows\npath's rules.",
+	identifier: "CheckoutLocation",
 });
 
-export type Checkout = { readonly origin: Origin; readonly path: HostPath };
+export type Checkout = {
+	readonly origin: Origin;
+	readonly path: CheckoutLocation;
+};
 
 export const Checkout = Schema.Struct({
 	origin: Origin,
-	path: HostPath,
+	path: CheckoutLocation,
 }).annotate({
 	description:
 		"A repository on this host whose root commit and remote are a project's.\nA session's project follows from its worktree's repository, which is\none of these.",
@@ -425,6 +428,14 @@ export const CloseReason = Schema.Union(
 	],
 	{ mode: "oneOf" },
 ).annotate({ identifier: "CloseReason" });
+
+export type HostPath = string;
+
+export const HostPath = Schema.String.annotate({
+	description:
+		"A path on the host, as the host's OS spells it. The client never\ninterprets it: a browser on a phone can't know a Windows path's rules.",
+	identifier: "HostPath",
+});
 
 export type ProjectId = string;
 
@@ -758,6 +769,10 @@ export const SignInCommand = Schema.Union(
 	identifier: "SignInCommand",
 });
 
+export type EditId = string;
+
+export const EditId = Schema.String.annotate({ identifier: "EditId" });
+
 export type Datum = string | globalThis.ReadonlyArray<string> | boolean;
 
 export const Datum = Schema.Union([
@@ -841,10 +856,13 @@ export const IssueChange = Schema.Union(
 export type HomeCommand =
 	| "Sync"
 	| { readonly Clone: { readonly project: ProjectId } }
-	| { readonly CreateIssue: NewIssue }
+	| {
+			readonly CreateIssue: { readonly edit: EditId; readonly issue: NewIssue };
+	  }
 	| {
 			readonly ChangeIssue: {
 				readonly change: IssueChange;
+				readonly edit: EditId;
 				readonly issue: IssueId;
 			};
 	  };
@@ -859,12 +877,18 @@ export const HomeCommand = Schema.Union(
 			description:
 				"Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
 		}),
-		Schema.Struct({ CreateIssue: NewIssue }).annotate({
+		Schema.Struct({
+			CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }),
+		}).annotate({
 			description:
-				"Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
+				"Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.\n\nThe app mints `edit` once per edit and sends it again with each\nretry, so the home writes the edit once.",
 		}),
 		Schema.Struct({
-			ChangeIssue: Schema.Struct({ change: IssueChange, issue: IssueId }),
+			ChangeIssue: Schema.Struct({
+				change: IssueChange,
+				edit: EditId,
+				issue: IssueId,
+			}),
 		}).annotate({
 			description: "Answers `IssueWritten` once written, like `CreateIssue`.",
 		}),

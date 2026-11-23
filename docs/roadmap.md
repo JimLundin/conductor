@@ -23,7 +23,7 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Short issue and project ids.** An issue id is 8 lowercase base 32
   digits, the seconds since 2026-01-01T00:00:00Z then 2 random, drawn
   again when the home has it, so issues list in creation order; a project
-  id is 6 random digits. `proto::IssueId` and `proto::ProjectId` mint,
+  id is 6 random digits. `home::IssueId` and `home::ProjectId` mint,
   parse and print them, the `home` command and the daemon mint the same way,
   and a 26-character id is a structural problem (ALPN `conductor/39`).
 

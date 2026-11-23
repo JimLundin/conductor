@@ -6,9 +6,10 @@
 
 use alloc::format;
 
+use home::{Home, IssueId};
 use proto::{
-    ClientName, Event, EventKind, FinishState, Finished, Home, HostSeq,
-    IssueId, SessionId, SessionRefusal, SessionResult, Workspace,
+    ClientName, Event, EventKind, FinishState, Finished, HostSeq, SessionId,
+    SessionRefusal, SessionResult, Workspace,
 };
 
 use crate::assignment::{Assigned, Assignment};

@@ -1,7 +1,8 @@
+use home::IssueId;
 use proto::{
     ClientName, CloseReason, Event, EventKind, Finished, HostPath, HostSeq,
-    InstanceId, IssueId, Kept, Provider, SessionId, SessionRefusal,
-    SessionResult, TurnOutcome, Workspace,
+    InstanceId, Kept, Provider, SessionId, SessionRefusal, SessionResult,
+    TurnOutcome, Workspace,
 };
 
 use super::{

@@ -1,13 +1,14 @@
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
+use crate::issue::{Datum, Issue, Section};
+use crate::{IssueId, ProjectId};
 use proptest::prelude::*;
-use proto::{Datum, Issue, IssueId, ProjectId, Section};
 
 use super::{Failure, Move, Step, holds};
 use crate::flow::graph::Graph;
 use crate::flow::load;
-use proto::flow::{Flow, Literal, Predicate, Quantifier, Role};
+use crate::flow::{Flow, Literal, Predicate, Quantifier, Role};
 
 fn flow() -> Flow {
     load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {

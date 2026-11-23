@@ -1600,8 +1600,9 @@ dependencies = [
 name = "home"
 version = "0.1.0"
 dependencies = [
+ "postcard",
  "proptest",
- "proto",
+ "schemars",
  "serde",
  "serde_json",
  "toml",
@@ -1615,7 +1616,6 @@ dependencies = [
  "getrandom 0.4.3",
  "home",
  "home-files",
- "proto",
 ]
 
 [[package]]
@@ -1623,7 +1623,6 @@ name = "home-files"
 version = "0.1.0"
 dependencies = [
  "home",
- "proto",
 ]
 
 [[package]]
@@ -3291,6 +3290,7 @@ name = "proto"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
+ "home",
  "postcard",
  "schemars",
  "serde",

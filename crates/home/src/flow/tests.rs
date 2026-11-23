@@ -1,4 +1,4 @@
-use proto::flow::{
+use crate::flow::{
     FieldRole, Literal, Predicate, Quantifier, Role, Severity, Shape,
 };
 

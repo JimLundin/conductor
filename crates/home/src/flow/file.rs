@@ -12,7 +12,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::{ChecklistItem, Entry, Section};
+use crate::issue::{ChecklistItem, Entry, Section};
 use toml::{Spanned, Table, Value};
 use toml_parser::{Source, lexer::TokenKind};
 

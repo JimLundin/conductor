@@ -4,7 +4,7 @@
 //! on an interval and before it reads, unless it pulled a moment ago. A
 //! failure is a state the host reports, never an error.
 
-use proto::HomeSync;
+use crate::HomeSync;
 
 use crate::prelude::*;
 

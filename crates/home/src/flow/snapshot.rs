@@ -6,8 +6,9 @@
 
 use alloc::collections::BTreeMap;
 
-use proto::flow::Flow;
-use proto::{Issue, IssueId, ProjectId};
+use crate::flow::Flow;
+use crate::issue::Issue;
+use crate::{IssueId, ProjectId};
 
 use super::graph::{File, Graph, read};
 use super::{PATH, load};

@@ -8,8 +8,9 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
-use proto::{Issue, ProjectId};
+use crate::ProjectId;
+use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
+use crate::issue::Issue;
 
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;

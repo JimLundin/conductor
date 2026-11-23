@@ -17,8 +17,8 @@ use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
 pub use host::session::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    ClientName, CommandId, EventKind, HostPath, HostSeq, Models, SessionId,
-    SessionResult, Workspace,
+    ClientName, EventKind, HostPath, HostSeq, Models, SessionId, SessionResult,
+    Workspace,
 };
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -356,7 +356,7 @@ impl Actor {
                 let note_id = watch.landing.map(|(attempt, _)| {
                     let namespace = uuid::Uuid::from_u128(self.id.0);
                     let name = format!("conductor finish note {}", attempt.0);
-                    CommandId(
+                    home::issue::EditId(
                         uuid::Uuid::new_v5(&namespace, name.as_bytes())
                             .as_u128(),
                     )

@@ -9,11 +9,12 @@
 
 use alloc::string::ToString;
 
-use proto::flow::{FieldRole, FieldType, Flow, Severity};
-use proto::{
-    ChecklistChange, Datum, Draws, Entry, Issue, IssueChange, IssueId, Item,
-    LogEvent, NewIssue, Part, ProjectId,
+use crate::flow::{FieldRole, FieldType, Flow, Severity};
+use crate::issue::{
+    ChecklistChange, Datum, Entry, Issue, IssueChange, Item, LogEvent,
+    NewIssue, Part,
 };
+use crate::{Draws, IssueId, ProjectId};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
@@ -925,7 +926,7 @@ fn quoted(text: &str) -> String {
 #[must_use]
 pub fn stamp(now: u64) -> String {
     let seconds = now / 1000;
-    let (year, month, day) = proto::civil(seconds / 86_400);
+    let (year, month, day) = crate::calendar::civil(seconds / 86_400);
     let of_day = seconds % 86_400;
     format!(
         "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",

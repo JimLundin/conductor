@@ -5,6 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use home::{Home, HomeResult};
 use host::log::Completion;
 use host::serve::{self, Admission, Relaunch, SessionRoute, Stream};
 use host::session::Order;
@@ -17,9 +18,9 @@ use net::wire::{self, WireError};
 use proto::fleet::FleetResult;
 use proto::{
     AuthToken, ClientName, Command, CommandId, CommandResult, Event,
-    Feed as Frame, HelloReply, Home, HomeResult, InstanceResult, Instances,
-    Open, PushCommand, PushResult, SessionId, SessionRefusal, SessionResult,
-    SignIn, SignInResult, Subscribe, Welcome,
+    Feed as Frame, HelloReply, InstanceResult, Instances, Open, PushCommand,
+    PushResult, SessionId, SessionRefusal, SessionResult, SignIn, SignInResult,
+    Subscribe, Welcome,
 };
 use tokio::sync::{Semaphore, broadcast, watch};
 
@@ -430,7 +431,7 @@ impl Conductor {
                 CommandResult::SignIn(self.registry.sign_in(asked).await?)
             }
             Command::Home(asked) => {
-                return self.home.order(asked, by, id).await;
+                return self.home.order(asked, by).await;
             }
             Command::Push(asked) => {
                 CommandResult::Push(self.push_command(asked).await)

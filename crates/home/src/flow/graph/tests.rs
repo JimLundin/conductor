@@ -1,12 +1,11 @@
 use alloc::collections::BTreeMap;
 
-use proto::{
-    ChecklistItem, Datum, Entry, IssueId, LogEvent, ProjectId, Section,
-};
+use crate::issue::{ChecklistItem, Datum, Entry, LogEvent, Section};
+use crate::{IssueId, ProjectId};
 
 use super::{File, Graph, Problem, read};
+use crate::flow::Flow;
 use crate::flow::load;
-use proto::flow::Flow;
 
 const SPEC: &str = "0tm7zt00";
 const TASK: &str = "0tm7zx0b";

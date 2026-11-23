@@ -10,7 +10,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::flow::Flow;
-use crate::{HostPath, Issue, IssueChange, IssueId, NewIssue, ProjectId};
+use crate::issue::{EditId, Issue, IssueChange, NewIssue};
+use crate::{IssueId, ProjectId};
 
 /// The host's clone of the home, and the projects it lists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -70,9 +71,15 @@ pub struct Project {
 /// one of these.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Checkout {
-    pub path: HostPath,
+    pub path: CheckoutLocation,
     pub origin: Origin,
 }
+
+/// Where a project is checked out on a host, as the host's OS spells it.
+/// Only the host reads it: a browser on a phone can't know a Windows
+/// path's rules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CheckoutLocation(pub String);
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
@@ -92,15 +99,6 @@ pub enum Cloning {
     Failed { reason: String },
 }
 
-/// Where a new session runs: a directory, a project's checkout, or an
-/// issue's project's checkout on a branch cut from the issue's.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum StartAt {
-    Directory(HostPath),
-    Project(ProjectId),
-    Issue(IssueId),
-}
-
 /// A command about the host's clone of the home.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum HomeCommand {
@@ -114,9 +112,16 @@ pub enum HomeCommand {
     /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
     /// once the host has written it to its clone of the home; pushing it
     /// follows, and how that went is in the home's `sync`.
-    CreateIssue(NewIssue),
+    ///
+    /// The app mints `edit` once per edit and sends it again with each
+    /// retry, so the home writes the edit once.
+    CreateIssue { edit: EditId, issue: NewIssue },
     /// Answers `IssueWritten` once written, like `CreateIssue`.
-    ChangeIssue { issue: IssueId, change: IssueChange },
+    ChangeIssue {
+        edit: EditId,
+        issue: IssueId,
+        change: IssueChange,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

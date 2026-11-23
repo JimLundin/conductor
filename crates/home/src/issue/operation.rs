@@ -1,19 +1,16 @@
 use alloc::boxed::Box;
 use alloc::string::ToString;
 
-use proto::{
-    CommandId, HomeRefusal, Issue, IssueChange, IssueId, NewIssue, Part,
-    ProjectId,
-};
-
 use super::{
-    Applied, Edit, EditData, Mode, apply, edit_marker, message, signer, was,
+    Applied, Edit, EditData, EditId, Issue, IssueChange, Mode, NewIssue, Part,
+    apply, edit_marker, message, signer, was,
 };
 use crate::flow::command;
 use crate::flow::role;
 use crate::flow::snapshot::Snapshot;
 use crate::layout;
 use crate::prelude::*;
+use crate::{HomeRefusal, IssueId, ProjectId};
 
 /// The issue and file an operation reads before deciding what to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +23,7 @@ pub struct Read {
 /// A local edit ready to read its file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
-    command: CommandId,
+    id: EditId,
     data: EditData,
 }
 
@@ -56,7 +53,7 @@ pub enum RecordEffect {
     Commit(Commit),
     Deliver {
         delivery: Delivery,
-        id: Option<CommandId>,
+        id: Option<EditId>,
     },
     Scan,
 }
@@ -68,9 +65,9 @@ pub struct Recorded(Recording, Vec<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Recording {
-    Keep(Box<Edit>, Option<Commit>, CommandId),
-    Write(CommandId, Option<Commit>),
-    Push(CommandId),
+    Keep(Box<Edit>, Option<Commit>, EditId),
+    Write(EditId, Option<Commit>),
+    Push(EditId),
     Scan,
     Done,
 }
@@ -153,7 +150,7 @@ impl PendingEdits {
     }
 
     #[must_use]
-    pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
+    pub fn issue_for(&self, id: EditId) -> Option<IssueId> {
         self.0.iter().find_map(|pending| pending.edit.issue_for(id))
     }
 
@@ -175,7 +172,7 @@ impl PendingEdits {
         });
     }
 
-    pub fn committed(&mut self, written: Option<CommandId>) {
+    pub fn committed(&mut self, written: Option<EditId>) {
         let Some(id) = written else { return };
         if let Some(pending) = self
             .0
@@ -269,7 +266,7 @@ pub struct Context<'a> {
     pub home: &'a Snapshot,
     pub host: &'a str,
     pub at: u64,
-    pub command: CommandId,
+    pub edit: EditId,
 }
 
 impl Context<'_> {
@@ -336,7 +333,7 @@ impl Context<'_> {
         edit: command::Edit,
     ) -> Record {
         Record {
-            command: self.command,
+            id: self.edit,
             data: EditData {
                 project,
                 at: self.at,
@@ -374,7 +371,7 @@ impl Record {
     ) -> Result<Recorded, HomeRefusal> {
         self.data.was = was(home.flow().ok(), current, &self.data);
         let edit = Edit {
-            command: self.command,
+            id: self.id,
             data: self.data,
         };
         let (commit, warnings) = match apply(home, current, &edit, Mode::Record)
@@ -396,7 +393,7 @@ impl Record {
         };
         let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue()));
         Ok(Recorded(
-            Recording::Keep(Box::new(edit), next, self.command),
+            Recording::Keep(Box::new(edit), next, self.id),
             warnings,
         ))
     }
@@ -420,8 +417,8 @@ impl EditData {
 
 impl Edit {
     #[must_use]
-    pub fn issue_for(&self, id: CommandId) -> Option<IssueId> {
-        (self.command == id).then_some(self.data.issue())
+    pub fn issue_for(&self, id: EditId) -> Option<IssueId> {
+        (self.id == id).then_some(self.data.issue())
     }
 
     #[must_use]
@@ -479,12 +476,12 @@ pub enum SessionUpdate {
 }
 
 impl SessionUpdate {
-    /// A resumed finish uses the original command identity for its note.
+    /// A resumed finish uses the original edit id for its note.
     #[must_use]
-    pub const fn command_for(
+    pub const fn edit_for(
         change: &IssueChange,
-        note_id: Option<CommandId>,
-    ) -> Option<CommandId> {
+        note_id: Option<EditId>,
+    ) -> Option<EditId> {
         match change {
             IssueChange::Note(_) => note_id,
             _ => None,
@@ -620,7 +617,7 @@ pub struct Listing {
 
 impl Listing {
     #[must_use]
-    pub fn creation_pattern(id: CommandId) -> String {
+    pub fn creation_pattern(id: EditId) -> String {
         format!("^{}$", crate::flow::file::comment_line(&edit_marker(id)))
     }
 

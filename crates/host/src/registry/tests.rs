@@ -3,19 +3,20 @@ use agents::Configuration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow::{Break, Continue};
 
+use home::{CheckoutLocation, Home, HomeRefusal, HomeSync, ProjectId};
 use proto::{
     Account, Auth, Availability, Catalog, ClientName, CloseReason, Credential,
-    CredentialForm, Effort, Event, EventKind, Field, FieldKind, HomeRefusal,
-    HostPath, HostSeq, Instance, InstanceId, InstanceRefusal, InstanceResult,
+    CredentialForm, Effort, Event, EventKind, Field, FieldKind, HostPath,
+    HostSeq, Instance, InstanceId, InstanceRefusal, InstanceResult,
     InstanceStatus, Instances, ModelChoice, ModelId, Models, Provider,
-    ProviderInfo, Roster, SessionId, SessionRefusal, SessionResult,
+    ProviderInfo, Roster, SessionId, SessionRefusal, SessionResult, StartAt,
 };
 
 use super::{
     AccountAdoption, Change, Effect, Job, Launch, Launcher, OwnSignIn,
     Refreshed, Registry, StartDecision, StartEffect, StartEnd, StartReport,
     StartSession, StartStep, Started, Starting, Stored, defaults, dir, offered,
-    picked, running,
+    picked, place, running,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -1140,7 +1141,7 @@ fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
 
 #[test]
 fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
-    let issue = proto::IssueId::new(0, 5);
+    let issue = home::IssueId::new(0, 5);
     let event = |session: u128, kind: EventKind| Event {
         seq: HostSeq(1),
         session: SessionId(session),
@@ -1173,7 +1174,7 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
     );
     assert_eq!(super::on_issue(&history, issue, &other), None);
     assert_eq!(
-        super::on_issue(&history, proto::IssueId::new(0, 6), &own),
+        super::on_issue(&history, home::IssueId::new(0, 6), &own),
         None
     );
     let removed = [
@@ -1225,17 +1226,68 @@ fn start_request() -> super::StartRequest {
     }
 }
 
-fn placement(on_issue: bool) -> home::Placement {
-    let directory = HostPath(text("/src"));
-    home::Placement {
-        directory: directory.clone(),
+fn placement(on_issue: bool) -> super::Placement {
+    super::Placement {
+        directory: HostPath(text("/src")),
         on: on_issue.then(|| home::issue::Start {
-            issue: proto::IssueId::new(0, 5),
-            checkout: directory,
+            issue: home::IssueId::new(0, 5),
+            checkout: CheckoutLocation(text("/src")),
             branch: text("refs/heads/issue/5"),
             brief: text("Implement the issue"),
         }),
     }
+}
+
+fn home_with(checkouts: &[&str]) -> Home {
+    Home {
+        remote: text("origin"),
+        synced: None,
+        sync: HomeSync::Synced,
+        unpushed: 0,
+        flow: None,
+        projects: Vec::from([home::Project {
+            id: ProjectId::new(1),
+            name: text("conductor"),
+            title: text("Conductor"),
+            remote: None,
+            profiles: Vec::new(),
+            provides: Vec::new(),
+            checkouts: checkouts
+                .iter()
+                .map(|path| home::Checkout {
+                    path: CheckoutLocation(text(path)),
+                    origin: home::Origin::Found,
+                })
+                .collect(),
+            cloning: home::Cloning::Idle,
+            issues: Vec::new(),
+        }]),
+    }
+}
+
+#[test]
+fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
+    let directory = HostPath(text("/work"));
+    let shown = home_with(&["/a", "/b"]);
+    let unchecked = home_with(&[]);
+    let project = ProjectId::new(1);
+    assert_eq!(
+        [
+            place(StartAt::Directory(directory.clone()), None),
+            place(StartAt::Project(project), Some(&shown)),
+            place(StartAt::Project(project), None),
+            place(StartAt::Project(ProjectId::new(2)), Some(&shown)),
+            place(StartAt::Project(project), Some(&unchecked)),
+        ]
+        .map(|placed| placed.map(|at| at.directory)),
+        [
+            Ok(directory),
+            Ok(HostPath(text("/a"))),
+            Err(HomeRefusal::NoHome),
+            Err(HomeRefusal::UnknownProject),
+            Err(HomeRefusal::NotCheckedOut),
+        ]
+    );
 }
 
 fn start_workspace() -> proto::Workspace {
@@ -1451,7 +1503,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
                 effort: None,
             },
             EventKind::OnIssue {
-                issue: proto::IssueId::new(0, 5)
+                issue: home::IssueId::new(0, 5)
             },
         ]
     );
@@ -1504,7 +1556,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
     assert_eq!(done.result, SessionResult::Started { session });
     assert_eq!(
         done.progress,
-        Some((proto::IssueId::new(0, 5), ClientName(text("phone"))))
+        Some((home::IssueId::new(0, 5), ClientName(text("phone"))))
     );
     Ok(())
 }
