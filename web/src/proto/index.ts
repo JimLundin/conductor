@@ -622,7 +622,7 @@ export const IssueChange = Schema.Union(
 				reason: Schema.String,
 				signed_off: Schema.Boolean.annotate({
 					description:
-						"The owner signed off, as leaving a stage with a sign-off needs.",
+						"The owner signed off, as entering a stage with a sign-off needs.",
 				}),
 				to: Schema.String,
 			}),

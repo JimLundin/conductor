@@ -141,12 +141,12 @@ next = ["spec"]
 [[stage]]
 name = "spec"
 skills = ["spec"]
-sign_off = true
 next = ["slice"]
 
 [[stage]]
 name = "slice"
 skills = ["slice"]
+sign_off = true
 next = ["build"]
 
 [[stage]]

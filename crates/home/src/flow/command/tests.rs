@@ -500,39 +500,51 @@ fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
 }
 
 #[test]
-fn a_spec_leaves_a_sign_off_stage_only_signed_off() {
-    let at_land = |inputs: Inputs| Inputs {
-        issues: inputs
-            .issues
-            .into_iter()
-            .map(|file| File {
-                text: file.text.replace("stage = \"spec\"", "stage = \"land\""),
-                ..file
-            })
-            .collect(),
-        ..inputs
+fn a_spec_enters_a_sign_off_stage_only_signed_off() {
+    let at = |stage: &str| {
+        let inputs = home();
+        Inputs {
+            issues: inputs
+                .issues
+                .into_iter()
+                .map(|file| File {
+                    text: file.text.replace(
+                        "stage = \"spec\"",
+                        &format!("stage = \"{stage}\""),
+                    ),
+                    ..file
+                })
+                .collect(),
+            ..inputs
+        }
     };
-    for (inputs, stage) in [(home(), "spec"), (at_land(home()), "land")] {
+    for (from, to) in [("spec", "slice"), ("review", "land")] {
+        let inputs = at(from);
         let unsigned =
-            ran(&inputs, &format!("issue move {SPEC} stage build ready"));
+            ran(&inputs, &format!("issue move {SPEC} stage {to} ready"));
         assert!(unsigned.failed && unsigned.writes.is_empty());
         assert_eq!(
             unsigned.output,
-            format!("home: leaving the stage {stage} needs its sign-off\n")
+            format!(
+                "home: entering the stage {to} needs its sign-off
+"
+            )
         );
         let signed = ran(
             &inputs,
-            &format!("issue move {SPEC} stage build --signed-off"),
+            &format!("issue move {SPEC} stage {to} --signed-off"),
         );
         assert!(!signed.failed, "{}", signed.output);
         assert!(
-            text(&signed).contains(&format!("stage {stage}→build: signed off")),
+            text(&signed).contains(&format!("stage {from}→{to}: signed off")),
             "{}",
             text(&signed)
         );
     }
-    let into = ran(&home(), &format!("issue move {TASK} stage spec"));
-    assert!(!into.failed, "{}", into.output);
+    for from in ["review", "land"] {
+        let rework = ran(&at(from), &format!("issue move {SPEC} stage build"));
+        assert!(!rework.failed, "{}", rework.output);
+    }
 }
 
 #[test]

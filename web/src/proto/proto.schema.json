@@ -2190,7 +2190,7 @@
 									"type": "string"
 								},
 								"signed_off": {
-									"description": "The owner signed off, as leaving a stage with a sign-off needs.",
+									"description": "The owner signed off, as entering a stage with a sign-off needs.",
 									"type": "boolean"
 								},
 								"to": {
