@@ -42,15 +42,6 @@ runs:
       shell: bash
       run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
-    - name: Fetch the recorded passes
-      shell: bash
-      working-directory: conductor
-      run: |
-        git fetch -q origin '+refs/notes/checks:refs/notes/checks' ||
-          echo "no passes recorded on origin yet"
-        git config user.name 'github-actions[bot]'
-        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-
     # Beside the checkout, so the standards' files are not untracked files
     # of Conductor's checkout, which every unit's key reads.
     - uses: actions/checkout@v7
