@@ -28,3 +28,23 @@ tools = ["PYTHON"]
 [[suite.when]]
 tier = "commit"
 paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
+
+# The web app, under the shared TypeScript standard, which keys and records
+# its own checks. Its key holds no tier, so the commit checks and the step's
+# tests are two suites: `web-step` reuses the passes `web` recorded and adds
+# the Vitest run.
+[[suite]]
+name = "web"
+command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" commit"
+tools = ["NODE"]
+[[suite.when]]
+tier = "commit"
+paths = ["web/**"]
+
+[[suite]]
+name = "web-step"
+command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" step"
+tools = ["NODE"]
+[[suite.when]]
+tier = "step"
+paths = ["web/**"]

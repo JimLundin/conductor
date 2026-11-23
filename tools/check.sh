@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The gate: the shared Rust standard, which runs Conductor's suites from
 # checks.toml beside its own checks. It runs its units without a recorded
-# pass. `tools/check.sh [commit|step|release] [--no-cache|--verify]`;
+# pass. It exports STANDARDS for the web suites in checks.toml, which run
+# the TypeScript standard on web/.
+# `tools/check.sh [commit|step|release] [--no-cache|--verify]`;
 # `--verify` runs nothing and fails each unit without a recorded pass.
 #
 # The standards come from a clone of the standards project on the Linux
@@ -21,5 +23,5 @@ if [ -z "${STANDARDS:-}" ]; then
 	[ -n "$(find "$clone/.git/FETCH_HEAD" -mmin -10 2>/dev/null)" ] ||
 		git -C "$clone" pull -q --ff-only || echo "warning: $clone not updated" >&2
 fi
-standards=${STANDARDS:-$clone}
-exec "$standards/rust/check.sh" "$@"
+export STANDARDS=${STANDARDS:-$clone}
+exec "$STANDARDS/rust/check.sh" "$@"

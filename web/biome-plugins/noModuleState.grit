@@ -1,0 +1,25 @@
+language js(typescript)
+
+or {
+    JsVariableDeclaration() as $let where {
+        $let <: r"(?s)let\s.*"
+    },
+    JsVariableDeclarator(initializer = JsInitializerClause(expression = $value)) where {
+        $value <: or {
+            JsArrayExpression(),
+            JsObjectExpression(),
+            JsNewExpression(callee = or { `Map`, `Set`, `Array`, `WeakMap`, `WeakSet` })
+        }
+    }
+} as $declaration where {
+    not $declaration <: within or {
+        JsFunctionBody(),
+        JsArrowFunctionExpression(),
+        JsClassDeclaration(),
+        JsClassExpression()
+    },
+    register_diagnostic(
+        span = $declaration,
+        message = "Mutable module-level state: use as const, a readonly type, or keep it inside a function."
+    )
+}
