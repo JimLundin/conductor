@@ -14,13 +14,12 @@ use iroh::endpoint::{
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
-use proto::fleet::{FleetCommand, FleetResult};
+use proto::fleet::FleetResult;
 use proto::{
     AuthToken, ClientName, Command, CommandId, CommandResult, Event,
-    Feed as Frame, HelloReply, Home, HomeCommand, HomeResult, InstanceCommand,
-    InstanceResult, Instances, Open, PushCommand, PushResult, SessionCommand,
-    SessionId, SessionRefusal, SessionResult, SignIn, SignInCommand,
-    SignInResult, Subscribe, Welcome,
+    Feed as Frame, HelloReply, Home, HomeResult, InstanceResult, Instances,
+    Open, PushCommand, PushResult, SessionId, SessionRefusal, SessionResult,
+    SignIn, SignInResult, Subscribe, Welcome,
 };
 use tokio::sync::{Semaphore, broadcast, watch};
 
@@ -206,47 +205,7 @@ async fn admit_fleet(
 }
 
 fn trace_command(id: CommandId, command: &Command) {
-    let operation = match command {
-        Command::Session(asked) => match asked {
-            SessionCommand::Start { .. } => "start_session",
-            SessionCommand::SendMessage { .. } => "send_message",
-            SessionCommand::Interrupt { .. } => "interrupt",
-            SessionCommand::Continue { .. } => "continue",
-            SessionCommand::Resolve { .. } => "resolve",
-            SessionCommand::Answer { .. } => "answer",
-            SessionCommand::GetDiff { .. } => "get_diff",
-            SessionCommand::SetEffort { .. } => "set_effort",
-            SessionCommand::Remove { .. } => "remove_session",
-            SessionCommand::Finish { .. } => "finish_session",
-        },
-        Command::Instance(asked) => match asked {
-            InstanceCommand::SetCredential { .. } => "set_credential",
-            InstanceCommand::Remove { .. } => "remove_instance",
-        },
-        Command::SignIn(asked) => match asked {
-            SignInCommand::Start { .. } => "start_sign_in",
-            SignInCommand::StartCredential { .. } => "start_credential_sign_in",
-            SignInCommand::SubmitCode { .. } => "submit_sign_in_code",
-            SignInCommand::Cancel { .. } => "cancel_sign_in",
-        },
-        Command::Home(asked) => match asked {
-            HomeCommand::Sync => "sync_home",
-            HomeCommand::Clone { .. } => "clone_project",
-            HomeCommand::CreateIssue(_) => "create_issue",
-            HomeCommand::ChangeIssue { .. } => "change_issue",
-        },
-        Command::Push(asked) => match asked {
-            PushCommand::PublicKey => "push_public_key",
-            PushCommand::Register(_) => "register_push",
-        },
-        Command::Fleet(asked) => match asked {
-            FleetCommand::Status => "fleet_status",
-            FleetCommand::Invite => "fleet_invite",
-            FleetCommand::Revoke(_) => "fleet_revoke",
-            FleetCommand::Approve(_) => "fleet_approve",
-            FleetCommand::Admit { .. } => "fleet_admit",
-        },
-    };
+    let operation = serve::operation(command);
     tracing::info!(command = id.0, operation, "command received");
 }
 
