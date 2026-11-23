@@ -6,7 +6,8 @@ import type { SessionId } from "../proto/index.ts";
 import { message, type Send, sessionOffers } from "./commands.ts";
 import { Offers, Requests } from "./requests.tsx";
 import { useSending } from "./sending.ts";
-import { closeText, Items } from "./transcript.tsx";
+import { Items } from "./transcript.tsx";
+import { closeText } from "./words.ts";
 
 const statusText = (session: Session): string =>
 	session.status._tag === "Closed"

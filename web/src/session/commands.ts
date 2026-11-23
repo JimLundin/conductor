@@ -9,6 +9,7 @@ import type {
 	CommandBody,
 	CommandResult,
 	Decision,
+	Question,
 	Rejection,
 	RequestId,
 	SessionId,
@@ -96,6 +97,29 @@ const decisions = (id: SessionId, asked: Asked): readonly Offer[] => [
 	{ label: "Deny", tone: "Danger", body: resolve(id, asked.request, "Deny") },
 ];
 
+// What the person picked for one question.
+interface Picked {
+	readonly labels: readonly string[];
+	readonly typed: string;
+}
+
+const nothing: Picked = { labels: [], typed: "" } as const;
+
+const toggled = (question: Question, picked: Picked, label: string): Picked => {
+	if (question.selection === "One") {
+		return { ...picked, labels: [label] };
+	}
+	return picked.labels.includes(label)
+		? { ...picked, labels: picked.labels.filter((one) => one !== label) }
+		: { ...picked, labels: [...picked.labels, label] };
+};
+
+// One answer per question in the order asked: the options chosen, then any text typed instead.
+const answersOf = (picks: readonly Picked[]): readonly Answer[] =>
+	picks.map(({ labels, typed }) =>
+		typed.trim() === "" ? labels : [...labels, typed.trim()],
+	);
+
 // Splits a variant's PascalCase name into a sentence.
 const sentence = (name: string): string => {
 	const words = name.replaceAll(/(?<lower>[a-z])(?<upper>[A-Z])/gu, "$1 $2");
@@ -106,10 +130,12 @@ const rejected = (rejection: Rejection): string => {
 	if (typeof rejection === "string") {
 		return sentence(rejection);
 	}
-	const [[name, detail]] = Object.entries(rejection) as [
-		[string, Readonly<Record<string, unknown>>],
-	];
-	return `${sentence(name)}: ${Object.values(detail).join(", ")}`;
+	return Object.entries(rejection)
+		.map(
+			([name, detail]: readonly [string, object]) =>
+				`${sentence(name)}: ${Object.values(detail).join(", ")}`,
+		)
+		.join("; ");
 };
 
 // What the person is told after a command: nothing once the host takes it, since its log shows
@@ -129,13 +155,16 @@ const failed = (error: SendError): string =>
 
 export {
 	answer,
+	answersOf,
 	type Asked,
 	decisions,
 	failed,
 	message,
+	nothing,
 	notice,
 	type Offer,
+	type Picked,
 	type Send,
 	sessionOffers,
-	type Tone,
+	toggled,
 };

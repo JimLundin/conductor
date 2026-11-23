@@ -3,16 +3,21 @@ import { type ReactElement, useState } from "react";
 import { openRequests } from "../fold/offers.ts";
 import type { Session } from "../fold/session.ts";
 import type { Item } from "../fold/transcript.ts";
-import type { Answer, Question, SessionId } from "../proto/index.ts";
+import type { SessionId } from "../proto/index.ts";
 import {
 	type Asked,
 	answer,
+	answersOf,
 	decisions,
+	nothing,
 	type Offer,
+	type Picked,
 	type Send,
+	toggled,
 } from "./commands.ts";
 import { useSending } from "./sending.ts";
-import { toolName, ToolDetail } from "./transcript.tsx";
+import { ToolDetail } from "./transcript.tsx";
+import { toolName } from "./words.ts";
 
 type Run = (body: Offer["body"]) => void;
 
@@ -66,28 +71,6 @@ const ApprovalRequest = ({
 		<Offers offers={decisions(id, asked)} run={run} disabled={disabled} />
 	</section>
 );
-
-interface Picked {
-	readonly labels: readonly string[];
-	readonly typed: string;
-}
-
-const nothing: Picked = { labels: [], typed: "" } as const;
-
-const toggled = (question: Question, picked: Picked, label: string): Picked => {
-	if (question.selection === "One") {
-		return { ...picked, labels: [label] };
-	}
-	return picked.labels.includes(label)
-		? { ...picked, labels: picked.labels.filter((one) => one !== label) }
-		: { ...picked, labels: [...picked.labels, label] };
-};
-
-// One answer per question in the order asked: the options chosen, then any text typed instead.
-const answersOf = (picks: readonly Picked[]): readonly Answer[] =>
-	picks.map(({ labels, typed }) =>
-		typed.trim() === "" ? labels : [...labels, typed.trim()],
-	);
 
 const QuestionRequest = ({
 	id,
@@ -179,7 +162,9 @@ const Request = ({
 		);
 	}
 	if (item._tag === "Question") {
-		return <QuestionRequest disabled={disabled} id={id} item={item} run={run} />;
+		return (
+			<QuestionRequest disabled={disabled} id={id} item={item} run={run} />
+		);
 	}
 	return null;
 };
@@ -225,4 +210,4 @@ const Requests = ({
 	);
 };
 
-export { answersOf, Offers, Requests };
+export { Offers, Requests };

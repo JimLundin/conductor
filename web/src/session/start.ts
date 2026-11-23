@@ -116,7 +116,6 @@ export {
 	choosable,
 	type Draft,
 	effortsOf,
-	instanceLabel,
 	orNull,
 	startable,
 	startOf,

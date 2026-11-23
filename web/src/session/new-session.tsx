@@ -1,6 +1,6 @@
 // The new-session form: a host, one of its instances, a project or directory, a model and an
 // effort.
-import { type ReactElement, useState } from "react";
+import { type ReactElement, useId, useState } from "react";
 import { directories, type Host } from "../fold/host.ts";
 import type { ModelId, SessionId } from "../proto/index.ts";
 import type { Send } from "./commands.ts";
@@ -19,11 +19,10 @@ import {
 // A paired host, by the key its link is kept under.
 interface Paired {
 	readonly key: string;
+	readonly name: string;
 	readonly host: Host;
 	readonly send: Send;
 }
-
-const hostName = (paired: Paired): string => paired.host.name ?? paired.key;
 
 const InstanceFields = ({
 	host,
@@ -39,6 +38,7 @@ const InstanceFields = ({
 	const projects = startable(host);
 	const suggested = directories(host);
 	const models = chosen?.models;
+	const listed = useId();
 	return (
 		<>
 			<label>
@@ -75,14 +75,14 @@ const InstanceFields = ({
 				<label>
 					Directory
 					<input
-						list="directories"
+						list={listed}
 						onChange={(event): void =>
 							change({ directory: event.target.value })
 						}
 						placeholder="A directory on the host"
 						value={draft.directory}
 					/>
-					<datalist id="directories">
+					<datalist id={listed}>
 						{suggested.map((path) => (
 							<option key={path} value={path} />
 						))}
@@ -133,16 +133,16 @@ const InstanceFields = ({
 
 export const NewSession = ({
 	hosts,
+	initial,
 	started,
 }: {
 	readonly hosts: readonly Paired[];
+	// The host the form opens on.
+	readonly initial: string;
 	// The session the host started, to open it.
 	readonly started: (host: string, session: SessionId) => void;
 }): ReactElement => {
-	const [draft, setDraft] = useState<Draft>({
-		...blank,
-		host: hosts.length === 1 ? (hosts[0]?.key ?? "") : "",
-	});
+	const [draft, setDraft] = useState<Draft>({ ...blank, host: initial });
 	const paired = hosts.find((one) => one.key === draft.host);
 	const sending = useSending();
 	const change = (next: Partial<Draft>): void =>
@@ -154,7 +154,7 @@ export const NewSession = ({
 	const start = paired === undefined ? null : startOf(paired.host, draft);
 	return (
 		<form
-			className="new-session"
+			className="start-session"
 			onSubmit={(event): void => {
 				event.preventDefault();
 				if (paired !== undefined && start !== null) {
@@ -178,7 +178,7 @@ export const NewSession = ({
 					<option value="">Choose a host</option>
 					{hosts.map((one) => (
 						<option key={one.key} value={one.key}>
-							{hostName(one)}
+							{one.name}
 						</option>
 					))}
 				</select>

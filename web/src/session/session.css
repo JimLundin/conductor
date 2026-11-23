@@ -2,7 +2,7 @@
    with what the agent waits on and the composer stays at the bottom, above the home indicator. */
 
 .session,
-.new-session {
+.start-session {
 	--line: color-mix(in oklch, var(--ink) 14%, transparent);
 	--card: color-mix(in oklch, var(--ink) 4%, var(--canvas));
 	--accent: oklch(62% 0.17 255);
@@ -49,11 +49,11 @@
 	font-size: 0.8rem;
 }
 
-.status.running {
+.session-bar .status.running {
 	color: var(--accent);
 }
 
-.status.closed {
+.session-bar .status.closed {
 	color: var(--danger);
 }
 
@@ -239,7 +239,7 @@
 	color: var(--danger);
 }
 
-.empty,
+.transcript .empty,
 .working {
 	color: var(--muted);
 	text-align: center;
@@ -317,7 +317,7 @@
 }
 
 .session button,
-.new-session button {
+.start-session button {
 	min-block-size: var(--tap);
 	padding-inline: 1rem;
 	border: 1px solid var(--line);
@@ -328,7 +328,7 @@
 }
 
 .session button.primary,
-.new-session button.primary {
+.start-session button.primary {
 	border-color: var(--accent);
 	background: var(--accent);
 	color: white;
@@ -340,14 +340,14 @@
 }
 
 .session button:disabled,
-.new-session button:disabled {
+.start-session button:disabled {
 	opacity: 0.45;
 }
 
 .composer textarea,
 .request input,
-.new-session select,
-.new-session input {
+.start-session select,
+.start-session input {
 	inline-size: 100%;
 	box-sizing: border-box;
 	padding: 0.6rem 0.75rem;
@@ -368,22 +368,23 @@
 	resize: none;
 }
 
-.new-session {
+.start-session {
 	display: flex;
 	flex-direction: column;
 	gap: 0.9rem;
 	max-inline-size: 32rem;
 	margin-inline: auto;
-	padding-block: calc(env(safe-area-inset-top) + 2rem) calc(env(safe-area-inset-bottom) + 2rem);
+	padding-block: calc(env(safe-area-inset-top) + 2rem)
+		calc(env(safe-area-inset-bottom) + 2rem);
 	padding-inline: 1.25rem;
 }
 
-.new-session h1 {
+.start-session h1 {
 	margin: 0;
 	font-size: 1.5rem;
 }
 
-.new-session label {
+.start-session label {
 	display: flex;
 	flex-direction: column;
 	gap: 0.3rem;

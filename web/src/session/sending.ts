@@ -46,4 +46,4 @@ const useSending = (): Sending => {
 	return { notice: told, pending, run };
 };
 
-export { type Sending, useSending };
+export { useSending };

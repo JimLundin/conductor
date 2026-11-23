@@ -25,6 +25,7 @@ import type {
 import {
 	type Asked,
 	answer,
+	answersOf,
 	decisions,
 	message,
 	notice,
@@ -34,15 +35,19 @@ import {
 } from "./commands.ts";
 import { NewSession } from "./new-session.tsx";
 import { framed, played, recordedSpan, session } from "./playback.ts";
-import { answersOf } from "./requests.tsx";
 import { SessionView } from "./session-view.tsx";
 import { blank, choosable, effortsOf, startOf } from "./start.ts";
 
-const unsent: Send = () => Effect.die("the view sent a command while rendering");
+const unsent: Send = () =>
+	Effect.die("the view sent a command while rendering");
 
 const view = (host: Host): string =>
 	renderToStaticMarkup(
-		<SessionView id={session} send={unsent} session={sessionOf(host, session)} />,
+		<SessionView
+			id={session}
+			send={unsent}
+			session={sessionOf(host, session)}
+		/>,
 	);
 
 const offered = (offers: readonly Offer[], label: string): CommandBody => {
@@ -72,7 +77,6 @@ const taken = (result: CommandResult | SendError): CommandResult => {
 const button = (label: string): string => `type="button">${label}</button>`;
 
 const directory = "/conductor/target/tmp/conductor-e2e-0-approve";
-const call = "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD";
 const ready = [created(directory), "SessionReady"] as const;
 
 test("a new session starts on the chosen instance in a directory, and opens ready for a message", async () => {
@@ -87,11 +91,14 @@ test("a new session starts on the chosen instance in a directory, and opens read
 	);
 	const form = renderToStaticMarkup(
 		<NewSession
-			hosts={[{ key: "laptop", host: before, send: unsent }]}
+			hosts={[{ key: "laptop", name: "test-host", host: before, send: unsent }]}
+			initial="laptop"
 			started={(): void => undefined}
 		/>,
 	);
-	expect(form).toContain('<option value="laptop" selected="">test-host</option>');
+	expect(form).toContain(
+		'<option value="laptop" selected="">test-host</option>',
+	);
 	expect(form).toContain('<option value="Claude">Claude Code</option>');
 	expect(form).not.toContain("Codex");
 	expect(commands).toStrictEqual([
@@ -106,7 +113,9 @@ test("a new session starts on the chosen instance in a directory, and opens read
 	]);
 	expect(result).toStrictEqual({ Started: { session } });
 	expect(view(after)).toContain("Send a message to start.");
-	expect(view(after)).toContain('<button class="primary" type="submit">Send</button>');
+	expect(view(after)).toContain(
+		'<button class="primary" type="submit">Send</button>',
+	);
 });
 
 test("a new session takes a model and an effort the instance offers, or a project", async () => {
@@ -119,10 +128,9 @@ test("a new session takes a model and an effort the instance offers, or a projec
 		"big",
 		"small",
 	]);
-	expect(effortsOf(claude?.models ?? { choices: [], default: null }, null)).toStrictEqual([
-		"Low",
-		"High",
-	]);
+	expect(
+		effortsOf(claude?.models ?? { choices: [], default: null }, null),
+	).toStrictEqual(["Low", "High"]);
 	const draft = { ...blank, instance: "Claude", model: "small", effort: "Low" };
 	expect(startOf(before, { ...draft, project: "0twr04e5" })).toStrictEqual({
 		StartSession: {
@@ -133,12 +141,18 @@ test("a new session takes a model and an effort the instance offers, or a projec
 		},
 	});
 	expect(startOf(before, draft)).toBeNull();
-	expect(startOf(before, { ...draft, instance: "Codex", directory })).toBeNull();
+	expect(
+		startOf(before, { ...draft, instance: "Codex", directory }),
+	).toBeNull();
 });
 
 test("a message is sent, and the transcript shows it, its tool card and the approval it waits on", async () => {
 	const { before, commands, after } = await played(
-		{ feed: recordedSpan(0, 4), result: "Accepted", answer: recordedSpan(5, 8) },
+		{
+			feed: recordedSpan(0, 4),
+			result: "Accepted",
+			answer: recordedSpan(5, 8),
+		},
 		() => message(session, "create a.txt"),
 	);
 	expect(view(before)).toContain('<textarea aria-label="Message"');
@@ -157,7 +171,11 @@ test("a message is sent, and the transcript shows it, its tool card and the appr
 
 test("an approval is sent, and its card, the streamed reply and the finished turn follow", async () => {
 	const { commands, after } = await played(
-		{ feed: recordedSpan(0, 8), result: "Accepted", answer: recordedSpan(9, 13) },
+		{
+			feed: recordedSpan(0, 8),
+			result: "Accepted",
+			answer: recordedSpan(9, 13),
+		},
 		(host) => offered(decisions(session, askedOf(host)), "Approve"),
 	);
 	expect(commands).toStrictEqual([
@@ -192,7 +210,7 @@ test("a rejected command tells the person why", async () => {
 	expect(notice("Accepted")).toBeNull();
 });
 
-const askedForSession: EventKind = {
+const askedForSession = {
 	RequestOpened: {
 		request: 1,
 		call: "toolu_1",
@@ -200,17 +218,26 @@ const askedForSession: EventKind = {
 		reason: "to see the files",
 		for_session: "Bash(ls)",
 	},
-};
+} as const satisfies EventKind;
 
 test.each([
-	["Approve for session", "ApproveForSession", "Approved for the session by phone"],
+	[
+		"Approve for session",
+		"ApproveForSession",
+		"Approved for the session by phone",
+	],
 	["Deny", "Deny", "Denied by phone"],
 ] as const)(
 	"%s is offered when the agent offers it, and the card follows the decision",
 	async (label, decision: Decision, shown) => {
 		const { before, commands, after } = await played(
 			{
-				feed: framed(1, [...ready, user("look"), started("toolu_1"), askedForSession]),
+				feed: framed(1, [
+					...ready,
+					user("look"),
+					started("toolu_1"),
+					askedForSession,
+				]),
 				result: "Accepted",
 				answer: framed(6, [
 					{
@@ -303,7 +330,11 @@ test("a closed session offers Continue, and is ready again once its agent starts
 test("a session on an issue offers Finish, and shows how finishing went", async () => {
 	const { before, commands, after } = await played(
 		{
-			feed: framed(1, [created(directory), { OnIssue: { issue: "0twtnsfs" } }, "SessionReady"]),
+			feed: framed(1, [
+				created(directory),
+				{ OnIssue: { issue: "0twtnsfs" } },
+				"SessionReady",
+			]),
 			result: "Accepted",
 			answer: framed(4, [
 				"FinishStarted",
@@ -331,7 +362,12 @@ test("a sub-agent shows under the tool call that started it, with its own tool c
 		[1, user("look around")],
 		[1, started("toolu_9")],
 		[1, subagentStarted("scout", "toolu_9")],
-		[1, subagentTool("scout", "toolu_10", { Started: { tool: { Command: { command: "rg todo" } } } })],
+		[
+			1,
+			subagentTool("scout", "toolu_10", {
+				Started: { tool: { Command: { command: "rg todo" } } },
+			}),
+		],
 	]);
 	const html = view(host);
 	expect(html).toMatch(
@@ -347,5 +383,7 @@ test("a reply shows streaming while its deltas arrive", () => {
 		[1, { AssistantDelta: { text: "Hel" } }],
 		[1, { AssistantDelta: { text: "lo" } }],
 	]);
-	expect(view(host)).toContain('<div class="reply streaming"><div class="markdown"><p><span>Hello</span>');
+	expect(view(host)).toContain(
+		'<div class="reply streaming"><div class="markdown"><p><span>Hello</span>',
+	);
 });

@@ -28,7 +28,11 @@ const Inline = ({ text }: { readonly text: string }): ReactElement => (
 			.split("`")
 			.map((piece, at) => ({ piece, isCode: at % 2 === 1, key: `${at}` }))
 			.map(({ piece, isCode, key }) =>
-				isCode ? <code key={key}>{piece}</code> : <span key={key}>{piece}</span>,
+				isCode ? (
+					<code key={key}>{piece}</code>
+				) : (
+					<span key={key}>{piece}</span>
+				),
 			)}
 	</>
 );

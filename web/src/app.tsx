@@ -3,10 +3,12 @@ import { type ReactElement, useState } from "react";
 import { type ListStatus, listStatus } from "./fold/offers.ts";
 import type { Session } from "./fold/session.ts";
 import type { LinkState, Status } from "./link/host.ts";
-import type { SessionId } from "./proto/index.ts";
+import type { CommandBody, SessionId } from "./proto/index.ts";
 import { fragmentOf, Route } from "./route.ts";
+import { NewSession } from "./session/new-session.tsx";
+import { SessionView } from "./session/session-view.tsx";
 import type { HostKey } from "./saved.ts";
-import { nameOf, type PairedHost } from "./store.ts";
+import { nameOf, type PairedHost, type Store } from "./store.ts";
 import { describeTicketError } from "./ticket.ts";
 import {
 	useHosts,
@@ -68,7 +70,10 @@ const SessionRow = ({
 				href={fragmentOf(Route.Session({ host, session: id }))}
 			>
 				<span className="session-title">{sessionTitle(session)}</span>
-				<span className="session-status" data-status={status._tag === "Requests" ? "Requests" : status.status}>
+				<span
+					className="session-status"
+					data-status={status._tag === "Requests" ? "Requests" : status.status}
+				>
 					{describeListStatus(status)}
 				</span>
 			</a>
@@ -205,24 +210,54 @@ const Back = (): ReactElement => (
 	</a>
 );
 
-// The session screens are T13's; these hold their place in the shell.
 const SessionPane = ({
 	host,
 	session,
 }: {
 	readonly host: HostKey;
 	readonly session: SessionId;
-}): ReactElement => (
-	<main className="pane" data-host={host} data-session={session}>
-		<Back />
-	</main>
-);
+}): ReactElement => {
+	const found = useSession(host, session);
+	const { send } = useStore();
+	return (
+		<main className="pane" data-host={host} data-session={session}>
+			<Back />
+			{found === undefined ? (
+				<p className="empty">The host has no such session.</p>
+			) : (
+				<SessionView
+					id={session}
+					send={(body) => send(host, body)}
+					session={found}
+				/>
+			)}
+		</main>
+	);
+};
 
-const NewSessionPane = ({ host }: { readonly host: HostKey }): ReactElement => (
-	<main className="pane" data-host={host}>
-		<Back />
-	</main>
-);
+const NewSessionPane = ({ host }: { readonly host: HostKey }): ReactElement => {
+	const store = useStore();
+	const hosts = useHosts().map((paired) => ({
+		key: paired.key,
+		name: nameOf(paired),
+		host: paired.fold,
+		send: (body: CommandBody): ReturnType<Store["send"]> =>
+			store.send(paired.key, body),
+	}));
+	return (
+		<main className="pane" data-host={host}>
+			<Back />
+			<NewSession
+				hosts={hosts}
+				initial={host}
+				key={host}
+				started={(on, session): void =>
+					store.show(Route.Session({ host: on, session }))
+				}
+			/>
+		</main>
+	);
+};
 
 const Chosen = (): ReactElement => (
 	<main className="pane pane-empty">
@@ -234,9 +269,7 @@ const pane = Route.$match({
 	Pairing: () => <Pairing />,
 	Sessions: () => <Chosen />,
 	NewSession: ({ host }) => <NewSessionPane host={host} />,
-	Session: ({ host, session }) => (
-		<SessionPane host={host} session={session} />
-	),
+	Session: ({ host, session }) => <SessionPane host={host} session={session} />,
 });
 
 // The sidebar beside the shown pane; on a phone they are a stack, showing the list on the
