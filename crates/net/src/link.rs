@@ -12,7 +12,9 @@ use std::time::Duration;
 use crate::wire::{self, WireError};
 use iroh::endpoint::{BindError, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr};
-use n0_future::boxed::BoxFuture;
+// `n0_future::boxed::BoxFuture` drops `Send` on wasm, which would make every
+// future holding the link non-`Send` there too.
+use n0_future::future::Boxed as BoxFuture;
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{FuturesUnordered, StreamExt, join_all, task};
 
