@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use client::host_fold::HostFold;
 use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, StatusLabel, ToolState,
+    Approval, HostView, Item, ReplyState, RequestState, ToolState,
 };
 use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
@@ -27,14 +27,14 @@ use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
     ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
-    Credential, Decision, Effort, Epoch, Event, EventKind, Feed, FileChange,
-    HostPath, HostSeq, InstanceId, InstanceStatus, Instances, IssueChange,
-    IssueId, Kept, ModelChoice, ModelId, Models, ProjectId, Provider, Question,
+    Credential, Decision, Effort, Event, EventKind, Feed, FileChange, HostPath,
+    HostSeq, InstanceId, InstanceStatus, Instances, IssueChange, IssueId, Kept,
+    ModelChoice, ModelId, Models, ProjectId, Provider, Question,
     QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
     SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
     SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
-use raw::{RawClient, Recorder};
+use raw::{RawClient, Received, Recorder};
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, UdpSocket};
@@ -82,13 +82,6 @@ impl Fixture {
     async fn shutdown_with_client(self, link: HostLink) -> Fallible {
         link.stop().await?;
         self.shutdown().await
-    }
-
-    async fn epoch(&self) -> Fallible<Epoch> {
-        let client = endpoint().await?;
-        let (_, welcome) = hello(&client, &self.target).await?;
-        client.close().await;
-        Ok(welcome.epoch)
     }
 
     async fn connect(&self) -> Fallible<(HostLink, Updates)> {
@@ -419,10 +412,10 @@ fn states(updates: Vec<Update>) -> Vec<LinkState> {
 
 /// The events up to and including `last`.
 async fn events_through(
-    updates: &mut Updates,
+    client: &mut RawClient,
     last: HostSeq,
 ) -> Fallible<Vec<Event>> {
-    read_events(updates, |event| event.seq >= last).await
+    client.events_until(|event| event.seq >= last).await
 }
 
 fn legacy_created(instance: InstanceId, directory: &Path) -> EventKind {
@@ -517,9 +510,11 @@ async fn a_client_offering_the_previous_alpn_fails_the_handshake() -> Fallible {
             .await
             .is_err()
     );
-    let (current, _updates) = fx.connect().await?;
-    current.stop().await?;
+    let mut feed = Recorder::new()?;
+    let current = RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    current.close().await;
     endpoint.close().await;
+    feed.write()?;
     fx.shutdown().await
 }
 
@@ -527,7 +522,9 @@ async fn a_client_offering_the_previous_alpn_fails_the_handshake() -> Fallible {
 async fn incomplete_hello_expires_while_established_clients_keep_working()
 -> Fallible {
     let fx = host().await?;
-    let (established, _updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let established =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let endpoint = endpoint().await?;
     let incomplete = endpoint
         .connect(fx.target.addr.clone(), proto::ALPN)
@@ -542,7 +539,7 @@ async fn incomplete_hello_expires_while_established_clients_keep_working()
         )
     };
     assert_eq!(
-        established.send(command()).await?,
+        established.send(command()).await?.value,
         CommandResult::Rejected(Rejection::NoSuchDirectory)
     );
     let reason = tokio::time::timeout(STEP, incomplete.closed()).await?;
@@ -551,11 +548,12 @@ async fn incomplete_hello_expires_while_established_clients_keep_working()
         iroh::endpoint::ConnectionError::ApplicationClosed(_)
     ));
     assert_eq!(
-        established.send(command()).await?,
+        established.send(command()).await?.value,
         CommandResult::Rejected(Rejection::NoSuchDirectory)
     );
-    established.stop().await?;
+    established.close().await;
     endpoint.close().await;
+    feed.write()?;
     fx.shutdown().await
 }
 
@@ -563,19 +561,12 @@ async fn incomplete_hello_expires_while_established_clients_keep_working()
 async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
 -> Fallible {
     let fx = host().await?;
-    let (link, mut updates) = link(fx.target.clone(), None).await?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    assert_eq!(phone.welcome.host, "test-host");
     assert_eq!(
-        states(until_live(&mut updates).await?),
-        [
-            LinkState::Connecting,
-            LinkState::Authenticating,
-            LinkState::CatchingUp
-        ]
-    );
-    assert_eq!(updates.host.name, Some(String::from("test-host")));
-    assert_eq!(
-        updates.host.instances,
-        Some(statuses(BTreeMap::from([
+        phone.instances,
+        statuses(BTreeMap::from([
             (
                 Provider::Claude,
                 Availability::Available {
@@ -589,7 +580,7 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
                     reason: String::from(UNAVAILABLE),
                 }
             )
-        ])))
+        ]))
     );
 
     let cases = Vec::from([
@@ -618,64 +609,63 @@ async fn a_client_goes_live_and_start_session_is_checked_at_the_boundary()
             result: CommandResult::Rejected(Rejection::UnknownSession),
         },
     ]);
-    let results = n0_future::join_all(
-        cases.iter().map(|case| link.send(case.body.clone())),
-    )
-    .await;
-    assert_eq!(
-        results
-            .into_iter()
-            .map(Result::unwrap)
-            .collect::<Vec<CommandResult>>(),
-        cases
-            .into_iter()
-            .map(|case| case.result)
-            .collect::<Vec<CommandResult>>()
-    );
-    fx.shutdown_with_client(link).await
+    for case in cases {
+        assert_eq!(phone.send(case.body).await?.value, case.result);
+    }
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 async fn feed_session(
-    link: &HostLink,
-    updates: &mut Updates,
+    client: &mut RawClient,
     name: &str,
 ) -> Fallible<SessionId> {
     let source = scratch(name, "claude-feed.jsonl")?;
-    start_ready(link, updates, instance(Provider::Claude), &source).await
+    start_ready(client, instance(Provider::Claude), &source).await
 }
 
 async fn feed_turn(
-    link: &HostLink,
-    updates: &mut Updates,
+    client: &mut RawClient,
     session: SessionId,
     text: &str,
 ) -> Fallible<Vec<Event>> {
-    accepted(link, message(session, text)).await?;
-    events_until(updates, Until::TurnEnd).await
+    client.accepted(message(session, text)).await?;
+    raw_events_until(client, Until::TurnEnd).await
 }
 
 #[tokio::test]
 async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates()
 -> Fallible {
     let fx = host().await?;
-    let (writer, mut written) = link(fx.target.clone(), None).await?;
-    let (reader, mut seen) = link(fx.target.clone(), None).await?;
-    until_live(&mut written).await?;
-    until_live(&mut seen).await?;
-    let session = feed_session(&writer, &mut written, "reconnect-feed").await?;
-    let first = feed_turn(&writer, &mut written, session, "one").await?;
+    let mut feed = Recorder::new()?;
+    let mut writer =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let mut reader = RawClient::live(&fx.target, "reader", &mut feed).await?;
+    let session = feed_session(&mut writer, "reconnect-feed").await?;
+    let first = feed_turn(&mut writer, session, "one").await?;
     let mut observed = events_through(
-        &mut seen,
+        &mut reader,
         first.last().ok_or("missing first turn")?.seq,
     )
     .await?;
-    accepted(&writer, message(session, "two")).await?;
-    reader.reconnect().await;
-    conversation_events_until(&mut written, Until::TurnEnd).await?;
-    let third = feed_turn(&writer, &mut written, session, "three").await?;
+    let applied = observed
+        .iter()
+        .map(|event| event.seq)
+        .max()
+        .ok_or("the reader applied nothing")?;
+    writer.accepted(message(session, "two")).await?;
+    reader.close().await;
+    // The second turn ends while the reader is away, so it resumes from the
+    // stored log alone and a rerun reads the same frames.
+    raw_conversation_events_until(&mut writer, Until::TurnEnd).await?;
+    let mut reader = RawClient::open(&fx.target, "reader", &mut feed).await?;
+    reader.subscribe(applied).await?;
+    observed.extend(raw_events(reader.caught_up().await?));
+    let third = feed_turn(&mut writer, session, "three").await?;
     observed.extend(
         events_through(
-            &mut seen,
+            &mut reader,
             third.last().ok_or("missing third turn")?.seq,
         )
         .await?,
@@ -683,34 +673,35 @@ async fn reconnect_mid_feed_resumes_after_the_cursor_without_gaps_or_duplicates(
     observed.retain(|event| {
         !matches!(event.kind, EventKind::AssistantDelta { .. })
     });
-    assert_eq!(observed, fx.history().await?);
+    assert_eq!(observed, raw_history(&fx.target, &mut feed).await?);
     assert_eq!(
         seqs(&observed),
         (1..=observed.len() as u64).map(HostSeq).collect::<Vec<_>>()
     );
-    reader.stop().await?;
-    fx.shutdown_with_client(writer).await
+    reader.close().await;
+    writer.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
 async fn a_new_client_resumes_from_a_dead_clients_cursor() -> Fallible {
     let fx = host().await?;
-    let (writer, mut written) = link(fx.target.clone(), None).await?;
-    let (reader, mut seen) = link(fx.target.clone(), None).await?;
-    until_live(&mut written).await?;
-    until_live(&mut seen).await?;
-    let session = feed_session(&writer, &mut written, "dead-client").await?;
-    let first = feed_turn(&writer, &mut written, session, "one").await?;
+    let mut feed = Recorder::new()?;
+    let mut writer =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let mut reader = RawClient::live(&fx.target, "reader", &mut feed).await?;
+    let session = feed_session(&mut writer, "dead-client").await?;
+    let first = feed_turn(&mut writer, session, "one").await?;
     let seq = first.last().ok_or("missing first turn")?.seq;
-    events_through(&mut seen, seq).await?;
-    reader.stop().await?;
-    let second = feed_turn(&writer, &mut written, session, "two").await?;
-    let cursor = Cursor {
-        epoch: fx.epoch().await?,
-        seq,
-    };
-    let (reader, mut seen) = link(fx.target.clone(), Some(cursor)).await?;
-    let rest = replayed(until_live(&mut seen).await?);
+    events_through(&mut reader, seq).await?;
+    let epoch = reader.welcome.epoch;
+    reader.close().await;
+    let second = feed_turn(&mut writer, session, "two").await?;
+    let mut reader = RawClient::open(&fx.target, "reader", &mut feed).await?;
+    assert_eq!(reader.welcome.epoch, epoch);
+    reader.subscribe(seq).await?;
+    let rest = raw_events(reader.caught_up().await?);
     assert_eq!(
         rest,
         second
@@ -721,18 +712,22 @@ async fn a_new_client_resumes_from_a_dead_clients_cursor() -> Fallible {
             ))
             .collect::<Vec<_>>()
     );
-    reader.stop().await?;
-    fx.shutdown_with_client(writer).await
+    reader.close().await;
+    writer.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
 async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message()
 -> Fallible {
     let fx = host().await?;
-    let (first, mut updates) = fx.connect().await?;
-    let session = feed_session(&first, &mut updates, "live-deltas").await?;
-    let seen = fx.history().await?;
-    let live = feed_turn(&first, &mut updates, session, "say hello").await?;
+    let mut feed = Recorder::new()?;
+    let mut first =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = feed_session(&mut first, "live-deltas").await?;
+    let seen = raw_history(&fx.target, &mut feed).await?;
+    let live = feed_turn(&mut first, session, "say hello").await?;
     let assistant = |events: &[Event]| {
         of(session, events)
             .into_iter()
@@ -755,79 +750,91 @@ async fn a_live_client_sees_the_deltas_and_a_resumed_one_only_the_message()
         .ok_or("no durable event before the first delta")?;
     let prior = window[0].seq;
     assert_eq!(seqs(&window[1..]), [prior, prior, prior.next()]);
-    first.stop().await?;
-    let cursor = Cursor {
-        epoch: fx.epoch().await?,
-        seq: seen.last().ok_or("missing opening events")?.seq,
-    };
-    let (resumed, mut updates) = link(fx.target.clone(), Some(cursor)).await?;
-    let rest = replayed(until_live(&mut updates).await?);
+    let epoch = first.welcome.epoch;
+    first.close().await;
+    let mut resumed =
+        RawClient::open(&fx.target, "test-client", &mut feed).await?;
+    assert_eq!(resumed.welcome.epoch, epoch);
+    resumed
+        .subscribe(seen.last().ok_or("missing opening events")?.seq)
+        .await?;
+    let rest = raw_events(resumed.caught_up().await?);
     assert_eq!(assistant(&rest), [reply("Hello")]);
     assert_eq!(
-        fold(seen.iter().chain(&live).cloned().collect()),
-        fold(seen.into_iter().chain(rest).collect())
+        rest,
+        live.into_iter()
+            .filter(|event| !matches!(
+                event.kind,
+                EventKind::AssistantDelta { .. }
+            ))
+            .collect::<Vec<_>>()
     );
-    fx.shutdown_with_client(resumed).await
+    resumed.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
 async fn a_cursor_from_another_epoch_starts_over_from_the_beginning() -> Fallible
 {
-    let fx = host().await?;
-    let prior = host().await?;
-    let (writer, mut updates) = fx.connect().await?;
+    let data = data_dir("epoch-reset")?;
+    let first =
+        durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
+    let address = first.address()?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&first.target, "test-client", &mut feed).await?;
+    let earlier = scratch("epoch-earlier", "claude-feed.jsonl")?;
+    let gone =
+        start_ready(&mut phone, instance(Provider::Claude), &earlier).await?;
+    let applied = feed_turn(&mut phone, gone, "say hello")
+        .await?
+        .last()
+        .ok_or("missing turn")?
+        .seq;
+    let stale = phone.welcome.epoch;
+    phone.close().await;
+    first.shutdown().await?;
+    // A host whose log is gone starts a new one, in a new epoch, under the
+    // same ticket.
+    std::fs::remove_file(data.join("conductor.redb"))?;
+    let second = durable_host(&data, address).await?;
+    let mut writer =
+        RawClient::live(&second.target, "test-client", &mut feed).await?;
+    let epoch = writer.welcome.epoch;
+    assert_ne!(epoch, stale);
     let source = scratch("epoch-reset", "claude-feed.jsonl")?;
     let session =
-        start_ready(&writer, &mut updates, instance(Provider::Claude), &source)
-            .await?;
-    feed_turn(&writer, &mut updates, session, "say hello").await?;
-    let stale = Cursor {
-        epoch: prior.epoch().await?,
-        seq: HostSeq(40),
-    };
-    let epoch = fx.epoch().await?;
-    assert_ne!(stale.epoch, epoch);
-    let (reader, mut updates) = link(fx.target.clone(), Some(stale)).await?;
-    let before_live = until_live(&mut updates).await?;
-    assert_eq!(
-        before_live
-            .iter()
-            .filter_map(|update| match update {
-                Update::Reset(epoch) => Some(epoch),
-                _ => None,
-            })
-            .collect::<Vec<_>>(),
-        [&epoch]
-    );
-    let events = replayed(before_live);
-    assert_eq!(events, fx.history().await?);
+        start_ready(&mut writer, instance(Provider::Claude), &source).await?;
+    feed_turn(&mut writer, session, "say hello").await?;
+    writer.close().await;
+
+    let mut phone =
+        RawClient::open(&second.target, "test-client", &mut feed).await?;
+    assert_eq!(phone.welcome.epoch, epoch);
+    phone.subscribe_in(stale, applied).await?;
+    let refused = phone.next().await.err().map(|error| error.to_string());
+    assert_eq!(refused.as_deref(), Some("the host finished the stream"));
+    phone.subscribe(HostSeq(0)).await?;
+    let events = raw_events(phone.caught_up().await?);
     assert_eq!(events.first().map(|event| event.seq), Some(HostSeq(1)));
-    let head = events.last().ok_or("missing replay")?.seq;
-    let view = fold(events);
-    assert_eq!(view.sessions.len(), 1);
-    let found = view
-        .sessions
-        .get(&session)
-        .ok_or("missing replayed session")?;
-    assert_eq!(found.instance.provider, Provider::Claude);
-    assert_eq!(found.directory.0, source.display().to_string());
-    assert_eq!(found.activity, head);
-    assert_eq!(found.status_label(), StatusLabel::Idle);
+    assert!(events.iter().all(|event| event.session == session));
     assert_eq!(
-        found.items,
+        of(session, &events),
         [
-            Item::User {
-                text: "say hello".into(),
-                by: test_client()
-            },
-            done("Hello"),
-            Item::TurnCompleted(TurnOutcome::Completed),
+            opening(Provider::Claude, &source),
+            Vec::from([
+                user("say hello"),
+                reply("Hello"),
+                turn_end(TurnOutcome::Completed),
+            ]),
         ]
+        .concat()
     );
-    reader.stop().await?;
-    writer.stop().await?;
-    prior.shutdown().await?;
-    fx.shutdown().await
+    assert_eq!(events, raw_history(&second.target, &mut feed).await?);
+    phone.close().await;
+    feed.write()?;
+    second.shutdown().await
 }
 
 /// Git commands use this test repository's identity, never the user's config.
@@ -978,7 +985,6 @@ async fn raw_ping_turn(client: &mut RawClient, session: SessionId) -> Fallible {
     );
     Ok(())
 }
-
 async fn raw_resume_to_ready(
     client: &mut RawClient,
     session: SessionId,
@@ -1011,6 +1017,17 @@ async fn raw_conversation_events_until(
     let mut events = raw_events_until(client, until).await?;
     events.retain(|event| conversation_event(&event.kind));
     Ok(events)
+}
+
+/// The events among `frames`.
+fn raw_events(frames: Vec<Received<Feed>>) -> Vec<Event> {
+    frames
+        .into_iter()
+        .filter_map(|frame| match frame.value {
+            Feed::Event(event) => Some(event),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The events through the first that reaches `until`, without the workspace
@@ -1086,9 +1103,9 @@ async fn accepted(link: &HostLink, body: CommandBody) -> Fallible {
 }
 
 /// An issue command is answered with the issue it wrote and no warning.
-async fn wrote(link: &HostLink, body: CommandBody) -> Fallible {
+async fn wrote(client: &RawClient, body: CommandBody) -> Fallible {
     assert!(matches!(
-        send(link, body).await?,
+        client.send(body).await?.value,
         CommandResult::IssueWritten { warnings, .. } if warnings.is_empty()
     ));
     Ok(())
@@ -1101,11 +1118,11 @@ async fn send(link: &HostLink, body: CommandBody) -> Fallible<CommandResult> {
 }
 
 async fn configured(
-    link: &HostLink,
+    client: &RawClient,
     body: CommandBody,
     target: &Target,
 ) -> Fallible<Instances> {
-    accepted(link, body).await?;
+    client.accepted(body).await?;
     current_offers(target).await
 }
 
@@ -1255,23 +1272,35 @@ fn codex_tool(
     command: &str,
     decision: Decision,
     outcome: ToolOutcome,
-) -> Item {
-    Item::Tool {
-        call: ToolCallId(String::from(call)),
-        tool: ToolKind::Command {
-            command: String::from(command),
+) -> Vec<EventKind> {
+    let id = ToolCallId(String::from(call));
+    let tool = ToolKind::Command {
+        command: String::from(command),
+    };
+    Vec::from([
+        EventKind::ToolCall {
+            call: id.clone(),
+            phase: ToolPhase::Started { tool: tool.clone() },
         },
-        state: ToolState::Finished(outcome),
-        approval: Approval::Asked {
+        EventKind::RequestOpened {
             request: RequestId(1),
+            call: id.clone(),
+            tool,
             reason: None,
             for_session: Some(String::from(command)),
-            state: RequestState::Resolved(Resolution::Decided {
+        },
+        EventKind::RequestResolved {
+            request: RequestId(1),
+            resolution: Resolution::Decided {
                 decision,
                 by: test_client(),
-            }),
+            },
         },
-    }
+        EventKind::ToolCall {
+            call: id,
+            phase: ToolPhase::Finished { outcome },
+        },
+    ])
 }
 
 const APPROVED_CALL: &str = "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD";
@@ -2088,76 +2117,85 @@ async fn a_missing_claude_binary_closes_the_session() -> Fallible {
 #[tokio::test]
 async fn two_codex_sessions_share_one_server() -> Fallible {
     let (fx, dir) = codex_host("codex-two-threads.jsonl").await?;
-    let (link, mut updates) = fx.connect().await?;
-    let first_session = launch(&link, start(Provider::Codex, &dir)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let first_session = phone.started(start(Provider::Codex, &dir)).await?;
     // The second session starts once the first has its thread, so the first
     // gets the recording's first thread.
-    let first = conversation_events_until(&mut updates, Until::Ready).await?;
-    let second_session = launch(&link, start(Provider::Codex, &dir)).await?;
+    raw_conversation_events_until(&mut phone, Until::Ready).await?;
+    let second_session = phone.started(start(Provider::Codex, &dir)).await?;
     assert_ne!(first_session, second_session);
-    let second = conversation_events_until(&mut updates, Until::Ready).await?;
-    assert_eq!(
-        [
-            send(&link, message(first_session, "create a.txt")).await?,
-            send(&link, message(second_session, "create b.txt")).await?,
-        ],
-        [CommandResult::Accepted, CommandResult::Accepted]
-    );
+    raw_conversation_events_until(&mut phone, Until::Ready).await?;
+    phone
+        .accepted(message(first_session, "create a.txt"))
+        .await?;
+    phone
+        .accepted(message(second_session, "create b.txt"))
+        .await?;
     let asked = [
-        conversation_events_until(&mut updates, Until::Request).await?,
-        conversation_events_until(&mut updates, Until::Request).await?,
+        raw_conversation_events_until(&mut phone, Until::Request).await?,
+        raw_conversation_events_until(&mut phone, Until::Request).await?,
     ]
     .concat();
-    assert_eq!(
-        [
-            send(&link, resolve(first_session, 1, Decision::Approve)).await?,
-            send(&link, resolve(second_session, 1, Decision::Deny)).await?,
-        ],
-        [CommandResult::Accepted, CommandResult::Accepted]
-    );
+    phone
+        .accepted(resolve(first_session, 1, Decision::Approve))
+        .await?;
+    phone
+        .accepted(resolve(second_session, 1, Decision::Deny))
+        .await?;
     let ended = [
-        conversation_events_until(&mut updates, Until::TurnEnd).await?,
-        conversation_events_until(&mut updates, Until::TurnEnd).await?,
+        asked,
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?,
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?,
     ]
     .concat();
-    let view = fold([first, second, asked, ended].concat());
-    let a_call = "exec-f4c7c6d4-8255-4bcc-972d-9f106cda7991";
+    let turn = |session| {
+        of(session, &ended)
+            .into_iter()
+            .filter(|kind| !matches!(kind, EventKind::AssistantDelta { .. }))
+            .collect::<Vec<EventKind>>()
+    };
     assert_eq!(
-        items(&view, first_session),
+        turn(first_session),
         [
-            Item::User {
-                text: String::from("create a.txt"),
-                by: test_client(),
-            },
-            done("I’ll create `a.txt` with the exact requested contents."),
+            Vec::from([
+                user("create a.txt"),
+                reply("I’ll create `a.txt` with the exact requested contents."),
+            ]),
             codex_tool(
-                a_call,
+                "exec-f4c7c6d4-8255-4bcc-972d-9f106cda7991",
                 "/usr/bin/zsh -lc \"printf %s 'hello from s2' > a.txt\"",
                 Decision::Approve,
                 ToolOutcome::Succeeded
             ),
-            done("Created [a.txt](/tmp/s2-scratch/a.txt)."),
-            Item::TurnCompleted(TurnOutcome::Completed),
+            Vec::from([
+                reply("Created [a.txt](/tmp/s2-scratch/a.txt)."),
+                turn_end(TurnOutcome::Completed),
+            ]),
         ]
+        .concat()
     );
     assert_eq!(
-        items(&view, second_session),
+        turn(second_session),
         [
-            Item::User {
-                text: String::from("create b.txt"),
-                by: test_client(),
-            },
+            Vec::from([user("create b.txt")]),
             codex_tool(
                 "exec-5f0ba5d1-395f-4d84-b098-a443a0873a5a",
                 "/usr/bin/zsh -lc 'printf %s nope > b.txt'",
                 Decision::Deny,
                 ToolOutcome::Declined
             ),
-            done("The request was declined."),
-            Item::TurnCompleted(TurnOutcome::Completed),
+            Vec::from([
+                reply("The request was declined."),
+                turn_end(TurnOutcome::Completed),
+            ]),
         ]
+        .concat()
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -2318,22 +2356,6 @@ async fn the_app_server_exiting_closes_every_codex_session() -> Fallible {
     fx.shutdown().await
 }
 
-/// The states before the link reported an error, and the error.
-async fn until_error(
-    updates: &mut Updates,
-) -> Fallible<(Vec<LinkState>, String)> {
-    let mut seen = Vec::new();
-    loop {
-        match next(updates).await? {
-            Update::Status(Status {
-                error: Some(error), ..
-            }) => break Ok((seen, error)),
-            Update::Status(status) => seen.push(status.state),
-            _ => {}
-        }
-    }
-}
-
 #[tokio::test]
 async fn a_wrong_token_is_refused_and_never_goes_live() -> Fallible {
     let fx = host().await?;
@@ -2341,15 +2363,18 @@ async fn a_wrong_token_is_refused_and_never_goes_live() -> Fallible {
         token: AuthToken::from_bytes([0; 16]),
         ..fx.target.clone()
     };
-    let (link, mut updates) = link(target, None).await?;
-    assert_eq!(
-        until_error(&mut updates).await?,
-        (
-            Vec::from([LinkState::Connecting, LinkState::Authenticating]),
-            String::from("the host refused us: wrong token")
-        )
-    );
-    fx.shutdown_with_client(link).await
+    let mut feed = Recorder::new()?;
+    let refused = match RawClient::open(&target, "test-client", &mut feed).await
+    {
+        Ok(client) => {
+            client.close().await;
+            None
+        }
+        Err(error) => Some(error.to_string()),
+    };
+    assert_eq!(refused.as_deref(), Some("wrong token"));
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// What iroh logs when an endpoint is dropped before anyone closed it.
@@ -2628,15 +2653,6 @@ fn start_on(instance: InstanceId, directory: &Path) -> CommandBody {
     }
 }
 
-/// A fresh link to `fx`, live, and the providers its `Welcome` reported.
-async fn live(
-    fx: &Fixture,
-) -> Fallible<(HostLink, Updates, Option<Instances>)> {
-    let (link, updates) = fx.connect().await?;
-    let instances = updates.host.instances.clone();
-    Ok((link, updates, instances))
-}
-
 #[tokio::test]
 async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
 -> Fallible {
@@ -2644,21 +2660,20 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
     let (log, logging) = capture_log("claude-gateway")?;
     let dir = scratch("claude-gateway", "claude-approve.jsonl")?;
     let fx = claude_host_in(&data).await?;
-    let (link, mut updates, welcomed) = live(&fx).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let claude_api = api(Provider::Claude);
     let with_api =
         and(with_claude(no_credential()), &claude_api, gateway(probed()));
-    assert_eq!(welcomed, Some(with_claude(no_credential())));
+    assert_eq!(phone.instances, with_claude(no_credential()));
     assert_eq!(
-        send(&link, start(Provider::Claude, &dir)).await?,
+        phone.send(start(Provider::Claude, &dir)).await?.value,
         refused_for_no_credential()
     );
-    assert_eq!(
-        send(&link, claude_gateway()).await?,
-        CommandResult::Accepted
-    );
-    wait_for_offer(&mut updates, &claude_api).await?;
-    assert_eq!(updates.host.instances.as_ref(), Some(&with_api));
+    phone.accepted(claude_gateway()).await?;
+    wait_for_offer(&mut phone, &claude_api).await?;
+    assert_eq!(phone.instances, with_api);
     let probe_env = read(&dir_of(&data, "work", &claude_api).join("env.txt"))?;
     let home = dir_of(&data, "home", &claude_api);
     assert_gateway_env(&probe_env, CLAUDE_TOKEN, GATEWAY, &home);
@@ -2669,44 +2684,40 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
         "after gateway configuration"
     );
 
-    launch(&link, start_on(claude_api.clone(), &dir)).await?;
-    let events = conversation_events_until(&mut updates, Until::Ready).await?;
+    phone.started(start_on(claude_api.clone(), &dir)).await?;
+    let events =
+        raw_conversation_events_until(&mut phone, Until::Ready).await?;
     let env = read(&dir.join("env.txt"))?;
     assert_gateway_env(&env, CLAUDE_TOKEN, GATEWAY, &home);
     assert_eq!(scrubbed(&env), scrubbed(&probe_env));
     assert_eq!(count(&data.join("credentials"), CLAUDE_TOKEN)?, 0);
-    link.stop().await?;
+    phone.close().await;
     fx.shutdown().await?;
 
     let fx = claude_host_in(&data).await?;
-    let (link, _updates, welcomed) = live(&fx).await?;
-    assert_eq!(welcomed, Some(with_api));
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    assert_eq!(phone.instances, with_api);
     assert_eq!(
         count(&log, UNPROTECTED)?,
         expected_warnings * 2,
         "after restarting with the gateway"
     );
+    phone
+        .accepted(CommandBody::RemoveInstance {
+            instance: claude_api.clone(),
+        })
+        .await?;
     assert_eq!(
-        send(
-            &link,
-            CommandBody::RemoveInstance {
-                instance: claude_api.clone(),
-            }
-        )
-        .await?,
-        CommandResult::Accepted
-    );
-    assert_eq!(
-        send(&link, start_on(claude_api, &dir)).await?,
+        phone.send(start_on(claude_api, &dir)).await?.value,
         CommandResult::Rejected(Rejection::UnknownInstance)
     );
-    link.stop().await?;
+    phone.close().await;
     fx.shutdown().await?;
 
     let fx = claude_host_in(&data).await?;
-    let (link, _updates, welcomed) = live(&fx).await?;
-    assert_eq!(welcomed, Some(with_claude(no_credential())));
-    link.stop().await?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    assert_eq!(phone.instances, with_claude(no_credential()));
+    phone.close().await;
     fx.shutdown().await?;
     assert_eq!(
         count(&log, UNPROTECTED)?,
@@ -2723,7 +2734,7 @@ async fn a_claude_gateway_reaches_the_cli_survives_a_restart_and_is_removed()
         ),
         (1, 0, 0)
     );
-    Ok(())
+    feed.write()
 }
 
 fn with_codex(codex: Availability) -> Instances {
@@ -2814,25 +2825,27 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         &data,
     )
     .await?;
-    let (link, mut updates, welcomed) = live(&fx).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     assert_eq!(
-        welcomed,
-        Some(and(
+        phone.instances,
+        and(
             with_codex(Availability::Unavailable {
                 reason: String::from(UNAVAILABLE),
             }),
             &codex_api,
             no_credential()
-        ))
+        )
     );
     assert_eq!(
         codex_offer(
-            configured(&link, codex_provider(FIRST_KEY), &fx.target).await?
+            configured(&phone, codex_provider(FIRST_KEY), &fx.target).await?
         ),
         Some(codex_gateway())
     );
-    launch(&link, start_on(codex_api.clone(), &server)).await?;
-    let first = conversation_events_until(&mut updates, Until::Ready).await?;
+    phone.started(start_on(codex_api.clone(), &server)).await?;
+    let first = raw_conversation_events_until(&mut phone, Until::Ready).await?;
     let home = dir_of(&data, "home", &codex_api);
     assert_eq!(
         read(&server.join("env.txt"))?,
@@ -2849,20 +2862,21 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
     );
     assert_eq!(
         codex_offer(
-            configured(&link, codex_provider(SECOND_KEY), &fx.target).await?
+            configured(&phone, codex_provider(SECOND_KEY), &fx.target).await?
         ),
         Some(codex_gateway())
     );
     assert_eq!(
-        kinds_until(&mut updates, Until::Closed).await?,
+        raw_kinds_until(&mut phone, Until::Closed).await?,
         [EventKind::SessionClosed {
             reason: CloseReason::Stopped {
                 reason: String::from("new Codex credential"),
             },
         }]
     );
-    launch(&link, start_on(codex_api, &server)).await?;
-    let second = conversation_events_until(&mut updates, Until::Ready).await?;
+    phone.started(start_on(codex_api, &server)).await?;
+    let second =
+        raw_conversation_events_until(&mut phone, Until::Ready).await?;
     assert_eq!(
         read(&server.join("env.txt"))?,
         format!(
@@ -2871,7 +2885,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         )
     );
     assert_eq!(count(&home.join("config.toml"), FIRST_KEY)?, 0);
-    link.stop().await?;
+    phone.close().await;
     fx.shutdown().await?;
     drop(logging);
     let logged = captured(&log)?;
@@ -2886,7 +2900,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         ),
         (2, 0, 0, 0)
     );
-    Ok(())
+    feed.write()
 }
 
 #[tokio::test]
@@ -2914,12 +2928,15 @@ async fn a_credential_sent_before_hello_is_refused_and_not_stored() -> Fallible
         })
     );
     endpoint.close().await;
-    let (link, _updates, welcomed) = live(&fx).await?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
     assert_eq!(
-        (welcomed, data.join("credentials").exists()),
-        (Some(with_claude(no_credential())), false)
+        (phone.instances.clone(), data.join("credentials").exists()),
+        (with_claude(no_credential()), false)
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -2929,7 +2946,8 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
     std::fs::write(data.join("store.key"), "00".repeat(32))?;
     std::fs::write(data.join("credentials"), b"not a sealed store")?;
     let fx = claude_host_in(&data).await?;
-    let (link, _updates, welcomed) = live(&fx).await?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let unreadable = Availability::Unavailable {
         reason: format!(
             "{} does not open with the store key; clearing a credential moves it aside",
@@ -2937,8 +2955,8 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
         ),
     };
     assert_eq!(
-        welcomed,
-        Some(with_claude(unreadable.clone())),
+        phone.instances,
+        with_claude(unreadable.clone()),
         "a stored credential may be in it, so the home's sign-in is not used"
     );
     let refused = CommandResult::Rejected(Rejection::CredentialNotSaved {
@@ -2947,7 +2965,7 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
             data.join("credentials").display()
         ),
     });
-    assert_eq!(send(&link, claude_gateway()).await?, refused);
+    assert_eq!(phone.send(claude_gateway()).await?.value, refused);
     assert_eq!(
         read(&data.join("credentials"))?,
         "not a sealed store",
@@ -2955,7 +2973,7 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
     );
     assert_eq!(
         configured(
-            &link,
+            &phone,
             CommandBody::RemoveInstance {
                 instance: instance(Provider::Codex),
             },
@@ -2969,21 +2987,24 @@ async fn an_unreadable_store_keeps_the_host_up_refuses_a_set_and_moves_aside()
         "not a sealed store"
     );
     assert_eq!(
-        configured(&link, claude_gateway(), &fx.target).await?,
+        configured(&phone, claude_gateway(), &fx.target).await?,
         and(
             with_claude(no_credential()),
             &api(Provider::Claude),
             gateway(probed())
         )
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
 async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
     let data = data_dir("base-url")?;
     let fx = claude_host_in(&data).await?;
-    let (link, _updates, _) = live(&fx).await?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let body = CommandBody::SetCredential {
         provider: Provider::Claude,
         credential: credential(
@@ -2995,7 +3016,10 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
         ),
     };
     assert_eq!(
-        (send(&link, body).await?, data.join("credentials").exists()),
+        (
+            phone.send(body).await?.value,
+            data.join("credentials").exists()
+        ),
         (
             CommandResult::Rejected(Rejection::InvalidCredential {
                 reason: String::from(
@@ -3005,7 +3029,9 @@ async fn a_base_url_that_could_hide_a_secret_is_refused() -> Fallible {
             false
         )
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 fn probe(data: &Path, id: &InstanceId, response: &str) -> Fallible {
@@ -3077,7 +3103,9 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
     probe(&data, &claude_api, PROBED)?;
     probe(&data, &other, PROBED)?;
     let fx = plugin_host(&data).await?;
-    let (link, mut updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let set = |base_url: &str, token: &str| CommandBody::SetCredential {
         provider: Provider::Claude,
         credential: credential(
@@ -3086,9 +3114,9 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
         ),
     };
     let after_api =
-        configured(&link, set(GATEWAY, CLAUDE_TOKEN), &fx.target).await?;
+        configured(&phone, set(GATEWAY, CLAUDE_TOKEN), &fx.target).await?;
     let after_other =
-        configured(&link, set(OTHER, OTHER_TOKEN), &fx.target).await?;
+        configured(&phone, set(OTHER, OTHER_TOKEN), &fx.target).await?;
     let other_gateway = Availability::Available {
         auth: Auth::Stored {
             kind: String::from("gateway"),
@@ -3106,7 +3134,7 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
     );
     probe(&data, &claude_api, CLAUDE_MODELS)?;
     let changed =
-        configured(&link, set(GATEWAY, API_TOKEN), &fx.target).await?;
+        configured(&phone, set(GATEWAY, API_TOKEN), &fx.target).await?;
     assert_eq!(
         (
             status_of(&changed, &claude_api).map(|it| it.availability),
@@ -3114,10 +3142,10 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
         ),
         (Some(gateway(models())), Some(other_gateway))
     );
-    let first = launch(&link, start_on(claude_api.clone(), &on_api)).await?;
-    let api_events = events_until(&mut updates, Until::Ready).await?;
-    let second = launch(&link, start_on(other.clone(), &on_other)).await?;
-    let other_events = events_until(&mut updates, Until::Ready).await?;
+    let first = phone.started(start_on(claude_api.clone(), &on_api)).await?;
+    let api_events = raw_events_until(&mut phone, Until::Ready).await?;
+    let second = phone.started(start_on(other.clone(), &on_other)).await?;
+    let other_events = raw_events_until(&mut phone, Until::Ready).await?;
     assert_eq!(
         (created_on(&api_events), created_on(&other_events)),
         (
@@ -3139,13 +3167,12 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
     );
     assert_eq!(
         (
-            send(
-                &link,
-                CommandBody::RemoveInstance {
+            phone
+                .send(CommandBody::RemoveInstance {
                     instance: claude_api.clone()
-                }
-            )
-            .await?,
+                })
+                .await?
+                .value,
             dir_of(&data, "home", &claude_api)
                 .join("settings.json")
                 .exists(),
@@ -3155,7 +3182,9 @@ async fn two_claude_accounts_keep_their_own_credentials_and_homes() -> Fallible
             true,
         )
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 fn start_with(
@@ -3845,31 +3874,33 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
         recording_file("codex-resumed-listed.jsonl"),
         server.join("stdout.2.jsonl"),
     )?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = started_session(
-        &send(
-            &link,
-            CommandBody::StartSession {
-                instance: api(Provider::Codex),
-                at: StartAt::Directory(HostPath(server.display().to_string())),
-                model: Some(ModelId(String::from("small"))),
-                effort: Some(Effort::Low),
-            },
-        )
-        .await?,
-    )?;
-    let _ = kinds_until(&mut updates, Until::Ready).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone
+        .started(CommandBody::StartSession {
+            instance: api(Provider::Codex),
+            at: StartAt::Directory(HostPath(server.display().to_string())),
+            model: Some(ModelId(String::from("small"))),
+            effort: Some(Effort::Low),
+        })
+        .await?;
+    let _ = raw_kinds_until(&mut phone, Until::Ready).await?;
     assert_eq!(
         codex_offer(
-            configured(&link, codex_provider("conductor-test-key"), &fx.target)
-                .await?
+            configured(
+                &phone,
+                codex_provider("conductor-test-key"),
+                &fx.target
+            )
+            .await?
         ),
         Some(codex_gateway())
     );
-    let _ = kinds_until(&mut updates, Until::Closed).await?;
-    accepted(&link, continued(session)).await?;
+    let _ = raw_kinds_until(&mut phone, Until::Closed).await?;
+    phone.accepted(continued(session)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Ready).await?,
+        raw_kinds_until(&mut phone, Until::Ready).await?,
         [
             EventKind::ModelChanged {
                 model: Some(ModelId(String::from("conductor-test-model"))),
@@ -3892,7 +3923,9 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
             Some(serde_json::json!("low"))
         )]
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// The thread, model and effort a `thread/start` or `thread/resume` names.
@@ -4029,37 +4062,51 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let address = first.address()?;
     let ticket = first.target.clone();
-    let (phone, mut updates) = first.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let _ = send(&phone, message(session, "create a.txt")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone = RawClient::live(&ticket, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    phone.accepted(message(session, "create a.txt")).await?;
     let before =
-        conversation_events_until(&mut updates, Until::Request).await?;
+        raw_conversation_events_until(&mut phone, Until::Request).await?;
     let cursor = before.last().ok_or("expected a value")?.seq;
+    let epoch = phone.welcome.epoch;
     let conversation = argv(&dir)?
         .first()
         .and_then(|run| flag(run, "--session-id"))
         .ok_or("expected a value")?;
+    phone.close().await;
     first.shutdown().await?;
 
     std::fs::write(home.join("AGENTS.md"), "Instructions after restart.")?;
     let second = durable_host(&data, address).await?;
     assert_eq!(second.target.addr.id, ticket.addr.id);
     assert_eq!(second.target.token, ticket.token);
-    phone.reconnect().await;
-    let caught_up = until_live(&mut updates).await?;
-    assert_restart_cleanup(caught_up, cursor, session)?;
+    let mut phone = RawClient::open(&ticket, "test-client", &mut feed).await?;
+    assert_eq!(phone.welcome.epoch, epoch, "nothing is reset");
+    phone.subscribe(cursor).await?;
+    assert_restart_cleanup(
+        &raw_events(phone.caught_up().await?),
+        cursor,
+        session,
+    )?;
     assert_eq!(
-        send(&phone, resolve(session, 1, Decision::Approve)).await?,
+        phone
+            .send(resolve(session, 1, Decision::Approve))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    resume_to_ready(&phone, &mut updates, session).await?;
+    raw_resume_to_ready(&mut phone, session).await?;
     assert_eq!(
-        send(&phone, resolve(session, 1, Decision::Approve)).await?,
+        phone
+            .send(resolve(session, 1, Decision::Approve))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    let _ = send(&phone, message(session, "how many sheep?")).await?;
+    phone.accepted(message(session, "how many sheep?")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd)
+        raw_kinds_until(&mut phone, Until::TurnEnd)
             .await?
             .into_iter()
             .filter(|kind| !matches!(kind, EventKind::AssistantDelta { .. }))
@@ -4083,7 +4130,8 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
             .iter()
             .any(|line| line == "Instructions after restart.")
     );
-    phone.stop().await?;
+    phone.close().await;
+    feed.write()?;
     second.shutdown().await
 }
 
@@ -4091,26 +4139,18 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
 /// open request withdrawn, the turn interrupted with a snapshot, and the
 /// session closed. Nothing is reset.
 fn assert_restart_cleanup(
-    caught_up: Vec<Update>,
+    cleanup: &[Event],
     cursor: HostSeq,
     session: SessionId,
 ) -> Fallible {
-    assert_eq!(
-        caught_up
-            .iter()
-            .filter(|update| matches!(update, Update::Reset(_)))
-            .count(),
-        0
-    );
-    let cleanup = replayed(caught_up);
     let end = cursor.0.checked_add(4).ok_or("restart cursor overflow")?;
     assert_eq!(
-        seqs(&cleanup),
+        seqs(cleanup),
         (cursor.next().0..=end).map(HostSeq).collect::<Vec<_>>()
     );
-    assert!(snapshot(&cleanup)?.1.turn_start.is_some());
+    assert!(snapshot(cleanup)?.1.turn_start.is_some());
     assert_eq!(
-        of(session, &cleanup),
+        of(session, cleanup),
         [
             EventKind::RequestResolved {
                 request: RequestId(1),
@@ -4336,7 +4376,7 @@ fn held_claude_probe(data: &Path) -> Fallible<PathBuf> {
 /// While Claude refreshes, starting or continuing a Claude session is
 /// refused at once, and other commands still answer.
 async fn assert_refreshing_claude_refuses(
-    phone: &HostLink,
+    phone: &RawClient,
     source: &Path,
     session: SessionId,
 ) -> Fallible {
@@ -4344,25 +4384,27 @@ async fn assert_refreshing_claude_refuses(
         reason: String::from(REFRESHING),
     });
     assert_eq!(
-        send(phone, start_on(api(Provider::Claude), source)).await?,
+        phone
+            .send(start_on(api(Provider::Claude), source))
+            .await?
+            .value,
         refused
     );
-    assert_eq!(send(phone, continued(session)).await?, refused);
+    assert_eq!(phone.send(continued(session)).await?.value, refused);
     assert_eq!(
-        send(phone, message(SessionId(999), "lookup")).await?,
+        phone.send(message(SessionId(999), "lookup")).await?.value,
         CommandResult::Rejected(Rejection::UnknownSession)
     );
     Ok(())
 }
 
 async fn start_ready(
-    phone: &HostLink,
-    updates: &mut Updates,
+    client: &mut RawClient,
     instance: InstanceId,
     source: &Path,
 ) -> Fallible<SessionId> {
-    let session = launch(phone, start_on(instance, source)).await?;
-    let ready = events_until(updates, Until::Ready).await?;
+    let session = client.started(start_on(instance, source)).await?;
+    let ready = raw_events_until(client, Until::Ready).await?;
     assert_eq!(ready.last().map(|event| event.session), Some(session));
     Ok(session)
 }
@@ -4370,7 +4412,7 @@ async fn start_ready(
 /// A credential whose probe fails leaves the account's instance
 /// unavailable with the probe's reason; the next lists its models again.
 async fn assert_failed_refresh_then_another(
-    phone: &HostLink,
+    phone: &RawClient,
     probe: &Path,
     target: &Target,
 ) -> Fallible {
@@ -4424,16 +4466,12 @@ fn with_api_claude(availability: Availability) -> Instances {
     )
 }
 
-async fn wait_for_offer(updates: &mut Updates, id: &InstanceId) -> Fallible {
+async fn wait_for_offer(client: &mut RawClient, id: &InstanceId) -> Fallible {
     while !matches!(
-        updates
-            .host
-            .instances
-            .as_ref()
-            .and_then(|list| list.availability(id)),
+        client.instances.availability(id),
         Some(Availability::Available { .. })
     ) {
-        next(updates).await?;
+        client.next().await?;
     }
     Ok(())
 }
@@ -4475,10 +4513,11 @@ async fn a_held_boot_probe_allows_connections_and_sessions_on_a_ready_account()
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let source = scratch("held-boot-probe", "claude-approve.jsonl")?;
-    let (phone, mut updates) = first.connect().await?;
-    let saved =
-        start_ready(&phone, &mut updates, healthy.clone(), &source).await?;
-    phone.stop().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&first.target, "test-client", &mut feed).await?;
+    let saved = start_ready(&mut phone, healthy.clone(), &source).await?;
+    phone.close().await;
     let address = first.address()?;
     let ticket = first.target.clone();
     first.shutdown().await?;
@@ -4489,42 +4528,46 @@ async fn a_held_boot_probe_allows_connections_and_sessions_on_a_ready_account()
         &format!("{}\n{PROBED}", r#"{"fake":"release","file":"go"}"#),
     )?;
     let rebound = durable_endpoint(&data, address).await?;
-    let restart = serve(rebound, claude_plugins(), &data);
-    let use_host = async {
-        let (phone, mut updates) = link(ticket.clone(), None).await?;
-        until_live(&mut updates).await?;
-        wait_for_offer(&mut updates, &healthy).await?;
-        let starting = Availability::Unavailable {
-            reason: String::from("starting the instance's CLI"),
-        };
-        assert_eq!(
-            updates
-                .host
-                .instances
-                .as_ref()
-                .and_then(|list| list.availability(&held)),
-            Some(&starting)
-        );
-        accepted(&phone, continued(saved)).await?;
-        events_until(&mut updates, Until::Ready).await?;
-        let other = scratch("held-boot-other", "claude-approve.jsonl")?;
-        start_ready(&phone, &mut updates, healthy, &other).await?;
-        let desktop = endpoint().await?;
-        let (conn, welcome) = hello(&desktop, &ticket).await?;
-        std::fs::write(work.join("go"), "")?;
-        wait_for_offer(&mut updates, &held).await?;
-        let refreshed = send(&phone, claude_gateway()).await?;
-        assert_eq!(refreshed, CommandResult::Accepted);
-        assert_eq!(
-            subscribed_offers(&conn, &welcome).await?,
-            with_api_claude(gateway(probed()))
-        );
-        desktop.close().await;
-        phone.stop().await?;
-        Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
+    // The host takes connections once started, before its probes finish.
+    let second = tokio::time::timeout(
+        STEP,
+        daemon::start(
+            rebound,
+            claude_plugins(),
+            HostOptions {
+                name: "test-host".into(),
+                data_dir: data.clone(),
+                home: None,
+                projects: Vec::new(),
+                user: None,
+            },
+        ),
+    )
+    .await??;
+    let mut phone = RawClient::live(&ticket, "test-client", &mut feed).await?;
+    wait_for_offer(&mut phone, &healthy).await?;
+    let starting = Availability::Unavailable {
+        reason: String::from("starting the instance's CLI"),
     };
-    let (second, ()) = tokio::try_join!(restart, use_host)?;
-    second.shutdown().await
+    assert_eq!(phone.instances.availability(&held), Some(&starting));
+    phone.accepted(continued(saved)).await?;
+    raw_events_until(&mut phone, Until::Ready).await?;
+    let other = scratch("held-boot-other", "claude-approve.jsonl")?;
+    start_ready(&mut phone, healthy, &other).await?;
+    let desktop = endpoint().await?;
+    let (conn, welcome) = hello(&desktop, &ticket).await?;
+    std::fs::write(work.join("go"), "")?;
+    wait_for_offer(&mut phone, &held).await?;
+    phone.accepted(claude_gateway()).await?;
+    assert_eq!(
+        subscribed_offers(&conn, &welcome).await?,
+        with_api_claude(gateway(probed()))
+    );
+    desktop.close().await;
+    phone.close().await;
+    tokio::time::timeout(STEP, second.initialized()).await??;
+    feed.write()?;
+    Ok(second.shutdown().await?)
 }
 
 #[tokio::test]
@@ -4562,8 +4605,8 @@ async fn retrying_the_stored_credential_during_boot_receives_the_live_refresh_re
     )
     .await?;
     let target = host.target();
-    let (phone, mut updates) = link(target.clone(), None).await?;
-    until_live(&mut updates).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone = RawClient::live(&target, "test-client", &mut feed).await?;
     let desktop = endpoint().await?;
     let conn = authenticated(&desktop, &target).await?;
     let body = CommandBody::SetCredential {
@@ -4574,14 +4617,8 @@ async fn retrying_the_stored_credential_during_boot_receives_the_live_refresh_re
     let refreshing = Availability::Unavailable {
         reason: String::from(REFRESHING),
     };
-    while updates
-        .host
-        .instances
-        .as_ref()
-        .and_then(|offers| offers.availability(&id))
-        != Some(&refreshing)
-    {
-        next(&mut updates).await?;
+    while phone.instances.availability(&id) != Some(&refreshing) {
+        phone.next().await?;
     }
     std::fs::write(work.join("go"), "")?;
     let receipt = finished_command(retry).await?;
@@ -4599,9 +4636,9 @@ async fn retrying_the_stored_credential_during_boot_receives_the_live_refresh_re
         receipt
     );
     desktop.close().await;
-    phone.stop().await?;
+    phone.close().await;
     host.shutdown().await?;
-    Ok(())
+    feed.write()
 }
 
 #[tokio::test]
@@ -4640,11 +4677,11 @@ async fn unsupported_stored_credentials_are_refused_by_both_instances_and_can_be
         &data,
     )
     .await?;
-    let (phone, _updates, welcomed) = live(&fx).await?;
-    let instances = welcomed.ok_or("missing instances in Welcome")?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
     for account in accounts {
         let Some(Availability::Unavailable { reason }) =
-            instances.availability(&account)
+            phone.instances.availability(&account)
         else {
             return Err(format!(
                 "the stored credential for {account} was accepted"
@@ -4669,7 +4706,9 @@ async fn unsupported_stored_credentials_are_refused_by_both_instances_and_can_be
         ),
         Some(codex_gateway())
     );
-    fx.shutdown_with_client(phone).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -4684,7 +4723,8 @@ async fn a_new_account_with_failed_discovery_stays_unavailable_until_a_successfu
         r#"{"fake":"fail","stderr":"gateway offline","status":1}"#,
     )?;
     let fx = plugin_host(&data).await?;
-    let (phone, _updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let failed = configured(&phone, claude_gateway(), &fx.target).await?;
     let Some(Availability::Unavailable { reason }) =
         status_of(&failed, &account).map(|status| status.availability)
@@ -4697,7 +4737,9 @@ async fn a_new_account_with_failed_discovery_stays_unavailable_until_a_successfu
         configured(&phone, claude_gateway(), &fx.target).await?,
         with_api_claude(gateway(probed()))
     );
-    fx.shutdown_with_client(phone).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -4710,9 +4752,10 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     let seeded = seed(&data, std::slice::from_ref(&claude_api), &[])?;
     standard_claude_probe(&data)?;
     let fx = plugin_host(&data).await?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session =
-        start_ready(&phone, &mut updates, claude_api, &source).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = start_ready(&mut phone, claude_api, &source).await?;
     let desktop = endpoint().await?;
     let conn = authenticated(&desktop, &fx.target).await?;
     let first_body = CommandBody::SetCredential {
@@ -4721,23 +4764,18 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     };
     let first = queued_command(&conn, 2301, first_body.clone());
     marker(&probe.join("held")).await?;
-    let (watcher, mut live_updates, offered) = live(&fx).await?;
+    let mut watcher =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     assert_eq!(
-        offered,
-        Some(with_api_claude(Availability::Unavailable {
+        watcher.instances,
+        with_api_claude(Availability::Unavailable {
             reason: String::from(REFRESHING)
-        }))
+        })
     );
     let duplicate = queued_command(&conn, 2301, first_body.clone());
     assert_refreshing_claude_refuses(&phone, &source, session).await?;
-    start_ready(
-        &watcher,
-        &mut live_updates,
-        instance(Provider::Claude),
-        &source,
-    )
-    .await?;
-    watcher.stop().await?;
+    start_ready(&mut watcher, instance(Provider::Claude), &source).await?;
+    watcher.close().await;
     let middle_body = CommandBody::SetCredential {
         provider: Provider::Claude,
         credential: claude_credential("conductor-test-middle"),
@@ -4767,7 +4805,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
         None
     );
     assert_failed_refresh_then_another(&phone, &probe, &fx.target).await?;
-    phone.stop().await?;
+    phone.close().await;
     desktop.close().await;
     fx.shutdown().await?;
     let reopened = plugin_host(&data).await?;
@@ -4787,7 +4825,7 @@ async fn provider_refresh_keeps_wire_commands_live_and_coalesces_stale_claude_re
     assert_eq!(read(&probe.join("runs.txt"))?, "6");
     client.close().await;
     reopened.shutdown().await?;
-    Ok(())
+    feed.write()
 }
 
 /// Holds the first listing after boot until `go` appears.
@@ -4811,15 +4849,14 @@ fn hold_codex_listing(server: &Path) -> Fallible {
 }
 
 /// The Codex account's instance can't be removed while its session runs.
-async fn assert_running_codex_is_not_removed(phone: &HostLink) -> Fallible {
+async fn assert_running_codex_is_not_removed(phone: &RawClient) -> Fallible {
     assert_eq!(
-        send(
-            phone,
-            CommandBody::RemoveInstance {
+        phone
+            .send(CommandBody::RemoveInstance {
                 instance: api(Provider::Codex),
-            },
-        )
-        .await?,
+            })
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::InstanceInUse { sessions: 1 })
     );
     Ok(())
@@ -4850,29 +4887,30 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
         &data,
     )
     .await?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session =
-        start_ready(&phone, &mut updates, claude_api.clone(), &source).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = start_ready(&mut phone, claude_api.clone(), &source).await?;
     std::fs::write(source.join("exit-now"), "")?;
-    events_until(&mut updates, Until::Closed).await?;
-    phone.stop().await?;
+    raw_events_until(&mut phone, Until::Closed).await?;
+    phone.close().await;
     let desktop = endpoint().await?;
     let conn = authenticated(&desktop, &fx.target).await?;
     let first =
         queued_command(&conn, 2311, codex_provider("conductor-test-old"));
     marker(&server.join("held")).await?;
-    let (phone, mut updates, offered) = live(&fx).await?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     assert_eq!(
-        offered.ok_or("expected a value")?.availability(&codex_api),
+        phone.instances.availability(&codex_api),
         Some(&Availability::Unavailable {
             reason: String::from(REFRESHING)
         })
     );
-    accepted(&phone, continued(session)).await?;
-    events_until(&mut updates, Until::Ready).await?;
-    let started = send(&phone, start_on(claude_api, &source)).await?;
-    let _ = started_session(&started)?;
-    events_until(&mut updates, Until::Ready).await?;
+    phone.accepted(continued(session)).await?;
+    raw_events_until(&mut phone, Until::Ready).await?;
+    phone.started(start_on(claude_api, &source)).await?;
+    raw_events_until(&mut phone, Until::Ready).await?;
     let middle_body = codex_provider("conductor-test-middle");
     let middle = queued_command(&conn, 2312, middle_body.clone());
     saved(&data, seeded.clone(), middle_body).await?;
@@ -4893,12 +4931,13 @@ async fn provider_refresh_orders_codex_configuration_without_blocking_claude()
         read(&server.join("env.txt"))?.find("conductor-test-newest"),
         None
     );
-    let _ = launch(&phone, start_on(codex_api, &server)).await?;
-    events_until(&mut updates, Until::Ready).await?;
+    phone.started(start_on(codex_api, &server)).await?;
+    raw_events_until(&mut phone, Until::Ready).await?;
     assert_running_codex_is_not_removed(&phone).await?;
     assert_eq!(read(&server.join("runs.txt"))?, "3");
-    phone.stop().await?;
+    phone.close().await;
     desktop.close().await;
+    feed.write()?;
     fx.shutdown().await
 }
 
@@ -4933,7 +4972,8 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     assert_ne!(restarted_phone.id(), phone.id());
     let conn = authenticated(&restarted_phone, &ticket).await?;
     assert_eq!(retry_command(&conn, &command).await?, receipt);
-    let history = second.history().await?;
+    let mut feed = Recorder::new()?;
+    let history = raw_history(&second.target, &mut feed).await?;
     assert_eq!(
         history
             .iter()
@@ -4946,6 +4986,7 @@ async fn one_command_receipt_survives_new_transport_identities_and_a_host_restar
     );
     assert_eq!(history.iter().find(|event| event.session != session), None);
     restarted_phone.close().await;
+    feed.write()?;
     second.shutdown().await
 }
 
@@ -4999,20 +5040,26 @@ async fn removal_rebuilds_its_missing_command_receipt_after_restart() -> Fallibl
     Ok(())
 }
 
-/// Restarts the durable host `first` on `address` and waits for `phone`
-/// to go live on the new one.
+/// Restarts the durable host `first` on `address` and opens `phone` again
+/// on the new one, resubscribed after the `applied` seq and caught up.
 async fn restart(
     first: Fixture,
     data: &Path,
     address: SocketAddr,
-    phone: &HostLink,
-    updates: &mut Updates,
-) -> Fallible<Fixture> {
+    phone: RawClient,
+    feed: &mut Recorder,
+    applied: HostSeq,
+) -> Fallible<(Fixture, RawClient)> {
+    let epoch = phone.welcome.epoch;
+    phone.close().await;
     first.shutdown().await?;
     let second = durable_host(data, address).await?;
-    phone.reconnect().await;
-    until_live(updates).await?;
-    Ok(second)
+    let mut phone =
+        RawClient::open(&second.target, "test-client", feed).await?;
+    assert_eq!(phone.welcome.epoch, epoch);
+    phone.subscribe(applied).await?;
+    phone.caught_up().await?;
+    Ok((second, phone))
 }
 
 /// Whether any of `events` is of a kind `wanted` picks.
@@ -5028,11 +5075,16 @@ fn assert_absent(path: &Path) {
 }
 
 async fn get_diff(
-    phone: &HostLink,
+    phone: &RawClient,
     session: SessionId,
     snapshot: HostSeq,
 ) -> Fallible<proto::SnapshotDiff> {
-    diff_result(send(phone, CommandBody::GetDiff { session, snapshot }).await?)
+    diff_result(
+        phone
+            .send(CommandBody::GetDiff { session, snapshot })
+            .await?
+            .value,
+    )
 }
 
 fn assistant_messages(session: SessionId, events: &[Event]) -> Vec<EventKind> {
@@ -5045,23 +5097,23 @@ fn assistant_messages(session: SessionId, events: &[Event]) -> Vec<EventKind> {
 /// A turn in the `other` session, in `other_path`, changes only its own
 /// worktree.
 async fn assert_independent(
-    phone: &HostLink,
-    updates: &mut Updates,
+    phone: &mut RawClient,
     other: SessionId,
     other_path: &Path,
     worktree: &Path,
-) -> Fallible {
+) -> Fallible<HostSeq> {
     assert_absent(&other_path.join("changed.txt"));
-    let _ =
-        send(phone, message(other, "an independent second session")).await?;
-    let other_turn = events_until(updates, Until::TurnEnd).await?;
+    phone
+        .accepted(message(other, "an independent second session"))
+        .await?;
+    let other_turn = raw_events_until(phone, Until::TurnEnd).await?;
     snapshot(&other_turn)?;
     assert_eq!(
         std::fs::read_to_string(other_path.join("continued.txt"))?,
         "continued session\n"
     );
     assert_absent(&worktree.join("continued.txt"));
-    Ok(())
+    Ok(other_turn.last().ok_or("missing turn")?.seq)
 }
 
 fn snapshot(events: &[Event]) -> Fallible<(HostSeq, proto::Snapshot)> {
@@ -5224,42 +5276,47 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let address = first.address()?;
-    let (phone, mut updates) = first.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &source)).await?;
-    let opening = events_until(&mut updates, Until::Ready).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&first.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &source)).await?;
+    let opening = raw_events_until(&mut phone, Until::Ready).await?;
     let managed = workspace(&opening)?;
     assert_eq!(snapshot(&opening)?.1.turn_start, None);
     let worktree = assert_isolated(&managed, &source, session)?;
-    let other = launch(&phone, start(Provider::Claude, &source)).await?;
-    let other_opening = events_until(&mut updates, Until::Ready).await?;
+    let other = phone.started(start(Provider::Claude, &source)).await?;
+    let other_opening = raw_events_until(&mut phone, Until::Ready).await?;
     let other_workspace = workspace(&other_opening)?;
     let other_path = PathBuf::from(&other_workspace.worktree.0);
     assert_ne!(session, other);
     assert_ne!(managed.worktree, other_workspace.worktree);
     assert_ne!(managed.branch, other_workspace.branch);
-    let _ = send(&phone, message(session, "turn one")).await?;
-    let first_turn = events_until(&mut updates, Until::TurnEnd).await?;
+    phone.accepted(message(session, "turn one")).await?;
+    let first_turn = raw_events_until(&mut phone, Until::TurnEnd).await?;
     let (_, first_snapshot) = snapshot(&first_turn)?;
-    let _ = send(&phone, message(session, "turn two")).await?;
-    let second_turn = events_until(&mut updates, Until::TurnEnd).await?;
+    phone.accepted(message(session, "turn two")).await?;
+    let second_turn = raw_events_until(&mut phone, Until::TurnEnd).await?;
     let (second_seq, second_snapshot) = snapshot(&second_turn)?;
     let kept_tasks = task_lists(&first_turn);
     assert_turn_tasks(&kept_tasks, &task_lists(&second_turn));
     assert_ne!(first_snapshot.commit, second_snapshot.commit);
     let diff = get_diff(&phone, session, second_seq).await?;
     assert_turn_diff(&diff, &second_snapshot, &worktree)?;
-    let _ = send(&phone, message(session, "turn three")).await?;
-    let third_turn = events_until(&mut updates, Until::TurnEnd).await?;
+    phone.accepted(message(session, "turn three")).await?;
+    let third_turn = raw_events_until(&mut phone, Until::TurnEnd).await?;
     snapshot(&third_turn)?;
     checkout.assert_unchanged(&source)?;
-    assert_independent(&phone, &mut updates, other, &other_path, &worktree)
+    let applied =
+        assert_independent(&mut phone, other, &other_path, &worktree).await?;
+    let (second, mut restarted) =
+        restart(first, &data, address, phone, &mut feed, applied).await?;
+    assert_eq!(get_diff(&restarted, session, second_seq).await?, diff);
+    restarted.accepted(continued(session)).await?;
+    raw_events_until(&mut restarted, Until::Ready).await?;
+    restarted
+        .accepted(message(session, "continue after restart"))
         .await?;
-    let second = restart(first, &data, address, &phone, &mut updates).await?;
-    assert_eq!(get_diff(&phone, session, second_seq).await?, diff);
-    accepted(&phone, continued(session)).await?;
-    events_until(&mut updates, Until::Ready).await?;
-    accepted(&phone, message(session, "continue after restart")).await?;
-    let after = events_until(&mut updates, Until::TurnEnd).await?;
+    let after = raw_events_until(&mut restarted, Until::TurnEnd).await?;
     assert_eq!(
         assistant_messages(session, &after),
         [reply("Continued session.")]
@@ -5267,9 +5324,10 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     let runs = argv(&source)?;
     let resumed = runs.last().ok_or("missing resumed invocation")?;
     assert!(resumed.iter().any(|arg| arg.starts_with("--resume=")));
-    assert_eq!(get_diff(&phone, session, second_seq).await?, diff);
+    assert_eq!(get_diff(&restarted, session, second_seq).await?, diff);
     checkout.assert_unchanged(&source)?;
-    phone.stop().await?;
+    restarted.close().await;
+    feed.write()?;
     second.shutdown().await
 }
 
@@ -5277,21 +5335,23 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
 async fn new_sessions_require_an_existing_repository_with_a_commit() -> Fallible
 {
     let host = host().await?;
-    let (phone, _updates) = host.connect().await?;
+    let mut feed = Recorder::new()?;
+    let phone = RawClient::live(&host.target, "test-client", &mut feed).await?;
     let plain = data_dir("not-a-repository")?;
     // Stop Git discovery at this fixture instead of finding the enclosing checkout.
     std::fs::write(plain.join(".git"), "gitdir: no-such-git-directory\n")?;
     assert_eq!(
-        send(&phone, start(Provider::Claude, &plain)).await?,
+        phone.send(start(Provider::Claude, &plain)).await?.value,
         CommandResult::Rejected(Rejection::NotGitRepository)
     );
     std::fs::remove_file(plain.join(".git"))?;
     git(&plain, &["init", "--quiet"])?;
     assert_eq!(
-        send(&phone, start(Provider::Claude, &plain)).await?,
+        phone.send(start(Provider::Claude, &plain)).await?.value,
         CommandResult::Rejected(Rejection::NotGitRepository)
     );
-    phone.stop().await?;
+    phone.close().await;
+    feed.write()?;
     host.shutdown().await
 }
 
@@ -5322,9 +5382,11 @@ async fn a_session_without_a_worktree_continues_in_its_original_directory()
     )?;
     let host =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
-    let (phone, mut updates) = host.connect().await?;
-    accepted(&phone, continued(session)).await?;
-    let ready = events_until(&mut updates, Until::Ready).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&host.target, "test-client", &mut feed).await?;
+    phone.accepted(continued(session)).await?;
+    let ready = raw_events_until(&mut phone, Until::Ready).await?;
     assert_eq!(
         ready.iter().find(|event| matches!(
             event.kind,
@@ -5332,13 +5394,14 @@ async fn a_session_without_a_worktree_continues_in_its_original_directory()
         )),
         None
     );
-    let _ = send(&phone, message(session, "legacy directory")).await?;
-    events_until(&mut updates, Until::TurnEnd).await?;
+    phone.accepted(message(session, "legacy directory")).await?;
+    raw_events_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         std::fs::read_to_string(source.join("continued.txt"))?,
         "continued session\n"
     );
-    phone.stop().await?;
+    phone.close().await;
+    feed.write()?;
     host.shutdown().await
 }
 
@@ -5347,16 +5410,19 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
 -> Fallible {
     let source = scratch("snapshot-retry", "claude-worktrees.jsonl")?;
     let host = host().await?;
-    let (phone, mut updates) = host.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &source)).await?;
-    let managed = workspace(&events_until(&mut updates, Until::Ready).await?)?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&host.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &source)).await?;
+    let managed =
+        workspace(&raw_events_until(&mut phone, Until::Ready).await?)?;
     let worktree = PathBuf::from(&managed.worktree.0);
-    let _ = send(&phone, message(session, "turn one")).await?;
+    phone.accepted(message(session, "turn one")).await?;
     let (_, retained) =
-        snapshot(&events_until(&mut updates, Until::TurnEnd).await?)?;
+        snapshot(&raw_events_until(&mut phone, Until::TurnEnd).await?)?;
     git(&worktree, &["symbolic-ref", "HEAD", "refs/heads/unrelated"])?;
-    let _ = send(&phone, message(session, "turn two")).await?;
-    let failed = events_until(&mut updates, Until::TurnEnd).await?;
+    phone.accepted(message(session, "turn two")).await?;
+    let failed = raw_events_until(&mut phone, Until::TurnEnd).await?;
     assert!(!any_event(&failed, |kind| matches!(
         kind,
         EventKind::SnapshotRecorded { .. }
@@ -5368,20 +5434,23 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
             .count(),
         1
     );
-    let before = host.history().await?;
+    let before = raw_history(&host.target, &mut feed).await?;
     let users = before
         .iter()
         .filter(|event| matches!(event.kind, EventKind::UserMessage { .. }))
         .count();
     assert!(matches!(
-        send(&phone, message(session, "must not enter native history")).await?,
+        phone
+            .send(message(session, "must not enter native history"))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::WorkspaceFailure { .. })
     ));
     assert!(matches!(
-        send(&phone, continued(session)).await?,
+        phone.send(continued(session)).await?.value,
         CommandResult::Rejected(Rejection::WorkspaceFailure { .. })
     ));
-    let still = host.history().await?;
+    let still = raw_history(&host.target, &mut feed).await?;
     assert_eq!(
         still
             .iter()
@@ -5397,11 +5466,12 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
             &format!("refs/heads/{}", managed.branch),
         ],
     )?;
-    accepted(&phone, continued(session)).await?;
-    accepted(&phone, continued(session)).await?;
-    let (recovered_seq, recovered) = snapshot(&host.history().await?)?;
-    accepted(&phone, message(session, "turn three")).await?;
-    let after = events_until(&mut updates, Until::TurnEnd).await?;
+    phone.accepted(continued(session)).await?;
+    phone.accepted(continued(session)).await?;
+    let (recovered_seq, recovered) =
+        snapshot(&raw_history(&host.target, &mut feed).await?)?;
+    phone.accepted(message(session, "turn three")).await?;
+    let after = raw_events_until(&mut phone, Until::TurnEnd).await?;
     let snapshots = after
         .iter()
         .filter_map(|event| match &event.kind {
@@ -5434,7 +5504,8 @@ async fn an_idle_session_retries_a_failed_snapshot_on_continue_before_the_next_m
             .collect::<Vec<String>>(),
         ["changed.txt", "later.txt"]
     );
-    phone.stop().await?;
+    phone.close().await;
+    feed.write()?;
     host.shutdown().await
 }
 
@@ -5755,59 +5826,45 @@ const SIGN_IN_CODE: &str = "conductor-test-sign-in-code#fake-state";
 /// One it refuses.
 const WRONG_CODE: &str = "conductor-test-wrong-code";
 
-/// The instance's sign-in steps the link shows, through the first that
-/// `done` takes.
+/// The instance's next sign-in step the client reads that `done` takes.
 async fn sign_in_until(
-    updates: &mut Updates,
+    client: &mut RawClient,
     instance: &InstanceId,
     done: impl Fn(&proto::SignInStep) -> bool,
 ) -> Fallible<proto::SignInStep> {
-    tokio::time::timeout(STEP * 3, async {
-        loop {
-            let update =
-                updates.incoming.recv().await.ok_or("the link stopped")?;
-            updates.host.apply(update);
-            if let Some(step) = updates
-                .host
-                .sign_ins
-                .get(instance)
-                .filter(|step| done(step))
-            {
-                break Ok(step.clone());
-            }
+    loop {
+        if let Feed::SignIn(proto::SignIn {
+            instance: signing_in,
+            step,
+        }) = client.next().await?.value
+            && signing_in == *instance
+            && done(&step)
+        {
+            break Ok(step);
         }
-    })
-    .await
-    .map_err(|_| "no sign-in update within the step timeout")?
+    }
 }
 
 async fn app_sign_in(
-    link: &HostLink,
-    updates: &mut Updates,
+    client: &mut RawClient,
     id: &InstanceId,
 ) -> Fallible<proto::SignInStep> {
-    let started = send(
-        link,
-        CommandBody::StartSignIn {
+    client
+        .accepted(CommandBody::StartSignIn {
             instance: id.clone(),
-        },
-    )
-    .await?;
-    assert_eq!(started, CommandResult::Accepted);
-    let _ = sign_in_until(updates, id, |step| {
+        })
+        .await?;
+    let _ = sign_in_until(client, id, |step| {
         matches!(step, proto::SignInStep::Open { .. })
     })
     .await?;
-    let submitted = send(
-        link,
-        CommandBody::SubmitSignInCode {
+    client
+        .accepted(CommandBody::SubmitSignInCode {
             instance: id.clone(),
             code: proto::SignInCode(String::from(SIGN_IN_CODE)),
-        },
-    )
-    .await?;
-    assert_eq!(submitted, CommandResult::Accepted);
-    sign_in_until(updates, id, |step| {
+        })
+        .await?;
+    sign_in_until(client, id, |step| {
         matches!(
             step,
             proto::SignInStep::SignedIn | proto::SignInStep::Failed { .. }
@@ -5849,6 +5906,7 @@ async fn terminal_sign_in(data: &Path, id: &InstanceId) -> Fallible {
 async fn app_and_terminal_sign_in_keep_ownership_when_the_status_probe_fails()
 -> Fallible {
     let own = instance(Provider::Claude);
+    let mut feed = Recorder::new()?;
     for status in ["nonzero", "signal", "timeout"] {
         let app = data_dir(&format!("app-sign-in-{status}"))?;
         let terminal = data_dir(&format!("terminal-sign-in-{status}"))?;
@@ -5857,9 +5915,10 @@ async fn app_and_terminal_sign_in_keep_ownership_when_the_status_probe_fails()
             std::fs::write(home.join(".fake-status"), status)?;
         }
         let fx = serve(endpoint().await?, sign_in_plugins(), &app).await?;
-        let (link, mut updates) = fx.connect().await?;
+        let mut phone =
+            RawClient::live(&fx.target, "test-client", &mut feed).await?;
         let (app_result, terminal_result) = tokio::join!(
-            app_sign_in(&link, &mut updates, &own),
+            app_sign_in(&mut phone, &own),
             terminal_sign_in(&terminal, &own),
         );
 
@@ -5894,10 +5953,10 @@ async fn app_and_terminal_sign_in_keep_ownership_when_the_status_probe_fails()
                 data.display(),
             );
         }
-        link.stop().await?;
+        phone.close().await;
         fx.shutdown().await?;
     }
-    Ok(())
+    feed.write()
 }
 
 #[tokio::test]
@@ -5906,6 +5965,7 @@ async fn app_refresh_and_terminal_restart_show_the_same_signed_in_instance()
     let own = instance(Provider::Claude);
     let named =
         InstanceId::named(Provider::Claude, "conductor-test@example.invalid");
+    let mut feed = Recorder::new()?;
     for (case, source, target) in [
         ("no-account", &own, &own),
         ("same-account", &named, &named),
@@ -5932,30 +5992,22 @@ async fn app_refresh_and_terminal_restart_show_the_same_signed_in_instance()
             )?;
         }
         let fx = serve(endpoint().await?, sign_in_plugins(), &app).await?;
-        let (link, mut updates) = fx.connect().await?;
+        let mut phone =
+            RawClient::live(&fx.target, "test-client", &mut feed).await?;
         assert_eq!(
-            app_sign_in(&link, &mut updates, source).await?,
+            app_sign_in(&mut phone, source).await?,
             proto::SignInStep::SignedIn
         );
-        wait_for_offer(&mut updates, target).await?;
-        let app_instances = updates
-            .host
-            .instances
-            .as_ref()
-            .ok_or("the app host did not publish its instances")?;
+        wait_for_offer(&mut phone, target).await?;
         terminal_sign_in(&terminal, source).await?;
         let reopened =
             serve(endpoint().await?, sign_in_plugins(), &terminal).await?;
-        let (terminal_link, mut terminal_updates) = reopened.connect().await?;
-        wait_for_offer(&mut terminal_updates, target).await?;
-        let terminal_instances = terminal_updates
-            .host
-            .instances
-            .as_ref()
-            .ok_or("the reopened host did not publish its instances")?;
+        let mut desk =
+            RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+        wait_for_offer(&mut desk, target).await?;
 
         for (data, instances) in
-            [(&app, app_instances), (&terminal, terminal_instances)]
+            [(&app, &phone.instances), (&terminal, &desk.instances)]
         {
             assert_eq!(
                 (
@@ -5991,12 +6043,12 @@ async fn app_refresh_and_terminal_restart_show_the_same_signed_in_instance()
                 );
             }
         }
-        link.stop().await?;
+        phone.close().await;
         fx.shutdown().await?;
-        terminal_link.stop().await?;
+        desk.close().await;
         reopened.shutdown().await?;
     }
-    Ok(())
+    feed.write()
 }
 
 /// Every file under `dir` that holds `text`.
@@ -6025,7 +6077,9 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
     let (log_path, logging) = capture_log("sign-in")?;
     probe(&data, &instance(Provider::Claude), PROBED)?;
     let fx = plugin_host(&data).await?;
-    let (link, mut updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let claude = instance(Provider::Claude);
     let account =
         InstanceId::named(Provider::Claude, "conductor-test@example.invalid");
@@ -6046,16 +6100,16 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
         )
     };
 
-    let started = send(&link, start()).await?;
-    let shown = sign_in_until(&mut updates, &claude, open).await?;
-    let again = send(&link, start()).await?;
-    let wrong = send(&link, submit(WRONG_CODE)).await?;
-    let refused = sign_in_until(&mut updates, &claude, ended).await?;
-    let restarted = send(&link, start()).await?;
-    let _ = sign_in_until(&mut updates, &claude, open).await?;
-    let right = send(&link, submit(SIGN_IN_CODE)).await?;
-    let signed_in = sign_in_until(&mut updates, &claude, ended).await?;
-    wait_for_offer(&mut updates, &account).await?;
+    let started = phone.send(start()).await?.value;
+    let shown = sign_in_until(&mut phone, &claude, open).await?;
+    let again = phone.send(start()).await?.value;
+    let wrong = phone.send(submit(WRONG_CODE)).await?.value;
+    let refused = sign_in_until(&mut phone, &claude, ended).await?;
+    let restarted = phone.send(start()).await?.value;
+    let _ = sign_in_until(&mut phone, &claude, open).await?;
+    let right = phone.send(submit(SIGN_IN_CODE)).await?.value;
+    let signed_in = sign_in_until(&mut phone, &claude, ended).await?;
+    wait_for_offer(&mut phone, &account).await?;
     let now = Availability::Available {
         auth: Auth::SignedIn,
         models: probed(),
@@ -6090,11 +6144,10 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
     assert_eq!(
         (
             signed_in,
-            updates
-                .host
+            phone
                 .instances
-                .as_ref()
-                .and_then(|known| known.of(&account).cloned())
+                .of(&account)
+                .cloned()
                 .map(|it| it.availability),
             dir_of(&data, "home", &account)
                 .join(".fake-signed-in")
@@ -6106,10 +6159,11 @@ async fn a_sign_in_from_the_app_makes_the_account_s_instance_and_stores_no_code(
         (proto::SignInStep::SignedIn, Some(now), true, false),
         "the signed-in home moved to the account's instance, and Claude's own is fresh"
     );
-    link.stop().await?;
+    phone.close().await;
     fx.shutdown().await?;
     drop(logging);
-    assert_no_code_kept(&log_path, &data)
+    assert_no_code_kept(&log_path, &data)?;
+    feed.write()
 }
 
 #[tokio::test]
@@ -6121,70 +6175,65 @@ async fn app_retry_finishes_adoption_interrupted_before_the_roster_save()
         InstanceId::named(Provider::Claude, "conductor-test@example.invalid");
     probe(&data, &own, PROBED)?;
     let fx = plugin_host(&data).await?;
-    let (link, mut updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     let start = || CommandBody::StartSignIn {
         instance: own.clone(),
     };
     let blocked = data.join("credentials.new");
     std::fs::create_dir(&blocked)?;
 
-    assert_eq!(send(&link, start()).await?, CommandResult::Accepted);
-    sign_in_until(&mut updates, &own, |step| {
+    phone.accepted(start()).await?;
+    sign_in_until(&mut phone, &own, |step| {
         matches!(step, proto::SignInStep::Open { .. })
     })
     .await?;
-    assert_eq!(
-        send(
-            &link,
-            CommandBody::SubmitSignInCode {
-                instance: own.clone(),
-                code: proto::SignInCode(String::from(SIGN_IN_CODE)),
-            },
-        )
-        .await?,
-        CommandResult::Accepted
-    );
-    sign_in_until(&mut updates, &own, |step| {
+    phone
+        .accepted(CommandBody::SubmitSignInCode {
+            instance: own.clone(),
+            code: proto::SignInCode(String::from(SIGN_IN_CODE)),
+        })
+        .await?;
+    sign_in_until(&mut phone, &own, |step| {
         matches!(step, proto::SignInStep::Failed { .. })
     })
     .await?;
     std::fs::remove_dir(blocked)?;
     assert_eq!(
-        send(&link, codex_provider("unrelated-credential")).await?,
+        phone
+            .send(codex_provider("unrelated-credential"))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::CredentialNotSaved {
             reason: String::from(
                 "an earlier account adoption still needs recovery"
             )
         })
     );
-    assert_eq!(send(&link, start()).await?, CommandResult::Accepted);
-    let done = sign_in_until(&mut updates, &own, |step| {
+    phone.accepted(start()).await?;
+    let done = sign_in_until(&mut phone, &own, |step| {
         matches!(step, proto::SignInStep::SignedIn)
     })
     .await?;
     assert_eq!(done, proto::SignInStep::SignedIn);
-    wait_for_offer(&mut updates, &account).await?;
-    let instances = updates
-        .host
-        .instances
-        .as_ref()
-        .ok_or("the recovered sign-in did not publish its instances")?;
+    wait_for_offer(&mut phone, &account).await?;
     assert_eq!(
-        instances.availability(&account),
+        phone.instances.availability(&account),
         Some(&Availability::Available {
             auth: Auth::SignedIn,
             models: probed(),
         })
     );
-    assert!(instances.of(&own).is_some());
+    assert!(phone.instances.of(&own).is_some());
     assert!(
         dir_of(&data, "home", &account)
             .join(".fake-signed-in")
             .try_exists()?
     );
-    link.stop().await?;
+    phone.close().await;
     fx.shutdown().await?;
-    Ok(())
+    feed.write()
 }
 
 /// Neither sign-in code is in the log at `log_path` or a file under
@@ -6272,17 +6321,16 @@ fn listed_project(home: &Path, name: &str, fields: (&str, &str)) -> Fallible {
     Ok(())
 }
 
-/// The home as reported by the host, once it is as `done` wants.
+/// The home as the client has it, once it is as `done` wants.
 async fn home_until(
-    updates: &mut Updates,
+    client: &mut RawClient,
     done: impl Fn(&proto::Home) -> bool,
 ) -> Fallible<proto::Home> {
     loop {
-        if let Some(home) = updates.host.home.as_ref().filter(|home| done(home))
-        {
+        if let Some(home) = client.home.as_ref().filter(|home| done(home)) {
             break Ok(home.clone());
         }
-        let _ = next(updates).await?;
+        let _ = client.next().await?;
     }
 }
 
@@ -6393,14 +6441,12 @@ fn clone_project(id: &str) -> CommandBody {
 /// beta, with no checkout, is cloned into the data dir; an unknown project
 /// is refused.
 async fn clones_beta(
-    link: &HostLink,
-    updates: &mut Updates,
+    link: &mut RawClient,
     data: &Path,
 ) -> Fallible<proto::Home> {
-    accepted(link, clone_project("beta")).await?;
+    link.accepted(clone_project("beta")).await?;
     let cloned =
-        home_until(updates, |home| !checkouts_of(home, "beta").is_empty())
-            .await?;
+        home_until(link, |home| !checkouts_of(home, "beta").is_empty()).await?;
     assert_eq!(
         checkouts_of(&cloned, "beta"),
         [found(
@@ -6409,7 +6455,7 @@ async fn clones_beta(
         )?]
     );
     assert_eq!(
-        send(link, clone_project("gamma")).await?,
+        link.send(clone_project("gamma")).await?.value,
         CommandResult::Rejected(Rejection::UnknownProject)
     );
     Ok(cloned)
@@ -6417,11 +6463,7 @@ async fn clones_beta(
 
 /// A session in alpha starts in the person's checkout, which stays as it
 /// was; an unknown project is refused.
-async fn starts_in_alpha(
-    link: &HostLink,
-    updates: &mut Updates,
-    land: &Homeland,
-) -> Fallible {
+async fn starts_in_alpha(link: &mut RawClient, land: &Homeland) -> Fallible {
     let in_project = |id: &str| CommandBody::StartSession {
         instance: instance(Provider::Claude),
         at: StartAt::Project(project_id(id)),
@@ -6429,11 +6471,11 @@ async fn starts_in_alpha(
         effort: None,
     };
     assert_eq!(
-        send(link, in_project("gamma")).await?,
+        link.send(in_project("gamma")).await?.value,
         CommandResult::Rejected(Rejection::UnknownProject)
     );
-    let session = launch(link, in_project("alpha")).await?;
-    let events = events_until(updates, Until::Ready).await?;
+    let session = link.started(in_project("alpha")).await?;
+    let events = raw_events_until(link, Until::Ready).await?;
     let alpha = land.roots.join("apps").join("alpha");
     let checkout = std::fs::canonicalize(&alpha)?.display().to_string();
     let placed = events
@@ -6472,12 +6514,14 @@ async fn starts_in_alpha(
 #[tokio::test]
 async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("projects")?;
     let (fx, data) =
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
-    let (link, mut updates) = fx.connect().await?;
-    let synced = home_until(&mut updates, |home| {
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let synced = home_until(&mut link, |home| {
         home.sync == proto::HomeSync::Synced && home.projects.len() == 2
     })
     .await?;
@@ -6505,19 +6549,19 @@ async fn the_home_is_cloned_its_checkouts_found_and_a_project_cloned_and_started
             Vec::new()
         )
     );
-    let _ = clones_beta(&link, &mut updates, &data).await?;
-    starts_in_alpha(&link, &mut updates, &land).await?;
+    let _ = clones_beta(&mut link, &data).await?;
+    starts_in_alpha(&mut link, &land).await?;
 
     land.go_offline()?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let behind = home_until(&mut updates, |home| {
+    link.accepted(CommandBody::SyncHome).await?;
+    let behind = home_until(&mut link, |home| {
         matches!(home.sync, proto::HomeSync::Behind { .. })
     })
     .await?;
     // The clone stays as of its last sync, with its projects.
     assert_eq!((behind.synced.is_some(), behind.projects.len()), (true, 2));
     assert!(behind.synced >= synced.synced);
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6590,21 +6634,20 @@ fn create_issue_in(project: &str, title: &str) -> CommandBody {
 /// An issue without a title is refused, and one with one is opened in
 /// alpha and pushed.
 async fn opens_an_issue(
-    link: &HostLink,
-    updates: &mut Updates,
+    link: &mut RawClient,
     land: &Homeland,
 ) -> Fallible<proto::IssueId> {
     assert_eq!(
-        send(link, create_issue(" ")).await?,
+        link.send(create_issue(" ")).await?.value,
         CommandResult::Rejected(Rejection::IssueRefused {
             reason: String::from("an issue needs a title")
         })
     );
-    let issue = match send(link, create_issue("Sign in")).await? {
+    let issue = match link.send(create_issue("Sign in")).await?.value {
         CommandResult::IssueWritten { issue, .. } => issue,
         other => return Err(format!("expected an issue, not {other:?}").into()),
     };
-    let opened = home_until(updates, |home| {
+    let opened = home_until(link, |home| {
         home.unpushed == 0 && !alpha_issues(home).is_empty()
     })
     .await?;
@@ -6622,8 +6665,7 @@ async fn opens_an_issue(
 /// A change made while the home's remote is away is kept, signed, in the
 /// clone, and lands on the next sync.
 async fn lands_an_offline_note(
-    link: &HostLink,
-    updates: &mut Updates,
+    link: &mut RawClient,
     land: &Homeland,
     issue: proto::IssueId,
 ) -> Fallible {
@@ -6633,7 +6675,7 @@ async fn lands_an_offline_note(
         change(issue, IssueChange::Note(String::from("offline"))),
     )
     .await?;
-    let waiting = home_until(updates, |home| home.unpushed == 1).await?;
+    let waiting = home_until(link, |home| home.unpushed == 1).await?;
     let signed = format!("test-host·{} note: offline", test_client().0);
     assert!(
         alpha_issues(&waiting)
@@ -6647,8 +6689,8 @@ async fn lands_an_offline_note(
         "the clone has the note, signed by the host and the client, before the remote does"
     );
     land.go_online()?;
-    accepted(link, CommandBody::SyncHome).await?;
-    let _ = home_until(updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(link, |home| home.unpushed == 0).await?;
     let landed = pushed_issue(land, issue)?;
     assert!(
         landed.contains(&signed) && landed.contains("- by hand"),
@@ -6657,8 +6699,8 @@ async fn lands_an_offline_note(
     Ok(())
 }
 
-async fn create_offline_issue(link: &HostLink) -> Fallible<proto::IssueId> {
-    let issue = match send(link, create_issue("Offline issue")).await? {
+async fn create_offline_issue(link: &RawClient) -> Fallible<proto::IssueId> {
+    let issue = match link.send(create_issue("Offline issue")).await?.value {
         CommandResult::IssueWritten { issue, .. } => issue,
         other => {
             return Err(format!("expected a saved issue, got {other:?}").into());
@@ -6696,24 +6738,26 @@ fn push_home_edit(writer: &Path) -> Fallible {
 #[tokio::test]
 async fn a_skill_added_to_the_home_is_installed_for_every_harness_once_it_syncs()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("skills")?;
     let user = land.scratch.join("user");
     let (fx, _) =
         host_at_home_for(land.home_url.clone(), Vec::new(), Some(user.clone()))
             .await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
     let writer = home_writer(&land)?;
     let added = writer.join("skills").join("build");
     std::fs::create_dir_all(&added)?;
     std::fs::write(added.join("SKILL.md"), "the build skill")?;
     push_home_edit(&writer)?;
-    accepted(&link, CommandBody::SyncHome).await?;
+    link.accepted(CommandBody::SyncHome).await?;
     for harness in [".claude", ".agents"] {
         let installed = user.join(harness).join("skills/build/SKILL.md");
         assert_eq!(std::fs::read_to_string(&installed)?, "the build skill");
     }
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6722,29 +6766,32 @@ async fn a_skill_added_to_the_home_is_installed_for_every_harness_once_it_syncs(
 #[tokio::test]
 async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("issue-queue-shortening")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
     land.go_offline()?;
     let issue = create_offline_issue(&link).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 2).await?;
     let state = data.join("home-edits.state");
     let saved = std::fs::read(&state)?;
     let blocked = data.join("home-edits.new");
     std::fs::create_dir(&blocked)?;
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    let waiting = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    let waiting = home_until(&mut link, |home| home.unpushed == 2).await?;
     assert_eq!(
         alpha_issues(&waiting).first().map(|shown| shown.id),
         Some(issue)
     );
     land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
+    link.accepted(CommandBody::SyncHome).await?;
     assert_eq!(
         pushed_issue(&land, issue)?
             .matches(": offline note")
@@ -6754,24 +6801,26 @@ async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
     assert_eq!(std::fs::read(&state)?, saved);
 
     let (second, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (peer, mut observed) = second.connect().await?;
-    let _ = home_until(&mut observed, |home| !alpha_issues(home).is_empty())
-        .await?;
+    let mut peer =
+        RawClient::live(&second.target, "test-client", &mut feed).await?;
+    let _ =
+        home_until(&mut peer, |home| !alpha_issues(home).is_empty()).await?;
     wrote(
         &peer,
         change(issue, IssueChange::Note(String::from("second host note"))),
     )
     .await?;
     let pushed = git(&land.home_bare, &["rev-parse", "HEAD"])?;
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 2).await?;
     std::fs::remove_dir(&blocked)?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let landed = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let landed = home_until(&mut link, |home| home.unpushed == 0).await?;
     assert_eq!(
         alpha_issues(&landed)
             .iter()
@@ -6784,9 +6833,9 @@ async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
     assert_eq!(text.matches(": second host note").count(), 1);
     assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, pushed);
     assert_ne!(std::fs::read(&state)?, saved);
-    peer.stop().await?;
+    peer.close().await;
     second.shutdown().await?;
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6794,12 +6843,16 @@ async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
 
 #[tokio::test]
 async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("blocked-creation")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let other = match send(&link, create_issue_in("beta", "Independent issue"))
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let other = match link
+        .send(create_issue_in("beta", "Independent issue"))
         .await?
+        .value
     {
         CommandResult::IssueWritten { issue, .. } => issue,
         result => {
@@ -6814,7 +6867,7 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
         change(other, IssueChange::Note(String::from("independent note"))),
     )
     .await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 3).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 3).await?;
     let state = data.join("home-edits.state");
     let saved = std::fs::read(&state)?;
     land.go_online()?;
@@ -6825,8 +6878,8 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
         "The issue directory is blocked by this file.",
     )?;
     push_home_edit(&writer)?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 2).await?;
     assert_ne!(std::fs::read(&state)?, saved);
     let other_file = format!(
         "HEAD:projects/{}/issues/{}.md",
@@ -6841,15 +6894,15 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
     git(&writer, &["pull", "--quiet", "--ff-only"])?;
     std::fs::remove_file(obstruction)?;
     push_home_edit(&writer)?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 0).await?;
     assert_eq!(
         pushed_issue(&land, issue)?
             .matches(": offline note")
             .count(),
         1
     );
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6858,11 +6911,13 @@ async fn a_blocked_creation_keeps_its_dependent_note_for_replay() -> Fallible {
 #[tokio::test]
 async fn a_pending_note_preserves_the_tail_of_a_large_upstream_issue()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("large-upstream-issue")?;
     let (fx, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     let writer = home_writer(&land)?;
     land.go_offline()?;
     wrote(
@@ -6870,7 +6925,7 @@ async fn a_pending_note_preserves_the_tail_of_a_large_upstream_issue()
         change(issue, IssueChange::Note(String::from("offline addition"))),
     )
     .await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 1).await?;
     land.go_online()?;
 
     let file = writer
@@ -6885,12 +6940,12 @@ async fn a_pending_note_preserves_the_tail_of_a_large_upstream_issue()
         format!("{original}\n## Notes\n\n- 2026-01-01 Writer{upstream}"),
     )?;
     push_home_edit(&writer)?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 0).await?;
     let landed = pushed_issue(&land, issue)?;
     assert!(landed.contains("upstream tail"));
     assert_eq!(landed.matches(": offline addition").count(), 1);
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6898,11 +6953,13 @@ async fn a_pending_note_preserves_the_tail_of_a_large_upstream_issue()
 
 #[tokio::test]
 async fn a_pending_note_waits_for_a_readable_issue() -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("unreadable-issue")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     let writer = home_writer(&land)?;
     let file = writer
         .join(ALPHA_ISSUES)
@@ -6914,7 +6971,7 @@ async fn a_pending_note_waits_for_a_readable_issue() -> Fallible {
         change(issue, IssueChange::Note(String::from("wait for repair"))),
     )
     .await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 1).await?;
     let state = data.join("home-edits.state");
     let saved = std::fs::read(&state)?;
     land.go_online()?;
@@ -6923,21 +6980,21 @@ async fn a_pending_note_waits_for_a_readable_issue() -> Fallible {
     {
         std::fs::write(&file, unreadable)?;
         push_home_edit(&writer)?;
-        accepted(&link, CommandBody::SyncHome).await?;
+        link.accepted(CommandBody::SyncHome).await?;
         assert_eq!(std::fs::read(&state)?, saved);
     }
 
     std::fs::write(file, original)?;
     push_home_edit(&writer)?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 0).await?;
     assert_eq!(
         pushed_issue(&land, issue)?
             .matches(": wait for repair")
             .count(),
         1
     );
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6946,17 +7003,19 @@ async fn a_pending_note_waits_for_a_readable_issue() -> Fallible {
 #[tokio::test]
 async fn a_stale_queue_does_not_recreate_an_issue_deleted_upstream() -> Fallible
 {
+    let mut feed = Recorder::new()?;
     let land = homeland("deleted-delivered-issue")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
     land.go_offline()?;
     let issue = create_offline_issue(&link).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 2).await?;
     let blocked = data.join("home-edits.new");
     std::fs::create_dir(&blocked)?;
     land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
+    link.accepted(CommandBody::SyncHome).await?;
     assert!(pushed_issue(&land, issue)?.contains(": offline note"));
 
     let writer = home_writer(&land)?;
@@ -6968,13 +7027,13 @@ async fn a_stale_queue_does_not_recreate_an_issue_deleted_upstream() -> Fallible
     push_home_edit(&writer)?;
     let deleted = git(&land.home_bare, &["rev-parse", "HEAD"])?;
     std::fs::remove_dir(&blocked)?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| {
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| {
         home.unpushed == 0 && alpha_issues(home).is_empty()
     })
     .await?;
     assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, deleted);
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -6983,18 +7042,20 @@ async fn a_stale_queue_does_not_recreate_an_issue_deleted_upstream() -> Fallible
 #[tokio::test]
 async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("ordered-issue-setters")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     let before = git(&land.home_bare, &["rev-parse", "HEAD"])?;
     let checkout = data.join("home-repo");
     let lock = checkout.join(".git/index.lock");
     std::fs::write(&lock, "")?;
     let title = |text: &str| change(issue, retitle(text));
     wrote(&link, title("First setter")).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 1).await?;
     std::fs::remove_file(&lock)?;
     git(
         &checkout,
@@ -7007,7 +7068,7 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
     )?;
 
     wrote(&link, title("Second setter")).await?;
-    let landed = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    let landed = home_until(&mut link, |home| home.unpushed == 0).await?;
     assert_eq!(
         alpha_issues(&landed)
             .first()
@@ -7023,7 +7084,7 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
         .trim(),
         "2"
     );
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7032,17 +7093,19 @@ async fn a_later_setter_is_delivered_after_an_older_uncommitted_setter()
 #[tokio::test]
 async fn a_queue_temporarily_unreadable_at_startup_is_loaded_before_the_next_edit()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("queue-read-at-startup")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     land.go_offline()?;
     let note =
         |text: &str| change(issue, IssueChange::Note(String::from(text)));
     wrote(&link, note("first note")).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
-    link.stop().await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 1).await?;
+    link.close().await;
     fx.shutdown().await?;
 
     let state = data.join("home-edits.state");
@@ -7050,24 +7113,25 @@ async fn a_queue_temporarily_unreadable_at_startup_is_loaded_before_the_next_edi
     std::fs::rename(&state, &kept)?;
     std::fs::create_dir(&state)?;
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    accepted(&link, CommandBody::SyncHome).await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    link.accepted(CommandBody::SyncHome).await?;
     assert!(matches!(
-        send(&link, note("cannot save yet")).await?,
+        link.send(note("cannot save yet")).await?.value,
         CommandResult::Rejected(Rejection::IssueNotSaved { .. })
     ));
     std::fs::remove_dir(&state)?;
     std::fs::rename(&kept, &state)?;
     wrote(&link, note("second note")).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 2).await?;
     land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 0).await?;
     let landed = pushed_issue(&land, issue)?;
     assert_eq!(landed.matches(": first note").count(), 1);
     assert_eq!(landed.matches(": second note").count(), 1);
     assert!(!landed.contains(": cannot save yet"));
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7076,11 +7140,13 @@ async fn a_queue_temporarily_unreadable_at_startup_is_loaded_before_the_next_edi
 #[tokio::test]
 async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("issue-queue-write-failure")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     land.go_offline()?;
     let blocked = data.join("home-edits.new");
     std::fs::create_dir(&blocked)?;
@@ -7107,8 +7173,8 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
         refused,
         CommandResult::Rejected(Rejection::IssueNotSaved { .. })
     ));
-    accepted(&link, CommandBody::SyncHome).await?;
-    let still_open = home_until(&mut updates, |home| {
+    link.accepted(CommandBody::SyncHome).await?;
+    let still_open = home_until(&mut link, |home| {
         matches!(home.sync, proto::HomeSync::Behind { .. })
     })
     .await?;
@@ -7132,25 +7198,26 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
         retry_command(&connection, &note).await?,
         CommandResult::IssueWritten { .. }
     ));
-    let kept = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let kept = home_until(&mut link, |home| home.unpushed == 1).await?;
     assert_issue_notes(&kept, issue, 2);
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    let kept = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    let kept = home_until(&mut link, |home| home.unpushed == 1).await?;
     assert_issue_notes(&kept, issue, 2);
     wrote(
         &link,
         change(issue, IssueChange::Note(String::from("still offline"))),
     )
     .await?;
-    let visible = home_until(&mut updates, |home| home.unpushed == 2).await?;
+    let visible = home_until(&mut link, |home| home.unpushed == 2).await?;
     assert_issue_notes(&visible, issue, 3);
     land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 0).await?;
     let landed = pushed_issue(&land, issue)?;
     assert_eq!(landed.matches(": retry me").count(), 1);
     assert_eq!(landed.matches(": still offline").count(), 1);
@@ -7162,7 +7229,7 @@ async fn an_issue_edit_rejected_when_the_queue_cannot_be_saved_can_be_retried()
         .trim(),
         "2"
     );
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7182,36 +7249,42 @@ fn assert_issue_notes(home: &proto::Home, issue: proto::IssueId, count: usize) {
 #[tokio::test]
 async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("issue-commit-write-failure")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
     land.go_offline()?;
     let lock = data.join("home-repo/.git/index.lock");
     std::fs::write(&lock, "")?;
-    let issue = match send(&link, create_issue("Commit after restart")).await? {
-        CommandResult::IssueWritten { issue, .. } => issue,
-        other => {
-            return Err(format!("expected a saved issue, got {other:?}").into());
-        }
-    };
-    let queued = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let issue =
+        match link.send(create_issue("Commit after restart")).await?.value {
+            CommandResult::IssueWritten { issue, .. } => issue,
+            other => {
+                return Err(
+                    format!("expected a saved issue, got {other:?}").into()
+                );
+            }
+        };
+    let queued = home_until(&mut link, |home| home.unpushed == 1).await?;
     assert_eq!(
         alpha_issues(&queued).first().map(|shown| shown.id),
         Some(issue)
     );
     let checkout = data.join("home-repo");
     assert_eq!(git(&checkout, &["ls-files", "--", ALPHA_ISSUES])?, "");
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     std::fs::remove_file(&lock)?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 1).await?;
     land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let landed = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let landed = home_until(&mut link, |home| home.unpushed == 0).await?;
     assert_eq!(
         alpha_issues(&landed).first().map(|shown| shown.id),
         Some(issue)
@@ -7220,7 +7293,7 @@ async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
         pushed_issue(&land, issue)?
             .contains("title = \"Commit after restart\"")
     );
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7229,10 +7302,12 @@ async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
 #[tokio::test]
 async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("issue-create-receipt-gap")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
     let phone = endpoint().await?;
     let connection = authenticated(&phone, &fx.target).await?;
     let command = proto::Command {
@@ -7243,12 +7318,12 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
     let CommandResult::IssueWritten { issue, .. } = created else {
         return Err(format!("expected an issue, got {created:?}").into());
     };
-    let _ = home_until(&mut updates, |home| {
+    let _ = home_until(&mut link, |home| {
         home.unpushed == 0 && !alpha_issues(home).is_empty()
     })
     .await?;
     phone.close().await;
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
 
     {
@@ -7265,9 +7340,10 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
     push_home_edit(&writer)?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| {
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| {
         home.projects.len() == 2 && alpha_issues(home).is_empty()
     })
     .await?;
@@ -7277,7 +7353,7 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
     assert_eq!(retry_command(&connection, &command).await?, created);
     assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, before);
     phone.close().await;
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7285,11 +7361,13 @@ async fn a_create_without_a_receipt_recovers_after_the_issue_file_breaks()
 
 #[tokio::test]
 async fn a_queue_stored_in_an_older_shape_is_set_aside() -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("older-issue-queue")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    link.stop().await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    link.close().await;
     fx.shutdown().await?;
 
     // A queue in the store's previous version.
@@ -7298,9 +7376,10 @@ async fn a_queue_stored_in_an_older_shape_is_set_aside() -> Fallible {
     let state = data.join("home-edits.state");
     std::fs::write(&state, older)?;
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let synced = home_until(&mut updates, |home| {
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let synced = home_until(&mut link, |home| {
         matches!(home.sync, proto::HomeSync::Synced)
     })
     .await?;
@@ -7310,7 +7389,7 @@ async fn a_queue_stored_in_an_older_shape_is_set_aside() -> Fallible {
         older.to_vec(),
         "the older queue is kept aside, unread"
     );
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7319,19 +7398,21 @@ async fn a_queue_stored_in_an_older_shape_is_set_aside() -> Fallible {
 #[tokio::test]
 async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("matching-offline-issue-change")?;
     let (fx, data) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
 
     let (second, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (writer, mut writer_updates) = second.connect().await?;
+    let mut writer =
+        RawClient::live(&second.target, "test-client", &mut feed).await?;
     let _ =
-        home_until(&mut writer_updates, |home| !alpha_issues(home).is_empty())
-            .await?;
+        home_until(&mut writer, |home| !alpha_issues(home).is_empty()).await?;
     wrote(&writer, change(issue, retitle("Upstream title"))).await?;
-    writer.stop().await?;
+    writer.close().await;
     second.shutdown().await?;
     assert!(pushed_issue(&land, issue)?.contains("title = \"Upstream title\""));
 
@@ -7349,19 +7430,20 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
             warnings: Vec::new(),
         }
     );
-    accepted(&link, CommandBody::SyncHome).await?;
-    let waiting = home_until(&mut updates, |home| {
+    link.accepted(CommandBody::SyncHome).await?;
+    let waiting = home_until(&mut link, |home| {
         matches!(home.sync, proto::HomeSync::Behind { .. })
     })
     .await?;
     assert_eq!(waiting.unpushed, 1);
-    link.stop().await?;
+    link.close().await;
     phone.close().await;
     fx.shutdown().await?;
 
     let reopened = serve(endpoint().await?, claude_plugins(), &data).await?;
-    let (link, mut updates) = reopened.connect().await?;
-    let waiting = home_until(&mut updates, |home| home.unpushed == 1).await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", &mut feed).await?;
+    let waiting = home_until(&mut link, |home| home.unpushed == 1).await?;
     assert_eq!(
         alpha_issues(&waiting)
             .first()
@@ -7378,11 +7460,11 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
         }
     );
     land.go_online()?;
-    accepted(&link, CommandBody::SyncHome).await?;
-    let _ = home_until(&mut updates, |home| home.unpushed == 0).await?;
+    link.accepted(CommandBody::SyncHome).await?;
+    let _ = home_until(&mut link, |home| home.unpushed == 0).await?;
     assert!(pushed_issue(&land, issue)?.contains("title = \"Sign in\""));
     retry.close().await;
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7391,11 +7473,13 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
 #[tokio::test]
 async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("issues")?;
     let (fx, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ = home_until(&mut link, |home| home.projects.len() == 2).await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     noted_by_hand(&land, issue)?;
     wrote(
         &link,
@@ -7417,18 +7501,16 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
         "the host's change lands on top of the person's: {replayed}"
     );
     assert_eq!(
-        send(
-            &link,
-            change(
-                proto::IssueId::new(0, 7),
-                IssueChange::Note(String::from("x"))
-            )
-        )
-        .await?,
+        link.send(change(
+            proto::IssueId::new(0, 7),
+            IssueChange::Note(String::from("x"))
+        ))
+        .await?
+        .value,
         CommandResult::Rejected(Rejection::UnknownIssue)
     );
-    lands_an_offline_note(&link, &mut updates, &land, issue).await?;
-    link.stop().await?;
+    lands_an_offline_note(&mut link, &land, issue).await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7478,46 +7560,47 @@ async fn competing_start_during_fetch(
     fx: &Fixture,
     listener: TcpListener,
     issue: proto::IssueId,
+    feed: &mut Recorder,
 ) -> Fallible<CommandResult> {
     let (mut barrier, _) =
         tokio::time::timeout(STEP, listener.accept()).await??;
-    let (other, updates) = fx.connect().await?;
-    assert!(updates.host.instances.is_some());
+    let other = RawClient::live(&fx.target, "test-client", feed).await?;
     let release = async {
         barrier.write_all(b"continue\n").await?;
         Ok(())
     };
     let (competing, ()) =
-        tokio::try_join!(send(&other, on_issue(issue)), release)?;
-    other.stop().await?;
-    Ok(competing)
+        tokio::try_join!(other.send(on_issue(issue)), release)?;
+    other.close().await;
+    Ok(competing.value)
 }
 
 #[tokio::test]
 async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("issue-sessions")?;
     let (fx, _) =
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| {
-        !checkouts_of(home, "alpha").is_empty()
-    })
-    .await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ =
+        home_until(&mut link, |home| !checkouts_of(home, "alpha").is_empty())
+            .await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
     let alpha = land.roots.join("apps").join("alpha");
     let listener =
         pause_first_fetch(&alpha, &land.scratch.join("upload-pack")).await?;
     let (session, competing) = tokio::try_join!(
-        launch(&link, on_issue(issue)),
-        competing_start_during_fetch(&fx, listener, issue),
+        link.started(on_issue(issue)),
+        competing_start_during_fetch(&fx, listener, issue, &mut feed),
     )?;
     assert_eq!(
         competing,
         CommandResult::Rejected(Rejection::IssueTaken { session })
     );
-    let events = events_until(&mut updates, Until::Request).await?;
+    let events = raw_events_until(&mut link, Until::Request).await?;
     let mine = events
         .iter()
         .filter(|event| event.session == session)
@@ -7556,14 +7639,14 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
         git(&alpha, &["rev-parse", "HEAD"])?,
         "a new issue's branch starts at the checkout's HEAD"
     );
-    let moved = home_until(&mut updates, |home| {
+    let moved = home_until(&mut link, |home| {
         alpha_issues(home)
             .iter()
             .any(|shown| shown.status == "active")
     })
     .await?;
     assert_eq!(moved.unpushed, 0);
-    link.stop().await?;
+    link.close().await;
     fx.shutdown().await?;
     let _ = std::fs::remove_dir_all(&land.scratch);
     Ok(())
@@ -7572,6 +7655,7 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
 #[tokio::test]
 async fn finishing_lands_work_and_notes_only_the_summary_before_review()
 -> Fallible {
+    let mut feed = Recorder::new()?;
     let land = homeland("finish")?;
     let alpha = land.roots.join("apps").join("alpha");
     std::fs::copy(
@@ -7581,17 +7665,20 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
     let (fx, data) =
         host_at_home(land.home_url.clone(), Vec::from([land.roots.clone()]))
             .await?;
-    let (link, mut updates) = fx.connect().await?;
-    let _ = home_until(&mut updates, |home| {
-        !checkouts_of(home, "alpha").is_empty()
-    })
-    .await?;
-    let issue = opens_an_issue(&link, &mut updates, &land).await?;
-    let session = launch(&link, on_issue(issue)).await?;
-    let _ = events_until(&mut updates, Until::TurnEnd).await?;
-    accepted(&link, CommandBody::FinishSession { session }).await?;
-    let finishing =
-        of(session, &events_until(&mut updates, Until::Finished).await?);
+    let mut link =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let _ =
+        home_until(&mut link, |home| !checkouts_of(home, "alpha").is_empty())
+            .await?;
+    let issue = opens_an_issue(&mut link, &land).await?;
+    let session = link.started(on_issue(issue)).await?;
+    let _ = raw_events_until(&mut link, Until::TurnEnd).await?;
+    link.accepted(CommandBody::FinishSession { session })
+        .await?;
+    let finishing = of(
+        session,
+        &raw_events_until(&mut link, Until::Finished).await?,
+    );
     let remote = git(&alpha, &["remote", "get-url", "origin"])?;
     assert_eq!(
         finishing.last(),
@@ -7619,13 +7706,39 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
         pushed.starts_with("turn two\n"),
         "what the worktree held when it finished landed and was pushed: {pushed}"
     );
-    let reviewed = home_until(&mut updates, |home| {
+    let reviewed = home_until(&mut link, |home| {
         alpha_issues(home)
             .iter()
             .any(|shown| shown.status == "review")
     })
     .await?;
-    let notes = alpha_issues(&reviewed)
+    assert_summary_noted(&reviewed);
+    assert_eq!(
+        link.send(CommandBody::FinishSession { session })
+            .await?
+            .value,
+        CommandResult::Rejected(Rejection::AlreadyFinished),
+        "a finished session that did nothing since doesn't finish again"
+    );
+    assert_eq!(
+        link.send(CommandBody::FinishSession {
+            session: SessionId(1)
+        })
+        .await?
+        .value,
+        CommandResult::Rejected(Rejection::UnknownSession)
+    );
+    link.close().await;
+    fx.shutdown().await?;
+    assert_finish_recovery(&land, &data, issue, session, &mut feed).await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+/// The issue's last note before it moves to review is the session's
+/// summary, and its checklist wrote none.
+fn assert_summary_noted(reviewed: &proto::Home) {
+    let notes = alpha_issues(reviewed)
         .into_iter()
         .flat_map(|shown| shown.log)
         .map(|entry| home::flow::file::log_line(&entry))
@@ -7651,26 +7764,6 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
         ],
         "the summary is the issue's last note before it moves to review: {notes:?}"
     );
-    assert_eq!(
-        send(&link, CommandBody::FinishSession { session }).await?,
-        CommandResult::Rejected(Rejection::AlreadyFinished),
-        "a finished session that did nothing since doesn't finish again"
-    );
-    assert_eq!(
-        send(
-            &link,
-            CommandBody::FinishSession {
-                session: SessionId(1)
-            }
-        )
-        .await?,
-        CommandResult::Rejected(Rejection::UnknownSession)
-    );
-    link.stop().await?;
-    fx.shutdown().await?;
-    assert_finish_recovery(&land, &data, issue, session).await?;
-    let _ = std::fs::remove_dir_all(&land.scratch);
-    Ok(())
 }
 
 async fn assert_finish_recovery(
@@ -7678,6 +7771,7 @@ async fn assert_finish_recovery(
     data: &Path,
     issue: IssueId,
     session: SessionId,
+    feed: &mut Recorder,
 ) -> Fallible {
     let project = land.roots.join("apps/alpha");
     let branch = format!("refs/heads/issue/{}", issue_name(issue));
@@ -7698,7 +7792,7 @@ async fn assert_finish_recovery(
     let old_issue = pushed_issue(land, issue)?;
     disk::lose_terminal_finish(data, session)?;
     let reopened = serve(endpoint().await?, claude_plugins(), data).await?;
-    let history = reopened.history().await?;
+    let history = raw_history(&reopened.target, feed).await?;
     let recovered = of(session, &history);
     assert!(recovered.contains(&EventKind::FinishInterrupted));
     assert!(
@@ -7707,11 +7801,13 @@ async fn assert_finish_recovery(
             .any(|event| matches!(event, EventKind::SessionFinished { .. }))
     );
 
-    let (link, mut updates) = reopened.connect().await?;
+    let mut link =
+        RawClient::live(&reopened.target, "test-client", feed).await?;
     let _ =
-        home_until(&mut updates, |home| !alpha_issues(home).is_empty()).await?;
-    accepted(&link, CommandBody::FinishSession { session }).await?;
-    let events = events_until(&mut updates, Until::Finished).await?;
+        home_until(&mut link, |home| !alpha_issues(home).is_empty()).await?;
+    link.accepted(CommandBody::FinishSession { session })
+        .await?;
+    let events = raw_events_until(&mut link, Until::Finished).await?;
     assert!(of(session, &events).iter().any(|event| matches!(
         event,
         EventKind::SessionFinished {
@@ -7722,9 +7818,11 @@ async fn assert_finish_recovery(
     assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, old_home);
     assert_eq!(pushed_issue(land, issue)?, old_issue);
     assert_eq!(
-        send(&link, CommandBody::FinishSession { session }).await?,
+        link.send(CommandBody::FinishSession { session })
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::AlreadyFinished)
     );
-    link.stop().await?;
+    link.close().await;
     reopened.shutdown().await
 }

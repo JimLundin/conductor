@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use net::{HostLink, Update};
 use proto::{
     Auth, Availability, CommandBody, CommandResult, Credential, Feed,
     InstanceId, Instances, Provider, Rejection, SignIn, SignInStep,
@@ -10,10 +9,10 @@ use runtime::Settings;
 use tokio::sync::{mpsc, oneshot};
 
 use super::{
-    Fallible, STEP, Updates, capture_log, captured, credential, data_dir, disk,
-    endpoint, fake_claude, holding, instance, probed, send, serve,
-    sign_in_until,
+    Fallible, capture_log, captured, credential, data_dir, disk, endpoint,
+    fake_claude, holding, instance, probed, raw_history, serve, sign_in_until,
 };
+use crate::raw::{RawClient, Recorder};
 
 const LABEL: &str = "paired fake setup";
 const URL: &str =
@@ -88,14 +87,10 @@ fn submit(own: &InstanceId) -> CommandBody {
     }
 }
 
-async fn begin(
-    link: &HostLink,
-    updates: &mut Updates,
-    own: &InstanceId,
-) -> Fallible {
-    assert_eq!(send(link, start(own)).await?, CommandResult::Accepted);
+async fn begin(client: &mut RawClient, own: &InstanceId) -> Fallible {
+    client.accepted(start(own)).await?;
     assert_eq!(
-        sign_in_until(updates, own, |step| matches!(
+        sign_in_until(client, own, |step| matches!(
             step,
             SignInStep::Open { .. }
         ))
@@ -109,42 +104,32 @@ async fn begin(
     Ok(())
 }
 
-async fn cancelled(updates: &mut Updates, own: &InstanceId) -> Fallible {
-    tokio::time::timeout(STEP, async {
-        loop {
-            let update = updates.incoming.recv().await.ok_or("the link stopped")?;
-            let is_cancelled = matches!(
-                &update,
-                Update::Feed(Feed::SignIn(SignIn { instance, step: SignInStep::Cancelled }))
-                    if instance == own
-            );
-            updates.host.apply(update);
-            if is_cancelled {
-                assert_eq!(updates.host.sign_ins.get(own), None);
-                return Ok(());
-            }
+async fn cancelled(client: &mut RawClient, own: &InstanceId) -> Fallible {
+    loop {
+        if matches!(
+            &client.next().await?.value,
+            Feed::SignIn(SignIn { instance, step: SignInStep::Cancelled })
+                if instance == own
+        ) {
+            return Ok(());
         }
-    })
-    .await?
+    }
 }
 
 async fn finish(
-    link: &HostLink,
-    updates: &mut Updates,
+    client: &mut RawClient,
     own: &InstanceId,
     account: &InstanceId,
 ) -> Fallible<Instances> {
-    assert_eq!(send(link, submit(own)).await?, CommandResult::Accepted);
-    let done = sign_in_until(updates, own, |step| {
+    client.accepted(submit(own)).await?;
+    let done = sign_in_until(client, own, |step| {
         matches!(step, SignInStep::SignedIn | SignInStep::Failed { .. })
     })
     .await?;
     match done {
         SignInStep::SignedIn => {
-            crate::wait_for_offer(updates, account).await?;
-            updates.host.instances.clone().ok_or_else(|| {
-                "the signed-in host did not publish its instances".into()
-            })
+            crate::wait_for_offer(client, account).await?;
+            Ok(client.instances.clone())
         }
         step => Err(format!("credential sign-in ended at {step:?}").into()),
     }
@@ -199,25 +184,24 @@ async fn paired_client_creates_a_credential_that_the_host_keeps() -> Fallible {
     let account = InstanceId::named(Provider::Claude, LABEL);
     let fx = serve(endpoint().await?, std::iter::once(plugin).collect(), &data)
         .await?;
-    let (link, mut updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
 
-    begin(&link, &mut updates, &own).await?;
-    let cancel_result = send(
-        &link,
-        CommandBody::CancelSignIn {
+    begin(&mut phone, &own).await?;
+    phone
+        .accepted(CommandBody::CancelSignIn {
             instance: own.clone(),
-        },
-    )
-    .await?;
-    assert_eq!(cancel_result, CommandResult::Accepted);
-    cancelled(&mut updates, &own).await?;
+        })
+        .await?;
+    cancelled(&mut phone, &own).await?;
     assert_eq!(
-        send(&link, submit(&own)).await?,
+        phone.send(submit(&own)).await?.value,
         CommandResult::Rejected(Rejection::NoCodeAsked)
     );
 
-    begin(&link, &mut updates, &own).await?;
-    let instances = finish(&link, &mut updates, &own, &account).await?;
+    begin(&mut phone, &own).await?;
+    let instances = finish(&mut phone, &own, &account).await?;
     assert_eq!(
         instances.availability(&account),
         Some(&Availability::Available {
@@ -228,8 +212,13 @@ async fn paired_client_creates_a_credential_that_the_host_keeps() -> Fallible {
             models: probed(),
         }),
     );
-    assert_eq!(fx.history().await?, Vec::<proto::Event>::new());
-    fx.shutdown_with_client(link).await?;
+    assert_eq!(
+        raw_history(&fx.target, &mut feed).await?,
+        Vec::<proto::Event>::new()
+    );
+    phone.close().await;
+    fx.shutdown().await?;
     drop(logging);
-    assert_private(&data, &log_path, &own, &account)
+    assert_private(&data, &log_path, &own, &account)?;
+    feed.write()
 }
