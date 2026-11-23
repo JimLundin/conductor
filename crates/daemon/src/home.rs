@@ -34,6 +34,7 @@ use home::issue::{
     Commit, Context, Delivery, Edit, Listing, PendingEdits, Record,
     RecordEffect, RemoteProbe, SessionUpdate, Write,
 };
+use home::skills;
 use home::sync::{self, Git, Sync};
 use home::{Found, Stored};
 use host::log::Completion;
@@ -66,6 +67,9 @@ pub struct Homing {
     pub remote: Option<String>,
     /// The directories to look for checkouts in.
     pub roots: Vec<PathBuf>,
+    /// The user's home, whose harness folders take the home's skills each
+    /// time the clone moves; `None` installs none.
+    pub user: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -331,6 +335,9 @@ struct Actor {
     edits_at: PathBuf,
     known: Vec<String>,
     shown: watch::Sender<Option<Home>>,
+    user: Option<PathBuf>,
+    /// The clone's commit whose skills were last installed.
+    installed: Option<String>,
 }
 
 impl Actor {
@@ -340,6 +347,7 @@ impl Actor {
             data_dir,
             remote,
             roots,
+            user,
         } = homing;
         let stored_at = data_dir.join("home.state");
         let stored: Stored = load(&stored_at);
@@ -370,6 +378,8 @@ impl Actor {
             edits_loaded: false,
             edits_at,
             shown,
+            user,
+            installed: None,
         }
     }
 
@@ -526,12 +536,37 @@ impl Actor {
                 .clone()
                 .after(outcome, self.destination.is_some(), now());
         if self.destination.is_some() {
+            self.install().await;
             self.scan().await;
         } else {
             self.home =
                 Snapshot::empty(String::from("the home has no checkout"));
             self.found.clear();
             self.publish();
+        }
+    }
+
+    /// Installs the clone's skills for the user once per commit it moves
+    /// to, as `home skills` does.
+    async fn install(&mut self) {
+        let moved = commit_of(&self.clone, "HEAD").await;
+        let Some((user, head)) =
+            skills::due(self.user.clone(), moved, self.installed.as_deref())
+        else {
+            return;
+        };
+        let clone = self.clone.clone();
+        let done = tokio::task::spawn_blocking(move || {
+            home_files::install(&clone, &user)
+        })
+        .await
+        .map_err(|err| err.to_string())
+        .and_then(core::convert::identity);
+        match done {
+            Ok(_) => self.installed = Some(head),
+            Err(reason) => {
+                tracing::warn!(%reason, "could not install the home's skills");
+            }
         }
     }
 
@@ -1542,6 +1577,7 @@ mod tests {
                 data_dir: root.clone(),
                 remote: Some(other_url.to_owned()),
                 roots: Vec::new(),
+                user: None,
             },
             shown,
         );

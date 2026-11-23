@@ -533,6 +533,7 @@ impl SessionUpdate {
                     part: Part::Status,
                     to: String::from(moved?),
                     reason: String::from(reason),
+                    signed_off: false,
                 })
             }
         }

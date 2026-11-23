@@ -5,7 +5,9 @@ use std::path::{Component, Path};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::ambient_authority;
 use cap_std::fs::{Dir, Metadata, OpenOptions};
-use home::sync::{IssueLeaf, IssueParent, IssuePath, issue_leaf, issue_parent};
+use home::layout::{
+    IssueLeaf, IssueParent, IssuePath, issue_leaf, issue_parent,
+};
 
 pub(super) struct IssueFile {
     // Windows capability operations may resolve a handle to a path. Retain

@@ -26,20 +26,46 @@ use super::role::opening;
 use super::snapshot::Snapshot;
 use crate::prelude::*;
 
-pub const USAGE: &str = "usage:
+/// What `home` says alone: every command and what it means.
+pub const USAGE: &str = "usage: home <command>, from anywhere in the home
+
   home check
+      Checks every project and issue against the flow; fails only on errors.
   home issue new <project> <kind> <title> [<field>=<value>...]
-  home issue move <id> stage|status <to> [<reason>...]
+      Opens an issue of the kind in the project, named by its name or id,
+      with the kind's sections and a fresh id, which it prints. Give the
+      title as one argument.
+  home issue move <id> stage|status <to> [--signed-off] [<reason>...]
+      Moves the stage or status, the only way to change either, and logs
+      the move and its reason, marking a move off the stage's usual next
+      ones as unusual. Leaving a stage with a sign-off takes --signed-off.
   home issue set <id> <field>=<value>...
+      Sets any other field or relation, title, parent and blocked_by among
+      them. A list's value is comma-separated: blocked_by=<id>,<id>.
   home issue note <id> <text>...
+      Appends a note to the log.
   home issue body <id> <text>...
   home issue body <id> --file <path>
+      Replaces the body, everything above its checklist and notes, with the
+      text or the file's; give a body of several lines or sections by file.
   home issue checklist <id> add <text>...
+      Adds an item to the checklist.
   home issue checklist <id> check|uncheck|remove <n>
-  home repos [sync|scan]
+      Checks, unchecks or removes the checklist's nth item, from 1.
+  home repos
+      Shows each project's checkouts on this machine and their state.
+  home repos sync
+      Clones each project with a remote and no checkout here.
+  home repos scan
+      Registers each repository here that matches no project, under a fresh
+      id, and rewrites the project list in AGENTS.md.
   home skills
-A list's value is comma-separated: blocked_by=<id>,<id>.
-A checklist's items are numbered from 1.
+      Installs the home's skills for every harness, at user level, keeping
+      any skill installed some other way.
+
+Each write signs and dates the log and is read back against the flow: a
+structural problem or a broken error rule refuses it, and anything softer
+is written with a warning.
 ";
 
 /// What the command line's words ask for: a command on the home's issues,
@@ -60,7 +86,7 @@ pub enum Local {
     Sync,
     /// `home repos scan`: registers each repository no project has.
     Scan,
-    /// `home skills`: copies the home's skills into each harness's folder.
+    /// `home skills`: installs the home's skills for each harness.
     Skills,
 }
 
@@ -277,19 +303,26 @@ pub fn command(
             id,
             part @ ("stage" | "status"),
             to,
-            reason @ ..,
-        ] => changing(
-            id,
-            IssueChange::Move {
-                part: if *part == "stage" {
-                    Part::Stage
-                } else {
-                    Part::Status
+            rest @ ..,
+        ] => {
+            let (signed_off, reason) = match rest {
+                ["--signed-off", reason @ ..] => (true, reason),
+                reason => (false, reason),
+            };
+            changing(
+                id,
+                IssueChange::Move {
+                    part: if *part == "stage" {
+                        Part::Stage
+                    } else {
+                        Part::Status
+                    },
+                    to: (*to).to_owned(),
+                    reason: reason.join(" "),
+                    signed_off,
                 },
-                to: (*to).to_owned(),
-                reason: reason.join(" "),
-            },
-        ),
+            )
+        }
         _ => Command::Usage,
     }
 }
@@ -523,10 +556,8 @@ pub fn write(
         by: context.by.clone(),
         mark: context.mark.clone(),
     };
-    let (file, moved) = match edit {
-        Edit::New { id, issue } => {
-            (opened(home, flow, *id, &sign, issue)?, false)
-        }
+    let file = match edit {
+        Edit::New { id, issue } => opened(home, flow, *id, &sign, issue)?,
         Edit::Change { id, changes } => {
             let stem = id.to_string();
             let file = home
@@ -534,13 +565,10 @@ pub fn write(
                 .iter()
                 .find(|file| file.stem == stem)
                 .ok_or_else(|| format!("no issue is called {id}"))?;
-            let moved = changes
-                .iter()
-                .any(|change| matches!(change, IssueChange::Move { .. }));
-            (changed(flow, file, changes, &sign)?, moved)
+            changed(flow, file, changes, &sign)?
         }
     };
-    finished(home, flow, file, moved)
+    finished(home, flow, file)
 }
 
 /// Who writes a file, and when.
@@ -570,13 +598,13 @@ impl Signer {
     }
 }
 
-/// The file read back among the others, refused on a structural problem
-/// or a broken `error` rule, else written with any warning.
+/// The file read back among the others, weighed as a move from the issue
+/// it was, refused on a structural problem or a broken `error` rule, else
+/// written with any warning.
 fn finished(
     home: &Snapshot,
     flow: &Flow,
     file: File,
-    moved: bool,
 ) -> Result<Written, String> {
     let after = home.with(file.clone());
     let graph = after.graph();
@@ -604,13 +632,9 @@ fn finished(
             issue.project == file.project && issue.id.to_string() == file.stem
         })
         .map_or_else(Vec::new, |issue| {
-            let moving = if moved {
-                Move {
-                    from: home.issue(issue.id),
-                    to: Some(issue),
-                }
-            } else {
-                Move::default()
+            let moving = Move {
+                from: home.issue(issue.id),
+                to: Some(issue),
             };
             let issues: Vec<&Issue> = graph.issues.iter().collect();
             of_issue(flow, &issues, issue, moving, &subject)
@@ -701,9 +725,14 @@ fn changed(
     let mut set = Vec::new();
     for change in changes {
         match change {
-            IssueChange::Move { part, to, reason } => {
+            IssueChange::Move {
+                part,
+                to,
+                reason,
+                signed_off,
+            } => {
                 let (key, event, text) =
-                    shifted(flow, &issue, (*part, to, reason))?;
+                    shifted(flow, &issue, (*part, to, reason), *signed_off)?;
                 document.set(key, &quoted(to)).ok_or_else(unread)?;
                 document.log_entry(&sign.entry(event, &text));
             }
@@ -737,11 +766,18 @@ fn changed(
     })
 }
 
-/// The key a move sets, the log's event for it, and the log's text.
+/// The key a move sets, the log's event for it, and the log's text, which
+/// says when the owner signed off.
+///
+/// # Errors
+///
+/// No stage or status is called `to`, or the move leaves a stage with a
+/// sign-off unsigned.
 fn shifted(
     flow: &Flow,
     current: &Issue,
     (part, to, reason): (Part, &str, &str),
+    signed_off: bool,
 ) -> Result<(&'static str, LogEvent, String), String> {
     let (key, from, known, usual) = match part {
         Part::Stage => {
@@ -762,6 +798,17 @@ fn shifted(
     if !known {
         return Err(format!("no {key} is called {to}"));
     }
+    if let Some(left) = from
+        .as_deref()
+        .filter(|left| part == Part::Stage && *left != to)
+        .and_then(|left| flow.stage(left))
+        .filter(|stage| stage.sign_off && !signed_off)
+    {
+        return Err(format!(
+            "leaving the stage {} needs its sign-off",
+            left.name
+        ));
+    }
     let (before, after) = (
         from.unwrap_or_else(|| String::from("none")),
         String::from(to),
@@ -777,7 +824,12 @@ fn shifted(
         },
     };
     let unusual = if usual { "" } else { " (unusual move)" };
-    Ok((key, event, format!("{reason}{unusual}")))
+    let said = match (signed_off, reason) {
+        (false, _) => String::from(reason),
+        (true, "") => String::from("signed off"),
+        (true, _) => format!("signed off: {reason}"),
+    };
+    Ok((key, event, format!("{said}{unusual}")))
 }
 
 /// Sets a declared field or relation; an issue's own words change by

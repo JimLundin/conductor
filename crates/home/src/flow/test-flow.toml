@@ -166,8 +166,9 @@ sign_off = true
 next = []
 
 # Rules. A predicate is an inline table of one key: an atom (`kind`,
-# `stage`, `status_role`, `field`, `has`, `has_section`, and in a rule's
-# `when` `from`/`to` while a move is weighed), `all`/`any` of a list,
+# `stage`, `status_role`, `field`, `has`, `has_section`, and `from`/`to`,
+# the issue before and after an edit, in a `when` and in the `require` of
+# a rule whose `when` weighs one), `all`/`any` of a list,
 # `not`, or `any`/`all`/`none` of
 # `{ via = <relation or its reverse>, where = <predicate> }`.
 [[rule]]
@@ -181,13 +182,13 @@ require = { any = { via = "children", where = { all = [
 ] } } }
 
 [[rule]]
-message = "Work starts once everything blocking it is finished"
+message = "Work starts once everything blocking it is built"
 severity = "warn"
-when = { any = [{ status_role = "active" }, { status_role = "review" }, { status_role = "terminal" }] }
-require = { all = { via = "blocked_by", where = { any = [
-  { status_role = "terminal" },
-  { status_role = "dropped" },
-] } } }
+when = { to = { status_role = "active" } }
+require = { all = [
+  { from = { any = [{ status_role = "idle" }, { status_role = "startable" }, { status_role = "active" }] } },
+  { all = { via = "blocked_by", where = { any = [{ status_role = "review" }, { status_role = "terminal" }, { status_role = "dropped" }] } } },
+] }
 
 [[rule]]
 message = "A settled decision records its answer"

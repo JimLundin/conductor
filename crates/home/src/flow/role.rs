@@ -4,12 +4,12 @@
 //! on, and where a session moves its issue: Conductor asks these, never a
 //! role or a status's name.
 
-use alloc::boxed::Box;
-
 use proto::Issue;
 
-use super::eval;
-use proto::flow::{Flow, Predicate, Quantifier, Role, Shape};
+use super::check::broken;
+use super::eval::Move;
+use crate::prelude::*;
+use proto::flow::{Flow, Role};
 
 /// The status that holds `role`: the first with it the flow declares.
 fn holding(flow: &Flow, role: Role) -> Option<&str> {
@@ -25,36 +25,26 @@ pub fn opening(flow: &Flow) -> Option<&str> {
     holding(flow, Role::Idle)
 }
 
-/// Whether a session can start on `issue`, among `issues`: it waits to be
-/// taken up, and every issue it depends on, through each of the flow's
-/// dependency relations, is built or dropped.
+/// Whether a session can start on `issue`, among `issues`: it isn't at
+/// work already, and moving it to the active status breaks none of the
+/// flow's rules.
 #[must_use]
 pub fn can_start(flow: &Flow, issues: &[&Issue], issue: &Issue) -> bool {
-    eval::holds(flow, issues, issue, eval::Move::default(), &startable(flow))
-        .is_ok()
-}
-
-/// What [`can_start`] asks of an issue.
-fn startable(flow: &Flow) -> Predicate {
-    let built = any_of(&[Role::Review, Role::Terminal, Role::Dropped]);
-    let blockers = flow
-        .relations
-        .iter()
-        .filter(|relation| relation.shape == Shape::Dependency)
-        .map(|relation| Predicate::Across {
-            quantifier: Quantifier::All,
-            via: relation.name.clone(),
-            condition: Box::new(built.clone()),
-        });
-    Predicate::All(
-        core::iter::once(any_of(&[Role::Idle, Role::Startable]))
-            .chain(blockers)
-            .collect(),
-    )
-}
-
-fn any_of(roles: &[Role]) -> Predicate {
-    Predicate::Any(roles.iter().copied().map(Predicate::StatusRole).collect())
+    let Some(active) = holding(flow, Role::Active) else {
+        return false;
+    };
+    if flow.status(&issue.status).map(|status| status.role)
+        == Some(Role::Active)
+    {
+        return false;
+    }
+    let mut after = issue.clone();
+    after.status = String::from(active);
+    let moving = Move {
+        from: Some(issue),
+        to: Some(&after),
+    };
+    broken(flow, issues, &after, moving).next().is_none()
 }
 
 /// The status `issue` moves to once a session on it has started, among

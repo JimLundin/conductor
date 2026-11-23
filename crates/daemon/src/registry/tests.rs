@@ -132,6 +132,7 @@ impl Fixture {
             data_dir: data.0.clone(),
             remote: None,
             roots: Vec::new(),
+            user: None,
         });
         let (initialized, _) = watch::channel(false);
         let mut actor =

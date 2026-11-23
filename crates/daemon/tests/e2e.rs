@@ -155,6 +155,15 @@ async fn host_at_home(
     remote: String,
     roots: Vec<PathBuf>,
 ) -> Fallible<(Fixture, PathBuf)> {
+    host_at_home_for(remote, roots, None).await
+}
+
+/// A host at the home whose skills go to the user at `user`, if any.
+async fn host_at_home_for(
+    remote: String,
+    roots: Vec<PathBuf>,
+    user: Option<PathBuf>,
+) -> Fallible<(Fixture, PathBuf)> {
     let endpoint = endpoint().await?;
     let data_dir = data_dir(&endpoint.id().to_string())?;
     standard_claude_probe(&data_dir)?;
@@ -166,6 +175,7 @@ async fn host_at_home(
             data_dir: data_dir.clone(),
             home: Some(remote),
             projects: roots,
+            user,
         },
     )
     .await?;
@@ -293,6 +303,7 @@ async fn serve(
             data_dir: data.to_path_buf(),
             home: None,
             projects: Vec::new(),
+            user: None,
         },
     )
     .await
@@ -4390,6 +4401,7 @@ async fn retrying_the_stored_credential_during_boot_receives_the_live_refresh_re
             data_dir: data,
             home: None,
             projects: Vec::new(),
+            user: None,
         },
     )
     .await?;
@@ -6507,6 +6519,32 @@ fn push_home_edit(writer: &Path) -> Fallible {
 }
 
 #[tokio::test]
+async fn a_skill_added_to_the_home_is_installed_for_every_harness_once_it_syncs()
+-> Fallible {
+    let land = homeland("skills")?;
+    let user = land.scratch.join("user");
+    let (fx, _) =
+        host_at_home_for(land.home_url.clone(), Vec::new(), Some(user.clone()))
+            .await?;
+    let (link, mut updates) = fx.connect().await?;
+    let _ = home_until(&mut updates, |home| home.projects.len() == 2).await?;
+    let writer = home_writer(&land)?;
+    let added = writer.join("skills").join("build");
+    std::fs::create_dir_all(&added)?;
+    std::fs::write(added.join("SKILL.md"), "the build skill")?;
+    push_home_edit(&writer)?;
+    accepted(&link, CommandBody::SyncHome).await?;
+    for harness in [".claude", ".agents"] {
+        let installed = user.join(harness).join("skills/build/SKILL.md");
+        assert_eq!(std::fs::read_to_string(&installed)?, "the build skill");
+    }
+    link.stop().await?;
+    fx.shutdown().await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+#[tokio::test]
 async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
 -> Fallible {
     let land = homeland("issue-queue-shortening")?;
@@ -7192,6 +7230,7 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
                 part: proto::Part::Status,
                 to: String::from("active"),
                 reason: String::new(),
+                signed_off: false,
             },
         ),
     )

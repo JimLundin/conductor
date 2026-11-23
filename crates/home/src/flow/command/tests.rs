@@ -193,11 +193,23 @@ fn the_words_name_a_command() {
         })
     };
     assert_eq!(
-        asked(&format!("issue move {TASK} stage slice signed off")),
+        asked(&format!(
+            "issue move {TASK} stage slice --signed-off by the owner"
+        )),
         changing(IssueChange::Move {
             part: Part::Stage,
             to: String::from("slice"),
-            reason: String::from("signed off"),
+            reason: String::from("by the owner"),
+            signed_off: true,
+        })
+    );
+    assert_eq!(
+        asked(&format!("issue move {TASK} status ready to go")),
+        changing(IssueChange::Move {
+            part: Part::Status,
+            to: String::from("ready"),
+            reason: String::from("to go"),
+            signed_off: false,
         })
     );
     assert_eq!(
@@ -463,21 +475,20 @@ fn a_missing_section_is_written_with_a_warning() {
 fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
     let usual = ran(
         &home(),
-        &format!("issue move {SPEC} stage slice signed off"),
+        &format!("issue move {SPEC} stage slice --signed-off by the owner"),
     );
     assert!(text(&usual).contains("stage = \"slice\"\n"));
     assert!(text(&usual).ends_with(
-        "- 2026-11-22T12:00:00Z laptop·claude stage spec→slice: signed off\n"
+        "- 2026-11-22T12:00:00Z laptop·claude stage spec→slice: signed off: by the owner\n"
     ));
     let unusual = ran(
         &home(),
-        &format!("issue move {SPEC} stage land skipping ahead"),
+        &format!("issue move {SPEC} stage land --signed-off skipping ahead"),
     );
     assert!(!unusual.failed);
-    assert!(
-        text(&unusual)
-            .ends_with("stage spec→land: skipping ahead (unusual move)\n")
-    );
+    assert!(text(&unusual).ends_with(
+        "stage spec→land: signed off: skipping ahead (unusual move)\n"
+    ));
     let status = ran(&home(), &format!("issue move {TASK} status ready"));
     assert!(text(&status).contains("status = \"ready\"\n"));
     assert!(text(&status).ends_with("status open→ready: \n"));
@@ -486,6 +497,42 @@ fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
         unknown.failed
             && unknown.output.contains("no status is called started")
     );
+}
+
+#[test]
+fn a_spec_leaves_a_sign_off_stage_only_signed_off() {
+    let at_land = |inputs: Inputs| Inputs {
+        issues: inputs
+            .issues
+            .into_iter()
+            .map(|file| File {
+                text: file.text.replace("stage = \"spec\"", "stage = \"land\""),
+                ..file
+            })
+            .collect(),
+        ..inputs
+    };
+    for (inputs, stage) in [(home(), "spec"), (at_land(home()), "land")] {
+        let unsigned =
+            ran(&inputs, &format!("issue move {SPEC} stage build ready"));
+        assert!(unsigned.failed && unsigned.writes.is_empty());
+        assert_eq!(
+            unsigned.output,
+            format!("home: leaving the stage {stage} needs its sign-off\n")
+        );
+        let signed = ran(
+            &inputs,
+            &format!("issue move {SPEC} stage build --signed-off"),
+        );
+        assert!(!signed.failed, "{}", signed.output);
+        assert!(
+            text(&signed).contains(&format!("stage {stage}→build: signed off")),
+            "{}",
+            text(&signed)
+        );
+    }
+    let into = ran(&home(), &format!("issue move {TASK} stage spec"));
+    assert!(!into.failed, "{}", into.output);
 }
 
 #[test]
@@ -681,7 +728,7 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
     for said in [
         String::from("issue new home task Wire-it"),
         format!("issue note {TASK} seen"),
-        format!("issue move {SPEC} stage slice signed off"),
+        format!("issue move {SPEC} stage slice --signed-off"),
         format!("issue move {TASK} status ready"),
         format!("issue set {TASK} title=Write-it-well"),
     ] {

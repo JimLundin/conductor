@@ -65,3 +65,43 @@ fn an_issue_file_that_couldn_t_be_read_is_unread_by_its_path() {
     );
     assert_eq!(made.unread, ["projects/a1b2c3/issues/b.md: denied"]);
 }
+
+#[test]
+fn an_issue_path_splits_its_directories_from_its_file() {
+    let path = super::IssuePath::checked(Some(Vec::from([
+        "projects", "a1b2c3", "issues", "a.md",
+    ])));
+    assert!(
+        path.is_ok_and(|split| split.parents
+            == ["projects", "a1b2c3", "issues"]
+            && split.leaf == "a.md")
+    );
+}
+
+#[test]
+fn an_issue_path_with_a_component_that_isn_t_a_name_or_no_file_is_unsafe() {
+    assert!(super::IssuePath::<&str>::checked(None).is_err());
+    assert!(super::IssuePath::<&str>::checked(Some(Vec::new())).is_err());
+}
+
+#[test]
+fn only_a_write_creates_a_missing_issue_directory() {
+    use super::{IssueParent, issue_parent};
+    assert!(matches!(issue_parent(true, false), IssueParent::Opened));
+    assert!(matches!(issue_parent(true, true), IssueParent::Opened));
+    assert!(matches!(issue_parent(false, false), IssueParent::Absent));
+    assert!(matches!(issue_parent(false, true), IssueParent::Create));
+}
+
+#[test]
+fn an_issue_file_is_missing_or_an_ordinary_file_never_a_link() {
+    use super::{IssueLeaf, UnsafeIssueEntry, issue_leaf};
+    let leaf = |regular, reparse_point| IssueLeaf {
+        regular,
+        reparse_point,
+    };
+    assert_eq!(issue_leaf(None), Ok(()));
+    assert_eq!(issue_leaf(Some(leaf(true, false))), Ok(()));
+    assert_eq!(issue_leaf(Some(leaf(false, false))), Err(UnsafeIssueEntry));
+    assert_eq!(issue_leaf(Some(leaf(true, true))), Err(UnsafeIssueEntry));
+}
