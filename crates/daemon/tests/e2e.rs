@@ -985,6 +985,7 @@ async fn raw_ping_turn(client: &mut RawClient, session: SessionId) -> Fallible {
     );
     Ok(())
 }
+
 async fn raw_resume_to_ready(
     client: &mut RawClient,
     session: SessionId,
