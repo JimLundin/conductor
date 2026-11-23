@@ -1,22 +1,19 @@
-"""Builds the gated Codex e2e recordings from the live `s2` recordings.
+"""Builds the gated Codex recording the `codex-cli` plugin replay plays, from
+the live `s2` recordings.
 
-Run from anywhere: `python3 -I fixtures/e2e/build-codex.py`. Each recording
-is the `initialize` answer, one `thread/start` answer per session, then whole
-turns of `s2`'s thread, cut from one `turn/start` answer to the next. The
-lines are Codex's own; only ids change, and markers go in by rule:
+Run from anywhere: `python3 -I fixtures/e2e/build-codex.py`. The recording
+is the `initialize` answer with the `model/list` answer, one `thread/start`
+answer per session, then whole turns of `s2`'s thread, cut from one
+`turn/start` answer to the next. The lines are Codex's own; only ids change,
+and markers go in by rule:
 
 - our requests are numbered in the order the hub sends them (`initialize`
-  1, then each `thread/start`, `turn/start` and `turn/interrupt`), so every
-  answer is renumbered in order and waits for our request with its id;
+  1, then each `thread/start` and `turn/start`), so every answer is
+  renumbered in order and waits for our request with its id;
 - Codex's own requests are renumbered from 0, as Codex numbers them per
   process, with the `requestId` of their `serverRequest/resolved`;
 - a `serverRequest/resolved` for a request the session answers waits for that
-  answer, with the decision or the answers `s2` gave;
-- an interrupt step waits for our `turn/interrupt`: after the first delta
-  (mid-stream), on `turn/started` once the test's `release` file exists
-  (held), or before Codex withdraws the open request (withdrawn), which
-  then also waits for the test's `release` file, so a test can answer the
-  request between the turn's end and Codex's withdrawal.
+  answer, with the decision `s2` gave.
 """
 
 import json
@@ -24,30 +21,13 @@ import pathlib
 
 HERE = pathlib.Path(__file__).parent
 SOURCE = HERE.parent / "codex" / "server1-u5.jsonl"
-QUESTIONS = HERE.parent / "codex" / "server3-questions.jsonl"
-CHOSEN = HERE.parent / "codex" / "server4-chosen-killed.jsonl"
-RESUMED = HERE.parent / "codex" / "server5-resumed.jsonl"
-PLANNED = HERE.parent / "codex" / "server8-plan-effort.jsonl"
-# The turn `s2` step 12 killed the app-server in; the e2e test sends it.
-COUNT = "Count from 1 to 300, one number per line."
 
-# `s2`'s turns on its first thread, by step: 1 approve, 2 decline, 3
-# interrupt at start, pong, 3c interrupt mid-stream, pong, 3d interrupt at
-# send, pong, 3b interrupt with an approval open.
-APPROVE, DECLINE, AT_START, _, MID_STREAM, PONG, _, _, WITHDRAW = range(9)
-# `s2`'s third process: 7 a question, 8 a command accepted for the session,
-# the same command again with no request, 9 a question withdrawn by an
-# interrupt.
-QUESTION, FOR_SESSION, AGAIN, QUESTION_WITHDRAWN = range(4)
+# `s2`'s first two turns on its first thread: 1 approve, 2 decline.
+APPROVE, DECLINE = range(2)
 
 
 def wait(match):
     return json.dumps({"fake": "await", "match": match})
-
-
-def interrupt(turn=None):
-    params = {} if turn is None else {"params": {"turnId": turn}}
-    return wait({"method": "turn/interrupt", **params})
 
 
 def segments(lines):
@@ -62,15 +42,13 @@ def segments(lines):
     return lines[: starts[0]], [lines[s:e] for s, e in zip(cuts, cuts[1:])]
 
 
-def answered(turn, result):
-    """Waits for our answer, a decision or a result to match, before Codex
-    resolves the request."""
-    result = {"decision": result} if isinstance(result, str) else result
+def answered(turn, decision):
+    """Waits for our decision before Codex resolves the request."""
     out = []
     for line in turn:
         msg = json.loads(line)
         if msg.get("method") == "serverRequest/resolved":
-            out.append(wait({"id": msg["params"]["requestId"], "result": result}))
+            out.append(wait({"id": msg["params"]["requestId"], "result": {"decision": decision}}))
         out.append(line)
     return out
 
@@ -79,24 +57,6 @@ def until_asked(turn):
     """The turn up to and including its approval request, and the rest."""
     asked = next(i for i, line in enumerate(turn) if 'requestApproval"' in line)
     return turn[: asked + 1], turn[asked + 1 :]
-
-
-def mid_stream(turn):
-    first = next(i for i, line in enumerate(turn) if '"item/agentMessage/delta"' in line)
-    return turn[: first + 1] + [interrupt()] + turn[first + 1 :]
-
-
-def held(turn):
-    started = next(i for i, line in enumerate(turn) if '"turn/started"' in line)
-    turn_id = json.loads(turn[started])["params"]["turn"]["id"]
-    release = json.dumps({"fake": "release", "file": "release"})
-    return turn[:started] + [release, turn[started], interrupt(turn_id)] + turn[started + 1 :]
-
-
-def withdrawn(turn):
-    resolved = next(i for i, line in enumerate(turn) if '"serverRequest/resolved"' in line)
-    release = json.dumps({"fake": "release", "file": "release"})
-    return turn[:resolved] + [interrupt(), release] + turn[resolved:]
 
 
 def renumbered(lines):
@@ -123,99 +83,27 @@ def renumbered(lines):
     return out
 
 
-def on_thread(lines, old, new):
-    return [line.replace(old, new) for line in lines]
-
-
 def thread_of(start):
     return json.loads(start[0])["result"]["thread"]["id"]
 
 
-def split(source, listed=False):
-    """The head, the thread starts and the turns of one `s2` process. The
-    head keeps the `model/list` answer only if `listed`: `conductord`
-    asks for it as it starts, the daemon tests' hosts never do."""
-    before, parts = segments(source.read_text().splitlines())
-    head = [
-        line
-        for line in before
-        if "userAgent" in line or (listed and '"data":' in line) or "result" not in json.loads(line)
-    ]
-    threads = [p for p in parts if "thread" in json.loads(p[0])["result"]]
-    turns = [p for p in parts if "turn" in json.loads(p[0])["result"]]
-    return head, threads, turns
-
-
-head, threads, turns = split(SOURCE)
-listed_head, _, _ = split(SOURCE, listed=True)
+before, parts = segments(SOURCE.read_text().splitlines())
+head = [line for line in before if "userAgent" in line or '"data":' in line or "result" not in json.loads(line)]
+threads = [p for p in parts if "thread" in json.loads(p[0])["result"]]
+turns = [p for p in parts if "turn" in json.loads(p[0])["result"]]
 first, second = threads[0], threads[1]
-q_head, q_threads, q_turns = split(QUESTIONS)
-q_first = q_threads[0]
-# `s2`'s fourth process: 11 a turn that reasons, then the turn it killed;
-# its fifth: 12 the thread resumed.
-c_head, c_threads, c_turns = split(CHOSEN)
-# `s2`'s eighth process: 14 a turn that keeps a plan, 15 a turn started at
-# `high`, which Codex reports with `thread/settings/updated` before its answer.
-p_head, p_threads, p_turns = split(PLANNED)
-applied = p_turns[0][-1]
-assert json.loads(applied)["method"] == "thread/settings/updated"
-r_head, r_threads, r_turns = split(RESUMED)
-killed = [
-    wait({"method": "turn/start", "params": {"input": [{"type": "text", "text": COUNT}]}}),
-    json.dumps({"fake": "exit"}),
-]
 a, b = thread_of(first), thread_of(second)
 
 approve_asked, approve_rest = until_asked(turns[APPROVE])
-decline_asked, decline_rest = until_asked(on_thread(turns[DECLINE], a, b))
+decline_asked, decline_rest = until_asked([line.replace(a, b) for line in turns[DECLINE]])
 
-RECORDINGS = {
-    "codex-two-threads.jsonl": head
+recording = (
+    head
     + first
     + second
     + approve_asked
     + decline_asked
     + answered(approve_rest, "accept")
-    + answered(decline_rest, "decline"),
-    # The same for the browser test's `conductord`, which lists the models.
-    "codex-two-threads-listed.jsonl": listed_head
-    + first
-    + second
-    + approve_asked
-    + decline_asked
-    + answered(approve_rest, "accept")
-    + answered(decline_rest, "decline"),
-    "codex-interrupt.jsonl": head + first + mid_stream(turns[MID_STREAM]) + turns[PONG],
-    "codex-held-interrupt.jsonl": head + first + held(turns[AT_START]),
-    "codex-withdraw.jsonl": head + first + withdrawn(turns[WITHDRAW]) + turns[PONG],
-    # The stand-in stops reading once both threads have started, then exits.
-    "codex-exit.jsonl": [json.dumps({"fake": "hang_up", "after": 4})] + head + first + second,
-    "codex-question.jsonl": q_head
-    + q_first
-    + answered(q_turns[QUESTION], {"answers": {"color": {"answers": ["Blue"]}}}),
-    "codex-for-session.jsonl": q_head
-    + q_first
-    + answered(q_turns[FOR_SESSION], "acceptForSession")
-    + q_turns[AGAIN],
-    "codex-question-withdraw.jsonl": q_head + q_first + withdrawn(q_turns[QUESTION_WITHDRAWN]),
-    "codex-plan-effort.jsonl": p_head
-    + p_threads[0]
-    + p_turns[0][:-1]
-    + [wait({"method": "turn/start", "params": {"effort": "high"}}), applied]
-    + p_turns[1],
-    # The stand-in dies as the next turn starts, before it answers `turn/start`.
-    "codex-killed.jsonl": c_head + c_threads[0] + c_turns[0] + killed,
-    # The live kill: after `turn/started`, with the recorded deltas sent.
-    "codex-killed-mid-turn.jsonl": c_head
-    + c_threads[0]
-    + c_turns[0]
-    + c_turns[1]
-    + [json.dumps({"fake": "exit"})],
-    "codex-resumed.jsonl": r_head + r_threads[0] + r_turns[0],
-    # The same on a server the host lists the models of first, as it does
-    # after a credential change.
-    "codex-resumed-listed.jsonl": listed_head + r_threads[0] + r_turns[0],
-}
-
-for name, lines in RECORDINGS.items():
-    (HERE / name).write_text("\n".join(renumbered(lines)) + "\n")
+    + answered(decline_rest, "decline")
+)
+(HERE / "codex-two-threads-listed.jsonl").write_text("\n".join(renumbered(recording)) + "\n")

@@ -9,13 +9,6 @@ import tempfile
 ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = ROOT / "fixtures"
 BUILDERS = ("build-claude.py", "build-codex.py")
-MANUAL_RECORDINGS = {
-    "claude-feed.jsonl",
-    "claude-refresh-exit.jsonl",
-    "claude-worktrees-continued.jsonl",
-    "claude-worktrees.jsonl",
-}
-
 
 def main():
     target = ROOT / "target"
@@ -29,8 +22,7 @@ def main():
             script = output / builder
             shutil.copyfile(FIXTURES / "e2e" / builder, script)
             subprocess.run([sys.executable, "-I", script], check=True)
-        committed = {file.name: file for file in (FIXTURES / "e2e").glob("*.jsonl")
-                     if file.name not in MANUAL_RECORDINGS}
+        committed = {file.name: file for file in (FIXTURES / "e2e").glob("*.jsonl")}
         recordings = {file.name: file for file in output.glob("*.jsonl")}
         differences = committed.keys() ^ recordings.keys()
         differences.update(name for name in committed.keys() & recordings.keys()

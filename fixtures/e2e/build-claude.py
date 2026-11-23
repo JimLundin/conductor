@@ -1,16 +1,13 @@
-"""Builds the gated Claude e2e recordings from the live `s1` recordings.
+"""Builds the gated Claude recordings the `claude-cli` replay tests play, from
+the live `s1` recordings.
 
 Run from anywhere: `python3 -I fixtures/e2e/build-claude.py`. Markers go in
 by rule, so every gate matches what a session writes:
 
 - the `initialize` response waits for a `control_request`;
-- each turn's `system/init` waits for a user message, and in the recordings
-  listed in `RELEASED` also for the test's `release` file;
+- each turn's `system/init` waits for a user message;
 - a `can_use_tool` request is followed by a wait for our `control_response`;
-- any later `control_response` (an interrupt's ack) waits for a `control_request`;
-- in the recordings listed in `WITHDRAWN`, nothing waits for an answer to
-  `can_use_tool`, and the `control_cancel_request` waits for the interrupt
-  in place of the ack after it.
+- any later `control_response` (an interrupt's ack) waits for a `control_request`.
 
 Acks are renumbered `req_1`, `req_2`, ... in order, because the session that
 replays a recording numbers its control requests from 1.
@@ -22,51 +19,14 @@ import re
 
 HERE = pathlib.Path(__file__).parent
 SESSION1 = HERE.parent / "claude" / "session1-approve-deny-interrupt.jsonl"
-SESSION3 = HERE.parent / "claude" / "session3-questions.jsonl"
-PROBE = HERE.parent / "claude" / "probe-thinking.jsonl"
-SUBAGENT = HERE.parent / "claude" / "probe-subagent-todo.jsonl"
-SESSION4 = HERE.parent / "claude" / "session4-chosen-killed.jsonl"
-SESSION5 = HERE.parent / "claude" / "session5-resumed.jsonl"
-SESSION6 = HERE.parent / "claude" / "session6-resume-missing.jsonl"
-SESSION9 = HERE.parent / "claude" / "session9-checklist-effort.jsonl"
 
 # The turns of `s1` session 1 by step: 1 approve, 2 deny, 3 interrupt at
 # start, pong, 3c interrupt mid-stream, pong, 3d interrupt at send, pong,
-# 3b interrupt with a permission open. Session 3: 7 a question, 8 a command
-# approved for the session, the same command again with no request, 9 a
-# question withdrawn by an interrupt. The probe: one turn with summarized
-# thinking. The subagent probe: one turn in which the main agent runs a
-# subagent that calls TodoWrite twice. Session 4: 12 a turn that reasons
-# (its thinking empty, through the owner's gateway); session 5: 13 the same
-# session resumed.
+# 3b interrupt with a permission open.
 RECORDINGS = {
     "claude-approve.jsonl": (SESSION1, [0]),
     "claude-deny-interrupt.jsonl": (SESSION1, [1, 4, 5]),
-    "claude-held-interrupt.jsonl": (SESSION1, [2]),
-    "claude-hang-up.jsonl": (SESSION1, []),
-    "claude-withdraw.jsonl": (SESSION1, [8]),
-    "claude-question.jsonl": (SESSION3, [0]),
-    "claude-for-session.jsonl": (SESSION3, [1, 2]),
-    "claude-question-withdraw.jsonl": (SESSION3, [3]),
-    "claude-reasoning.jsonl": (PROBE, [0]),
-    "claude-subagent.jsonl": (SUBAGENT, [0]),
-    "claude-killed.jsonl": (SESSION4, [0]),
-    "claude-resumed.jsonl": (SESSION5, [0]),
 }
-
-# After its turns, the stand-in reads the next message and dies, as a CLI
-# killed mid-turn does.
-KILLED = {"claude-killed.jsonl"}
-
-# The turn starts only once the test has sent its interrupt, so the session
-# must hold it until `init` (docs/architecture.md §5.1).
-RELEASED = {"claude-held-interrupt.jsonl"}
-
-# The stand-in stops reading after `initialize`, so the first message fails.
-HUNG_UP = {"claude-hang-up.jsonl"}
-
-# The test never answers the request. Its interrupt makes the CLI withdraw it.
-WITHDRAWN = {"claude-withdraw.jsonl", "claude-question-withdraw.jsonl"}
 
 
 def wait(match):
@@ -76,14 +36,6 @@ def wait(match):
 def permission_response(msg, recording):
     body = msg["request"]
     verdict = {"behavior": "allow", "updatedInput": body["input"]}
-    if recording == "claude-question.jsonl":
-        question = body["input"]["questions"][0]["question"]
-        verdict["updatedInput"] = {**body["input"], "answers": {question: "Blue"}}
-    if recording == "claude-for-session.jsonl":
-        verdict["updatedPermissions"] = [
-            {"type": "addRules", "behavior": "allow", "destination": "session",
-             "rules": [{"toolName": "Bash", "ruleContent": "touch t1.txt"}]}
-        ]
     if recording == "claude-deny-interrupt.jsonl":
         verdict = {"behavior": "deny"}
     return {
@@ -96,18 +48,15 @@ def permission_response(msg, recording):
     }
 
 
-def gated(line, released, withdrawn, recording=None):
+def gated(line, recording=None):
     msg = json.loads(line)
     kind = (msg.get("type"), msg.get("subtype"))
-    if kind == ("control_cancel_request", None):
-        return [wait({"type": "control_request"}), line]
     if kind == ("control_response", None):
-        return [line] if withdrawn else [wait({"type": "control_request"}), line]
+        return [wait({"type": "control_request"}), line]
     if kind == ("system", "init"):
-        release = [json.dumps({"fake": "release", "file": "release"})] if released else []
-        return [wait({"type": "user"})] + release + [line]
+        return [wait({"type": "user"}), line]
     if kind == ("control_request", None) and msg["request"]["subtype"] == "can_use_tool":
-        return [line] if withdrawn else [line, wait(permission_response(msg, recording))]
+        return [line, wait(permission_response(msg, recording))]
     return [line]
 
 
@@ -127,32 +76,6 @@ def renumbered(lines):
 for name, (source, picked) in RECORDINGS.items():
     initialize, played = turns(source.read_text().splitlines())
     lines = renumbered([initialize] + [line for t in picked for line in played[t]])
-    hang_up = [json.dumps({"fake": "hang_up", "after": 1})] if name in HUNG_UP else []
-    turn = [m for line in lines[1:] for m in gated(line, name in RELEASED, name in WITHDRAWN, name)]
-    killed = [wait({"type": "user"}), json.dumps({"fake": "exit"})] if name in KILLED else []
-    out = hang_up + gated(lines[0], False, False) + turn + killed
+    turn = [m for line in lines[1:] for m in gated(line, name)]
+    out = gated(lines[0]) + turn
     (HERE / name).write_text("\n".join(out) + "\n")
-
-# A `--resume` whose transcript is gone: the CLI prints its one `result`,
-# writes the same reason to stderr and exits 1, before `initialize`.
-refused = SESSION6.read_text().splitlines()
-reason = json.loads(refused[-1])["errors"][-1]
-(HERE / "claude-resume-missing.jsonl").write_text(
-    "\n".join(refused + [json.dumps({"fake": "fail", "stderr": reason, "status": 1})]) + "\n"
-)
-
-# `s1` steps 15 and 16: a turn that keeps a checklist with `TodoWrite`, then
-# `apply_flag_settings`, answered with no `response`, which the session sends
-# right before the next message, and that turn. `s1` also asked
-# `get_settings` around it, which a session never does.
-recorded = SESSION9.read_text().splitlines()
-initialize, played = turns(recorded)
-applied = next(
-    line
-    for line in recorded
-    if json.loads(line).get("type") == "control_response" and "response" not in json.loads(line)["response"]
-)
-lines = renumbered([initialize] + played[0] + [applied] + played[1])
-(HERE / "claude-checklist-effort.jsonl").write_text(
-    "\n".join(m for line in lines for m in gated(line, False, False)) + "\n"
-)
