@@ -615,13 +615,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "client"
-version = "0.1.0"
-dependencies = [
- "proto",
-]
-
-[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -889,7 +882,6 @@ dependencies = [
  "cap-std",
  "chacha20poly1305",
  "claude-cli",
- "client",
  "codex-cli",
  "data-encoding",
  "dbus-secret-service",
@@ -2463,7 +2455,6 @@ name = "net"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "client",
  "getrandom 0.4.3",
  "iroh",
  "iroh-base",

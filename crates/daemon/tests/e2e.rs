@@ -12,18 +12,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use client::host_fold::HostFold;
-use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, ToolState,
-};
-use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
 mod credential_sign_in;
 mod disk;
 mod raw;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
-use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
+use net::Target;
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
     ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
@@ -79,23 +74,8 @@ impl Fixture {
         Ok(self.host.shutdown().await?)
     }
 
-    async fn shutdown_with_client(self, link: HostLink) -> Fallible {
-        link.stop().await?;
-        self.shutdown().await
-    }
 
-    async fn connect(&self) -> Fallible<(HostLink, Updates)> {
-        let (link, mut updates) = link(self.target.clone(), None).await?;
-        until_live(&mut updates).await?;
-        Ok((link, updates))
-    }
 
-    async fn history(&self) -> Fallible<Vec<Event>> {
-        let (late, mut updates) = link(self.target.clone(), None).await?;
-        let events = replayed(until_live(&mut updates).await?);
-        late.stop().await?;
-        Ok(events)
-    }
 }
 
 fn fake_claude() -> PathBuf {
@@ -346,69 +326,11 @@ async fn durable_endpoint(
         .await?)
 }
 
-struct Updates {
-    incoming: mpsc::Receiver<Update>,
-    host: HostFold,
-}
 
-async fn spawn_link(
-    target: Target,
-    options: LinkOptions,
-) -> Fallible<(HostLink, Updates)> {
-    let (link, incoming) = HostLink::spawn(target, options).await?;
-    Ok((
-        link,
-        Updates {
-            incoming,
-            host: HostFold::default(),
-        },
-    ))
-}
 
-async fn link(
-    target: Target,
-    resume: Option<Cursor>,
-) -> Fallible<(HostLink, Updates)> {
-    let options = LinkOptions {
-        resume,
-        network: Network::Local,
-        ..LinkOptions::new(ClientName(String::from("test-client")))
-    };
-    spawn_link(target, options).await
-}
 
-async fn next(updates: &mut Updates) -> Fallible<Update> {
-    let update = tokio::time::timeout(STEP, updates.incoming.recv())
-        .await
-        .map_err(|_| "no update within the step timeout")?
-        .ok_or("the link stopped")?;
-    updates.host.apply(update.clone());
-    Ok(update)
-}
 
-/// The updates before the link went live.
-async fn until_live(updates: &mut Updates) -> Fallible<Vec<Update>> {
-    let mut seen = Vec::new();
-    loop {
-        match next(updates).await? {
-            Update::Status(Status {
-                state: LinkState::Live,
-                ..
-            }) => break Ok(seen),
-            update => seen.push(update),
-        }
-    }
-}
 
-fn states(updates: Vec<Update>) -> Vec<LinkState> {
-    updates
-        .into_iter()
-        .filter_map(|update| match update {
-            Update::Status(status) => Some(status.state),
-            _ => None,
-        })
-        .collect()
-}
 
 /// The events up to and including `last`.
 async fn events_through(
@@ -428,15 +350,6 @@ fn legacy_created(instance: InstanceId, directory: &Path) -> EventKind {
     }
 }
 
-fn replayed(updates: Vec<Update>) -> Vec<Event> {
-    updates
-        .into_iter()
-        .filter_map(|update| match update {
-            Update::Feed(Feed::Event(event)) => Some(event),
-            _ => None,
-        })
-        .collect()
-}
 
 fn delta(text: &str) -> EventKind {
     EventKind::AssistantDelta {
@@ -448,9 +361,6 @@ fn seqs(events: &[Event]) -> Vec<HostSeq> {
     events.iter().map(|event| event.seq).collect()
 }
 
-fn fold(events: Vec<Event>) -> HostView {
-    events.into_iter().fold(HostView::empty(), HostView::apply)
-}
 
 /// One command and the host's literal answer.
 struct Case {
@@ -923,18 +833,6 @@ const fn reached(until: &Until, kind: &EventKind) -> bool {
     )
 }
 
-/// The kinds of the events the link receives, through the first that
-/// reaches `until`, for tests that start one session.
-async fn kinds_until(
-    updates: &mut Updates,
-    until: Until,
-) -> Fallible<Vec<EventKind>> {
-    Ok(conversation_events_until(updates, until)
-        .await?
-        .into_iter()
-        .map(|event| event.kind)
-        .collect())
-}
 
 /// The kinds of the conversation events the raw client receives, through
 /// the first that reaches `until`, for tests that start one session.
@@ -1031,16 +929,6 @@ fn raw_events(frames: Vec<Received<Feed>>) -> Vec<Event> {
         .collect()
 }
 
-/// The events through the first that reaches `until`, without the workspace
-/// and snapshot metadata, which have tests of their own.
-async fn conversation_events_until(
-    updates: &mut Updates,
-    until: Until,
-) -> Fallible<Vec<Event>> {
-    let mut events = events_until(updates, until).await?;
-    events.retain(|event| conversation_event(&event.kind));
-    Ok(events)
-}
 
 const fn conversation_event(kind: &EventKind) -> bool {
     !matches!(
@@ -1051,29 +939,7 @@ const fn conversation_event(kind: &EventKind) -> bool {
     )
 }
 
-/// The events the link receives, through the first that reaches `until`.
-async fn events_until(
-    updates: &mut Updates,
-    until: Until,
-) -> Fallible<Vec<Event>> {
-    read_events(updates, |event| reached(&until, &event.kind)).await
-}
 
-async fn read_events(
-    updates: &mut Updates,
-    done: impl Fn(&Event) -> bool,
-) -> Fallible<Vec<Event>> {
-    let mut events = Vec::new();
-    loop {
-        if let Update::Feed(Feed::Event(event)) = next(updates).await? {
-            let reached = done(&event);
-            events.push(event);
-            if reached {
-                return Ok(events);
-            }
-        }
-    }
-}
 
 /// The kinds of `session`'s events.
 fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
@@ -1085,23 +951,7 @@ fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
         .collect()
 }
 
-async fn resume_to_ready(
-    link: &HostLink,
-    updates: &mut Updates,
-    session: SessionId,
-) -> Fallible {
-    accepted(link, continued(session)).await?;
-    assert_eq!(
-        kinds_until(updates, Until::Ready).await?,
-        [EventKind::SessionReady]
-    );
-    Ok(())
-}
 
-async fn accepted(link: &HostLink, body: CommandBody) -> Fallible {
-    assert_eq!(send(link, body).await?, CommandResult::Accepted);
-    Ok(())
-}
 
 /// An issue command is answered with the issue it wrote and no warning.
 async fn wrote(client: &RawClient, body: CommandBody) -> Fallible {
@@ -1112,11 +962,6 @@ async fn wrote(client: &RawClient, body: CommandBody) -> Fallible {
     Ok(())
 }
 
-async fn send(link: &HostLink, body: CommandBody) -> Fallible<CommandResult> {
-    Ok(tokio::time::timeout(STEP, link.send(body))
-        .await
-        .map_err(|_| "no command result within the step timeout")??)
-}
 
 async fn configured(
     client: &RawClient,
@@ -1135,9 +980,6 @@ async fn current_offers(target: &Target) -> Fallible<Instances> {
     offers
 }
 
-async fn launch(link: &HostLink, body: CommandBody) -> Fallible<SessionId> {
-    started_session(&send(link, body).await?)
-}
 
 fn started_session(result: &CommandResult) -> Fallible<SessionId> {
     match result {
@@ -1254,11 +1096,6 @@ fn decided(
     ])
 }
 
-fn items(view: &HostView, session: SessionId) -> Vec<Item> {
-    view.sessions
-        .get(&session)
-        .map_or_else(Vec::new, |found| found.items.clone())
-}
 
 fn done(text: &str) -> Item {
     Item::Reply {
@@ -2466,43 +2303,6 @@ async fn from_host(socket: &UdpSocket) -> io::Result<Datagram> {
     Ok(Datagram::FromHost(bytes))
 }
 
-#[tokio::test]
-async fn a_stalled_dial_goes_live_through_a_fresh_endpoint_and_stops_cleanly()
--> Fallible {
-    let (log_path, _logging) = capture_log("stalled-dial")?;
-    let fx = host().await?;
-    let hop = Hop::spawn(fx.address()?).await?;
-    let target = Target {
-        addr: EndpointAddr::new(fx.target.addr.id).with_ip_addr(hop),
-        ..fx.target.clone()
-    };
-    let (link, mut updates) = link(target, None).await?;
-
-    // No deadline: only the hedge can take the link live, and STEP bounds each update.
-    let before_live = until_live(&mut updates).await?;
-    assert_eq!(
-        states(before_live),
-        [
-            LinkState::Connecting,
-            LinkState::Authenticating,
-            LinkState::CatchingUp
-        ]
-    );
-    link.stop().await?;
-    drop(updates);
-    fx.shutdown().await?;
-
-    let logged = captured(&log_path)?;
-    assert_eq!(
-        (
-            logged.matches("hedged dial connected").count(),
-            logged.matches(UNGRACEFUL).count()
-        ),
-        (1, 0),
-        "{logged}"
-    );
-    Ok(())
-}
 
 /// Sends this thread's logs, at debug and above, to a file named after
 /// `test`. A `tokio::test` runs on one thread, so they include the host's.

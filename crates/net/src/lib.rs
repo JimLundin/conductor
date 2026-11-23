@@ -1,19 +1,13 @@
 //! `proto` on iroh: frame I/O on streams, a ticket as an address to dial,
-//! and the client's link to a host.
+//! and where a host is.
 
-mod link;
 pub mod platform;
 mod relay;
 pub mod wire;
 
 use iroh::{EndpointAddr, EndpointId, RelayUrl};
-use proto::{Ticket, TicketError};
+use proto::{AuthToken, Ticket, TicketError};
 
-pub use link::{
-    HostLink, LinkOptions, LinkState, SendError, StartError, Status, Target,
-    Update,
-};
-pub use platform::Network;
 pub use relay::without_root_dot;
 
 /// Parses ticket text and checks that it names a host that can be dialled.
@@ -87,5 +81,24 @@ mod tests {
             parse(&ticket(off_curve, "https://r.example/").to_text()),
             Err(TicketError::HostId)
         );
+    }
+}
+
+/// Where a host is and the secret it expects in `Hello`.
+#[derive(Debug, Clone)]
+pub struct Target {
+    pub addr: EndpointAddr,
+    pub token: AuthToken,
+}
+
+impl Target {
+    /// # Errors
+    ///
+    /// The [`TicketError`] of [`address`].
+    pub fn of_ticket(ticket: &Ticket) -> Result<Self, TicketError> {
+        Ok(Self {
+            addr: address(ticket)?,
+            token: ticket.token,
+        })
     }
 }
