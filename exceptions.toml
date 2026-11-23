@@ -3,42 +3,12 @@
 [[exception]]
 path = "Cargo.toml"
 rule = "drift:lints.clippy.multiple_crate_versions"
-reason = "iroh and dioxus pin different majors of windows-sys, netlink, thiserror, syn and others; only upstream can unify them"
+reason = "iroh's dependencies pin different majors of rand, digest, thiserror, syn, windows-sys and others; only upstream can unify them"
 
 [[exception]]
 path = "crates/proto/src/frame.rs"
 rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
-
-[[exception]]
-path = "crates/app/src/*.rs"
-rule = "clippy::disallowed_types"
-reason = "rsx! caches each template in a OnceLock static"
-
-[[exception]]
-path = "crates/app/src/*.rs"
-rule = "clippy::empty_enums"
-reason = "derive(Props), which #[component] puts on each props struct, declares empty error enums for missing and repeated props"
-
-[[exception]]
-path = "crates/app/src/*.rs"
-rule = "clippy::shadow_reuse"
-reason = "derive(Props), which #[component] puts on each props struct, rebinds every prop in its builder; an expect on the component can't reach those sibling impls"
-
-[[exception]]
-path = "crates/app/src/*.rs"
-rule = "clippy::useless_format"
-reason = "rsx! expands each \"{text}\" node to format!"
-
-[[exception]]
-path = "crates/app/src/shell.rs"
-rule = "clippy::volatile_composites"
-reason = "asset! reads its link section with read_volatile"
-
-[[exception]]
-path = "crates/app/src/shell.rs"
-rule = "clippy::future_not_send"
-reason = "the link tasks run on the single-threaded UI executor and hold Dioxus signals and an Rc'd link"
 
 # Debt: shell code that still makes decisions. Each entry goes as its
 # decisions move into a core crate.
@@ -109,25 +79,5 @@ reason = "boxes recursive or large values, which predates the plain-values rule"
 
 [[exception]]
 path = "crates/proto/src/lib.rs"
-rule = "box"
-reason = "boxes recursive or large values, which predates the plain-values rule"
-
-[[exception]]
-path = "crates/ui/src/lib.rs"
-rule = "box"
-reason = "boxes recursive or large values, which predates the plain-values rule"
-
-[[exception]]
-path = "crates/ui/src/prelude.rs"
-rule = "box"
-reason = "boxes recursive or large values, which predates the plain-values rule"
-
-[[exception]]
-path = "crates/ui/src/snapshots.rs"
-rule = "box"
-reason = "snapshot previews share their patch text through Rc, which predates the plain-values rule"
-
-[[exception]]
-path = "crates/ui/src/state.rs"
 rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"

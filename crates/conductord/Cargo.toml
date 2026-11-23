@@ -22,9 +22,5 @@ runtime = { path = "../runtime" }
 tokio.workspace = true
 tracing-subscriber.workspace = true
 
-[dev-dependencies]
-# The worktrees browser scenario's seed, a client of the fake host.
-net = { path = "../net" }
-
 [lints]
 workspace = true

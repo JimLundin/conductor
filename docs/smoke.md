@@ -5,8 +5,8 @@ minutes and costs a few cents of API use. Tick each box, and write anything
 odd under **Findings** with the time it happened, so it can be matched to the
 host log.
 
-The automated checks cover the protocol paths (`tools/check.sh`,
-`tools/live-host.sh`, `tools/e2e-browser.sh`). This list covers what they
+The automated checks cover the protocol paths (`tools/check.sh`). This
+list covers what they
 can't: a real phone, its keyboard and Home Screen app, two CLIs running at
 once, and how the whole thing feels.
 
@@ -172,6 +172,3 @@ it to reach Live.
    the answer after it catches up.
 4. On a fresh test installation, deny the prompt and check that Conductor
    reports the denial and still opens sessions.
-
-The worker fixtures run with `node --test tools/test-push.mjs` and send no
-network notifications.

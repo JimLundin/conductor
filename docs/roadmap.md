@@ -8,9 +8,7 @@ What is built and what comes next. Update it in the commit that changes it.
   against the retained product in [the consolidation assessment](reviews/consolidation.md).
   Their completed cuts remain in place. Remaining cleanup borrows question
   and credential drafts, uses the log's command kind for routing, encodes
-  Codex calls without duplicate parameter records and uses the provider's
-  parser in the headless client. The browser lint suite also checks `ui`
-  without a separate lint-suppression script.
+  Codex calls without duplicate parameter records.
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
@@ -44,9 +42,9 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
-  `agents`, `claude`, `codex`, `host`, `home` and `ui`; `net`, `daemon`,
-  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`,
-  `home-files` and `app` declare themselves the shell.
+  `agents`, `claude`, `codex`, `host` and `home`; `net`, `daemon`,
+  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`
+  and `home-files` declare themselves the shell.
   `client` holds the host link's state machine, and `host` holds
   workspace decisions and checklists. The shell still makes about a
   quarter of the decisions (Next, item 1).
@@ -98,7 +96,7 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Managed CLIs** (#1) (§6.2). `conductord` installs the pinned Claude
   Code and Codex into its data dir, checks their hashes and runs only those,
   with private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off. Gateway
-  credentials run them (`tools/live-host.sh --register`). Subscription
+  credentials run them. Subscription
   sign-in from the app is built (below); `conductord login <instance>`
   remains as the host-terminal fallback.
 
@@ -151,8 +149,8 @@ What is built and what comes next. Update it in the commit that changes it.
 - **Client.** `HostLink` per host: reconnect with backoff, a hedged dial,
   catch-up from the cursor. `HostView` folds events into what the UI shows.
 - **App.** One Dioxus web app, installed as an app on the desktop and the
-  iPhone: session list, new session, session pane, phone layout. Browser e2e
-  on the real daemon with fake CLIs. See [verification boundaries](verification.md).
+  iPhone: session list, new session, session pane, phone layout. Removed,
+  with its browser e2e, for the TypeScript app (ADR 0001).
 - **Several hosts in one app** (home step 2, architecture §8). The app keeps
   every paired host in local storage, a `conductor.host.<endpoint>` record
   and a `conductor.name.<endpoint>` name per host, and a live link to each
@@ -245,8 +243,7 @@ What is built and what comes next. Update it in the commit that changes it.
   closed session's CLI again with the provider's resume in the private
   home. Claude's reasoning text needs experimental betas, which the
   owner's gateway refuses, so through it Claude shows none (Claude
-  `PROTOCOL.md`). *Try:* restart a session's CLI and continue it
-  (`tools/live-host.sh` checks it as `continue=pass`).
+  `PROTOCOL.md`). *Try:* restart a session's CLI and continue it.
 - **Sign in from the app** (#12, §6.3). Gateway credentials, direct
   Anthropic and OpenAI API keys and a Claude setup token from the
   credentials screen, encrypted in the host's credential store (macOS

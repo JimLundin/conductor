@@ -12,7 +12,7 @@ several of your machines, with no server of ours in the path.
 
 - **Hosts** run `conductord`, which drives the `claude` and `codex` CLIs in
   their native protocols and keeps each host's event log.
-- **The client is one web app** (Dioxus compiled to WebAssembly), served as
+- **The client is one web app** (TypeScript, ADR 0001), served as
   static files from GitHub Pages and installed as an app: Chrome, Edge or
   Safari's Add to Dock on the desktop, Add to Home Screen on the iPhone.
   There is no native client and no Apple Developer account.
@@ -41,7 +41,7 @@ preview, cloud workers, multi-user use.
 | # | Decision | Why |
 |---|---|---|
 | D1 | Rust for the daemon, the client core and the UI | One set of types end to end. The agents' SDKs are thin wrappers over stdio protocols we speak directly. |
-| D2 | One Dioxus web app for every device | Dioxus renders real HTML, which mobile Safari needs for keyboard, scrolling and selection. An installed web app behaves like a native one on the desktop and the iPhone, so there is one build and one test target. A thin native shell can come later if a need appears (tray, global hotkey). |
+| D2 | One web app for every device (Dioxus at first; TypeScript since ADR 0001) | Dioxus renders real HTML, which mobile Safari needs for keyboard, scrolling and selection. An installed web app behaves like a native one on the desktop and the iPhone, so there is one build and one test target. A thin native shell can come later if a need appears (tray, global hotkey). |
 | D3 | iroh 1.x through n0's public relays; the relay map is one setting | Connections are authenticated and encrypted and dialed by public key. A browser can't send UDP, so in a browser every iroh connection is relayed. |
 | D4 | Each host is the only source of truth for its own sessions | No replication between hosts. Clients connect to each host and merge. Catching up is "events after seq N". |
 | D5 | Trust comes from a fleet root key that signs device certificates (§6) | Hosts store only the root's public key, so pairing a device once gives it access to every host. |
@@ -1039,8 +1039,8 @@ plugin describes the kinds it takes in its `ProviderInfo`, which
 `Welcome.catalog` carries: a `CredentialForm { kind, label, fields,
 account }`, whose `account` names the field that is the account (§5.2), and
 each `Field { id, label, kind, placeholder, required }` of kind `Text`,
-`Url` or `Secret`. The app draws each form from that description (`ui`
-builds it, knowing no provider), and a credential travels and is stored as
+`Url` or `Secret`. The app draws each form from that description, knowing no
+provider, and a credential travels and is stored as
 `Credential { kind, values }`, its form's values by field id;
 `SetCredential` names the provider, and the account field's value the
 instance.
@@ -1050,8 +1050,8 @@ empty, and a `Url` field is plain `http(s)://host/path`. The provider's
 core reads its values into its own type (`claude::ClaudeCredential`,
 `codex::CodexCredential`) and decides what they become: environment,
 config edits and the default model. Another kind is another form in the
-provider's core, and the daemon, `host`, `proto`, `client`, `ui` and the
-app don't change.
+provider's core, and the daemon, `host`, `proto`, `client` and the app
+don't change.
 
 #### Built first: gateway credentials
 
@@ -1076,9 +1076,8 @@ The owner reaches both models through gateways, so their forms remain first in t
   the host log "the CLI's commands can read the provider credential; install
   bubblewrap and socat to sandbox them" with `provider=Claude`
   at start and when the gateway is set. The base URL reaches commands either way; it is an address, not a
-  secret. The live canary in `tools/live-host.sh` has the agent count the
-  token in a command's environment: 0 with the sandbox, and 1 without it,
-  reported as `leak=unprotected` (observed both). A change applies to the
+  secret. A live canary had the agent count the token in a command's
+  environment: 0 with the sandbox, and 1 without it (observed both). A change applies to the
   next session. Clearing a Claude credential
   doesn't stop the sessions already running on it, unlike Codex below; to
   cut off a leaked token, revoke it at the gateway.
@@ -1216,7 +1215,7 @@ Built: the per-host subscription sign-in of each provider, on one host.
    the CLI reads back on stdin (`paste`); and what a failure the CLI prints
    means (`Failure { says, means }`). It exits 0 when it succeeds. The host
    strips terminal colours and keeps the output only until the link is
-   there. The daemon, `host`, `proto`, `client`, `ui` and the app read only
+   there. The daemon, `host`, `proto`, `client` and the app read only
    that description.
 3. **Claude, per-host.** `claude auth login --claudeai` on pipes prints
    "Opening browser to sign in…", then "If the browser didn't open, visit:
@@ -1648,67 +1647,14 @@ record scope changes.
   when to offer the composer, Interrupt, Continue and Finish. It also
   supplies the status for the pane and list and the reason for a closed
   footer. The UI maps these decisions to text and markup.
-- Both compile to wasm32 for the app. A native build exists only as
-  the harness for the daemon's e2e tests and the headless example.
-  `tools/live-host.sh` runs the example from `net` against a live host.
-  The example applies link updates to `HostFold` and uses its `HostView`
-  to read session controls, requests and turn snapshots for its scripted
-  checks.
+- They build natively only, as the harness for the daemon's e2e tests,
+  until the TypeScript link and fold replace them (ADR 0001).
 
-## 8. The app (`crates/app`)
+## 8. The app
 
-Dioxus web, routed through the URL fragment so GitHub Pages never serves an
-unknown path. The app is model, update, view over the pure `no_std` `ui`
-crate. `ui::State` holds every paired host, keyed by its endpoint id
-(`ui::HostId`), each with its ticket, its saved name and its host fold.
-Beside the hosts it holds what the person has open: the place shown, which
-names its host when it is a session, and that place's drafts, forms and
-open diffs, dropped when another place shows. `ui::update` turns each
-`Intent` (what a person does, a host's link update, a command's answer)
-into the next state and `Effect`s as data: send a command to a host, save
-the hosts, move the focus. A link update, a credential change and each
-`Effect::Send` name their host, and an answer comes back to the host and
-the visit that asked. Returning to the same place starts another visit.
-For example, a newly opened turn diff may use the same request
-number as a diff from an earlier visit to the same session. Resetting a
-host's event history also drops the shown session's draft while the app
-waits for its events to arrive again. `ui::view` describes the whole `Screen`, down to each
-string, class and enabled flag, and which pane a phone shows. The Dioxus
-components only draw that description and turn events into intents; one
-signal in the app shell holds the state and performs the effects, and the
-shell keeps a `HostLink` for each host the screen lists, keyed by its
-ticket.
-
-- **Several hosts.** The session list has a group per host, headed by its
-  name and link state, with its own error line; the detail pane shows the
-  selected session of its host. The credentials screen has a section per
-  host with its instances and *Forget this host*. A new session picks a host
-  first, by default the host of the session shown last, else the first
-  live one, then one of that host's instances. Where the app speaks of a
-  host it names it. The UI assigns each link state its visible label and
-  uses that same label in the `data-state` attribute.
-- **Session forms and drafts.** The new-session form in `ui` handles start
-  refusals, and the session pane keeps the answers being edited for open
-  question cards. The form and pane read the advertised models and efforts
-  through `proto::Availability` and `proto::Models`.
-- **Pairing.** A join link (`#join=`) or a ticket pasted under *Add host*
-  adds a host; pairing a host again gives it the new ticket and keeps its
-  sessions. Forgetting the last host returns to the pairing screen. A Home
-  Screen app on iOS has its own storage and can't receive a join link from
-  the camera, so it pairs from its own form.
-- **Projects** (§5.4). *Projects* in the band shows each host's home, how
-  it syncs and a *Sync* button, then each project the homes list, with its
-  checkouts on each host that lists it and *Clone here* where it has none
-  and a remote. The status's `home` comes from `Welcome` and `Feed::Home`.
-  The new-session form offers the chosen host's projects, those with no
-  checkout there disabled, or a directory; a picked project hides the
-  directory. A session whose worktree's repository is a project's checkout
-  is listed by the project's name.
-- **Storage.** Local storage keeps a record per host under
-  `conductor.host.<endpoint id>`, with names under `conductor.name.<endpoint id>`.
-  Independent pairing writes survive concurrent tabs, and name refreshes
-  cannot resurrect a forgotten host. Only these records are read; older
-  single-ticket and shared-map storage stays untouched and requires pairing again.
+The Dioxus app (`crates/app`, over the `ui` crate) is removed. The
+TypeScript app in `web/` replaces it (ADR 0001), and this section is
+rewritten with it.
 
 We port T3 Code's designs, not its code (`apps/web/src/components/`):
 
@@ -1725,22 +1671,12 @@ We port T3 Code's designs, not its code (`apps/web/src/components/`):
 The phone layout follows T3 Code's `docs/internals/mobile-layout.md`: the
 sidebar becomes a stack and approvals get one-tap actions.
 
-**Web Push.** With one paired host, the app offers **Enable notifications**
-in Credentials. That action requests browser permission and registers its
-service worker. The host persists its VAPID signing key and browser
-subscriptions in private files. It sends encrypted routing metadata when
-a new approval or question opens. The worker displays a fixed message and
-uses only host, session, event sequence and expiry to route and deduplicate
-notifications. It never receives the pairing credential, transcript,
-prompt, question text or tool arguments. The host removes subscriptions
-that the browser's push service reports as expired.
-
-Tapping opens the paired host's session. An existing window reconnects with
-its current link cursor. A cold launch rebuilds the session from the event
-log. A request already resolved on another device displays as resolved
-after catch-up. The worker registration holds a single subscription bound
-to one VAPID key. Supporting more than one host per installation follows
-fleet pairing (#14).
+**Web Push.** The host persists its VAPID signing key and browser
+subscriptions in private files. It sends encrypted routing metadata (host,
+session, event sequence and expiry) when a new approval or question opens,
+never the pairing credential, transcript, prompt, question text or tool
+arguments. It removes subscriptions that the browser's push service reports
+as expired. The app's side, its service worker, went with the Dioxus app.
 
 ## 9. Testing
 
@@ -1756,13 +1692,9 @@ fleet pairing (#14).
   production plugins configured to run the fakes. Its scenarios include
   approvals, interrupts, reconnects, epochs and two Codex sessions on one
   server. It checks rendered session state through the client's `HostView`.
-- **Browser e2e** (`tools/e2e-browser.sh`): the web app in Chromium and
-  WebKit against the real daemon and the fake CLIs, with the run record and
-  screenshots under `target/e2e-browser/` and failure screenshots under
-  `target/e2e-failures/`. Set `E2E_RECORD` to choose another run record
-  directory. The commit gate checks
-  generated recordings against their builders and checks retained run
-  records for public IP addresses.
+- **Fixtures and run records.** The commit gate checks generated
+  recordings against their builders and checks retained run records for
+  public IP addresses.
 - **Manual smoke** (`docs/smoke.md`): real CLIs, the desktop browser and
   the iPhone on mobile data.
 
@@ -1776,4 +1708,4 @@ fleet pairing (#14).
 | getpaseo/paseo | Apache-2.0 | Provider option sets, timeline epochs |
 | BloopAI/vibe-kanban (`executors`) | Apache-2.0 | Second reference for the clients |
 | hardbeat920/monocode | MIT | SSH host bootstrap, provider lifecycle |
-| n0-computer/iroh, DioxusLabs/dioxus | Apache-2.0/MIT | Transport, UI |
+| n0-computer/iroh | Apache-2.0/MIT | Transport |

@@ -1,8 +1,6 @@
 //! `proto` on iroh: frame I/O on streams, a ticket as an address to dial,
-//! and the client's link to a host. It compiles natively and to
-//! `wasm32-unknown-unknown`; target differences live in [`platform`].
+//! and the client's link to a host.
 
-pub mod fleet;
 mod link;
 pub mod platform;
 mod relay;

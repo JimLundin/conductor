@@ -19,14 +19,7 @@ command = "python3 -B tools/test-tooling.py && python3 -B tools/test-pin.py"
 tools = ["PYTHON"]
 [[suite.when]]
 tier = "commit"
-paths = ["tools/test-tooling.py", "tools/test-pin.py", "tools/scrub-ips.py", "tools/pin", "tools/live-host.sh", "tools/live-host-child.py"]
-
-[[suite]]
-name = "wasm-clippy"
-command = "cargo clippy --target wasm32-unknown-unknown -p proto -p client -p ui -p net -p app --features app/web"
-[[suite.when]]
-tier = "commit"
-packages = ["proto", "client", "ui", "net", "app"]
+paths = ["tools/test-tooling.py", "tools/test-pin.py", "tools/scrub-ips.py", "tools/pin"]
 
 [[suite]]
 name = "e2e-fixtures"
@@ -35,31 +28,3 @@ tools = ["PYTHON"]
 [[suite.when]]
 tier = "commit"
 paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
-
-[[suite]]
-name = "browser"
-# At step for a change the web app runs. Its waits are on what the page and
-# the hosts show, under a generous ceiling, so a loaded machine slows it
-# rather than fails it; it reuses the web build of an unchanged app. It reads
-# the web app with its scenarios (app), the host it drives (conductord, with
-# the fake CLIs of its dependencies), the files below, and Node, dx and Python.
-command = "node --test tools/test-push.mjs && python3 -I tools/check-browser-harness.py && tools/e2e-browser.sh"
-tools = ["NODE", "DX", "PYTHON"]
-[[suite.when]]
-tier = "release"
-[[suite.when]]
-tier = "step"
-packages = ["app", "conductord"]
-paths = [
-    "fixtures/e2e/**",
-    "tools/target-dir",
-    "tools/scrub-ips.py",
-    "tools/e2e-browser.sh",
-    "tools/test-push.mjs",
-    "tools/test-fleet-key.mjs",
-    "tools/check-browser-harness.py",
-    "crates/conductord/examples/worktrees_browser.rs",
-    "tools/e2e-common.sh",
-    "tools/e2e-http.py",
-    "tools/e2e-host-log.py",
-]

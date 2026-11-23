@@ -38,7 +38,7 @@ runs:
           echo "STANDARDS=$GITHUB_WORKSPACE/standards"
         } >>"$GITHUB_ENV"
 
-    - name: Free disk space for the debug, wasm and release builds
+    - name: Free disk space for the debug and release builds
       shell: bash
       run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
@@ -91,11 +91,9 @@ runs:
       with:
         version: v${{ env.SCCACHE }}
 
-    # install-action installs tools it doesn't know, such as dioxus-cli,
-    # through cargo-binstall.
     - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
       with:
-        tool: nextest@${{ env.NEXTEST }},dioxus-cli@${{ env.DX }}
+        tool: nextest@${{ env.NEXTEST }}
 
     - id: decisions
       uses: actions/cache@v6
@@ -130,20 +128,6 @@ runs:
     - uses: actions/setup-node@v7
       with:
         node-version: ${{ env.NODE }}
-
-    - uses: actions/cache@v6
-      with:
-        path: ~/.cache/ms-playwright
-        key: playwright-${{ hashFiles('conductor/crates/app/tests-e2e/package-lock.json') }}
-
-    - name: Install the browser suite's dependencies and its Playwright browsers
-      shell: bash
-      working-directory: conductor
-      run: |
-        source tools/e2e-common.sh
-        install_browser_dependencies
-        cd crates/app/tests-e2e
-        npx --no-install playwright install --with-deps chromium webkit
 
     - id: check
       name: Run tools/check.sh step
@@ -211,8 +195,6 @@ runs:
         name: check-logs
         path: |
           ${{ runner.temp }}/check-logs
-          conductor/target/e2e-browser/browser-run.txt
-          conductor/target/e2e-failures
         if-no-files-found: ignore
         retention-days: 14
 

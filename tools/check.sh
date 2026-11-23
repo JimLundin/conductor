@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # The gate: the shared Rust standard, which runs Conductor's suites from
-# checks.toml beside its own checks, then the shared TypeScript standard on
-# the browser suite in crates/app/tests-e2e. Each runs its units without a
-# recorded pass, and the gate fails if either fails. `tools/check.sh
-# [commit|step|release] [--no-cache|--verify]`; `--verify` runs nothing and
-# fails each unit without a recorded pass.
+# checks.toml beside its own checks. It runs its units without a recorded
+# pass. `tools/check.sh [commit|step|release] [--no-cache|--verify]`;
+# `--verify` runs nothing and fails each unit without a recorded pass.
 #
 # The standards come from a clone of the standards project on the Linux
 # filesystem (`STANDARDS_CLONE`, default ~/projects/tools/standards), which
@@ -24,11 +22,4 @@ if [ -z "${STANDARDS:-}" ]; then
 		git -C "$clone" pull -q --ff-only || echo "warning: $clone not updated" >&2
 fi
 standards=${STANDARDS:-$clone}
-status=0
-"$standards/rust/check.sh" "$@" || status=1
-source tools/e2e-common.sh
-target=$(tools/target-dir) || exit 1
-lock_browser || exit 1
-install_browser_dependencies || exit 1
-"$standards/typescript/check.sh" "$@" crates/app/tests-e2e || status=1
-exit "$status"
+exec "$standards/rust/check.sh" "$@"

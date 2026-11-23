@@ -25,12 +25,8 @@ Home Screen. The design is in
   Apply this policy without asking whether existing data must be preserved.
 - **Gate.** `tools/check.sh [commit|step|release]` runs the standard's
   `rust/check.sh`, which also runs Conductor's suites in `checks.toml`: the
-  run-record IP scrub and clippy for the wasm crates at `commit`, and the
-  browser suite (`tools/e2e-browser.sh`) at `step` when the web app's
-  crates (`app`, `ui`, `net`, `proto`, `client`) or the script change, and
-  at `release`. It then runs the standard's `typescript/check.sh` on that
-  suite, `crates/app/tests-e2e`, whose exceptions live in its own
-  `exceptions.toml`. Use `commit` for local validation when the environment
+  run-record IP scrub, the tooling tests and the e2e fixture check at
+  `commit`. Use `commit` for local validation when the environment
   is available. If validation is unavailable or stalls, commit and push the
   task branch with the commands, results and outstanding checks recorded
   in the commit message and handoff. Saving work requires no validation
@@ -97,7 +93,7 @@ Home Screen. The design is in
   `conductord login <provider> [--account <account>]`, which picks the
   instance of that account, or without one the provider's own; build it
   with `cargo build -p conductord`. Keep provider-specific code out of `daemon`, `host`,
-  `proto`, `client`, `ui` and `app`.
+  `proto`, `client` and the web app.
 - **Instances.** A host runs instances, not providers: each one account
   of a provider, keyed by `InstanceId { provider, account }`, with its own
   credential, private home (`<data>/home/<dir>`), work dir

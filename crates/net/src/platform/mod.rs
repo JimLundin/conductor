@@ -1,26 +1,13 @@
-//! The endpoint the link binds, and the client's name, which differs per
-//! target. The app runs only in the browser; native builds are the test
-//! harness.
-
-#[cfg(not(target_family = "wasm"))]
-mod native;
-#[cfg(target_family = "wasm")]
-mod web;
+//! The endpoint the link binds.
 
 use iroh::endpoint::{BindError, presets};
 use iroh::{Endpoint, RelayMode};
-
-#[cfg(not(target_family = "wasm"))]
-pub use native::client_name;
-#[cfg(target_family = "wasm")]
-pub use web::client_name;
 
 /// Which kind of endpoint the link binds, for its first dial and for every
 /// hedge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
-    /// n0's relays and DNS lookup. A browser can't send UDP, so there it
-    /// only ever talks through a relay.
+    /// n0's relays and DNS lookup.
     Public,
     /// Direct addresses only, with no relays and no lookup, as on loopback.
     Local,

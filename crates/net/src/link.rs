@@ -12,13 +12,9 @@ use std::time::Duration;
 use crate::wire::{self, WireError};
 use iroh::endpoint::{BindError, Connection, RecvStream, SendStream};
 use iroh::{Endpoint, EndpointAddr};
-// `n0_future::boxed::BoxFuture` drops `Send` on wasm, which would make every
-// future holding the link non-`Send` there too.
-use n0_future::future::Boxed as BoxFuture;
+use n0_future::boxed::BoxFuture;
 use n0_future::time::{Instant, sleep, timeout};
 use n0_future::{FuturesUnordered, StreamExt, join_all, task};
-
-use proto::fleet::Certificate;
 
 use client::link::{
     Attempt, Cursor, Effect, Input, Link as Core, Lost, Operation, Unreached,
@@ -81,8 +77,6 @@ pub enum StartError {
     Ticket(#[from] TicketError),
     #[error("could not start iroh: {0}")]
     Bind(#[from] BindError),
-    #[error("{0}")]
-    Fleet(crate::fleet::IdentityError),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -152,50 +146,20 @@ impl HostLink {
         target: Target,
         options: LinkOptions,
     ) -> Result<(Self, mpsc::Receiver<Update>), BindError> {
-        Self::spawn_with(target.addr, target.token, None, options).await
-    }
-
-    /// Connects using this browser's fleet identity.
-    ///
-    /// # Errors
-    ///
-    /// If the host address or local endpoint cannot be opened.
-    pub async fn spawn_fleet(
-        host: &proto::fleet::HostEntry,
-        certificate: Certificate,
-        options: LinkOptions,
-    ) -> Result<(Self, mpsc::Receiver<Update>), StartError> {
-        let address = crate::fleet::address(host).map_err(StartError::Fleet)?;
-        Ok(Self::spawn_with(
-            address,
-            AuthToken::from_bytes([0; 16]),
-            Some(certificate),
-            options,
-        )
-        .await?)
-    }
-
-    async fn spawn_with(
-        address: EndpointAddr,
-        token: AuthToken,
-        fleet: Option<Certificate>,
-        options: LinkOptions,
-    ) -> Result<(Self, mpsc::Receiver<Update>), BindError> {
         let endpoint = platform::bind_endpoint(options.network).await?;
         let (requests_tx, requests_rx) = mpsc::channel(16);
         let (updates_tx, updates_rx) = mpsc::channel(UPDATE_BUFFER);
         let (status_tx, status_rx) = watch::channel(Status::default());
         let hello = Hello {
             client: options.client,
-            token,
+            token: target.token,
         };
         let (core, first) = Core::start(hello, options.resume);
         let link = Link {
             endpoint,
             retiring: Vec::new(),
             network: options.network,
-            addr: address,
-            fleet,
+            addr: target.addr,
             conn: None,
             attempts: BTreeMap::new(),
             reached: BTreeMap::new(),
@@ -300,7 +264,6 @@ struct Link {
     retiring: Vec<Endpoint>,
     network: Network,
     addr: EndpointAddr,
-    fleet: Option<Certificate>,
     conn: Option<Connection>,
     /// Each dial's endpoint, until the core adopts or retires the dial.
     attempts: BTreeMap<Attempt, Endpoint>,
@@ -469,11 +432,7 @@ impl Link {
     fn start(&self, operation: Operation) -> BoxFuture<Done> {
         match operation {
             Operation::Hello { hello, within } => {
-                let fleet = self.fleet.clone();
-                let local = self.endpoint.id();
-                self.on_connection(|conn| {
-                    Box::pin(greet(conn, hello, within, fleet, local))
-                })
+                self.on_connection(|conn| Box::pin(greet(conn, hello, within)))
             }
             Operation::Subscribe(subscribe) => {
                 self.on_connection(|conn| Box::pin(subscribed(conn, subscribe)))
@@ -595,28 +554,8 @@ fn broken(err: &WireError) -> Input {
     Input::Lost(Lost::Wire(err.to_string()))
 }
 
-async fn greet(
-    conn: Connection,
-    hello: Hello,
-    within: Duration,
-    fleet: Option<Certificate>,
-    local: iroh::EndpointId,
-) -> Done {
-    let opening = match fleet {
-        Some(certificate) => {
-            match crate::fleet::hello(certificate, conn.remote_id(), local)
-                .await
-            {
-                Ok(hello) => Open::FleetHello(hello),
-                Err(error) => {
-                    return Done::Input(Input::Lost(Lost::Wire(
-                        error.to_string(),
-                    )));
-                }
-            }
-        }
-        None => Open::Hello(hello),
-    };
+async fn greet(conn: Connection, hello: Hello, within: Duration) -> Done {
+    let opening = Open::Hello(hello);
     let answered = timeout(within, hello_reply(&conn, &opening)).await;
     Done::Input(answered.map_or_else(
         |_| {

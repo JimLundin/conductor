@@ -1,7 +1,6 @@
-"""Controlled regression tests for the run records, pin updater, and live check."""
+"""Controlled regression tests for the run records and the pin updater."""
 
 import multiprocessing
-import os
 import signal
 import subprocess
 import sys
@@ -24,7 +23,6 @@ def load(name, filename):
 
 
 scrub = load("scrub", "scrub-ips.py")
-child = load("child", "live-host-child.py")
 pin = load("pin", "pin")
 
 
@@ -81,38 +79,6 @@ class ToolingTests(unittest.TestCase):
         self.assertNotIn(b"deleted.txt", result.stderr)
         new.write_text("[2001:db8::1]:443")
         run(*command)
-
-    def test_live_host_child_matches_literal_workspace_and_own_parent(self):
-        cli = self.scratch / "host.[1]" / "cli" / "codex"
-        workspace = self.scratch / "project (a)+[1]"
-        for pid, parent, exe, cwd in (
-            (101, 70, cli / "v/bin/codex", workspace),
-            (102, 71, cli / "v/bin/codex", workspace),
-            (103, 70, cli / "v/bin/codex", self.scratch / "project (a)+[2]"),
-            (104, 70, self.scratch / "host.1/cli/codex/v/bin/codex", workspace),
-        ):
-            proc = self.scratch / str(pid)
-            proc.mkdir()
-            (proc / "stat").write_text(f"{pid} (cli ) name) S {parent} 0")
-            (proc / "exe").symlink_to(exe)
-            (proc / "cwd").symlink_to(cwd)
-        fd = os.open(os.devnull, os.O_RDONLY)
-        with patch.object(os, "pidfd_open", return_value=fd, create=True) as opened:
-            with patch.object(signal, "pidfd_send_signal", create=True) as sent:
-                child.interrupt(self.scratch, 70, cli, workspace)
-        opened.assert_called_once_with(101)
-        sent.assert_called_once_with(fd, signal.SIGKILL)
-
-    def test_crash_check_selects_the_registered_codex_server_work_directory(self):
-        cli = self.scratch / "cli" / "codex"
-        work = self.scratch / "work" / "codex-8c2a47d3bdb8d309"
-        workspace = self.scratch / "session"
-        for directory in (cli, work, workspace):
-            directory.mkdir(parents=True)
-        args = ["check", "70", str(self.scratch), "codex", str(workspace), "me@example.com"]
-        with patch.object(sys, "argv", args), patch.object(child, "interrupt") as interrupt:
-            child.main()
-        interrupt.assert_called_once_with(Path("/proc"), 70, cli, work)
 
     def use_scratch_pins(self):
         path = self.scratch / pin.PINS_RS.name
