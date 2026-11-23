@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use client::host_fold::HostFold;
 use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, StatusLabel, Subagent,
+    Approval, HostView, Item, ReplyState, RequestState, Subagent,
     SubagentStatus, ToolState,
 };
 use client::link::Cursor;
@@ -28,9 +28,9 @@ use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
     ChecklistStatus, ClientName, CloseReason, CommandBody, CommandResult,
-    Credential, Decision, Effort, Epoch, Event, EventKind, Feed, FileChange,
-    HostPath, HostSeq, InstanceId, InstanceStatus, Instances, IssueChange,
-    IssueId, Kept, ModelChoice, ModelId, Models, ProjectId, Provider, Question,
+    Credential, Decision, Effort, Event, EventKind, Feed, FileChange, HostPath,
+    HostSeq, InstanceId, InstanceStatus, Instances, IssueChange, IssueId, Kept,
+    ModelChoice, ModelId, Models, ProjectId, Provider, Question,
     QuestionOption, Rejection, RequestId, Resolution, Roster, Selection,
     SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
     SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
@@ -83,13 +83,6 @@ impl Fixture {
     async fn shutdown_with_client(self, link: HostLink) -> Fallible {
         link.stop().await?;
         self.shutdown().await
-    }
-
-    async fn epoch(&self) -> Fallible<Epoch> {
-        let client = endpoint().await?;
-        let (_, welcome) = hello(&client, &self.target).await?;
-        client.close().await;
-        Ok(welcome.epoch)
     }
 
     async fn connect(&self) -> Fallible<(HostLink, Updates)> {
@@ -980,20 +973,6 @@ async fn raw_history(
     Ok(events)
 }
 
-async fn raw_ping_turn(client: &mut RawClient, session: SessionId) -> Fallible {
-    client.accepted(message(session, "ping")).await?;
-    assert_eq!(
-        raw_kinds_until(client, Until::TurnEnd).await?,
-        [
-            user("ping"),
-            delta("pong"),
-            reply("pong"),
-            turn_end(TurnOutcome::Completed)
-        ]
-    );
-    Ok(())
-}
-
 async fn raw_resume_to_ready(
     client: &mut RawClient,
     session: SessionId,
@@ -1012,7 +991,9 @@ async fn raw_events_until(
     client: &mut RawClient,
     until: Until,
 ) -> Fallible<Vec<Event>> {
-    client.events_until(|event| reached(&until, &event.kind)).await
+    client
+        .events_until(|event| reached(&until, &event.kind))
+        .await
 }
 
 /// The events through the first that reaches `until`, without the workspace
@@ -1298,18 +1279,18 @@ fn codex_tool(
     decision: Decision,
     outcome: ToolOutcome,
 ) -> Vec<EventKind> {
-    let call = ToolCallId(String::from(call));
+    let id = ToolCallId(String::from(call));
     let tool = ToolKind::Command {
         command: String::from(command),
     };
     Vec::from([
         EventKind::ToolCall {
-            call: call.clone(),
+            call: id.clone(),
             phase: ToolPhase::Started { tool: tool.clone() },
         },
         EventKind::RequestOpened {
             request: RequestId(1),
-            call: call.clone(),
+            call: id.clone(),
             tool,
             reason: None,
             for_session: Some(String::from(command)),
@@ -1322,7 +1303,7 @@ fn codex_tool(
             },
         },
         EventKind::ToolCall {
-            call,
+            call: id,
             phase: ToolPhase::Finished { outcome },
         },
     ])
@@ -2110,8 +2091,12 @@ async fn two_codex_sessions_share_one_server() -> Fallible {
     let second_session = phone.started(start(Provider::Codex, &dir)).await?;
     assert_ne!(first_session, second_session);
     raw_conversation_events_until(&mut phone, Until::Ready).await?;
-    phone.accepted(message(first_session, "create a.txt")).await?;
-    phone.accepted(message(second_session, "create b.txt")).await?;
+    phone
+        .accepted(message(first_session, "create a.txt"))
+        .await?;
+    phone
+        .accepted(message(second_session, "create b.txt"))
+        .await?;
     let asked = [
         raw_conversation_events_until(&mut phone, Until::Request).await?,
         raw_conversation_events_until(&mut phone, Until::Request).await?,
@@ -2809,8 +2794,7 @@ async fn a_codex_provider_reaches_the_app_server_and_a_new_one_restarts_it()
         Some(codex_gateway())
     );
     phone.started(start_on(codex_api.clone(), &server)).await?;
-    let first =
-        raw_conversation_events_until(&mut phone, Until::Ready).await?;
+    let first = raw_conversation_events_until(&mut phone, Until::Ready).await?;
     let home = dir_of(&data, "home", &codex_api);
     assert_eq!(
         read(&server.join("env.txt"))?,
@@ -3829,8 +3813,12 @@ async fn a_codex_session_continues_on_the_default_when_a_new_credential_drops_it
     let _ = raw_kinds_until(&mut phone, Until::Ready).await?;
     assert_eq!(
         codex_offer(
-            configured(&phone, codex_provider("conductor-test-key"), &fx.target)
-                .await?
+            configured(
+                &phone,
+                codex_provider("conductor-test-key"),
+                &fx.target
+            )
+            .await?
         ),
         Some(codex_gateway())
     );
@@ -4021,14 +4009,24 @@ async fn a_durable_host_restarts_with_the_same_ticket_cursor_and_conversation()
     let mut phone = RawClient::open(&ticket, "test-client", &mut feed).await?;
     assert_eq!(phone.welcome.epoch, epoch, "nothing is reset");
     phone.subscribe(cursor).await?;
-    assert_restart_cleanup(&raw_events(phone.caught_up().await?), cursor, session)?;
+    assert_restart_cleanup(
+        &raw_events(phone.caught_up().await?),
+        cursor,
+        session,
+    )?;
     assert_eq!(
-        phone.send(resolve(session, 1, Decision::Approve)).await?.value,
+        phone
+            .send(resolve(session, 1, Decision::Approve))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
     raw_resume_to_ready(&mut phone, session).await?;
     assert_eq!(
-        phone.send(resolve(session, 1, Decision::Approve)).await?.value,
+        phone
+            .send(resolve(session, 1, Decision::Approve))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
     phone.accepted(message(session, "how many sheep?")).await?;
@@ -4981,7 +4979,8 @@ async fn restart(
     phone.close().await;
     first.shutdown().await?;
     let second = durable_host(data, address).await?;
-    let mut phone = RawClient::open(&second.target, "test-client", feed).await?;
+    let mut phone =
+        RawClient::open(&second.target, "test-client", feed).await?;
     assert_eq!(phone.welcome.epoch, epoch);
     phone.subscribe(applied).await?;
     phone.caught_up().await?;
@@ -5234,15 +5233,15 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     checkout.assert_unchanged(&source)?;
     let applied =
         assert_independent(&mut phone, other, &other_path, &worktree).await?;
-    let (second, mut phone) =
+    let (second, mut restarted) =
         restart(first, &data, address, phone, &mut feed, applied).await?;
-    assert_eq!(get_diff(&phone, session, second_seq).await?, diff);
-    phone.accepted(continued(session)).await?;
-    raw_events_until(&mut phone, Until::Ready).await?;
-    phone
+    assert_eq!(get_diff(&restarted, session, second_seq).await?, diff);
+    restarted.accepted(continued(session)).await?;
+    raw_events_until(&mut restarted, Until::Ready).await?;
+    restarted
         .accepted(message(session, "continue after restart"))
         .await?;
-    let after = raw_events_until(&mut phone, Until::TurnEnd).await?;
+    let after = raw_events_until(&mut restarted, Until::TurnEnd).await?;
     assert_eq!(
         assistant_messages(session, &after),
         [reply("Continued session.")]
@@ -5250,9 +5249,9 @@ async fn managed_worktrees_isolate_source_and_keep_diffs_after_restart()
     let runs = argv(&source)?;
     let resumed = runs.last().ok_or("missing resumed invocation")?;
     assert!(resumed.iter().any(|arg| arg.starts_with("--resume=")));
-    assert_eq!(get_diff(&phone, session, second_seq).await?, diff);
+    assert_eq!(get_diff(&restarted, session, second_seq).await?, diff);
     checkout.assert_unchanged(&source)?;
-    phone.close().await;
+    restarted.close().await;
     feed.write()?;
     second.shutdown().await
 }
@@ -6353,8 +6352,7 @@ async fn clones_beta(
 ) -> Fallible<proto::Home> {
     link.accepted(clone_project("beta")).await?;
     let cloned =
-        home_until(link, |home| !checkouts_of(home, "beta").is_empty())
-            .await?;
+        home_until(link, |home| !checkouts_of(home, "beta").is_empty()).await?;
     assert_eq!(
         checkouts_of(&cloned, "beta"),
         [found(
@@ -6371,10 +6369,7 @@ async fn clones_beta(
 
 /// A session in alpha starts in the person's checkout, which stays as it
 /// was; an unknown project is refused.
-async fn starts_in_alpha(
-    link: &mut RawClient,
-    land: &Homeland,
-) -> Fallible {
+async fn starts_in_alpha(link: &mut RawClient, land: &Homeland) -> Fallible {
     let in_project = |id: &str| CommandBody::StartSession {
         instance: instance(Provider::Claude),
         at: StartAt::Project(project_id(id)),
@@ -6714,8 +6709,8 @@ async fn offline_creation_and_note_converge_after_a_failed_queue_shortening()
     let (second, _) = host_at_home(land.home_url.clone(), Vec::new()).await?;
     let mut peer =
         RawClient::live(&second.target, "test-client", &mut feed).await?;
-    let _ = home_until(&mut peer, |home| !alpha_issues(home).is_empty())
-        .await?;
+    let _ =
+        home_until(&mut peer, |home| !alpha_issues(home).is_empty()).await?;
     wrote(
         &peer,
         change(issue, IssueChange::Note(String::from("second host note"))),
@@ -7169,12 +7164,15 @@ async fn an_issue_creation_with_a_failed_local_commit_lands_after_restart()
     land.go_offline()?;
     let lock = data.join("home-repo/.git/index.lock");
     std::fs::write(&lock, "")?;
-    let issue = match link.send(create_issue("Commit after restart")).await?.value {
-        CommandResult::IssueWritten { issue, .. } => issue,
-        other => {
-            return Err(format!("expected a saved issue, got {other:?}").into());
-        }
-    };
+    let issue =
+        match link.send(create_issue("Commit after restart")).await?.value {
+            CommandResult::IssueWritten { issue, .. } => issue,
+            other => {
+                return Err(
+                    format!("expected a saved issue, got {other:?}").into()
+                );
+            }
+        };
     let queued = home_until(&mut link, |home| home.unpushed == 1).await?;
     assert_eq!(
         alpha_issues(&queued).first().map(|shown| shown.id),
@@ -7318,8 +7316,7 @@ async fn an_offline_issue_change_matching_the_local_file_is_kept_for_replay()
     let mut writer =
         RawClient::live(&second.target, "test-client", &mut feed).await?;
     let _ =
-        home_until(&mut writer, |home| !alpha_issues(home).is_empty())
-            .await?;
+        home_until(&mut writer, |home| !alpha_issues(home).is_empty()).await?;
     wrote(&writer, change(issue, retitle("Upstream title"))).await?;
     writer.close().await;
     second.shutdown().await?;
@@ -7494,10 +7491,9 @@ async fn a_session_on_an_issue_works_on_its_branch_from_the_issues_brief()
             .await?;
     let mut link =
         RawClient::live(&fx.target, "test-client", &mut feed).await?;
-    let _ = home_until(&mut link, |home| {
-        !checkouts_of(home, "alpha").is_empty()
-    })
-    .await?;
+    let _ =
+        home_until(&mut link, |home| !checkouts_of(home, "alpha").is_empty())
+            .await?;
     let issue = opens_an_issue(&mut link, &land).await?;
     let alpha = land.roots.join("apps").join("alpha");
     let listener =
@@ -7577,16 +7573,18 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
             .await?;
     let mut link =
         RawClient::live(&fx.target, "test-client", &mut feed).await?;
-    let _ = home_until(&mut link, |home| {
-        !checkouts_of(home, "alpha").is_empty()
-    })
-    .await?;
+    let _ =
+        home_until(&mut link, |home| !checkouts_of(home, "alpha").is_empty())
+            .await?;
     let issue = opens_an_issue(&mut link, &land).await?;
     let session = link.started(on_issue(issue)).await?;
     let _ = raw_events_until(&mut link, Until::TurnEnd).await?;
-    link.accepted(CommandBody::FinishSession { session }).await?;
-    let finishing =
-        of(session, &raw_events_until(&mut link, Until::Finished).await?);
+    link.accepted(CommandBody::FinishSession { session })
+        .await?;
+    let finishing = of(
+        session,
+        &raw_events_until(&mut link, Until::Finished).await?,
+    );
     let remote = git(&alpha, &["remote", "get-url", "origin"])?;
     assert_eq!(
         finishing.last(),
@@ -7620,7 +7618,33 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
             .any(|shown| shown.status == "review")
     })
     .await?;
-    let notes = alpha_issues(&reviewed)
+    assert_summary_noted(&reviewed);
+    assert_eq!(
+        link.send(CommandBody::FinishSession { session })
+            .await?
+            .value,
+        CommandResult::Rejected(Rejection::AlreadyFinished),
+        "a finished session that did nothing since doesn't finish again"
+    );
+    assert_eq!(
+        link.send(CommandBody::FinishSession {
+            session: SessionId(1)
+        })
+        .await?
+        .value,
+        CommandResult::Rejected(Rejection::UnknownSession)
+    );
+    link.close().await;
+    fx.shutdown().await?;
+    assert_finish_recovery(&land, &data, issue, session, &mut feed).await?;
+    let _ = std::fs::remove_dir_all(&land.scratch);
+    Ok(())
+}
+
+/// The issue's last note before it moves to review is the session's
+/// summary, and its checklist wrote none.
+fn assert_summary_noted(reviewed: &proto::Home) {
+    let notes = alpha_issues(reviewed)
         .into_iter()
         .flat_map(|shown| shown.log)
         .map(|entry| home::flow::file::log_line(&entry))
@@ -7646,24 +7670,6 @@ async fn finishing_lands_work_and_notes_only_the_summary_before_review()
         ],
         "the summary is the issue's last note before it moves to review: {notes:?}"
     );
-    assert_eq!(
-        link.send(CommandBody::FinishSession { session }).await?.value,
-        CommandResult::Rejected(Rejection::AlreadyFinished),
-        "a finished session that did nothing since doesn't finish again"
-    );
-    assert_eq!(
-        link.send(CommandBody::FinishSession {
-            session: SessionId(1)
-        })
-        .await?
-        .value,
-        CommandResult::Rejected(Rejection::UnknownSession)
-    );
-    link.close().await;
-    fx.shutdown().await?;
-    assert_finish_recovery(&land, &data, issue, session, &mut feed).await?;
-    let _ = std::fs::remove_dir_all(&land.scratch);
-    Ok(())
 }
 
 async fn assert_finish_recovery(
@@ -7705,7 +7711,8 @@ async fn assert_finish_recovery(
         RawClient::live(&reopened.target, "test-client", feed).await?;
     let _ =
         home_until(&mut link, |home| !alpha_issues(home).is_empty()).await?;
-    link.accepted(CommandBody::FinishSession { session }).await?;
+    link.accepted(CommandBody::FinishSession { session })
+        .await?;
     let events = raw_events_until(&mut link, Until::Finished).await?;
     assert!(of(session, &events).iter().any(|event| matches!(
         event,
@@ -7717,7 +7724,9 @@ async fn assert_finish_recovery(
     assert_eq!(git(&land.home_bare, &["rev-parse", "HEAD"])?, old_home);
     assert_eq!(pushed_issue(land, issue)?, old_issue);
     assert_eq!(
-        link.send(CommandBody::FinishSession { session }).await?.value,
+        link.send(CommandBody::FinishSession { session })
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::AlreadyFinished)
     );
     link.close().await;
