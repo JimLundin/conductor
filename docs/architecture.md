@@ -1707,7 +1707,7 @@ type and a message can only travel in its link's:
 
 | Link | Codec | Messages |
 |---|---|---|
-| Client and host (`proto::ALPN`, `conductor/40`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`proto::ALPN`, `conductor/41`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` on a host, `web-iroh` in the browser.

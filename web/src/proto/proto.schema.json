@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/40",
+			"const": "conductor/41",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
