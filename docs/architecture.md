@@ -662,11 +662,13 @@ standards and issues, cloned on every host. Built so far are home steps
   checkouts it found before (host-local, in `<data>/home.state`) and its
   own clones, then in each search root (`--projects <dir>`, repeatable)
   each directory and each directory in those, skipping hidden ones and
-  those in `_old` or `Archives`, running `rev-parse --show-toplevel`,
-  `rev-list --max-parents=0 HEAD` and `remote get-url origin` in each
-  holding `.git`; the decisions are `home::checkout`, the walk and the
-  probes `home-files`, which `home repos` shares with the home's folder as
-  its one root. A project may have several checkouts on a host
+  those in `_old` or `Archives`, running in each what
+  `home::checkout::ASKED` lists (`rev-parse --show-toplevel`, `rev-list
+  --max-parents=0 --first-parent HEAD` and `remote get-url origin`) with
+  its time-limited Git runner; the decisions and the reading of Git's
+  answers are `home::checkout`, the walk is `home-files`, and `home repos`
+  does the same with the home's folder as its one root, running Git with
+  std's processes. A project may have several checkouts on a host
   (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in
   `<data>/home.state`. `CloneProject` clones a project with a remote into
   `<data>/projects/<project>` (`Project.cloning` is `Running`, then `Idle`

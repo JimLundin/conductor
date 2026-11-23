@@ -72,17 +72,25 @@ fn join(directory: &str, name: &str) -> String {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
     pub path: String,
-    /// The root commits of its `HEAD`'s history.
+    /// The root commit of its `HEAD`'s first-parent history.
     pub roots: Vec<String>,
     pub remote: Option<String>,
 }
 
+/// What a shell asks Git at a candidate path, in [`probed`]'s order: the
+/// top of the repository there, the root of its `HEAD`'s first-parent
+/// history, and its `origin`.
+pub const ASKED: [&[&str]; 3] = [
+    &["rev-parse", "--show-toplevel"],
+    &["rev-list", "--max-parents=0", "--first-parent", "HEAD"],
+    &["remote", "get-url", "origin"],
+];
+
 /// The repository at `path`, if it is the top of one.
 ///
-/// `top` is what `git rev-parse --show-toplevel` printed there, `roots`
-/// what `git rev-list --max-parents=0 HEAD` did, and `remote` what `git
-/// remote get-url origin` did, each `None` if it failed. A directory
-/// inside another repository, or one with no commit, is none.
+/// `top`, `roots` and `remote` are what Git printed for each of [`ASKED`]
+/// there, each `None` if it failed. A directory inside another repository,
+/// or one with no commit, is none.
 #[must_use]
 pub fn probed(
     path: &str,

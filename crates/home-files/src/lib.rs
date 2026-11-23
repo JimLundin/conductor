@@ -59,7 +59,7 @@ pub fn root(path: &Path) -> Root {
 }
 
 /// The repository at each of `paths` that is the top of one, as
-/// [`checkout::probed`] reads it.
+/// [`checkout::probed`] reads it, Git run with std's processes.
 #[must_use]
 pub fn probes(paths: &[String]) -> Vec<Probe> {
     paths
@@ -68,18 +68,15 @@ pub fn probes(paths: &[String]) -> Vec<Probe> {
         .collect()
 }
 
-/// What Git says of the repository at `path`, by its canonical path. A
-/// folder without `.git` is the top of none, so Git isn't asked there.
+/// What Git says of the repository at `path`, by its canonical path.
 fn probe(path: &Path) -> Option<Probe> {
-    let at = fs::canonicalize(path)
-        .ok()
-        .filter(|at| at.join(".git").exists())?;
-    let asked = |args: &[&str]| git(&at, args);
+    let at = fs::canonicalize(path).ok()?;
+    let [top, roots, remote] = checkout::ASKED.map(|args| git(&at, args));
     checkout::probed(
         at.to_str()?,
-        asked(&["rev-parse", "--show-toplevel"]).as_deref(),
-        asked(&["rev-list", "--max-parents=0", "HEAD"]).as_deref(),
-        asked(&["remote", "get-url", "origin"]).as_deref(),
+        top.as_deref(),
+        roots.as_deref(),
+        remote.as_deref(),
     )
 }
 
@@ -195,31 +192,72 @@ mod tests {
         Ok(())
     }
 
-    fn committed(at: &std::path::Path) -> std::io::Result<()> {
+    /// What Git printed running `args` in `at`, dated `date` if given.
+    fn git(
+        at: &std::path::Path,
+        args: &[&str],
+        date: Option<&str>,
+    ) -> std::io::Result<String> {
+        let mut command = std::process::Command::new("git");
+        command
+            .arg("-C")
+            .arg(at)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args);
+        if let Some(when) = date {
+            command
+                .env("GIT_AUTHOR_DATE", when)
+                .env("GIT_COMMITTER_DATE", when);
+        }
+        let ran = command.output()?;
+        Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
+    }
+
+    /// A repository at `at` with one commit, and that commit.
+    fn committed(at: &std::path::Path) -> std::io::Result<String> {
         fs::create_dir_all(at.join("inner"))?;
         fs::write(at.join("README.md"), "")?;
-        [
-            &["init", "-q"][..],
-            &["add", "."],
+        git(at, &["init", "-q", "-b", "main"], None)?;
+        git(at, &["add", "."], None)?;
+        git(at, &["commit", "-qm", "first"], None)?;
+        git(at, &["rev-parse", "HEAD"], None)
+    }
+
+    #[test]
+    fn a_repository_s_root_is_the_first_commit_of_its_first_parent_history()
+    -> std::io::Result<()> {
+        let scratch = Scratch(
+            std::env::temp_dir()
+                .join(format!("home-files-roots-{}", std::process::id())),
+        );
+        let at = &scratch.0;
+        let first = committed(at)?;
+        git(at, &["checkout", "-q", "--orphan", "older"], None)?;
+        fs::write(at.join("older.md"), "")?;
+        git(at, &["add", "."], None)?;
+        git(
+            at,
+            &["commit", "-qm", "older"],
+            Some("2000-01-01T00:00:00Z"),
+        )?;
+        git(at, &["checkout", "-q", "main"], None)?;
+        git(
+            at,
             &[
-                "-c",
-                "user.name=t",
-                "-c",
-                "user.email=t@t",
-                "commit",
-                "-qm",
-                "first",
+                "merge",
+                "-q",
+                "--allow-unrelated-histories",
+                "-m",
+                "in",
+                "older",
             ],
-        ]
-        .iter()
-        .try_for_each(|args| {
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(at)
-                .args(*args)
-                .status()
-                .map(drop)
-        })
+            None,
+        )?;
+        let found = super::probes(&[at.display().to_string()]);
+        let roots: Vec<&[String]> =
+            found.iter().map(|probe| probe.roots.as_slice()).collect();
+        assert_eq!(roots, [[first]]);
+        Ok(())
     }
 
     #[test]

@@ -25,7 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use home::checkout::Root;
+use home::checkout::{Probe, Root};
 use home::flow::command::fresh;
 use home::flow::graph::File;
 use home::flow::snapshot::Snapshot;
@@ -893,13 +893,9 @@ impl Actor {
         ]
         .concat();
         let paths = home::checkout::candidates(&roots, &known);
-        let probes =
-            tokio::task::spawn_blocking(move || home_files::probes(&paths))
-                .await
-                .unwrap_or_default();
         self.found = home::checkout::matched(
             self.home.projects(),
-            &probes,
+            &probes(paths).await,
             &self.clones,
         );
         let stored = Stored::kept(self.remote.clone(), &self.found);
@@ -1275,6 +1271,31 @@ async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
     .await
     .map(drop)
     .map_err(|err| err.to_string())
+}
+
+async fn probes(paths: Vec<String>) -> Vec<Probe> {
+    let mut found = Vec::new();
+    for path in paths {
+        found.extend(probe(&path).await);
+    }
+    found
+}
+
+/// What Git says of the repository at `path`, by its canonical path, each
+/// of [`home::checkout::ASKED`] run in turn with the daemon's time limit.
+async fn probe(path: &str) -> Option<Probe> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let shown = canonical.to_str()?.to_owned();
+    let [asked_top, asked_roots, asked_remote] = home::checkout::ASKED;
+    let top = text(&canonical, asked_top).await.ok();
+    let roots = text(&canonical, asked_roots).await.ok();
+    let remote = text(&canonical, asked_remote).await.ok();
+    home::checkout::probed(
+        &shown,
+        top.as_deref(),
+        roots.as_deref(),
+        remote.as_deref(),
+    )
 }
 
 /// The host's clone of the home, `<data>/home-repo`.
