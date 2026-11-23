@@ -4,7 +4,7 @@ Each domain crate owns its model, its commands, its results and its refusals, an
 
 ## Rejected
 
-- **A shared crate for values with no domain**, such as a host's path or a command's id. Every type has a domain that gives it meaning; when two domains model something similar, each owns its own type, and the crate that depends on both converts between them.
+- **A shared crate for values with no domain**, such as a host's path or a command's id. Every type has a domain that gives it meaning; when two domains model something similar, each owns its own type, and the crate that depends on both converts between them. A type is named for what it represents in its domain, such as a project's checkout or the directory an agent works in, not for its representation, such as a path.
 
 ## Consequences
 
