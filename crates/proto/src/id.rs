@@ -12,6 +12,14 @@ const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 /// The bits one digit carries.
 const BITS: u32 = 5;
 
+/// How many draws minting one id takes, each tried in turn while it gives
+/// an id the home already has.
+pub const DRAWS: usize = 64;
+
+/// The randomness a shell gives to mint one id, of which each id keeps
+/// the bits it has room for.
+pub type Draws = [u64; DRAWS];
+
 /// An issue's id: 8 digits, the first 6 the seconds since [`Self::EPOCH`]
 /// it was minted at, the last 2 random.
 ///
@@ -45,13 +53,13 @@ impl IssueId {
     /// None when `now` is outside the years an id can count, or every draw
     /// gives a held id.
     #[must_use]
-    pub fn mint(now: u64, draws: &[u16], held: &[Self]) -> Option<Self> {
+    pub fn mint(now: u64, draws: &Draws, held: &[Self]) -> Option<Self> {
         let seconds = now
             .checked_sub(Self::EPOCH)
             .filter(|seconds| *seconds <= mask(Self::TIME_BITS))?;
         draws
             .iter()
-            .map(|random| Self::new(seconds, u64::from(*random)))
+            .map(|random| Self::new(seconds, *random))
             .find(|id| !held.contains(id))
     }
 
@@ -85,10 +93,10 @@ impl ProjectId {
 
     /// The first id of `draws` not `held`, if any.
     #[must_use]
-    pub fn mint(draws: &[u32], held: &[Self]) -> Option<Self> {
+    pub fn mint(draws: &Draws, held: &[Self]) -> Option<Self> {
         draws
             .iter()
-            .map(|random| Self::new(u64::from(*random)))
+            .map(|random| Self::new(*random))
             .find(|id| !held.contains(id))
     }
 

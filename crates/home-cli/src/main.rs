@@ -6,42 +6,49 @@
 use std::env;
 use std::fs;
 use std::io::Write as _;
-use std::iter;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::flow::PATH;
 use home::flow::command::{
-    Context, DRAWS, Write, command, fresh, homeless, run,
+    Asked, Command, Context, Write, asked, fresh, homeless, run,
 };
 use home::flow::snapshot::Snapshot;
-use home::repos;
+use proto::Draws;
 
 mod local;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let root = root();
-    let (text, code) = root.as_deref().map_or_else(homeless, |home| {
-        let snapshot = home_files::read(home);
-        repos::asked(&args).map_or_else(
-            || issues(home, &args, &snapshot),
-            |asked| local::run(home, asked, &snapshot),
-        )
-    });
+    let (text, code) = root
+        .as_deref()
+        .map_or_else(homeless, |home| answered(home, &args));
     let _written = std::io::stdout().lock().write_all(text.as_bytes());
     ExitCode::from(code)
 }
 
-/// The flow's commands, on the home's issues.
-fn issues(home: &Path, args: &[String], snapshot: &Snapshot) -> (String, u8) {
+/// What `args` ask of the home at `home`, done.
+fn answered(home: &Path, args: &[String]) -> (String, u8) {
+    let snapshot = home_files::read(home);
     let context = context();
-    let draws: Vec<u16> = iter::repeat_with(random).take(DRAWS).collect();
-    let fresh = fresh(snapshot, context.now, &draws);
-    let asked = command(args, snapshot, fresh);
+    let fresh = fresh(&snapshot, context.now / 1000, &draws());
+    match asked(args, &snapshot, fresh) {
+        Asked::Local(local) => local::run(home, local, &snapshot),
+        Asked::Flow(command) => issues(home, command, &snapshot, &context),
+    }
+}
+
+/// The flow's `command`, on the home's issues.
+fn issues(
+    home: &Path,
+    asked: Command,
+    snapshot: &Snapshot,
+    context: &Context,
+) -> (String, u8) {
     let file = asked.file().map(|path| read(Path::new(path)));
-    let outcome = run(asked, file, snapshot, &context);
+    let outcome = run(asked, file, snapshot, context);
     let saved = outcome
         .writes
         .iter()
@@ -77,11 +84,9 @@ fn context() -> Context {
     }
 }
 
-/// The randomness of the id a new issue takes, drawn again on a clash.
-fn random() -> u16 {
-    let mut bytes = [0_u8; 2];
-    let _filled = getrandom::fill(&mut bytes);
-    u16::from_le_bytes(bytes)
+/// The randomness a new issue's or project's id is minted with.
+fn draws() -> Draws {
+    core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
 }
 
 fn read(path: &Path) -> Result<String, String> {

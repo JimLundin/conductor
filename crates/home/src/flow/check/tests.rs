@@ -146,3 +146,28 @@ fn the_text_lists_each_finding_and_the_counts() {
         )
     );
 }
+
+#[test]
+fn two_issue_files_with_one_id_fail_the_check() {
+    let mut home = inputs(FLOW, "done");
+    home.projects.push(project("8p0d1x", "other", ""));
+    home.issues.push(File {
+        project: ProjectId::parse("8p0d1x").unwrap_or(ProjectId::new(0)),
+        ..issue(
+            SPEC,
+            "title = \"Again\"\nkind = \"spec\"\nstatus = \"open\"\n",
+            "",
+        )
+    });
+    let report = check(&home);
+    assert!(report.failed(), "{}", report.text());
+    assert!(
+        report.findings.contains(&Finding {
+            severity: Severity::Error,
+            subject: Some(String::from("other/0tm7zt00")),
+            message: String::from("id: is also the id of 7r5n23/0tm7zt00"),
+        }),
+        "{}",
+        report.text()
+    );
+}

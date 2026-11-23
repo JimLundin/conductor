@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
-use proto::ProjectId;
+use proto::{Draws, ProjectId};
 
 use super::{
-    Asked, Fetch, Scanning, asked, placed, probe, profiles, regenerated,
-    report, repositories, scan, sync, table, unmatched, warnings,
+    Fetch, New, Scanning, local, placed, profiles, regenerated, report, scan,
+    sync, table, unmatched, warnings,
 };
 use crate::checkout::Probe;
 use crate::project::{Project, parse};
@@ -32,36 +32,16 @@ fn repository(path: &str, root: &str, remote: Option<&str>) -> Probe {
     }
 }
 
-fn words(line: &str) -> Vec<String> {
-    line.split_whitespace().map(String::from).collect()
-}
-
 #[test]
-fn the_words_ask_for_repos_sync_scan_or_skills() {
-    assert_eq!(asked(&words("repos")), Some(Asked::Status));
-    assert_eq!(asked(&words("repos sync")), Some(Asked::Sync));
-    assert_eq!(asked(&words("repos scan")), Some(Asked::Scan));
-    assert_eq!(asked(&words("skills")), Some(Asked::Skills));
-    assert_eq!(asked(&words("repos wipe")), None);
-    assert_eq!(asked(&words("check")), None);
-}
-
-#[test]
-fn the_home_comes_first_then_sorted_repositories_but_none_set_aside() {
-    let found = ["apps/conductor", "_old/thing", "keyframe", "Archives/x"]
-        .map(String::from)
+fn a_repository_is_named_by_its_path_from_the_home() {
+    let found = ["/home/me/projects", "/home/me/projects/apps/x", "/srv/y"]
+        .map(|path| repository(path, ROOT, None))
         .to_vec();
-    assert_eq!(repositories(found), [".", "apps/conductor", "keyframe"]);
-}
-
-#[test]
-fn a_repository_without_a_commit_is_no_probe() {
-    assert_eq!(probe("empty", None, None), None);
-    assert_eq!(probe("empty", Some(""), None), None);
-    assert_eq!(
-        probe("sop", Some(&format!("{ROOT}\n")), Some("\n")),
-        Some(repository("sop", ROOT, None))
-    );
+    let paths: Vec<String> = local("/home/me/projects/", found)
+        .into_iter()
+        .map(|probe| probe.path)
+        .collect();
+    assert_eq!(paths, [".", "apps/x", "/srv/y"]);
 }
 
 #[test]
@@ -195,14 +175,27 @@ fn the_table_replaces_the_lines_between_its_markers_only() {
     assert_eq!(regenerated("no table\n", "table\n"), "no table\n");
 }
 
-fn scanning(new: Vec<(Probe, Vec<String>)>, draws: Vec<u32>) -> Scanning {
+/// The draws `given`, the last of them repeated to the end.
+fn draws(given: &[u64]) -> Draws {
+    core::array::from_fn(|at| {
+        given.get(at).or_else(|| given.last()).copied().unwrap_or(0)
+    })
+}
+
+fn new(probe: Probe, names: &[&str], given: &[u64]) -> New {
+    New {
+        probe,
+        names: names.iter().copied().map(String::from).collect(),
+        draws: draws(given),
+    }
+}
+
+fn scanning(new: Vec<New>) -> Scanning {
     let home = project("a00000", "home", ROOT, None);
     Scanning {
         home: String::from("projects"),
-        folders: Vec::from([String::from("a00000")]),
         projects: Vec::from([home]),
         new,
-        draws,
         problems: Vec::new(),
         doc: Ok(String::from(
             "intro\n<!-- repos:start -->\n<!-- repos:end -->\n",
@@ -213,11 +206,11 @@ fn scanning(new: Vec<(Probe, Vec<String>)>, draws: Vec<u32>) -> Scanning {
 #[test]
 fn scan_registers_a_new_repository_named_after_its_folder() -> Result<(), String>
 {
-    let new = Vec::from([(
+    let done = scan(scanning(Vec::from([new(
         repository("apps/My App", OTHER, Some("https://example.com/app.git")),
-        Vec::from([String::from("Cargo.toml")]),
-    )]);
-    let done = scan(scanning(new, Vec::from([5])))?;
+        &["Cargo.toml"],
+        &[5],
+    )])))?;
     assert_eq!(
         done.writes,
         [
@@ -253,21 +246,15 @@ fn scan_registers_a_new_repository_named_after_its_folder() -> Result<(), String
 #[test]
 fn scan_draws_again_for_an_id_the_home_holds_or_has_just_minted()
 -> Result<(), String> {
-    let new = Vec::from([
-        (
+    let mut input = scanning(Vec::from([
+        new(
             repository(".", ROOT, Some("https://example.com/home")),
-            Vec::new(),
+            &[],
+            &[0, 3, 3],
         ),
-        (repository("sop", OTHER, None), Vec::new()),
-    ]);
-    let first = [0, 3].into_iter().chain(std::iter::repeat(0));
-    let second = [0, 3, 7].into_iter().chain(std::iter::repeat(0));
-    let draws = first
-        .take(super::DRAWS)
-        .chain(second.take(super::DRAWS))
-        .collect();
-    let mut input = scanning(new, draws);
-    input.folders = Vec::from([String::from("000000")]);
+        new(repository("sop", OTHER, None), &[], &[0, 3, 7]),
+    ]));
+    input.projects = Vec::from([project("000000", "home", ROOT, None)]);
     let done = scan(input)?;
     let folders: Vec<&str> =
         done.writes.iter().map(|(path, _)| path.as_str()).collect();
@@ -292,9 +279,9 @@ fn scan_draws_again_for_an_id_the_home_holds_or_has_just_minted()
 
 #[test]
 fn scan_gives_up_when_every_draw_is_held() {
-    let new = Vec::from([(repository("sop", OTHER, None), Vec::new())]);
-    let mut input = scanning(new, Vec::from([0, 0]));
-    input.folders = Vec::from([String::from("000000")]);
+    let mut input =
+        scanning(Vec::from([new(repository("sop", OTHER, None), &[], &[0])]));
+    input.projects = Vec::from([project("000000", "home", ROOT, None)]);
     assert_eq!(
         scan(input),
         Err(String::from("no fresh project id for sop"))
@@ -303,8 +290,8 @@ fn scan_gives_up_when_every_draw_is_held() {
 
 #[test]
 fn scan_registers_nothing_while_a_project_folder_does_not_read() {
-    let new = Vec::from([(repository("sop", OTHER, None), Vec::new())]);
-    let mut input = scanning(new, Vec::from([1]));
+    let mut input =
+        scanning(Vec::from([new(repository("sop", OTHER, None), &[], &[1])]));
     input.problems = Vec::from([String::from("projects/x: no project.toml")]);
     assert_eq!(
         scan(input),

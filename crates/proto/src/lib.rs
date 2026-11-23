@@ -47,7 +47,7 @@ pub use credential::{
 };
 pub use frame::{FrameError, HEADER_LEN, body_len, decode, encode};
 pub use home::{Checkout, Cloning, Home, HomeSync, Origin, Project, StartAt};
-pub use id::{IssueId, ProjectId};
+pub use id::{DRAWS, Draws, IssueId, ProjectId};
 pub use instance::{
     Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
 };

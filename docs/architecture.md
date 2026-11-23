@@ -659,11 +659,14 @@ standards and issues, cloned on every host. Built so far are home steps
   history has the project's root commit and its `origin` is the project's
   remote, compared without scheme, user, `.git` or case; a local-only
   project's checkouts have no `origin`. The host probes, in order, the
-  checkouts it found before (host-local, in `<data>/home.state`), then in
-  each search root (`--projects <dir>`, repeatable) each directory and each
-  directory in those, skipping hidden ones, then its own clones, running `rev-parse --show-toplevel`, `rev-list --max-parents=0
-  HEAD` and `remote get-url origin` in each; the decisions are
-  `home::checkout`. A project may have several checkouts on a host
+  checkouts it found before (host-local, in `<data>/home.state`) and its
+  own clones, then in each search root (`--projects <dir>`, repeatable)
+  each directory and each directory in those, skipping hidden ones and
+  those in `_old` or `Archives`, running `rev-parse --show-toplevel`,
+  `rev-list --max-parents=0 HEAD` and `remote get-url origin` in each
+  holding `.git`; the decisions are `home::checkout`, the walk and the
+  probes `home-files`, which `home repos` shares with the home's folder as
+  its one root. A project may have several checkouts on a host
   (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in
   `<data>/home.state`. `CloneProject` clones a project with a remote into
   `<data>/projects/<project>` (`Project.cloning` is `Running`, then `Idle`

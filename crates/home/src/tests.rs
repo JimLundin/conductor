@@ -5,7 +5,9 @@ use proto::{
     StartAt,
 };
 
-use crate::checkout::{Probe, Root, candidates, matched, normal, probed};
+use crate::checkout::{
+    Probe, Root, candidates, clone_paths, matched, normal, probed,
+};
 use crate::project::{Listing, Project, listed, parse};
 use crate::sync::{Git, Sync, next};
 use crate::{Found, Stored, cloned, place, remote_of, view};
@@ -216,9 +218,7 @@ fn a_renamed_project_keeps_its_id_and_its_checkouts() {
 }
 
 #[test]
-fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once()
- {
-    let projects = [project("conductor", Some(REMOTE)), project("sop", None)];
+fn candidates_are_known_paths_then_each_root_s_directories_each_once() {
     let roots = [
         Root {
             path: String::from("/home/me/projects/"),
@@ -229,6 +229,9 @@ fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once
                 String::from("apps/.git"),
                 String::from("apps/conductor"),
                 String::from("conductor"),
+                String::from("_old"),
+                String::from("_old/conductor"),
+                String::from("Archives/sop"),
             ]),
         },
         Root {
@@ -239,18 +242,27 @@ fn candidates_are_known_paths_then_each_root_s_directories_then_clones_each_once
     assert_eq!(
         candidates(
             &roots,
-            &projects,
-            &[String::from("/home/me/projects/conductor")],
-            "/data/projects",
+            &[
+                String::from("/home/me/projects/conductor"),
+                String::from("/data/projects/cnd000"),
+            ],
         ),
         [
             "/home/me/projects/conductor",
+            "/data/projects/cnd000",
             "/home/me/projects/apps",
             "/home/me/projects/apps/conductor",
             "/srv/sop",
-            "/data/projects/cnd000",
-            "/data/projects/s0p000",
         ]
+    );
+}
+
+#[test]
+fn the_host_clones_each_project_into_a_folder_of_its_id() {
+    let projects = [project("conductor", Some(REMOTE)), project("sop", None)];
+    assert_eq!(
+        clone_paths("/data/projects/", &projects),
+        ["/data/projects/cnd000", "/data/projects/s0p000"]
     );
 }
 

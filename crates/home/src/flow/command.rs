@@ -11,8 +11,8 @@ use alloc::string::ToString;
 
 use proto::flow::{FieldRole, FieldType, Flow, Severity};
 use proto::{
-    ChecklistChange, Datum, Entry, Issue, IssueChange, IssueId, Item, LogEvent,
-    NewIssue, Part, ProjectId,
+    ChecklistChange, Datum, Draws, Entry, Issue, IssueChange, IssueId, Item,
+    LogEvent, NewIssue, Part, ProjectId,
 };
 use serde::{Deserialize, Serialize};
 use toml::Value;
@@ -41,6 +41,28 @@ pub const USAGE: &str = "usage:
 A list's value is comma-separated: blocked_by=<id>,<id>.
 A checklist's items are numbered from 1.
 ";
+
+/// What the command line's words ask for: a command on the home's issues,
+/// or one the shell does in the home's folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    Flow(Command),
+    Local(Local),
+}
+
+/// What the shell does in the home's folder, among its repositories and
+/// skills.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Local {
+    /// `home repos`: each project's checkouts here and their state.
+    Status,
+    /// `home repos sync`: clones each project not checked out here.
+    Sync,
+    /// `home repos scan`: registers each repository no project has.
+    Scan,
+    /// `home skills`: copies the home's skills into each harness's folder.
+    Skills,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -169,19 +191,35 @@ pub struct Written {
     pub warnings: Vec<String>,
 }
 
-/// How many times a shell draws for a new issue's id before it gives up.
-pub const DRAWS: usize = 64;
-
-/// The id a new issue made at `now`, in milliseconds since the Unix epoch,
+/// The id a new issue made at `now`, in seconds since the Unix epoch,
 /// takes: the first of `draws` that gives one the home has no file of.
 #[must_use]
-pub fn fresh(home: &Snapshot, now: u64, draws: &[u16]) -> Option<IssueId> {
+pub fn fresh(home: &Snapshot, now: u64, draws: &Draws) -> Option<IssueId> {
     let held: Vec<IssueId> = home
         .files()
         .iter()
         .filter_map(|file| IssueId::parse(&file.stem))
         .collect();
-    IssueId::mint(now / 1000, draws, &held)
+    IssueId::mint(now, draws, &held)
+}
+
+/// What `args`, after the program's name, ask of `home`: what [`command`]
+/// makes of them, unless they ask for something the shell does in the
+/// home's folder.
+#[must_use]
+pub fn asked(
+    args: &[String],
+    home: &Snapshot,
+    fresh: Option<IssueId>,
+) -> Asked {
+    let words: Vec<&str> = args.iter().map(String::as_str).collect();
+    match words.as_slice() {
+        ["repos"] => Asked::Local(Local::Status),
+        ["repos", "sync"] => Asked::Local(Local::Sync),
+        ["repos", "scan"] => Asked::Local(Local::Scan),
+        ["skills"] => Asked::Local(Local::Skills),
+        _ => Asked::Flow(command(args, home, fresh)),
+    }
 }
 
 /// The command `args` ask for in `home`, after the program's name.
@@ -542,7 +580,6 @@ fn finished(
 ) -> Result<Written, String> {
     let after = home.with(file.clone());
     let graph = after.graph();
-    let place = format!("{}/{}", file.project, file.stem);
     let name = home
         .projects()
         .iter()
@@ -555,7 +592,9 @@ fn finished(
     let mut problems: Vec<String> = graph
         .problems
         .iter()
-        .filter(|problem| problem.issue == place)
+        .filter(|problem| {
+            problem.project == file.project && problem.stem == file.stem
+        })
         .map(ToString::to_string)
         .collect();
     let findings: Vec<Finding> = graph

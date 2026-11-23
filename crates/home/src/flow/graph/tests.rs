@@ -67,10 +67,13 @@ fn problems(graph: &Graph) -> Vec<(String, Option<String>, String)> {
         .iter()
         .map(
             |Problem {
-                 issue,
+                 project,
+                 stem,
                  field,
                  message,
-             }| (issue.clone(), field.clone(), message.clone()),
+             }| {
+                (format!("{project}/{stem}"), field.clone(), message.clone())
+            },
         )
         .collect()
 }
@@ -203,7 +206,8 @@ fn an_issue_keeps_its_body_before_the_checklist_and_the_log() {
 #[test]
 fn a_problem_says_what_is_wrong_after_the_field_that_causes_it() {
     let at = |field: Option<&str>| Problem {
-        issue: format!("{CONDUCTOR}/{TASK}"),
+        project: ProjectId::new(0),
+        stem: String::from(TASK),
         field: field.map(String::from),
         message: String::from("is missing"),
     };
@@ -447,4 +451,24 @@ fn an_issue_lands_on_the_branch_its_branch_field_names_whatever_it_is_called()
         Some(format!("issue/{TASK}"))
     );
     Ok(())
+}
+
+#[test]
+fn each_file_holding_an_id_another_file_holds_is_a_problem() {
+    let graph = read(&flow(), &[task(HOME, ""), task(CONDUCTOR, "")]);
+    assert_eq!(
+        problems(&graph),
+        Vec::from([
+            problem(
+                &format!("{HOME}/{TASK}"),
+                "id",
+                &format!("is also the id of {CONDUCTOR}/{TASK}")
+            ),
+            problem(
+                &format!("{CONDUCTOR}/{TASK}"),
+                "id",
+                &format!("is also the id of {HOME}/{TASK}")
+            ),
+        ])
+    );
 }

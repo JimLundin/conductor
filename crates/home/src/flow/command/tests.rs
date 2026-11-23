@@ -1,11 +1,11 @@
 use proto::{
-    ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, IssueId, Item,
-    NewIssue, Part, ProjectId,
+    ChecklistChange, ChecklistItem, DRAWS, Datum, Draws, Issue, IssueChange,
+    IssueId, Item, NewIssue, Part, ProjectId,
 };
 
 use super::{
-    Command, Context, Edit, Outcome, command, fresh, homeless, run, stamp,
-    write,
+    Asked, Command, Context, Edit, Local, Outcome, asked as dispatched,
+    command, fresh, homeless, run, stamp, write,
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
@@ -20,6 +20,8 @@ const SPEC: &str = "0tm7zt01";
 const TASK: &str = "0tm7zx0d";
 /// 2026-11-22T12:00:00Z.
 const NOW: u64 = 1_795_348_800_000;
+const SECONDS: u64 = NOW / 1000;
+const SEVEN: Draws = [7; DRAWS];
 
 fn words(text: &str) -> Vec<String> {
     text.split(' ').map(String::from).collect()
@@ -61,6 +63,13 @@ fn home() -> Inputs {
     }
 }
 
+/// The draws `given`, the last of them repeated to the end.
+fn draws(given: &[u64]) -> Draws {
+    core::array::from_fn(|at| {
+        given.get(at).or_else(|| given.last()).copied().unwrap_or(0)
+    })
+}
+
 fn id(stem: &str) -> IssueId {
     IssueId::parse(stem).unwrap_or(IssueId::new(0, 0))
 }
@@ -68,14 +77,14 @@ fn id(stem: &str) -> IssueId {
 /// What the command line `line` asks of the home `inputs` holds.
 fn asked(inputs: &Inputs, line: &str) -> Command {
     let home = Snapshot::of(inputs.clone());
-    command(&words(line), &home, fresh(&home, NOW, &[7]))
+    command(&words(line), &home, fresh(&home, SECONDS, &SEVEN))
 }
 
 /// What saying `line` to the home `inputs` holds writes and says.
 fn ran(inputs: &Inputs, line: &str) -> Outcome {
     let home = Snapshot::of(inputs.clone());
     run(
-        command(&words(line), &home, fresh(&home, NOW, &[7])),
+        command(&words(line), &home, fresh(&home, SECONDS, &SEVEN)),
         None,
         &home,
         &context(),
@@ -144,7 +153,7 @@ fn a_new_issue_takes_the_fresh_id() {
 #[test]
 fn a_new_issue_s_id_sorts_after_every_issue_made_before_it() {
     let home = Snapshot::of(home());
-    let fresh = fresh(&home, NOW, &[7]);
+    let fresh = fresh(&home, SECONDS, &SEVEN);
     assert!(fresh.is_some());
     assert!(
         home.graph()
@@ -152,7 +161,7 @@ fn a_new_issue_s_id_sorts_after_every_issue_made_before_it() {
             .iter()
             .all(|issue| Some(issue.id) < fresh)
     );
-    assert!(fresh < super::fresh(&home, NOW + 1000, &[0]));
+    assert!(fresh < super::fresh(&home, SECONDS + 1, &[0; DRAWS]));
 }
 
 #[test]
@@ -161,8 +170,11 @@ fn a_new_issue_draws_again_for_an_id_the_home_has() {
     held.issues
         .push(issue("0tt82007", "title = \"Taken\"\n", ""));
     let home = Snapshot::of(held);
-    assert_eq!(fresh(&home, NOW, &[7, 7, 9]), Some(id("0tt82009")));
-    assert_eq!(fresh(&home, NOW, &[7]), None);
+    assert_eq!(
+        fresh(&home, SECONDS, &draws(&[7, 7, 9])),
+        Some(id("0tt82009"))
+    );
+    assert_eq!(fresh(&home, SECONDS, &SEVEN), None);
     assert!(matches!(
         command(&words("issue new home task T"), &home, None),
         Command::Wrong(reason) if reason.starts_with("no issue id is free")
@@ -768,4 +780,16 @@ fn an_edit_to_an_issue_that_doesn_t_read_says_what_is_wrong_with_it() {
             )
         )
     );
+}
+
+#[test]
+fn repos_and_skills_are_done_in_the_home_s_folder_and_the_rest_on_its_issues() {
+    let home = Snapshot::of(home());
+    let local = |line: &str| dispatched(&words(line), &home, None);
+    assert_eq!(local("repos"), Asked::Local(Local::Status));
+    assert_eq!(local("repos sync"), Asked::Local(Local::Sync));
+    assert_eq!(local("repos scan"), Asked::Local(Local::Scan));
+    assert_eq!(local("skills"), Asked::Local(Local::Skills));
+    assert_eq!(local("repos wipe"), Asked::Flow(Command::Usage));
+    assert_eq!(local("check"), Asked::Flow(Command::Check));
 }

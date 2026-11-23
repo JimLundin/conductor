@@ -9,7 +9,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::ProjectId;
+use proto::{Draws, ProjectId};
 use serde::Serialize;
 
 use crate::checkout::{Probe, is_checkout};
@@ -17,67 +17,33 @@ use crate::layout;
 use crate::prelude::*;
 use crate::project::{Project, parse};
 
-/// What the command line's words ask of the home's repositories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Asked {
-    Status,
-    Sync,
-    Scan,
-    Skills,
-}
-
-/// What `args`, after the program's name, ask, if they ask for one of these.
-#[must_use]
-pub fn asked(args: &[String]) -> Option<Asked> {
-    let words: Vec<&str> = args.iter().map(String::as_str).collect();
-    match words.as_slice() {
-        ["repos"] => Some(Asked::Status),
-        ["repos", "sync"] => Some(Asked::Sync),
-        ["repos", "scan"] => Some(Asked::Scan),
-        ["skills"] => Some(Asked::Skills),
-        _ => None,
-    }
-}
-
-/// The folders under the home whose repositories are set aside.
-const SET_ASIDE: [&str; 2] = ["_old", "Archives"];
-
 /// The home itself, as a repository's path from the home.
 pub const HOME: &str = ".";
 
-/// The repositories to probe, by path from the home: the home, then each
-/// of the `found` folders holding `.git`, one or two deep, that isn't set
-/// aside, sorted.
+/// `probes`, found as the host finds checkouts with the home at `home` as
+/// both a known path and the one root, each by its path from the home: the
+/// home's own as [`HOME`], one outside it as it is.
 #[must_use]
-pub fn repositories(found: Vec<String>) -> Vec<String> {
-    let mut kept: Vec<String> = found
+pub fn local(home: &str, probes: Vec<Probe>) -> Vec<Probe> {
+    probes
         .into_iter()
-        .filter(|path| {
-            !SET_ASIDE.contains(&path.split('/').next().unwrap_or_default())
+        .map(|probe| Probe {
+            path: from_home(home, &probe.path),
+            ..probe
         })
-        .collect();
-    kept.sort();
-    core::iter::once(String::from(HOME)).chain(kept).collect()
+        .collect()
 }
 
-/// The repository at `path`, from what `git rev-list --max-parents=0
-/// --first-parent HEAD` and `git remote get-url origin` printed there, each
-/// `None` if it failed. One with no commit is none.
-#[must_use]
-pub fn probe(
-    path: &str,
-    roots: Option<&str>,
-    remote: Option<&str>,
-) -> Option<Probe> {
-    let commits: Vec<String> = roots?.lines().map(str::to_owned).collect();
-    (!commits.is_empty()).then(|| Probe {
-        path: path.to_owned(),
-        roots: commits,
-        remote: remote
-            .map(str::trim)
-            .filter(|url| !url.is_empty())
-            .map(str::to_owned),
-    })
+fn from_home(home: &str, path: &str) -> String {
+    path.strip_prefix(home.trim_end_matches(['/', '\\']))
+        .and_then(|rest| {
+            if rest.is_empty() {
+                Some(HOME)
+            } else {
+                rest.strip_prefix(['/', '\\'])
+            }
+        })
+        .map_or_else(|| path.to_owned(), str::to_owned)
 }
 
 /// A project and the paths of its checkouts here.
@@ -240,23 +206,23 @@ pub fn profiles(names: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// How many draws `home repos scan` takes for each repository it
-/// registers.
-pub const DRAWS: usize = 64;
+/// A repository that is no project's checkout, with the names at its top
+/// and the draws for the id it is registered as.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct New {
+    pub probe: Probe,
+    pub names: Vec<String>,
+    pub draws: Draws,
+}
 
 /// What `home repos scan` reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scanning {
     /// The name of the home's folder, which titles the home itself.
     pub home: String,
+    /// The home's projects, whose ids a new project can't take.
     pub projects: Vec<Project>,
-    /// The folders of the home's `projects/`, whose ids a new project
-    /// can't take.
-    pub folders: Vec<String>,
-    /// Each repository matching no project, with the names at its top.
-    pub new: Vec<(Probe, Vec<String>)>,
-    /// [`DRAWS`] for each repository in `new`, in turn.
-    pub draws: Vec<u32>,
+    pub new: Vec<New>,
     /// Why any folder of the home's `projects/` isn't a project.
     pub problems: Vec<String>,
     /// The text of the home's `AGENTS.md`, or why it couldn't be read.
@@ -293,9 +259,7 @@ pub fn scan(scanning: Scanning) -> Result<Scan, String> {
     let Scanning {
         home,
         projects,
-        folders,
         new,
-        draws,
         problems,
         doc,
     } = scanning;
@@ -305,20 +269,17 @@ pub fn scan(scanning: Scanning) -> Result<Scan, String> {
             problems.join("\n")
         ));
     }
-    let mut held: Vec<ProjectId> = folders
-        .iter()
-        .filter_map(|folder| ProjectId::parse(folder))
-        .collect();
-    let mut chunks = draws.chunks(DRAWS);
+    let mut held: Vec<ProjectId> =
+        projects.iter().map(|project| project.id).collect();
     let added = new
         .iter()
-        .map(|(probe, names)| {
-            let id = ProjectId::mint(chunks.next().unwrap_or_default(), &held)
-                .ok_or_else(|| {
-                    format!("no fresh project id for {}", probe.path)
+        .map(|repository| {
+            let id =
+                ProjectId::mint(&repository.draws, &held).ok_or_else(|| {
+                    format!("no fresh project id for {}", repository.probe.path)
                 })?;
             held.push(id);
-            described(&home, probe, names, id)
+            described(&home, &repository.probe, &repository.names, id)
         })
         .collect::<Result<Vec<(Project, String)>, String>>()?;
     let mut all = projects;
@@ -328,12 +289,12 @@ pub fn scan(scanning: Scanning) -> Result<Scan, String> {
     let said = added
         .iter()
         .zip(&new)
-        .map(|((project, _), (probe, _))| {
+        .map(|((project, _), repository)| {
             format!(
                 "added {} as {} from {}\n",
                 project.name,
                 layout::project(&project.id.to_string()),
-                probe.path
+                repository.probe.path
             )
         })
         .chain(

@@ -5,7 +5,6 @@
 //! of these, so each sees the home the same way.
 
 use alloc::collections::BTreeMap;
-use alloc::string::ToString;
 
 use proto::flow::Flow;
 use proto::{Issue, IssueId, ProjectId};
@@ -112,9 +111,10 @@ impl Snapshot {
     /// The project called `name`, or whose id it is.
     #[must_use]
     pub fn project(&self, name: &str) -> Option<&Project> {
-        self.projects().iter().find(|project| {
-            project.name == name || project.id.to_string() == name
-        })
+        let id = ProjectId::parse(name);
+        self.projects()
+            .iter()
+            .find(|project| project.name == name || Some(project.id) == id)
     }
 
     /// Every issue file that could be read.
@@ -167,12 +167,9 @@ impl Snapshot {
             .into_iter()
             .chain(self.listing.problems.iter().cloned())
             .chain(self.unread.iter().cloned())
-            .chain(
-                self.graph
-                    .problems
-                    .iter()
-                    .map(|problem| format!("{}: {problem}", problem.issue)),
-            )
+            .chain(self.graph.problems.iter().map(|problem| {
+                format!("{}/{}: {problem}", problem.project, problem.stem)
+            }))
             .collect()
     }
 }

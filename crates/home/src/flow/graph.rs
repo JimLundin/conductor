@@ -2,9 +2,10 @@
 //!
 //! An issue's front matter holds its id, title, kind, status and stage,
 //! the fields its kind has, and the relations that start from its kind.
-//! Anything else is a structural problem, as is a reference to no issue,
-//! a target of a kind the relation doesn't allow, and a cycle where the
-//! relation forbids one. Ids are global, so a relation may cross projects.
+//! Anything else is a structural problem, as is an id more than one file
+//! holds, a reference to no issue, a target of a kind the relation doesn't
+//! allow, and a cycle where the relation forbids one. Ids are global, so a
+//! relation may cross projects.
 //! The file's parts are as [`super::file`] reads them.
 
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -37,8 +38,9 @@ pub struct Graph {
 /// Something structurally wrong with an issue, where a field is the cause.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
-    /// `<project>/<stem>`.
-    pub issue: String,
+    /// The project and the stem of the issue's file.
+    pub project: ProjectId,
+    pub stem: String,
     pub field: Option<String>,
     pub message: String,
 }
@@ -70,6 +72,7 @@ pub fn read(flow: &Flow, files: &[File]) -> Graph {
         }
     }
     issues.sort_by_key(|read_issue| read_issue.id);
+    problems.extend(shared(&issues));
     problems.extend(references(flow, &issues, &unread));
     problems.extend(cycles(flow, &issues));
     Graph { issues, problems }
@@ -92,9 +95,9 @@ pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
 ///
 /// What is structurally wrong with it.
 pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
-    let place = format!("{}/{}", file.project, file.stem);
     let fail = |field: Option<&str>, message: String| Problem {
-        issue: place.clone(),
+        project: file.project,
+        stem: file.stem.clone(),
         field: field.map(ToOwned::to_owned),
         message,
     };
@@ -213,6 +216,30 @@ fn targets(relation: &Relation, value: Value) -> Result<Vec<IssueId>, String> {
     }
 }
 
+/// Each issue whose id another file holds too, naming that file; `issues`
+/// are sorted by id, so those sharing one are side by side.
+fn shared(issues: &[Issue]) -> Vec<Problem> {
+    issues
+        .chunk_by(|one, other| one.id == other.id)
+        .flat_map(|sharing| {
+            sharing.iter().flat_map(move |issue| {
+                sharing
+                    .iter()
+                    .filter(move |other| !core::ptr::eq(*other, issue))
+                    .map(move |other| Problem {
+                        project: issue.project,
+                        stem: issue.id.to_string(),
+                        field: Some(String::from(ID)),
+                        message: format!(
+                            "is also the id of {}/{}",
+                            other.project, other.id
+                        ),
+                    })
+            })
+        })
+        .collect()
+}
+
 /// Each reference to no issue, or to one of a kind its relation doesn't
 /// allow. An issue whose file has a problem of its own still exists, so a
 /// reference to it is left to that problem.
@@ -247,7 +274,8 @@ fn references(
                     Some(_) => None,
                 };
                 problems.extend(message.map(|text| Problem {
-                    issue: format!("{}/{}", issue.project, issue.id),
+                    project: issue.project,
+                    stem: issue.id.to_string(),
                     field: Some(name.clone()),
                     message: text,
                 }));
@@ -292,7 +320,8 @@ fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
                     projects.get(id).map(|project| (*project, id))
                 });
                 problems.extend(members.map(|(project, id)| Problem {
-                    issue: format!("{project}/{id}"),
+                    project,
+                    stem: id.to_string(),
                     field: Some(relation.name.clone()),
                     message: message.clone(),
                 }));

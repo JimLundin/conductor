@@ -1,13 +1,20 @@
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use super::{IssueId, ProjectId};
+use super::{DRAWS, Draws, IssueId, ProjectId};
 
 /// 2026-11-22T12:00:00Z.
 const NOW: u64 = 1_795_348_800;
 
-fn minted(now: u64, random: u16) -> Option<IssueId> {
-    IssueId::mint(now, &[random], &[])
+fn minted(now: u64, random: u64) -> Option<IssueId> {
+    IssueId::mint(now, &[random; DRAWS], &[])
+}
+
+/// The draws `given`, the last of them repeated to the end.
+fn draws(given: &[u64]) -> Draws {
+    core::array::from_fn(|at| {
+        given.get(at).or_else(|| given.last()).copied().unwrap_or(0)
+    })
 }
 
 #[test]
@@ -40,8 +47,11 @@ fn issue_ids_sort_by_when_they_were_minted() {
 #[test]
 fn minting_an_id_the_home_has_draws_again() {
     let held = Vec::from_iter(minted(NOW, 7));
-    assert_eq!(IssueId::mint(NOW, &[7, 7, 9], &held), minted(NOW, 9));
-    assert_eq!(IssueId::mint(NOW, &[7], &held), None);
+    assert_eq!(
+        IssueId::mint(NOW, &draws(&[7, 7, 9]), &held),
+        minted(NOW, 9)
+    );
+    assert_eq!(IssueId::mint(NOW, &draws(&[7]), &held), None);
 }
 
 #[test]
@@ -84,7 +94,7 @@ fn only_8_lower_case_base_32_digits_are_an_issue_id() {
 
 #[test]
 fn a_project_id_reads_back_as_it_is_written() {
-    let id = ProjectId::mint(&[0x3fff_ffff], &[]);
+    let id = ProjectId::mint(&draws(&[0x3fff_ffff]), &[]);
     assert_eq!(id.map(|minted| minted.to_string()), Some("zzzzzz".into()));
     assert_eq!(ProjectId::parse("a1b2c3").map(|id| id.to_string()), {
         Some("a1b2c3".to_string())
@@ -109,7 +119,10 @@ fn only_6_lower_case_base_32_digits_are_a_project_id() {
 #[test]
 fn minting_a_project_id_the_home_has_draws_again() {
     let held = Vec::from_iter(ProjectId::parse("000001"));
-    assert_eq!(ProjectId::mint(&[1, 2], &held), ProjectId::parse("000002"));
+    assert_eq!(
+        ProjectId::mint(&draws(&[1, 2]), &held),
+        ProjectId::parse("000002")
+    );
 }
 
 #[test]
@@ -123,4 +136,16 @@ fn an_id_crosses_the_wire_as_its_text_and_nothing_else() {
     let foreign = postcard::to_allocvec(&Some("01m82c165wagy4ctje7xncgje4"))
         .unwrap_or_default();
     assert!(postcard::from_bytes::<Option<IssueId>>(&foreign).is_err());
+}
+
+#[test]
+fn an_id_keeps_of_a_draw_only_the_bits_it_has_room_for() {
+    assert_eq!(
+        minted(IssueId::EPOCH, u64::MAX).map(|id| id.to_string()),
+        Some("000000zz".to_string())
+    );
+    assert_eq!(
+        ProjectId::mint(&[u64::MAX; DRAWS], &[]).map(|id| id.to_string()),
+        Some("zzzzzz".to_string())
+    );
 }

@@ -1474,7 +1474,7 @@ mod as_the_command_line {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
         let home = Snapshot::of(inputs());
         let outcome = run(
-            command(&words, &home, fresh(&home, NOW * 1000, &[7])),
+            command(&words, &home, fresh(&home, NOW, &[7; proto::DRAWS])),
             None,
             &home,
             &command::Context {
@@ -1604,7 +1604,7 @@ mod as_the_command_line {
             mark: None,
         };
         let typed = run(
-            command(&said, &home, fresh(&home, NOW * 1000, &[7])),
+            command(&said, &home, fresh(&home, NOW, &[7; proto::DRAWS])),
             None,
             &home,
             &by,

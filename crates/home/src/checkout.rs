@@ -20,26 +20,25 @@ pub struct Root {
     pub entries: Vec<String>,
 }
 
-/// The paths to look for checkouts at, each once: those found before, then
-/// each directory in each root that isn't hidden or in a hidden one, then
-/// the host's own clones.
+/// The folders in a root whose repositories are set aside.
+const SET_ASIDE: [&str; 2] = ["_old", "Archives"];
+
+/// The paths to look for checkouts at, each once: the `known` ones, then
+/// each directory in each root that isn't hidden, in a hidden one or in
+/// one set aside.
 #[must_use]
-pub fn candidates(
-    roots: &[Root],
-    projects: &[Project],
-    known: &[String],
-    clones: &str,
-) -> Vec<String> {
+pub fn candidates(roots: &[Root], known: &[String]) -> Vec<String> {
     let searched = roots.iter().flat_map(|root| {
         root.entries
             .iter()
-            .filter(|entry| !entry.split('/').any(|name| name.starts_with('.')))
+            .filter(|entry| {
+                !entry.split('/').any(|name| name.starts_with('.'))
+                    && !SET_ASIDE
+                        .contains(&entry.split('/').next().unwrap_or_default())
+            })
             .map(|entry| join(&root.path, entry))
     });
-    let own = projects
-        .iter()
-        .map(|project| clone_path(clones, &project.id));
-    known.iter().cloned().chain(searched).chain(own).fold(
+    known.iter().cloned().chain(searched).fold(
         Vec::new(),
         |mut listed, path| {
             if !listed.contains(&path) {
@@ -48,6 +47,15 @@ pub fn candidates(
             listed
         },
     )
+}
+
+/// Where the host clones each of `projects`, as [`clone_path`] says.
+#[must_use]
+pub fn clone_paths(clones: &str, projects: &[Project]) -> Vec<String> {
+    projects
+        .iter()
+        .map(|project| clone_path(clones, &project.id))
+        .collect()
 }
 
 /// Where the host clones `project`: `<clones>/<project>`.

@@ -25,8 +25,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use home::checkout::{Probe, Root};
-use home::flow::command::{DRAWS, fresh};
+use home::checkout::Root;
+use home::flow::command::fresh;
 use home::flow::graph::File;
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
@@ -622,14 +622,11 @@ impl Actor {
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
-        let draws: Vec<u16> =
-            std::iter::repeat_with(draw).take(DRAWS).collect();
-        let issue = fresh(&self.home, now().saturating_mul(1000), &draws)
-            .ok_or_else(|| {
-                IssueError::Retryable(String::from(
-                    "no issue id is free this second",
-                ))
-            })?;
+        let issue = fresh(&self.home, now(), &draws()).ok_or_else(|| {
+            IssueError::Retryable(String::from(
+                "no issue id is free this second",
+            ))
+        })?;
         let request =
             self.issue_context(command).open(issue, new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
@@ -888,17 +885,21 @@ impl Actor {
         let roots = self
             .roots
             .iter()
-            .map(|path| root(path))
+            .map(|path| home_files::root(path))
             .collect::<Vec<Root>>();
-        let paths = home::checkout::candidates(
-            &roots,
-            self.home.projects(),
-            &self.known,
-            &self.clones,
-        );
+        let known = [
+            self.known.clone(),
+            home::checkout::clone_paths(&self.clones, self.home.projects()),
+        ]
+        .concat();
+        let paths = home::checkout::candidates(&roots, &known);
+        let probes =
+            tokio::task::spawn_blocking(move || home_files::probes(&paths))
+                .await
+                .unwrap_or_default();
         self.found = home::checkout::matched(
             self.home.projects(),
-            &probes(paths).await,
+            &probes,
             &self.clones,
         );
         let stored = Stored::kept(self.remote.clone(), &self.found);
@@ -1276,71 +1277,6 @@ async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
     .map_err(|err| err.to_string())
 }
 
-/// A search root with the directories in it and in each of those that
-/// isn't hidden, so a checkout one level down is found too.
-fn root(path: &Path) -> Root {
-    let mut entries = directories(path)
-        .into_iter()
-        .flat_map(|name| {
-            let deeper = if name.starts_with('.') {
-                Vec::new()
-            } else {
-                directories(&path.join(&name))
-            };
-            let inner = deeper
-                .into_iter()
-                .map(|inner| format!("{name}/{inner}"))
-                .collect::<Vec<String>>();
-            core::iter::once(name).chain(inner)
-        })
-        .collect::<Vec<String>>();
-    entries.sort();
-    Root {
-        path: path.to_string_lossy().into_owned(),
-        entries,
-    }
-}
-
-/// The names of the directories in `path`.
-fn directories(path: &Path) -> Vec<String> {
-    std::fs::read_dir(path)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect()
-}
-
-async fn probes(paths: Vec<String>) -> Vec<Probe> {
-    let mut found = Vec::new();
-    for path in paths {
-        found.extend(probe(&path).await);
-    }
-    found
-}
-
-/// What Git says of the repository at `path`, by its canonical path.
-async fn probe(path: &str) -> Option<Probe> {
-    let canonical = std::fs::canonicalize(path).ok()?;
-    let shown = canonical.to_str()?.to_owned();
-    let top = text(&canonical, &["rev-parse", "--show-toplevel"])
-        .await
-        .ok();
-    let roots = text(&canonical, &["rev-list", "--max-parents=0", "HEAD"])
-        .await
-        .ok();
-    let remote = text(&canonical, &["remote", "get-url", "origin"])
-        .await
-        .ok();
-    home::checkout::probed(
-        &shown,
-        top.as_deref(),
-        roots.as_deref(),
-        remote.as_deref(),
-    )
-}
-
 /// The host's clone of the home, `<data>/home-repo`.
 fn clone_of(data_dir: &Path) -> PathBuf {
     data_dir.join("home-repo")
@@ -1473,11 +1409,9 @@ fn now() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
-/// The randomness of a new issue's id, drawn again on a clash.
-fn draw() -> u16 {
-    let mut bytes = [0_u8; 2];
-    let _filled = getrandom::fill(&mut bytes);
-    u16::from_le_bytes(bytes)
+/// The randomness a new issue's id is minted with.
+fn draws() -> proto::Draws {
+    core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
 }
 
 #[cfg(test)]

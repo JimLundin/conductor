@@ -5,23 +5,24 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write as _};
-use std::iter;
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
-use home::checkout::Probe;
+use home::checkout::{self, Probe};
+use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
-use home::repos::{self, Asked, Scanning};
+use home::repos::{self, New, Scanning};
 use home::skills::{self, HARNESSES, LISTING, SKILL_FILE, SKILLS};
+use home_files::git;
 
-/// What doing `asked` in the home at `root` says, and its exit code.
-pub fn run(root: &Path, asked: Asked, home: &Snapshot) -> (String, u8) {
-    match asked {
-        Asked::Status => (status(root, home), 0),
-        Asked::Sync => sync(root, home.projects()),
-        Asked::Scan => ended(scan(root, home)),
-        Asked::Skills => ended(copied(root)),
+/// What doing `local` in the home at `root` says, and its exit code.
+pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
+    match local {
+        Local::Status => (status(root, home), 0),
+        Local::Sync => sync(root, home.projects()),
+        Local::Scan => ended(scan(root, home)),
+        Local::Skills => ended(copied(root)),
     }
 }
 
@@ -73,23 +74,20 @@ fn clone(root: &Path, remote: &str, into: &str) -> Result<(), String> {
 
 fn scan(root: &Path, home: &Snapshot) -> Result<String, String> {
     let projects = home.projects();
-    let new: Vec<(Probe, Vec<String>)> =
-        repos::unmatched(projects, &probes(root))
-            .into_iter()
-            .map(|probe| {
-                let names = home_files::names(&root.join(&probe.path));
-                (probe, names)
-            })
-            .collect();
-    let draws = iter::repeat_with(random).take(new.len() * repos::DRAWS);
+    let new = repos::unmatched(projects, &probes(root))
+        .into_iter()
+        .map(|probe| New {
+            names: home_files::names(&root.join(&probe.path)),
+            draws: crate::draws(),
+            probe,
+        })
+        .collect();
     let done = repos::scan(Scanning {
         home: root.file_name().map_or_else(String::new, |name| {
             name.to_string_lossy().into_owned()
         }),
         projects: projects.to_vec(),
-        folders: home_files::project_folders(root),
         new,
-        draws: draws.collect(),
         problems: home.listing_problems().to_vec(),
         doc: read(&root.join(repos::DOC)),
     })?;
@@ -99,32 +97,16 @@ fn scan(root: &Path, home: &Snapshot) -> Result<String, String> {
     Ok(done.said)
 }
 
-/// Each repository `home repos` looks at, as Git describes it.
+/// Each repository in the home, the home among them, found as the host
+/// finds checkouts with the home as its one root.
 fn probes(root: &Path) -> Vec<Probe> {
-    home_files::repositories(root)
-        .iter()
-        .filter_map(|path| {
-            let at = root.join(path);
-            let roots = git(
-                &at,
-                &["rev-list", "--max-parents=0", "--first-parent", "HEAD"],
-            );
-            let remote = git(&at, &["remote", "get-url", "origin"]);
-            repos::probe(path, roots.as_deref(), remote.as_deref())
-        })
-        .collect()
-}
-
-/// What Git printed in `at`, if it succeeded.
-fn git(at: &Path, args: &[&str]) -> Option<String> {
-    Command::new("git")
-        .arg("-C")
-        .arg(at)
-        .args(args)
-        .output()
-        .ok()
-        .filter(|ran| ran.status.success())
-        .and_then(|ran| String::from_utf8(ran.stdout).ok())
+    let home = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let shown = home.to_string_lossy().into_owned();
+    let paths = checkout::candidates(
+        &[home_files::root(&home)],
+        std::slice::from_ref(&shown),
+    );
+    repos::local(&shown, home_files::probes(&paths))
 }
 
 /// Copies the home's skills into each harness's folder in the user's home.
@@ -199,11 +181,4 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| fs::write(path, text))
         .map_err(|err| format!("{}: {err}", path.display()))
-}
-
-/// A draw for a new project's id.
-fn random() -> u32 {
-    let mut bytes = [0_u8; 4];
-    let _filled = getrandom::fill(&mut bytes);
-    u32::from_le_bytes(bytes)
 }
