@@ -10,7 +10,7 @@
 
 use agents::Note;
 use agents::runtime::{Command, Lifecycle, Outcome, Report, Start, Started};
-use proto::{Effort, HostPath, Provider, SessionId as Session};
+use proto::{Effort, HostPath, SessionId as Session};
 
 use crate::prelude::*;
 use crate::{
@@ -199,7 +199,7 @@ impl Runtime {
     fn event(&mut self, event: ClaudeEvent) -> Vec<Effect> {
         let note = match &event {
             ClaudeEvent::Unknown(_) => Some(Note::unmapped(
-                Provider::Claude,
+                crate::PROVIDER,
                 String::from("unknown"),
                 None,
             )),

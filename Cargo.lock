@@ -681,7 +681,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "claude",
  "claude-cli",
+ "codex",
  "codex-cli",
  "daemon",
  "host",
@@ -1927,7 +1929,6 @@ dependencies = [
  "claude",
  "data-encoding",
  "n0-future",
- "proto",
  "reqwest",
  "rustls",
  "serde_json",

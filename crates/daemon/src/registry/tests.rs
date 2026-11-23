@@ -86,8 +86,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> anyhow::Result<Self> {
         let data = Data::new()?;
-        let source = InstanceId::named(Provider::Claude, "source");
-        let destination = InstanceId::named(Provider::Claude, "destination");
+        let source = InstanceId::named(Provider::new("claude"), "source");
+        let destination =
+            InstanceId::named(Provider::new("claude"), "destination");
         let providers = Providers::new(
             Plugins::default(),
             data.0.clone(),
@@ -144,7 +145,7 @@ impl Fixture {
                 model: None,
                 effort: None,
             },
-            actor.told(Provider::Claude),
+            actor.told(&Provider::new("claude")),
             (None, None),
             &[],
             actor.log.clone(),

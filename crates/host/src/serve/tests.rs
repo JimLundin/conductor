@@ -109,14 +109,17 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
     );
     let configured = [
         InstanceCommand::SetCredential {
-            provider: Provider::Codex,
+            provider: Provider::new("codex"),
             credential: proto::Credential {
                 kind: String::from("provider"),
                 values: std::collections::BTreeMap::new(),
             },
         },
         InstanceCommand::Remove {
-            instance: InstanceId::named(Provider::Codex, "https://gw.example"),
+            instance: InstanceId::named(
+                Provider::new("codex"),
+                "https://gw.example",
+            ),
         },
     ]
     .map(|command| ledger(&Command::Instance(command)));
@@ -168,7 +171,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
         .map(|command| ledger(&Command::Home(command)));
     assert_eq!(run, [None; 2]);
     let start = SessionCommand::Start {
-        instance: InstanceId::own(Provider::Claude),
+        instance: InstanceId::own(Provider::new("claude")),
         at: proto::StartAt::Project(project()),
         model: None,
         effort: Some(Effort::High),
@@ -180,7 +183,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
     assert_eq!(
         session(start, phone()),
         SessionRoute::Start {
-            instance: InstanceId::own(Provider::Claude),
+            instance: InstanceId::own(Provider::new("claude")),
             at: proto::StartAt::Project(project()),
             choice: (None, Some(Effort::High)),
             by: phone(),
@@ -190,7 +193,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
 
 #[test]
 fn sign_in_commands_keep_no_receipt() {
-    let work = || InstanceId::own(Provider::Claude);
+    let work = || InstanceId::own(Provider::new("claude"));
     let submit = SignInCommand::SubmitCode {
         instance: work(),
         code: SignInCode(String::from("pasted#code")),
@@ -209,7 +212,7 @@ fn sign_in_commands_keep_no_receipt() {
     assert_eq!(run, [None; 4]);
     assert_eq!(
         format!("{submit:?}"),
-        "SubmitCode { instance: InstanceId { provider: Claude, account: Own }, code: SignInCode(..) }"
+        "SubmitCode { instance: InstanceId { provider: Provider(\"claude\"), account: Own }, code: SignInCode(..) }"
     );
 }
 

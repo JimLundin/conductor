@@ -8,4 +8,4 @@ pub mod process;
 pub mod runner;
 
 pub use home::Home;
-pub use install::{InstallError, install};
+pub use install::{InstallError, here, install};

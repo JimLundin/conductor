@@ -94,7 +94,9 @@ Home Screen. The design is in
   profile, its sign-in (`agents::SignIn`) and credential forms as data
   (`claude::profile`, `codex::profile`) plus its starter, built by
   `claude_cli::plugin` and
-  `codex_cli::plugin`. `daemon::start` takes a bound endpoint, those plugins
+  `codex_cli::plugin`. A provider is the name its plugin declares
+  (`claude::PROVIDER`, `codex::PROVIDER`), and each pins its own CLI
+  (`claude::pin`, `codex::pin`). `daemon::start` takes a bound endpoint, those plugins
   and the host's options. `daemon::serve` uses the same entry point for
   `conductord host`. Instances in the stored roster and those added during
   a run use the same plugin launch path. Credentials are generic form values
@@ -106,8 +108,8 @@ Home Screen. The design is in
   <dir>` (repeatable, where it looks for checkouts), and
   `conductord login <provider> [--account <account>]`, which picks the
   instance of that account, or without one the provider's own; build it
-  with `cargo build -p conductord`. Keep provider-specific code out of `daemon`, `host`,
-  `proto` and the web app.
+  with `cargo build -p conductord`. Keep provider-specific code out of `agents`, `daemon`,
+  `host`, `install`, `runtime`, `proto` and the web app.
 - **Instances.** A host runs instances, not providers: each one account
   of a provider, keyed by `InstanceId { provider, account }`, with its own
   credential, private home (`<data>/home/<dir>`), work dir

@@ -7,44 +7,49 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+PROVIDERS = ("claude", "codex")
 
 
 class PinTest(unittest.TestCase):
     def setUp(self):
         self.pin = runpy.run_path(str(ROOT / "tools/pin"))
-        self.original = self.pin["read"]()
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
-        self.rs = Path(self.scratch.name) / "pins.rs"
-        self.rs.write_bytes((ROOT / "crates/agents/src/pin/pins.rs").read_bytes())
-        self.pin["read"].__globals__["PINS_RS"] = self.rs
-        self.pin["read"].__globals__["ROOT"] = self.rs.parent
+        scratch = Path(self.scratch.name)
+        paths = self.pin["read"].__globals__["PINS_RS"]
+        for provider in PROVIDERS:
+            copy = scratch / provider / "pins.rs"
+            copy.parent.mkdir()
+            copy.write_bytes(paths[provider].read_bytes())
+            paths[provider] = copy
+        self.pin["read"].__globals__["ROOT"] = scratch
+        self.original = {provider: self.pin["read"](provider) for provider in PROVIDERS}
 
     def test_formatted_output_roundtrips(self):
-        self.pin["write"](self.original)
-        self.assertEqual(self.pin["read"](), self.original)
+        for provider in PROVIDERS:
+            with self.subTest(provider=provider):
+                self.pin["write"](provider, self.original[provider])
+                self.assertEqual(self.pin["read"](provider), self.original[provider])
 
-    def test_each_update_preserves_the_other_provider(self):
+    def test_each_update_writes_only_its_providers_pin(self):
         for provider, other in (("claude", "codex"), ("codex", "claude")):
             with self.subTest(provider=provider):
-                pins = self.pin["read"]()
-                pins[provider] = {
+                pinned = {
                     "version": "test-version",
                     "verified": "test verification",
                     "sha256": {"test-platform": "a" * 64},
                 }
-                self.pin["write"](pins)
-                updated = self.pin["read"]()
-                self.assertEqual(updated[provider], pins[provider])
-                self.assertEqual(updated[other], self.original[other])
-                self.pin["write"](self.original)
+                self.pin["write"](provider, pinned)
+                self.assertEqual(self.pin["read"](provider), pinned)
+                self.assertEqual(self.pin["read"](other), self.original[other])
+                self.pin["write"](provider, self.original[provider])
 
     def test_malformed_hash_is_rejected(self):
-        text = self.rs.read_text()
+        rs = self.pin["read"].__globals__["PINS_RS"]["claude"]
         digest = next(iter(self.original["claude"]["sha256"].values()))
-        self.rs.write_text(text.replace(digest, "bad", 1))
+        rs.write_text(rs.read_text().replace(digest, "bad", 1))
         with self.assertRaises(SystemExit):
-            self.pin["read"]()
+            self.pin["read"]("claude")
 
 
 if __name__ == "__main__":

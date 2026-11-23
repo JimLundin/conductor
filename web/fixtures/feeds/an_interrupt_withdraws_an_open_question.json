@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -147,7 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{ "account": "Own", "provider": "Claude" },
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -174,7 +174,7 @@
 						}
 					],
 					[
-						{ "account": "Own", "provider": "Codex" },
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -193,7 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -220,7 +220,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -250,7 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-question-withdraw",
 						"effort": null,
-						"instance": { "account": "Own", "provider": "Claude" },
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},

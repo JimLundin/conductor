@@ -27,7 +27,7 @@ pin = load("pin", "pin")
 
 
 def change_pin(scratch, provider, version, ready):
-    pinned = pin.read()[provider]
+    pinned = pin.read(provider)
     pinned["version"] = version
 
     def format_stub(_command, **_kwargs):
@@ -81,14 +81,18 @@ class ToolingTests(unittest.TestCase):
         run(*command)
 
     def use_scratch_pins(self):
-        path = self.scratch / pin.PINS_RS.name
-        path.write_bytes(pin.PINS_RS.read_bytes())
-        self.enterContext(patch.object(pin, "PINS_RS", path))
+        paths = {}
+        for provider, original in pin.PINS_RS.items():
+            path = self.scratch / provider / original.name
+            path.parent.mkdir()
+            path.write_bytes(original.read_bytes())
+            paths[provider] = path
+        self.enterContext(patch.object(pin, "PINS_RS", paths))
         self.enterContext(patch.object(pin, "ROOT", self.scratch))
 
     def test_failed_formatter_does_not_replace_pins(self):
         self.use_scratch_pins()
-        original = pin.PINS_RS.read_bytes()
+        original = pin.PINS_RS["claude"].read_bytes()
 
         def interrupted(command, **_kwargs):
             Path(command[-1]).write_text("partially formatted")
@@ -96,8 +100,8 @@ class ToolingTests(unittest.TestCase):
 
         with patch.object(pin.subprocess, "run", side_effect=interrupted):
             with self.assertRaises(subprocess.CalledProcessError):
-                pin.update("claude", pin.read()["claude"], self.scratch)
-        self.assertEqual(pin.PINS_RS.read_bytes(), original)
+                pin.update("claude", pin.read("claude"), self.scratch)
+        self.assertEqual(pin.PINS_RS["claude"].read_bytes(), original)
 
     def test_concurrent_pin_updates_keep_both_providers(self):
         self.use_scratch_pins()
@@ -117,18 +121,18 @@ class ToolingTests(unittest.TestCase):
                 worker.join()
             self.assertEqual(worker.exitcode, 0)
         self.assertEqual(
-            [(provider, pin.read()[provider]["version"]) for provider, _ in updates],
+            [(provider, pin.read(provider)["version"]) for provider, _ in updates],
             updates,
         )
 
     def test_incomplete_platforms_are_rejected(self):
         self.use_scratch_pins()
-        original = pin.PINS_RS.read_bytes()
-        pinned = pin.read()["claude"]
+        original = pin.PINS_RS["claude"].read_bytes()
+        pinned = pin.read("claude")
         del pinned["sha256"]["linux-x64-musl"]
         with self.assertRaisesRegex(SystemExit, "supported platforms: linux-x64-musl"):
             pin.update("claude", pinned, self.scratch)
-        self.assertEqual(pin.PINS_RS.read_bytes(), original)
+        self.assertEqual(pin.PINS_RS["claude"].read_bytes(), original)
 
     def test_codex_requires_cosign_before_fetching(self):
         with patch.object(pin.shutil, "which", return_value=None), patch.object(pin, "fetch") as fetch:

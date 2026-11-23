@@ -885,7 +885,7 @@ impl RegistryActor {
             self.log.append(id, EventKind::FinishInterrupted).await?;
         }
         let recovered = events_of(id, &self.log.history().await?);
-        let told = self.told(instance.provider);
+        let told = self.told(&instance.provider);
         let session = Session::restore(
             id,
             directory,
@@ -899,7 +899,7 @@ impl RegistryActor {
         Ok(())
     }
 
-    fn told(&self, provider: Provider) -> Told {
+    fn told(&self, provider: &Provider) -> Told {
         Told {
             home: self.home.clone(),
             instructions_file: self.providers.instructions_file(provider),
@@ -1015,7 +1015,7 @@ impl RegistryActor {
                         session,
                         directory,
                         choice,
-                        self.told(provider),
+                        self.told(&provider),
                         (starter.start(), offered),
                         self.log.clone(),
                         history.as_ref(),

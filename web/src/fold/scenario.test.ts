@@ -66,10 +66,10 @@ const theSession = (host: Host): Session => sessionOf(host, session);
 test("a welcome names the host and brings its catalog and instances", () => {
 	const host = folded(received(recordedFeed(scenario), 0).slice(0, 1));
 	expect(host.name).toBe("test-host");
-	expect(Object.keys(host.catalog ?? {})).toStrictEqual(["Claude", "Codex"]);
+	expect(Object.keys(host.catalog ?? {})).toStrictEqual(["claude", "codex"]);
 	expect(host.instances.map(([instance]) => instance)).toStrictEqual([
-		{ account: "Own", provider: "Claude" },
-		{ account: "Own", provider: "Codex" },
+		{ account: "Own", provider: "claude" },
+		{ account: "Own", provider: "codex" },
 	]);
 	expect(host.sessions.size).toBe(0);
 });

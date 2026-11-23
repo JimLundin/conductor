@@ -32,6 +32,7 @@ mod schema;
 mod sign_in;
 mod ticket;
 
+use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -424,11 +425,12 @@ pub enum StartAt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ClientName(pub String);
 
-/// The providers a host may run: the one place they are listed.
+/// A provider, by the name its plugin declares: what the host's command
+/// line, its data dir and the wire call it. Which providers there are is up
+/// to the plugins a host is given.
 #[derive(
     Debug,
     Clone,
-    Copy,
     PartialEq,
     Eq,
     Hash,
@@ -438,29 +440,24 @@ pub struct ClientName(pub String);
     Deserialize,
     JsonSchema,
 )]
-pub enum Provider {
-    Claude,
-    Codex,
-}
+#[serde(transparent)]
+pub struct Provider(Cow<'static, str>);
 
 impl Provider {
-    pub const ALL: [Self; 2] = [Self::Claude, Self::Codex];
-
-    /// What the host's command line and data dir call it.
     #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Claude => "claude",
-            Self::Codex => "codex",
-        }
+    pub const fn new(name: &'static str) -> Self {
+        Self(Cow::Borrowed(name))
     }
 
-    /// The provider called `name`.
     #[must_use]
-    pub fn named(name: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|provider| provider.name() == name)
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl core::fmt::Display for Provider {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
     }
 }
 
@@ -1195,17 +1192,22 @@ mod tests {
     }
 
     #[test]
-    fn each_provider_is_found_by_its_name() {
+    fn a_provider_travels_as_the_name_its_plugin_declares()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let gemini = super::Provider::new("gemini");
+        assert_eq!(serde_json::to_string(&gemini)?, "\"gemini\"");
         assert_eq!(
-            super::Provider::ALL
-                .map(|provider| super::Provider::named(provider.name())),
-            super::Provider::ALL.map(Some)
+            serde_json::from_str::<super::Provider>("\"gemini\"")?,
+            gemini
         );
         assert_eq!(
-            super::Provider::ALL.map(super::Provider::name),
-            ["claude", "codex"]
+            postcard::from_bytes::<super::Provider>(&postcard::to_allocvec(
+                &gemini
+            )?)?,
+            gemini
         );
-        assert_eq!(super::Provider::named("gemini"), None);
+        assert_eq!(gemini.name(), "gemini");
+        Ok(())
     }
 
     #[test]
@@ -1298,15 +1300,15 @@ mod tests {
             credentials: Vec::new(),
         };
         let catalog = Catalog(alloc::collections::BTreeMap::from([(
-            Provider::Claude,
+            Provider::new("claude"),
             info.clone(),
         )]));
-        assert_eq!(catalog.of(Provider::Claude), Some(&info));
-        assert_eq!(catalog.of(Provider::Codex), None);
+        assert_eq!(catalog.of(&Provider::new("claude")), Some(&info));
+        assert_eq!(catalog.of(&Provider::new("codex")), None);
         assert_eq!(
             [
-                catalog.label(Provider::Claude),
-                catalog.label(Provider::Codex)
+                catalog.label(&Provider::new("claude")),
+                catalog.label(&Provider::new("codex"))
             ],
             [String::from("Claude Code"), String::from("codex")]
         );
@@ -1317,8 +1319,8 @@ mod tests {
         use super::{
             Availability, InstanceId, InstanceStatus, Instances, Provider,
         };
-        let own = InstanceId::own(Provider::Claude);
-        let named = InstanceId::named(Provider::Codex, "me@example.com");
+        let own = InstanceId::own(Provider::new("claude"));
+        let named = InstanceId::named(Provider::new("codex"), "me@example.com");
         assert_eq!(
             [format!("{own}"), format!("{named}")],
             [String::from("claude"), String::from("codex me@example.com")]

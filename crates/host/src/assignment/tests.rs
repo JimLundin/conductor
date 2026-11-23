@@ -30,7 +30,7 @@ fn created(session: u128, instance: InstanceId) -> Event {
 }
 
 fn own() -> InstanceId {
-    InstanceId::own(Provider::Claude)
+    InstanceId::own(Provider::new("claude"))
 }
 
 fn fold(events: &[Event]) -> Assigned {
@@ -84,12 +84,15 @@ fn a_session_is_on_an_issue_in_its_instance_only() {
     ]);
     assert!(on.is(ISSUE, &own()));
     assert!(!on.is(IssueId::new(0, 4), &own()));
-    assert!(!on.is(ISSUE, &InstanceId::named(Provider::Claude, "https://gw")));
+    assert!(!on.is(
+        ISSUE,
+        &InstanceId::named(Provider::new("claude"), "https://gw")
+    ));
 }
 
 #[test]
 fn each_session_folds_only_its_own_events() {
-    let other = InstanceId::named(Provider::Codex, "https://gw");
+    let other = InstanceId::named(Provider::new("codex"), "https://gw");
     let sessions = assigned(&[
         created(1, own()),
         created(2, other.clone()),
@@ -113,7 +116,7 @@ fn an_assignment_is_signed_by_its_instance() {
     };
     assert_eq!(signed(own()).signer().0, "claude");
     assert_eq!(
-        signed(InstanceId::named(Provider::Codex, "https://gw"))
+        signed(InstanceId::named(Provider::new("codex"), "https://gw"))
             .signer()
             .0,
         "codex · https://gw"

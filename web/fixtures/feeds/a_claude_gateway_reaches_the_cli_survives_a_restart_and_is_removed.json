@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -147,7 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{ "account": "Own", "provider": "Claude" },
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": { "reason": "no credential configured" }
@@ -155,7 +155,7 @@
 						}
 					],
 					[
-						{ "account": "Own", "provider": "Codex" },
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -174,7 +174,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "no credential configured" }
@@ -182,7 +182,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -212,7 +212,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "no credential configured" }
@@ -222,7 +222,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -231,7 +231,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -249,7 +249,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "no credential configured" }
@@ -259,7 +259,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -286,7 +286,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -317,7 +317,7 @@
 						"effort": null,
 						"instance": {
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						"model": null
 					}
@@ -383,7 +383,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -455,7 +455,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -526,7 +526,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{ "account": "Own", "provider": "Claude" },
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": { "reason": "no credential configured" }
@@ -536,7 +536,7 @@
 					[
 						{
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -563,7 +563,7 @@
 						}
 					],
 					[
-						{ "account": "Own", "provider": "Codex" },
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -588,7 +588,7 @@
 						"effort": null,
 						"instance": {
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						"model": null
 					}
@@ -669,7 +669,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "no credential configured" }
@@ -679,7 +679,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -706,7 +706,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -730,7 +730,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -802,7 +802,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -873,7 +873,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{ "account": "Own", "provider": "Claude" },
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": { "reason": "no credential configured" }
@@ -881,7 +881,7 @@
 						}
 					],
 					[
-						{ "account": "Own", "provider": "Codex" },
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -906,7 +906,7 @@
 						"effort": null,
 						"instance": {
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						"model": null
 					}
@@ -987,7 +987,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "no credential configured" }
@@ -995,7 +995,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {

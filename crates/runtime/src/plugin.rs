@@ -8,7 +8,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use agents::{Configuration, Profile};
-use install::Home;
+use install::{Home, InstallError};
 use proto::{Credential, SignInCode};
 use tokio::sync::oneshot;
 
@@ -67,4 +67,6 @@ pub struct Plugin {
     /// The account a signed-in home is, from what the CLI reports where
     /// the profile's `account` says.
     pub account: fn(&str) -> Option<String>,
+    /// The build of its CLI the host installs when it is given none.
+    pub pin: fn() -> Result<agents::pin::Pin, InstallError>,
 }

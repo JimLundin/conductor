@@ -78,9 +78,9 @@ fn adoption_roster(
 fn reopening_finishes_adoption_interrupted_after_home() -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
-    let from = InstanceId::own(Provider::Codex);
-    let to = InstanceId::named(Provider::Codex, "signed-in");
-    let unrelated = InstanceId::named(Provider::Codex, "unrelated");
+    let from = InstanceId::own(Provider::new("codex"));
+    let to = InstanceId::named(Provider::new("codex"), "signed-in");
+    let unrelated = InstanceId::named(Provider::new("codex"), "unrelated");
     let (roster, settings) = adoption_roster(&from, &to, &unrelated);
     let (store, _) = Store::open(&data.0, catalog.clone())?;
     store.save(&roster)?;
@@ -173,8 +173,8 @@ fn retry_installs_the_staged_directory_after_the_destination_is_recreated()
 -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
-    let from = InstanceId::named(Provider::Codex, "source");
-    let to = InstanceId::named(Provider::Codex, "signed-in");
+    let from = InstanceId::named(Provider::new("codex"), "source");
+    let to = InstanceId::named(Provider::new("codex"), "signed-in");
     let mut roster = Roster::default();
     roster.0.insert(from.clone(), Instance::default());
     roster.0.insert(to.clone(), Instance::default());
@@ -223,8 +223,8 @@ async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
 -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
-    let from = InstanceId::named(Provider::Codex, "source");
-    let to = InstanceId::named(Provider::Codex, "signed-in");
+    let from = InstanceId::named(Provider::new("codex"), "source");
+    let to = InstanceId::named(Provider::new("codex"), "signed-in");
     let mut roster = Roster::default();
     roster.0.insert(from.clone(), Instance::default());
     let (store, _) = Store::open(&data.0, catalog.clone())?;
@@ -263,7 +263,7 @@ async fn terminal_retry_finishes_adoption_interrupted_before_the_roster_save()
     crate::login(
         Some(data.0.clone()),
         crate::Plugins::default(),
-        Provider::Codex,
+        Provider::new("codex"),
         Some("source".into()),
     )
     .await?;
@@ -293,8 +293,8 @@ fn committed_adoption_returns_its_roster_while_cleanup_can_retry()
 -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
-    let from = InstanceId::named(Provider::Codex, "source");
-    let to = InstanceId::named(Provider::Codex, "signed-in");
+    let from = InstanceId::named(Provider::new("codex"), "source");
+    let to = InstanceId::named(Provider::new("codex"), "signed-in");
     let mut roster = Roster::default();
     roster.0.insert(from.clone(), Instance::default());
     let (store, _) = Store::open(&data.0, catalog.clone())?;
@@ -343,7 +343,7 @@ fn committed_adoption_returns_its_roster_while_cleanup_can_retry()
 fn a_signing_lease_uses_the_current_roster() -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
-    let instance = InstanceId::named(Provider::Codex, "source");
+    let instance = InstanceId::named(Provider::new("codex"), "source");
     let mut roster = Roster::default();
     roster.0.insert(instance.clone(), Instance::default());
     let (writer, _) = Store::open(&data.0, catalog.clone())?;
@@ -370,11 +370,11 @@ fn competing_adoptions_and_a_stale_credential_update_keep_each_account()
     let data = Data::new()?;
     let catalog = Catalog::default();
     let (store, _) = Store::open(&data.0, catalog.clone())?;
-    let from = InstanceId::own(Provider::Codex);
-    let to = InstanceId::named(Provider::Codex, "codex-account");
-    let other_from = InstanceId::own(Provider::Claude);
-    let other_to = InstanceId::named(Provider::Claude, "claude-account");
-    let credential_id = InstanceId::named(Provider::Claude, "gateway");
+    let from = InstanceId::own(Provider::new("codex"));
+    let to = InstanceId::named(Provider::new("codex"), "codex-account");
+    let other_from = InstanceId::own(Provider::new("claude"));
+    let other_to = InstanceId::named(Provider::new("claude"), "claude-account");
+    let credential_id = InstanceId::named(Provider::new("claude"), "gateway");
     let source_settings = Instance {
         model: Some(ModelId("first model".into())),
         ..Instance::default()
@@ -438,9 +438,9 @@ fn adoption_keeps_the_source_of_another_sign_in() -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
     let (store, _) = Store::open(&data.0, catalog.clone())?;
-    let first = InstanceId::own(Provider::Codex);
-    let second = InstanceId::named(Provider::Codex, "second");
-    let third = InstanceId::named(Provider::Codex, "third");
+    let first = InstanceId::own(Provider::new("codex"));
+    let second = InstanceId::named(Provider::new("codex"), "second");
+    let third = InstanceId::named(Provider::new("codex"), "third");
     let mut roster = Roster::default();
     roster.0.insert(first.clone(), Instance::default());
     roster.0.insert(second.clone(), Instance::default());
@@ -483,7 +483,7 @@ fn signing_distinguishes_empty_and_unreadable_rosters() -> anyhow::Result<()> {
     let data = Data::new()?;
     let (store, _) = Store::open(&data.0, Catalog::default())?;
     store.save(&Roster::default())?;
-    let id = InstanceId::own(Provider::Codex);
+    let id = InstanceId::own(Provider::new("codex"));
     let empty = store
         .signing(&id)
         .err()
@@ -516,7 +516,7 @@ fn removal_result_survives_reopening_before_the_command_receipt()
     let data = Data::new()?;
     let catalog = Catalog::default();
     let id = proto::CommandId(17);
-    let instance = InstanceId::named(Provider::Codex, "removed");
+    let instance = InstanceId::named(Provider::new("codex"), "removed");
     let (store, _) = Store::open(&data.0, catalog.clone())?;
     let mut roster = Roster::default();
     roster.0.insert(instance.clone(), Instance::default());

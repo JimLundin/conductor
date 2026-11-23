@@ -6,7 +6,6 @@ use core::fmt;
 
 use agents::driver::{self, Command, FailureText};
 use agents::{Exit, Note};
-use proto::Provider;
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -121,7 +120,7 @@ impl<R> Session<R> {
             Input::Read(Ok(None)) => self.stop(After::Nothing),
             Input::Read(Err(error)) => {
                 let mut effects = Vec::from([Effect::Log(Note::Unreadable {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     error,
                 })]);
                 effects.extend(self.stop(After::Nothing));
@@ -141,7 +140,7 @@ impl<R> Session<R> {
         match parse_line(line) {
             Ok(inbound) => self.inbound(inbound),
             Err(error) => Vec::from([Effect::Log(Note::NotJson {
-                provider: Provider::Claude,
+                provider: crate::PROVIDER,
                 error: error.to_string(),
             })]),
         }
@@ -190,7 +189,7 @@ impl<R> Session<R> {
                 let message =
                     format!("unsupported control request subtype: {subtype}");
                 let mut effects = Vec::from([Effect::Log(Note::Unsupported {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     request: subtype.clone(),
                 })]);
                 effects.extend(self.write(
@@ -287,7 +286,7 @@ impl<R> Session<R> {
         self.pending.remove(request_id).map_or_else(
             || {
                 Vec::from([Effect::Log(Note::UnknownResponse {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     request: request_id.to_owned(),
                 })])
             },
@@ -434,7 +433,7 @@ fn failed<R, S, E: fmt::Display>(
         }
         Then::Refusal { subtype } => {
             Vec::from([Effect::Log(Note::Unwritten {
-                provider: Provider::Claude,
+                provider: crate::PROVIDER,
                 writing: format!("refusing {subtype}"),
                 error: failure.describe(&FAILURE_TEXT),
             })])
@@ -445,7 +444,7 @@ fn failed<R, S, E: fmt::Display>(
 #[cfg(test)]
 mod tests {
     use agents::{Exit, Note};
-    use proto::{Answer, Provider};
+    use proto::Answer;
     use serde_json::{Value, json};
 
     use super::{
@@ -651,7 +650,7 @@ mod tests {
                 )]),
                 Vec::from([Effect::Reply(1, Ok(json!({ "ok": true })))]),
                 Vec::from([Effect::Log(Note::UnknownResponse {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     request: String::from("req_1"),
                 })]),
             ])
@@ -686,7 +685,7 @@ mod tests {
                 Vec::from([Effect::Reply(1, Err(Failure::Io("broken pipe")))]),
                 Vec::from([Effect::Reply(2, Err(Failure::Io("broken pipe")))]),
                 Vec::from([Effect::Log(Note::Unwritten {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     writing: String::from("refusing hook_callback"),
                     error: String::from("claude i/o: broken pipe"),
                 })]),
@@ -707,7 +706,7 @@ mod tests {
             seen,
             Vec::from([
                 Effect::Log(Note::Unsupported {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     request: String::from("hook_callback"),
                 }),
                 written(
@@ -861,7 +860,7 @@ mod tests {
         assert_eq!(
             seen,
             Vec::from([Effect::Log(Note::NotJson {
-                provider: Provider::Claude,
+                provider: crate::PROVIDER,
                 error: String::from("expected value at line 1 column 1"),
             })])
         );
@@ -941,7 +940,7 @@ mod tests {
                 Vec::from([Effect::Stop(After::Nothing)]),
                 Vec::from([
                     Effect::Log(Note::Unreadable {
-                        provider: Provider::Claude,
+                        provider: crate::PROVIDER,
                         error: String::from("reset"),
                     }),
                     Effect::Stop(After::Nothing)

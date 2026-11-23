@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -147,7 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{ "account": "Own", "provider": "Claude" },
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -157,7 +157,7 @@
 						}
 					],
 					[
-						{ "account": "Own", "provider": "Codex" },
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -169,7 +169,7 @@
 					[
 						{
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						{
 							"availability": {
@@ -187,7 +187,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -197,7 +197,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -209,7 +209,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -234,7 +234,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -244,7 +244,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -256,7 +256,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -273,7 +273,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -283,7 +283,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -295,7 +295,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -426,7 +426,7 @@
 						"effort": null,
 						"instance": {
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						"model": "conductor-test-model"
 					}
@@ -493,7 +493,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -503,7 +503,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -515,7 +515,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -554,7 +554,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -564,7 +564,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -576,7 +576,7 @@
 				[
 					{
 						"account": { "Named": "https://conductor-test.invalid/gateway" },
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -707,7 +707,7 @@
 						"effort": null,
 						"instance": {
 							"account": { "Named": "https://conductor-test.invalid/gateway" },
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						"model": "conductor-test-model"
 					}

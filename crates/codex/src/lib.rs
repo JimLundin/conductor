@@ -15,6 +15,7 @@ mod driver;
 pub mod hub;
 mod launch;
 mod mapping;
+pub mod pin;
 mod prelude;
 mod protocol;
 pub mod runtime;
@@ -38,3 +39,6 @@ pub use protocol::{
     user_agent,
 };
 pub use sign_in::sign_in;
+
+/// Codex, as its plugin names it.
+pub const PROVIDER: proto::Provider = proto::Provider::new("codex");

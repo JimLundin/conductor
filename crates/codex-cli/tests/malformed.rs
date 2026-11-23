@@ -25,7 +25,7 @@ fn malformed_codex_stdout_warns_without_the_raw_frame()
     let text = std::fs::read_to_string(captured.path())?;
     assert!(text.contains("WARN"), "{text}");
     assert!(text.contains("agent"), "{text}");
-    assert!(text.contains("Codex"), "{text}");
+    assert!(text.contains("provider=codex"), "{text}");
     assert!(text.contains("printed a line that is not JSON"), "{text}");
     assert!(text.contains("expected value at line 1 column 1"), "{text}");
     assert!(!text.contains(MARKER), "{text}");

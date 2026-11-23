@@ -12,8 +12,10 @@ layer = "shell"
 rpassword = "7.4.0"
 zeroize = "1.8.2"
 anyhow.workspace = true
+claude = { path = "../claude" }
 claude-cli = { path = "../claude-cli" }
 clap = { version = "4.6.7", features = ["derive"] }
+codex = { path = "../codex" }
 codex-cli = { path = "../codex-cli" }
 daemon = { path = "../daemon" }
 host = { path = "../host" }
