@@ -43,3 +43,13 @@ issue.
 **Pending issue edit**:
 A change to an issue that the home has not yet accepted. It remains
 pending while the host is offline or the home cannot be updated.
+
+**Client link**:
+The contract between a host and the app: the frames each side sends on a
+connection, built from the commands, results, refusals and feeds of the
+domains it carries.
+_Avoid_: protocol, proto, wire
+
+**Fleet protocol**:
+The contract between hosts in one fleet, and the signed data they exchange.
+_Avoid_: protocol, proto
