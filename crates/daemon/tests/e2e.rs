@@ -21,6 +21,7 @@ use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
 mod credential_sign_in;
 mod disk;
+mod raw;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, RelayMode};
 use net::{HostLink, LinkOptions, LinkState, Network, Status, Target, Update};
@@ -34,6 +35,7 @@ use proto::{
     SessionId, StartAt, SubagentActivity, SubagentEvent, SubagentId,
     SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
+use raw::{RawClient, Recorder};
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpListener, UdpSocket};
@@ -928,6 +930,21 @@ async fn kinds_until(
         .collect())
 }
 
+/// The kinds of the conversation events the raw client receives, through
+/// the first that reaches `until`, for tests that start one session.
+async fn raw_kinds_until(
+    client: &mut RawClient,
+    until: Until,
+) -> Fallible<Vec<EventKind>> {
+    Ok(client
+        .events_until(|event| reached(&until, &event.kind))
+        .await?
+        .into_iter()
+        .map(|event| event.kind)
+        .filter(conversation_event)
+        .collect())
+}
+
 /// The events through the first that reaches `until`, without the workspace
 /// and snapshot metadata, which have tests of their own.
 async fn conversation_events_until(
@@ -1214,15 +1231,20 @@ const DENIED_CALL: &str = "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx";
 async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
     let fx = host().await?;
     let dir = scratch("approve", "claude-approve.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    accepted(&link, message(session, "create a.txt")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = started_session(
+        &phone.send(start(Provider::Claude, &dir)).await?.value,
+    )?;
+    let sent = phone.send(message(session, "create a.txt")).await?;
+    assert_eq!(sent.raw, br#""Accepted""#);
     assert_eq!(
-        send(&link, message(session, "and b.txt")).await?,
+        phone.send(message(session, "and b.txt")).await?.value,
         CommandResult::Rejected(Rejection::TurnInProgress)
     );
     assert_eq!(
-        kinds_until(&mut updates, Until::Request).await?,
+        raw_kinds_until(&mut phone, Until::Request).await?,
         [
             opening(Provider::Claude, &dir),
             Vec::from([user("create a.txt")]),
@@ -1230,18 +1252,18 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
         ]
         .concat()
     );
-    let desk_options = LinkOptions {
-        network: Network::Local,
-        ..LinkOptions::new(ClientName(String::from("desk")))
-    };
-    let (desk, mut at_desk) =
-        spawn_link(fx.target.clone(), desk_options).await?;
-    until_live(&mut at_desk).await?;
+    let desk = RawClient::live(&fx.target, "desk", &mut feed).await?;
     assert_eq!(
         [
-            send(&link, resolve(session, 1, Decision::Approve)).await?,
-            send(&desk, resolve(session, 1, Decision::Deny)).await?,
-            send(&link, resolve(session, 2, Decision::Approve)).await?,
+            phone
+                .send(resolve(session, 1, Decision::Approve))
+                .await?
+                .value,
+            desk.send(resolve(session, 1, Decision::Deny)).await?.value,
+            phone
+                .send(resolve(session, 2, Decision::Approve))
+                .await?
+                .value,
         ],
         [
             CommandResult::Accepted,
@@ -1253,7 +1275,7 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
     );
     let text = "I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.";
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             decided(Decision::Approve, APPROVED_CALL, ToolOutcome::Succeeded),
             [
@@ -1269,7 +1291,10 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
         ]
         .concat()
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    desk.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
