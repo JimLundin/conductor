@@ -256,16 +256,16 @@ fn plugins(
     .with_fleet_credentials(fleet_sharing)
 }
 
+/// Which credentials the fleet shares: every API key, and a setup token
+/// (which only Claude has) as the only one of its provider.
 fn fleet_sharing(
-    provider: &Provider,
+    _: &Provider,
     credential: &proto::Credential,
 ) -> daemon::fleet::Sharing {
     use daemon::fleet::Sharing;
     match credential.kind.as_str() {
-        "api_key" if PROVIDERS.contains(provider) => Sharing::Shared,
-        "setup_token" if *provider == claude::PROVIDER => {
-            Sharing::OnePerProvider
-        }
+        "api_key" => Sharing::Shared,
+        claude::SETUP_TOKEN => Sharing::OnePerProvider,
         _ => Sharing::Local,
     }
 }
