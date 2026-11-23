@@ -29,7 +29,7 @@ use crate::prelude::*;
 pub const USAGE: &str = "usage:
   home check
   home issue new <project> <kind> <title> [<field>=<value>...]
-  home issue move <id> stage|status <to> [<reason>...]
+  home issue move <id> stage|status <to> [--signed-off] [<reason>...]
   home issue set <id> <field>=<value>...
   home issue note <id> <text>...
   home issue body <id> <text>...
@@ -277,19 +277,26 @@ pub fn command(
             id,
             part @ ("stage" | "status"),
             to,
-            reason @ ..,
-        ] => changing(
-            id,
-            IssueChange::Move {
-                part: if *part == "stage" {
-                    Part::Stage
-                } else {
-                    Part::Status
+            rest @ ..,
+        ] => {
+            let (signed_off, reason) = match rest {
+                ["--signed-off", reason @ ..] => (true, reason),
+                reason => (false, reason),
+            };
+            changing(
+                id,
+                IssueChange::Move {
+                    part: if *part == "stage" {
+                        Part::Stage
+                    } else {
+                        Part::Status
+                    },
+                    to: (*to).to_owned(),
+                    reason: reason.join(" "),
+                    signed_off,
                 },
-                to: (*to).to_owned(),
-                reason: reason.join(" "),
-            },
-        ),
+            )
+        }
         _ => Command::Usage,
     }
 }
@@ -692,9 +699,14 @@ fn changed(
     let mut set = Vec::new();
     for change in changes {
         match change {
-            IssueChange::Move { part, to, reason } => {
+            IssueChange::Move {
+                part,
+                to,
+                reason,
+                signed_off,
+            } => {
                 let (key, event, text) =
-                    shifted(flow, &issue, (*part, to, reason))?;
+                    shifted(flow, &issue, (*part, to, reason), *signed_off)?;
                 document.set(key, &quoted(to)).ok_or_else(unread)?;
                 document.log_entry(&sign.entry(event, &text));
             }
@@ -728,11 +740,18 @@ fn changed(
     })
 }
 
-/// The key a move sets, the log's event for it, and the log's text.
+/// The key a move sets, the log's event for it, and the log's text, which
+/// says when the owner signed off.
+///
+/// # Errors
+///
+/// No stage or status is called `to`, or the move leaves a stage with a
+/// sign-off unsigned.
 fn shifted(
     flow: &Flow,
     current: &Issue,
     (part, to, reason): (Part, &str, &str),
+    signed_off: bool,
 ) -> Result<(&'static str, LogEvent, String), String> {
     let (key, from, known, usual) = match part {
         Part::Stage => {
@@ -753,6 +772,17 @@ fn shifted(
     if !known {
         return Err(format!("no {key} is called {to}"));
     }
+    if let Some(left) = from
+        .as_deref()
+        .filter(|left| part == Part::Stage && *left != to)
+        .and_then(|left| flow.stage(left))
+        .filter(|stage| stage.sign_off && !signed_off)
+    {
+        return Err(format!(
+            "leaving the stage {} needs its sign-off",
+            left.name
+        ));
+    }
     let (before, after) = (
         from.unwrap_or_else(|| String::from("none")),
         String::from(to),
@@ -768,7 +798,12 @@ fn shifted(
         },
     };
     let unusual = if usual { "" } else { " (unusual move)" };
-    Ok((key, event, format!("{reason}{unusual}")))
+    let said = match (signed_off, reason) {
+        (false, _) => String::from(reason),
+        (true, "") => String::from("signed off"),
+        (true, _) => format!("signed off: {reason}"),
+    };
+    Ok((key, event, format!("{said}{unusual}")))
 }
 
 /// Sets a declared field or relation; an issue's own words change by

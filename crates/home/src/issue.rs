@@ -437,7 +437,7 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
         issue: id,
         checkout: checkout.path.clone(),
         branch: format!("refs/heads/{}", issue.branch),
-        brief: brief(&project.title, issue),
+        brief: brief(&project.title, known.flow.as_deref(), issue),
     })
 }
 
@@ -458,9 +458,9 @@ pub fn branch(home: Option<&Home>, id: IssueId) -> String {
     )
 }
 
-/// The agent's first message: the issue as its file has it, and what to
-/// do with it.
-fn brief(project: &str, issue: &Issue) -> String {
+/// The agent's first message: the issue as its file has it, its stage and
+/// the skills that serve it, and what to do with it.
+fn brief(project: &str, flow: Option<&Flow>, issue: &Issue) -> String {
     let checklist = issue
         .checklist
         .iter()
@@ -476,7 +476,7 @@ fn brief(project: &str, issue: &Issue) -> String {
     };
     let body = &issue.body;
     format!(
-        "You are working on the issue \"{title}\" in {project}. You are on a branch cut from {branch}; commit your work on it as you go.\n\n{body}\n{checklist}{notes}\nWork through what is left. When you are done, or stuck, say so, and sum up what you did and what is left.",
+        "You are working on the issue \"{title}\" in {project}. You are on a branch cut from {branch}; commit your work on it as you go.\n\n{body}\n{checklist}{notes}{stage}\nWork through what is left. When you are done, or stuck, say so, and sum up what you did and what is left.",
         title = issue.title,
         branch = issue.branch,
         body = if body.is_empty() {
@@ -486,7 +486,28 @@ fn brief(project: &str, issue: &Issue) -> String {
         },
         checklist = section("Its checklist", &checklist),
         notes = section("Its notes so far", &notes),
+        stage = staged(flow, issue),
     )
+}
+
+/// The issue's stage, and the skills that serve it, the leading one to
+/// follow.
+fn staged(flow: Option<&Flow>, issue: &Issue) -> String {
+    let Some(name) = &issue.stage else {
+        return String::new();
+    };
+    let skills = flow
+        .and_then(|declared| declared.stage(name))
+        .map_or(&[][..], |stage| stage.skills.as_slice());
+    let serving = match skills {
+        [] => String::new(),
+        [leading] => format!(": follow the {leading} skill"),
+        [leading, rest @ ..] => format!(
+            ": follow the {leading} skill, and {} where it serves",
+            rest.join(", ")
+        ),
+    };
+    format!("\nIt is at the stage {name}{serving}.\n")
 }
 
 /// The remote's copy of an issue's branch, as the checkout found it.

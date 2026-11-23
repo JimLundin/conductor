@@ -280,6 +280,7 @@ fn moving_to(status: &str) -> IssueChange {
         part: Part::Status,
         to: text(status),
         reason: String::new(),
+        signed_off: false,
     }
 }
 
@@ -728,6 +729,33 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
         Err(Rejection::UnknownIssue)
     );
     assert_eq!(start(None, ID).map(|_| ()), Err(Rejection::NoHome));
+}
+
+#[test]
+fn a_brief_names_the_issue_s_stage_and_the_skills_that_serve_it() {
+    let brief_at = |stage: Option<&str>| {
+        let at = Issue {
+            stage: stage.map(text),
+            ..issue()
+        };
+        start(Some(&home(Vec::from([checkout()]), Vec::from([at]))), ID)
+            .map_or_else(|_| String::new(), |started| started.brief)
+    };
+    let build = brief_at(Some("build"));
+    assert!(
+        build.contains(
+            "It is at the stage build: follow the build skill, and diagnose where it serves."
+        ),
+        "{build}"
+    );
+    let spec = brief_at(Some("spec"));
+    assert!(
+        spec.contains("It is at the stage spec: follow the spec skill."),
+        "{spec}"
+    );
+    let intake = brief_at(Some("intake"));
+    assert!(intake.contains("It is at the stage intake."), "{intake}");
+    assert!(!brief_at(None).contains("stage"));
 }
 
 /// What a session's update moves the issue to from `status`, when it is
@@ -1350,6 +1378,7 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
             part: Part::Status,
             to: text("active"),
             reason: text("a session started on it"),
+            signed_off: false,
         })
     );
     assert_eq!(start.next(&open, ID), None);
@@ -1375,6 +1404,7 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
             part: Part::Status,
             to: text("review"),
             reason: text("a session on it landed work"),
+            signed_off: false,
         })
     );
     assert_eq!(finish.next(&open, ID), None);

@@ -1009,6 +1009,7 @@ fn moving_to(status: &str) -> IssueChange {
         part: Part::Status,
         to: text(status),
         reason: String::new(),
+        signed_off: false,
     }
 }
 

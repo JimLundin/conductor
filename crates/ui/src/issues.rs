@@ -202,6 +202,7 @@ impl IssueDraft {
                         part: Part::Status,
                         to: status,
                         reason: String::new(),
+                        signed_off: false,
                     })
                 };
                 (self, effects)

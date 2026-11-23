@@ -7162,6 +7162,7 @@ async fn issues_are_written_to_the_home_and_replayed_over_a_concurrent_push()
                 part: proto::Part::Status,
                 to: String::from("active"),
                 reason: String::new(),
+                signed_off: false,
             },
         ),
     )
