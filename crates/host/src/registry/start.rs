@@ -4,9 +4,9 @@ use core::ops::ControlFlow::{self, Break, Continue};
 
 use home::Placement;
 use proto::{
-    ClientName, CommandResult, Effort, Event, EventKind, HostPath, InstanceId,
-    IssueId, ModelId, Models, Provider, Rejection, SessionId, Snapshot,
-    Workspace,
+    ClientName, Effort, Event, EventKind, HomeRefusal, HostPath, InstanceId,
+    IssueId, ModelId, Models, Provider, SessionId, SessionRefusal,
+    SessionResult, Snapshot, Workspace,
 };
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
@@ -73,12 +73,12 @@ pub enum StartEnd {
 #[derive(Debug)]
 pub struct StartOutcome {
     pub progress: Option<(IssueId, ClientName)>,
-    pub result: CommandResult,
+    pub result: SessionResult,
 }
 
 #[derive(Debug)]
 pub enum StartReport<H> {
-    Branch(Result<(), Rejection>),
+    Branch(Result<(), SessionRefusal>),
     Directory(bool),
     Workspace(SessionId, Result<Workspace, GitError>),
     Snapshot(Result<String, GitError>),
@@ -111,19 +111,19 @@ type Planned<S, H> = (Phase<S, H>, StartEffect<S, H>);
 impl StartRequest {
     pub fn placed<S, H>(
         self,
-        result: Result<Placement, Rejection>,
+        result: Result<Placement, HomeRefusal>,
         history: &[Event],
     ) -> StartDecision<S, H> {
         let placed = match result {
             Ok(placement) => placement,
-            Err(reason) => return rejected(reason),
+            Err(reason) => return rejected(SessionRefusal::Home(reason)),
         };
         let (phase, effect) = match &placed.on {
             Some(on) => {
                 if let Some(session) =
                     on_issue(history, on.issue, &self.instance)
                 {
-                    return rejected(Rejection::IssueTaken { session });
+                    return rejected(SessionRefusal::IssueTaken { session });
                 }
                 (Phase::Branch, StartEffect::ReadyBranch(on.clone()))
             }
@@ -188,7 +188,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
                     (Phase::Record(session, launch), effect)
                 }
                 Err(error) => {
-                    return rejected(Rejection::WorkspaceFailure {
+                    return rejected(SessionRefusal::WorkspaceFailure {
                         reason: error.to_string(),
                     });
                 }
@@ -246,7 +246,7 @@ fn workspace_creation<S: Clone, H: Clone, R>(
     request: &StartRequest,
     placed: &Placement,
     exists: bool,
-) -> Result<Planned<S, H>, Rejection> {
+) -> Result<Planned<S, H>, SessionRefusal> {
     let launch = registry.launch_session(
         &request.instance,
         exists,
@@ -316,18 +316,18 @@ fn admitted<S: Clone, H: Clone, R>(
     registry.admit(session, request.instance, handle);
     Break(StartEnd::Finished(StartOutcome {
         progress: placed.on.map(|on| (on.issue, request.by)),
-        result: CommandResult::Started { session },
+        result: SessionResult::Started { session },
     }))
 }
 
-const fn rejected<S, H>(reason: Rejection) -> StartDecision<S, H> {
+const fn rejected<S, H>(reason: SessionRefusal) -> StartDecision<S, H> {
     Break(StartEnd::Finished(StartOutcome {
         progress: None,
-        result: CommandResult::Rejected(reason),
+        result: SessionResult::Refused(reason),
     }))
 }
 
 #[must_use]
-pub fn brief_sent(answer: Option<&CommandResult>) -> Option<EventKind> {
+pub fn brief_sent(answer: Option<&SessionResult>) -> Option<EventKind> {
     unbriefed(answer).map(|message| EventKind::Error { message })
 }

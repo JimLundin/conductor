@@ -221,6 +221,26 @@ pub struct PairRequest {
     pub name: String,
 }
 
+/// A command about the fleet, from the app.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum FleetCommand {
+    Status,
+    Invite,
+    Revoke(NodeId),
+    Approve(PairRequest),
+    Admit { ticket: crate::Ticket, name: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum FleetResult {
+    Accepted,
+    Status(SignedSnapshot),
+    Invite(Invite),
+    Pairing(Box<Pairing>),
+    /// Fleet changes need the root host.
+    Unavailable,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("invalid fleet text")]
 pub struct TextError;

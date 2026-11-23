@@ -2,6 +2,7 @@
 //! is checked out on this host.
 
 use alloc::boxed::Box;
+use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -9,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::flow::Flow;
-use crate::{HostPath, Issue, IssueId, ProjectId};
+use crate::{HostPath, Issue, IssueChange, IssueId, NewIssue, ProjectId};
 
 /// The host's clone of the home, and the projects it lists.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -98,4 +99,83 @@ pub enum StartAt {
     Directory(HostPath),
     Project(ProjectId),
     Issue(IssueId),
+}
+
+/// A command about the host's clone of the home.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum HomeCommand {
+    /// Pulls the home now. `Accepted` once it has; how it went is in the
+    /// home's `sync`.
+    Sync,
+    /// Clones the project into the host's data dir, for a project with no
+    /// checkout here. `Accepted` once it has; how it went is in the
+    /// project's `cloning`.
+    Clone { project: ProjectId },
+    /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
+    /// once the host has written it to its clone of the home; pushing it
+    /// follows, and how that went is in the home's `sync`.
+    CreateIssue(NewIssue),
+    /// Answers `IssueWritten` once written, like `CreateIssue`.
+    ChangeIssue { issue: IssueId, change: IssueChange },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum HomeResult {
+    Accepted,
+    /// The issue a `CreateIssue` or `ChangeIssue` wrote, and what the
+    /// flow warns of it.
+    IssueWritten {
+        issue: IssueId,
+        warnings: Vec<String>,
+    },
+    Refused(HomeRefusal),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum HomeRefusal {
+    /// The host was given no home.
+    NoHome,
+    UnknownProject,
+    /// The project has no checkout on the host.
+    NotCheckedOut,
+    /// The project is local only: there is no remote to clone.
+    NoRemote,
+    UnknownIssue,
+    /// The home can't be written now, for this reason.
+    IssueNotSaved {
+        reason: String,
+    },
+    /// The flow refuses the edit, for this reason, as the `home` command
+    /// line would.
+    IssueRefused {
+        reason: String,
+    },
+}
+
+impl HomeRefusal {
+    /// Why the host refused the command, for a person to read.
+    #[must_use]
+    pub fn label(&self) -> String {
+        match self {
+            Self::NoHome => String::from(
+                "the host has no home; start it with --home <remote>",
+            ),
+            Self::UnknownProject => {
+                String::from("the host's home lists no such project")
+            }
+            Self::NotCheckedOut => String::from(
+                "the project isn't checked out on the host; clone it there first",
+            ),
+            Self::NoRemote => String::from(
+                "the project is local only, so there is nothing to clone",
+            ),
+            Self::UnknownIssue => {
+                String::from("the host's home lists no such issue")
+            }
+            Self::IssueNotSaved { reason } => {
+                format!("the issue was not saved: {reason}")
+            }
+            Self::IssueRefused { reason } => reason.clone(),
+        }
+    }
 }

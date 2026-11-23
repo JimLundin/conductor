@@ -18,7 +18,7 @@ use agents::{Invocation, Reported, SignIn as Flow};
 use host::sign_in::{CredentialTarget, Key, LIMIT, Login};
 use install::Home;
 use install::process::{SignInRun, command, sign_in, write_line};
-use proto::{Account, CommandResult, Credential, Instance, SignInCode};
+use proto::{Account, Credential, Instance, InstanceResult, SignInCode};
 use tokio::process::ChildStdin;
 
 use crate::credentials::SigningLease;
@@ -76,7 +76,7 @@ pub enum Report {
     Expired,
     Checked(Result<Option<Account>, String>),
     Written(Result<ChildStdin, String>),
-    Listed(Option<CommandResult>),
+    Listed(Option<InstanceResult>),
     CredentialLink(String),
     CredentialCreated(Option<Credential>),
 }
@@ -280,7 +280,7 @@ impl Runs {
     pub fn listen(
         &mut self,
         key: Key,
-        answer: oneshot::Receiver<CommandResult>,
+        answer: oneshot::Receiver<InstanceResult>,
     ) {
         let sender = self.sender.clone();
         self.tasks.spawn(async move {

@@ -695,7 +695,10 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Finish {
                 key: CommandId(23),
-                completion: CommandResult::Accepted.into(),
+                completion: CommandResult::Session(
+                    proto::SessionResult::Accepted,
+                )
+                .into(),
                 reply: finished_reply,
             })
             .await?;
@@ -715,21 +718,29 @@ mod durability_tests {
                 .map(|_| "pending"),
             Some("pending")
         );
-        ordinary.finish(CommandResult::Accepted).await?;
+        ordinary
+            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         finished.await?;
         drop(receipt);
         let retried = match retry.await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
-        assert_eq!(retried, Some(CommandResult::Accepted));
+        assert_eq!(
+            retried,
+            Some(CommandResult::Session(proto::SessionResult::Accepted))
+        );
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
         let cached = match reopened.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
-        assert_eq!(cached, Some(CommandResult::Accepted));
+        assert_eq!(
+            cached,
+            Some(CommandResult::Session(proto::SessionResult::Accepted))
+        );
         reopened.shutdown().await?;
         Ok(())
     }
@@ -771,7 +782,7 @@ mod durability_tests {
                 &transaction,
                 &host::log::Write::Receipt(
                     CommandId(id),
-                    CommandResult::Accepted,
+                    CommandResult::Session(proto::SessionResult::Accepted),
                 ),
             )?;
         }
@@ -799,17 +810,22 @@ mod durability_tests {
                 reply,
             }))
             .await?;
-        running.finish(CommandResult::Accepted).await?;
+        running
+            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         let BeginCommand::Execute(last) = cache_miss.await? else {
             return Err("expected the cache miss to execute".into());
         };
         for mut answer in queued {
             assert!(matches!(
                 answer.try_recv()?,
-                BeginCommand::Cached(CommandResult::Accepted)
+                BeginCommand::Cached(CommandResult::Session(
+                    proto::SessionResult::Accepted
+                ))
             ));
         }
-        last.finish(CommandResult::Accepted).await?;
+        last.finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         log.shutdown().await?;
         std::fs::remove_file(path)?;
         Ok(())
@@ -871,20 +887,27 @@ mod durability_tests {
                 reply: next_reply,
             }))
             .await?;
-        first.finish(CommandResult::Accepted).await?;
+        first
+            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         assert_eq!(live.recv().await?.kind, EventKind::SessionReady);
         assert_eq!(live.recv().await?.seq, HostSeq(1));
         let cached = match duplicate.await? {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
-        assert_eq!(cached, Some(CommandResult::Accepted));
+        assert_eq!(
+            cached,
+            Some(CommandResult::Session(proto::SessionResult::Accepted))
+        );
         let second = match next.await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
         .ok_or("expected a value")?;
-        second.finish(CommandResult::Accepted).await?;
+        second
+            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(reopened.subscribe(HostSeq(0)).await?.replay.len(), 1);
@@ -892,7 +915,10 @@ mod durability_tests {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
-        assert_eq!(cached, Some(CommandResult::Accepted));
+        assert_eq!(
+            cached,
+            Some(CommandResult::Session(proto::SessionResult::Accepted))
+        );
         reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
         Ok(())
@@ -946,7 +972,9 @@ mod durability_tests {
             Vec::from([started])
         );
         let retried = lease(&reopened, 9).await?;
-        retried.finish(CommandResult::Accepted).await?;
+        retried
+            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
         Ok(())
@@ -971,7 +999,9 @@ mod durability_tests {
         let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(reopened.history().await?, Vec::new());
         let retried = lease(&reopened, 1).await?;
-        retried.finish(CommandResult::Accepted).await?;
+        retried
+            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .await?;
         reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
         Ok(())

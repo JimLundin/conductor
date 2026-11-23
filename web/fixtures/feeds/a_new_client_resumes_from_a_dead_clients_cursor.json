@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -393,10 +381,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -423,10 +408,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -445,10 +427,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -475,10 +454,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -494,9 +470,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -509,10 +483,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-dead-client",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -572,21 +543,12 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "one"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "one" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -597,11 +559,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -612,11 +570,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Hel"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Hel" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -627,11 +581,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "lo"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "lo" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -642,11 +592,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Hello"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Hello" } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -675,11 +621,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 9,
 				"session": "00000000000000000000000001"
 			}
@@ -695,10 +637,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-dead-client",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -762,12 +701,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "one"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "one" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -778,11 +712,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -793,11 +723,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Hel"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Hel" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -808,11 +734,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "lo"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "lo" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -823,11 +745,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Hello"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Hello" } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -856,32 +774,19 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 9,
 				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "two"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "two" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -892,11 +797,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 10
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 10 } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -907,11 +808,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " wor"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " wor" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -922,11 +819,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "ld"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "ld" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -937,11 +830,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": " world"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": " world" } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -970,11 +859,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -1129,10 +1014,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -1159,10 +1041,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -1180,12 +1059,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "two"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "two" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -1196,11 +1070,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 10
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 10 } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -1211,11 +1081,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": " world"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": " world" } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1244,11 +1110,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -1260,10 +1122,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -1290,10 +1149,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {

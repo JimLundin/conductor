@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-subagent",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -335,12 +314,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "delegate"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "delegate" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -415,11 +385,7 @@
 				"kind": {
 					"Subagent": {
 						"agent": "af19920e77caaf1de",
-						"event": {
-							"Kind": {
-								"kind": "general-purpose"
-							}
-						}
+						"event": { "Kind": { "kind": "general-purpose" } }
 					}
 				},
 				"seq": 9,
@@ -438,14 +404,8 @@
 						"event": {
 							"ChecklistChanged": {
 								"checklist": [
-									{
-										"status": "Pending",
-										"text": "alpha"
-									},
-									{
-										"status": "Pending",
-										"text": "beta"
-									}
+									{ "status": "Pending", "text": "alpha" },
+									{ "status": "Pending", "text": "beta" }
 								]
 							}
 						}
@@ -468,11 +428,7 @@
 							"Activity": {
 								"ToolCall": {
 									"call": "toolu_01WSCsnAQWyaEonxDVnmncap",
-									"phase": {
-										"Finished": {
-											"outcome": "Succeeded"
-										}
-									}
+									"phase": { "Finished": { "outcome": "Succeeded" } }
 								}
 							}
 						}
@@ -494,14 +450,8 @@
 						"event": {
 							"ChecklistChanged": {
 								"checklist": [
-									{
-										"status": "Completed",
-										"text": "alpha"
-									},
-									{
-										"status": "Completed",
-										"text": "beta"
-									}
+									{ "status": "Completed", "text": "alpha" },
+									{ "status": "Completed", "text": "beta" }
 								]
 							}
 						}
@@ -524,11 +474,7 @@
 							"Activity": {
 								"ToolCall": {
 									"call": "toolu_01H4nEBx6jVuR4PwHBWBgvPw",
-									"phase": {
-										"Finished": {
-											"outcome": "Succeeded"
-										}
-									}
+									"phase": { "Finished": { "outcome": "Succeeded" } }
 								}
 							}
 						}
@@ -547,12 +493,7 @@
 				"kind": {
 					"Subagent": {
 						"agent": "af19920e77caaf1de",
-						"event": {
-							"Ended": {
-								"outcome": "Finished",
-								"summary": "ok"
-							}
-						}
+						"event": { "Ended": { "outcome": "Finished", "summary": "ok" } }
 					}
 				},
 				"seq": 14,
@@ -568,11 +509,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 15,
@@ -585,11 +522,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "done"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "done" } },
 				"seq": 15,
 				"session": "00000000000000000000000001"
 			}
@@ -600,11 +533,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "done"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "done" } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}
@@ -633,11 +562,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 18,
 				"session": "00000000000000000000000001"
 			}

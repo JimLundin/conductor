@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-question-withdraw",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -335,12 +314,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "ask me"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "ask me" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -394,20 +364,13 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
 				"kind": {
-					"RequestResolved": {
-						"request": 1,
-						"resolution": "Withdrawn"
-					}
+					"RequestResolved": { "request": 1, "resolution": "Withdrawn" }
 				},
 				"seq": 8,
 				"session": "00000000000000000000000001"
@@ -422,11 +385,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa",
-						"phase": {
-							"Finished": {
-								"outcome": "Failed"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Failed" } }
 					}
 				},
 				"seq": 9,
@@ -457,11 +416,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Interrupted"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Interrupted" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -470,9 +425,7 @@
 	},
 	{
 		"connection": 0,
-		"frame": {
-			"Rejected": "UnknownRequest"
-		},
+		"frame": { "Session": { "Refused": "UnknownRequest" } },
 		"stream": "command"
 	}
 ]

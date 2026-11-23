@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/39",
+			"const": "conductor/40",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
@@ -312,460 +312,66 @@
 			]
 		},
 		"Command": {
-			"properties": {
-				"body": {
-					"$ref": "#/$defs/CommandBody"
-				},
-				"id": {
-					"$ref": "#/$defs/CommandId"
-				}
-			},
-			"required": ["id", "body"],
-			"type": "object"
-		},
-		"CommandBody": {
-			"description": "Every session command after `StartSession` names the session it acts\non, and every instance command the instance.",
+			"description": "A command, in the domain it acts on.",
 			"oneOf": [
 				{
-					"enum": ["PushPublicKey", "FleetStatus", "FleetInvite"],
-					"type": "string"
-				},
-				{
 					"additionalProperties": false,
-					"description": "`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
 					"properties": {
-						"StartSession": {
-							"properties": {
-								"at": {
-									"$ref": "#/$defs/StartAt"
-								},
-								"effort": {
-									"anyOf": [
-										{
-											"$ref": "#/$defs/Effort"
-										},
-										{
-											"type": "null"
-										}
-									]
-								},
-								"instance": {
-									"$ref": "#/$defs/InstanceId"
-								},
-								"model": {
-									"anyOf": [
-										{
-											"$ref": "#/$defs/ModelId"
-										},
-										{
-											"type": "null"
-										}
-									]
-								}
-							},
-							"required": ["instance", "at", "model", "effort"],
-							"type": "object"
+						"Session": {
+							"$ref": "#/$defs/SessionCommand"
 						}
 					},
-					"required": ["StartSession"],
+					"required": ["Session"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"SendMessage": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								},
-								"text": {
-									"type": "string"
-								}
-							},
-							"required": ["session", "text"],
-							"type": "object"
+						"Instance": {
+							"$ref": "#/$defs/InstanceCommand"
 						}
 					},
-					"required": ["SendMessage"],
+					"required": ["Instance"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"Interrupt": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session"],
-							"type": "object"
+						"SignIn": {
+							"$ref": "#/$defs/SignInCommand"
 						}
 					},
-					"required": ["Interrupt"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
-					"properties": {
-						"Continue": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session"],
-							"type": "object"
-						}
-					},
-					"required": ["Continue"],
+					"required": ["SignIn"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"Resolve": {
-							"properties": {
-								"decision": {
-									"$ref": "#/$defs/Decision"
-								},
-								"request": {
-									"$ref": "#/$defs/RequestId"
-								},
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session", "request", "decision"],
-							"type": "object"
+						"Home": {
+							"$ref": "#/$defs/HomeCommand"
 						}
 					},
-					"required": ["Resolve"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
-					"properties": {
-						"Answer": {
-							"properties": {
-								"answers": {
-									"items": {
-										"$ref": "#/$defs/Answer"
-									},
-									"type": "array"
-								},
-								"request": {
-									"$ref": "#/$defs/RequestId"
-								},
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session", "request", "answers"],
-							"type": "object"
-						}
-					},
-					"required": ["Answer"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
-					"properties": {
-						"SetCredential": {
-							"properties": {
-								"credential": {
-									"$ref": "#/$defs/Credential"
-								},
-								"provider": {
-									"$ref": "#/$defs/Provider"
-								}
-							},
-							"required": ["provider", "credential"],
-							"type": "object"
-						}
-					},
-					"required": ["SetCredential"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "A bounded diff between this snapshot and its predecessor.",
-					"properties": {
-						"GetDiff": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								},
-								"snapshot": {
-									"$ref": "#/$defs/HostSeq"
-								}
-							},
-							"required": ["session", "snapshot"],
-							"type": "object"
-						}
-					},
-					"required": ["GetDiff"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
-					"properties": {
-						"SetEffort": {
-							"properties": {
-								"effort": {
-									"$ref": "#/$defs/Effort"
-								},
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session", "effort"],
-							"type": "object"
-						}
-					},
-					"required": ["SetEffort"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
-					"properties": {
-						"RemoveInstance": {
-							"properties": {
-								"instance": {
-									"$ref": "#/$defs/InstanceId"
-								}
-							},
-							"required": ["instance"],
-							"type": "object"
-						}
-					},
-					"required": ["RemoveInstance"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
-					"properties": {
-						"StartSignIn": {
-							"properties": {
-								"instance": {
-									"$ref": "#/$defs/InstanceId"
-								}
-							},
-							"required": ["instance"],
-							"type": "object"
-						}
-					},
-					"required": ["StartSignIn"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
-					"properties": {
-						"SubmitSignInCode": {
-							"properties": {
-								"code": {
-									"$ref": "#/$defs/SignInCode"
-								},
-								"instance": {
-									"$ref": "#/$defs/InstanceId"
-								}
-							},
-							"required": ["instance", "code"],
-							"type": "object"
-						}
-					},
-					"required": ["SubmitSignInCode"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Stops the instance's sign-in, if one runs.",
-					"properties": {
-						"CancelSignIn": {
-							"properties": {
-								"instance": {
-									"$ref": "#/$defs/InstanceId"
-								}
-							},
-							"required": ["instance"],
-							"type": "object"
-						}
-					},
-					"required": ["CancelSignIn"],
-					"type": "object"
-				},
-				{
-					"const": "SyncHome",
-					"description": "Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
-					"type": "string"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
-					"properties": {
-						"CloneProject": {
-							"properties": {
-								"project": {
-									"$ref": "#/$defs/ProjectId"
-								}
-							},
-							"required": ["project"],
-							"type": "object"
-						}
-					},
-					"required": ["CloneProject"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
-					"properties": {
-						"RemoveSession": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session"],
-							"type": "object"
-						}
-					},
-					"required": ["RemoveSession"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
-					"properties": {
-						"CreateIssue": {
-							"$ref": "#/$defs/NewIssue"
-						}
-					},
-					"required": ["CreateIssue"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Answers `IssueWritten` once written, like `CreateIssue`.",
-					"properties": {
-						"ChangeIssue": {
-							"properties": {
-								"change": {
-									"$ref": "#/$defs/IssueChange"
-								},
-								"issue": {
-									"$ref": "#/$defs/IssueId"
-								}
-							},
-							"required": ["issue", "change"],
-							"type": "object"
-						}
-					},
-					"required": ["ChangeIssue"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
-					"properties": {
-						"FinishSession": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session"],
-							"type": "object"
-						}
-					},
-					"required": ["FinishSession"],
+					"required": ["Home"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"RegisterPush": {
-							"$ref": "#/$defs/PushSubscription"
+						"Push": {
+							"$ref": "#/$defs/PushCommand"
 						}
 					},
-					"required": ["RegisterPush"],
+					"required": ["Push"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"FleetRevoke": {
-							"items": {
-								"format": "uint8",
-								"maximum": 255,
-								"minimum": 0,
-								"type": "integer"
-							},
-							"maxItems": 32,
-							"minItems": 32,
-							"type": "array"
+						"Fleet": {
+							"$ref": "#/$defs/FleetCommand"
 						}
 					},
-					"required": ["FleetRevoke"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"FleetApprove": {
-							"$ref": "#/$defs/PairRequest"
-						}
-					},
-					"required": ["FleetApprove"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"FleetAdmit": {
-							"properties": {
-								"name": {
-									"type": "string"
-								},
-								"ticket": {
-									"$ref": "#/$defs/Ticket"
-								}
-							},
-							"required": ["ticket", "name"],
-							"type": "object"
-						}
-					},
-					"required": ["FleetAdmit"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "Runs the provider's live credential setup through its own instance.",
-					"properties": {
-						"StartCredentialSignIn": {
-							"properties": {
-								"instance": {
-									"$ref": "#/$defs/InstanceId"
-								},
-								"kind": {
-									"type": "string"
-								},
-								"label": {
-									"type": "string"
-								}
-							},
-							"required": ["instance", "kind", "label"],
-							"type": "object"
-						}
-					},
-					"required": ["StartCredentialSignIn"],
+					"required": ["Fleet"],
 					"type": "object"
 				}
 			]
@@ -775,109 +381,66 @@
 			"type": "string"
 		},
 		"CommandResult": {
+			"description": "A command's answer, in the domain of the command.",
 			"oneOf": [
 				{
-					"enum": ["Accepted", "PushUnavailable"],
-					"type": "string"
-				},
-				{
 					"additionalProperties": false,
-					"description": "The answer to `StartSession`. `SessionCreated` follows in the log.",
 					"properties": {
-						"Started": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session"],
-							"type": "object"
+						"Session": {
+							"$ref": "#/$defs/SessionResult"
 						}
 					},
-					"required": ["Started"],
+					"required": ["Session"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"Rejected": {
-							"$ref": "#/$defs/Rejection"
+						"Instance": {
+							"$ref": "#/$defs/InstanceResult"
 						}
 					},
-					"required": ["Rejected"],
+					"required": ["Instance"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"Diff": {
-							"$ref": "#/$defs/SnapshotDiff"
+						"SignIn": {
+							"$ref": "#/$defs/SignInResult"
 						}
 					},
-					"required": ["Diff"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
-					"properties": {
-						"IssueWritten": {
-							"properties": {
-								"issue": {
-									"$ref": "#/$defs/IssueId"
-								},
-								"warnings": {
-									"items": {
-										"type": "string"
-									},
-									"type": "array"
-								}
-							},
-							"required": ["issue", "warnings"],
-							"type": "object"
-						}
-					},
-					"required": ["IssueWritten"],
+					"required": ["SignIn"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"PushPublicKey": {
-							"type": "string"
+						"Home": {
+							"$ref": "#/$defs/HomeResult"
 						}
 					},
-					"required": ["PushPublicKey"],
+					"required": ["Home"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"FleetStatus": {
-							"$ref": "#/$defs/Signed"
+						"Push": {
+							"$ref": "#/$defs/PushResult"
 						}
 					},
-					"required": ["FleetStatus"],
+					"required": ["Push"],
 					"type": "object"
 				},
 				{
 					"additionalProperties": false,
 					"properties": {
-						"FleetInvite": {
-							"$ref": "#/$defs/Invite"
+						"Fleet": {
+							"$ref": "#/$defs/FleetResult"
 						}
 					},
-					"required": ["FleetInvite"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"FleetPairing": {
-							"$ref": "#/$defs/Pairing"
-						}
-					},
-					"required": ["FleetPairing"],
+					"required": ["Fleet"],
 					"type": "object"
 				}
 			]
@@ -1738,6 +1301,105 @@
 				}
 			]
 		},
+		"FleetCommand": {
+			"description": "A command about the fleet, from the app.",
+			"oneOf": [
+				{
+					"enum": ["Status", "Invite"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Revoke": {
+							"items": {
+								"format": "uint8",
+								"maximum": 255,
+								"minimum": 0,
+								"type": "integer"
+							},
+							"maxItems": 32,
+							"minItems": 32,
+							"type": "array"
+						}
+					},
+					"required": ["Revoke"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Approve": {
+							"$ref": "#/$defs/PairRequest"
+						}
+					},
+					"required": ["Approve"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Admit": {
+							"properties": {
+								"name": {
+									"type": "string"
+								},
+								"ticket": {
+									"$ref": "#/$defs/Ticket"
+								}
+							},
+							"required": ["ticket", "name"],
+							"type": "object"
+						}
+					},
+					"required": ["Admit"],
+					"type": "object"
+				}
+			]
+		},
+		"FleetResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Status": {
+							"$ref": "#/$defs/Signed"
+						}
+					},
+					"required": ["Status"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Invite": {
+							"$ref": "#/$defs/Invite"
+						}
+					},
+					"required": ["Invite"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Pairing": {
+							"$ref": "#/$defs/Pairing"
+						}
+					},
+					"required": ["Pairing"],
+					"type": "object"
+				},
+				{
+					"const": "Unavailable",
+					"description": "Fleet changes need the root host.",
+					"type": "string"
+				}
+			]
+		},
 		"Flow": {
 			"properties": {
 				"default_kind": {
@@ -1913,6 +1575,162 @@
 			"required": ["remote", "synced", "sync", "unpushed", "flow", "projects"],
 			"type": "object"
 		},
+		"HomeCommand": {
+			"description": "A command about the host's clone of the home.",
+			"oneOf": [
+				{
+					"const": "Sync",
+					"description": "Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
+					"properties": {
+						"Clone": {
+							"properties": {
+								"project": {
+									"$ref": "#/$defs/ProjectId"
+								}
+							},
+							"required": ["project"],
+							"type": "object"
+						}
+					},
+					"required": ["Clone"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
+					"properties": {
+						"CreateIssue": {
+							"$ref": "#/$defs/NewIssue"
+						}
+					},
+					"required": ["CreateIssue"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Answers `IssueWritten` once written, like `CreateIssue`.",
+					"properties": {
+						"ChangeIssue": {
+							"properties": {
+								"change": {
+									"$ref": "#/$defs/IssueChange"
+								},
+								"issue": {
+									"$ref": "#/$defs/IssueId"
+								}
+							},
+							"required": ["issue", "change"],
+							"type": "object"
+						}
+					},
+					"required": ["ChangeIssue"],
+					"type": "object"
+				}
+			]
+		},
+		"HomeRefusal": {
+			"oneOf": [
+				{
+					"enum": ["UnknownProject", "UnknownIssue"],
+					"type": "string"
+				},
+				{
+					"const": "NoHome",
+					"description": "The host was given no home.",
+					"type": "string"
+				},
+				{
+					"const": "NotCheckedOut",
+					"description": "The project has no checkout on the host.",
+					"type": "string"
+				},
+				{
+					"const": "NoRemote",
+					"description": "The project is local only: there is no remote to clone.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The home can't be written now, for this reason.",
+					"properties": {
+						"IssueNotSaved": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueNotSaved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The flow refuses the edit, for this reason, as the `home` command\nline would.",
+					"properties": {
+						"IssueRefused": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueRefused"],
+					"type": "object"
+				}
+			]
+		},
+		"HomeResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
+					"properties": {
+						"IssueWritten": {
+							"properties": {
+								"issue": {
+									"$ref": "#/$defs/IssueId"
+								},
+								"warnings": {
+									"items": {
+										"type": "string"
+									},
+									"type": "array"
+								}
+							},
+							"required": ["issue", "warnings"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueWritten"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Refused": {
+							"$ref": "#/$defs/HomeRefusal"
+						}
+					},
+					"required": ["Refused"],
+					"type": "object"
+				}
+			]
+		},
 		"HomeSync": {
 			"oneOf": [
 				{
@@ -1999,6 +1817,48 @@
 			"minimum": 0,
 			"type": "integer"
 		},
+		"InstanceCommand": {
+			"description": "A command that changes the host's instances.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
+					"properties": {
+						"SetCredential": {
+							"properties": {
+								"credential": {
+									"$ref": "#/$defs/Credential"
+								},
+								"provider": {
+									"$ref": "#/$defs/Provider"
+								}
+							},
+							"required": ["provider", "credential"],
+							"type": "object"
+						}
+					},
+					"required": ["SetCredential"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
+					"properties": {
+						"Remove": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance"],
+							"type": "object"
+						}
+					},
+					"required": ["Remove"],
+					"type": "object"
+				}
+			]
+		},
 		"InstanceId": {
 			"description": "An instance by its key, the account of a provider on this host (the\nnode). The provider names the account, not the owner, so it never\nchanges and the instance is never renamed.",
 			"properties": {
@@ -2011,6 +1871,90 @@
 			},
 			"required": ["provider", "account"],
 			"type": "object"
+		},
+		"InstanceRefusal": {
+			"oneOf": [
+				{
+					"enum": ["UnknownInstance"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host could not store the credential, and kept the one it had.",
+					"properties": {
+						"CredentialNotSaved": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["CredentialNotSaved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The credential is malformed, for this reason, and was not stored.",
+					"properties": {
+						"InvalidCredential": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["InvalidCredential"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The instance can't be removed while sessions run on it.",
+					"properties": {
+						"InstanceInUse": {
+							"properties": {
+								"sessions": {
+									"format": "uint64",
+									"minimum": 0,
+									"type": "integer"
+								}
+							},
+							"required": ["sessions"],
+							"type": "object"
+						}
+					},
+					"required": ["InstanceInUse"],
+					"type": "object"
+				},
+				{
+					"const": "FleetUnavailable",
+					"description": "Only the fleet's root host changes a fleet's instances.",
+					"type": "string"
+				}
+			]
+		},
+		"InstanceResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Refused": {
+							"$ref": "#/$defs/InstanceRefusal"
+						}
+					},
+					"required": ["Refused"],
+					"type": "object"
+				}
+			]
 		},
 		"InstanceStatus": {
 			"description": "What a client learns of one instance.",
@@ -2554,7 +2498,16 @@
 					"additionalProperties": false,
 					"properties": {
 						"Command": {
-							"$ref": "#/$defs/Command"
+							"properties": {
+								"body": {
+									"$ref": "#/$defs/Command"
+								},
+								"id": {
+									"$ref": "#/$defs/CommandId"
+								}
+							},
+							"required": ["id", "body"],
+							"type": "object"
 						}
 					},
 					"required": ["Command"],
@@ -2874,6 +2827,47 @@
 			"required": ["label", "note", "credentials"],
 			"type": "object"
 		},
+		"PushCommand": {
+			"oneOf": [
+				{
+					"enum": ["PublicKey"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Register": {
+							"$ref": "#/$defs/PushSubscription"
+						}
+					},
+					"required": ["Register"],
+					"type": "object"
+				}
+			]
+		},
+		"PushResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"PublicKey": {
+							"type": "string"
+						}
+					},
+					"required": ["PublicKey"],
+					"type": "object"
+				},
+				{
+					"const": "Unavailable",
+					"description": "The host sends no push.",
+					"type": "string"
+				}
+			]
+		},
 		"PushSubscription": {
 			"properties": {
 				"auth": {
@@ -2927,245 +2921,6 @@
 			},
 			"required": ["label", "description"],
 			"type": "object"
-		},
-		"Rejection": {
-			"oneOf": [
-				{
-					"enum": [
-						"NoSuchDirectory",
-						"UnknownSession",
-						"SessionClosed",
-						"TurnInProgress",
-						"NoTurnRunning",
-						"UnknownRequest",
-						"NotGitRepository",
-						"SnapshotUnavailable",
-						"UnknownInstance",
-						"SignInRunning",
-						"UnknownProject",
-						"SessionRemoved",
-						"UnknownIssue",
-						"FleetUnavailable"
-					],
-					"type": "string"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"InstanceUnavailable": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["InstanceUnavailable"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The host doesn't offer that model or effort, for this reason.",
-					"properties": {
-						"NotOffered": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["NotOffered"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"AlreadyResolved": {
-							"properties": {
-								"by": {
-									"$ref": "#/$defs/ClientName"
-								}
-							},
-							"required": ["by"],
-							"type": "object"
-						}
-					},
-					"required": ["AlreadyResolved"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The reply doesn't fit the request, for this reason.",
-					"properties": {
-						"WrongReply": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["WrongReply"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The host could not store the credential, and kept the one it had.",
-					"properties": {
-						"CredentialNotSaved": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["CredentialNotSaved"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The credential is malformed, for this reason, and was not stored.",
-					"properties": {
-						"InvalidCredential": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["InvalidCredential"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"WorkspaceFailure": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["WorkspaceFailure"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The instance can't be removed while sessions run on it.",
-					"properties": {
-						"InstanceInUse": {
-							"properties": {
-								"sessions": {
-									"format": "uint64",
-									"minimum": 0,
-									"type": "integer"
-								}
-							},
-							"required": ["sessions"],
-							"type": "object"
-						}
-					},
-					"required": ["InstanceInUse"],
-					"type": "object"
-				},
-				{
-					"const": "NoCodeAsked",
-					"description": "No sign-in runs on the instance, or it takes no code now.",
-					"type": "string"
-				},
-				{
-					"const": "NoHome",
-					"description": "The host was given no home.",
-					"type": "string"
-				},
-				{
-					"const": "NotCheckedOut",
-					"description": "The project has no checkout on the host.",
-					"type": "string"
-				},
-				{
-					"const": "NoRemote",
-					"description": "The project is local only: there is no remote to clone.",
-					"type": "string"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The home can't be written now, for this reason.",
-					"properties": {
-						"IssueNotSaved": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["IssueNotSaved"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The flow refuses the edit, for this reason, as the `home` command\nline would.",
-					"properties": {
-						"IssueRefused": {
-							"properties": {
-								"reason": {
-									"type": "string"
-								}
-							},
-							"required": ["reason"],
-							"type": "object"
-						}
-					},
-					"required": ["IssueRefused"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The instance has this session on the issue already: one session\nper instance and issue.",
-					"properties": {
-						"IssueTaken": {
-							"properties": {
-								"session": {
-									"$ref": "#/$defs/SessionId"
-								}
-							},
-							"required": ["session"],
-							"type": "object"
-						}
-					},
-					"required": ["IssueTaken"],
-					"type": "object"
-				},
-				{
-					"const": "NotOnIssue",
-					"description": "The session works on no issue, so there is nothing to finish it on.",
-					"type": "string"
-				},
-				{
-					"const": "AlreadyFinished",
-					"description": "The session is finishing, or has done nothing since it finished.",
-					"type": "string"
-				}
-			]
 		},
 		"Relation": {
 			"additionalProperties": false,
@@ -3338,9 +3093,412 @@
 			"enum": ["One", "Many"],
 			"type": "string"
 		},
+		"SessionCommand": {
+			"description": "Every command after `Start` names the session it acts on.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
+					"properties": {
+						"Start": {
+							"properties": {
+								"at": {
+									"$ref": "#/$defs/StartAt"
+								},
+								"effort": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/Effort"
+										},
+										{
+											"type": "null"
+										}
+									]
+								},
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								},
+								"model": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/ModelId"
+										},
+										{
+											"type": "null"
+										}
+									]
+								}
+							},
+							"required": ["instance", "at", "model", "effort"],
+							"type": "object"
+						}
+					},
+					"required": ["Start"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"SendMessage": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								},
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["session", "text"],
+							"type": "object"
+						}
+					},
+					"required": ["SendMessage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Interrupt": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Interrupt"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
+					"properties": {
+						"Continue": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Continue"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Resolve": {
+							"properties": {
+								"decision": {
+									"$ref": "#/$defs/Decision"
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session", "request", "decision"],
+							"type": "object"
+						}
+					},
+					"required": ["Resolve"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
+					"properties": {
+						"Answer": {
+							"properties": {
+								"answers": {
+									"items": {
+										"$ref": "#/$defs/Answer"
+									},
+									"type": "array"
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session", "request", "answers"],
+							"type": "object"
+						}
+					},
+					"required": ["Answer"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A bounded diff between this snapshot and its predecessor.",
+					"properties": {
+						"GetDiff": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								},
+								"snapshot": {
+									"$ref": "#/$defs/HostSeq"
+								}
+							},
+							"required": ["session", "snapshot"],
+							"type": "object"
+						}
+					},
+					"required": ["GetDiff"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
+					"properties": {
+						"SetEffort": {
+							"properties": {
+								"effort": {
+									"$ref": "#/$defs/Effort"
+								},
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session", "effort"],
+							"type": "object"
+						}
+					},
+					"required": ["SetEffort"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
+					"properties": {
+						"Remove": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Remove"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
+					"properties": {
+						"Finish": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Finish"],
+					"type": "object"
+				}
+			]
+		},
 		"SessionId": {
 			"description": "A fleet-unique ULID assigned by the host, represented as its 128 bits.",
 			"type": "string"
+		},
+		"SessionRefusal": {
+			"oneOf": [
+				{
+					"enum": [
+						"NoSuchDirectory",
+						"UnknownSession",
+						"SessionClosed",
+						"TurnInProgress",
+						"NoTurnRunning",
+						"UnknownRequest",
+						"NotGitRepository",
+						"SnapshotUnavailable",
+						"UnknownInstance",
+						"SessionRemoved"
+					],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"InstanceUnavailable": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["InstanceUnavailable"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host doesn't offer that model or effort, for this reason.",
+					"properties": {
+						"NotOffered": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["NotOffered"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"AlreadyResolved": {
+							"properties": {
+								"by": {
+									"$ref": "#/$defs/ClientName"
+								}
+							},
+							"required": ["by"],
+							"type": "object"
+						}
+					},
+					"required": ["AlreadyResolved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The reply doesn't fit the request, for this reason.",
+					"properties": {
+						"WrongReply": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["WrongReply"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"WorkspaceFailure": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["WorkspaceFailure"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The session can't start where it was asked to: the home refuses\nthe project or issue.",
+					"properties": {
+						"Home": {
+							"$ref": "#/$defs/HomeRefusal"
+						}
+					},
+					"required": ["Home"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The instance has this session on the issue already: one session\nper instance and issue.",
+					"properties": {
+						"IssueTaken": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueTaken"],
+					"type": "object"
+				},
+				{
+					"const": "NotOnIssue",
+					"description": "The session works on no issue, so there is nothing to finish it on.",
+					"type": "string"
+				},
+				{
+					"const": "AlreadyFinished",
+					"description": "The session is finishing, or has done nothing since it finished.",
+					"type": "string"
+				}
+			]
+		},
+		"SessionResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The answer to `Start`. `SessionCreated` follows in the log.",
+					"properties": {
+						"Started": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Started"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Refused": {
+							"$ref": "#/$defs/SessionRefusal"
+						}
+					},
+					"required": ["Refused"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Diff": {
+							"$ref": "#/$defs/SnapshotDiff"
+						}
+					},
+					"required": ["Diff"],
+					"type": "object"
+				}
+			]
 		},
 		"Severity": {
 			"enum": ["warn", "error"],
@@ -3376,6 +3534,188 @@
 			"description": "The code a person pastes from a sign-in page. It is a secret: its\n`Debug` doesn't print it, so no log line carries it.",
 			"type": "string"
 		},
+		"SignInCommand": {
+			"description": "A command about an instance's sign-in from the app.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
+					"properties": {
+						"Start": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance"],
+							"type": "object"
+						}
+					},
+					"required": ["Start"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
+					"properties": {
+						"SubmitCode": {
+							"properties": {
+								"code": {
+									"$ref": "#/$defs/SignInCode"
+								},
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance", "code"],
+							"type": "object"
+						}
+					},
+					"required": ["SubmitCode"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Stops the instance's sign-in, if one runs.",
+					"properties": {
+						"Cancel": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance"],
+							"type": "object"
+						}
+					},
+					"required": ["Cancel"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Runs the provider's live credential setup through its own instance.",
+					"properties": {
+						"StartCredential": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								},
+								"kind": {
+									"type": "string"
+								},
+								"label": {
+									"type": "string"
+								}
+							},
+							"required": ["instance", "kind", "label"],
+							"type": "object"
+						}
+					},
+					"required": ["StartCredential"],
+					"type": "object"
+				}
+			]
+		},
+		"SignInRefusal": {
+			"oneOf": [
+				{
+					"enum": ["UnknownInstance", "SignInRunning"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"InstanceUnavailable": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["InstanceUnavailable"],
+					"type": "object"
+				},
+				{
+					"const": "NoCodeAsked",
+					"description": "No sign-in runs on the instance, or it takes no code now.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The sign-in can't make that credential, for this reason.",
+					"properties": {
+						"InvalidCredential": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["InvalidCredential"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host could not store what the sign-in changed.",
+					"properties": {
+						"CredentialNotSaved": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["CredentialNotSaved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The sign-in would change an instance sessions run on.",
+					"properties": {
+						"InstanceInUse": {
+							"properties": {
+								"sessions": {
+									"format": "uint64",
+									"minimum": 0,
+									"type": "integer"
+								}
+							},
+							"required": ["sessions"],
+							"type": "object"
+						}
+					},
+					"required": ["InstanceInUse"],
+					"type": "object"
+				}
+			]
+		},
+		"SignInResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Refused": {
+							"$ref": "#/$defs/SignInRefusal"
+						}
+					},
+					"required": ["Refused"],
+					"type": "object"
+				}
+			]
+		},
 		"SignInStep": {
 			"oneOf": [
 				{
@@ -3389,7 +3729,7 @@
 				},
 				{
 					"additionalProperties": false,
-					"description": "The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitSignInCode`.",
+					"description": "The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitCode`.",
 					"properties": {
 						"Open": {
 							"properties": {

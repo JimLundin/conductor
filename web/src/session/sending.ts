@@ -1,7 +1,7 @@
 // Runs a screen's commands on its host's link and keeps what the person should be told.
 import { Effect } from "effect";
 import { useState } from "react";
-import type { CommandBody, CommandResult } from "../proto/index.ts";
+import type { Command, CommandResult } from "../proto/index.ts";
 import { failed, notice, type Send } from "./commands.ts";
 
 interface Sending {
@@ -10,7 +10,7 @@ interface Sending {
 	readonly pending: boolean;
 	readonly run: (
 		send: Send,
-		body: CommandBody,
+		body: Command,
 		taken?: (result: CommandResult) => void,
 	) => void;
 }
@@ -20,7 +20,7 @@ const useSending = (): Sending => {
 	const [pending, setPending] = useState(false);
 	const run = (
 		send: Send,
-		body: CommandBody,
+		body: Command,
 		taken?: (result: CommandResult) => void,
 	): void => {
 		setPending(true);

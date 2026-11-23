@@ -27,11 +27,11 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use proto::{
-    ChecklistEntry, ClientName, CloseReason, CommandResult, Decision, Effort,
-    Event, EventKind, HostPath, HostSeq, Kept, ModelId, Models, Rejection,
-    RequestId, Resolution, SessionId, Snapshot, SnapshotDiff, SubagentActivity,
-    SubagentEvent, SubagentId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome, Workspace,
+    ChecklistEntry, ClientName, CloseReason, Decision, Effort, Event,
+    EventKind, HostPath, HostSeq, Kept, ModelId, Models, RequestId, Resolution,
+    SessionId, SessionRefusal, SessionResult, Snapshot, SnapshotDiff,
+    SubagentActivity, SubagentEvent, SubagentId, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -171,7 +171,7 @@ pub enum Effect {
     Barrier,
     Trace(&'static str),
     /// Answer the order.
-    Reply(CommandResult),
+    Reply(SessionResult),
     Call(Call),
 }
 
@@ -286,7 +286,7 @@ enum Flow {
     /// The message is being sent, changing the agent's effort to this.
     Sending(Option<Effort>),
     /// An agent call whose failure is logged as an error, then the reply.
-    Noting(Option<CommandResult>),
+    Noting(Option<SessionResult>),
     Diffing,
     /// The agent is starting, for this.
     Starting,
@@ -425,7 +425,7 @@ impl Session {
                 Input::Agent(Outcome::ShutDown(Ok(()))),
             ) => join(
                 self.closed(CloseReason::Stopped { reason }),
-                [Effect::Reply(CommandResult::Accepted)],
+                [Effect::Reply(SessionResult::Accepted)],
             ),
             (
                 Flow::Stopping | Flow::Halting(_),
@@ -436,7 +436,7 @@ impl Session {
                         "the agent did not confirm shutdown: {reason}"
                     ),
                 })],
-                rejected(Rejection::InstanceUnavailable { reason }),
+                rejected(SessionRefusal::InstanceUnavailable { reason }),
             ),
             (Flow::Removing, Input::Removed(Ok(kept))) => self.gone(Some(kept)),
             (Flow::Removing, Input::Removed(Err(reason))) => {
@@ -451,7 +451,7 @@ impl Session {
 
     fn order(&mut self, order: Order) -> Vec<Effect> {
         if self.removed {
-            return rejected(Rejection::SessionRemoved);
+            return rejected(SessionRefusal::SessionRemoved);
         }
         match order {
             Order::Diff(snapshot) => self.diff(snapshot),
@@ -465,7 +465,7 @@ impl Session {
                 Order::Remove | Order::Stop(_),
                 Turn::Starting(_) | Turn::Running(_),
                 _,
-            ) => rejected(Rejection::TurnInProgress),
+            ) => rejected(SessionRefusal::TurnInProgress),
             (Order::Stop(reason), Turn::Idle, Agent::Up { .. }) => {
                 self.flow = Flow::Halting(reason);
                 Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
@@ -483,21 +483,21 @@ impl Session {
             }
             (Order::Start { .. }, _, Agent::Up { .. })
             | (Order::Stop(_), Turn::Idle, Agent::Down) => {
-                answer(CommandResult::Accepted)
+                answer(SessionResult::Accepted)
             }
             // A closed session takes it too: `Continue` starts at it.
             (Order::Effort(effort, offered), _, _) => {
                 self.set_effort(effort, &offered)
             }
-            (_, _, Agent::Down) => rejected(Rejection::SessionClosed),
+            (_, _, Agent::Down) => rejected(SessionRefusal::SessionClosed),
             (Order::Send { text, by }, Turn::Idle, _) => {
                 self.save(Saved::Send(text, by))
             }
             (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
-                rejected(Rejection::TurnInProgress)
+                rejected(SessionRefusal::TurnInProgress)
             }
             (Order::Interrupt, Turn::Idle, _) => {
-                rejected(Rejection::NoTurnRunning)
+                rejected(SessionRefusal::NoTurnRunning)
             }
             (Order::Interrupt, Turn::Starting(_), _) => {
                 self.turn = Turn::Starting(Held::Interrupt);
@@ -505,18 +505,20 @@ impl Session {
                     Effect::Trace(
                         "holding the interrupt until the turn starts",
                     ),
-                    Effect::Reply(CommandResult::Accepted),
+                    Effect::Reply(SessionResult::Accepted),
                 ])
             }
             (Order::Interrupt, Turn::Running(native), _) => {
                 let call = Call::Agent(Command::Interrupt(native.clone()));
-                self.flow = Flow::Noting(Some(CommandResult::Accepted));
+                self.flow = Flow::Noting(Some(SessionResult::Accepted));
                 Vec::from([Effect::Call(call)])
             }
             (Order::Reply { request, reply, by }, _, _) => {
                 self.reply(request, reply, by)
             }
-            (Order::Diff(_), _, _) => rejected(Rejection::SnapshotUnavailable),
+            (Order::Diff(_), _, _) => {
+                rejected(SessionRefusal::SnapshotUnavailable)
+            }
         }
     }
 
@@ -558,15 +560,15 @@ impl Session {
             takes(offered, self.choice.model.as_ref(), effort),
             self.choice.effort,
         ) {
-            (Err(reason), _) => rejected(Rejection::NotOffered { reason }),
+            (Err(reason), _) => rejected(SessionRefusal::NotOffered { reason }),
             (Ok(taken), Some(current)) if taken == current => {
-                answer(CommandResult::Accepted)
+                answer(SessionResult::Accepted)
             }
             (Ok(_), _) => {
                 self.choice.effort = Some(effort);
                 Vec::from([
                     Effect::Emit(EventKind::EffortChanged { effort }),
-                    Effect::Reply(CommandResult::Accepted),
+                    Effect::Reply(SessionResult::Accepted),
                 ])
             }
         }
@@ -605,7 +607,7 @@ impl Session {
                 self.turn = Turn::Starting(Held::Nothing);
                 join(
                     self.conversation.clone().map(Effect::Conversation),
-                    [Effect::Reply(CommandResult::Accepted)],
+                    [Effect::Reply(SessionResult::Accepted)],
                 )
             }
             Err(message) => {
@@ -614,7 +616,7 @@ impl Session {
                     self.snapshot_event(EventKind::TurnCompleted {
                         outcome: TurnOutcome::Failed { message },
                     }),
-                    Effect::Reply(CommandResult::Accepted),
+                    Effect::Reply(SessionResult::Accepted),
                 ])
             }
         }
@@ -628,15 +630,15 @@ impl Session {
     ) -> Vec<Effect> {
         match self.requests.get(&request).cloned() {
             None | Some(Pending::Resolved(Resolution::Withdrawn)) => {
-                rejected(Rejection::UnknownRequest)
+                rejected(SessionRefusal::UnknownRequest)
             }
             Some(Pending::Resolved(
                 Resolution::Decided { by: first, .. }
                 | Resolution::Answered { by: first, .. },
-            )) => rejected(Rejection::AlreadyResolved { by: first }),
+            )) => rejected(SessionRefusal::AlreadyResolved { by: first }),
             Some(Pending::Open { native, asked }) => match fits(&asked, &reply)
             {
-                Err(reason) => rejected(Rejection::WrongReply { reason }),
+                Err(reason) => rejected(SessionRefusal::WrongReply { reason }),
                 Ok(()) => self.resolve(request, (native, asked), reply, by),
             },
         }
@@ -671,7 +673,7 @@ impl Session {
         };
         self.requests
             .insert(request, Pending::Resolved(resolution.clone()));
-        self.flow = Flow::Noting(Some(CommandResult::Accepted));
+        self.flow = Flow::Noting(Some(SessionResult::Accepted));
         Vec::from([
             Effect::Emit(EventKind::RequestResolved {
                 request,
@@ -975,7 +977,7 @@ impl Session {
         self.removed = true;
         Vec::from([
             Effect::Emit(EventKind::SessionRemoved { kept }),
-            Effect::Reply(CommandResult::Accepted),
+            Effect::Reply(SessionResult::Accepted),
         ])
     }
 
@@ -1032,7 +1034,7 @@ impl Session {
                 let changed = self.offered(&offered);
                 join(changed, self.start())
             }
-            (Saved::Continue, Ok(())) => answer(CommandResult::Accepted),
+            (Saved::Continue, Ok(())) => answer(SessionResult::Accepted),
             (Saved::Send(text, by), Ok(())) => {
                 self.flow = Flow::Recording(text.clone());
                 Vec::from([Effect::Call(Call::Record(
@@ -1042,7 +1044,7 @@ impl Session {
             (
                 Saved::Start(..) | Saved::Continue | Saved::Send(..),
                 Err(reason),
-            ) => rejected(Rejection::WorkspaceFailure { reason }),
+            ) => rejected(SessionRefusal::WorkspaceFailure { reason }),
             (Saved::TurnEnded(outcome), taken) => {
                 join(snapshot_failed(taken), self.turn_ended(outcome))
             }
@@ -1074,14 +1076,14 @@ impl Session {
                 Vec::from([
                     Effect::Conversation(conversation),
                     Effect::Emit(EventKind::SessionReady),
-                    Effect::Reply(CommandResult::Accepted),
+                    Effect::Reply(SessionResult::Accepted),
                 ])
             }
             Err(message) => Vec::from([
                 Effect::Emit(EventKind::SessionClosed {
                     reason: CloseReason::FailedToStart { message },
                 }),
-                Effect::Reply(CommandResult::Accepted),
+                Effect::Reply(SessionResult::Accepted),
             ]),
         }
     }
@@ -1092,7 +1094,7 @@ impl Session {
                 self.flow = Flow::Diffing;
                 Vec::from([Effect::Call(call)])
             }
-            None => rejected(Rejection::SnapshotUnavailable),
+            None => rejected(SessionRefusal::SnapshotUnavailable),
         }
     }
 
@@ -1128,9 +1130,9 @@ fn removal_failed(reason: String) -> Vec<Effect> {
         Effect::Emit(EventKind::Error {
             message: format!("the session was not removed: {reason}"),
         }),
-        Effect::Reply(CommandResult::Rejected(Rejection::WorkspaceFailure {
-            reason,
-        })),
+        Effect::Reply(SessionResult::Refused(
+            SessionRefusal::WorkspaceFailure { reason },
+        )),
     ])
 }
 
@@ -1213,7 +1215,7 @@ fn snapshot_failed(saved: Result<(), String>) -> Option<Effect> {
 /// an `Error`, since the command's effects are already in the log.
 fn noted(
     called: Result<(), String>,
-    then: Option<CommandResult>,
+    then: Option<SessionResult>,
 ) -> Vec<Effect> {
     join(
         called
@@ -1223,21 +1225,21 @@ fn noted(
     )
 }
 
-fn diffed(diff: Result<SnapshotDiff, String>) -> CommandResult {
+fn diffed(diff: Result<SnapshotDiff, String>) -> SessionResult {
     diff.map_or_else(
         |reason| {
-            CommandResult::Rejected(Rejection::WorkspaceFailure { reason })
+            SessionResult::Refused(SessionRefusal::WorkspaceFailure { reason })
         },
-        CommandResult::Diff,
+        SessionResult::Diff,
     )
 }
 
-fn answer(result: CommandResult) -> Vec<Effect> {
+fn answer(result: SessionResult) -> Vec<Effect> {
     Vec::from([Effect::Reply(result)])
 }
 
-fn rejected(rejection: Rejection) -> Vec<Effect> {
-    answer(CommandResult::Rejected(rejection))
+fn rejected(rejection: SessionRefusal) -> Vec<Effect> {
+    answer(SessionResult::Refused(rejection))
 }
 
 fn subagent(agent: SubagentId, event: SubagentEvent) -> Vec<Effect> {

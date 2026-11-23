@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -160,10 +157,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Available": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -212,10 +203,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Available": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "codex"
-						},
+						"instance": { "account": "Own", "provider": "codex" },
 						"model": "big"
 					}
 				},
@@ -335,12 +314,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "delegate"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "delegate" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -372,10 +342,7 @@
 						"phase": {
 							"Started": {
 								"tool": {
-									"Other": {
-										"detail": "Inspect alpha",
-										"name": "Spawn agent"
-									}
+									"Other": { "detail": "Inspect alpha", "name": "Spawn agent" }
 								}
 							}
 						}
@@ -394,11 +361,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "spawn-alpha",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 8,
@@ -435,11 +398,7 @@
 				"kind": {
 					"Subagent": {
 						"agent": "child-alpha",
-						"event": {
-							"Kind": {
-								"kind": "explorer"
-							}
-						}
+						"event": { "Kind": { "kind": "explorer" } }
 					}
 				},
 				"seq": 10,
@@ -458,10 +417,7 @@
 						"phase": {
 							"Started": {
 								"tool": {
-									"Other": {
-										"detail": "/root/beta",
-										"name": "Spawn agent"
-									}
+									"Other": { "detail": "/root/beta", "name": "Spawn agent" }
 								}
 							}
 						}
@@ -480,11 +436,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "spawn-beta",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 12,
@@ -501,10 +453,7 @@
 					"Subagent": {
 						"agent": "child-beta",
 						"event": {
-							"Started": {
-								"call": "spawn-beta",
-								"description": "/root/beta"
-							}
+							"Started": { "call": "spawn-beta", "description": "/root/beta" }
 						}
 					}
 				},
@@ -523,12 +472,7 @@
 						"agent": "child-alpha",
 						"event": {
 							"ChecklistChanged": {
-								"checklist": [
-									{
-										"status": "InProgress",
-										"text": "Read alpha"
-									}
-								]
+								"checklist": [{ "status": "InProgress", "text": "Read alpha" }]
 							}
 						}
 					}
@@ -552,11 +496,7 @@
 									"call": "alpha-command",
 									"phase": {
 										"Started": {
-											"tool": {
-												"Command": {
-													"command": "ls alpha"
-												}
-											}
+											"tool": { "Command": { "command": "ls alpha" } }
 										}
 									}
 								}
@@ -583,11 +523,7 @@
 								"for_session": "ls alpha",
 								"reason": null,
 								"request": 1,
-								"tool": {
-									"Command": {
-										"command": "ls alpha"
-									}
-								}
+								"tool": { "Command": { "command": "ls alpha" } }
 							}
 						}
 					}
@@ -598,11 +534,7 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -611,10 +543,7 @@
 					"RequestResolved": {
 						"request": 1,
 						"resolution": {
-							"Decided": {
-								"by": "test-client",
-								"decision": "Approve"
-							}
+							"Decided": { "by": "test-client", "decision": "Approve" }
 						}
 					}
 				},
@@ -635,11 +564,7 @@
 							"Activity": {
 								"ToolCall": {
 									"call": "alpha-command",
-									"phase": {
-										"Finished": {
-											"outcome": "Succeeded"
-										}
-									}
+									"phase": { "Finished": { "outcome": "Succeeded" } }
 								}
 							}
 						}
@@ -660,12 +585,7 @@
 						"agent": "child-alpha",
 						"event": {
 							"ChecklistChanged": {
-								"checklist": [
-									{
-										"status": "Completed",
-										"text": "Read alpha"
-									}
-								]
+								"checklist": [{ "status": "Completed", "text": "Read alpha" }]
 							}
 						}
 					}
@@ -683,13 +603,7 @@
 				"kind": {
 					"Subagent": {
 						"agent": "child-beta",
-						"event": {
-							"Activity": {
-								"Message": {
-									"text": "Beta checked."
-								}
-							}
-						}
+						"event": { "Activity": { "Message": { "text": "Beta checked." } } }
 					}
 				},
 				"seq": 20,
@@ -706,10 +620,7 @@
 					"Subagent": {
 						"agent": "child-alpha",
 						"event": {
-							"Ended": {
-								"outcome": "Finished",
-								"summary": "Alpha checked."
-							}
+							"Ended": { "outcome": "Finished", "summary": "Alpha checked." }
 						}
 					}
 				},
@@ -727,10 +638,7 @@
 					"Subagent": {
 						"agent": "child-beta",
 						"event": {
-							"Ended": {
-								"outcome": "Failed",
-								"summary": "Beta failed."
-							}
+							"Ended": { "outcome": "Failed", "summary": "Beta failed." }
 						}
 					}
 				},
@@ -744,11 +652,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Delegation done."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Delegation done." } },
 				"seq": 23,
 				"session": "00000000000000000000000001"
 			}
@@ -777,11 +681,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 25,
 				"session": "00000000000000000000000001"
 			}
@@ -936,10 +836,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -949,10 +846,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Available": {
@@ -992,10 +886,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "codex"
-						},
+						"instance": { "account": "Own", "provider": "codex" },
 						"model": "big"
 					}
 				},
@@ -1059,12 +950,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "delegate"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "delegate" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -1075,11 +961,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1096,10 +978,7 @@
 						"phase": {
 							"Started": {
 								"tool": {
-									"Other": {
-										"detail": "Inspect alpha",
-										"name": "Spawn agent"
-									}
+									"Other": { "detail": "Inspect alpha", "name": "Spawn agent" }
 								}
 							}
 						}
@@ -1118,11 +997,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "spawn-alpha",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 8,
@@ -1159,11 +1034,7 @@
 				"kind": {
 					"Subagent": {
 						"agent": "child-alpha",
-						"event": {
-							"Kind": {
-								"kind": "explorer"
-							}
-						}
+						"event": { "Kind": { "kind": "explorer" } }
 					}
 				},
 				"seq": 10,
@@ -1182,10 +1053,7 @@
 						"phase": {
 							"Started": {
 								"tool": {
-									"Other": {
-										"detail": "/root/beta",
-										"name": "Spawn agent"
-									}
+									"Other": { "detail": "/root/beta", "name": "Spawn agent" }
 								}
 							}
 						}
@@ -1204,11 +1072,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "spawn-beta",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 12,
@@ -1225,10 +1089,7 @@
 					"Subagent": {
 						"agent": "child-beta",
 						"event": {
-							"Started": {
-								"call": "spawn-beta",
-								"description": "/root/beta"
-							}
+							"Started": { "call": "spawn-beta", "description": "/root/beta" }
 						}
 					}
 				},
@@ -1247,12 +1108,7 @@
 						"agent": "child-alpha",
 						"event": {
 							"ChecklistChanged": {
-								"checklist": [
-									{
-										"status": "InProgress",
-										"text": "Read alpha"
-									}
-								]
+								"checklist": [{ "status": "InProgress", "text": "Read alpha" }]
 							}
 						}
 					}
@@ -1276,11 +1132,7 @@
 									"call": "alpha-command",
 									"phase": {
 										"Started": {
-											"tool": {
-												"Command": {
-													"command": "ls alpha"
-												}
-											}
+											"tool": { "Command": { "command": "ls alpha" } }
 										}
 									}
 								}
@@ -1307,11 +1159,7 @@
 								"for_session": "ls alpha",
 								"reason": null,
 								"request": 1,
-								"tool": {
-									"Command": {
-										"command": "ls alpha"
-									}
-								}
+								"tool": { "Command": { "command": "ls alpha" } }
 							}
 						}
 					}
@@ -1330,10 +1178,7 @@
 					"RequestResolved": {
 						"request": 1,
 						"resolution": {
-							"Decided": {
-								"by": "test-client",
-								"decision": "Approve"
-							}
+							"Decided": { "by": "test-client", "decision": "Approve" }
 						}
 					}
 				},
@@ -1354,11 +1199,7 @@
 							"Activity": {
 								"ToolCall": {
 									"call": "alpha-command",
-									"phase": {
-										"Finished": {
-											"outcome": "Succeeded"
-										}
-									}
+									"phase": { "Finished": { "outcome": "Succeeded" } }
 								}
 							}
 						}
@@ -1379,12 +1220,7 @@
 						"agent": "child-alpha",
 						"event": {
 							"ChecklistChanged": {
-								"checklist": [
-									{
-										"status": "Completed",
-										"text": "Read alpha"
-									}
-								]
+								"checklist": [{ "status": "Completed", "text": "Read alpha" }]
 							}
 						}
 					}
@@ -1402,13 +1238,7 @@
 				"kind": {
 					"Subagent": {
 						"agent": "child-beta",
-						"event": {
-							"Activity": {
-								"Message": {
-									"text": "Beta checked."
-								}
-							}
-						}
+						"event": { "Activity": { "Message": { "text": "Beta checked." } } }
 					}
 				},
 				"seq": 20,
@@ -1425,10 +1255,7 @@
 					"Subagent": {
 						"agent": "child-alpha",
 						"event": {
-							"Ended": {
-								"outcome": "Finished",
-								"summary": "Alpha checked."
-							}
+							"Ended": { "outcome": "Finished", "summary": "Alpha checked." }
 						}
 					}
 				},
@@ -1446,10 +1273,7 @@
 					"Subagent": {
 						"agent": "child-beta",
 						"event": {
-							"Ended": {
-								"outcome": "Failed",
-								"summary": "Beta failed."
-							}
+							"Ended": { "outcome": "Failed", "summary": "Beta failed." }
 						}
 					}
 				},
@@ -1463,11 +1287,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Delegation done."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Delegation done." } },
 				"seq": 23,
 				"session": "00000000000000000000000001"
 			}
@@ -1496,11 +1316,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 25,
 				"session": "00000000000000000000000001"
 			}
@@ -1512,10 +1328,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -1525,10 +1338,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Available": {

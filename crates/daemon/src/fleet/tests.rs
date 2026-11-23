@@ -436,16 +436,16 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
         device: *SecretKey::from_bytes(&[13; 32]).public().as_bytes(),
         name: String::from("new browser"),
     };
-    let action = host::serve::FleetAction::Approve(request);
+    let action = proto::fleet::FleetCommand::Approve(request);
     let reply =
         super::command(Some(&root), &root_endpoint, action.clone()).await;
-    let proto::CommandResult::FleetPairing(pairing) = reply else {
+    let proto::fleet::FleetResult::Pairing(pairing) = reply else {
         anyhow::bail!("root refused browser approval");
     };
     member.admit_owner(&pairing.certificate).await?;
     assert!(matches!(
         super::command(Some(&member), &target, action).await,
-        proto::CommandResult::Rejected(proto::Rejection::FleetUnavailable)
+        proto::fleet::FleetResult::Unavailable
     ));
 
     target_router.shutdown().await?;

@@ -17,8 +17,8 @@ use alloc::string::ToString;
 
 use proto::flow::Flow;
 use proto::{
-    ChecklistChange, CommandId, Datum, Home, HostPath, Issue, IssueChange,
-    IssueId, Item, Part, ProjectId, Rejection,
+    ChecklistChange, CommandId, Datum, Home, HomeRefusal, HostPath, Issue,
+    IssueChange, IssueId, Item, Part, ProjectId,
 };
 use serde::{Deserialize, Serialize};
 
@@ -419,8 +419,8 @@ pub struct Start {
 ///
 /// The host has no home, its home lists no such issue, or the issue's
 /// project has no checkout on the host.
-pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
-    let known = home.ok_or(Rejection::NoHome)?;
+pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
+    let known = home.ok_or(HomeRefusal::NoHome)?;
     let (project, issue) = known
         .projects
         .iter()
@@ -431,8 +431,11 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, Rejection> {
                 .find(|issue| issue.id == id)
                 .map(|issue| (project, issue))
         })
-        .ok_or(Rejection::UnknownIssue)?;
-    let checkout = project.checkouts.first().ok_or(Rejection::NotCheckedOut)?;
+        .ok_or(HomeRefusal::UnknownIssue)?;
+    let checkout = project
+        .checkouts
+        .first()
+        .ok_or(HomeRefusal::NotCheckedOut)?;
     Ok(Start {
         issue: id,
         checkout: checkout.path.clone(),

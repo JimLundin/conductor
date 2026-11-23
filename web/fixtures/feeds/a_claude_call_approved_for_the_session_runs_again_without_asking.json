@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-for-session",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -336,10 +315,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "touch t1.txt"
-					}
+					"UserMessage": { "by": "test-client", "text": "touch t1.txt" }
 				},
 				"seq": 5,
 				"session": "00000000000000000000000001"
@@ -351,11 +327,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -371,11 +343,7 @@
 						"call": "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
 						"phase": {
 							"Started": {
-								"tool": {
-									"Command": {
-										"command": "touch t1.txt"
-									}
-								}
+								"tool": { "Command": { "command": "touch t1.txt" } }
 							}
 						}
 					}
@@ -396,11 +364,7 @@
 						"for_session": "Bash(touch t1.txt)",
 						"reason": null,
 						"request": 1,
-						"tool": {
-							"Command": {
-								"command": "touch t1.txt"
-							}
-						}
+						"tool": { "Command": { "command": "touch t1.txt" } }
 					}
 				},
 				"seq": 8,
@@ -409,11 +373,7 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -442,11 +402,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 10,
@@ -459,11 +415,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Ran `touch t1."
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Ran `touch t1." } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -474,11 +426,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "txt`. It completed with"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "txt`. It completed with" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -489,11 +437,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " no output."
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " no output." } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -537,32 +481,19 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "again"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "again" } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -573,11 +504,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 14
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 14 } },
 				"seq": 15,
 				"session": "00000000000000000000000001"
 			}
@@ -593,11 +520,7 @@
 						"call": "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
 						"phase": {
 							"Started": {
-								"tool": {
-									"Command": {
-										"command": "touch t1.txt"
-									}
-								}
+								"tool": { "Command": { "command": "touch t1.txt" } }
 							}
 						}
 					}
@@ -615,11 +538,7 @@
 				"kind": {
 					"ToolCall": {
 						"call": "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
-						"phase": {
-							"Finished": {
-								"outcome": "Succeeded"
-							}
-						}
+						"phase": { "Finished": { "outcome": "Succeeded" } }
 					}
 				},
 				"seq": 17,
@@ -632,11 +551,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Ran `touch t1"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Ran `touch t1" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -647,11 +562,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": ".txt` again. It complet"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": ".txt` again. It complet" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -662,11 +573,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "ed with no output."
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "ed with no output." } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -677,11 +584,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " Since `touch` only"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " Since `touch` only" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -692,11 +595,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " updates the"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " updates the" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -707,11 +606,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " timestamp on"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " timestamp on" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -722,11 +617,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " an"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " an" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -737,11 +628,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " existing file, the"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " existing file, the" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -752,11 +639,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " file's"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " file's" } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -767,11 +650,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": " contents are unchanged."
-					}
-				},
+				"kind": { "AssistantDelta": { "text": " contents are unchanged." } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -815,11 +694,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 20,
 				"session": "00000000000000000000000001"
 			}

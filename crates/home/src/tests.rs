@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use proto::{
-    Checkout, Cloning, Home, HomeSync, HostPath, Origin, ProjectId, Rejection,
-    StartAt,
+    Checkout, Cloning, Home, HomeRefusal, HomeSync, HostPath, Origin,
+    ProjectId, StartAt,
 };
 
 use crate::checkout::{
@@ -546,9 +546,9 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
         [
             Ok(directory),
             Ok(HostPath(String::from("/a"))),
-            Err(Rejection::NoHome),
-            Err(Rejection::UnknownProject),
-            Err(Rejection::NotCheckedOut),
+            Err(HomeRefusal::NoHome),
+            Err(HomeRefusal::UnknownProject),
+            Err(HomeRefusal::NotCheckedOut),
         ]
     );
 }
@@ -564,8 +564,8 @@ fn only_a_known_project_with_a_remote_clones() {
         ],
         [
             Ok(String::from(REMOTE)),
-            Err(Rejection::NoRemote),
-            Err(Rejection::UnknownProject),
+            Err(HomeRefusal::NoRemote),
+            Err(HomeRefusal::UnknownProject),
         ]
     );
     assert_eq!(

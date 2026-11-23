@@ -1,7 +1,7 @@
 use proto::{
-    ClientName, CloseReason, CommandResult, Event, EventKind, Finished,
-    HostPath, HostSeq, InstanceId, IssueId, Kept, Provider, Rejection,
-    SessionId, TurnOutcome, Workspace,
+    ClientName, CloseReason, Event, EventKind, Finished, HostPath, HostSeq,
+    InstanceId, IssueId, Kept, Provider, SessionId, SessionRefusal,
+    SessionResult, TurnOutcome, Workspace,
 };
 
 use super::{
@@ -107,7 +107,7 @@ fn a_session_on_an_issue_finishes_between_turns() {
     );
     assert_eq!(
         finishing(&and(started(), Vec::from([user(5)])), SESSION),
-        Err(Rejection::TurnInProgress)
+        Err(SessionRefusal::TurnInProgress)
     );
     let closed = and(
         started(),
@@ -130,7 +130,7 @@ fn a_session_on_an_issue_finishes_between_turns() {
         .into_iter()
         .filter(|event| !matches!(event.kind, EventKind::OnIssue { .. }))
         .collect::<Vec<Event>>();
-    assert_eq!(finishing(&plain, SESSION), Err(Rejection::NotOnIssue));
+    assert_eq!(finishing(&plain, SESSION), Err(SessionRefusal::NotOnIssue));
     assert_eq!(
         finishing(
             &and(
@@ -139,9 +139,9 @@ fn a_session_on_an_issue_finishes_between_turns() {
             ),
             SESSION
         ),
-        Err(Rejection::SessionRemoved)
+        Err(SessionRefusal::SessionRemoved)
     );
-    assert_eq!(finishing(&[], SESSION), Err(Rejection::UnknownSession));
+    assert_eq!(finishing(&[], SESSION), Err(SessionRefusal::UnknownSession));
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn a_session_finishes_once_until_it_does_more() {
         and(started(), Vec::from([event(5, EventKind::FinishStarted)]));
     assert_eq!(
         finishing(&finishing_now, SESSION).map(|_| ()),
-        Err(Rejection::AlreadyFinished)
+        Err(SessionRefusal::AlreadyFinished)
     );
     let summed_up = and(
         finishing_now,
@@ -237,7 +237,7 @@ fn a_session_finishes_once_until_it_does_more() {
     );
     assert_eq!(
         finishing(&summed_up, SESSION).map(|_| ()),
-        Err(Rejection::AlreadyFinished),
+        Err(SessionRefusal::AlreadyFinished),
         "its own summary turn doesn't count as more work"
     );
     let more = and(
@@ -261,14 +261,16 @@ fn rejected_summary_order_explains_what_was_interrupted() {
     assert_eq!(
         super::interrupted(
             "asking for a summary",
-            Some(&proto::CommandResult::Accepted)
+            Some(&proto::SessionResult::Accepted)
         ),
         None
     );
     assert!(
         super::interrupted(
             "asking for a summary",
-            Some(&proto::CommandResult::Rejected(Rejection::TurnInProgress))
+            Some(&proto::SessionResult::Refused(
+                SessionRefusal::TurnInProgress
+            ))
         )
         .is_some_and(|reason| reason.starts_with("asking for a summary: "))
     );
@@ -288,7 +290,7 @@ fn ask() -> (Finish, Vec<Effect>) {
 fn watching() -> Finish {
     let (mut finish, _) = ask();
     assert_eq!(
-        finish.step(Input::Ordered(Some(CommandResult::Accepted))),
+        finish.step(Input::Ordered(Some(SessionResult::Accepted))),
         [Effect::Watch {
             after: HostSeq(4),
             seconds: 600
@@ -338,7 +340,7 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
         effects,
         [
             Effect::Emit(EventKind::FinishStarted),
-            Effect::Reply(CommandResult::Accepted),
+            Effect::Reply(SessionResult::Accepted),
             Effect::Order(Order::Send {
                 text: text(super::SUMMARY),
                 by: client()
@@ -346,7 +348,7 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
         ]
     );
     assert!(matches!(
-        &finish.step(Input::Ordered(Some(CommandResult::Accepted)))[..],
+        &finish.step(Input::Ordered(Some(SessionResult::Accepted)))[..],
         [Effect::Watch { .. }]
     ));
     assert_eq!(
@@ -355,7 +357,9 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
             Vec::from([event(5, EventKind::FinishStarted)])
         ))),
         [
-            Effect::Reply(CommandResult::Rejected(Rejection::AlreadyFinished)),
+            Effect::Reply(SessionResult::Refused(
+                SessionRefusal::AlreadyFinished
+            )),
             Effect::NextEvent,
         ]
     );
@@ -375,7 +379,7 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
         [Effect::Order(Order::Stop(text(super::FINISHED)))]
     );
     assert_eq!(
-        finish.step(Input::Ordered(Some(CommandResult::Accepted))),
+        finish.step(Input::Ordered(Some(SessionResult::Accepted))),
         [Effect::ReadHome]
     );
     assert_eq!(
@@ -419,8 +423,8 @@ fn an_active_turn_is_rejected_before_logging_or_asking() {
     let (mut finish, _) = Finish::new(SESSION, client());
     assert_eq!(
         finish.step(Input::History(and(started(), Vec::from([user(5)])))),
-        [Effect::Reply(CommandResult::Rejected(
-            Rejection::TurnInProgress
+        [Effect::Reply(SessionResult::Refused(
+            SessionRefusal::TurnInProgress
         ))]
     );
 }
@@ -442,10 +446,10 @@ fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure() {
         finish.step(Input::Events(Vec::from([reply(5, "summary"), closed]))),
         [Effect::Order(Order::Stop(text(super::FINISHED)))]
     );
-    let rejection = Rejection::TurnInProgress;
+    let rejection = SessionRefusal::TurnInProgress;
     let reason = format!("stopping the agent: {}", rejection.label());
     assert_eq!(
-        finish.step(Input::Ordered(Some(CommandResult::Rejected(rejection)))),
+        finish.step(Input::Ordered(Some(SessionResult::Refused(rejection)))),
         [note(None, 0)]
     );
     failed(&mut finish, &reason);
@@ -460,8 +464,8 @@ fn a_summary_timeout_interrupts_and_skips_landing_even_if_the_interrupt_is_refus
         [Effect::Order(Order::Interrupt)]
     );
     assert_eq!(
-        finish.step(Input::Ordered(Some(CommandResult::Rejected(
-            Rejection::NoTurnRunning
+        finish.step(Input::Ordered(Some(SessionResult::Refused(
+            SessionRefusal::NoTurnRunning
         )))),
         [note(None, 0)]
     );
@@ -483,7 +487,7 @@ fn closed_finish() -> Finish {
         ))),
         [
             Effect::Emit(EventKind::FinishStarted),
-            Effect::Reply(CommandResult::Accepted),
+            Effect::Reply(SessionResult::Accepted),
             Effect::ReadHome,
         ]
     );
@@ -556,7 +560,7 @@ fn a_restarted_finish_reuses_its_pending_attempt_and_summary() {
     let (mut finish, _) = Finish::new(SESSION, client());
     assert_eq!(
         finish.step(Input::History(interrupted)),
-        [Effect::Reply(CommandResult::Accepted), Effect::ReadHome]
+        [Effect::Reply(SessionResult::Accepted), Effect::ReadHome]
     );
     let _ = finish.step(Input::Home(None));
     let _ = finish.step(Input::Ready(Ok(())));

@@ -16,7 +16,7 @@ import { type HostLink, type Status, Update } from "./link/host.ts";
 import type { Pipe } from "./pipe.ts";
 import type {
 	ClientName,
-	CommandBody,
+	Command,
 	CommandResult,
 	SessionId,
 	Ticket,
@@ -64,7 +64,7 @@ interface Store {
 	// Runs one command on the host's link; see HostLink.send.
 	readonly send: (
 		host: HostKey,
-		body: CommandBody,
+		body: Command,
 	) => Effect.Effect<CommandResult, SendError>;
 	readonly show: (route: Route) => void;
 	// Reads the fragment again, after the page's changed.
@@ -263,7 +263,7 @@ const makeStore = (
 
 		const send = (
 			key: HostKey,
-			body: CommandBody,
+			body: Command,
 		): Effect.Effect<CommandResult, SendError> =>
 			Effect.suspend(
 				() =>

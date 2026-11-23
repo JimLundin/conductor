@@ -150,3 +150,47 @@ impl Instances {
         self.of(id).map(|status| &status.availability)
     }
 }
+
+/// A command that changes the host's instances.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum InstanceCommand {
+    /// Stores a credential of `provider` on the host. The account its form
+    /// names makes the instance: one that has it takes the credential in
+    /// place of its own, and otherwise the host adds the instance and
+    /// starts its CLI before it answers. The host never sends it back.
+    /// Like every command it needs a client admitted by the ticket's
+    /// token, which device certificates replace with the fleet (§6.1).
+    SetCredential {
+        provider: Provider,
+        credential: Credential,
+    },
+    /// Refused while a session runs on the instance. Its closed sessions
+    /// stay, and can't continue. A provider's own sign-in stays; on a host
+    /// whose store doesn't open, removing it moves the store aside.
+    Remove { instance: InstanceId },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum InstanceResult {
+    Accepted,
+    Refused(InstanceRefusal),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum InstanceRefusal {
+    /// The host could not store the credential, and kept the one it had.
+    CredentialNotSaved {
+        reason: String,
+    },
+    /// The credential is malformed, for this reason, and was not stored.
+    InvalidCredential {
+        reason: String,
+    },
+    UnknownInstance,
+    /// The instance can't be removed while sessions run on it.
+    InstanceInUse {
+        sessions: u64,
+    },
+    /// Only the fleet's root host changes a fleet's instances.
+    FleetUnavailable,
+}

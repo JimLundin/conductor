@@ -6,17 +6,20 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use host::log::Completion;
-use host::serve::{self, Admission, Order, Relaunch, Route, Stream};
+use host::serve::{self, Admission, Relaunch, SessionRoute, Stream};
+use host::session::Order;
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
+use proto::fleet::FleetResult;
 use proto::{
-    AuthToken, ClientName, Command, CommandBody, CommandResult, Event,
-    Feed as Frame, HelloReply, Home, Instances, Open, Rejection, SessionId,
-    SignIn, Subscribe, Welcome,
+    AuthToken, ClientName, Command, CommandId, CommandResult, Event,
+    Feed as Frame, HelloReply, Home, HomeResult, InstanceResult, Instances,
+    Open, PushCommand, PushResult, SessionId, SessionRefusal, SessionResult,
+    SignIn, SignInResult, Subscribe, Welcome,
 };
 use tokio::sync::{Semaphore, broadcast, watch};
 
@@ -201,51 +204,32 @@ async fn admit_fleet(
     }
 }
 
-fn trace_command(command: &Command) {
-    let operation = match &command.body {
-        CommandBody::StartSession { .. } => "start_session",
-        CommandBody::SendMessage { .. } => "send_message",
-        CommandBody::Interrupt { .. } => "interrupt",
-        CommandBody::Continue { .. } => "continue",
-        CommandBody::Resolve { .. } => "resolve",
-        CommandBody::Answer { .. } => "answer",
-        CommandBody::SetCredential { .. } => "set_credential",
-        CommandBody::GetDiff { .. } => "get_diff",
-        CommandBody::SetEffort { .. } => "set_effort",
-        CommandBody::RemoveInstance { .. } => "remove_instance",
-        CommandBody::StartSignIn { .. } => "start_sign_in",
-        CommandBody::StartCredentialSignIn { .. } => "start_credential_sign_in",
-        CommandBody::SubmitSignInCode { .. } => "submit_sign_in_code",
-        CommandBody::CancelSignIn { .. } => "cancel_sign_in",
-        CommandBody::SyncHome => "sync_home",
-        CommandBody::CloneProject { .. } => "clone_project",
-        CommandBody::RemoveSession { .. } => "remove_session",
-        CommandBody::CreateIssue { .. } => "create_issue",
-        CommandBody::ChangeIssue { .. } => "change_issue",
-        CommandBody::FinishSession { .. } => "finish_session",
-        CommandBody::PushPublicKey => "push_public_key",
-        CommandBody::RegisterPush(_) => "register_push",
-        CommandBody::FleetStatus => "fleet_status",
-        CommandBody::FleetInvite => "fleet_invite",
-        CommandBody::FleetRevoke(_) => "fleet_revoke",
-        CommandBody::FleetApprove(_) => "fleet_approve",
-        CommandBody::FleetAdmit { .. } => "fleet_admit",
-    };
-    tracing::info!(command = command.id.0, operation, "command received");
+fn trace_command(id: CommandId, command: &Command) {
+    let operation = serve::operation(command);
+    tracing::info!(command = id.0, operation, "command received");
 }
 
 const fn command_outcome(result: &CommandResult) -> &'static str {
     match result {
-        CommandResult::Accepted => "accepted",
-        CommandResult::Started { .. } => "started",
-        CommandResult::Rejected(_) => "rejected",
-        CommandResult::Diff(_) => "diff",
-        CommandResult::IssueWritten { .. } => "issue_written",
-        CommandResult::PushPublicKey(_) => "push_public_key",
-        CommandResult::PushUnavailable => "push_unavailable",
-        CommandResult::FleetStatus(_) => "fleet_status",
-        CommandResult::FleetInvite(_) => "fleet_invite",
-        CommandResult::FleetPairing(_) => "fleet_pairing",
+        CommandResult::Session(SessionResult::Accepted)
+        | CommandResult::Instance(InstanceResult::Accepted)
+        | CommandResult::SignIn(SignInResult::Accepted)
+        | CommandResult::Home(HomeResult::Accepted)
+        | CommandResult::Push(PushResult::Accepted)
+        | CommandResult::Fleet(FleetResult::Accepted) => "accepted",
+        CommandResult::Session(SessionResult::Started { .. }) => "started",
+        CommandResult::Session(SessionResult::Refused(_))
+        | CommandResult::Instance(InstanceResult::Refused(_))
+        | CommandResult::SignIn(SignInResult::Refused(_))
+        | CommandResult::Home(HomeResult::Refused(_))
+        | CommandResult::Fleet(FleetResult::Unavailable) => "rejected",
+        CommandResult::Session(SessionResult::Diff(_)) => "diff",
+        CommandResult::Home(HomeResult::IssueWritten { .. }) => "issue_written",
+        CommandResult::Push(PushResult::PublicKey(_)) => "push_public_key",
+        CommandResult::Push(PushResult::Unavailable) => "push_unavailable",
+        CommandResult::Fleet(FleetResult::Status(_)) => "fleet_status",
+        CommandResult::Fleet(FleetResult::Invite(_)) => "fleet_invite",
+        CommandResult::Fleet(FleetResult::Pairing(_)) => "fleet_pairing",
     }
 }
 
@@ -375,10 +359,9 @@ impl Conductor {
         client: ClientName,
     ) -> Result<(), StreamError> {
         match serve::stream(wire::read::<Open>(&mut recv).await?) {
-            Stream::Command(command) => {
-                trace_command(&command);
-                let id = command.id;
-                let result = self.run(command, client).await?;
+            Stream::Command(id, command) => {
+                trace_command(id, &command);
+                let result = self.run(id, command, client).await?;
                 tracing::info!(
                     command = id.0,
                     outcome = command_outcome(&result),
@@ -398,23 +381,23 @@ impl Conductor {
     /// Runs the command or returns its receipt when it has completed.
     async fn run(
         &self,
+        id: CommandId,
         command: Command,
         client: ClientName,
     ) -> Result<CommandResult, Stopped> {
-        let route = serve::route(command.body, client);
-        let begun = match route.ledger() {
+        let begun = match serve::ledger(&command) {
             None => {
                 return self
-                    .command(route, command.id)
+                    .command(command, client, id)
                     .await
                     .map(Completion::into_result);
             }
-            Some(kind) => self.log.begin(command.id, kind).await?,
+            Some(kind) => self.log.begin(id, kind).await?,
         };
         match begun {
             BeginCommand::Cached(result) => Ok(result),
             BeginCommand::Execute(lease) => {
-                let completion = self.command(route, command.id).await?;
+                let completion = self.command(command, client, id).await?;
                 let result = completion.clone().into_result();
                 lease.finish(completion).await?;
                 Ok(result)
@@ -424,56 +407,78 @@ impl Conductor {
 
     async fn command(
         &self,
-        route: Route,
-        id: proto::CommandId,
+        command: Command,
+        by: ClientName,
+        id: CommandId,
     ) -> Result<Completion, Stopped> {
         let membership = self.fleet.borrow().clone();
-        let result = match route {
-            Route::Order(session, order) => self.order(session, order).await,
-            Route::Relaunch(session, relaunch) => {
+        let result = match command {
+            Command::Session(asked) => CommandResult::Session(
+                self.session(serve::session(asked, by)).await?,
+            ),
+            Command::Instance(asked) => CommandResult::Instance(
+                crate::fleet::configure(
+                    &self.registry,
+                    membership.as_ref(),
+                    &self.plugins,
+                    asked,
+                    id,
+                )
+                .await?,
+            ),
+            Command::SignIn(asked) => {
+                CommandResult::SignIn(self.registry.sign_in(asked).await?)
+            }
+            Command::Home(asked) => {
+                return self.home.order(asked, by, id).await;
+            }
+            Command::Push(asked) => {
+                CommandResult::Push(self.push_command(asked).await)
+            }
+            Command::Fleet(asked) => CommandResult::Fleet(
+                crate::fleet::command(
+                    membership.as_ref(),
+                    &self.endpoint,
+                    asked,
+                )
+                .await,
+            ),
+        };
+        Ok(result.into())
+    }
+
+    async fn session(
+        &self,
+        route: SessionRoute,
+    ) -> Result<SessionResult, Stopped> {
+        match route {
+            SessionRoute::Order(session, order) => {
+                self.order(session, order).await
+            }
+            SessionRoute::Relaunch(session, relaunch) => {
                 self.relaunch(session, relaunch).await
             }
-            Route::Start {
+            SessionRoute::Start {
                 instance,
                 at,
                 choice,
                 by,
             } => self.registry.start(instance, at, choice, by).await,
-            Route::Configure(configure) => {
-                crate::fleet::configure(
-                    &self.registry,
-                    membership.as_ref(),
-                    &self.plugins,
-                    configure,
-                    id,
-                )
-                .await
-            }
-            Route::Push(order) => Ok(self.push_order(order).await),
-            Route::Fleet(action) => Ok(crate::fleet::command(
-                membership.as_ref(),
-                &self.endpoint,
-                action,
-            )
-            .await),
-            Route::SignIn(order) => self.registry.sign_in(order).await,
-            Route::Home(order) => return self.home.order(order, id).await,
-            Route::Finish(session, by) => {
+            SessionRoute::Finish(session, by) => {
                 match self.registry.find(session).await? {
                     Some(handle) => handle.finish(by).await,
-                    None => {
-                        Ok(CommandResult::Rejected(Rejection::UnknownSession))
-                    }
+                    None => Ok(SessionResult::Refused(
+                        SessionRefusal::UnknownSession,
+                    )),
                 }
             }
-        }?;
-        Ok(result.into())
+        }
     }
 
-    async fn push_order(&self, order: host::serve::PushOrder) -> CommandResult {
+    async fn push_command(&self, command: PushCommand) -> PushResult {
         match &self.push {
-            Some(push) => push.command(order).await,
-            None => CommandResult::PushUnavailable,
+            Some(push) => push.command(command).await,
+            None => PushResult::Unavailable,
         }
     }
 
@@ -481,13 +486,12 @@ impl Conductor {
         &self,
         session: SessionId,
         order: Order,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<SessionResult, Stopped> {
         match self.registry.find(session).await? {
-            None => Ok(CommandResult::Rejected(Rejection::UnknownSession)),
-            Some(handle) => Ok(handle
-                .order(order)
-                .await
-                .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
+            None => Ok(SessionResult::Refused(SessionRefusal::UnknownSession)),
+            Some(handle) => Ok(handle.order(order).await.unwrap_or(
+                SessionResult::Refused(SessionRefusal::SessionClosed),
+            )),
         }
     }
 
@@ -495,13 +499,15 @@ impl Conductor {
         &self,
         session: SessionId,
         relaunch: Relaunch,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<SessionResult, Stopped> {
         match self.registry.relaunch(session).await? {
-            Err(rejection) => Ok(CommandResult::Rejected(rejection)),
+            Err(refusal) => Ok(SessionResult::Refused(refusal)),
             Ok((handle, adapter, offered, reservation)) => Ok(handle
                 .relaunch(relaunch.order(offered), adapter, reservation)
                 .await
-                .unwrap_or(CommandResult::Rejected(Rejection::SessionClosed))),
+                .unwrap_or(SessionResult::Refused(
+                    SessionRefusal::SessionClosed,
+                ))),
         }
     }
 
@@ -597,7 +603,7 @@ mod diagnostics_tests {
     use std::sync::Arc;
 
     use proto::{
-        Answer, Command, CommandBody, CommandId, Kept, RequestId, SessionId,
+        Answer, Command, CommandId, Kept, RequestId, SessionCommand, SessionId,
     };
 
     #[test]
@@ -614,23 +620,23 @@ mod diagnostics_tests {
                 .with_writer(Arc::new(output))
                 .finish(),
             || {
-                super::trace_command(&Command {
-                    id: CommandId(1),
-                    body: CommandBody::SendMessage {
+                super::trace_command(
+                    CommandId(1),
+                    &Command::Session(SessionCommand::SendMessage {
                         session: SessionId(1),
                         text: String::from("synthetic-message-marker"),
-                    },
-                });
-                super::trace_command(&Command {
-                    id: CommandId(2),
-                    body: CommandBody::Answer {
+                    }),
+                );
+                super::trace_command(
+                    CommandId(2),
+                    &Command::Session(SessionCommand::Answer {
                         session: SessionId(1),
                         request: RequestId(1),
                         answers: vec![Answer(vec![String::from(
                             "synthetic-answer-marker",
                         )])],
-                    },
-                });
+                    }),
+                );
                 crate::workspace::trace_removed(
                     "conductor/1",
                     &Kept::Pushed {

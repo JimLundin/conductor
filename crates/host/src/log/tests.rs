@@ -1,7 +1,7 @@
 use proto::{
     Availability, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
     InstanceId, InstanceStatus, Instances, Models, Provider, SessionId,
-    Subscribe, Welcome,
+    SessionRefusal, SessionResult, Subscribe, Welcome,
 };
 
 use super::{Begun, Effect, FORMAT, Kind, Log, Ticket, Write, opens};
@@ -129,14 +129,17 @@ fn a_commands_events_stage_until_its_receipt_commits_them() {
     assert_eq!(streamed.seq, HostSeq(1));
     assert_eq!(effects, Vec::<Effect>::new());
     assert_eq!(log.history(), Vec::<Event>::new());
-    let (finished, effects) = log.finish(CommandId(1), CommandResult::Accepted);
+    let (finished, effects) = log.finish(
+        CommandId(1),
+        CommandResult::Session(SessionResult::Accepted),
+    );
     assert_ne!(finished, ticket);
     assert_eq!(
         effects,
         [
             Effect::Store(Write::Receipt(
                 CommandId(1),
-                CommandResult::Accepted
+                CommandResult::Session(SessionResult::Accepted)
             )),
             Effect::Commit,
             Effect::Publish(event(1, EventKind::SessionReady)),
@@ -175,7 +178,10 @@ fn dropping_a_running_command_stops_the_log_and_a_finished_one_does_not() {
     let _ = execute(&mut log, 1, Kind::Receipt);
     assert_eq!(log.abort(CommandId(1)), [Effect::Stop]);
     assert_eq!(log.abort(CommandId(2)), Vec::<Effect>::new());
-    let _ = log.finish(CommandId(1), CommandResult::Accepted);
+    let _ = log.finish(
+        CommandId(1),
+        CommandResult::Session(SessionResult::Accepted),
+    );
     assert_eq!(log.abort(CommandId(1)), Vec::<Effect>::new());
 }
 
@@ -185,7 +191,9 @@ fn concurrent_session_retries_share_a_retryable_result() {
     let _ = execute(&mut log, 1, Kind::Session);
     let (retry, effects) = log.begin(CommandId(1), Kind::Session);
     assert_eq!(effects, Vec::<Effect>::new());
-    let result = CommandResult::Rejected(proto::Rejection::NoSuchDirectory);
+    let result = CommandResult::Session(SessionResult::Refused(
+        SessionRefusal::NoSuchDirectory,
+    ));
     let (finished, effects) =
         log.finish(CommandId(1), super::Completion::Retryable(result.clone()));
     assert_eq!(
@@ -204,28 +212,36 @@ fn a_receipt_finish_waits_for_the_active_command_to_commit() {
     let mut log = log();
     let _ = execute(&mut log, 23, Kind::Receipt);
     let _ = execute(&mut log, 24, Kind::Session);
-    let (held, effects) = log.finish(CommandId(23), CommandResult::Accepted);
+    let (held, effects) = log.finish(
+        CommandId(23),
+        CommandResult::Session(SessionResult::Accepted),
+    );
     assert_eq!(effects, Vec::<Effect>::new());
     let (retry, effects) = log.begin(CommandId(23), Kind::Receipt);
     assert_eq!(effects, Vec::<Effect>::new());
-    let (finished, effects) =
-        log.finish(CommandId(24), CommandResult::Accepted);
+    let (finished, effects) = log.finish(
+        CommandId(24),
+        CommandResult::Session(SessionResult::Accepted),
+    );
     assert_eq!(
         effects,
         [
             Effect::Store(Write::Receipt(
                 CommandId(24),
-                CommandResult::Accepted
+                CommandResult::Session(SessionResult::Accepted)
             )),
             Effect::Commit,
             Effect::Finished(finished),
             Effect::Open,
             Effect::Store(Write::Receipt(
                 CommandId(23),
-                CommandResult::Accepted
+                CommandResult::Session(SessionResult::Accepted)
             )),
             Effect::Commit,
-            Effect::Begun(retry, Begun::Cached(CommandResult::Accepted)),
+            Effect::Begun(
+                retry,
+                Begun::Cached(CommandResult::Session(SessionResult::Accepted))
+            ),
             Effect::Finished(held),
         ]
     );
@@ -238,18 +254,23 @@ fn a_receipt_retry_waits_for_the_first_run_and_takes_its_result() {
     let (retry, effects) = log.begin(CommandId(23), Kind::Receipt);
     assert_eq!(effects, [Effect::Lookup(CommandId(23))]);
     assert_eq!(log.receipt(None), Vec::<Effect>::new());
-    let (finished, effects) =
-        log.finish(CommandId(23), CommandResult::Accepted);
+    let (finished, effects) = log.finish(
+        CommandId(23),
+        CommandResult::Session(SessionResult::Accepted),
+    );
     assert_eq!(
         effects,
         [
             Effect::Open,
             Effect::Store(Write::Receipt(
                 CommandId(23),
-                CommandResult::Accepted
+                CommandResult::Session(SessionResult::Accepted)
             )),
             Effect::Commit,
-            Effect::Begun(retry, Begun::Cached(CommandResult::Accepted)),
+            Effect::Begun(
+                retry,
+                Begun::Cached(CommandResult::Session(SessionResult::Accepted))
+            ),
             Effect::Finished(finished),
         ]
     );
@@ -273,7 +294,7 @@ fn a_conversation_id_joins_the_active_transaction() {
 #[test]
 fn a_receipt_nobody_asked_for_does_nothing() {
     assert_eq!(
-        log().receipt(Some(CommandResult::Accepted)),
+        log().receipt(Some(CommandResult::Session(SessionResult::Accepted))),
         Vec::<Effect>::new()
     );
 }

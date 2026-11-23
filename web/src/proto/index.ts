@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/39";
+export type Alpn = "conductor/40";
 
-export const Alpn = Schema.Literal("conductor/39").annotate({
+export const Alpn = Schema.Literal("conductor/40").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -522,20 +522,6 @@ export const RequestId = Schema.Number.annotate({
 		}),
 	);
 
-export type Credential = {
-	readonly kind: string;
-	readonly values: { readonly [x: string]: string };
-};
-
-export const Credential = Schema.Struct({
-	kind: Schema.String,
-	values: Schema.Record(Schema.String, Schema.String),
-}).annotate({
-	description:
-		"One instance's credential: the values of its kind's form, by field id.\nAs `SetCredential` carries it and as the host stores it. The instance\nit belongs to names the provider.",
-	identifier: "Credential",
-});
-
 export type HostSeq = number;
 
 export const HostSeq = Schema.Number.annotate({
@@ -551,12 +537,220 @@ export const HostSeq = Schema.Number.annotate({
 		}),
 	);
 
+export type SessionCommand =
+	| {
+			readonly Start: {
+				readonly at: StartAt;
+				readonly effort: Effort | null;
+				readonly instance: InstanceId;
+				readonly model: ModelId | null;
+			};
+	  }
+	| {
+			readonly SendMessage: {
+				readonly session: SessionId;
+				readonly text: string;
+			};
+	  }
+	| { readonly Interrupt: { readonly session: SessionId } }
+	| { readonly Continue: { readonly session: SessionId } }
+	| {
+			readonly Resolve: {
+				readonly decision: Decision;
+				readonly request: RequestId;
+				readonly session: SessionId;
+			};
+	  }
+	| {
+			readonly Answer: {
+				readonly answers: globalThis.ReadonlyArray<Answer>;
+				readonly request: RequestId;
+				readonly session: SessionId;
+			};
+	  }
+	| {
+			readonly GetDiff: {
+				readonly session: SessionId;
+				readonly snapshot: HostSeq;
+			};
+	  }
+	| {
+			readonly SetEffort: {
+				readonly effort: Effort;
+				readonly session: SessionId;
+			};
+	  }
+	| { readonly Remove: { readonly session: SessionId } }
+	| { readonly Finish: { readonly session: SessionId } };
+
+export const SessionCommand = Schema.Union(
+	[
+		Schema.Struct({
+			Start: Schema.Struct({
+				at: StartAt,
+				effort: Schema.Union([Effort, Schema.Null]),
+				instance: InstanceId,
+				model: Schema.Union([ModelId, Schema.Null]),
+			}),
+		}).annotate({
+			description:
+				"`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
+		}),
+		Schema.Struct({
+			SendMessage: Schema.Struct({ session: SessionId, text: Schema.String }),
+		}),
+		Schema.Struct({ Interrupt: Schema.Struct({ session: SessionId }) }),
+		Schema.Struct({ Continue: Schema.Struct({ session: SessionId }) }).annotate(
+			{
+				description:
+					"Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
+			},
+		),
+		Schema.Struct({
+			Resolve: Schema.Struct({
+				decision: Decision,
+				request: RequestId,
+				session: SessionId,
+			}),
+		}),
+		Schema.Struct({
+			Answer: Schema.Struct({
+				answers: Schema.Array(Answer),
+				request: RequestId,
+				session: SessionId,
+			}),
+		}).annotate({
+			description:
+				"Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
+		}),
+		Schema.Struct({
+			GetDiff: Schema.Struct({ session: SessionId, snapshot: HostSeq }),
+		}).annotate({
+			description: "A bounded diff between this snapshot and its predecessor.",
+		}),
+		Schema.Struct({
+			SetEffort: Schema.Struct({ effort: Effort, session: SessionId }),
+		}).annotate({
+			description:
+				"Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
+		}),
+		Schema.Struct({ Remove: Schema.Struct({ session: SessionId }) }).annotate({
+			description:
+				"Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
+		}),
+		Schema.Struct({ Finish: Schema.Struct({ session: SessionId }) }).annotate({
+			description:
+				"Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({
+	description: "Every command after `Start` names the session it acts on.",
+	identifier: "SessionCommand",
+});
+
+export type Credential = {
+	readonly kind: string;
+	readonly values: { readonly [x: string]: string };
+};
+
+export const Credential = Schema.Struct({
+	kind: Schema.String,
+	values: Schema.Record(Schema.String, Schema.String),
+}).annotate({
+	description:
+		"One instance's credential: the values of its kind's form, by field id.\nAs `SetCredential` carries it and as the host stores it. The instance\nit belongs to names the provider.",
+	identifier: "Credential",
+});
+
+export type InstanceCommand =
+	| {
+			readonly SetCredential: {
+				readonly credential: Credential;
+				readonly provider: Provider;
+			};
+	  }
+	| { readonly Remove: { readonly instance: InstanceId } };
+
+export const InstanceCommand = Schema.Union(
+	[
+		Schema.Struct({
+			SetCredential: Schema.Struct({
+				credential: Credential,
+				provider: Provider,
+			}),
+		}).annotate({
+			description:
+				"Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
+		}),
+		Schema.Struct({ Remove: Schema.Struct({ instance: InstanceId }) }).annotate(
+			{
+				description:
+					"Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
+			},
+		),
+	],
+	{ mode: "oneOf" },
+).annotate({
+	description: "A command that changes the host's instances.",
+	identifier: "InstanceCommand",
+});
+
 export type SignInCode = string;
 
 export const SignInCode = Schema.String.annotate({
 	description:
 		"The code a person pastes from a sign-in page. It is a secret: its\n`Debug` doesn't print it, so no log line carries it.",
 	identifier: "SignInCode",
+});
+
+export type SignInCommand =
+	| { readonly Start: { readonly instance: InstanceId } }
+	| {
+			readonly SubmitCode: {
+				readonly code: SignInCode;
+				readonly instance: InstanceId;
+			};
+	  }
+	| { readonly Cancel: { readonly instance: InstanceId } }
+	| {
+			readonly StartCredential: {
+				readonly instance: InstanceId;
+				readonly kind: string;
+				readonly label: string;
+			};
+	  };
+
+export const SignInCommand = Schema.Union(
+	[
+		Schema.Struct({ Start: Schema.Struct({ instance: InstanceId }) }).annotate({
+			description:
+				"Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
+		}),
+		Schema.Struct({
+			SubmitCode: Schema.Struct({ code: SignInCode, instance: InstanceId }),
+		}).annotate({
+			description:
+				"The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
+		}),
+		Schema.Struct({ Cancel: Schema.Struct({ instance: InstanceId }) }).annotate(
+			{ description: "Stops the instance's sign-in, if one runs." },
+		),
+		Schema.Struct({
+			StartCredential: Schema.Struct({
+				instance: InstanceId,
+				kind: Schema.String,
+				label: Schema.String,
+			}),
+		}).annotate({
+			description:
+				"Runs the provider's live credential setup through its own instance.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({
+	description: "A command about an instance's sign-in from the app.",
+	identifier: "SignInCommand",
 });
 
 export type Datum = string | globalThis.ReadonlyArray<string> | boolean;
@@ -639,6 +833,43 @@ export const IssueChange = Schema.Union(
 	identifier: "IssueChange",
 });
 
+export type HomeCommand =
+	| "Sync"
+	| { readonly Clone: { readonly project: ProjectId } }
+	| { readonly CreateIssue: NewIssue }
+	| {
+			readonly ChangeIssue: {
+				readonly change: IssueChange;
+				readonly issue: IssueId;
+			};
+	  };
+
+export const HomeCommand = Schema.Union(
+	[
+		Schema.Literal("Sync").annotate({
+			description:
+				"Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
+		}),
+		Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }).annotate({
+			description:
+				"Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
+		}),
+		Schema.Struct({ CreateIssue: NewIssue }).annotate({
+			description:
+				"Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
+		}),
+		Schema.Struct({
+			ChangeIssue: Schema.Struct({ change: IssueChange, issue: IssueId }),
+		}).annotate({
+			description: "Answers `IssueWritten` once written, like `CreateIssue`.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({
+	description: "A command about the host's clone of the home.",
+	identifier: "HomeCommand",
+});
+
 export type PushSubscription = {
 	readonly auth: string;
 	readonly endpoint: string;
@@ -650,6 +881,13 @@ export const PushSubscription = Schema.Struct({
 	endpoint: Schema.String,
 	p256dh: Schema.String,
 }).annotate({ identifier: "PushSubscription" });
+
+export type PushCommand = "PublicKey" | { readonly Register: PushSubscription };
+
+export const PushCommand = Schema.Union(
+	[Schema.Literal("PublicKey"), Schema.Struct({ Register: PushSubscription })],
+	{ mode: "oneOf" },
+).annotate({ identifier: "PushCommand" });
 
 export type PairRequest = {
 	readonly device: globalThis.ReadonlyArray<number>;
@@ -719,209 +957,18 @@ export const Ticket = Schema.Struct({
 	token: AuthToken,
 }).annotate({ identifier: "Ticket" });
 
-export type CommandBody =
-	| "PushPublicKey"
-	| "FleetStatus"
-	| "FleetInvite"
-	| {
-			readonly StartSession: {
-				readonly at: StartAt;
-				readonly effort: Effort | null;
-				readonly instance: InstanceId;
-				readonly model: ModelId | null;
-			};
-	  }
-	| {
-			readonly SendMessage: {
-				readonly session: SessionId;
-				readonly text: string;
-			};
-	  }
-	| { readonly Interrupt: { readonly session: SessionId } }
-	| { readonly Continue: { readonly session: SessionId } }
-	| {
-			readonly Resolve: {
-				readonly decision: Decision;
-				readonly request: RequestId;
-				readonly session: SessionId;
-			};
-	  }
-	| {
-			readonly Answer: {
-				readonly answers: globalThis.ReadonlyArray<Answer>;
-				readonly request: RequestId;
-				readonly session: SessionId;
-			};
-	  }
-	| {
-			readonly SetCredential: {
-				readonly credential: Credential;
-				readonly provider: Provider;
-			};
-	  }
-	| {
-			readonly GetDiff: {
-				readonly session: SessionId;
-				readonly snapshot: HostSeq;
-			};
-	  }
-	| {
-			readonly SetEffort: {
-				readonly effort: Effort;
-				readonly session: SessionId;
-			};
-	  }
-	| { readonly RemoveInstance: { readonly instance: InstanceId } }
-	| { readonly StartSignIn: { readonly instance: InstanceId } }
-	| {
-			readonly SubmitSignInCode: {
-				readonly code: SignInCode;
-				readonly instance: InstanceId;
-			};
-	  }
-	| { readonly CancelSignIn: { readonly instance: InstanceId } }
-	| "SyncHome"
-	| { readonly CloneProject: { readonly project: ProjectId } }
-	| { readonly RemoveSession: { readonly session: SessionId } }
-	| { readonly CreateIssue: NewIssue }
-	| {
-			readonly ChangeIssue: {
-				readonly change: IssueChange;
-				readonly issue: IssueId;
-			};
-	  }
-	| { readonly FinishSession: { readonly session: SessionId } }
-	| { readonly RegisterPush: PushSubscription }
-	| { readonly FleetRevoke: globalThis.ReadonlyArray<number> }
-	| { readonly FleetApprove: PairRequest }
-	| { readonly FleetAdmit: { readonly name: string; readonly ticket: Ticket } }
-	| {
-			readonly StartCredentialSignIn: {
-				readonly instance: InstanceId;
-				readonly kind: string;
-				readonly label: string;
-			};
-	  };
+export type FleetCommand =
+	| "Status"
+	| "Invite"
+	| { readonly Revoke: globalThis.ReadonlyArray<number> }
+	| { readonly Approve: PairRequest }
+	| { readonly Admit: { readonly name: string; readonly ticket: Ticket } };
 
-export const CommandBody = Schema.Union(
+export const FleetCommand = Schema.Union(
 	[
-		Schema.Literals(["PushPublicKey", "FleetStatus", "FleetInvite"]),
+		Schema.Literals(["Status", "Invite"]),
 		Schema.Struct({
-			StartSession: Schema.Struct({
-				at: StartAt,
-				effort: Schema.Union([Effort, Schema.Null]),
-				instance: InstanceId,
-				model: Schema.Union([ModelId, Schema.Null]),
-			}),
-		}).annotate({
-			description:
-				"`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
-		}),
-		Schema.Struct({
-			SendMessage: Schema.Struct({ session: SessionId, text: Schema.String }),
-		}),
-		Schema.Struct({ Interrupt: Schema.Struct({ session: SessionId }) }),
-		Schema.Struct({ Continue: Schema.Struct({ session: SessionId }) }).annotate(
-			{
-				description:
-					"Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
-			},
-		),
-		Schema.Struct({
-			Resolve: Schema.Struct({
-				decision: Decision,
-				request: RequestId,
-				session: SessionId,
-			}),
-		}),
-		Schema.Struct({
-			Answer: Schema.Struct({
-				answers: Schema.Array(Answer),
-				request: RequestId,
-				session: SessionId,
-			}),
-		}).annotate({
-			description:
-				"Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
-		}),
-		Schema.Struct({
-			SetCredential: Schema.Struct({
-				credential: Credential,
-				provider: Provider,
-			}),
-		}).annotate({
-			description:
-				"Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
-		}),
-		Schema.Struct({
-			GetDiff: Schema.Struct({ session: SessionId, snapshot: HostSeq }),
-		}).annotate({
-			description: "A bounded diff between this snapshot and its predecessor.",
-		}),
-		Schema.Struct({
-			SetEffort: Schema.Struct({ effort: Effort, session: SessionId }),
-		}).annotate({
-			description:
-				"Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
-		}),
-		Schema.Struct({
-			RemoveInstance: Schema.Struct({ instance: InstanceId }),
-		}).annotate({
-			description:
-				"Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
-		}),
-		Schema.Struct({
-			StartSignIn: Schema.Struct({ instance: InstanceId }),
-		}).annotate({
-			description:
-				"Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
-		}),
-		Schema.Struct({
-			SubmitSignInCode: Schema.Struct({
-				code: SignInCode,
-				instance: InstanceId,
-			}),
-		}).annotate({
-			description:
-				"The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
-		}),
-		Schema.Struct({
-			CancelSignIn: Schema.Struct({ instance: InstanceId }),
-		}).annotate({ description: "Stops the instance's sign-in, if one runs." }),
-		Schema.Literal("SyncHome").annotate({
-			description:
-				"Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
-		}),
-		Schema.Struct({
-			CloneProject: Schema.Struct({ project: ProjectId }),
-		}).annotate({
-			description:
-				"Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
-		}),
-		Schema.Struct({
-			RemoveSession: Schema.Struct({ session: SessionId }),
-		}).annotate({
-			description:
-				"Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
-		}),
-		Schema.Struct({ CreateIssue: NewIssue }).annotate({
-			description:
-				"Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
-		}),
-		Schema.Struct({
-			ChangeIssue: Schema.Struct({ change: IssueChange, issue: IssueId }),
-		}).annotate({
-			description: "Answers `IssueWritten` once written, like `CreateIssue`.",
-		}),
-		Schema.Struct({
-			FinishSession: Schema.Struct({ session: SessionId }),
-		}).annotate({
-			description:
-				"Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
-		}),
-		Schema.Struct({ RegisterPush: PushSubscription }),
-		Schema.Struct({
-			FleetRevoke: Schema.Array(
+			Revoke: Schema.Array(
 				Schema.Number.annotate({ format: "uint8" })
 					.check(Schema.isInt().annotate({ expected: "an integer" }))
 					.check(
@@ -946,26 +993,38 @@ export const CommandBody = Schema.Union(
 					}),
 				),
 		}),
-		Schema.Struct({ FleetApprove: PairRequest }),
+		Schema.Struct({ Approve: PairRequest }),
 		Schema.Struct({
-			FleetAdmit: Schema.Struct({ name: Schema.String, ticket: Ticket }),
-		}),
-		Schema.Struct({
-			StartCredentialSignIn: Schema.Struct({
-				instance: InstanceId,
-				kind: Schema.String,
-				label: Schema.String,
-			}),
-		}).annotate({
-			description:
-				"Runs the provider's live credential setup through its own instance.",
+			Admit: Schema.Struct({ name: Schema.String, ticket: Ticket }),
 		}),
 	],
 	{ mode: "oneOf" },
 ).annotate({
-	description:
-		"Every session command after `StartSession` names the session it acts\non, and every instance command the instance.",
-	identifier: "CommandBody",
+	description: "A command about the fleet, from the app.",
+	identifier: "FleetCommand",
+});
+
+export type Command =
+	| { readonly Session: SessionCommand }
+	| { readonly Instance: InstanceCommand }
+	| { readonly SignIn: SignInCommand }
+	| { readonly Home: HomeCommand }
+	| { readonly Push: PushCommand }
+	| { readonly Fleet: FleetCommand };
+
+export const Command = Schema.Union(
+	[
+		Schema.Struct({ Session: SessionCommand }),
+		Schema.Struct({ Instance: InstanceCommand }),
+		Schema.Struct({ SignIn: SignInCommand }),
+		Schema.Struct({ Home: HomeCommand }),
+		Schema.Struct({ Push: PushCommand }),
+		Schema.Struct({ Fleet: FleetCommand }),
+	],
+	{ mode: "oneOf" },
+).annotate({
+	description: "A command, in the domain it acts on.",
+	identifier: "Command",
 });
 
 export type CommandId = string;
@@ -976,110 +1035,18 @@ export const CommandId = Schema.String.annotate({
 	identifier: "CommandId",
 });
 
-export type Command = { readonly body: CommandBody; readonly id: CommandId };
-
-export const Command = Schema.Struct({
-	body: CommandBody,
-	id: CommandId,
-}).annotate({ identifier: "Command" });
-
-export type Rejection =
-	| "NoSuchDirectory"
-	| "UnknownSession"
-	| "SessionClosed"
-	| "TurnInProgress"
-	| "NoTurnRunning"
-	| "UnknownRequest"
-	| "NotGitRepository"
-	| "SnapshotUnavailable"
-	| "UnknownInstance"
-	| "SignInRunning"
+export type HomeRefusal =
 	| "UnknownProject"
-	| "SessionRemoved"
 	| "UnknownIssue"
-	| "FleetUnavailable"
-	| { readonly InstanceUnavailable: { readonly reason: string } }
-	| { readonly NotOffered: { readonly reason: string } }
-	| { readonly AlreadyResolved: { readonly by: ClientName } }
-	| { readonly WrongReply: { readonly reason: string } }
-	| { readonly CredentialNotSaved: { readonly reason: string } }
-	| { readonly InvalidCredential: { readonly reason: string } }
-	| { readonly WorkspaceFailure: { readonly reason: string } }
-	| { readonly InstanceInUse: { readonly sessions: number } }
-	| "NoCodeAsked"
 	| "NoHome"
 	| "NotCheckedOut"
 	| "NoRemote"
 	| { readonly IssueNotSaved: { readonly reason: string } }
-	| { readonly IssueRefused: { readonly reason: string } }
-	| { readonly IssueTaken: { readonly session: SessionId } }
-	| "NotOnIssue"
-	| "AlreadyFinished";
+	| { readonly IssueRefused: { readonly reason: string } };
 
-export const Rejection = Schema.Union(
+export const HomeRefusal = Schema.Union(
 	[
-		Schema.Literals([
-			"NoSuchDirectory",
-			"UnknownSession",
-			"SessionClosed",
-			"TurnInProgress",
-			"NoTurnRunning",
-			"UnknownRequest",
-			"NotGitRepository",
-			"SnapshotUnavailable",
-			"UnknownInstance",
-			"SignInRunning",
-			"UnknownProject",
-			"SessionRemoved",
-			"UnknownIssue",
-			"FleetUnavailable",
-		]),
-		Schema.Struct({
-			InstanceUnavailable: Schema.Struct({ reason: Schema.String }),
-		}),
-		Schema.Struct({
-			NotOffered: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host doesn't offer that model or effort, for this reason.",
-		}),
-		Schema.Struct({ AlreadyResolved: Schema.Struct({ by: ClientName }) }),
-		Schema.Struct({
-			WrongReply: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "The reply doesn't fit the request, for this reason.",
-		}),
-		Schema.Struct({
-			CredentialNotSaved: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host could not store the credential, and kept the one it had.",
-		}),
-		Schema.Struct({
-			InvalidCredential: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The credential is malformed, for this reason, and was not stored.",
-		}),
-		Schema.Struct({
-			WorkspaceFailure: Schema.Struct({ reason: Schema.String }),
-		}),
-		Schema.Struct({
-			InstanceInUse: Schema.Struct({
-				sessions: Schema.Number.annotate({ format: "uint64" })
-					.check(Schema.isInt().annotate({ expected: "an integer" }))
-					.check(
-						Schema.isGreaterThanOrEqualTo(0).annotate({
-							expected: "a value greater than or equal to 0",
-						}),
-					),
-			}),
-		}).annotate({
-			description: "The instance can't be removed while sessions run on it.",
-		}),
-		Schema.Literal("NoCodeAsked").annotate({
-			description: "No sign-in runs on the instance, or it takes no code now.",
-		}),
+		Schema.Literals(["UnknownProject", "UnknownIssue"]),
 		Schema.Literal("NoHome").annotate({
 			description: "The host was given no home.",
 		}),
@@ -1100,6 +1067,67 @@ export const Rejection = Schema.Union(
 			description:
 				"The flow refuses the edit, for this reason, as the `home` command\nline would.",
 		}),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "HomeRefusal" });
+
+export type SessionRefusal =
+	| "NoSuchDirectory"
+	| "UnknownSession"
+	| "SessionClosed"
+	| "TurnInProgress"
+	| "NoTurnRunning"
+	| "UnknownRequest"
+	| "NotGitRepository"
+	| "SnapshotUnavailable"
+	| "UnknownInstance"
+	| "SessionRemoved"
+	| { readonly InstanceUnavailable: { readonly reason: string } }
+	| { readonly NotOffered: { readonly reason: string } }
+	| { readonly AlreadyResolved: { readonly by: ClientName } }
+	| { readonly WrongReply: { readonly reason: string } }
+	| { readonly WorkspaceFailure: { readonly reason: string } }
+	| { readonly Home: HomeRefusal }
+	| { readonly IssueTaken: { readonly session: SessionId } }
+	| "NotOnIssue"
+	| "AlreadyFinished";
+
+export const SessionRefusal = Schema.Union(
+	[
+		Schema.Literals([
+			"NoSuchDirectory",
+			"UnknownSession",
+			"SessionClosed",
+			"TurnInProgress",
+			"NoTurnRunning",
+			"UnknownRequest",
+			"NotGitRepository",
+			"SnapshotUnavailable",
+			"UnknownInstance",
+			"SessionRemoved",
+		]),
+		Schema.Struct({
+			InstanceUnavailable: Schema.Struct({ reason: Schema.String }),
+		}),
+		Schema.Struct({
+			NotOffered: Schema.Struct({ reason: Schema.String }),
+		}).annotate({
+			description:
+				"The host doesn't offer that model or effort, for this reason.",
+		}),
+		Schema.Struct({ AlreadyResolved: Schema.Struct({ by: ClientName }) }),
+		Schema.Struct({
+			WrongReply: Schema.Struct({ reason: Schema.String }),
+		}).annotate({
+			description: "The reply doesn't fit the request, for this reason.",
+		}),
+		Schema.Struct({
+			WorkspaceFailure: Schema.Struct({ reason: Schema.String }),
+		}),
+		Schema.Struct({ Home: HomeRefusal }).annotate({
+			description:
+				"The session can't start where it was asked to: the home refuses\nthe project or issue.",
+		}),
 		Schema.Struct({
 			IssueTaken: Schema.Struct({ session: SessionId }),
 		}).annotate({
@@ -1116,7 +1144,7 @@ export const Rejection = Schema.Union(
 		}),
 	],
 	{ mode: "oneOf" },
-).annotate({ identifier: "Rejection" });
+).annotate({ identifier: "SessionRefusal" });
 
 export type DiffExtent = "Complete" | "Truncated";
 
@@ -1162,6 +1190,169 @@ export const SnapshotDiff = Schema.Struct({
 	files: Schema.Array(SnapshotFile),
 	snapshot: HostSeq,
 }).annotate({ identifier: "SnapshotDiff" });
+
+export type SessionResult =
+	| "Accepted"
+	| { readonly Started: { readonly session: SessionId } }
+	| { readonly Refused: SessionRefusal }
+	| { readonly Diff: SnapshotDiff };
+
+export const SessionResult = Schema.Union(
+	[
+		Schema.Literal("Accepted"),
+		Schema.Struct({ Started: Schema.Struct({ session: SessionId }) }).annotate({
+			description:
+				"The answer to `Start`. `SessionCreated` follows in the log.",
+		}),
+		Schema.Struct({ Refused: SessionRefusal }),
+		Schema.Struct({ Diff: SnapshotDiff }),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "SessionResult" });
+
+export type InstanceRefusal =
+	| "UnknownInstance"
+	| { readonly CredentialNotSaved: { readonly reason: string } }
+	| { readonly InvalidCredential: { readonly reason: string } }
+	| { readonly InstanceInUse: { readonly sessions: number } }
+	| "FleetUnavailable";
+
+export const InstanceRefusal = Schema.Union(
+	[
+		Schema.Literal("UnknownInstance"),
+		Schema.Struct({
+			CredentialNotSaved: Schema.Struct({ reason: Schema.String }),
+		}).annotate({
+			description:
+				"The host could not store the credential, and kept the one it had.",
+		}),
+		Schema.Struct({
+			InvalidCredential: Schema.Struct({ reason: Schema.String }),
+		}).annotate({
+			description:
+				"The credential is malformed, for this reason, and was not stored.",
+		}),
+		Schema.Struct({
+			InstanceInUse: Schema.Struct({
+				sessions: Schema.Number.annotate({ format: "uint64" })
+					.check(Schema.isInt().annotate({ expected: "an integer" }))
+					.check(
+						Schema.isGreaterThanOrEqualTo(0).annotate({
+							expected: "a value greater than or equal to 0",
+						}),
+					),
+			}),
+		}).annotate({
+			description: "The instance can't be removed while sessions run on it.",
+		}),
+		Schema.Literal("FleetUnavailable").annotate({
+			description: "Only the fleet's root host changes a fleet's instances.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "InstanceRefusal" });
+
+export type InstanceResult = "Accepted" | { readonly Refused: InstanceRefusal };
+
+export const InstanceResult = Schema.Union(
+	[Schema.Literal("Accepted"), Schema.Struct({ Refused: InstanceRefusal })],
+	{ mode: "oneOf" },
+).annotate({ identifier: "InstanceResult" });
+
+export type SignInRefusal =
+	| "UnknownInstance"
+	| "SignInRunning"
+	| { readonly InstanceUnavailable: { readonly reason: string } }
+	| "NoCodeAsked"
+	| { readonly InvalidCredential: { readonly reason: string } }
+	| { readonly CredentialNotSaved: { readonly reason: string } }
+	| { readonly InstanceInUse: { readonly sessions: number } };
+
+export const SignInRefusal = Schema.Union(
+	[
+		Schema.Literals(["UnknownInstance", "SignInRunning"]),
+		Schema.Struct({
+			InstanceUnavailable: Schema.Struct({ reason: Schema.String }),
+		}),
+		Schema.Literal("NoCodeAsked").annotate({
+			description: "No sign-in runs on the instance, or it takes no code now.",
+		}),
+		Schema.Struct({
+			InvalidCredential: Schema.Struct({ reason: Schema.String }),
+		}).annotate({
+			description: "The sign-in can't make that credential, for this reason.",
+		}),
+		Schema.Struct({
+			CredentialNotSaved: Schema.Struct({ reason: Schema.String }),
+		}).annotate({
+			description: "The host could not store what the sign-in changed.",
+		}),
+		Schema.Struct({
+			InstanceInUse: Schema.Struct({
+				sessions: Schema.Number.annotate({ format: "uint64" })
+					.check(Schema.isInt().annotate({ expected: "an integer" }))
+					.check(
+						Schema.isGreaterThanOrEqualTo(0).annotate({
+							expected: "a value greater than or equal to 0",
+						}),
+					),
+			}),
+		}).annotate({
+			description: "The sign-in would change an instance sessions run on.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "SignInRefusal" });
+
+export type SignInResult = "Accepted" | { readonly Refused: SignInRefusal };
+
+export const SignInResult = Schema.Union(
+	[Schema.Literal("Accepted"), Schema.Struct({ Refused: SignInRefusal })],
+	{ mode: "oneOf" },
+).annotate({ identifier: "SignInResult" });
+
+export type HomeResult =
+	| "Accepted"
+	| {
+			readonly IssueWritten: {
+				readonly issue: IssueId;
+				readonly warnings: globalThis.ReadonlyArray<string>;
+			};
+	  }
+	| { readonly Refused: HomeRefusal };
+
+export const HomeResult = Schema.Union(
+	[
+		Schema.Literal("Accepted"),
+		Schema.Struct({
+			IssueWritten: Schema.Struct({
+				issue: IssueId,
+				warnings: Schema.Array(Schema.String),
+			}),
+		}).annotate({
+			description:
+				"The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
+		}),
+		Schema.Struct({ Refused: HomeRefusal }),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "HomeResult" });
+
+export type PushResult =
+	| "Accepted"
+	| { readonly PublicKey: string }
+	| "Unavailable";
+
+export const PushResult = Schema.Union(
+	[
+		Schema.Literal("Accepted"),
+		Schema.Struct({ PublicKey: Schema.String }),
+		Schema.Literal("Unavailable").annotate({
+			description: "The host sends no push.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "PushResult" });
 
 export type Signed = {
 	readonly payload: globalThis.ReadonlyArray<number>;
@@ -1346,48 +1537,48 @@ export const Pairing = Schema.Struct({
 	signed: Signed,
 }).annotate({ identifier: "Pairing" });
 
-export type CommandResult =
+export type FleetResult =
 	| "Accepted"
-	| "PushUnavailable"
-	| { readonly Started: { readonly session: SessionId } }
-	| { readonly Rejected: Rejection }
-	| { readonly Diff: SnapshotDiff }
-	| {
-			readonly IssueWritten: {
-				readonly issue: IssueId;
-				readonly warnings: globalThis.ReadonlyArray<string>;
-			};
-	  }
-	| { readonly PushPublicKey: string }
-	| { readonly FleetStatus: Signed }
-	| { readonly FleetInvite: Invite }
-	| { readonly FleetPairing: Pairing };
+	| { readonly Status: Signed }
+	| { readonly Invite: Invite }
+	| { readonly Pairing: Pairing }
+	| "Unavailable";
+
+export const FleetResult = Schema.Union(
+	[
+		Schema.Literal("Accepted"),
+		Schema.Struct({ Status: Signed }),
+		Schema.Struct({ Invite: Invite }),
+		Schema.Struct({ Pairing: Pairing }),
+		Schema.Literal("Unavailable").annotate({
+			description: "Fleet changes need the root host.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "FleetResult" });
+
+export type CommandResult =
+	| { readonly Session: SessionResult }
+	| { readonly Instance: InstanceResult }
+	| { readonly SignIn: SignInResult }
+	| { readonly Home: HomeResult }
+	| { readonly Push: PushResult }
+	| { readonly Fleet: FleetResult };
 
 export const CommandResult = Schema.Union(
 	[
-		Schema.Literals(["Accepted", "PushUnavailable"]),
-		Schema.Struct({ Started: Schema.Struct({ session: SessionId }) }).annotate({
-			description:
-				"The answer to `StartSession`. `SessionCreated` follows in the log.",
-		}),
-		Schema.Struct({ Rejected: Rejection }),
-		Schema.Struct({ Diff: SnapshotDiff }),
-		Schema.Struct({
-			IssueWritten: Schema.Struct({
-				issue: IssueId,
-				warnings: Schema.Array(Schema.String),
-			}),
-		}).annotate({
-			description:
-				"The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
-		}),
-		Schema.Struct({ PushPublicKey: Schema.String }),
-		Schema.Struct({ FleetStatus: Signed }),
-		Schema.Struct({ FleetInvite: Invite }),
-		Schema.Struct({ FleetPairing: Pairing }),
+		Schema.Struct({ Session: SessionResult }),
+		Schema.Struct({ Instance: InstanceResult }),
+		Schema.Struct({ SignIn: SignInResult }),
+		Schema.Struct({ Home: HomeResult }),
+		Schema.Struct({ Push: PushResult }),
+		Schema.Struct({ Fleet: FleetResult }),
 	],
 	{ mode: "oneOf" },
-).annotate({ identifier: "CommandResult" });
+).annotate({
+	description: "A command's answer, in the domain of the command.",
+	identifier: "CommandResult",
+});
 
 export type DeviceHello = {
 	readonly certificate: Signed;
@@ -2067,7 +2258,7 @@ export const SignInStep = Schema.Union(
 			}),
 		}).annotate({
 			description:
-				"The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitSignInCode`.",
+				"The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitCode`.",
 		}),
 		Schema.Literal("Finishing").annotate({
 			description:
@@ -2695,14 +2886,14 @@ export const Subscribe = Schema.Struct({
 export type Open =
 	| { readonly Hello: Hello }
 	| { readonly Subscribe: Subscribe }
-	| { readonly Command: Command }
+	| { readonly Command: { readonly body: Command; readonly id: CommandId } }
 	| { readonly FleetHello: DeviceHello };
 
 export const Open = Schema.Union(
 	[
 		Schema.Struct({ Hello: Hello }),
 		Schema.Struct({ Subscribe: Subscribe }),
-		Schema.Struct({ Command: Command }),
+		Schema.Struct({ Command: Schema.Struct({ body: Command, id: CommandId }) }),
 		Schema.Struct({ FleetHello: DeviceHello }),
 	],
 	{ mode: "oneOf" },

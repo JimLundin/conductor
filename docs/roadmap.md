@@ -25,7 +25,7 @@ What is built and what comes next. Update it in the commit that changes it.
   again when the home has it, so issues list in creation order; a project
   id is 6 random digits. `proto::IssueId` and `proto::ProjectId` mint,
   parse and print them, the `home` command and the daemon mint the same way,
-  and a 26-character id is a structural problem (ALPN `conductor/38`).
+  and a 26-character id is a structural problem (ALPN `conductor/40`).
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
@@ -169,7 +169,7 @@ What is built and what comes next. Update it in the commit that changes it.
   `HostLink`, the browser e2e and the `headless` example are gone; nothing
   compiles to wasm but `crates/web-iroh`, iroh in the browser as a byte
   pipe to one host through its relay. The client link is JSON (ALPN
-  `conductor/38`), each message type naming its codec, with postcard kept
+  `conductor/40`), each message type naming its codec, with postcard kept
   between hosts (`conductor-fleet/3`); signed fleet payloads are signed
   over their exact JSON bytes and verified before they are parsed. The
   app's Effect Schemas are generated from `proto`'s JSON Schema into
@@ -209,13 +209,13 @@ What is built and what comes next. Update it in the commit that changes it.
   `Behind`, `Failed`). It finds each project's checkouts by root commit and
   remote in its `--projects <dir>` roots, keeps them in `<data>/home.state`,
   and clones one from the app into `<data>/projects/<project>`. The new
-  `home` core crate holds the decisions. `StartSession` takes a project or
+  `home` core crate holds the decisions. `Session::Start` takes a project or
   a directory; the app has a *Projects* view and a
   project picker in the new-session form. *Try:* start a host with `--home
   https://github.com/JimLundin/home.git --projects <your projects dir>`,
   open *Projects*, clone a project you lack, and start a session in it.
 - **Removing a session** (home step 5, architecture §5.3). A closed
-  session's *Remove* (`RemoveSession`) stops its
+  session's *Remove* (`Session::Remove`) stops its
   agent between turns, commits what its worktree holds onto
   `conductor/<ulid>`, pushes that branch alone to the checkout's `origin`
   without force, and removes the worktree. The branch stays in the checkout;

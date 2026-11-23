@@ -1,9 +1,10 @@
 use std::collections::BTreeSet;
 
+use host::fleet;
 pub use host::fleet::Sharing;
-use host::{fleet, serve::Configure};
 use proto::{
-    CommandId, CommandResult, Instance, InstanceId, Rejection, Roster,
+    CommandId, Instance, InstanceCommand, InstanceId, InstanceRefusal,
+    InstanceResult, Roster,
 };
 
 use super::Membership;
@@ -15,14 +16,14 @@ pub async fn configure(
     registry: &Registry,
     membership: Option<&Membership>,
     plugins: &Plugins,
-    command: Configure,
+    command: InstanceCommand,
     id: CommandId,
-) -> Result<CommandResult, Stopped> {
+) -> Result<InstanceResult, Stopped> {
     if let Some(fleet) = membership
         && let Err(reason) =
             update_fleet(registry, fleet, plugins, &command).await?
     {
-        return Ok(CommandResult::Rejected(reason));
+        return Ok(InstanceResult::Refused(reason));
     }
     registry.configure(command, id).await
 }
@@ -31,17 +32,19 @@ async fn update_fleet(
     registry: &Registry,
     fleet: &Membership,
     plugins: &Plugins,
-    command: &Configure,
-) -> Result<Result<(), Rejection>, Stopped> {
+    command: &InstanceCommand,
+) -> Result<Result<(), InstanceRefusal>, Stopped> {
     match command {
-        Configure::SetCredential {
+        InstanceCommand::SetCredential {
             provider,
             credential,
         } => {
             let sharing = plugins.sharing(provider, credential);
             share(registry, fleet, provider, credential, sharing).await
         }
-        Configure::Remove(id) => Ok(remove(fleet, id).await),
+        InstanceCommand::Remove { instance } => {
+            Ok(remove(fleet, instance).await)
+        }
     }
 }
 
@@ -51,18 +54,18 @@ async fn share(
     provider: &proto::Provider,
     credential: &proto::Credential,
     sharing: Sharing,
-) -> Result<Result<(), Rejection>, Stopped> {
+) -> Result<Result<(), InstanceRefusal>, Stopped> {
     if sharing == Sharing::Local {
         return Ok(Ok(()));
     }
     let (_, catalog) = registry.instances().await?;
     let resolved_account = catalog
         .of(provider)
-        .ok_or(Rejection::FleetUnavailable)
+        .ok_or(InstanceRefusal::FleetUnavailable)
         .and_then(|profile| {
             profile
                 .account(credential)
-                .map_err(|reason| Rejection::InvalidCredential { reason })
+                .map_err(|reason| InstanceRefusal::InvalidCredential { reason })
         });
     let result = match resolved_account {
         Ok(account) => {
@@ -87,7 +90,7 @@ pub async fn share_credential(
     id: InstanceId,
     credential: &proto::Credential,
     sharing: Sharing,
-) -> Result<(), Rejection> {
+) -> Result<(), InstanceRefusal> {
     if sharing == Sharing::Local {
         return Ok(());
     }
@@ -96,13 +99,13 @@ pub async fn share_credential(
             host::fleet::store(roster, id, credential, sharing);
         })
         .await
-        .map_err(|_| Rejection::FleetUnavailable)
+        .map_err(|_| InstanceRefusal::FleetUnavailable)
 }
 
 async fn remove(
     fleet: &Membership,
     instance: &InstanceId,
-) -> Result<(), Rejection> {
+) -> Result<(), InstanceRefusal> {
     if fleet.credentials().await.of(instance).is_none() {
         return Ok(());
     }
@@ -111,7 +114,7 @@ async fn remove(
             roster.0.remove(instance);
         })
         .await
-        .map_err(|_| Rejection::FleetUnavailable)
+        .map_err(|_| InstanceRefusal::FleetUnavailable)
 }
 
 pub fn follow_credentials(
@@ -203,7 +206,14 @@ async fn remove_retired(
     removals: Vec<InstanceId>,
 ) {
     for id in removals {
-        if perform(registry, Configure::Remove(id.clone())).await {
+        if perform(
+            registry,
+            InstanceCommand::Remove {
+                instance: id.clone(),
+            },
+        )
+        .await
+        {
             applied.0.remove(&id);
             known.remove(&id);
         }
@@ -227,7 +237,7 @@ async fn configure_changed(
     };
     perform(
         registry,
-        Configure::SetCredential {
+        InstanceCommand::SetCredential {
             provider: id.provider.clone(),
             credential: credential.clone(),
         },
@@ -235,7 +245,7 @@ async fn configure_changed(
     .await
 }
 
-async fn perform(registry: &Registry, command: Configure) -> bool {
+async fn perform(registry: &Registry, command: InstanceCommand) -> bool {
     let mut bytes = [0; 16];
     if getrandom::fill(&mut bytes).is_err() {
         return false;

@@ -29,7 +29,7 @@ import {
 import type { Connection, Pipe } from "./pipe.ts";
 import {
 	type ClientName,
-	type CommandBody,
+	type Command,
 	type CommandResult,
 	HelloReply,
 	type Ticket,
@@ -169,7 +169,7 @@ const run = (host: Host, reconnects: Queue.Queue<void>): Effect.Effect<never> =>
 
 const sendOn = (
 	access: Option.Option<Access>,
-	body: CommandBody,
+	body: Command,
 ): Effect.Effect<CommandResult, SendError> => {
 	if (
 		Option.isSome(access) &&
@@ -183,7 +183,7 @@ const sendOn = (
 
 const send =
 	(host: Host) =>
-	(body: CommandBody): Effect.Effect<CommandResult, SendError> =>
+	(body: Command): Effect.Effect<CommandResult, SendError> =>
 		SubscriptionRef.changes(host.access).pipe(
 			Stream.filter((access) => access !== "connecting"),
 			Stream.runHead,

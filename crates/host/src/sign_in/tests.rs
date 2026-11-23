@@ -1,8 +1,8 @@
 use agents::{Failure, Invocation, Pick, SignIn as Flow, Word};
 use proto::{
-    Account, Auth, Availability, CommandResult, Credential, Instance,
-    InstanceId, InstanceStatus, Instances, Models, Provider, Rejection, SignIn,
-    SignInCode, SignInStep,
+    Account, Auth, Availability, Credential, Instance, InstanceId,
+    InstanceResult, InstanceStatus, Instances, Models, Provider, SignIn,
+    SignInCode, SignInRefusal, SignInResult, SignInStep,
 };
 
 use super::{CredentialTarget, Effect, Key, Login, Run, SignIns, release};
@@ -120,7 +120,7 @@ fn only_a_matching_retry_waits_for_the_recovered_account() {
     assert_eq!(
         sign_ins.listed(
             &key,
-            Some(CommandResult::Accepted),
+            Some(InstanceResult::Accepted),
             &Instances::default()
         ),
         Vec::from([Effect::Publish(done.clone())]),
@@ -148,17 +148,17 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
         &key(1),
         Ok(Some(Account::Named(String::from("me@example.com")))),
     );
-    assert_eq!(sign_ins.cancel(id()), (CommandResult::Accepted, Vec::new()));
+    assert_eq!(sign_ins.cancel(id()), (SignInResult::Accepted, Vec::new()));
     let listed = sign_ins.listed(
         &key(1),
-        Some(CommandResult::Accepted),
+        Some(InstanceResult::Accepted),
         &Instances::default(),
     );
     assert_eq!(
         (started, again, before, link, later, snapshot),
         (
             (
-                CommandResult::Accepted,
+                SignInResult::Accepted,
                 Vec::from([
                     Effect::Spawn {
                         key: key(1),
@@ -168,7 +168,7 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
                 ])
             ),
             (
-                CommandResult::Rejected(Rejection::SignInRunning),
+                SignInResult::Refused(SignInRefusal::SignInRunning),
                 Vec::new()
             ),
             Vec::new(),
@@ -191,13 +191,16 @@ fn a_pasted_code_goes_to_the_cli_and_a_checked_home_signs_the_instance_in() {
         ),
         (
             (
-                CommandResult::Accepted,
+                SignInResult::Accepted,
                 Vec::from([
                     Effect::Write(key(1), code()),
                     step(SignInStep::Finishing),
                 ])
             ),
-            (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
+            (
+                SignInResult::Refused(SignInRefusal::NoCodeAsked),
+                Vec::new()
+            ),
             Vec::from([
                 Effect::Check(key(1), Login(())),
                 step(SignInStep::Finishing)
@@ -226,7 +229,10 @@ fn a_device_code_is_shown_with_its_link_and_no_code_is_taken() {
                 instance: id(),
                 step: open(Some("WXYZ-1234"), false),
             }]),
-            (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
+            (
+                SignInResult::Refused(SignInRefusal::NoCodeAsked),
+                Vec::new()
+            ),
             Vec::from([
                 Effect::Check(key(1), Login(())),
                 step(SignInStep::Finishing)
@@ -246,11 +252,17 @@ fn a_code_is_taken_only_once_the_page_can_have_given_one() {
         (unknown, none, early),
         (
             (
-                CommandResult::Rejected(Rejection::UnknownInstance),
+                SignInResult::Refused(SignInRefusal::UnknownInstance),
                 Vec::new()
             ),
-            (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
-            (CommandResult::Rejected(Rejection::NoCodeAsked), Vec::new()),
+            (
+                SignInResult::Refused(SignInRefusal::NoCodeAsked),
+                Vec::new()
+            ),
+            (
+                SignInResult::Refused(SignInRefusal::NoCodeAsked),
+                Vec::new()
+            ),
         )
     );
 }
@@ -296,7 +308,7 @@ fn a_cancelled_run_is_killed_and_its_later_reports_are_dropped() {
             ),
             sign_ins.listed(
                 &key(1),
-                Some(CommandResult::Accepted),
+                Some(InstanceResult::Accepted),
                 &Instances::default()
             ),
             sign_ins.expired(&key(1)),
@@ -305,11 +317,11 @@ fn a_cancelled_run_is_killed_and_its_later_reports_are_dropped() {
         ),
         (
             (
-                CommandResult::Accepted,
+                SignInResult::Accepted,
                 Vec::from([Effect::Kill(key(1)), step(SignInStep::Cancelled)])
             ),
-            (CommandResult::Accepted, Vec::new()),
-            CommandResult::Accepted,
+            (SignInResult::Accepted, Vec::new()),
+            SignInResult::Accepted,
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -480,7 +492,7 @@ fn cancelled_credential_runs_cannot_publish_or_save_and_refresh_must_succeed() {
     assert_eq!(
         sign_ins.listed(
             &key(2),
-            Some(CommandResult::Accepted),
+            Some(InstanceResult::Accepted),
             &Instances::default()
         ),
         [failed("the host could not save and refresh the credential")]
@@ -517,7 +529,11 @@ fn an_accepted_credential_sign_in_checks_the_current_offer() {
             failed("the host could not save and refresh the credential")
         };
         assert_eq!(
-            sign_ins.listed(&key(1), Some(CommandResult::Accepted), &instances),
+            sign_ins.listed(
+                &key(1),
+                Some(InstanceResult::Accepted),
+                &instances
+            ),
             [expected]
         );
     }

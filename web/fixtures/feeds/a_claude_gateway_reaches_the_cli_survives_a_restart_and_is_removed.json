@@ -147,23 +147,15 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
-								"Unavailable": {
-									"reason": "no credential configured"
-								}
+								"Unavailable": { "reason": "no credential configured" }
 							}
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -182,23 +174,15 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "no credential configured"
-							}
+							"Unavailable": { "reason": "no credential configured" }
 						}
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -214,56 +198,40 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Rejected": {
-				"InstanceUnavailable": {
-					"reason": "no credential configured"
+			"Session": {
+				"Refused": {
+					"InstanceUnavailable": { "reason": "no credential configured" }
 				}
 			}
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Instance": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "no credential configured"
-							}
+							"Unavailable": { "reason": "no credential configured" }
 						}
 					}
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "claude"
 					},
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "starting the instance's CLI"
-							}
+							"Unavailable": { "reason": "starting the instance's CLI" }
 						}
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -281,23 +249,16 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "no credential configured"
-							}
+							"Unavailable": { "reason": "no credential configured" }
 						}
 					}
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "claude"
 					},
 					{
@@ -325,10 +286,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -344,9 +302,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -360,9 +316,7 @@
 						"directory": "/conductor/target/tmp/conductor-e2e-0-claude-gateway",
 						"effort": null,
 						"instance": {
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "claude"
 						},
 						"model": null
@@ -572,23 +526,16 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
-								"Unavailable": {
-									"reason": "no credential configured"
-								}
+								"Unavailable": { "reason": "no credential configured" }
 							}
 						}
 					],
 					[
 						{
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "claude"
 						},
 						{
@@ -616,10 +563,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -643,9 +587,7 @@
 						"directory": "/conductor/target/tmp/conductor-e2e-0-claude-gateway",
 						"effort": null,
 						"instance": {
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "claude"
 						},
 						"model": null
@@ -713,11 +655,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Stopped": {
-								"reason": "the host restarted"
-							}
-						}
+						"reason": { "Stopped": { "reason": "the host restarted" } }
 					}
 				},
 				"seq": 5,
@@ -731,23 +669,16 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "no credential configured"
-							}
+							"Unavailable": { "reason": "no credential configured" }
 						}
 					}
 				],
 				[
 					{
-						"account": {
-							"Named": "https://conductor-test.invalid/gateway"
-						},
+						"account": { "Named": "https://conductor-test.invalid/gateway" },
 						"provider": "claude"
 					},
 					{
@@ -775,10 +706,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -791,16 +719,10 @@
 		},
 		"stream": "feed"
 	},
+	{ "connection": 1, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 1,
-		"frame": "Accepted",
-		"stream": "command"
-	},
-	{
-		"connection": 1,
-		"frame": {
-			"Rejected": "UnknownInstance"
-		},
+		"frame": { "Session": { "Refused": "UnknownInstance" } },
 		"stream": "command"
 	},
 	{
@@ -951,23 +873,15 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
-								"Unavailable": {
-									"reason": "no credential configured"
-								}
+								"Unavailable": { "reason": "no credential configured" }
 							}
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -991,9 +905,7 @@
 						"directory": "/conductor/target/tmp/conductor-e2e-0-claude-gateway",
 						"effort": null,
 						"instance": {
-							"account": {
-								"Named": "https://conductor-test.invalid/gateway"
-							},
+							"account": { "Named": "https://conductor-test.invalid/gateway" },
 							"provider": "claude"
 						},
 						"model": null
@@ -1061,11 +973,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Stopped": {
-								"reason": "the host restarted"
-							}
-						}
+						"reason": { "Stopped": { "reason": "the host restarted" } }
 					}
 				},
 				"seq": 5,
@@ -1079,23 +987,15 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
-							"Unavailable": {
-								"reason": "no credential configured"
-							}
+							"Unavailable": { "reason": "no credential configured" }
 						}
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {

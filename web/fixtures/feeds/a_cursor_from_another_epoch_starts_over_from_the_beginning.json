@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -229,10 +220,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -248,9 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -263,10 +249,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-epoch-earlier",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -326,21 +309,12 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "say hello"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "say hello" } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -351,11 +325,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -366,11 +336,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Hel"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Hel" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -381,11 +347,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "lo"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "lo" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -396,11 +358,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Hello"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Hello" } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -429,11 +387,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 9,
 				"session": "00000000000000000000000001"
 			}
@@ -588,10 +542,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -618,10 +569,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -640,10 +588,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -670,10 +615,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -689,9 +631,7 @@
 	{
 		"connection": 1,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000002"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000002" } }
 		},
 		"stream": "command"
 	},
@@ -704,10 +644,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-epoch-reset",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -767,21 +704,12 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 1,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 1, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "say hello"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "say hello" } },
 				"seq": 5,
 				"session": "00000000000000000000000002"
 			}
@@ -792,11 +720,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -807,11 +731,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "Hel"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "Hel" } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -822,11 +742,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "lo"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "lo" } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -837,11 +753,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Hello"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Hello" } },
 				"seq": 7,
 				"session": "00000000000000000000000002"
 			}
@@ -870,11 +782,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 9,
 				"session": "00000000000000000000000002"
 			}
@@ -1029,10 +937,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -1059,10 +964,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -1085,10 +987,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-epoch-reset",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -1152,12 +1051,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "say hello"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "say hello" } },
 				"seq": 5,
 				"session": "00000000000000000000000002"
 			}
@@ -1168,11 +1062,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -1183,11 +1073,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Hello"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Hello" } },
 				"seq": 7,
 				"session": "00000000000000000000000002"
 			}
@@ -1216,11 +1102,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 9,
 				"session": "00000000000000000000000002"
 			}
@@ -1232,10 +1114,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -1262,10 +1141,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -1426,10 +1302,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -1456,10 +1329,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -1482,10 +1352,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-e2e-0-epoch-reset",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": "big"
 					}
 				},
@@ -1549,12 +1416,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "say hello"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "say hello" } },
 				"seq": 5,
 				"session": "00000000000000000000000002"
 			}
@@ -1565,11 +1427,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -1580,11 +1438,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Hello"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Hello" } },
 				"seq": 7,
 				"session": "00000000000000000000000002"
 			}
@@ -1613,11 +1467,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 9,
 				"session": "00000000000000000000000002"
 			}
@@ -1629,10 +1479,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -1659,10 +1506,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {

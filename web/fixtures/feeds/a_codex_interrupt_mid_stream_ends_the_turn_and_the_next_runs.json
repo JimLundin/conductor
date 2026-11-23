@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -160,10 +157,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Available": {
@@ -199,10 +193,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -212,10 +203,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Available": {
@@ -248,17 +236,11 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Started": {
-				"session": "00000000000000000000000001"
-			}
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -268,10 +250,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-codex-interrupt.jsonl/work/codex",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "codex"
-						},
+						"instance": { "account": "Own", "provider": "codex" },
 						"model": "big"
 					}
 				},
@@ -336,10 +315,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "count to 300"
-					}
+					"UserMessage": { "by": "test-client", "text": "count to 300" }
 				},
 				"seq": 5,
 				"session": "00000000000000000000000001"
@@ -351,11 +327,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 5
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -366,31 +338,19 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "1"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "1" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "\n"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "\n" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -419,32 +379,19 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Interrupted"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Interrupted" } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "ping"
-					}
-				},
+				"kind": { "UserMessage": { "by": "test-client", "text": "ping" } },
 				"seq": 9,
 				"session": "00000000000000000000000001"
 			}
@@ -455,11 +402,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"NativeTurnStarted": {
-						"turn_start": 9
-					}
-				},
+				"kind": { "NativeTurnStarted": { "turn_start": 9 } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -470,11 +413,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantDelta": {
-						"text": "pong"
-					}
-				},
+				"kind": { "AssistantDelta": { "text": "pong" } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -485,11 +424,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "pong"
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "pong" } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}
@@ -518,11 +453,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}

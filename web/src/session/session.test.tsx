@@ -17,7 +17,7 @@ import type { Host } from "../fold/host.ts";
 import { openRequests } from "../fold/offers.ts";
 import type { SendError } from "../link/command.ts";
 import type {
-	CommandBody,
+	Command,
 	CommandResult,
 	Decision,
 	EventKind,
@@ -51,7 +51,7 @@ const view = (host: Host): string =>
 		/>,
 	);
 
-const offered = (offers: readonly Offer[], label: string): CommandBody => {
+const offered = (offers: readonly Offer[], label: string): Command => {
 	const offer = offers.find((one) => one.label === label);
 	if (offer === undefined) {
 		throw new Error(`nothing offered as ${label}`);
@@ -85,10 +85,10 @@ test("a new session starts on the chosen instance in a directory, and opens read
 	const { before, commands, result, after } = await played(
 		{
 			feed: recordedSpan(0, 0),
-			result: { Started: { session } },
+			result: { Session: { Started: { session } } },
 			answer: recordedSpan(1, 4),
 		},
-		(host) => startOf(host, draft) ?? "SyncHome",
+		(host) => startOf(host, draft) ?? { Home: "Sync" },
 	);
 	const form = renderToStaticMarkup(
 		<NewSession
@@ -104,15 +104,17 @@ test("a new session starts on the chosen instance in a directory, and opens read
 	expect(form).not.toContain("Codex");
 	expect(commands).toStrictEqual([
 		{
-			StartSession: {
-				instance: { account: "Own", provider: "claude" },
-				at: { Directory: directory },
-				model: null,
-				effort: null,
+			Session: {
+				Start: {
+					instance: { account: "Own", provider: "claude" },
+					at: { Directory: directory },
+					model: null,
+					effort: null,
+				},
 			},
 		},
 	]);
-	expect(result).toStrictEqual({ Started: { session } });
+	expect(result).toStrictEqual({ Session: { Started: { session } } });
 	expect(view(after)).toContain("Send a message to start.");
 	expect(view(after)).toContain(
 		'<button class="primary" type="submit">Send</button>',
@@ -121,8 +123,8 @@ test("a new session starts on the chosen instance in a directory, and opens read
 
 test("a new session takes a model and an effort the instance offers, or a project", async () => {
 	const { before } = await played(
-		{ feed: recordedSpan(0, 0), result: "Accepted", answer: [] },
-		() => "SyncHome",
+		{ feed: recordedSpan(0, 0), result: { Session: "Accepted" }, answer: [] },
+		() => ({ Home: "Sync" }),
 	);
 	const [claude] = choosable(before);
 	expect(claude?.models.choices.map((choice) => choice.id)).toStrictEqual([
@@ -134,11 +136,13 @@ test("a new session takes a model and an effort the instance offers, or a projec
 	).toStrictEqual(["Low", "High"]);
 	const draft = { ...blank, instance: "claude", model: "small", effort: "Low" };
 	expect(startOf(before, { ...draft, project: "0twr04e5" })).toStrictEqual({
-		StartSession: {
-			instance: { account: "Own", provider: "claude" },
-			at: { Project: "0twr04e5" },
-			model: "small",
-			effort: "Low",
+		Session: {
+			Start: {
+				instance: { account: "Own", provider: "claude" },
+				at: { Project: "0twr04e5" },
+				model: "small",
+				effort: "Low",
+			},
 		},
 	});
 	expect(startOf(before, draft)).toBeNull();
@@ -151,14 +155,14 @@ test("a message is sent, and the transcript shows it, its tool card and the appr
 	const { before, commands, after } = await played(
 		{
 			feed: recordedSpan(0, 4),
-			result: "Accepted",
+			result: { Session: "Accepted" },
 			answer: recordedSpan(5, 8),
 		},
 		() => message(session, "create a.txt"),
 	);
 	expect(view(before)).toContain('<textarea aria-label="Message"');
 	expect(commands).toStrictEqual([
-		{ SendMessage: { session, text: "create a.txt" } },
+		{ Session: { SendMessage: { session, text: "create a.txt" } } },
 	]);
 	const html = view(after);
 	expect(html).toContain('<p class="bubble">create a.txt</p>');
@@ -174,13 +178,13 @@ test("an approval is sent, and its card, the streamed reply and the finished tur
 	const { commands, after } = await played(
 		{
 			feed: recordedSpan(0, 8),
-			result: "Accepted",
+			result: { Session: "Accepted" },
 			answer: recordedSpan(9, 13),
 		},
 		(host) => offered(decisions(session, askedOf(host)), "Approve"),
 	);
 	expect(commands).toStrictEqual([
-		{ Resolve: { session, request: 1, decision: "Approve" } },
+		{ Session: { Resolve: { session, request: 1, decision: "Approve" } } },
 	]);
 	const html = view(after);
 	expect(html).toContain("Approved by test-client");
@@ -197,7 +201,9 @@ test("a rejected command tells the person why", async () => {
 	const { result } = await played(
 		{
 			feed: recordedSpan(0, 8),
-			result: { Rejected: { AlreadyResolved: { by: "test-client" } } },
+			result: {
+				Session: { Refused: { AlreadyResolved: { by: "test-client" } } },
+			},
 			answer: [],
 		},
 		(host) => offered(decisions(session, askedOf(host)), "Approve"),
@@ -205,10 +211,10 @@ test("a rejected command tells the person why", async () => {
 	expect(notice(taken(result))).toBe(
 		"The host refused: Already resolved: test-client.",
 	);
-	expect(notice({ Rejected: "TurnInProgress" })).toBe(
+	expect(notice({ Session: { Refused: "TurnInProgress" } })).toBe(
 		"The host refused: Turn in progress.",
 	);
-	expect(notice("Accepted")).toBeNull();
+	expect(notice({ Session: "Accepted" })).toBeNull();
 });
 
 const askedForSession = {
@@ -239,7 +245,7 @@ test.each([
 					started("toolu_1"),
 					askedForSession,
 				]),
-				result: "Accepted",
+				result: { Session: "Accepted" },
 				answer: framed(6, [
 					{
 						RequestResolved: {
@@ -254,7 +260,7 @@ test.each([
 		expect(view(before)).toContain(button(label));
 		expect(view(before)).toContain("For the session: Bash(ls)");
 		expect(commands).toStrictEqual([
-			{ Resolve: { session, request: 1, decision } },
+			{ Session: { Resolve: { session, request: 1, decision } } },
 		]);
 		expect(view(after)).toContain(shown);
 		expect(view(after)).not.toContain(button(label));
@@ -265,7 +271,7 @@ test("a question is answered with the options picked, and the card shows the ans
 	const { before, commands, after } = await played(
 		{
 			feed: framed(1, [...ready, user("paint it"), question(1)]),
-			result: "Accepted",
+			result: { Session: "Accepted" },
 			answer: framed(5, [
 				{
 					RequestResolved: {
@@ -280,7 +286,7 @@ test("a question is answered with the options picked, and the card shows the ans
 	expect(view(before)).toContain("<legend>Color</legend><p>Which color?</p>");
 	expect(view(before)).toContain('title="Cool" type="button">Blue</button>');
 	expect(commands).toStrictEqual([
-		{ Answer: { session, request: 1, answers: [["Blue"]] } },
+		{ Session: { Answer: { session, request: 1, answers: [["Blue"]] } } },
 	]);
 	expect(view(after)).toContain("Answered by phone: Blue");
 	expect(view(after)).not.toContain("<legend>Color</legend>");
@@ -299,13 +305,13 @@ test("a running turn offers Stop, which interrupts it", async () => {
 	const { before, commands, after } = await played(
 		{
 			feed: framed(1, [...ready, user("look"), started("toolu_1")]),
-			result: "Accepted",
+			result: { Session: "Accepted" },
 			answer: framed(5, [{ TurnCompleted: { outcome: "Interrupted" } }]),
 		},
 		(host) => offered(sessionOffers(session, sessionOf(host, session)), "Stop"),
 	);
 	expect(view(before)).toContain(button("Stop"));
-	expect(commands).toStrictEqual([{ Interrupt: { session } }]);
+	expect(commands).toStrictEqual([{ Session: { Interrupt: { session } } }]);
 	expect(view(after)).toContain('<p class="marker stopped">Interrupted</p>');
 	expect(view(after)).toContain('data-status="Stopped"');
 	expect(view(after)).not.toContain(button("Stop"));
@@ -315,7 +321,7 @@ test("a closed session offers Continue, and is ready again once its agent starts
 	const { before, commands, after } = await played(
 		{
 			feed: framed(1, [...ready, user("look"), exited("1")]),
-			result: "Accepted",
+			result: { Session: "Accepted" },
 			answer: framed(5, ["SessionReady"]),
 		},
 		(host) =>
@@ -323,7 +329,7 @@ test("a closed session offers Continue, and is ready again once its agent starts
 	);
 	expect(view(before)).toContain(button("Continue"));
 	expect(view(before)).toContain("Closed: it exited with 1");
-	expect(commands).toStrictEqual([{ Continue: { session } }]);
+	expect(commands).toStrictEqual([{ Session: { Continue: { session } } }]);
 	expect(view(after)).toContain("Continued after it exited with 1");
 	expect(view(after)).not.toContain(button("Continue"));
 });
@@ -336,7 +342,7 @@ test("a session on an issue offers Finish, and shows how finishing went", async 
 				{ OnIssue: { issue: "0twtnsfs" } },
 				"SessionReady",
 			]),
-			result: "Accepted",
+			result: { Session: "Accepted" },
 			answer: framed(4, [
 				"FinishStarted",
 				{
@@ -350,7 +356,7 @@ test("a session on an issue offers Finish, and shows how finishing went", async 
 			offered(sessionOffers(session, sessionOf(host, session)), "Finish"),
 	);
 	expect(view(before)).toContain(button("Finish"));
-	expect(commands).toStrictEqual([{ FinishSession: { session } }]);
+	expect(commands).toStrictEqual([{ Session: { Finish: { session } } }]);
 	expect(view(after)).toContain("Finishing on its issue");
 	expect(view(after)).toContain("Finished: 2 commits landed, kept locally");
 	expect(view(after)).not.toContain(button("Finish"));

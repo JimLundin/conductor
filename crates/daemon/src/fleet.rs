@@ -268,35 +268,34 @@ pub(crate) fn exclusive(data: &Path) -> anyhow::Result<std::fs::File> {
 pub(crate) async fn command(
     fleet: Option<&Membership>,
     endpoint: &Endpoint,
-    action: host::serve::FleetAction,
-) -> proto::CommandResult {
-    use host::serve::FleetAction;
-    use proto::{CommandResult, Rejection};
-    let unavailable = CommandResult::Rejected(Rejection::FleetUnavailable);
+    command: proto::fleet::FleetCommand,
+) -> proto::fleet::FleetResult {
+    use proto::fleet::{FleetCommand, FleetResult};
+    let unavailable = FleetResult::Unavailable;
     let Some(membership) = fleet else {
         return unavailable;
     };
-    match action {
-        FleetAction::Status => {
-            CommandResult::FleetStatus(membership.public_snapshot().await)
+    match command {
+        FleetCommand::Status => {
+            FleetResult::Status(membership.public_snapshot().await)
         }
-        FleetAction::Invite => new_invite(membership)
+        FleetCommand::Invite => new_invite(membership)
             .await
-            .map_or(unavailable, CommandResult::FleetInvite),
-        FleetAction::Approve(request) => approve(membership, request)
+            .map_or(unavailable, FleetResult::Invite),
+        FleetCommand::Approve(request) => approve(membership, request)
             .await
             .map_or(unavailable, |pairing| {
-                CommandResult::FleetPairing(Box::new(pairing))
+                FleetResult::Pairing(Box::new(pairing))
             }),
-        FleetAction::Admit { ticket, name } => {
+        FleetCommand::Admit { ticket, name } => {
             admit_existing(membership, endpoint, ticket, name)
                 .await
-                .map_or(unavailable, |()| CommandResult::Accepted)
+                .map_or(unavailable, |()| FleetResult::Accepted)
         }
-        FleetAction::Revoke(node) => membership
+        FleetCommand::Revoke(node) => membership
             .revoke(node)
             .await
-            .map_or(unavailable, |()| CommandResult::Accepted),
+            .map_or(unavailable, |()| FleetResult::Accepted),
     }
 }
 

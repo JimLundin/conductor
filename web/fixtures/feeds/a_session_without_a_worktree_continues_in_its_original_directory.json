@@ -147,10 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{
-							"account": "Own",
-							"provider": "claude"
-						},
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -177,10 +174,7 @@
 						}
 					],
 					[
-						{
-							"account": "Own",
-							"provider": "codex"
-						},
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -203,10 +197,7 @@
 						"by": "test-client",
 						"directory": "/conductor/target/tmp/conductor-test-0-legacy-session-source",
 						"effort": null,
-						"instance": {
-							"account": "Own",
-							"provider": "claude"
-						},
+						"instance": { "account": "Own", "provider": "claude" },
 						"model": null
 					}
 				},
@@ -222,11 +213,7 @@
 			"Event": {
 				"kind": {
 					"SessionClosed": {
-						"reason": {
-							"Stopped": {
-								"reason": "old host stopped"
-							}
-						}
+						"reason": { "Stopped": { "reason": "old host stopped" } }
 					}
 				},
 				"seq": 2,
@@ -240,10 +227,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{
-						"account": "Own",
-						"provider": "claude"
-					},
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -270,10 +254,7 @@
 					}
 				],
 				[
-					{
-						"account": "Own",
-						"provider": "codex"
-					},
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -286,11 +267,7 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
@@ -302,20 +279,13 @@
 		},
 		"stream": "feed"
 	},
-	{
-		"connection": 0,
-		"frame": "Accepted",
-		"stream": "command"
-	},
+	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
 	{
 		"connection": 0,
 		"frame": {
 			"Event": {
 				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "legacy directory"
-					}
+					"UserMessage": { "by": "test-client", "text": "legacy directory" }
 				},
 				"seq": 4,
 				"session": "00000000000000000000000001"
@@ -327,11 +297,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"AssistantMessage": {
-						"text": "Continued session."
-					}
-				},
+				"kind": { "AssistantMessage": { "text": "Continued session." } },
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}
@@ -342,11 +308,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": "Completed"
-					}
-				},
+				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}

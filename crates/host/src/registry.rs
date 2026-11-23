@@ -34,9 +34,10 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 
 use proto::{
-    Account, Auth, Availability, Catalog, CommandResult, Credential, Effort,
-    Event, Instance, InstanceId, InstanceStatus, Instances, IssueId, ModelId,
-    Models, Provider, Rejection, Roster, SessionId,
+    Account, Auth, Availability, Catalog, Credential, Effort, Event, Instance,
+    InstanceId, InstanceRefusal, InstanceResult, InstanceStatus, Instances,
+    IssueId, ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
+    SessionResult,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -317,10 +318,10 @@ fn on_issue(
 /// What the session's log says when the issue's brief, its first
 /// message, didn't reach the agent: `None` when it did.
 #[must_use]
-fn unbriefed(answer: Option<&CommandResult>) -> Option<String> {
+fn unbriefed(answer: Option<&SessionResult>) -> Option<String> {
     let why = match answer {
-        Some(CommandResult::Accepted) => return None,
-        Some(CommandResult::Rejected(rejection)) => rejection.label(),
+        Some(SessionResult::Accepted) => return None,
+        Some(SessionResult::Refused(refusal)) => refusal.label(),
         None => String::from("the session stopped"),
         Some(other) => format!("the session answered {other:?}"),
     };
@@ -409,7 +410,7 @@ impl Change {
 /// What the shell does next, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect<S, R> {
-    Reply(R, CommandResult),
+    Reply(R, InstanceResult),
     /// Move the store that doesn't open aside, and report
     /// [`Registry::moved_aside`].
     MoveAside {
@@ -551,16 +552,16 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         exists: bool,
         model: Option<ModelId>,
         effort: Option<Effort>,
-    ) -> Result<Launch<S>, Rejection> {
+    ) -> Result<Launch<S>, SessionRefusal> {
         if !exists {
-            return Err(Rejection::NoSuchDirectory);
+            return Err(SessionRefusal::NoSuchDirectory);
         }
         if self.roster.of(instance).is_none() {
-            return Err(Rejection::UnknownInstance);
+            return Err(SessionRefusal::UnknownInstance);
         }
         let (start, _, offered) = self.ready(instance).map_err(unavailable)?;
         let choice = choose(&offered, model, effort)
-            .map_err(|reason| Rejection::NotOffered { reason })?;
+            .map_err(|reason| SessionRefusal::NotOffered { reason })?;
         Ok(Launch {
             start,
             choice,
@@ -587,11 +588,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     pub fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<(H, S, Models), Rejection> {
+    ) -> Result<(H, S, Models), SessionRefusal> {
         let (instance, handle) = self
             .sessions
             .get(&session)
-            .ok_or(Rejection::UnknownSession)?;
+            .ok_or(SessionRefusal::UnknownSession)?;
         self.ready(instance)
             .map(|(adapter, _, models)| (handle.clone(), adapter, models))
             .map_err(unavailable)
@@ -629,10 +630,13 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 adoption.plan(&self.roster).map(|roster| (adoption, roster))
             })
         {
-            if let Some(reason) =
+            if let Some(sessions) =
                 self.instance_in_use(&[&adoption.from, &adoption.to], running)
             {
-                return Vec::from([rejected(reply, reason)]);
+                return Vec::from([rejected(
+                    reply,
+                    InstanceRefusal::InstanceInUse { sessions },
+                )]);
             }
             return self.save(roster, Change::SignedIn(adoption), reply);
         }
@@ -665,7 +669,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             Err(reason) => {
                 return Vec::from([rejected(
                     reply,
-                    Rejection::InvalidCredential { reason },
+                    InstanceRefusal::InvalidCredential { reason },
                 )]);
             }
         };
@@ -697,7 +701,10 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         reply: R,
     ) -> Vec<Effect<S, R>> {
         if self.roster.of(&instance).is_none() {
-            return Vec::from([rejected(reply, Rejection::UnknownInstance)]);
+            return Vec::from([rejected(
+                reply,
+                InstanceRefusal::UnknownInstance,
+            )]);
         }
         if self.unreadable.is_some() {
             return Vec::from([Effect::MoveAside { instance, reply }]);
@@ -705,8 +712,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         if instance.account == Account::Own {
             return Vec::from([Self::answer(reply)]);
         }
-        if let Some(reason) = self.instance_in_use(&[&instance], running) {
-            return Vec::from([rejected(reply, reason)]);
+        if let Some(sessions) = self.instance_in_use(&[&instance], running) {
+            return Vec::from([rejected(
+                reply,
+                InstanceRefusal::InstanceInUse { sessions },
+            )]);
         }
         let mut roster = self.roster.clone();
         roster.0.remove(&instance);
@@ -718,7 +728,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &self,
         instances: &[&InstanceId],
         running: &BTreeSet<SessionId>,
-    ) -> Option<Rejection> {
+    ) -> Option<u64> {
         let busy = self
             .sessions
             .iter()
@@ -726,9 +736,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
                 instances.contains(&on) && running.contains(id)
             })
             .count();
-        (busy > 0).then(|| Rejection::InstanceInUse {
-            sessions: u64::try_from(busy).unwrap_or(u64::MAX),
-        })
+        (busy > 0).then(|| u64::try_from(busy).unwrap_or(u64::MAX))
     }
 
     /// How the [`Effect::MoveAside`] went.
@@ -1017,7 +1025,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     }
 
     const fn answer(reply: R) -> Effect<S, R> {
-        Effect::Reply(reply, CommandResult::Accepted)
+        Effect::Reply(reply, InstanceResult::Accepted)
     }
 
     fn answers(replies: Vec<R>) -> Vec<Effect<S, R>> {
@@ -1120,23 +1128,23 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
 
 /// Why a session's workspace could not be made.
 #[must_use]
-fn unprepared(error: GitError) -> Rejection {
+fn unprepared(error: GitError) -> SessionRefusal {
     match error {
-        GitError::NotRepository => Rejection::NotGitRepository,
-        GitError::Failed(reason) => Rejection::WorkspaceFailure { reason },
+        GitError::NotRepository => SessionRefusal::NotGitRepository,
+        GitError::Failed(reason) => SessionRefusal::WorkspaceFailure { reason },
     }
 }
 
-const fn unavailable(reason: String) -> Rejection {
-    Rejection::InstanceUnavailable { reason }
+const fn unavailable(reason: String) -> SessionRefusal {
+    SessionRefusal::InstanceUnavailable { reason }
 }
 
-const fn rejected<S, R>(reply: R, rejection: Rejection) -> Effect<S, R> {
-    Effect::Reply(reply, CommandResult::Rejected(rejection))
+const fn rejected<S, R>(reply: R, refusal: InstanceRefusal) -> Effect<S, R> {
+    Effect::Reply(reply, InstanceResult::Refused(refusal))
 }
 
 const fn not_saved<S, R>(reply: R, reason: String) -> Effect<S, R> {
-    rejected(reply, Rejection::CredentialNotSaved { reason })
+    rejected(reply, InstanceRefusal::CredentialNotSaved { reason })
 }
 
 fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {

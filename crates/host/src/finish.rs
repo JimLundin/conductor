@@ -7,8 +7,8 @@
 use alloc::format;
 
 use proto::{
-    ClientName, CommandResult, Event, EventKind, FinishState, Finished, Home,
-    HostSeq, IssueId, Rejection, SessionId, Workspace,
+    ClientName, Event, EventKind, FinishState, Finished, Home, HostSeq,
+    IssueId, SessionId, SessionRefusal, SessionResult, Workspace,
 };
 
 use crate::assignment::{Assigned, Assignment};
@@ -41,7 +41,7 @@ struct Finishing {
 fn finishing(
     history: &[Event],
     session: SessionId,
-) -> Result<Finishing, Rejection> {
+) -> Result<Finishing, SessionRefusal> {
     let mut assigned = Assigned::default();
     let mut workspace = None;
     let mut removed = false;
@@ -65,13 +65,13 @@ fn finishing(
         finish = finish.after(&event.kind);
         assigned = assigned.after(&event.kind);
     }
-    let instance = assigned.instance.ok_or(Rejection::UnknownSession)?;
+    let instance = assigned.instance.ok_or(SessionRefusal::UnknownSession)?;
     let refused = [
-        (removed, Rejection::SessionRemoved),
-        (turning, Rejection::TurnInProgress),
+        (removed, SessionRefusal::SessionRemoved),
+        (turning, SessionRefusal::TurnInProgress),
         (
             matches!(finish, FinishState::Finishing | FinishState::Done),
-            Rejection::AlreadyFinished,
+            SessionRefusal::AlreadyFinished,
         ),
     ];
     if let Some((_, rejection)) = refused.into_iter().find(|(is, _)| *is) {
@@ -80,11 +80,13 @@ fn finishing(
     Ok(Finishing {
         retry: finish == FinishState::Retrying,
         assignment: Assignment {
-            issue: assigned.issue.ok_or(Rejection::NotOnIssue)?,
+            issue: assigned.issue.ok_or(SessionRefusal::NotOnIssue)?,
             instance,
         },
-        workspace: workspace.ok_or_else(|| Rejection::WorkspaceFailure {
-            reason: String::from("the session has no workspace to land"),
+        workspace: workspace.ok_or_else(|| {
+            SessionRefusal::WorkspaceFailure {
+                reason: String::from("the session has no workspace to land"),
+            }
         })?,
         running,
     })
@@ -156,10 +158,10 @@ const IMPATIENT: &str =
 /// Why finishing landed nothing when the agent wasn't asked or stopped:
 /// a turn got in first.
 #[must_use]
-fn interrupted(what: &str, answer: Option<&CommandResult>) -> Option<String> {
+fn interrupted(what: &str, answer: Option<&SessionResult>) -> Option<String> {
     match answer {
-        Some(CommandResult::Accepted) => None,
-        Some(CommandResult::Rejected(rejection)) => {
+        Some(SessionResult::Accepted) => None,
+        Some(SessionResult::Refused(rejection)) => {
             Some(format!("{what}: {}", rejection.label()))
         }
         Some(other) => Some(format!("{what}: the session answered {other:?}")),
@@ -193,7 +195,7 @@ enum Stage {
 #[derive(Debug)]
 pub enum Input {
     History(Vec<Event>),
-    Ordered(Option<CommandResult>),
+    Ordered(Option<SessionResult>),
     Events(Vec<Event>),
     Lagged,
     TimedOut,
@@ -210,7 +212,7 @@ pub enum Input {
 pub enum Effect {
     History,
     Emit(EventKind),
-    Reply(CommandResult),
+    Reply(SessionResult),
     Order(crate::session::Order),
     Watch {
         after: HostSeq,
@@ -256,9 +258,9 @@ impl Finish {
         if let Input::RequestedAgain(history) = input {
             let reason = finishing(&history, self.session)
                 .err()
-                .unwrap_or(Rejection::AlreadyFinished);
+                .unwrap_or(SessionRefusal::AlreadyFinished);
             return Vec::from([
-                Effect::Reply(CommandResult::Rejected(reason)),
+                Effect::Reply(SessionResult::Refused(reason)),
                 Effect::NextEvent,
             ]);
         }
@@ -353,7 +355,7 @@ impl Finish {
         } = match finishing(history, self.session) {
             Ok(finishing) => finishing,
             Err(rejection) => {
-                return Vec::from([Effect::Reply(CommandResult::Rejected(
+                return Vec::from([Effect::Reply(SessionResult::Refused(
                     rejection,
                 ))]);
             }
@@ -362,7 +364,7 @@ impl Finish {
         if !retry {
             effects.push(Effect::Emit(EventKind::FinishStarted));
         }
-        effects.push(Effect::Reply(CommandResult::Accepted));
+        effects.push(Effect::Reply(SessionResult::Accepted));
         if running {
             let after = history.last().map_or(HostSeq(0), |event| event.seq);
             self.stage = Stage::Asking(assignment, workspace, after);
@@ -382,7 +384,7 @@ impl Finish {
         assignment: Assignment,
         workspace: Workspace,
         after: HostSeq,
-        answer: Option<&CommandResult>,
+        answer: Option<&SessionResult>,
     ) -> Vec<Effect> {
         if let Some(reason) = interrupted("asking for a summary", answer) {
             return self.failed(&assignment, None, reason);

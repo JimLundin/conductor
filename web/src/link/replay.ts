@@ -5,7 +5,6 @@ import { isDelta } from "../fold/host.ts";
 import type { HostLink, LinkState, Update } from "./host.ts";
 import type { Connection, Pipe } from "../pipe.ts";
 import {
-	type Command,
 	CommandResult,
 	Feed,
 	HelloReply,
@@ -17,6 +16,9 @@ import {
 import { type RecordedFeed, recordedFeed } from "../recorded-feeds.ts";
 
 type Entry = RecordedFeed[number];
+
+// A command as the app sent it: its id and what it asks.
+type Sent = Extract<Open, { readonly Command: unknown }>["Command"];
 
 interface Scenario {
 	readonly welcome: (connection: number) => Effect.Effect<Welcome>;
@@ -149,7 +151,7 @@ const opened = (stream: HostStream): Effect.Effect<Open> =>
 // What the app asked the host for.
 interface Served {
 	readonly subscribes: Ref.Ref<readonly Subscribe[]>;
-	readonly commands: Ref.Ref<readonly Command[]>;
+	readonly commands: Ref.Ref<readonly Sent[]>;
 }
 
 interface Replay {
@@ -234,7 +236,7 @@ const serve = (
 	Effect.gen(function* serving() {
 		const served: Served = {
 			subscribes: yield* Ref.make<readonly Subscribe[]>([]),
-			commands: yield* Ref.make<readonly Command[]>([]),
+			commands: yield* Ref.make<readonly Sent[]>([]),
 		};
 		const script: Script = {
 			results: yield* Ref.make(replay.results),
@@ -312,6 +314,7 @@ export {
 	reach,
 	scenario,
 	scoped,
+	type Sent,
 	serve,
 	states,
 	stored,

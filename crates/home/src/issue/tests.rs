@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use proto::flow::Flow;
 use proto::{
     ChecklistChange, ChecklistItem, Checkout, Cloning, CommandId, Datum, Entry,
-    Home, HomeSync, HostPath, Issue, IssueChange, IssueId, Item, LogEvent,
-    NewIssue, Origin, Part, ProjectId, Rejection, Section,
+    Home, HomeRefusal, HomeSync, HostPath, Issue, IssueChange, IssueId, Item,
+    LogEvent, NewIssue, Origin, Part, ProjectId, Section,
 };
 
 use super::{
@@ -576,7 +576,7 @@ fn context(home: &Snapshot, command: CommandId) -> super::Context<'_> {
 
 #[test]
 fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
--> Result<(), Rejection> {
+-> Result<(), HomeRefusal> {
     let home = snapshot_of(&[]);
     let listed = context(&home, CommandId(1));
     let nowhere = super::Context {
@@ -585,7 +585,7 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
     };
     assert_eq!(
         nowhere.open(ID, wanted(), "iPhone").map(|_| ()),
-        Err(Rejection::NoHome)
+        Err(HomeRefusal::NoHome)
     );
     assert_eq!(
         listed
@@ -598,7 +598,7 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
                 "iPhone"
             )
             .map(|_| ()),
-        Err(Rejection::UnknownProject)
+        Err(HomeRefusal::UnknownProject)
     );
     let untitled = listed.open(
         ID,
@@ -612,7 +612,7 @@ fn an_issue_opens_in_a_listed_project_on_a_host_with_a_home()
         among(&[], |home| untitled
             .decide(None, home, &PendingEdits::default())
             .map(|_| ())),
-        Err(Rejection::IssueRefused {
+        Err(HomeRefusal::IssueRefused {
             reason: text("an issue needs a title")
         })
     );
@@ -633,7 +633,7 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
         listed
             .edit(IssueId::new(0, 7), IssueChange::Note(text("x")), "iPhone")
             .map(|_| ()),
-        Err(Rejection::UnknownIssue)
+        Err(HomeRefusal::UnknownIssue)
     );
     let nowhere = super::Context {
         remote: None,
@@ -643,7 +643,7 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
         nowhere
             .edit(ID, IssueChange::Note(text("x")), "iPhone")
             .map(|_| ()),
-        Err(Rejection::NoHome)
+        Err(HomeRefusal::NoHome)
     );
 }
 
@@ -722,13 +722,13 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
     }
     assert_eq!(
         start(Some(&home(Vec::new(), Vec::from([issue()]))), ID).map(|_| ()),
-        Err(Rejection::NotCheckedOut)
+        Err(HomeRefusal::NotCheckedOut)
     );
     assert_eq!(
         start(Some(&home(Vec::from([checkout()]), Vec::new())), ID).map(|_| ()),
-        Err(Rejection::UnknownIssue)
+        Err(HomeRefusal::UnknownIssue)
     );
-    assert_eq!(start(None, ID).map(|_| ()), Err(Rejection::NoHome));
+    assert_eq!(start(None, ID).map(|_| ()), Err(HomeRefusal::NoHome));
 }
 
 #[test]
@@ -1137,15 +1137,15 @@ fn an_issues_branch_is_the_one_the_home_lists_for_it() {
     assert_eq!(branch(Some(&listed), ID), "refs/heads/issue/mine");
 }
 
-fn unexpected_effect() -> Rejection {
-    Rejection::IssueNotSaved {
+fn unexpected_effect() -> HomeRefusal {
+    HomeRefusal::IssueNotSaved {
         reason: text("unexpected record effect"),
     }
 }
 
 #[test]
 fn an_opening_is_rejected_until_its_edit_can_be_recovered()
--> Result<(), Rejection> {
+-> Result<(), HomeRefusal> {
     use super::{Delivery, RecordEffect, Write};
 
     let home = snapshot_of(&[]);
@@ -1163,7 +1163,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     let reason = text("queue write failed");
     assert_eq!(
         failed.next(Err(reason.clone())),
-        Err(Rejection::IssueNotSaved { reason })
+        Err(HomeRefusal::IssueNotSaved { reason })
     );
     assert_eq!(failed.next(Ok(()))?, None);
 
@@ -1234,7 +1234,7 @@ fn recorded(
     change: IssueChange,
     command: CommandId,
     current: &str,
-) -> Result<(Edit, super::Commit), Rejection> {
+) -> Result<(Edit, super::Commit), HomeRefusal> {
     use super::RecordEffect;
 
     let home = snapshot_of(&[issue_file()]);
@@ -1261,7 +1261,7 @@ fn replay(
 
 #[test]
 fn issue_changes_decide_each_commit_and_replay_against_the_file()
--> Result<(), Rejection> {
+-> Result<(), HomeRefusal> {
     use super::Write;
 
     let changes = [
@@ -1327,8 +1327,8 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
 }
 
 #[test]
-fn replay_preserves_separate_notes_with_identical_text() -> Result<(), Rejection>
-{
+fn replay_preserves_separate_notes_with_identical_text()
+-> Result<(), HomeRefusal> {
     use super::Write;
 
     let note = || IssueChange::Note(text("Same note"));
@@ -1447,7 +1447,7 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 /// The home the `home` command line's own tests use: a spec, and a task
 /// under it that lacks a section.
 mod as_the_command_line {
-    use proto::{CommandId, IssueChange, IssueId, ProjectId, Rejection};
+    use proto::{CommandId, HomeRefusal, IssueChange, IssueId, ProjectId};
 
     use proto::Datum;
 
@@ -1532,10 +1532,10 @@ mod as_the_command_line {
     }
 
     /// What the app is told of `change` to the task.
-    fn by_app(change: IssueChange) -> Result<Vec<String>, Rejection> {
+    fn by_app(change: IssueChange) -> Result<Vec<String>, HomeRefusal> {
         let inputs = inputs();
         let home = Snapshot::of(inputs.clone());
-        let task = IssueId::parse(TASK).ok_or(Rejection::UnknownIssue)?;
+        let task = IssueId::parse(TASK).ok_or(HomeRefusal::UnknownIssue)?;
         let current = inputs
             .issues
             .iter()
@@ -1598,7 +1598,7 @@ mod as_the_command_line {
             );
             assert_eq!(
                 by_app(change),
-                Err(Rejection::IssueRefused {
+                Err(HomeRefusal::IssueRefused {
                     reason: refused.err().unwrap_or_default()
                 }),
                 "{said}"
@@ -1617,7 +1617,7 @@ mod as_the_command_line {
         );
         assert_eq!(
             by_app(IssueChange::Note(String::from("checked"))),
-            warned.map_err(|reason| Rejection::IssueRefused { reason })
+            warned.map_err(|reason| HomeRefusal::IssueRefused { reason })
         );
     }
 
