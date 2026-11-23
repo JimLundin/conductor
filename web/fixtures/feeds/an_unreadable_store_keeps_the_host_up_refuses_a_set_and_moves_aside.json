@@ -1,235 +1,235 @@
 [
-  {
-    "connection": 0,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 0,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/target/tmp/conductor-test-0-unreadable/credentials does not open with the store key; clearing a credential moves it aside"
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/target/tmp/conductor-test-0-unreadable/credentials does not open with the store key; clearing a credential moves it aside"
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Rejected": {
-        "CredentialNotSaved": {
-          "reason": "/conductor/target/tmp/conductor-test-0-unreadable/credentials does not open with the store key; clearing a credential moves it aside"
-        }
-      }
-    },
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  }
+	{
+		"connection": 0,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 0,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/target/tmp/conductor-test-0-unreadable/credentials does not open with the store key; clearing a credential moves it aside"
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/target/tmp/conductor-test-0-unreadable/credentials does not open with the store key; clearing a credential moves it aside"
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Rejected": {
+				"CredentialNotSaved": {
+					"reason": "/conductor/target/tmp/conductor-test-0-unreadable/credentials does not open with the store key; clearing a credential moves it aside"
+				}
+			}
+		},
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	}
 ]

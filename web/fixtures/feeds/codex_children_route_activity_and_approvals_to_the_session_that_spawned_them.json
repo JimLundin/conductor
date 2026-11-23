@@ -1,1581 +1,1561 @@
 [
-  {
-    "connection": 0,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 0,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Started": {
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionCreated": {
-            "by": "test-client",
-            "directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
-            "effort": null,
-            "instance": {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            "model": "big"
-          }
-        },
-        "seq": 1,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "WorkspaceCreated": {
-            "workspace": {
-              "branch": "conductor/00000000000000000000000001",
-              "directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001/",
-              "original": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
-              "repository": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
-              "worktree": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001"
-            }
-          }
-        },
-        "seq": 2,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": null
-            }
-          }
-        },
-        "seq": 3,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 4,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "delegate"
-          }
-        },
-        "seq": 5,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 5
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-alpha",
-            "phase": {
-              "Started": {
-                "tool": {
-                  "Other": {
-                    "detail": "Inspect alpha",
-                    "name": "Spawn agent"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-alpha",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 8,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Started": {
-                "call": "spawn-alpha",
-                "description": "Inspect alpha"
-              }
-            }
-          }
-        },
-        "seq": 9,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Kind": {
-                "kind": "explorer"
-              }
-            }
-          }
-        },
-        "seq": 10,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-beta",
-            "phase": {
-              "Started": {
-                "tool": {
-                  "Other": {
-                    "detail": "/root/beta",
-                    "name": "Spawn agent"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 11,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-beta",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-beta",
-            "event": {
-              "Started": {
-                "call": "spawn-beta",
-                "description": "/root/beta"
-              }
-            }
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "ChecklistChanged": {
-                "checklist": [
-                  {
-                    "status": "InProgress",
-                    "text": "Read alpha"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "seq": 14,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Activity": {
-                "ToolCall": {
-                  "call": "alpha-command",
-                  "phase": {
-                    "Started": {
-                      "tool": {
-                        "Command": {
-                          "command": "ls alpha"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 15,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "RequestOpened": {
-                "call": "alpha-command",
-                "for_session": "ls alpha",
-                "reason": null,
-                "request": 1,
-                "tool": {
-                  "Command": {
-                    "command": "ls alpha"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 16,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "RequestResolved": {
-            "request": 1,
-            "resolution": {
-              "Decided": {
-                "by": "test-client",
-                "decision": "Approve"
-              }
-            }
-          }
-        },
-        "seq": 17,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Activity": {
-                "ToolCall": {
-                  "call": "alpha-command",
-                  "phase": {
-                    "Finished": {
-                      "outcome": "Succeeded"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "ChecklistChanged": {
-                "checklist": [
-                  {
-                    "status": "Completed",
-                    "text": "Read alpha"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "seq": 19,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-beta",
-            "event": {
-              "Activity": {
-                "Message": {
-                  "text": "Beta checked."
-                }
-              }
-            }
-          }
-        },
-        "seq": 20,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Ended": {
-                "outcome": "Finished",
-                "summary": "Alpha checked."
-              }
-            }
-          }
-        },
-        "seq": 21,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-beta",
-            "event": {
-              "Ended": {
-                "outcome": "Failed",
-                "summary": "Beta failed."
-              }
-            }
-          }
-        },
-        "seq": 22,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Delegation done."
-          }
-        },
-        "seq": 23,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 5
-            }
-          }
-        },
-        "seq": 24,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 25,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 25,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionCreated": {
-            "by": "test-client",
-            "directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
-            "effort": null,
-            "instance": {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            "model": "big"
-          }
-        },
-        "seq": 1,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "WorkspaceCreated": {
-            "workspace": {
-              "branch": "conductor/00000000000000000000000001",
-              "directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001/",
-              "original": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
-              "repository": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
-              "worktree": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001"
-            }
-          }
-        },
-        "seq": 2,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": null
-            }
-          }
-        },
-        "seq": 3,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 4,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "delegate"
-          }
-        },
-        "seq": 5,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 5
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-alpha",
-            "phase": {
-              "Started": {
-                "tool": {
-                  "Other": {
-                    "detail": "Inspect alpha",
-                    "name": "Spawn agent"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-alpha",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 8,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Started": {
-                "call": "spawn-alpha",
-                "description": "Inspect alpha"
-              }
-            }
-          }
-        },
-        "seq": 9,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Kind": {
-                "kind": "explorer"
-              }
-            }
-          }
-        },
-        "seq": 10,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-beta",
-            "phase": {
-              "Started": {
-                "tool": {
-                  "Other": {
-                    "detail": "/root/beta",
-                    "name": "Spawn agent"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 11,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "spawn-beta",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-beta",
-            "event": {
-              "Started": {
-                "call": "spawn-beta",
-                "description": "/root/beta"
-              }
-            }
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "ChecklistChanged": {
-                "checklist": [
-                  {
-                    "status": "InProgress",
-                    "text": "Read alpha"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "seq": 14,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Activity": {
-                "ToolCall": {
-                  "call": "alpha-command",
-                  "phase": {
-                    "Started": {
-                      "tool": {
-                        "Command": {
-                          "command": "ls alpha"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 15,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "RequestOpened": {
-                "call": "alpha-command",
-                "for_session": "ls alpha",
-                "reason": null,
-                "request": 1,
-                "tool": {
-                  "Command": {
-                    "command": "ls alpha"
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 16,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "RequestResolved": {
-            "request": 1,
-            "resolution": {
-              "Decided": {
-                "by": "test-client",
-                "decision": "Approve"
-              }
-            }
-          }
-        },
-        "seq": 17,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Activity": {
-                "ToolCall": {
-                  "call": "alpha-command",
-                  "phase": {
-                    "Finished": {
-                      "outcome": "Succeeded"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "ChecklistChanged": {
-                "checklist": [
-                  {
-                    "status": "Completed",
-                    "text": "Read alpha"
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "seq": 19,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-beta",
-            "event": {
-              "Activity": {
-                "Message": {
-                  "text": "Beta checked."
-                }
-              }
-            }
-          }
-        },
-        "seq": 20,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-alpha",
-            "event": {
-              "Ended": {
-                "outcome": "Finished",
-                "summary": "Alpha checked."
-              }
-            }
-          }
-        },
-        "seq": 21,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Subagent": {
-            "agent": "child-beta",
-            "event": {
-              "Ended": {
-                "outcome": "Failed",
-                "summary": "Beta failed."
-              }
-            }
-          }
-        },
-        "seq": 22,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Delegation done."
-          }
-        },
-        "seq": 23,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 5
-            }
-          }
-        },
-        "seq": 24,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 25,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  }
+	{
+		"connection": 0,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 0,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Started": {
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionCreated": {
+						"by": "test-client",
+						"directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
+						"effort": null,
+						"instance": {
+							"account": "Own",
+							"provider": "Codex"
+						},
+						"model": "big"
+					}
+				},
+				"seq": 1,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"WorkspaceCreated": {
+						"workspace": {
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001/",
+							"original": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
+							"repository": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
+							"worktree": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001"
+						}
+					}
+				},
+				"seq": 2,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": null
+						}
+					}
+				},
+				"seq": 3,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 4,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "delegate"
+					}
+				},
+				"seq": 5,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 5
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-alpha",
+						"phase": {
+							"Started": {
+								"tool": {
+									"Other": {
+										"detail": "Inspect alpha",
+										"name": "Spawn agent"
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-alpha",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 8,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Started": {
+								"call": "spawn-alpha",
+								"description": "Inspect alpha"
+							}
+						}
+					}
+				},
+				"seq": 9,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Kind": {
+								"kind": "explorer"
+							}
+						}
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-beta",
+						"phase": {
+							"Started": {
+								"tool": {
+									"Other": {
+										"detail": "/root/beta",
+										"name": "Spawn agent"
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 11,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-beta",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-beta",
+						"event": {
+							"Started": {
+								"call": "spawn-beta",
+								"description": "/root/beta"
+							}
+						}
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"ChecklistChanged": {
+								"checklist": [
+									{
+										"status": "InProgress",
+										"text": "Read alpha"
+									}
+								]
+							}
+						}
+					}
+				},
+				"seq": 14,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Activity": {
+								"ToolCall": {
+									"call": "alpha-command",
+									"phase": {
+										"Started": {
+											"tool": {
+												"Command": {
+													"command": "ls alpha"
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 15,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"RequestOpened": {
+								"call": "alpha-command",
+								"for_session": "ls alpha",
+								"reason": null,
+								"request": 1,
+								"tool": {
+									"Command": {
+										"command": "ls alpha"
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 16,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"RequestResolved": {
+						"request": 1,
+						"resolution": {
+							"Decided": {
+								"by": "test-client",
+								"decision": "Approve"
+							}
+						}
+					}
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Activity": {
+								"ToolCall": {
+									"call": "alpha-command",
+									"phase": {
+										"Finished": {
+											"outcome": "Succeeded"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"ChecklistChanged": {
+								"checklist": [
+									{
+										"status": "Completed",
+										"text": "Read alpha"
+									}
+								]
+							}
+						}
+					}
+				},
+				"seq": 19,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-beta",
+						"event": {
+							"Activity": {
+								"Message": {
+									"text": "Beta checked."
+								}
+							}
+						}
+					}
+				},
+				"seq": 20,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Ended": {
+								"outcome": "Finished",
+								"summary": "Alpha checked."
+							}
+						}
+					}
+				},
+				"seq": 21,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-beta",
+						"event": {
+							"Ended": {
+								"outcome": "Failed",
+								"summary": "Beta failed."
+							}
+						}
+					}
+				},
+				"seq": 22,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Delegation done."
+					}
+				},
+				"seq": 23,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 5
+						}
+					}
+				},
+				"seq": 24,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 25,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 25,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionCreated": {
+						"by": "test-client",
+						"directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
+						"effort": null,
+						"instance": {
+							"account": "Own",
+							"provider": "Codex"
+						},
+						"model": "big"
+					}
+				},
+				"seq": 1,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"WorkspaceCreated": {
+						"workspace": {
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001/",
+							"original": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
+							"repository": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/work/codex",
+							"worktree": "/conductor/target/tmp/conductor-test-0-codex-subagents.jsonl/worktrees/00000000000000000000000001"
+						}
+					}
+				},
+				"seq": 2,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": null
+						}
+					}
+				},
+				"seq": 3,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 4,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "delegate"
+					}
+				},
+				"seq": 5,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 5
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-alpha",
+						"phase": {
+							"Started": {
+								"tool": {
+									"Other": {
+										"detail": "Inspect alpha",
+										"name": "Spawn agent"
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-alpha",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 8,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Started": {
+								"call": "spawn-alpha",
+								"description": "Inspect alpha"
+							}
+						}
+					}
+				},
+				"seq": 9,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Kind": {
+								"kind": "explorer"
+							}
+						}
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-beta",
+						"phase": {
+							"Started": {
+								"tool": {
+									"Other": {
+										"detail": "/root/beta",
+										"name": "Spawn agent"
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 11,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "spawn-beta",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-beta",
+						"event": {
+							"Started": {
+								"call": "spawn-beta",
+								"description": "/root/beta"
+							}
+						}
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"ChecklistChanged": {
+								"checklist": [
+									{
+										"status": "InProgress",
+										"text": "Read alpha"
+									}
+								]
+							}
+						}
+					}
+				},
+				"seq": 14,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Activity": {
+								"ToolCall": {
+									"call": "alpha-command",
+									"phase": {
+										"Started": {
+											"tool": {
+												"Command": {
+													"command": "ls alpha"
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 15,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"RequestOpened": {
+								"call": "alpha-command",
+								"for_session": "ls alpha",
+								"reason": null,
+								"request": 1,
+								"tool": {
+									"Command": {
+										"command": "ls alpha"
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 16,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"RequestResolved": {
+						"request": 1,
+						"resolution": {
+							"Decided": {
+								"by": "test-client",
+								"decision": "Approve"
+							}
+						}
+					}
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Activity": {
+								"ToolCall": {
+									"call": "alpha-command",
+									"phase": {
+										"Finished": {
+											"outcome": "Succeeded"
+										}
+									}
+								}
+							}
+						}
+					}
+				},
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"ChecklistChanged": {
+								"checklist": [
+									{
+										"status": "Completed",
+										"text": "Read alpha"
+									}
+								]
+							}
+						}
+					}
+				},
+				"seq": 19,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-beta",
+						"event": {
+							"Activity": {
+								"Message": {
+									"text": "Beta checked."
+								}
+							}
+						}
+					}
+				},
+				"seq": 20,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-alpha",
+						"event": {
+							"Ended": {
+								"outcome": "Finished",
+								"summary": "Alpha checked."
+							}
+						}
+					}
+				},
+				"seq": 21,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Subagent": {
+						"agent": "child-beta",
+						"event": {
+							"Ended": {
+								"outcome": "Failed",
+								"summary": "Beta failed."
+							}
+						}
+					}
+				},
+				"seq": 22,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Delegation done."
+					}
+				},
+				"seq": 23,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 5
+						}
+					}
+				},
+				"seq": 24,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 25,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	}
 ]

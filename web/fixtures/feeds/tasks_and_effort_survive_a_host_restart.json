@@ -1,3020 +1,2980 @@
 [
-  {
-    "connection": 0,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 0,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Started": {
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionCreated": {
-            "by": "test-client",
-            "directory": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-            "effort": null,
-            "instance": {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            "model": "big"
-          }
-        },
-        "seq": 1,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "WorkspaceCreated": {
-            "workspace": {
-              "branch": "conductor/00000000000000000000000001",
-              "directory": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001/",
-              "original": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-              "repository": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-              "worktree": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001"
-            }
-          }
-        },
-        "seq": 2,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": null
-            }
-          }
-        },
-        "seq": 3,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 4,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "plan"
-          }
-        },
-        "seq": 5,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 5
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Pending",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 8,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "InProgress",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 9,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 10,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Completed",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 11,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_017z4Mk6iLT8HvumDv3paetP",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "Done. I"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " made"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " the three"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "-item"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " checklist, then"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " marked \""
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "Write a.txt\" in"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " progress and completed."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " I sent the in"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "-progress and completed upd"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "ates in one batch rather than"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " wa"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "iting between"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " them, so the in-progress"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " state was never sh"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "own on"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " its own. No files were created."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 5
-            }
-          }
-        },
-        "seq": 14,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 15,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 17,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionCreated": {
-            "by": "test-client",
-            "directory": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-            "effort": null,
-            "instance": {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            "model": "big"
-          }
-        },
-        "seq": 1,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "WorkspaceCreated": {
-            "workspace": {
-              "branch": "conductor/00000000000000000000000001",
-              "directory": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001/",
-              "original": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-              "repository": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-              "worktree": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001"
-            }
-          }
-        },
-        "seq": 2,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": null
-            }
-          }
-        },
-        "seq": 3,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 4,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "plan"
-          }
-        },
-        "seq": 5,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 5
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Pending",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 8,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "InProgress",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 9,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 10,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Completed",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 11,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_017z4Mk6iLT8HvumDv3paetP",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 5
-            }
-          }
-        },
-        "seq": 14,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 15,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "EffortChanged": {
-            "effort": "Low"
-          }
-        },
-        "seq": 16,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionClosed": {
-            "reason": {
-              "Stopped": {
-                "reason": "the host restarted"
-              }
-            }
-          }
-        },
-        "seq": 17,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 1,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 17,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "EffortChanged": {
-            "effort": "Low"
-          }
-        },
-        "seq": 16,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionClosed": {
-            "reason": {
-              "Stopped": {
-                "reason": "the host restarted"
-              }
-            }
-          }
-        },
-        "seq": 17,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "plan"
-          }
-        },
-        "seq": 19,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 19
-          }
-        },
-        "seq": 20,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Pending",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 21,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 22,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "InProgress",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 23,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 24,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Completed",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 25,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_017z4Mk6iLT8HvumDv3paetP",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "Done. I"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " made"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " the three"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "-item"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " checklist, then"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " marked \""
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "Write a.txt\" in"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " progress and completed."
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " I sent the in"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "-progress and completed upd"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "ates in one batch rather than"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " wa"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "iting between"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " them, so the in-progress"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " state was never sh"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "own on"
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": " its own. No files were created."
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
-          }
-        },
-        "seq": 27,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 19
-            }
-          }
-        },
-        "seq": 28,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 2,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 29,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 29,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionCreated": {
-            "by": "test-client",
-            "directory": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-            "effort": null,
-            "instance": {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            "model": "big"
-          }
-        },
-        "seq": 1,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "WorkspaceCreated": {
-            "workspace": {
-              "branch": "conductor/00000000000000000000000001",
-              "directory": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001/",
-              "original": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-              "repository": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
-              "worktree": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001"
-            }
-          }
-        },
-        "seq": 2,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": null
-            }
-          }
-        },
-        "seq": 3,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 4,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "plan"
-          }
-        },
-        "seq": 5,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 5
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Pending",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 8,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "InProgress",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 9,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 10,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Completed",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 11,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_017z4Mk6iLT8HvumDv3paetP",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 5
-            }
-          }
-        },
-        "seq": 14,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 15,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "EffortChanged": {
-            "effort": "Low"
-          }
-        },
-        "seq": 16,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionClosed": {
-            "reason": {
-              "Stopped": {
-                "reason": "the host restarted"
-              }
-            }
-          }
-        },
-        "seq": 17,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "plan"
-          }
-        },
-        "seq": 19,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 19
-          }
-        },
-        "seq": 20,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Pending",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 21,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 22,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "InProgress",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 23,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 24,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ChecklistChanged": {
-            "checklist": [
-              {
-                "status": "Completed",
-                "text": "Write a.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write b.txt"
-              },
-              {
-                "status": "Pending",
-                "text": "Write c.txt"
-              }
-            ]
-          }
-        },
-        "seq": 25,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ToolCall": {
-            "call": "toolu_017z4Mk6iLT8HvumDv3paetP",
-            "phase": {
-              "Finished": {
-                "outcome": "Succeeded"
-              }
-            }
-          }
-        },
-        "seq": 26,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
-          }
-        },
-        "seq": 27,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 19
-            }
-          }
-        },
-        "seq": 28,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 29,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 3,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  }
+	{
+		"connection": 0,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 0,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Started": {
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionCreated": {
+						"by": "test-client",
+						"directory": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+						"effort": null,
+						"instance": {
+							"account": "Own",
+							"provider": "Claude"
+						},
+						"model": "big"
+					}
+				},
+				"seq": 1,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"WorkspaceCreated": {
+						"workspace": {
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001/",
+							"original": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+							"repository": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+							"worktree": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001"
+						}
+					}
+				},
+				"seq": 2,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": null
+						}
+					}
+				},
+				"seq": 3,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 4,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "plan"
+					}
+				},
+				"seq": 5,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 5
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Pending",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 8,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "InProgress",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 9,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Completed",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 11,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "Done. I"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " made"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " the three"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "-item"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " checklist, then"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " marked \""
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "Write a.txt\" in"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " progress and completed."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " I sent the in"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "-progress and completed upd"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "ates in one batch rather than"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " wa"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "iting between"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " them, so the in-progress"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " state was never sh"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "own on"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " its own. No files were created."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 5
+						}
+					}
+				},
+				"seq": 14,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 15,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 17,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionCreated": {
+						"by": "test-client",
+						"directory": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+						"effort": null,
+						"instance": {
+							"account": "Own",
+							"provider": "Claude"
+						},
+						"model": "big"
+					}
+				},
+				"seq": 1,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"WorkspaceCreated": {
+						"workspace": {
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001/",
+							"original": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+							"repository": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+							"worktree": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001"
+						}
+					}
+				},
+				"seq": 2,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": null
+						}
+					}
+				},
+				"seq": 3,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 4,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "plan"
+					}
+				},
+				"seq": 5,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 5
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Pending",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 8,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "InProgress",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 9,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Completed",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 11,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 5
+						}
+					}
+				},
+				"seq": 14,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 15,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"EffortChanged": {
+						"effort": "Low"
+					}
+				},
+				"seq": 16,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionClosed": {
+						"reason": {
+							"Stopped": {
+								"reason": "the host restarted"
+							}
+						}
+					}
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 1,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 17,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"EffortChanged": {
+						"effort": "Low"
+					}
+				},
+				"seq": 16,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionClosed": {
+						"reason": {
+							"Stopped": {
+								"reason": "the host restarted"
+							}
+						}
+					}
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "plan"
+					}
+				},
+				"seq": 19,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 19
+					}
+				},
+				"seq": 20,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Pending",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 21,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 22,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "InProgress",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 23,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 24,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Completed",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 25,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "Done. I"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " made"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " the three"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "-item"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " checklist, then"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " marked \""
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "Write a.txt\" in"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " progress and completed."
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " I sent the in"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "-progress and completed upd"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "ates in one batch rather than"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " wa"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "iting between"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " them, so the in-progress"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " state was never sh"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "own on"
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": " its own. No files were created."
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+					}
+				},
+				"seq": 27,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 19
+						}
+					}
+				},
+				"seq": 28,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 2,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 29,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 29,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionCreated": {
+						"by": "test-client",
+						"directory": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+						"effort": null,
+						"instance": {
+							"account": "Own",
+							"provider": "Claude"
+						},
+						"model": "big"
+					}
+				},
+				"seq": 1,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"WorkspaceCreated": {
+						"workspace": {
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001/",
+							"original": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+							"repository": "/conductor/target/tmp/conductor-e2e-0-checklist-restart",
+							"worktree": "/conductor/target/tmp/conductor-test-0-checklist-restart/worktrees/00000000000000000000000001"
+						}
+					}
+				},
+				"seq": 2,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": null
+						}
+					}
+				},
+				"seq": 3,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 4,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "plan"
+					}
+				},
+				"seq": 5,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 5
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Pending",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 8,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "InProgress",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 9,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Completed",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 11,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 5
+						}
+					}
+				},
+				"seq": 14,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 15,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"EffortChanged": {
+						"effort": "Low"
+					}
+				},
+				"seq": 16,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionClosed": {
+						"reason": {
+							"Stopped": {
+								"reason": "the host restarted"
+							}
+						}
+					}
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "plan"
+					}
+				},
+				"seq": 19,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 19
+					}
+				},
+				"seq": 20,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Pending",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 21,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 22,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "InProgress",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 23,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 24,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ChecklistChanged": {
+						"checklist": [
+							{
+								"status": "Completed",
+								"text": "Write a.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write b.txt"
+							},
+							{
+								"status": "Pending",
+								"text": "Write c.txt"
+							}
+						]
+					}
+				},
+				"seq": 25,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ToolCall": {
+						"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
+						"phase": {
+							"Finished": {
+								"outcome": "Succeeded"
+							}
+						}
+					}
+				},
+				"seq": 26,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+					}
+				},
+				"seq": 27,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 19
+						}
+					}
+				},
+				"seq": 28,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 29,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 3,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	}
 ]

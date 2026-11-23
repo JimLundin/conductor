@@ -1,3311 +1,3301 @@
 [
-  {
-    "connection": 0,
-    "frame": {
-      "Welcome": {
-        "catalog": {
-          "Claude": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Gateway URL",
-                    "placeholder": "https://gateway.example.com",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "gateway",
-                "label": "Gateway",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "Anthropic API key",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "token",
-                    "kind": "Secret",
-                    "label": "Token from claude setup-token",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "setup_token",
-                "label": "Claude setup token",
-                "setup_sign_in": "Sign in to create a token"
-              }
-            ],
-            "label": "Claude Code",
-            "note": null
-          },
-          "Codex": {
-            "credentials": [
-              {
-                "account": "base_url",
-                "fields": [
-                  {
-                    "id": "name",
-                    "kind": "Text",
-                    "label": "Provider name",
-                    "placeholder": "Gateway",
-                    "required": true
-                  },
-                  {
-                    "id": "base_url",
-                    "kind": "Url",
-                    "label": "Base URL",
-                    "placeholder": "https://gateway.example.com/v1",
-                    "required": true
-                  },
-                  {
-                    "id": "model",
-                    "kind": "Text",
-                    "label": "Model",
-                    "placeholder": "gpt-6",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "Key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "provider",
-                "label": "Model provider",
-                "setup_sign_in": null
-              },
-              {
-                "account": "account_label",
-                "fields": [
-                  {
-                    "id": "account_label",
-                    "kind": "Text",
-                    "label": "Public account label",
-                    "placeholder": "Work",
-                    "required": true
-                  },
-                  {
-                    "id": "key",
-                    "kind": "Secret",
-                    "label": "API key",
-                    "placeholder": "",
-                    "required": true
-                  }
-                ],
-                "kind": "api_key",
-                "label": "OpenAI API key",
-                "setup_sign_in": null
-              }
-            ],
-            "label": "Codex",
-            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-          }
-        },
-        "epoch": "1",
-        "head_seq": 0,
-        "home": null,
-        "host": "test-host",
-        "instances": [
-          [
-            {
-              "account": "Own",
-              "provider": "Claude"
-            },
-            {
-              "availability": {
-                "Unavailable": {
-                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-                }
-              }
-            }
-          ],
-          [
-            {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            {
-              "availability": {
-                "Available": {
-                  "auth": "Unmanaged",
-                  "models": {
-                    "choices": [
-                      {
-                        "description": "thinks",
-                        "efforts": [
-                          "Low",
-                          "High"
-                        ],
-                        "id": "big",
-                        "name": "Big"
-                      },
-                      {
-                        "description": "quick",
-                        "efforts": [
-                          "Low"
-                        ],
-                        "id": "small",
-                        "name": "Small"
-                      }
-                    ],
-                    "default": "big"
-                  }
-                }
-              }
-            }
-          ]
-        ]
-      }
-    },
-    "stream": "hello"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Instances": [
-        [
-          {
-            "account": "Own",
-            "provider": "Claude"
-          },
-          {
-            "availability": {
-              "Unavailable": {
-                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-              }
-            }
-          }
-        ],
-        [
-          {
-            "account": "Own",
-            "provider": "Codex"
-          },
-          {
-            "availability": {
-              "Available": {
-                "auth": "Unmanaged",
-                "models": {
-                  "choices": [
-                    {
-                      "description": "thinks",
-                      "efforts": [
-                        "Low",
-                        "High"
-                      ],
-                      "id": "big",
-                      "name": "Big"
-                    },
-                    {
-                      "description": "quick",
-                      "efforts": [
-                        "Low"
-                      ],
-                      "id": "small",
-                      "name": "Small"
-                    }
-                  ],
-                  "default": "big"
-                }
-              }
-            }
-          }
-        ]
-      ]
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Started": {
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionCreated": {
-            "by": "test-client",
-            "directory": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/work/codex",
-            "effort": "Low",
-            "instance": {
-              "account": "Own",
-              "provider": "Codex"
-            },
-            "model": "small"
-          }
-        },
-        "seq": 1,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "WorkspaceCreated": {
-            "workspace": {
-              "branch": "conductor/00000000000000000000000001",
-              "directory": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/worktrees/00000000000000000000000001/",
-              "original": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/work/codex",
-              "repository": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/work/codex",
-              "worktree": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/worktrees/00000000000000000000000001"
-            }
-          }
-        },
-        "seq": 2,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": null
-            }
-          }
-        },
-        "seq": 3,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 4,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "prime?"
-          }
-        },
-        "seq": 5,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 5
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "**Assessing primality**\n\nI"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " need"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " determine"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " if"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " 1"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "000"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "003"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " is"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " prime"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " To"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " do"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " this"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " should"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " check"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " its"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " divis"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "ors"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " up"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " the"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " square"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " root"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " of"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " about"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " 1"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "000"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " It"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " seems"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " recall"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " that"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " 1"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "000"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "003"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " is"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " a"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " known"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " prime"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " number"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " often"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " recognized"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " as"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " the"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " first"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " prime"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " above"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " one"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " million"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " think"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " can"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " confidently"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " answer"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " \""
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "yes"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "\""
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " the"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " user's"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " question"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " without"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " needing"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " any"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " tools"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " It"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "’s"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " important"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " verify"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " my"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " information"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " carefully"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " though"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "!"
-          }
-        },
-        "seq": 6,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Reasoning": {
-            "text": "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It’s important to verify my information carefully, though!"
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "Yes"
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "."
-          }
-        },
-        "seq": 7,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "Yes."
-          }
-        },
-        "seq": 8,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 5
-            }
-          }
-        },
-        "seq": 9,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 10,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "Count from 1 to 300, one number per line."
-          }
-        },
-        "seq": 11,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 11
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "**Compiling numbers**\n\nI'm"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " tasked"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " with"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " creating"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " a"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " list"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " of"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " 300"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " numbers"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " one"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " per"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " line"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " It"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " sounds"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " massive"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " but"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " straightforward"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "—"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "I'll"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " ensure"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " each"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " number"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " is"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " on"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " its"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " own"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " line"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " need"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " focus"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " on"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " accuracy"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " while"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " keeping"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " the"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " format"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " neat"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " There"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " are"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " around"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " 600"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " tokens"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " work"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " with"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " overall"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " Luckily"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ","
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " it"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " seems"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " won"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "’t"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " need"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " any"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " tools"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " for"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " this"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " task"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": ";"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " I"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " just"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " need"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " to"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " produce"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " the"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " exact"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " output"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " as"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " required"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "."
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " Let's"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " get"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " started"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " on"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": " this"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "ReasoningDelta": {
-            "text": "!"
-          }
-        },
-        "seq": 12,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "Reasoning": {
-            "text": "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward—I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won’t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!"
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "1"
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "\n"
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "2"
-          }
-        },
-        "seq": 13,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 11
-            }
-          }
-        },
-        "seq": 14,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SessionClosed": {
-            "reason": {
-              "Exited": {
-                "status": "signal: 9 (SIGKILL)"
-              }
-            }
-          }
-        },
-        "seq": 15,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": "SessionReady",
-        "seq": 16,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": "Accepted",
-    "stream": "command"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "UserMessage": {
-            "by": "test-client",
-            "text": "codeword?"
-          }
-        },
-        "seq": 17,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "NativeTurnStarted": {
-            "turn_start": 17
-          }
-        },
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "qu"
-          }
-        },
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantDelta": {
-            "text": "ince"
-          }
-        },
-        "seq": 18,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "AssistantMessage": {
-            "text": "quince"
-          }
-        },
-        "seq": 19,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "SnapshotRecorded": {
-            "snapshot": {
-              "commit": "0000000000000000000000000000000000000001",
-              "turn_start": 17
-            }
-          }
-        },
-        "seq": 20,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  },
-  {
-    "connection": 0,
-    "frame": {
-      "Event": {
-        "kind": {
-          "TurnCompleted": {
-            "outcome": "Completed"
-          }
-        },
-        "seq": 21,
-        "session": "00000000000000000000000001"
-      }
-    },
-    "stream": "feed"
-  }
+	{
+		"connection": 0,
+		"frame": {
+			"Welcome": {
+				"catalog": {
+					"Claude": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Gateway URL",
+										"placeholder": "https://gateway.example.com",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "gateway",
+								"label": "Gateway",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "Anthropic API key",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "token",
+										"kind": "Secret",
+										"label": "Token from claude setup-token",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "setup_token",
+								"label": "Claude setup token",
+								"setup_sign_in": "Sign in to create a token"
+							}
+						],
+						"label": "Claude Code",
+						"note": null
+					},
+					"Codex": {
+						"credentials": [
+							{
+								"account": "base_url",
+								"fields": [
+									{
+										"id": "name",
+										"kind": "Text",
+										"label": "Provider name",
+										"placeholder": "Gateway",
+										"required": true
+									},
+									{
+										"id": "base_url",
+										"kind": "Url",
+										"label": "Base URL",
+										"placeholder": "https://gateway.example.com/v1",
+										"required": true
+									},
+									{
+										"id": "model",
+										"kind": "Text",
+										"label": "Model",
+										"placeholder": "gpt-6",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "Key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "provider",
+								"label": "Model provider",
+								"setup_sign_in": null
+							},
+							{
+								"account": "account_label",
+								"fields": [
+									{
+										"id": "account_label",
+										"kind": "Text",
+										"label": "Public account label",
+										"placeholder": "Work",
+										"required": true
+									},
+									{
+										"id": "key",
+										"kind": "Secret",
+										"label": "API key",
+										"placeholder": "",
+										"required": true
+									}
+								],
+								"kind": "api_key",
+								"label": "OpenAI API key",
+								"setup_sign_in": null
+							}
+						],
+						"label": "Codex",
+						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+					}
+				},
+				"epoch": "1",
+				"head_seq": 0,
+				"home": null,
+				"host": "test-host",
+				"instances": [
+					[
+						{
+							"account": "Own",
+							"provider": "Claude"
+						},
+						{
+							"availability": {
+								"Unavailable": {
+									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+								}
+							}
+						}
+					],
+					[
+						{
+							"account": "Own",
+							"provider": "Codex"
+						},
+						{
+							"availability": {
+								"Available": {
+									"auth": "Unmanaged",
+									"models": {
+										"choices": [
+											{
+												"description": "thinks",
+												"efforts": ["Low", "High"],
+												"id": "big",
+												"name": "Big"
+											},
+											{
+												"description": "quick",
+												"efforts": ["Low"],
+												"id": "small",
+												"name": "Small"
+											}
+										],
+										"default": "big"
+									}
+								}
+							}
+						}
+					]
+				]
+			}
+		},
+		"stream": "hello"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Instances": [
+				[
+					{
+						"account": "Own",
+						"provider": "Claude"
+					},
+					{
+						"availability": {
+							"Unavailable": {
+								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+							}
+						}
+					}
+				],
+				[
+					{
+						"account": "Own",
+						"provider": "Codex"
+					},
+					{
+						"availability": {
+							"Available": {
+								"auth": "Unmanaged",
+								"models": {
+									"choices": [
+										{
+											"description": "thinks",
+											"efforts": ["Low", "High"],
+											"id": "big",
+											"name": "Big"
+										},
+										{
+											"description": "quick",
+											"efforts": ["Low"],
+											"id": "small",
+											"name": "Small"
+										}
+									],
+									"default": "big"
+								}
+							}
+						}
+					}
+				]
+			]
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Started": {
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionCreated": {
+						"by": "test-client",
+						"directory": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/work/codex",
+						"effort": "Low",
+						"instance": {
+							"account": "Own",
+							"provider": "Codex"
+						},
+						"model": "small"
+					}
+				},
+				"seq": 1,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"WorkspaceCreated": {
+						"workspace": {
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/worktrees/00000000000000000000000001/",
+							"original": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/work/codex",
+							"repository": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/work/codex",
+							"worktree": "/conductor/target/tmp/conductor-test-0-codex-killed-mid-turn.jsonl/worktrees/00000000000000000000000001"
+						}
+					}
+				},
+				"seq": 2,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": null
+						}
+					}
+				},
+				"seq": 3,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 4,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "prime?"
+					}
+				},
+				"seq": 5,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 5
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "**Assessing primality**\n\nI"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " need"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " determine"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " if"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " 1"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "000"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "003"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " is"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " prime"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " To"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " do"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " this"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " should"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " check"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " its"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " divis"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "ors"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " up"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " the"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " square"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " root"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " of"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " about"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " 1"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "000"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " It"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " seems"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " recall"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " that"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " 1"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "000"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "003"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " is"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " a"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " known"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " prime"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " number"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " often"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " recognized"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " as"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " the"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " first"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " prime"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " above"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " one"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " million"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " think"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " can"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " confidently"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " answer"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " \""
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "yes"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "\""
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " the"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " user's"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " question"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " without"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " needing"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " any"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " tools"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " It"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "’s"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " important"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " verify"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " my"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " information"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " carefully"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " though"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "!"
+					}
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Reasoning": {
+						"text": "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It’s important to verify my information carefully, though!"
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "Yes"
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "."
+					}
+				},
+				"seq": 7,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "Yes."
+					}
+				},
+				"seq": 8,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 5
+						}
+					}
+				},
+				"seq": 9,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "Count from 1 to 300, one number per line."
+					}
+				},
+				"seq": 11,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 11
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "**Compiling numbers**\n\nI'm"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " tasked"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " with"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " creating"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " a"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " list"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " of"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " 300"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " numbers"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " one"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " per"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " line"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " It"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " sounds"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " massive"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " but"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " straightforward"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "—"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "I'll"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " ensure"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " each"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " number"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " is"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " on"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " its"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " own"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " line"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " need"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " focus"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " on"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " accuracy"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " while"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " keeping"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " the"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " format"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " neat"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " There"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " are"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " around"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " 600"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " tokens"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " work"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " with"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " overall"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " Luckily"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ","
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " it"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " seems"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " won"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "’t"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " need"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " any"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " tools"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " for"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " this"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " task"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": ";"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " I"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " just"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " need"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " to"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " produce"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " the"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " exact"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " output"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " as"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " required"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "."
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " Let's"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " get"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " started"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " on"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": " this"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"ReasoningDelta": {
+						"text": "!"
+					}
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Reasoning": {
+						"text": "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward—I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won’t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!"
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "1"
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "\n"
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "2"
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 11
+						}
+					}
+				},
+				"seq": 14,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SessionClosed": {
+						"reason": {
+							"Exited": {
+								"status": "signal: 9 (SIGKILL)"
+							}
+						}
+					}
+				},
+				"seq": 15,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": "SessionReady",
+				"seq": 16,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": "Accepted",
+		"stream": "command"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"UserMessage": {
+						"by": "test-client",
+						"text": "codeword?"
+					}
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"NativeTurnStarted": {
+						"turn_start": 17
+					}
+				},
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "qu"
+					}
+				},
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantDelta": {
+						"text": "ince"
+					}
+				},
+				"seq": 18,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"AssistantMessage": {
+						"text": "quince"
+					}
+				},
+				"seq": 19,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"SnapshotRecorded": {
+						"snapshot": {
+							"commit": "0000000000000000000000000000000000000001",
+							"turn_start": 17
+						}
+					}
+				},
+				"seq": 20,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"TurnCompleted": {
+						"outcome": "Completed"
+					}
+				},
+				"seq": 21,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	}
 ]
