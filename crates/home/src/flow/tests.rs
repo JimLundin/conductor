@@ -189,7 +189,7 @@ fn a_default_is_a_value_of_its_field_s_type() {
 }
 
 #[test]
-fn only_a_rule_s_when_weighs_a_move() {
+fn a_rule_s_require_weighs_a_move_only_where_its_when_does() {
     for word in ["from", "to"] {
         assert_eq!(
             failure(
@@ -198,7 +198,9 @@ fn only_a_rule_s_when_weighs_a_move() {
                     "require = {{ {word} = {{ has_section = \"Answer\" }} }}"
                 )
             ),
-            format!("rule[2].require.{word}: only a rule's when weighs a move")
+            format!(
+                "rule[2].require.{word}: a rule's require weighs a move only where its when does"
+            )
         );
     }
     assert_eq!(

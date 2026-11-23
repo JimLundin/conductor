@@ -8,7 +8,7 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
-use proto::flow::{Flow, Literal, Predicate, Quantifier, Severity};
+use proto::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use proto::{Issue, ProjectId};
 
 use super::eval::{Failure, Move, holds};
@@ -112,13 +112,11 @@ pub fn check(home: &Snapshot) -> Report {
     let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
         let subject = named(issue.project, &issue.id.to_string());
-        findings.extend(of_issue(
-            flow,
-            &issues,
-            issue,
-            Move::default(),
-            &subject,
-        ));
+        let standing = Move {
+            from: Some(issue),
+            to: Some(issue),
+        };
+        findings.extend(of_issue(flow, &issues, issue, standing, &subject));
     }
     Report { findings }
 }
@@ -147,18 +145,30 @@ pub(crate) fn of_issue(
             message: format!("lacks the section {section:?}"),
         })
         .collect();
-    for rule in &flow.rules {
-        let applies = holds(flow, issues, issue, moving, &rule.when).is_ok();
-        let broken = applies
-            .then(|| holds(flow, issues, issue, moving, &rule.require).err())
-            .flatten();
-        findings.extend(broken.map(|failure| Finding {
+    findings.extend(broken(flow, issues, issue, moving).map(
+        |(rule, failure)| Finding {
             severity: rule.severity,
             subject: Some(subject.to_owned()),
             message: format!("{}: {}", rule.message, explain(&failure)),
-        }));
-    }
+        },
+    ));
     findings
+}
+
+/// Each of the flow's rules that `issue` among `issues` breaks, weighing
+/// `moving`, with why.
+pub(crate) fn broken<'a>(
+    flow: &'a Flow,
+    issues: &'a [&'a Issue],
+    issue: &'a Issue,
+    moving: Move<'a>,
+) -> impl Iterator<Item = (&'a Rule, Failure)> {
+    flow.rules.iter().filter_map(move |rule| {
+        holds(flow, issues, issue, moving, &rule.when).ok()?;
+        holds(flow, issues, issue, moving, &rule.require)
+            .err()
+            .map(|failure| (rule, failure))
+    })
 }
 
 /// A profile that more than one project provides, once each.

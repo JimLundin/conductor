@@ -425,18 +425,37 @@ fn shown(flow: &Flow, kind: &Kind, name: &str) -> bool {
 }
 
 fn rule(flow: &Flow, at: &At, entry: RuleEntry) -> Result<Rule, String> {
+    let when =
+        Predicates { flow, moves: true }.read(&at.key("when"), &entry.when)?;
+    let require = Predicates {
+        flow,
+        moves: weighs_a_move(&when),
+    }
+    .read(&at.key("require"), &entry.require)?;
     Ok(Rule {
         message: entry.message,
         severity: entry.severity,
-        when: Predicates { flow, moves: true }
-            .read(&at.key("when"), &entry.when)?,
-        require: Predicates { flow, moves: false }
-            .read(&at.key("require"), &entry.require)?,
+        when,
+        require,
     })
 }
 
+/// Whether `predicate` looks at the issue before or after an edit.
+fn weighs_a_move(predicate: &Predicate) -> bool {
+    match predicate {
+        Predicate::From(_) | Predicate::To(_) => true,
+        Predicate::Not(inner) => weighs_a_move(inner),
+        Predicate::Across { condition, .. } => weighs_a_move(condition),
+        Predicate::All(parts) | Predicate::Any(parts) => {
+            parts.iter().any(weighs_a_move)
+        }
+        _ => false,
+    }
+}
+
 /// How a rule's predicates are read: against the flow's declarations, and
-/// whether they may weigh a move, which only a rule's `when` may.
+/// whether they may weigh a move, which a rule's `require` may only where
+/// its `when` does: a new issue has no before.
 ///
 /// Hand-written rather than derived: a predicate is an inline table whose
 /// one key decides what its value is, and its names must be ones the flow
@@ -484,9 +503,9 @@ impl Predicates<'_> {
             .map(Predicate::Has),
             "has_section" => word_of(&here, inner).map(Predicate::HasSection),
             "field" => field_atom(flow, &here, inner),
-            "from" | "to" if !self.moves => {
-                here.fail("only a rule's when weighs a move")
-            }
+            "from" | "to" if !self.moves => here.fail(
+                "a rule's require weighs a move only where its when does",
+            ),
             "from" => nested(inner).map(Predicate::From),
             "to" => nested(inner).map(Predicate::To),
             "not" => nested(inner).map(Predicate::Not),

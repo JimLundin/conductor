@@ -146,7 +146,7 @@ fn a_done_spec_needs_a_done_design_review_among_its_children() {
 }
 
 #[test]
-fn blocking_holds_until_every_blocker_is_finished_and_ends_on_a_cycle() {
+fn blocking_holds_until_every_blocker_is_built_and_ends_on_a_cycle() {
     let flow = flow();
     let one = linked(issue("one", "task", "active"), "blocked_by", &["two"]);
     let two = linked(issue("two", "task", "open"), "blocked_by", &["one"]);
@@ -154,16 +154,14 @@ fn blocking_holds_until_every_blocker_is_finished_and_ends_on_a_cycle() {
         issues: Vec::from([one.clone(), two]),
         problems: Vec::new(),
     };
+    let standing = Move {
+        from: Some(&one),
+        to: Some(&one),
+    };
     assert_eq!(
-        holds(
-            &flow,
-            &among(&graph),
-            &one,
-            Move::default(),
-            &rule(&flow, 1)
-        ),
+        holds(&flow, &among(&graph), &one, standing, &rule(&flow, 1)),
         Err(Failure {
-            predicate: terminal(),
+            predicate: Predicate::StatusRole(Role::Review),
             issue: id("two"),
             path: Vec::from([step("blocked_by", "two")]),
         })

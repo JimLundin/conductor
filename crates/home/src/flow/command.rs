@@ -523,10 +523,8 @@ pub fn write(
         by: context.by.clone(),
         mark: context.mark.clone(),
     };
-    let (file, moved) = match edit {
-        Edit::New { id, issue } => {
-            (opened(home, flow, *id, &sign, issue)?, false)
-        }
+    let file = match edit {
+        Edit::New { id, issue } => opened(home, flow, *id, &sign, issue)?,
         Edit::Change { id, changes } => {
             let stem = id.to_string();
             let file = home
@@ -534,13 +532,10 @@ pub fn write(
                 .iter()
                 .find(|file| file.stem == stem)
                 .ok_or_else(|| format!("no issue is called {id}"))?;
-            let moved = changes
-                .iter()
-                .any(|change| matches!(change, IssueChange::Move { .. }));
-            (changed(flow, file, changes, &sign)?, moved)
+            changed(flow, file, changes, &sign)?
         }
     };
-    finished(home, flow, file, moved)
+    finished(home, flow, file)
 }
 
 /// Who writes a file, and when.
@@ -570,13 +565,13 @@ impl Signer {
     }
 }
 
-/// The file read back among the others, refused on a structural problem
-/// or a broken `error` rule, else written with any warning.
+/// The file read back among the others, weighed as a move from the issue
+/// it was, refused on a structural problem or a broken `error` rule, else
+/// written with any warning.
 fn finished(
     home: &Snapshot,
     flow: &Flow,
     file: File,
-    moved: bool,
 ) -> Result<Written, String> {
     let after = home.with(file.clone());
     let graph = after.graph();
@@ -604,13 +599,9 @@ fn finished(
             issue.project == file.project && issue.id.to_string() == file.stem
         })
         .map_or_else(Vec::new, |issue| {
-            let moving = if moved {
-                Move {
-                    from: home.issue(issue.id),
-                    to: Some(issue),
-                }
-            } else {
-                Move::default()
+            let moving = Move {
+                from: home.issue(issue.id),
+                to: Some(issue),
             };
             let issues: Vec<&Issue> = graph.issues.iter().collect();
             of_issue(flow, &issues, issue, moving, &subject)

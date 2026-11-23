@@ -10,19 +10,26 @@ fn text(value: &str) -> String {
     String::from(value)
 }
 
+const FLOW: &str = include_str!("../test-flow.toml");
+
 /// The tests' flow with every status renamed and a second active status
 /// after the first.
 fn renamed() -> Flow {
-    let mut flow =
-        load(include_str!("../test-flow.toml")).unwrap_or_else(|_| Flow {
-            default_kind: String::new(),
-            statuses: Vec::new(),
-            fields: Vec::new(),
-            kinds: Vec::new(),
-            relations: Vec::new(),
-            stages: Vec::new(),
-            rules: Vec::new(),
-        });
+    renamed_from(FLOW)
+}
+
+/// The flow `written` with every status renamed and a second active
+/// status after the first.
+fn renamed_from(written: &str) -> Flow {
+    let mut flow = load(written).unwrap_or_else(|_| Flow {
+        default_kind: String::new(),
+        statuses: Vec::new(),
+        fields: Vec::new(),
+        kinds: Vec::new(),
+        relations: Vec::new(),
+        stages: Vec::new(),
+        rules: Vec::new(),
+    });
     for status in &mut flow.statuses {
         status.name = text(match status.role {
             Role::Idle => "backlog",
@@ -133,5 +140,41 @@ fn an_issue_not_yet_built_whose_session_landed_work_is_up_for_review_by_role() {
             None,
             Some("checking"),
         ]
+    );
+}
+
+#[test]
+fn what_can_start_is_what_the_flow_s_start_rule_says() {
+    let blocked_by_one_in = |flow: &Flow, status: &str| {
+        let mut waiting = issue(WAITING, "queued");
+        waiting
+            .links
+            .insert(text("blocked_by"), Vec::from([BLOCKER]));
+        let blocking = issue(BLOCKER, status);
+        can_start(flow, &[&waiting, &blocking], &waiting)
+    };
+    let built =
+        "via = \"blocked_by\", where = { any = [{ status_role = \"review\" }, ";
+    assert!(FLOW.contains(built), "the flow's start rule has moved");
+    let finished = renamed_from(&FLOW.replacen(
+        built,
+        "via = \"blocked_by\", where = { any = [",
+        1,
+    ));
+    assert!(blocked_by_one_in(&renamed(), "checking"));
+    assert!(!blocked_by_one_in(&finished, "checking"));
+    assert!(blocked_by_one_in(&finished, "shipped"));
+}
+
+#[test]
+fn only_waiting_work_starts() {
+    let flow = renamed();
+    let from = |status: &str| {
+        let issue = issue(WAITING, status);
+        can_start(&flow, &[&issue], &issue)
+    };
+    assert_eq!(
+        ["backlog", "queued", "checking", "shipped", "abandoned"].map(from),
+        [true, true, false, false, false]
     );
 }

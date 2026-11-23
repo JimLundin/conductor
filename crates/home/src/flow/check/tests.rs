@@ -171,3 +171,35 @@ fn two_issue_files_with_one_id_fail_the_check() {
         report.text()
     );
 }
+
+#[test]
+fn an_active_issue_whose_blocker_isn_t_built_warns() {
+    const TASK: &str = "0tm7zy00";
+    const BLOCKER: &str = "0tm7zz00";
+    let mut home = inputs(FLOW, "done");
+    home.issues.extend([
+        issue(
+            TASK,
+            &format!(
+                "title = \"Wire it\"\nkind = \"task\"\nstatus = \"active\"\n\
+                 blocked_by = [\"{BLOCKER}\"]\n"
+            ),
+            "## What\n\n## Acceptance\n",
+        ),
+        issue(
+            BLOCKER,
+            "title = \"First\"\nkind = \"task\"\nstatus = \"open\"\n",
+            "## What\n\n## Acceptance\n",
+        ),
+    ]);
+    let report = check(&home);
+    let warned = Finding {
+        severity: Severity::Warn,
+        subject: Some(subject(TASK)),
+        message: format!(
+            "Work starts once everything blocking it is built: {{ status_role = \"review\" }} \
+             fails on {BLOCKER} (via blocked_by {BLOCKER})"
+        ),
+    };
+    assert!(report.findings.contains(&warned), "{}", report.text());
+}
