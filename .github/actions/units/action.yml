@@ -119,11 +119,13 @@ runs:
         cache-dependency-glob: standards/checks/uv.lock
 
     # uv fetches the pinned Python as a standalone build; setup-python has no
-    # build of every patch release for every runner image.
+    # build of every patch release for every runner image. UV_PYTHON tells
+    # every later uv the pin, as check.sh does.
     - shell: bash
       run: |
         uv python install "$PYTHON"
         dirname "$(uv python find "$PYTHON")" >>"$GITHUB_PATH"
+        echo "UV_PYTHON=$PYTHON" >>"$GITHUB_ENV"
 
     - uses: actions/setup-node@v7
       with:
