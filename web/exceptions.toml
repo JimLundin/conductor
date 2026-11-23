@@ -19,3 +19,8 @@ reason = "an Effect tagged enum's variant constructors are PascalCase functions 
 path = "vite.config.ts"
 rule = "lint/style/noDefaultExport"
 reason = "Vite and Vitest read their config from the file's default export"
+
+[[exception]]
+path = "knip.json"
+rule = "drift:ignoreBinaries:wasm-pack"
+reason = "`npm run pipe` runs wasm-pack, a Rust tool installed beside the toolchain, not an npm package"

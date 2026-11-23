@@ -6,8 +6,9 @@
 		"node": ">=26"
 	},
 	"scripts": {
-		"dev": "vite",
-		"build": "vite build",
+		"dev": "npm run pipe && vite",
+		"pipe": "wasm-pack build ../crates/web-iroh --target web --profile wasm --out-dir ../../web/web-iroh --no-pack",
+		"build": "npm run pipe && vite build",
 		"preview": "vite preview",
 		"test": "vitest run",
 		"test:full": "vitest run --mode full"

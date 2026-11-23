@@ -1,5 +1,6 @@
 {
 	"$schema": "https://unpkg.com/knip@latest/schema.json",
 	"entry": ["profiles/fast.ts", "profiles/full.ts"],
-	"ignoreFiles": ["profiles/mutation.ts"]
+	"ignoreFiles": ["profiles/mutation.ts"],
+	"ignoreBinaries": ["wasm-pack"]
 }

@@ -47,7 +47,7 @@ pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
 };
 pub use frame::{
-    Codec, Frame, FrameError, HEADER_LEN, body_len, decode, encode,
+    Codec, Frame, FrameError, HEADER_LEN, body_len, decode, encode, header,
 };
 pub use home::{Checkout, Cloning, Home, HomeSync, Origin, Project, StartAt};
 pub use id::{DRAWS, Draws, IssueId, ProjectId};

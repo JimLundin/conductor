@@ -4746,6 +4746,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "web-iroh"
+version = "0.1.0"
+dependencies = [
+ "iroh",
+ "proto",
+ "thiserror 2.0.21",
+ "tokio",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"

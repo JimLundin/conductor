@@ -29,21 +29,34 @@ tools = ["PYTHON"]
 tier = "commit"
 paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
 
+# The browser's iroh, the only crate built for wasm, under clippy on its
+# target; the workspace's lint checks it on the host's.
+[[suite]]
+name = "wasm-clippy"
+command = "cargo clippy --target wasm32-unknown-unknown -p web-iroh --lib"
+[[suite.when]]
+tier = "commit"
+packages = ["web-iroh"]
+
 # The web app, under the shared TypeScript standard, which keys and records
 # its own checks. Its key holds no tier, so the commit checks and the step's
 # tests are two suites: `web-step` reuses the passes `web` recorded and adds
-# the Vitest run.
+# the Vitest run. Both first build web-iroh into web/web-iroh, whose
+# declarations the app type-checks against. The standard keys its checks by
+# web/'s files alone, so `web`, which a change to web-iroh also runs, runs
+# them all afresh.
 [[suite]]
 name = "web"
-command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" commit"
+command = "cd web && npm ci --no-fund --no-audit --silent && npm run build --silent && \"$STANDARDS/typescript/check.sh\" commit --no-cache"
 tools = ["NODE"]
 [[suite.when]]
 tier = "commit"
 paths = ["web/**"]
+packages = ["web-iroh"]
 
 [[suite]]
 name = "web-step"
-command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" step"
+command = "cd web && npm ci --no-fund --no-audit --silent && npm run pipe --silent && \"$STANDARDS/typescript/check.sh\" step"
 tools = ["NODE"]
 [[suite.when]]
 tier = "step"

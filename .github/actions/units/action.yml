@@ -84,9 +84,11 @@ runs:
       with:
         version: v${{ env.SCCACHE }}
 
+    # wasm-pack builds web-iroh for the web suites; ring compiles its C for
+    # wasm32 with the clang the runner image ships.
     - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2.90.8
       with:
-        tool: nextest@${{ env.NEXTEST }}
+        tool: nextest@${{ env.NEXTEST }},wasm-pack@0.15.1
 
     - id: decisions
       uses: actions/cache@v6
