@@ -113,9 +113,12 @@ runs:
         enable-cache: true
         cache-dependency-glob: standards/checks/uv.lock
 
-    # uv fetches the pinned Python as a standalone build; setup-python has no
-    # build of every patch release for every runner image.
+    # Conductor's tools and suites run on this Python; the standards no longer
+    # pin one. uv fetches it as a standalone build; setup-python has no build
+    # of every patch release for every runner image.
     - shell: bash
+      env:
+        PYTHON: "3.15"
       run: |
         uv python install "$PYTHON"
         dirname "$(uv python find "$PYTHON")" >>"$GITHUB_PATH"
