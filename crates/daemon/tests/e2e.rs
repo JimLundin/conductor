@@ -14,8 +14,7 @@ use std::time::Duration;
 
 use client::host_fold::HostFold;
 use client::host_view::{
-    Approval, HostView, Item, ReplyState, RequestState, StatusLabel, Subagent,
-    SubagentStatus, ToolState,
+    Approval, HostView, Item, ReplyState, RequestState, StatusLabel, ToolState,
 };
 use client::link::Cursor;
 use daemon::{HostOptions, Hosted, Plugins};
@@ -992,6 +991,28 @@ async fn raw_resume_to_ready(
     Ok(())
 }
 
+/// The events the raw client receives, through the first that reaches
+/// `until`.
+async fn raw_events_until(
+    client: &mut RawClient,
+    until: Until,
+) -> Fallible<Vec<Event>> {
+    client
+        .events_until(|event| reached(&until, &event.kind))
+        .await
+}
+
+/// The events through the first that reaches `until`, without the workspace
+/// and snapshot metadata, which have tests of their own.
+async fn raw_conversation_events_until(
+    client: &mut RawClient,
+    until: Until,
+) -> Fallible<Vec<Event>> {
+    let mut events = raw_events_until(client, until).await?;
+    events.retain(|event| conversation_event(&event.kind));
+    Ok(events)
+}
+
 /// The events through the first that reaches `until`, without the workspace
 /// and snapshot metadata, which have tests of their own.
 async fn conversation_events_until(
@@ -1044,24 +1065,6 @@ fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
         .filter(|event| conversation_event(&event.kind))
         .map(|event| event.kind.clone())
         .collect()
-}
-
-async fn assert_ping_turn(
-    link: &HostLink,
-    updates: &mut Updates,
-    session: SessionId,
-) -> Fallible {
-    let _ = send(link, message(session, "ping")).await?;
-    assert_eq!(
-        kinds_until(updates, Until::TurnEnd).await?,
-        [
-            user("ping"),
-            delta("pong"),
-            reply("pong"),
-            turn_end(TurnOutcome::Completed)
-        ]
-    );
-    Ok(())
 }
 
 async fn resume_to_ready(
@@ -1348,9 +1351,11 @@ async fn a_claude_turn_streams_asks_and_finishes() -> Fallible {
 async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
     let fx = host().await?;
     let dir = scratch("remove", "claude-approve.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    let opened = events_until(&mut updates, Until::Ready).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let opened = raw_events_until(&mut phone, Until::Ready).await?;
     let worktree = opened
         .iter()
         .find_map(|event| match &event.kind {
@@ -1361,9 +1366,11 @@ async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
         })
         .ok_or("the session made no workspace")?;
     assert!(worktree.is_dir());
-    accepted(&link, CommandBody::RemoveSession { session }).await?;
+    phone
+        .accepted(CommandBody::RemoveSession { session })
+        .await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Removed).await?,
+        raw_kinds_until(&mut phone, Until::Removed).await?,
         [
             EventKind::SessionClosed {
                 reason: CloseReason::Stopped {
@@ -1377,10 +1384,12 @@ async fn removing_a_session_stops_it_and_removes_its_workspace() -> Fallible {
     );
     assert!(!worktree.exists());
     assert_eq!(
-        send(&link, CommandBody::Continue { session }).await?,
+        phone.send(CommandBody::Continue { session }).await?.value,
         CommandResult::Rejected(Rejection::SessionRemoved)
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -1388,15 +1397,17 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() -> Fallible
 {
     let fx = host().await?;
     let dir = scratch("deny", "claude-deny-interrupt.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
     assert_eq!(
-        send(&link, interrupt(session)).await?,
+        phone.send(interrupt(session)).await?.value,
         CommandResult::Rejected(Rejection::NoTurnRunning)
     );
-    let _ = send(&link, message(session, "create b.txt")).await?;
+    let _ = phone.send(message(session, "create b.txt")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Request).await?,
+        raw_kinds_until(&mut phone, Until::Request).await?,
         [
             opening(Provider::Claude, &dir),
             Vec::from([user("create b.txt")]),
@@ -1404,10 +1415,10 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() -> Fallible
         ]
         .concat()
     );
-    accepted(&link, resolve(session, 1, Decision::Deny)).await?;
+    phone.accepted(resolve(session, 1, Decision::Deny)).await?;
     let text = "The write to `b.txt` was denied (\"The user does not want b.txt.\"), so I did not retry and no file was created.";
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             decided(Decision::Deny, DENIED_CALL, ToolOutcome::Declined),
             [
@@ -1427,19 +1438,21 @@ async fn a_denied_request_continues_and_an_interrupt_ends_the_turn() -> Fallible
         .concat()
     );
 
-    let _ = send(&link, message(session, "count to 100")).await?;
+    let _ = phone.send(message(session, "count to 100")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Delta).await?,
+        raw_kinds_until(&mut phone, Until::Delta).await?,
         [user("count to 100"), delta("1")]
     );
-    accepted(&link, interrupt(session)).await?;
+    phone.accepted(interrupt(session)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [reply("1"), turn_end(TurnOutcome::Interrupted)]
     );
 
-    assert_ping_turn(&link, &mut updates, session).await?;
-    fx.shutdown_with_client(link).await
+    raw_ping_turn(&mut phone, session).await?;
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// The recording starts the turn only once `release` exists, and the fake
@@ -1450,13 +1463,15 @@ async fn held_interrupt(
     dir: PathBuf,
     provider: Provider,
 ) -> Fallible {
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(provider, &dir)).await?;
-    let _ = send(&link, message(session, "count to 300")).await?;
-    accepted(&link, interrupt(session)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(provider, &dir)).await?;
+    let _ = phone.send(message(session, "count to 300")).await?;
+    phone.accepted(interrupt(session)).await?;
     std::fs::write(dir.join("release"), "")?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             opening(provider, &dir),
             Vec::from([
@@ -1466,7 +1481,9 @@ async fn held_interrupt(
         ]
         .concat()
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -1482,12 +1499,14 @@ async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() -> Fallible
 async fn an_interrupt_withdraws_the_open_request() -> Fallible {
     let fx = host().await?;
     let dir = scratch("withdraw", "claude-withdraw.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    let _ = send(&link, message(session, "create d.txt")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "create d.txt")).await?;
     let call = "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq";
     assert_eq!(
-        kinds_until(&mut updates, Until::Request).await?,
+        raw_kinds_until(&mut phone, Until::Request).await?,
         [
             opening(Provider::Claude, &dir),
             Vec::from([user("create d.txt")]),
@@ -1495,9 +1514,9 @@ async fn an_interrupt_withdraws_the_open_request() -> Fallible {
         ]
         .concat()
     );
-    accepted(&link, interrupt(session)).await?;
+    phone.accepted(interrupt(session)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             EventKind::RequestResolved {
                 request: RequestId(1),
@@ -1513,10 +1532,15 @@ async fn an_interrupt_withdraws_the_open_request() -> Fallible {
         ]
     );
     assert_eq!(
-        send(&link, resolve(session, 1, Decision::Approve)).await?,
+        phone
+            .send(resolve(session, 1, Decision::Approve))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 fn answer(session: SessionId, request: u64, words: &[&str]) -> CommandBody {
@@ -1599,11 +1623,13 @@ fn sent_to_agent(dir: &Path) -> Fallible<String> {
 async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
     let fx = host().await?;
     let dir = scratch("question", "claude-question.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    let _ = send(&link, message(session, "ask me")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "ask me")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Question).await?,
+        raw_kinds_until(&mut phone, Until::Question).await?,
         [
             opening(Provider::Claude, &dir),
             Vec::from([
@@ -1620,27 +1646,23 @@ async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
         ]
         .concat()
     );
-    let desk_options = LinkOptions {
-        network: Network::Local,
-        ..LinkOptions::new(ClientName(String::from("desk")))
-    };
-    let (desk, mut at_desk) =
-        spawn_link(fx.target.clone(), desk_options).await?;
-    until_live(&mut at_desk).await?;
+    let desk = RawClient::live(&fx.target, "desk", &mut feed).await?;
     assert_eq!(
         [
-            send(&link, resolve(session, 1, Decision::Approve)).await?,
-            send(
-                &link,
-                CommandBody::Answer {
+            phone
+                .send(resolve(session, 1, Decision::Approve))
+                .await?
+                .value,
+            phone
+                .send(CommandBody::Answer {
                     session,
                     request: RequestId(1),
                     answers: Vec::new(),
-                }
-            )
-            .await?,
-            send(&link, answer(session, 1, &["Blue"])).await?,
-            send(&desk, answer(session, 1, &["Red"])).await?,
+                })
+                .await?
+                .value,
+            phone.send(answer(session, 1, &["Blue"])).await?.value,
+            desk.send(answer(session, 1, &["Red"])).await?.value,
         ],
         [
             CommandResult::Rejected(Rejection::WrongReply {
@@ -1658,7 +1680,7 @@ async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
         ]
     );
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             answered_blue(),
             finished(
@@ -1676,8 +1698,10 @@ async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
             .count(),
         1
     );
-    link.stop().await?;
-    fx.shutdown_with_client(desk).await
+    phone.close().await;
+    desk.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// Codex asks with `requestUserInput`, answered as an RPC result keyed by
@@ -1685,11 +1709,13 @@ async fn a_claude_question_is_answered_once_by_the_first_client() -> Fallible {
 #[tokio::test]
 async fn a_codex_question_is_answered_by_its_question_id() -> Fallible {
     let (fx, dir) = codex_host("codex-question.jsonl").await?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let _ = send(&link, message(session, "ask me")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = phone.send(message(session, "ask me")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Question).await?,
+        raw_kinds_until(&mut phone, Until::Question).await?,
         [
             opening(Provider::Codex, &dir),
             Vec::from([
@@ -1703,9 +1729,9 @@ async fn a_codex_question_is_answered_by_its_question_id() -> Fallible {
         ]
         .concat()
     );
-    accepted(&link, answer(session, 1, &["Blue"])).await?;
+    phone.accepted(answer(session, 1, &["Blue"])).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             answered_blue(),
             delta("Blue"),
@@ -1713,7 +1739,9 @@ async fn a_codex_question_is_answered_by_its_question_id() -> Fallible {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// Approving for the session adds the CLI's suggested rule for the session
@@ -1723,9 +1751,11 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
 -> Fallible {
     let fx = host().await?;
     let dir = scratch("for-session", "claude-for-session.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    let _ = send(&link, message(session, "touch t1.txt")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "touch t1.txt")).await?;
     let (first, again) = (
         "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
         "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
@@ -1734,7 +1764,7 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
         command: String::from("touch t1.txt"),
     };
     assert_eq!(
-        kinds_until(&mut updates, Until::Request).await?,
+        raw_kinds_until(&mut phone, Until::Request).await?,
         [
             opening(Provider::Claude, &dir),
             Vec::from([
@@ -1751,10 +1781,12 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
         ]
         .concat()
     );
-    accepted(&link, resolve(session, 1, Decision::ApproveForSession)).await?;
-    let first_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
-    let _ = send(&link, message(session, "again")).await?;
-    let second_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
+    phone
+        .accepted(resolve(session, 1, Decision::ApproveForSession))
+        .await?;
+    let first_turn = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
+    let _ = phone.send(message(session, "again")).await?;
+    let second_turn = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         (
             calls_and_requests(first_turn),
@@ -1786,7 +1818,9 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
             .count(),
         1
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// Codex takes `acceptForSession` for a command, which the stand-in waits
@@ -1795,9 +1829,11 @@ async fn a_claude_call_approved_for_the_session_runs_again_without_asking()
 async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
 -> Fallible {
     let (fx, dir) = codex_host("codex-for-session.jsonl").await?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let _ = send(&link, message(session, "touch t1.txt")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = phone.send(message(session, "touch t1.txt")).await?;
     let command = "/usr/bin/zsh -c 'touch t1.txt'";
     let (first, again) = (
         "exec-6a70037b-22b5-482b-955f-e442841e7e21",
@@ -1807,11 +1843,13 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
         command: String::from(command),
     };
     let asked =
-        calls_and_requests(kinds_until(&mut updates, Until::Request).await?);
-    accepted(&link, resolve(session, 1, Decision::ApproveForSession)).await?;
-    let first_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
-    let _ = send(&link, message(session, "again")).await?;
-    let second_turn = kinds_until(&mut updates, Until::TurnEnd).await?;
+        calls_and_requests(raw_kinds_until(&mut phone, Until::Request).await?);
+    phone
+        .accepted(resolve(session, 1, Decision::ApproveForSession))
+        .await?;
+    let first_turn = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
+    let _ = phone.send(message(session, "again")).await?;
+    let second_turn = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         (
             asked,
@@ -1853,24 +1891,29 @@ async fn a_codex_command_accepted_for_the_session_runs_again_without_asking()
             ]),
         )
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// An interrupt withdraws an open question, as it does an approval: Claude
-/// cancels it, Codex withdraws it after the turn ends, and either way the
-/// view shows it withdrawn and a late answer is refused.
+/// cancels it, Codex withdraws it after the turn ends, and either way it is
+/// withdrawn and a late answer is refused.
 #[tokio::test]
 async fn an_interrupt_withdraws_an_open_question() -> Fallible {
     let fx = host().await?;
     let dir = scratch("question-withdraw", "claude-question-withdraw.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    let _ = send(&link, message(session, "ask me")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "ask me")).await?;
     let mut events =
-        conversation_events_until(&mut updates, Until::Question).await?;
-    accepted(&link, interrupt(session)).await?;
-    events
-        .extend(conversation_events_until(&mut updates, Until::TurnEnd).await?);
+        raw_conversation_events_until(&mut phone, Until::Question).await?;
+    phone.accepted(interrupt(session)).await?;
+    events.extend(
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?,
+    );
     assert_eq!(
         events
             .iter()
@@ -1898,42 +1941,29 @@ async fn an_interrupt_withdraws_an_open_question() -> Fallible {
         ]
     );
     assert_eq!(
-        send(&link, answer(session, 1, &["Pear"])).await?,
+        phone.send(answer(session, 1, &["Pear"])).await?.value,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
-    let questions = items(&fold(events), session)
-        .into_iter()
-        .filter_map(|item| match item {
-            Item::Question { state, .. } => Some(state),
-            Item::User { .. }
-            | Item::Reply { .. }
-            | Item::Reasoning { .. }
-            | Item::Tool { .. }
-            | Item::TurnCompleted(_)
-            | Item::Continued(_)
-            | Item::ModelChanged(_)
-            | Item::Finishing
-            | Item::Finished(_)
-            | Item::Error(_) => None,
-        })
-        .collect::<Vec<RequestState>>();
-    assert_eq!(questions, [RequestState::Resolved(Resolution::Withdrawn)]);
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
 async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end()
 -> Fallible {
     let (fx, dir) = codex_host("codex-question-withdraw.jsonl").await?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let _ = send(&link, message(session, "ask me")).await?;
-    let question = kinds_until(&mut updates, Until::Question).await?;
-    accepted(&link, interrupt(session)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = phone.send(message(session, "ask me")).await?;
+    let question = raw_kinds_until(&mut phone, Until::Question).await?;
+    phone.accepted(interrupt(session)).await?;
     assert_eq!(
         (
             question.last().cloned(),
-            kinds_until(&mut updates, Until::Resolved).await?
+            raw_kinds_until(&mut phone, Until::Resolved).await?
         ),
         (
             Some(asked(
@@ -1951,12 +1981,14 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end()
         )
     );
     assert_eq!(
-        send(&link, answer(session, 1, &["Pear"])).await?,
+        phone.send(answer(session, 1, &["Pear"])).await?.value,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
     std::fs::write(dir.join("release"), "")?;
     assert_eq!(sent_to_agent(&dir)?.matches("\"answers\"").count(), 0);
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// The stand-in stops reading after `initialize`, so the message can't
@@ -1965,11 +1997,13 @@ async fn a_codex_interrupt_withdraws_the_open_question_at_the_turn_end()
 async fn a_message_the_agent_never_gets_fails_its_turn() -> Fallible {
     let fx = host().await?;
     let dir = scratch("hang-up", "claude-hang-up.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    accepted(&link, message(session, "hi")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    phone.accepted(message(session, "hi")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [
             opening(Provider::Claude, &dir),
             Vec::from([
@@ -1984,11 +2018,11 @@ async fn a_message_the_agent_never_gets_fails_its_turn() -> Fallible {
         .concat()
     );
     assert_eq!(
-        send(&link, interrupt(session)).await?,
+        phone.send(interrupt(session)).await?.value,
         CommandResult::Rejected(Rejection::NoTurnRunning)
     );
     assert_eq!(
-        kinds_until(&mut updates, Until::Closed).await?,
+        raw_kinds_until(&mut phone, Until::Closed).await?,
         [EventKind::SessionClosed {
             reason: CloseReason::Exited {
                 status: String::from("exit status: 0"),
@@ -1996,10 +2030,12 @@ async fn a_message_the_agent_never_gets_fails_its_turn() -> Fallible {
         }]
     );
     assert_eq!(
-        send(&link, message(session, "hi")).await?,
+        phone.send(message(session, "hi")).await?.value,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -2010,10 +2046,12 @@ async fn a_missing_claude_binary_closes_the_session() -> Fallible {
     let fx = host_with(script.clone()).await?;
     std::fs::remove_file(script)?;
     let dir = scratch("missing-binary", "claude-approve.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Closed).await?,
+        raw_kinds_until(&mut phone, Until::Closed).await?,
         [
             EventKind::SessionCreated {
                 instance: instance(Provider::Claude),
@@ -2032,10 +2070,12 @@ async fn a_missing_claude_binary_closes_the_session() -> Fallible {
         ]
     );
     assert_eq!(
-        send(&link, message(session, "hi")).await?,
+        phone.send(message(session, "hi")).await?.value,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// Two sessions' turns run at once on one app-server: each session's events
@@ -2126,24 +2166,28 @@ async fn a_codex_interrupt_before_the_turn_starts_is_sent_by_turn_id()
 async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs()
 -> Fallible {
     let (fx, dir) = codex_host("codex-interrupt.jsonl").await?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let _ = send(&link, message(session, "count to 300")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = phone.send(message(session, "count to 300")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Delta).await?,
+        raw_kinds_until(&mut phone, Until::Delta).await?,
         [
             opening(Provider::Codex, &dir),
             Vec::from([user("count to 300"), delta("1")]),
         ]
         .concat()
     );
-    accepted(&link, interrupt(session)).await?;
+    phone.accepted(interrupt(session)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd).await?,
+        raw_kinds_until(&mut phone, Until::TurnEnd).await?,
         [delta("\n"), turn_end(TurnOutcome::Interrupted)]
     );
-    assert_ping_turn(&link, &mut updates, session).await?;
-    fx.shutdown_with_client(link).await
+    raw_ping_turn(&mut phone, session).await?;
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// Codex withdraws the open request only after the interrupted turn ends,
@@ -2154,16 +2198,18 @@ async fn a_codex_interrupt_mid_stream_ends_the_turn_and_the_next_runs()
 async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
 -> Fallible {
     let (fx, dir) = codex_host("codex-withdraw.jsonl").await?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let _ = send(&link, message(session, "create d.txt")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = phone.send(message(session, "create d.txt")).await?;
     let call =
         ToolCallId(String::from("exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b"));
     let tool = ToolKind::Command {
         command: String::from("/usr/bin/zsh -lc 'printf %s d > d.txt'"),
     };
     assert_eq!(
-        kinds_until(&mut updates, Until::Request).await?,
+        raw_kinds_until(&mut phone, Until::Request).await?,
         [
             opening(Provider::Codex, &dir),
             Vec::from([
@@ -2185,9 +2231,9 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
         ]
         .concat()
     );
-    accepted(&link, interrupt(session)).await?;
+    phone.accepted(interrupt(session)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Resolved).await?,
+        raw_kinds_until(&mut phone, Until::Resolved).await?,
         [
             turn_end(TurnOutcome::Interrupted),
             EventKind::RequestResolved {
@@ -2197,19 +2243,24 @@ async fn a_codex_interrupt_withdraws_the_open_request_at_the_turn_end()
         ]
     );
     assert_eq!(
-        send(&link, resolve(session, 1, Decision::Approve)).await?,
+        phone
+            .send(resolve(session, 1, Decision::Approve))
+            .await?
+            .value,
         CommandResult::Rejected(Rejection::UnknownRequest)
     );
     std::fs::write(dir.join("release"), "")?;
     // Codex's withdrawal plays before the next turn and is ignored.
-    assert_ping_turn(&link, &mut updates, session).await?;
+    raw_ping_turn(&mut phone, session).await?;
     assert_eq!(
         std::fs::read_to_string(dir.join("stdin.jsonl"))?
             .matches("\"decision\"")
             .count(),
         0
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// Both thread starts must have answered before the app-server exits.
@@ -2220,15 +2271,17 @@ async fn the_app_server_exiting_closes_every_codex_session() -> Fallible {
         recording_file("codex-exit.jsonl"),
         dir.join("stdout.2.jsonl"),
     )?;
-    let (link, mut updates) = fx.connect().await?;
-    let first_session = launch(&link, start(Provider::Codex, &dir)).await?;
-    let first = conversation_events_until(&mut updates, Until::Ready).await?;
-    let second_session = launch(&link, start(Provider::Codex, &dir)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let first_session = phone.started(start(Provider::Codex, &dir)).await?;
+    let first = raw_conversation_events_until(&mut phone, Until::Ready).await?;
+    let second_session = phone.started(start(Provider::Codex, &dir)).await?;
     assert_ne!(first_session, second_session);
     let seen = [
         first,
-        conversation_events_until(&mut updates, Until::Closed).await?,
-        conversation_events_until(&mut updates, Until::Closed).await?,
+        raw_conversation_events_until(&mut phone, Until::Closed).await?,
+        raw_conversation_events_until(&mut phone, Until::Closed).await?,
     ]
     .concat();
     let closed = EventKind::SessionClosed {
@@ -2245,17 +2298,19 @@ async fn the_app_server_exiting_closes_every_codex_session() -> Fallible {
         )
     );
     assert_eq!(
-        send(&link, message(first_session, "hi")).await?,
+        phone.send(message(first_session, "hi")).await?.value,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    let next_session = launch(&link, start(Provider::Codex, &dir)).await?;
+    let next_session = phone.started(start(Provider::Codex, &dir)).await?;
     assert_ne!(next_session, first_session);
     assert_ne!(next_session, second_session);
     assert_eq!(
-        kinds_until(&mut updates, Until::Ready).await?,
+        raw_kinds_until(&mut phone, Until::Ready).await?,
         opening(Provider::Codex, &dir)
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// The states before the link reported an error, and the error.
@@ -3175,19 +3230,19 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers()
 -> Fallible {
     let fx = host().await?;
     let dir = scratch("chosen", "claude-approve.jsonl")?;
-    let (link, mut updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     assert_eq!(
         [
-            send(
-                &link,
-                start_with(Provider::Claude, &dir, "huge", Effort::Low)
-            )
-            .await?,
-            send(
-                &link,
-                start_with(Provider::Claude, &dir, "small", Effort::High)
-            )
-            .await?,
+            phone
+                .send(start_with(Provider::Claude, &dir, "huge", Effort::Low))
+                .await?
+                .value,
+            phone
+                .send(start_with(Provider::Claude, &dir, "small", Effort::High))
+                .await?
+                .value,
         ],
         [
             CommandResult::Rejected(Rejection::NotOffered {
@@ -3198,15 +3253,11 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers()
             }),
         ]
     );
-    let _ = started_session(
-        &send(
-            &link,
-            start_with(Provider::Claude, &dir, "small", Effort::Low),
-        )
-        .await?,
-    )?;
+    let _ = phone
+        .started(start_with(Provider::Claude, &dir, "small", Effort::Low))
+        .await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Ready).await?,
+        raw_kinds_until(&mut phone, Until::Ready).await?,
         [
             created_with(Provider::Claude, &dir, "small", Effort::Low),
             EventKind::SessionReady,
@@ -3219,7 +3270,9 @@ async fn start_session_takes_only_a_model_and_effort_the_host_offers()
             .collect::<Vec<(Option<String>, Option<String>)>>(),
         [(Some(String::from("small")), Some(String::from("low")))]
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 const THOUGHT: &str = "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n";
@@ -3233,10 +3286,12 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
 {
     let fx = host().await?;
     let dir = scratch("reasoning", "claude-reasoning.jsonl")?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let _ = send(&phone, message(session, "sheep?")).await?;
-    let live = kinds_until(&mut updates, Until::TurnEnd).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "sheep?")).await?;
+    let live = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
     let streamed = live
         .iter()
         .filter_map(|kind| match kind {
@@ -3270,40 +3325,18 @@ async fn claude_reasoning_streams_live_and_is_stored_once_finished() -> Fallible
         ),
         (String::from(THOUGHT), stored.clone())
     );
-    let (late, mut late_updates) = link(fx.target.clone(), None).await?;
-    let caught_up = until_live(&mut late_updates)
-        .await?
-        .into_iter()
-        .filter_map(|update| match update {
-            Update::Feed(Feed::Event(event)) => Some(event),
-            _ => None,
-        })
-        .collect::<Vec<Event>>();
+    let caught_up = raw_history(&fx.target, &mut feed).await?;
     assert_eq!(
         caught_up
-            .iter()
-            .map(|event| event.kind.clone())
-            .filter(|kind| !matches!(
-                kind,
-                EventKind::WorkspaceCreated { .. }
-                    | EventKind::SnapshotRecorded { .. }
-                    | EventKind::NativeTurnStarted { .. }
-            ))
+            .into_iter()
+            .map(|event| event.kind)
+            .filter(conversation_event)
             .collect::<Vec<EventKind>>(),
         stored
     );
-    assert_eq!(
-        items(&fold(caught_up), session)
-            .into_iter()
-            .filter(|item| matches!(item, Item::Reasoning { .. }))
-            .collect::<Vec<Item>>(),
-        [Item::Reasoning {
-            text: String::from(THOUGHT),
-            state: ReplyState::Done,
-        }]
-    );
-    late.stop().await?;
-    fx.shutdown_with_client(phone).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// `probe-subagent-todo.jsonl`: the main agent's `Agent` call runs a
@@ -3314,11 +3347,13 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
 -> Fallible {
     let fx = host().await?;
     let dir = scratch("subagent", "claude-subagent.jsonl")?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let _ = send(&phone, message(session, "delegate")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "delegate")).await?;
     let events =
-        conversation_events_until(&mut updates, Until::TurnEnd).await?;
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
     let agent = || SubagentId(String::from("af19920e77caaf1de"));
     let call = || ToolCallId(String::from("toolu_015av4j2jHs5CwVCv76qxYf2"));
     let description = || String::from("Run TodoWrite checklist task");
@@ -3388,32 +3423,13 @@ async fn a_claude_subagent_runs_in_its_session_under_the_call_that_started_it()
         ]
         .concat()
     );
-    let final_checklist = assert_child_checklists(&events, &agent());
-    let view = fold(events);
-    assert_eq!(
-        view.sessions
-            .get(&session)
-            .map(|shown| (shown.checklist.clone(), shown.subagents.clone())),
-        Some((
-            Vec::new(),
-            Vec::from([Subagent {
-                id: agent(),
-                call: call(),
-                description: description(),
-                kind: Some(String::from("general-purpose")),
-                checklist: final_checklist,
-                status: SubagentStatus::Ended(SubagentOutcome::Finished),
-                items: Vec::from([done("ok")]),
-            }])
-        ))
-    );
-    fx.shutdown_with_client(phone).await
+    assert_child_checklists(&events, &agent());
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
-fn assert_child_checklists(
-    events: &[Event],
-    child: &SubagentId,
-) -> Vec<ChecklistEntry> {
+fn assert_child_checklists(events: &[Event], child: &SubagentId) {
     let checklists: Vec<&[ChecklistEntry]> = events
         .iter()
         .filter_map(|entry| match &entry.kind {
@@ -3440,7 +3456,6 @@ fn assert_child_checklists(
             ],
         ],
     );
-    checklists[1].to_vec()
 }
 
 /// Synthetic against the pinned 0.166 app-server schema.
@@ -3453,11 +3468,13 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
         .join(recording);
     let (fx, dir) =
         codex_host_from(recording, instance(Provider::Codex), &source).await?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session = launch(&phone, start(Provider::Codex, &dir)).await?;
-    let _ = send(&phone, message(session, "delegate")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = phone.send(message(session, "delegate")).await?;
     let events =
-        conversation_events_until(&mut updates, Until::Request).await?;
+        raw_conversation_events_until(&mut phone, Until::Request).await?;
     let request = events
         .last()
         .and_then(|event| match &event.kind {
@@ -3468,45 +3485,122 @@ async fn codex_children_route_activity_and_approvals_to_the_session_that_spawned
             _ => None,
         })
         .ok_or("expected the child approval")?;
-    accepted(&phone, resolve(session, request.0, Decision::Approve)).await?;
-    let _ = conversation_events_until(&mut updates, Until::TurnEnd).await?;
-    let view = fold(fx.history().await?);
-    let shown = view.sessions.get(&session).ok_or("missing session")?;
-    let [alpha, beta] = shown.subagents.as_slice() else {
-        return Err("expected both Codex agents".into());
-    };
-    assert_eq!(alpha.description, "Inspect alpha");
-    assert_eq!(alpha.kind.as_deref(), Some("explorer"));
+    phone
+        .accepted(resolve(session, request.0, Decision::Approve))
+        .await?;
+    let _ = raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
+    let history = of(session, &raw_history(&fx.target, &mut feed).await?);
+    let alpha = agent_events(&history, "child-alpha");
+    let beta = agent_events(&history, "child-beta");
+    assert!(alpha.iter().any(|event| matches!(
+        event,
+        SubagentEvent::Started { description, .. } if description == "Inspect alpha"
+    )));
+    assert!(alpha.contains(&SubagentEvent::Kind {
+        kind: String::from("explorer")
+    }));
     assert_eq!(
-        steps(&alpha.checklist),
-        [("Read alpha", ChecklistStatus::Completed)]
+        alpha.iter().rev().find_map(|event| match event {
+            SubagentEvent::ChecklistChanged { checklist } => {
+                Some(steps(checklist))
+            }
+            _ => None,
+        }),
+        Some(Vec::from([("Read alpha", ChecklistStatus::Completed)]))
     );
-    assert_eq!(
-        alpha.status,
-        SubagentStatus::Ended(SubagentOutcome::Finished)
-    );
-    assert_eq!(beta.status, SubagentStatus::Ended(SubagentOutcome::Failed));
-    assert!(alpha.items.contains(&done("Alpha checked.")));
-    assert!(beta.items.contains(&done("Beta failed.")));
-    assert!(alpha.items.iter().any(|item| matches!(
-        item,
-        Item::Tool {
-            state: ToolState::Finished(ToolOutcome::Succeeded),
-            approval: Approval::Asked {
-                state: RequestState::Resolved(Resolution::Decided {
-                    decision: Decision::Approve,
-                    ..
-                }),
-                ..
-            },
+    assert!(alpha.iter().any(|event| matches!(
+        event,
+        SubagentEvent::Ended {
+            outcome: SubagentOutcome::Finished,
             ..
         }
     )));
-    assert!(shown.items.contains(&done("Delegation done.")));
-    assert!(!shown.items.contains(&done("Alpha checked.")));
-    assert_eq!(shown.checklist, [] as [ChecklistEntry; 0]);
-    phone.stop().await?;
+    assert!(beta.iter().any(|event| matches!(
+        event,
+        SubagentEvent::Ended {
+            outcome: SubagentOutcome::Failed,
+            ..
+        }
+    )));
+    assert!(reports(&alpha).contains(&"Alpha checked."));
+    assert!(reports(&beta).contains(&"Beta failed."));
+    assert_approved_and_ran(&history, &alpha, request)?;
+    assert!(history.contains(&reply("Delegation done.")));
+    assert!(!history.contains(&reply("Alpha checked.")));
+    assert!(
+        !history
+            .iter()
+            .any(|kind| matches!(kind, EventKind::ChecklistChanged { .. }))
+    );
+    phone.close().await;
+    feed.write()?;
     fx.shutdown().await
+}
+
+/// The child's call that asked `request` was approved and then succeeded.
+fn assert_approved_and_ran(
+    history: &[EventKind],
+    alpha: &[SubagentEvent],
+    request: RequestId,
+) -> Fallible {
+    let call = alpha
+        .iter()
+        .find_map(|event| match event {
+            SubagentEvent::RequestOpened {
+                request: asked,
+                call,
+                ..
+            } if *asked == request => Some(call.clone()),
+            _ => None,
+        })
+        .ok_or("the child asked no approval")?;
+    assert!(history.iter().any(|kind| matches!(
+        kind,
+        EventKind::RequestResolved {
+            request: resolved,
+            resolution: Resolution::Decided {
+                decision: Decision::Approve,
+                ..
+            },
+        } if *resolved == request
+    )));
+    assert!(alpha.contains(&SubagentEvent::Activity(
+        SubagentActivity::ToolCall {
+            call,
+            phase: ToolPhase::Finished {
+                outcome: ToolOutcome::Succeeded,
+            },
+        }
+    )));
+    Ok(())
+}
+
+/// What the sub-agent `agent` did, among a session's events.
+fn agent_events(kinds: &[EventKind], agent: &str) -> Vec<SubagentEvent> {
+    kinds
+        .iter()
+        .filter_map(|kind| match kind {
+            EventKind::Subagent { agent: id, event } if id.0 == agent => {
+                Some(event.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// A sub-agent's messages and final report.
+fn reports(events: &[SubagentEvent]) -> Vec<&str> {
+    events
+        .iter()
+        .filter_map(|event| match event {
+            SubagentEvent::Activity(SubagentActivity::Message { text })
+            | SubagentEvent::Ended {
+                summary: Some(text),
+                ..
+            } => Some(text.as_str()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Through the owner's gateway, with betas off, the CLI streams an empty
@@ -3516,36 +3610,26 @@ async fn empty_gateway_thinking_logs_no_reasoning_and_folds_to_no_disclosure()
 -> Fallible {
     let fx = host().await?;
     let dir = scratch("betas-off", "claude-killed.jsonl")?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let _ = send(&phone, message(session, "sheep?")).await?;
-    let turn = conversation_events_until(&mut updates, Until::TurnEnd).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "sheep?")).await?;
+    let turn = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
-        (
-            turn.iter()
-                .filter(|event| matches!(
-                    event.kind,
-                    EventKind::Reasoning { .. }
-                        | EventKind::ReasoningDelta { .. }
-                ))
-                .count(),
-            items(&fold(turn), session)
-                .into_iter()
-                .filter(|item| matches!(
-                    item,
-                    Item::Reasoning { .. } | Item::Reply { .. }
-                ))
-                .collect::<Vec<Item>>(),
-        ),
-        (
-            0,
-            Vec::from([Item::Reply {
-                text: String::from("18"),
-                state: ReplyState::Done,
-            }])
-        )
+        turn.into_iter()
+            .filter(|kind| matches!(
+                kind,
+                EventKind::Reasoning { .. }
+                    | EventKind::ReasoningDelta { .. }
+                    | EventKind::AssistantMessage { .. }
+            ))
+            .collect::<Vec<EventKind>>(),
+        [reply("18")]
     );
-    fx.shutdown_with_client(phone).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// A Claude CLI killed mid-turn closes the session; `Continue` starts it
@@ -3559,23 +3643,22 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
         recording_file("claude-resumed.jsonl"),
         dir.join("stdout.2.jsonl"),
     )?;
-    let (link, mut updates) = fx.connect().await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
     assert_eq!(
-        send(&link, continued(SessionId(1))).await?,
+        phone.send(continued(SessionId(1))).await?.value,
         CommandResult::Rejected(Rejection::UnknownSession)
     );
-    let session = started_session(
-        &send(
-            &link,
-            start_with(Provider::Claude, &dir, "small", Effort::Low),
-        )
-        .await?,
-    )?;
-    let _ = send(&link, message(session, "sheep?")).await?;
-    let first = conversation_events_until(&mut updates, Until::TurnEnd).await?;
-    accepted(&link, continued(session)).await?;
-    let _ = send(&link, message(session, "count")).await?;
-    let killed = conversation_events_until(&mut updates, Until::Closed).await?;
+    let session = phone
+        .started(start_with(Provider::Claude, &dir, "small", Effort::Low))
+        .await?;
+    let _ = phone.send(message(session, "sheep?")).await?;
+    let _ = raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
+    phone.accepted(continued(session)).await?;
+    let _ = phone.send(message(session, "count")).await?;
+    let killed =
+        raw_conversation_events_until(&mut phone, Until::Closed).await?;
     assert_eq!(
         killed
             .iter()
@@ -3591,13 +3674,13 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
         ]
     );
     assert_eq!(
-        send(&link, message(session, "hello?")).await?,
+        phone.send(message(session, "hello?")).await?.value,
         CommandResult::Rejected(Rejection::SessionClosed)
     );
-    accepted(&link, continued(session)).await?;
-    let ready = conversation_events_until(&mut updates, Until::Ready).await?;
-    let _ = send(&link, message(session, "how many sheep?")).await?;
-    let after = conversation_events_until(&mut updates, Until::TurnEnd).await?;
+    raw_resume_to_ready(&mut phone, session).await?;
+    let _ = phone.send(message(session, "how many sheep?")).await?;
+    let after =
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         after
             .iter()
@@ -3630,17 +3713,9 @@ async fn a_killed_claude_session_continues_its_conversation() -> Fallible {
             ),
         ]
     );
-    let view = fold([first, killed, ready, after].concat());
-    assert_eq!(
-        items(&view, session)
-            .into_iter()
-            .filter(|item| matches!(item, Item::Continued(_)))
-            .collect::<Vec<Item>>(),
-        [Item::Continued(CloseReason::Exited {
-            status: String::from("signal: 9 (SIGKILL)"),
-        })]
-    );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// A `Continue` whose transcript is gone leaves the session closed, with
@@ -3654,15 +3729,17 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason()
         recording_file("claude-resume-missing.jsonl"),
         dir.join("stdout.2.jsonl"),
     )?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = launch(&link, start(Provider::Claude, &dir)).await?;
-    let _ = send(&link, message(session, "sheep?")).await?;
-    let _ = conversation_events_until(&mut updates, Until::TurnEnd).await?;
-    let _ = send(&link, message(session, "count")).await?;
-    let _ = conversation_events_until(&mut updates, Until::Closed).await?;
-    accepted(&link, continued(session)).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "sheep?")).await?;
+    let _ = raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
+    let _ = phone.send(message(session, "count")).await?;
+    let _ = raw_conversation_events_until(&mut phone, Until::Closed).await?;
+    phone.accepted(continued(session)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Closed).await?,
+        raw_kinds_until(&mut phone, Until::Closed).await?,
         [EventKind::SessionClosed {
             reason: CloseReason::FailedToStart {
                 message: String::from(
@@ -3671,7 +3748,9 @@ async fn a_continue_with_no_transcript_stays_closed_with_the_clis_reason()
             },
         }]
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 const COUNTING: &str = "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward—I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won’t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!";
@@ -3686,18 +3765,16 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() -> Fallible {
         recording_file("codex-resumed.jsonl"),
         server.join("stdout.2.jsonl"),
     )?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = started_session(
-        &send(
-            &link,
-            start_with(Provider::Codex, &server, "small", Effort::Low),
-        )
-        .await?,
-    )?;
-    let _ = send(&link, message(session, "prime?")).await?;
-    let _ = kinds_until(&mut updates, Until::TurnEnd).await?;
-    let _ = send(&link, message(session, COUNT)).await?;
-    let killed = kinds_until(&mut updates, Until::Closed).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone
+        .started(start_with(Provider::Codex, &server, "small", Effort::Low))
+        .await?;
+    let _ = phone.send(message(session, "prime?")).await?;
+    let _ = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
+    let _ = phone.send(message(session, COUNT)).await?;
+    let killed = raw_kinds_until(&mut phone, Until::Closed).await?;
     assert_eq!(
         (
             killed
@@ -3728,10 +3805,10 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() -> Fallible {
             ])
         )
     );
-    resume_to_ready(&link, &mut updates, session).await?;
-    let _ = send(&link, message(session, "codeword?")).await?;
+    raw_resume_to_ready(&mut phone, session).await?;
+    let _ = phone.send(message(session, "codeword?")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd)
+        raw_kinds_until(&mut phone, Until::TurnEnd)
             .await?
             .into_iter()
             .filter(|kind| !matches!(
@@ -3746,7 +3823,9 @@ async fn a_codex_server_killed_mid_turn_closes_and_continues() -> Fallible {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// A new credential that doesn't offer a Codex session's model: `Continue`
@@ -3839,16 +3918,14 @@ async fn a_killed_codex_server_continues_the_thread() -> Fallible {
         recording_file("codex-resumed.jsonl"),
         server.join("stdout.2.jsonl"),
     )?;
-    let (link, mut updates) = fx.connect().await?;
-    let session = started_session(
-        &send(
-            &link,
-            start_with(Provider::Codex, &server, "small", Effort::Low),
-        )
-        .await?,
-    )?;
-    let _ = send(&link, message(session, "prime?")).await?;
-    let first = kinds_until(&mut updates, Until::TurnEnd).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone
+        .started(start_with(Provider::Codex, &server, "small", Effort::Low))
+        .await?;
+    let _ = phone.send(message(session, "prime?")).await?;
+    let first = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         first
             .into_iter()
@@ -3869,9 +3946,9 @@ async fn a_killed_codex_server_continues_the_thread() -> Fallible {
             turn_end(TurnOutcome::Completed),
         ]
     );
-    let _ = send(&link, message(session, COUNT)).await?;
+    let _ = phone.send(message(session, COUNT)).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::Closed).await?,
+        raw_kinds_until(&mut phone, Until::Closed).await?,
         [
             user(COUNT),
             // It dies before it answers `turn/start`.
@@ -3885,10 +3962,10 @@ async fn a_killed_codex_server_continues_the_thread() -> Fallible {
             },
         ]
     );
-    resume_to_ready(&link, &mut updates, session).await?;
-    let _ = send(&link, message(session, "codeword?")).await?;
+    raw_resume_to_ready(&mut phone, session).await?;
+    let _ = phone.send(message(session, "codeword?")).await?;
     assert_eq!(
-        kinds_until(&mut updates, Until::TurnEnd)
+        raw_kinds_until(&mut phone, Until::TurnEnd)
             .await?
             .into_iter()
             .filter(|kind| !matches!(
@@ -3923,7 +4000,9 @@ async fn a_killed_codex_server_continues_the_thread() -> Fallible {
             )]),
         )
     );
-    fx.shutdown_with_client(link).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// The original ticket and live link survive a real transport restart. The
@@ -5459,18 +5538,22 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
     let fx = host().await?;
     let dir = scratch("checklist", "claude-checklist-effort.jsonl")?;
     hold_first_turn(&dir)?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let opened = conversation_events_until(&mut updates, Until::Ready).await?;
-    let _ = send(&phone, message(session, "plan")).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let opened =
+        raw_conversation_events_until(&mut phone, Until::Ready).await?;
+    let _ = phone.send(message(session, "plan")).await?;
     let mid_turn = [
-        send(&phone, set_effort(session, Effort::Max)).await?,
-        send(&phone, set_effort(session, Effort::Low)).await?,
-        send(&phone, set_effort(session, Effort::Low)).await?,
+        phone.send(set_effort(session, Effort::Max)).await?.value,
+        phone.send(set_effort(session, Effort::Low)).await?.value,
+        phone.send(set_effort(session, Effort::Low)).await?.value,
     ];
     let before = written_to_claude(&dir)?;
     std::fs::write(dir.join("release"), "")?;
-    let turn = conversation_events_until(&mut updates, Until::TurnEnd).await?;
+    let turn =
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
     let lists = task_lists(&turn);
     assert_eq!(
         (
@@ -5513,8 +5596,9 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             }]),
         )
     );
-    let _ = send(&phone, message(session, "pong")).await?;
-    let next = conversation_events_until(&mut updates, Until::TurnEnd).await?;
+    let _ = phone.send(message(session, "pong")).await?;
+    let next =
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         written_to_claude(&dir)?,
         [
@@ -5524,14 +5608,13 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
             "pong"
         ]
     );
-    let view = fold([opened, turn, next].concat());
     assert_eq!(
-        view.sessions
-            .get(&session)
-            .map(|found| (found.effort, found.checklist.clone())),
-        Some((Some(Effort::Low), lists.last().cloned().unwrap_or_default()))
+        latest_effort_and_checklist(&[opened, turn, next].concat()),
+        (Some(Effort::Low), lists.last().cloned())
     );
-    fx.shutdown_with_client(phone).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 /// A Codex turn's plan updates become the session's checklist as Claude's
@@ -5540,15 +5623,18 @@ async fn a_claude_checklist_becomes_tasks_and_a_new_effort_waits_for_the_next_tu
 async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
 -> Fallible {
     let (fx, dir) = codex_host("codex-plan-effort.jsonl").await?;
-    let (phone, mut updates) = fx.connect().await?;
-    let session = launch(&phone, start(Provider::Codex, &dir)).await?;
-    let _ = conversation_events_until(&mut updates, Until::Ready).await?;
-    let _ = send(&phone, message(session, "plan")).await?;
-    let turn = conversation_events_until(&mut updates, Until::TurnEnd).await?;
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&fx.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Codex, &dir)).await?;
+    let _ = raw_conversation_events_until(&mut phone, Until::Ready).await?;
+    let _ = phone.send(message(session, "plan")).await?;
+    let turn =
+        raw_conversation_events_until(&mut phone, Until::TurnEnd).await?;
     let lists = task_lists(&turn);
-    let set = send(&phone, set_effort(session, Effort::High)).await?;
-    let _ = send(&phone, message(session, "pong")).await?;
-    let next = kinds_until(&mut updates, Until::TurnEnd).await?;
+    let set = phone.send(set_effort(session, Effort::High)).await?.value;
+    let _ = phone.send(message(session, "pong")).await?;
+    let next = raw_kinds_until(&mut phone, Until::TurnEnd).await?;
     assert_eq!(
         (
             lists
@@ -5581,7 +5667,9 @@ async fn a_codex_plan_becomes_tasks_and_a_new_effort_starts_the_next_turn()
             Vec::from([None, Some(serde_json::Value::from("high"))]),
         )
     );
-    fx.shutdown_with_client(phone).await
+    phone.close().await;
+    feed.write()?;
+    fx.shutdown().await
 }
 
 #[tokio::test]
@@ -5592,33 +5680,35 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
     let first =
         durable_host(&data, SocketAddr::from((Ipv4Addr::LOCALHOST, 0))).await?;
     let address = first.address()?;
-    let (phone, mut updates) = first.connect().await?;
-    let session = launch(&phone, start(Provider::Claude, &dir)).await?;
-    let _ = send(&phone, message(session, "plan")).await?;
-    let before = task_lists(
-        &conversation_events_until(&mut updates, Until::TurnEnd).await?,
+    let mut feed = Recorder::new()?;
+    let mut phone =
+        RawClient::live(&first.target, "test-client", &mut feed).await?;
+    let session = phone.started(start(Provider::Claude, &dir)).await?;
+    let _ = phone.send(message(session, "plan")).await?;
+    let turn = raw_events_until(&mut phone, Until::TurnEnd).await?;
+    let before = task_lists(&turn);
+    let cursor = (
+        phone.welcome.epoch,
+        turn.last().ok_or("the turn had no events")?.seq,
     );
-    let set = send(&phone, set_effort(session, Effort::Low)).await?;
+    let set = phone.send(set_effort(session, Effort::Low)).await?.value;
+    phone.close().await;
     first.shutdown().await?;
 
     let second = durable_host(&data, address).await?;
-    let replayed = fold(second.history().await?);
-    assert_eq!(
-        replayed
-            .sessions
-            .get(&session)
-            .map(|shown| &shown.checklist),
-        before.last(),
-    );
-    phone.reconnect().await;
-    let _ = until_live(&mut updates).await?;
-    let continued = send(&phone, continued(session)).await?;
-    let _ = kinds_until(&mut updates, Until::Ready).await?;
-    let _ = send(&phone, message(session, "plan")).await?;
+    let replayed = raw_history(&second.target, &mut feed).await?;
+    assert_eq!(task_lists(&replayed).last(), before.last());
+    let mut phone =
+        RawClient::open(&second.target, "test-client", &mut feed).await?;
+    phone.subscribe_in(cursor.0, cursor.1).await?;
+    let _ = phone.caught_up().await?;
+    let continued = phone.send(continued(session)).await?.value;
+    let _ = raw_kinds_until(&mut phone, Until::Ready).await?;
+    let _ = phone.send(message(session, "plan")).await?;
     let after = task_lists(
-        &conversation_events_until(&mut updates, Until::TurnEnd).await?,
+        &raw_conversation_events_until(&mut phone, Until::TurnEnd).await?,
     );
-    let view = fold(second.history().await?);
+    let history = raw_history(&second.target, &mut feed).await?;
     assert_eq!(
         (
             set,
@@ -5628,23 +5718,31 @@ async fn tasks_and_effort_survive_a_host_restart() -> Fallible {
                 .map(|run| flag(run, "--effort"))
                 .collect::<Vec<Option<String>>>(),
             after.len(),
-            view.sessions
-                .get(&session)
-                .map(|found| (found.effort, found.checklist.clone())),
+            latest_effort_and_checklist(&history),
         ),
         (
             CommandResult::Accepted,
             CommandResult::Accepted,
             Vec::from([None, Some(String::from("low"))]),
             3,
-            Some((
-                Some(Effort::Low),
-                after.last().cloned().unwrap_or_default()
-            )),
+            (Some(Effort::Low), after.last().cloned()),
         )
     );
-    phone.stop().await?;
+    phone.close().await;
+    feed.write()?;
     second.shutdown().await
+}
+
+/// The effort and the checklist that the last `EffortChanged` and the last
+/// `ChecklistChanged` in `events` set.
+fn latest_effort_and_checklist(
+    events: &[Event],
+) -> (Option<Effort>, Option<Vec<ChecklistEntry>>) {
+    let effort = events.iter().rev().find_map(|event| match event.kind {
+        EventKind::EffortChanged { effort } => Some(effort),
+        _ => None,
+    });
+    (effort, task_lists(events).pop())
 }
 
 /// The code the sign-in stand-in accepts (fixtures/fake-login.py).

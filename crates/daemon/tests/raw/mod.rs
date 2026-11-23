@@ -18,13 +18,14 @@ use iroh::Endpoint;
 use iroh::endpoint::{Connection, RecvStream};
 use net::Target;
 use proto::{
-    ClientName, Command, CommandBody, CommandId, CommandResult, Event, Feed,
-    Frame, Hello, HelloReply, HostSeq, Open, SessionId, Subscribe, Welcome,
+    ClientName, Command, CommandBody, CommandId, CommandResult, Epoch, Event,
+    Feed, Frame, Hello, HelloReply, HostSeq, Instances, Open, SessionId,
+    Subscribe, Welcome,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::{Fallible, STEP, endpoint, started_session, target_tmp};
+use crate::{Fallible, STEP, endpoint, target_tmp};
 
 /// One frame as it came, and what it decodes to.
 pub struct Received<T> {
@@ -269,6 +270,8 @@ pub struct RawClient {
     endpoint: Endpoint,
     conn: Connection,
     pub welcome: Welcome,
+    /// The offers of the last `Feed::Instances` read, at first `Welcome`'s.
+    pub instances: Instances,
     feed: Option<RecvStream>,
 }
 
@@ -302,6 +305,7 @@ impl RawClient {
             tap,
             endpoint,
             conn,
+            instances: welcome.instances.clone(),
             welcome,
             feed: None,
         })
@@ -320,13 +324,19 @@ impl RawClient {
     }
 
     pub async fn subscribe(&mut self, after_seq: HostSeq) -> Fallible {
+        self.subscribe_in(self.welcome.epoch, after_seq).await
+    }
+
+    /// Subscribes with a cursor into `epoch`, which may not be the host's.
+    pub async fn subscribe_in(
+        &mut self,
+        epoch: Epoch,
+        after_seq: HostSeq,
+    ) -> Fallible {
         let (mut send, recv) = self.conn.open_bi().await?;
         net::wire::write(
             &mut send,
-            &Open::Subscribe(Subscribe {
-                epoch: self.welcome.epoch,
-                after_seq,
-            }),
+            &Open::Subscribe(Subscribe { epoch, after_seq }),
         )
         .await?;
         send.finish()?;
@@ -339,6 +349,9 @@ impl RawClient {
         let feed = self.feed.as_mut().ok_or("not subscribed")?;
         let frame = read::<Feed>(feed).await?;
         self.tap.hear("feed", &frame.raw)?;
+        if let Feed::Instances(instances) = &frame.value {
+            self.instances = instances.clone();
+        }
         Ok(frame)
     }
 
@@ -391,15 +404,22 @@ impl RawClient {
         Ok(result)
     }
 
-    /// Sends `body` and checks that the host accepted it.
+    /// Sends `body`, which the host must accept.
     pub async fn accepted(&self, body: CommandBody) -> Fallible {
-        assert_eq!(self.send(body).await?.value, CommandResult::Accepted);
-        Ok(())
+        match self.send(body).await?.value {
+            CommandResult::Accepted => Ok(()),
+            other => Err(format!("expected Accepted, not {other:?}").into()),
+        }
     }
 
-    /// Sends `body` and returns the session it started.
+    /// Sends `body`, which must start a session, and names the session.
     pub async fn started(&self, body: CommandBody) -> Fallible<SessionId> {
-        started_session(&self.send(body).await?.value)
+        match self.send(body).await?.value {
+            CommandResult::Started { session } => Ok(session),
+            other => {
+                Err(format!("expected a started session, not {other:?}").into())
+            }
+        }
     }
 
     pub async fn close(self) {
