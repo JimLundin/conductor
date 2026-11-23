@@ -1221,9 +1221,12 @@ impl Call {
                 text,
                 effort,
             } => {
-                let mut params = json!({
-                    "threadId": thread.0, "input": [{"type": "text", "text": text}],
-                });
+                // An array in json! expands to vec!, whose Box the core
+                // refuses; Vec::from builds the same array.
+                let input = Value::Array(Vec::from([
+                    json!({"type": "text", "text": text}),
+                ]));
+                let mut params = json!({"threadId": thread.0, "input": input});
                 if let Some(level) = effort {
                     params["effort"] = Value::from(level.wire());
                 }
