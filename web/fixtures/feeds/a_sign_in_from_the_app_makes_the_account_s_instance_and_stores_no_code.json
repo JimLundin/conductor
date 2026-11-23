@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -149,7 +149,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -173,7 +173,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						{
 							"availability": {
@@ -195,7 +195,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -219,7 +219,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -244,7 +244,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": "Starting"
 			}
@@ -257,7 +257,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": {
 					"Open": {
@@ -288,7 +288,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": "Finishing"
 			}
@@ -301,7 +301,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": {
 					"Failed": {
@@ -323,7 +323,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": "Starting"
 			}
@@ -336,7 +336,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": {
 					"Open": {
@@ -360,7 +360,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": "Finishing"
 			}
@@ -373,7 +373,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": "Finishing"
 			}
@@ -387,7 +387,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -402,7 +402,7 @@
 						"account": {
 							"Named": "conductor-test@example.invalid"
 						},
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -415,7 +415,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -436,7 +436,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -451,7 +451,7 @@
 						"account": {
 							"Named": "conductor-test@example.invalid"
 						},
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -475,7 +475,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -495,7 +495,7 @@
 			"SignIn": {
 				"instance": {
 					"account": "Own",
-					"provider": "Claude"
+					"provider": "claude"
 				},
 				"step": "SignedIn"
 			}

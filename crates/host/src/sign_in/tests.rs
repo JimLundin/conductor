@@ -9,7 +9,7 @@ use super::{CredentialTarget, Effect, Key, Login, Run, SignIns, release};
 use crate::registry::AccountAdoption;
 
 fn id() -> InstanceId {
-    InstanceId::own(Provider::ALL[0])
+    InstanceId::own(Provider::new("claude"))
 }
 
 fn settings() -> Instance {

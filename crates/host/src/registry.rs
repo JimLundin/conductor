@@ -137,7 +137,9 @@ pub fn defaults(catalog: &Catalog) -> Roster {
         catalog
             .0
             .keys()
-            .map(|&provider| (InstanceId::own(provider), Instance::default()))
+            .map(|provider| {
+                (InstanceId::own(provider.clone()), Instance::default())
+            })
             .collect(),
     )
 }
@@ -168,17 +170,17 @@ pub fn dir(instance: &InstanceId) -> String {
 /// The roster has no such instance; the error lists the accounts it has.
 pub fn picked(
     roster: &Roster,
-    provider: Provider,
+    provider: &Provider,
     account: Option<&str>,
 ) -> Result<InstanceId, String> {
-    let id = sign_in_instance(provider, account);
+    let id = sign_in_instance(provider.clone(), account);
     if roster.of(&id).is_some() {
         return Ok(id);
     }
     let known = roster
         .0
         .keys()
-        .filter(|known| known.provider == provider)
+        .filter(|known| &known.provider == provider)
         .filter_map(|known| match &known.account {
             Account::Named(named) => Some(named.clone()),
             Account::Own => None,
@@ -201,10 +203,10 @@ pub fn sign_in_instance(
     provider: Provider,
     account: Option<&str>,
 ) -> InstanceId {
-    account.map_or_else(
-        || InstanceId::own(provider),
-        |named| InstanceId::named(provider, named),
-    )
+    match account {
+        Some(named) => InstanceId::named(provider, named),
+        None => InstanceId::own(provider),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,7 +228,7 @@ impl AccountAdoption {
         Some(Self {
             from: from.clone(),
             to: InstanceId {
-                provider: from.provider,
+                provider: from.provider.clone(),
                 account,
             },
         })
@@ -655,7 +657,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     ) -> Vec<Effect<S, R>> {
         let named = self
             .catalog
-            .of(provider)
+            .of(&provider)
             .ok_or_else(|| format!("this host doesn't run {}", provider.name()))
             .and_then(|info| info.account(&credential));
         let instance = match named {
@@ -1094,7 +1096,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         credential: Option<&Credential>,
         own: OwnSignIn,
     ) -> Result<Auth, String> {
-        let info = self.catalog.of(instance.provider);
+        let info = self.catalog.of(&instance.provider);
         credential.zip(info).map_or_else(
             || match (&instance.account, own) {
                 // Only a sign-in names an account without a credential, so

@@ -14,6 +14,7 @@ pub fn plugin(settings: Settings) -> Plugin {
         settings,
         instance,
         account: codex::account,
+        pin: || install::here(codex::pin::pin),
     }
 }
 

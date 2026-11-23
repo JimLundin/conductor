@@ -37,7 +37,7 @@ fn workspace() -> Workspace {
 }
 
 fn instance() -> InstanceId {
-    InstanceId::own(Provider::Claude)
+    InstanceId::own(Provider::new("claude"))
 }
 
 fn started() -> Vec<Event> {

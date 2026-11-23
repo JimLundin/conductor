@@ -143,9 +143,10 @@ What is built and what comes next. Update it in the commit that changes it.
   commits reachable. Diffs only read: there is no undo or provider
   rewind. Continue resumes the provider conversation on the same host.
 
-- **Single CLI pin source** (#28). `tools/pin` writes only
-  `crates/agents/src/pin/pins.rs`, including upstream verification notes.
-  Fixture and supported-version checks use the compiled pins.
+- **Single CLI pin source** (#28). `tools/pin` writes only the
+  provider's `crates/<provider>/src/pin/pins.rs`, including upstream
+  verification notes. Fixture and supported-version checks use the compiled
+  pins, in each provider's crate.
 
 - **Codex start errors** (#19). Failed starts and Continue keep the
   app-server’s JSON-RPC error or last nonempty stderr line.
@@ -329,10 +330,10 @@ Each item ends in something to try. The fleet design is
 2. **Instance settings from the app.** Per-instance model and CLI
    settings; the store already keeps both. *Try:* change a gateway
    instance's default model from the phone and start a session on it.
-3. **One place to list a provider.** The pins in `agents::pin` and
-   `Provider` itself are the last places a new provider is named outside
-   its plugin. *Try:* a test plugin registered only in `conductord` runs a
-   session.
+3. **One place to list a provider.** `Provider` is the name each plugin
+   declares and each provider pins its own CLI, so only `conductord` lists
+   the providers. *Try:* a test plugin registered only in `conductord` runs
+   a session.
 4. **Live checks still owed.** Experiments E2 (one Claude setup token on
    two hosts) and E3 (a second ChatGPT device-code sign-in;
    `docs/verification/codex_manual_probe.py`), architecture §6.9; live

@@ -40,8 +40,8 @@ async fn blocked_input(
 async fn a_stalled_input_leaves_another_instance_responsive()
 -> anyhow::Result<()> {
     let mut runs = Runs::default();
-    let stalled = key(Provider::Claude);
-    let other = key(Provider::Codex);
+    let stalled = key(Provider::new("claude"));
+    let other = key(Provider::new("codex"));
     let stalled_reader = blocked_input(&mut runs, stalled.clone()).await?;
     let (answer, listed) = oneshot::channel();
     runs.listen(other.clone(), listed);
@@ -82,8 +82,10 @@ async fn a_stalled_input_leaves_another_instance_responsive()
 async fn a_dropped_refresh_reply_fails_the_sign_in()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut sign_ins = SignIns::default();
-    let (_, effects) = sign_ins
-        .start(InstanceId::own(Provider::Claude), Some(Instance::default()));
+    let (_, effects) = sign_ins.start(
+        InstanceId::own(Provider::new("claude")),
+        Some(Instance::default()),
+    );
     let key = effects
         .into_iter()
         .find_map(|effect| match effect {

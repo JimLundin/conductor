@@ -3,7 +3,7 @@
 //! runs.
 
 use agents::{Config, HomeKind, Invocation, Note, Profile, Reported, Var};
-use proto::{Effort, Provider};
+use proto::Effort;
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -173,7 +173,7 @@ pub fn login(home: HomeKind) -> Invocation {
 #[must_use]
 pub fn profile() -> Profile {
     Profile {
-        provider: Provider::Claude,
+        provider: crate::PROVIDER,
         info: crate::info(),
         instructions_file: String::from("CLAUDE.md"),
         config: Config {
@@ -362,13 +362,13 @@ pub fn admit(
             Err(UnsupportedVersion::Outside { found, supported }),
             VersionPolicy::AllowUntested,
         ) => Ok(Some(Note::Untested {
-            provider: Provider::Claude,
+            provider: crate::PROVIDER,
             found,
             supported,
         })),
         (Err(UnsupportedVersion::Unreported), VersionPolicy::AllowUntested) => {
             Ok(Some(Note::Unversioned {
-                provider: Provider::Claude,
+                provider: crate::PROVIDER,
             }))
         }
         (Err(unsupported), VersionPolicy::SupportedOnly) => Err(unsupported),
@@ -383,7 +383,7 @@ pub const fn unprotected(
 ) -> Option<Note> {
     match (credential, sandbox) {
         (Some(_), Sandbox::Missing) => Some(Note::CredentialExposed {
-            provider: Provider::Claude,
+            provider: crate::PROVIDER,
         }),
         _ => None,
     }
@@ -392,7 +392,7 @@ pub const fn unprotected(
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Note, Var};
-    use proto::{Effort, Provider};
+    use proto::Effort;
     use serde_json::json;
 
     use super::{
@@ -415,7 +415,7 @@ mod tests {
                 [profile.version, profile.status, profile.sign_in.run]
             ),
             (
-                Provider::Claude,
+                crate::PROVIDER,
                 "settings.json",
                 [
                     Invocation::of(private.clone(), &["--version"]),
@@ -691,12 +691,12 @@ mod tests {
             ],
             [
                 Ok(Some(Note::Untested {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                     found: String::from("1.0.0"),
                     supported: String::from("2.1.316 to 2.1.322"),
                 })),
                 Ok(Some(Note::Unversioned {
-                    provider: Provider::Claude,
+                    provider: crate::PROVIDER,
                 })),
                 Err(UnsupportedVersion::Unreported),
                 Ok(None)
@@ -718,7 +718,7 @@ mod tests {
             ],
             [
                 Some(Note::CredentialExposed {
-                    provider: Provider::Claude
+                    provider: crate::PROVIDER
                 }),
                 None,
                 None

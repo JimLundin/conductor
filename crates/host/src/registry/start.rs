@@ -202,7 +202,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
                     session,
                     directory: placed.directory.clone(),
                     choice: launch.choice,
-                    provider: request.instance.provider,
+                    provider: request.instance.provider.clone(),
                     agent: (launch.start, launch.offered),
                     history,
                 },

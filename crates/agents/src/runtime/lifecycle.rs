@@ -149,10 +149,14 @@ mod tests {
         assert_eq!(
             lifecycle.steps::<Report>(
                 Vec::new(),
-                Some(Note::unmapped(Provider::Claude, frame.clone(), None))
+                Some(Note::unmapped(
+                    Provider::new("claude"),
+                    frame.clone(),
+                    None
+                ))
             ),
             [Report::Log(Note::Unmapped {
-                provider: Provider::Claude,
+                provider: Provider::new("claude"),
                 frame
             })],
         );

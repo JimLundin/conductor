@@ -576,7 +576,7 @@ mod tests {
 
     fn instances() -> Instances {
         Instances(
-            Provider::ALL
+            [Provider::new("claude"), Provider::new("codex")]
                 .into_iter()
                 .zip([
                     Availability::Available {

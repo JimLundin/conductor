@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -149,7 +149,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -162,7 +162,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						{
 							"availability": {
@@ -201,7 +201,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -214,7 +214,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -270,7 +270,7 @@
 						"effort": "Low",
 						"instance": {
 							"account": "Own",
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						"model": "small"
 					}

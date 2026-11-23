@@ -879,10 +879,11 @@ against the recorded hash.
    manifest. `tools/pin codex <version>` downloads every platform's package,
    checks each against GitHub's published digest and
    `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
-   `cosign` is installed. Both write only `crates/agents/src/pin/pins.rs`,
-   including the verification result in doc comments. Versions, platform
-   hashes and verification provenance stay together in compiled Rust values.
-   Updating one provider preserves the other provider's pin.
+   `cosign` is installed. Each writes only its provider's
+   `crates/<provider>/src/pin/pins.rs`, including the verification result in
+   doc comments. Versions, platform hashes and verification provenance stay
+   together in compiled Rust values, beside the provider's `pin`, which says
+   which build a platform takes.
 2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
    is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
    package unpacked whole, with `bin/codex`. It downloads to a temporary
@@ -1431,7 +1432,7 @@ transfer is enough. There is no gossip protocol, CRDT or per-field merge.
 The single writer costs nothing extra here, because a signature from one key
 is already what makes the roster trustworthy.
 
-The fleet exchange uses `conductor-fleet/3`. Full configuration signatures,
+The fleet exchange uses `conductor-fleet/4`. Full configuration signatures,
 local sealed state and root backups use version 3 contexts. A certificate
 and the public snapshot are signed over their exact JSON bytes, under the
 version 2 certificate and snapshot domains, and carried as those bytes
@@ -1699,8 +1700,8 @@ type and a message can only travel in its link's:
 
 | Link | Codec | Messages |
 |---|---|---|
-| Client and host (`proto::ALPN`, `conductor/38`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
-| Host and host (`proto::fleet::ALPN`, `conductor-fleet/3`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
+| Client and host (`proto::ALPN`, `conductor/39`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` on a host, `web-iroh` in the browser.
 JSON names every variant and field, so any change to a type reachable from

@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -149,7 +149,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -162,7 +162,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						{
 							"availability": {
@@ -184,7 +184,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -197,7 +197,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -234,7 +234,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -249,7 +249,7 @@
 						"account": {
 							"Named": "https://conductor-test.invalid/gateway"
 						},
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -262,7 +262,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -283,7 +283,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -298,7 +298,7 @@
 						"account": {
 							"Named": "https://conductor-test.invalid/gateway"
 						},
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -327,7 +327,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -363,7 +363,7 @@
 							"account": {
 								"Named": "https://conductor-test.invalid/gateway"
 							},
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						"model": null
 					}
@@ -429,7 +429,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -501,7 +501,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -574,7 +574,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -589,7 +589,7 @@
 							"account": {
 								"Named": "https://conductor-test.invalid/gateway"
 							},
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -618,7 +618,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						{
 							"availability": {
@@ -646,7 +646,7 @@
 							"account": {
 								"Named": "https://conductor-test.invalid/gateway"
 							},
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						"model": null
 					}
@@ -733,7 +733,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -748,7 +748,7 @@
 						"account": {
 							"Named": "https://conductor-test.invalid/gateway"
 						},
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -777,7 +777,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {
@@ -808,7 +808,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -880,7 +880,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -953,7 +953,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						{
 							"availability": {
@@ -966,7 +966,7 @@
 					[
 						{
 							"account": "Own",
-							"provider": "Codex"
+							"provider": "codex"
 						},
 						{
 							"availability": {
@@ -994,7 +994,7 @@
 							"account": {
 								"Named": "https://conductor-test.invalid/gateway"
 							},
-							"provider": "Claude"
+							"provider": "claude"
 						},
 						"model": null
 					}
@@ -1081,7 +1081,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -1094,7 +1094,7 @@
 				[
 					{
 						"account": "Own",
-						"provider": "Codex"
+						"provider": "codex"
 					},
 					{
 						"availability": {

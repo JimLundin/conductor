@@ -109,7 +109,7 @@ impl CredentialTarget {
             });
         }
         if catalog
-            .of(source.provider)
+            .of(&source.provider)
             .and_then(|info| info.form(&kind))
             .is_none_or(|form| form.setup_sign_in.is_none())
         {
@@ -120,14 +120,14 @@ impl CredentialTarget {
             });
         }
         Ok(Self {
-            destination: InstanceId::named(source.provider, account),
+            destination: InstanceId::named(source.provider.clone(), account),
             kind,
         })
     }
 
     #[must_use]
     pub fn accepts(&self, catalog: &Catalog, credential: &Credential) -> bool {
-        catalog.of(self.destination.provider).is_some_and(|info| {
+        catalog.of(&self.destination.provider).is_some_and(|info| {
             credential.kind == self.kind
                 && info
                     .account(credential)

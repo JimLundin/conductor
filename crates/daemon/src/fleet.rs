@@ -187,7 +187,7 @@ pub async fn revoke(data: Option<PathBuf>, node: &str) -> anyhow::Result<()> {
     membership.revoke(*identity.as_bytes()).await?;
     writeln!(
         std::io::stdout().lock(),
-        "Revoked {node}. Rotate fleet API keys and the shared Claude token. For a revoked host using ChatGPT, sign it out in OpenAI account settings."
+        "Revoked {node}. Rotate the API keys and tokens the fleet shares. For a revoked host signed in to a subscription, sign it out in that provider's account settings."
     )?;
     Ok(())
 }

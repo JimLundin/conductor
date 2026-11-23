@@ -15,8 +15,8 @@ use crate::sign_in::Signing;
 use anyhow::Context;
 use host::registry::{AccountAdoption, sign_in_instance};
 use host::start::{Mode, Next, Output};
+use install::Home;
 use install::process::command;
-use install::{Home, install};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
@@ -31,7 +31,7 @@ use tracing::Instrument;
 #[derive(Debug, Clone, Default)]
 pub struct Plugins(
     Arc<BTreeMap<Provider, Plugin>>,
-    Option<fn(Provider, &proto::Credential) -> crate::fleet::Sharing>,
+    Option<fn(&Provider, &proto::Credential) -> crate::fleet::Sharing>,
 );
 
 impl FromIterator<Plugin> for Plugins {
@@ -40,7 +40,7 @@ impl FromIterator<Plugin> for Plugins {
             Arc::new(
                 plugins
                     .into_iter()
-                    .map(|plugin| (plugin.profile.provider, plugin))
+                    .map(|plugin| (plugin.profile.provider.clone(), plugin))
                     .collect(),
             ),
             None,
@@ -52,7 +52,7 @@ impl Plugins {
     #[must_use]
     pub fn with_fleet_credentials(
         mut self,
-        policy: fn(Provider, &proto::Credential) -> crate::fleet::Sharing,
+        policy: fn(&Provider, &proto::Credential) -> crate::fleet::Sharing,
     ) -> Self {
         self.1 = Some(policy);
         self
@@ -60,7 +60,7 @@ impl Plugins {
 
     pub(crate) fn sharing(
         &self,
-        provider: Provider,
+        provider: &Provider,
         credential: &proto::Credential,
     ) -> crate::fleet::Sharing {
         self.1.map_or(crate::fleet::Sharing::Local, |policy| {
@@ -74,8 +74,8 @@ impl Plugins {
         Catalog(
             self.0
                 .iter()
-                .map(|(&provider, plugin)| {
-                    (provider, plugin.profile.info.clone())
+                .map(|(provider, plugin)| {
+                    (provider.clone(), plugin.profile.info.clone())
                 })
                 .collect(),
         )
@@ -106,10 +106,10 @@ impl Providers {
         self.plugins.catalog()
     }
 
-    pub fn instructions_file(&self, provider: Provider) -> Option<String> {
+    pub fn instructions_file(&self, provider: &Provider) -> Option<String> {
         self.plugins
             .0
-            .get(&provider)
+            .get(provider)
             .map(|plugin| plugin.profile.instructions_file.clone())
     }
 
@@ -137,7 +137,7 @@ impl Providers {
     ) -> Result<(), proto::Rejection> {
         let membership = self.fleet.borrow().clone();
         if let Some(fleet) = membership {
-            let sharing = self.plugins.sharing(id.provider, credential);
+            let sharing = self.plugins.sharing(&id.provider, credential);
             crate::fleet::share_credential(&fleet, id, credential, sharing)
                 .await?;
         }
@@ -160,7 +160,7 @@ impl Providers {
             prepare(&self.plugins, isolated.path(), id, instance).ok()?;
         let path = provider_program(
             prepared.settings.path,
-            prepared.plugin.profile.provider,
+            &prepared.plugin,
             &self.data_dir,
         )
         .await
@@ -187,10 +187,9 @@ impl Providers {
             home,
             work: _,
         } = prepare(&self.plugins, &self.data_dir, id, instance)?;
-        let profile = plugin.profile;
         let program =
-            provider_program(settings.path, profile.provider, &self.data_dir)
-                .await?;
+            provider_program(settings.path, &plugin, &self.data_dir).await?;
+        let profile = plugin.profile;
         Ok(Signing {
             program,
             home,
@@ -535,15 +534,21 @@ fn prepare(
 
 async fn provider_program(
     configured: Option<PathBuf>,
-    provider: Provider,
+    plugin: &Plugin,
     data_dir: &Path,
 ) -> Result<PathBuf, String> {
     match configured {
         Some(path) => Ok(path),
-        None => install(provider, data_dir)
-            .await
-            .map_err(|err| err.to_string()),
+        None => install(plugin, data_dir).await,
     }
+}
+
+/// Installs the build of the plugin's CLI that it pins.
+async fn install(plugin: &Plugin, data_dir: &Path) -> Result<PathBuf, String> {
+    let pin = (plugin.pin)().map_err(|err| err.to_string())?;
+    install::install(plugin.profile.provider.name(), pin, data_dir)
+        .await
+        .map_err(|err| err.to_string())
 }
 
 /// Runs each step of `host::start` for the instance's CLI: the one its
@@ -560,19 +565,16 @@ async fn run(
         home,
         work,
     } = prepared;
-    let profile = plugin.profile;
     let mut next = host::start::start(
-        profile.provider.name(),
+        plugin.profile.provider.name(),
         settings.path,
         settings.model,
     );
     loop {
         next = match next {
-            Next::Install(installing) => installing.installed(
-                install(profile.provider, data_dir)
-                    .await
-                    .map_err(|err| err.to_string()),
-            ),
+            Next::Install(installing) => {
+                installing.installed(install(&plugin, data_dir).await)
+            }
             Next::Probe(path, probing) => {
                 let start = (plugin.instance)(Launch {
                     path: path.clone(),
@@ -580,15 +582,22 @@ async fn run(
                     work: work.clone(),
                 });
                 let program = path.display().to_string();
-                let ran =
-                    version(command(&path, &home, profile.version.clone()))
-                        .await;
+                let ran = version(command(
+                    &path,
+                    &home,
+                    plugin.profile.version.clone(),
+                ))
+                .await;
                 probing.probed(path, start, program, ran)
             }
             Next::CheckSignIn(path, checking) => checking.checked(
-                &sign_in_check(command(&path, &home, profile.status.clone()))
-                    .await
-                    .map(|(code, _)| code),
+                &sign_in_check(command(
+                    &path,
+                    &home,
+                    plugin.profile.status.clone(),
+                ))
+                .await
+                .map(|(code, _)| code),
             ),
             Next::Configure(listing) => {
                 let configured = listing
@@ -627,14 +636,14 @@ pub async fn login(
     let data_dir = data_dir_or_default(given)?;
     let catalog = plugins.catalog();
     let (store, _) = Store::open(&data_dir, catalog)?;
-    let requested = sign_in_instance(provider, account.as_deref());
+    let requested = sign_in_instance(provider.clone(), account.as_deref());
     if let Some(to) = store.recovered_account(&requested) {
         tracing::info!(target: "host", instance = %to, "signed in");
         return Ok(());
     }
     let roster = store.read_roster()?;
     let instance =
-        host::registry::picked(&roster, provider, account.as_deref())
+        host::registry::picked(&roster, &provider, account.as_deref())
             .map_err(anyhow::Error::msg)?;
     let lease = store.signing(&instance)?;
     let key = crate::load_or_create_key(&data_dir)?;

@@ -5,7 +5,7 @@
     tools/pin codex <version>
 
 Verifies every platform's build with upstream's own checks, then writes the
-provider's pin in crates/agents/src/pin/pins.rs, preserving the other provider.
+provider's pin in crates/<provider>/src/pin/pins.rs.
 Claude: manifest.json.sig against Anthropic's release key, then each binary
 against the manifest. Codex: each
 codex-package-<triple>.tar.gz against GitHub's published digest and
@@ -26,7 +26,14 @@ import urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-PINS_RS = ROOT / "crates/agents/src/pin/pins.rs"
+PINS_RS = {
+    "claude": ROOT / "crates/claude/src/pin/pins.rs",
+    "codex": ROOT / "crates/codex/src/pin/pins.rs",
+}
+DOWNLOADS = {
+    "claude": "`claude` binary for a platform named as in Claude's manifest",
+    "codex": "`codex-package-<triple>.tar.gz` release asset for a target triple",
+}
 
 CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
 CLAUDE_KEY = "https://downloads.claude.ai/keys/claude-code.asc"
@@ -165,52 +172,44 @@ def verify_codex_bundle(cosign, version, archive, assets):
     print(f"  cosign verifies {archive.name}")
 
 
-def read():
+def read(provider):
     """Reads only the Rust shape emitted below (including rustfmt's wrapping)."""
-    text = PINS_RS.read_text()
-    pins = {}
-    for name in ("claude", "codex"):
-        block = re.search(
-            rf'/// Verified: ([^\n]+)\n'
-            rf'pub const {name.upper()}_VERSION: &str = "([^"\n]+)";'
-            rf'.*?pub fn {name}_sha256\(platform: &str\) -> Option<String> {{'
-            rf'\s*match platform {{(.*?)\n    }}\n}}', text, re.S)
-        if block is None:
-            fail(f"cannot read {name}'s generated pin in {PINS_RS}")
-        note, version, arms = block.groups()
-        entries = re.findall(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', arms)
-        remaining = re.sub(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', '', arms)
-        if not entries or len(dict(entries)) != len(entries) or remaining.strip() != "_ => None,":
-            fail(f"cannot read {name}'s generated hashes in {PINS_RS}")
-        pins[name] = {"version": version, "verified": note, "sha256": dict(entries)}
-    return pins
+    path = PINS_RS[provider]
+    block = re.search(
+        r'/// Verified: ([^\n]+)\n'
+        r'pub const VERSION: &str = "([^"\n]+)";'
+        r'.*?pub fn sha256\(platform: &str\) -> Option<String> \{'
+        r'\s*match platform \{(.*?)\n    \}\n\}', path.read_text(), re.S)
+    if block is None:
+        fail(f"cannot read the generated pin in {path}")
+    note, version, arms = block.groups()
+    entries = re.findall(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', arms)
+    remaining = re.sub(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', '', arms)
+    if not entries or len(dict(entries)) != len(entries) or remaining.strip() != "_ => None,":
+        fail(f"cannot read the generated hashes in {path}")
+    return {"version": version, "verified": note, "sha256": dict(entries)}
 
 
-def rust_fn(name, what, pin):
+def write(provider, pin):
+    path = PINS_RS[provider]
     arms = "".join(f'        "{key}" => Some(String::from("{value}")),\n' for key, value in pin["sha256"].items())
-    return (
+    source = (
+        f"//! The pinned {provider}, written by `tools/pin`. Run it again to change the pin.\n\n"
+        "use crate::prelude::*;\n\n"
         f'/// Verified: {pin["verified"]}\n'
-        f'pub const {name.upper()}_VERSION: &str = "{pin["version"]}";\n\n'
-        f"/// The SHA-256 of the {what}.\n"
+        f'pub const VERSION: &str = "{pin["version"]}";\n\n'
+        f"/// The SHA-256 of the {DOWNLOADS[provider]}.\n"
         f"#[must_use]\n"
-        f"pub fn {name}_sha256(platform: &str) -> Option<String> {{\n"
+        f"pub fn sha256(platform: &str) -> Option<String> {{\n"
         f"    match platform {{\n{arms}        _ => None,\n    }}\n}}\n"
     )
-
-
-def write(pins):
-    source = (
-        "//! The pinned CLIs, written by `tools/pin`. Run it again to change a pin.\n\n"
-        "use crate::prelude::*;\n\n"
-        + rust_fn("claude", "`claude` binary for a platform named as in Claude's manifest", pins["claude"]) + "\n"
-        + rust_fn("codex", "`codex-package-<triple>.tar.gz` release asset for a target triple", pins["codex"]))
-    with tempfile.TemporaryDirectory(dir=PINS_RS.parent, prefix=".pin-") as work:
-        staged = Path(work) / PINS_RS.name
+    with tempfile.TemporaryDirectory(dir=path.parent, prefix=".pin-") as work:
+        staged = Path(work) / path.name
         staged.write_text(source, encoding="utf-8")
-        staged.chmod(PINS_RS.stat().st_mode)
+        staged.chmod(path.stat().st_mode)
         subprocess.run(["rustfmt", "--edition", "2024", str(staged)], check=True)
-        os.replace(staged, PINS_RS)
-    print(f"wrote {PINS_RS.relative_to(ROOT)}")
+        os.replace(staged, path)
+    print(f"wrote {path.relative_to(ROOT)}")
 
 
 def update(provider, pinned, scratch):
@@ -218,9 +217,7 @@ def update(provider, pinned, scratch):
     require_platforms(provider, pinned["sha256"], expected)
     with (scratch / "pin.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        pins = read()
-        pins[provider] = pinned
-        write(pins)
+        write(provider, pinned)
 
 
 def main():

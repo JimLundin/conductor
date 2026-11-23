@@ -317,7 +317,8 @@ async fn verify_replication(
     outsider: &Endpoint,
     owner: proto::fleet::NodeId,
 ) -> anyhow::Result<()> {
-    let instance = proto::InstanceId::named(proto::Provider::Claude, "fixture");
+    let instance =
+        proto::InstanceId::named(proto::Provider::new("claude"), "fixture");
     root.change_credentials(|roster| {
         let key = proto::Credential {
             kind: String::from("api_key"),
