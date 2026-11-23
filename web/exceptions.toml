@@ -1,0 +1,21 @@
+# Where the web app departs from the shared TypeScript standard, and why.
+
+[[exception]]
+path = "src/**"
+rule = "lint/nursery/noDanglingUnderscore"
+reason = "Effect's tagged values, its Data enums and Schema unions, discriminate on `_tag`, which the app reads to tell them apart"
+
+[[exception]]
+path = "src/**"
+rule = "lint/style/useNamingConvention"
+reason = "an Effect tagged enum names its variants in PascalCase, as the variant types and the `$match` cases that handle them"
+
+[[exception]]
+path = "src/**"
+rule = "lint/nursery/useCapitalizedConstructors"
+reason = "an Effect tagged enum's variant constructors are PascalCase functions called without new, such as `Route.Pairing()`"
+
+[[exception]]
+path = "vite.config.ts"
+rule = "lint/style/noDefaultExport"
+reason = "Vite and Vitest read their config from the file's default export"

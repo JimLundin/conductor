@@ -25,11 +25,14 @@ Home Screen. The design is in
   Apply this policy without asking whether existing data must be preserved.
 - **Gate.** `tools/check.sh [commit|step|release]` runs the standard's
   `rust/check.sh`, which also runs Conductor's suites in `checks.toml`: the
-  run-record IP scrub, the tooling tests and the e2e fixture check at
-  `commit`. Use `commit` for local validation when the environment
-  is available. If validation is unavailable or stalls, commit and push the
-  task branch with the commands, results and outstanding checks recorded
-  in the commit message and handoff. Saving work requires no validation
+  run-record IP scrub, the tooling tests, the e2e fixture check and the
+  shared TypeScript standard on `web/` (`web`) at `commit`, and that
+  standard's step with the web app's Vitest tests (`web-step`) at `step`.
+  The web app builds with `npm run build` in `web/`, which Pages deploys.
+  Use `commit` for local validation when the environment is available. If
+  validation is unavailable or stalls, commit and push the task branch
+  with the commands, results and outstanding checks recorded in the commit
+  message and handoff. Saving work requires no validation
   waiver. `release` adds mutation testing and the slow checks, in CI.
   It runs as units, each a check of one scope, and skips a unit whose key
   already has a pass recorded on `refs/notes/checks`, which it fetches

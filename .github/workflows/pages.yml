@@ -17,30 +17,26 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install the toolchain from rust-toolchain.toml
-        run: rustc -Vv
-
-      - uses: cargo-bins/cargo-binstall@5885714d0a40a14b2535c6ffc051fd8e49aa9665 # v1.27.0
+      - uses: actions/checkout@v7
         with:
-          version: v1.27.0
+          persist-credentials: false
 
-      - name: Install dx 0.7.10
-        run: cargo binstall dioxus-cli@0.7.10 --no-confirm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-
-      # ring compiles C for wasm32 with clang, which the runner image ships.
-      - name: Build the web app with base path /conductor/
-        working-directory: crates/app
+      # The build uses relative asset paths, so it serves from /conductor/.
+      - name: Build the web app
+        working-directory: web
         run: |
-          clang --version
-          dx build --platform web --release
+          npm ci --no-fund --no-audit
+          npm run build
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: target/dx/app/release/web/public
+          path: web/dist
 
   deploy:
     needs: build

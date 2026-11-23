@@ -1,0 +1,54 @@
+@layer base, screens;
+
+@layer base {
+	:root {
+		--canvas: oklch(96.5% 0.005 285);
+		--ink: oklch(21% 0.01 265);
+		--muted: oklch(53% 0.015 265);
+		color-scheme: light dark;
+		font:
+			16px / 1.45 -apple-system,
+			BlinkMacSystemFont,
+			"Segoe UI",
+			system-ui,
+			sans-serif;
+	}
+
+	@media (prefers-color-scheme: dark) {
+		:root {
+			--canvas: oklch(0% 0 0);
+			--ink: oklch(95% 0.004 265);
+			--muted: oklch(70% 0.013 265);
+		}
+	}
+
+	html {
+		background: var(--canvas);
+		color: var(--ink);
+		-webkit-text-size-adjust: 100%;
+	}
+
+	body {
+		margin: 0;
+	}
+}
+
+@layer screens {
+	.pairing {
+		max-inline-size: 32rem;
+		margin-inline: auto;
+		padding-block: calc(env(safe-area-inset-top) + 3rem) 2rem;
+		padding-inline: 1.25rem;
+	}
+
+	.pairing h1 {
+		margin-block: 0 0.5rem;
+		margin-inline: 0;
+		font-size: 1.75rem;
+	}
+
+	.pairing p {
+		margin: 0;
+		color: var(--muted);
+	}
+}
