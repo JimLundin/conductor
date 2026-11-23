@@ -277,7 +277,10 @@ mod tests {
 
     fn started() -> EventKind {
         EventKind::SessionCreated {
-            instance: InstanceId::named(Provider::Codex, "https://gw.example"),
+            instance: InstanceId::named(
+                Provider::new("codex"),
+                "https://gw.example",
+            ),
             directory: HostPath(String::from("/work")),
             by: ClientName(String::from("phone")),
             model: None,
@@ -334,7 +337,7 @@ mod tests {
             Some(&Created {
                 session: SessionId(1),
                 instance: InstanceId::named(
-                    Provider::Codex,
+                    Provider::new("codex"),
                     "https://gw.example"
                 ),
                 directory: HostPath(String::from("/work")),

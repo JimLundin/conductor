@@ -102,13 +102,13 @@ impl Credential {
 impl Catalog {
     /// `None` when the host runs no plugin for `provider`.
     #[must_use]
-    pub fn of(&self, provider: Provider) -> Option<&ProviderInfo> {
-        self.0.get(&provider)
+    pub fn of(&self, provider: &Provider) -> Option<&ProviderInfo> {
+        self.0.get(provider)
     }
 
     /// What the app calls `provider`: its plugin's label, else its name.
     #[must_use]
-    pub fn label(&self, provider: Provider) -> String {
+    pub fn label(&self, provider: &Provider) -> String {
         self.of(provider).map_or_else(
             || String::from(provider.name()),
             |info| info.label.clone(),

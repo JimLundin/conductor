@@ -38,7 +38,7 @@ const created = (directory: string): EventKind => ({
 		by: "desk",
 		directory,
 		effort: null,
-		instance: { account: "Own", provider: "Claude" },
+		instance: { account: "Own", provider: "claude" },
 		model: null,
 	},
 });

@@ -197,7 +197,7 @@ mod tests {
     use agents::{NativeRequest, NativeTurn, Note, Reply, Step};
     use proto::{
         ClientName, CloseReason, Decision as Chosen, Effort, HostPath, ModelId,
-        Provider, SessionId,
+        SessionId,
     };
     use serde_json::json;
 
@@ -353,7 +353,7 @@ mod tests {
                 }
             )))),
             [Report::Log(Note::UnmappedOnThread {
-                provider: Provider::Codex,
+                provider: crate::PROVIDER,
                 thread: text("th_1"),
                 frame: text("unknown"),
             })

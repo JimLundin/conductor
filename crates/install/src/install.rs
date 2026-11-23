@@ -1,11 +1,11 @@
-//! Installs the pinned CLIs (`pins.rs`, docs/architecture.md §6.2).
+//! Installs the pinned CLIs (docs/architecture.md §6.2).
 //!
 //! Each one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
 //! file, a SHA-256 check of that file against the pin and a rename, so a
 //! crash leaves either nothing or a verified install. `<data>/cli/<cli>/lock`
 //! keeps two processes from installing into one data dir at once. Which
-//! build a platform takes and whether a download is it are decided in
-//! `agents::pin`.
+//! build a platform takes is each provider's pin; whether a download is it
+//! is decided in `agents::pin`.
 
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
@@ -14,7 +14,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use agents::pin::{Mismatch, Package, Pin};
-use proto::Provider;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -30,10 +29,9 @@ const READ_BUFFER: usize = 1_048_576;
 pub enum InstallError {
     #[error("no pinned build for {os} on {arch}")]
     Platform { os: String, arch: String },
-    #[error(
-        "Claude has no pinned Linux build for this libc; supported: GNU libc and musl"
-    )]
-    Libc,
+    /// The CLI pins no build for this platform, for the reason given.
+    #[error("{0}")]
+    Unsupported(String),
     #[error("starting or joining the archive extraction worker: {0}")]
     Worker(#[from] tokio::task::JoinError),
     #[error("downloading the pinned CLI: {0}")]
@@ -50,47 +48,40 @@ pub enum InstallError {
     Unpack { archive: String, status: String },
 }
 
-fn unpinned() -> InstallError {
-    InstallError::Platform {
-        os: String::from(std::env::consts::OS),
-        arch: String::from(std::env::consts::ARCH),
-    }
-}
-
-fn pin(cli: Provider) -> Result<Pin, InstallError> {
-    if cli == Provider::Claude
-        && cfg!(target_os = "linux")
-        && !cfg!(any(target_env = "gnu", target_env = "musl"))
-    {
-        return Err(InstallError::Libc);
-    }
-    agents::pin::pin(
-        cli,
+/// The build `pin` pins for the platform this host runs on: its OS and
+/// architecture as Rust names them, its executables' suffix, and whether its
+/// libc is musl.
+///
+/// # Errors
+/// `pin` pins no build for this platform.
+pub fn here(
+    pin: fn(&str, &str, &str, bool) -> Option<Pin>,
+) -> Result<Pin, InstallError> {
+    pin(
         std::env::consts::OS,
         std::env::consts::ARCH,
         std::env::consts::EXE_SUFFIX,
         cfg!(target_env = "musl"),
     )
-    .ok_or_else(unpinned)
+    .ok_or_else(|| InstallError::Platform {
+        os: String::from(std::env::consts::OS),
+        arch: String::from(std::env::consts::ARCH),
+    })
 }
 
-/// Makes sure the pinned `cli` is installed under `data_dir` and returns its
-/// path, after removing every other version. It runs before any session, so
-/// no session can be using one.
+/// Makes sure `pin`, the CLI called `cli`, is installed under `data_dir`.
+///
+/// It returns the binary's path, after removing every other version. It
+/// runs before any session, so no session can be using one.
 ///
 /// # Errors
-/// Fails when the CLI has no pin for this platform, or the download,
-/// verification or install fails.
+/// Fails when the download, verification or install fails.
 pub async fn install(
-    cli: Provider,
+    cli: &str,
+    pin: Pin,
     data_dir: &Path,
 ) -> Result<PathBuf, InstallError> {
-    put(
-        cli.name(),
-        pin(cli)?,
-        &data_dir.join("cli").join(cli.name()),
-    )
-    .await
+    put(cli, pin, &data_dir.join("cli").join(cli)).await
 }
 
 /// Installs `pin` in `parent`, holding `parent`'s lock throughout. An
@@ -475,86 +466,18 @@ fn make_executable(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// The pin and the protocol code move together (docs/architecture.md §6.2):
-/// each pinned version has a fixture recorded at it, and Claude's is in
-/// the supported range.
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
-    use serde_json::Value;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
 
     use super::{Package, Pin, put, sha256};
-    use agents::pin::pins;
-    use claude::check_version;
 
     fn root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
-    }
-
-    /// Every string at `pointer` in the lines recorded in `fixtures/<dir>`.
-    fn recorded(
-        dir: &str,
-        pointer: &str,
-    ) -> Result<BTreeSet<String>, std::io::Error> {
-        let texts = std::fs::read_dir(root().join("fixtures").join(dir))?
-            .map(|entry| std::fs::read_to_string(entry?.path()))
-            .collect::<Result<Vec<String>, std::io::Error>>()?;
-        Ok(texts
-            .iter()
-            .flat_map(|text| {
-                text.lines()
-                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-                    .filter_map(|line| {
-                        line.pointer(pointer)
-                            .and_then(Value::as_str)
-                            .map(String::from)
-                    })
-                    .collect::<Vec<String>>()
-            })
-            .collect())
-    }
-
-    #[test]
-    fn claude_pin_is_recorded_and_supported()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let version = String::from(pins::CLAUDE_VERSION);
-        let versions =
-            recorded("claude", "/response/response/claude_code_version")?;
-        let initialize = serde_json::from_str(&format!(
-            "{{\"claude_code_version\": \"{version}\"}}"
-        ))?;
-        assert_eq!(
-            versions.get(&version),
-            Some(&version),
-            "no fixture in fixtures/claude was recorded at the pinned claude"
-        );
-        assert_eq!(
-            check_version(initialize),
-            Ok(()),
-            "the pinned claude is outside SUPPORTED_VERSIONS"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn codex_pin_is_recorded() -> Result<(), Box<dyn std::error::Error>> {
-        let version = String::from(pins::CODEX_VERSION);
-        let versions = recorded("codex", "/result/userAgent")?
-            .iter()
-            .filter_map(|agent| agent.split_whitespace().next())
-            .filter_map(|product| product.split_once('/'))
-            .map(|(_, recorded_version)| String::from(recorded_version))
-            .collect::<BTreeSet<String>>();
-        assert_eq!(
-            versions.get(&version),
-            Some(&version),
-            "no fixture in fixtures/codex was recorded at the pinned codex"
-        );
-        Ok(())
     }
 
     /// The test binary: 8 MiB of sevens, sent in 64 KiB pieces with a pause

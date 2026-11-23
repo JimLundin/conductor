@@ -262,9 +262,12 @@ fn instances(availability: Availability) -> Instances {
     let status = |availability| InstanceStatus { availability };
     Instances(
         [
-            (InstanceId::own(Provider::Claude), status(availability)),
             (
-                InstanceId::own(Provider::Codex),
+                InstanceId::own(Provider::new("claude")),
+                status(availability),
+            ),
+            (
+                InstanceId::own(Provider::new("codex")),
                 status(Availability::Unavailable {
                     reason: String::from("no codex"),
                 }),

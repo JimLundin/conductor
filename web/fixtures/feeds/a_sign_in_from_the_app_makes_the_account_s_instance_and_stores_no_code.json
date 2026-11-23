@@ -4,7 +4,7 @@
 		"frame": {
 			"Welcome": {
 				"catalog": {
-					"Claude": {
+					"claude": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -76,7 +76,7 @@
 						"label": "Claude Code",
 						"note": null
 					},
-					"Codex": {
+					"codex": {
 						"credentials": [
 							{
 								"account": "base_url",
@@ -147,7 +147,7 @@
 				"host": "test-host",
 				"instances": [
 					[
-						{ "account": "Own", "provider": "Claude" },
+						{ "account": "Own", "provider": "claude" },
 						{
 							"availability": {
 								"Available": {
@@ -168,7 +168,7 @@
 						}
 					],
 					[
-						{ "account": "Own", "provider": "Codex" },
+						{ "account": "Own", "provider": "codex" },
 						{
 							"availability": {
 								"Unavailable": {
@@ -187,7 +187,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Available": {
@@ -208,7 +208,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -226,7 +226,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": "Starting"
 			}
 		},
@@ -236,7 +236,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": {
 					"Open": {
 						"code": null,
@@ -258,7 +258,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": "Finishing"
 			}
 		},
@@ -268,7 +268,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": {
 					"Failed": {
 						"reason": "Claude didn't accept that code. Sign in again to get a new one."
@@ -283,7 +283,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": "Starting"
 			}
 		},
@@ -293,7 +293,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": {
 					"Open": {
 						"code": null,
@@ -310,7 +310,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": "Finishing"
 			}
 		},
@@ -320,7 +320,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": "Finishing"
 			}
 		},
@@ -331,7 +331,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "starting the instance's CLI" }
@@ -341,7 +341,7 @@
 				[
 					{
 						"account": { "Named": "conductor-test@example.invalid" },
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -350,7 +350,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -368,7 +368,7 @@
 		"frame": {
 			"Instances": [
 				[
-					{ "account": "Own", "provider": "Claude" },
+					{ "account": "Own", "provider": "claude" },
 					{
 						"availability": {
 							"Unavailable": { "reason": "starting the instance's CLI" }
@@ -378,7 +378,7 @@
 				[
 					{
 						"account": { "Named": "conductor-test@example.invalid" },
-						"provider": "Claude"
+						"provider": "claude"
 					},
 					{
 						"availability": {
@@ -400,7 +400,7 @@
 					}
 				],
 				[
-					{ "account": "Own", "provider": "Codex" },
+					{ "account": "Own", "provider": "codex" },
 					{
 						"availability": {
 							"Unavailable": {
@@ -417,7 +417,7 @@
 		"connection": 0,
 		"frame": {
 			"SignIn": {
-				"instance": { "account": "Own", "provider": "Claude" },
+				"instance": { "account": "Own", "provider": "claude" },
 				"step": "SignedIn"
 			}
 		},

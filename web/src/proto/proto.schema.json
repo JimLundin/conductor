@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/39",
+			"const": "conductor/40",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
@@ -121,16 +121,10 @@
 			]
 		},
 		"Catalog": {
-			"additionalProperties": false,
-			"description": "What the host's plugins describe, by provider.",
-			"properties": {
-				"Claude": {
-					"$ref": "#/$defs/ProviderInfo"
-				},
-				"Codex": {
-					"$ref": "#/$defs/ProviderInfo"
-				}
+			"additionalProperties": {
+				"$ref": "#/$defs/ProviderInfo"
 			},
+			"description": "What the host's plugins describe, by provider.",
 			"type": "object"
 		},
 		"Change": {
@@ -2809,8 +2803,7 @@
 			"type": "string"
 		},
 		"Provider": {
-			"description": "The providers a host may run: the one place they are listed.",
-			"enum": ["Claude", "Codex"],
+			"description": "A provider, by the name its plugin declares: what the host's command\nline, its data dir and the wire call it. Which providers there are is up\nto the plugins a host is given.",
 			"type": "string"
 		},
 		"ProviderInfo": {

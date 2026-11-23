@@ -39,8 +39,8 @@ async fn update_fleet(
             provider,
             credential,
         } => {
-            let sharing = plugins.sharing(*provider, credential);
-            share(registry, fleet, *provider, credential, sharing).await
+            let sharing = plugins.sharing(provider, credential);
+            share(registry, fleet, provider, credential, sharing).await
         }
         InstanceCommand::Remove { instance } => {
             Ok(remove(fleet, instance).await)
@@ -51,7 +51,7 @@ async fn update_fleet(
 async fn share(
     registry: &Registry,
     fleet: &Membership,
-    provider: proto::Provider,
+    provider: &proto::Provider,
     credential: &proto::Credential,
     sharing: Sharing,
 ) -> Result<Result<(), InstanceRefusal>, Stopped> {
@@ -71,7 +71,10 @@ async fn share(
         Ok(account) => {
             share_credential(
                 fleet,
-                InstanceId { provider, account },
+                InstanceId {
+                    provider: provider.clone(),
+                    account,
+                },
                 credential,
                 sharing,
             )
@@ -228,14 +231,14 @@ async fn configure_changed(
         return false;
     }
     let Some(credential) = instance.credential.as_ref().filter(|credential| {
-        plugins.sharing(id.provider, credential) != Sharing::Local
+        plugins.sharing(&id.provider, credential) != Sharing::Local
     }) else {
         return false;
     };
     perform(
         registry,
         InstanceCommand::SetCredential {
-            provider: id.provider,
+            provider: id.provider.clone(),
             credential: credential.clone(),
         },
     )

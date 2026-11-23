@@ -36,7 +36,7 @@ fn own(provider: Provider) -> InstanceId {
 
 /// Claude's instance of the gateway account.
 fn api() -> InstanceId {
-    InstanceId::named(Provider::Claude, GATEWAY)
+    InstanceId::named(Provider::new("claude"), GATEWAY)
 }
 
 fn model(id: &str) -> ModelId {
@@ -91,9 +91,9 @@ fn booted(
 fn registry(own_sign_in: OwnSignIn, stored: &Stored) -> Test {
     booted(
         BTreeMap::from([
-            (own(Provider::Claude), ready("claude", own_sign_in)),
+            (own(Provider::new("claude")), ready("claude", own_sign_in)),
             (
-                own(Provider::Codex),
+                own(Provider::new("codex")),
                 Launcher::Unavailable(text("no codex")),
             ),
         ]),
@@ -105,8 +105,14 @@ fn registry(own_sign_in: OwnSignIn, stored: &Stored) -> Test {
 /// starter named with it.
 fn host_of(instances: &[(&'static str, InstanceId)]) -> Test {
     let mut launchers = BTreeMap::from([
-        (own(Provider::Claude), ready("claude", OwnSignIn::Unmanaged)),
-        (own(Provider::Codex), ready("codex", OwnSignIn::Unmanaged)),
+        (
+            own(Provider::new("claude")),
+            ready("claude", OwnSignIn::Unmanaged),
+        ),
+        (
+            own(Provider::new("codex")),
+            ready("codex", OwnSignIn::Unmanaged),
+        ),
     ]);
     launchers.extend(
         instances
@@ -147,8 +153,8 @@ fn catalog() -> Catalog {
         }]),
     };
     Catalog(BTreeMap::from([
-        (Provider::Claude, info("Claude Code")),
-        (Provider::Codex, info("Codex")),
+        (Provider::new("claude"), info("Claude Code")),
+        (Provider::new("codex"), info("Codex")),
     ]))
 }
 
@@ -185,9 +191,12 @@ fn stored_auth() -> Auth {
 /// The own instances, Claude's as `availability` says.
 fn claude(availability: Availability) -> Instances {
     Instances(BTreeMap::from([
-        (own(Provider::Claude), InstanceStatus { availability }),
         (
-            own(Provider::Codex),
+            own(Provider::new("claude")),
+            InstanceStatus { availability },
+        ),
+        (
+            own(Provider::new("codex")),
             InstanceStatus {
                 availability: unavailable("no codex"),
             },
@@ -279,12 +288,17 @@ fn with_credential(roster: Roster, id: &InstanceId, token: &str) -> Roster {
 #[test]
 fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
     let registry = registry(OwnSignIn::Unmanaged, &opened());
-    let claude = own(Provider::Claude);
+    let claude = own(Provider::new("claude"));
     assert_eq!(
         [
             registry.launch_session(&claude, false, None, None),
             registry.launch_session(&api(), true, None, None),
-            registry.launch_session(&own(Provider::Codex), true, None, None),
+            registry.launch_session(
+                &own(Provider::new("codex")),
+                true,
+                None,
+                None
+            ),
             registry.launch_session(&claude, true, Some(model("tiny")), None),
             registry.launch_session(&claude, true, None, Some(Effort::Max)),
         ],
@@ -321,7 +335,7 @@ fn every_host_has_each_provider_s_own_instance_beside_its_accounts() {
     let accounts = Roster(BTreeMap::from([(api(), Instance::default())]));
     assert_eq!(
         defaults.0.keys().cloned().collect::<Vec<InstanceId>>(),
-        [own(Provider::Claude), own(Provider::Codex)]
+        [own(Provider::new("claude")), own(Provider::new("codex"))]
     );
     assert_eq!(
         [
@@ -348,9 +362,12 @@ fn every_host_has_each_provider_s_own_instance_beside_its_accounts() {
 fn an_instance_s_dirs_are_its_provider_and_a_hash_of_its_account() {
     assert_eq!(
         [
-            dir(&own(Provider::Claude)),
-            dir(&InstanceId::named(Provider::Claude, "me@example.com")),
-            dir(&InstanceId::named(Provider::Codex, "me@example.com")),
+            dir(&own(Provider::new("claude"))),
+            dir(&InstanceId::named(
+                Provider::new("claude"),
+                "me@example.com"
+            )),
+            dir(&InstanceId::named(Provider::new("codex"), "me@example.com")),
             dir(&api()),
         ],
         [
@@ -369,13 +386,13 @@ fn the_command_line_picks_an_account_or_the_provider_s_own_instance() {
             .roster(&catalog());
     assert_eq!(
         [
-            picked(&roster, Provider::Claude, None),
-            picked(&roster, Provider::Claude, Some(GATEWAY)),
-            picked(&roster, Provider::Claude, Some("me@example.com")),
-            picked(&roster, Provider::Codex, Some("me@example.com")),
+            picked(&roster, &Provider::new("claude"), None),
+            picked(&roster, &Provider::new("claude"), Some(GATEWAY)),
+            picked(&roster, &Provider::new("claude"), Some("me@example.com")),
+            picked(&roster, &Provider::new("codex"), Some("me@example.com")),
         ],
         [
-            Ok(own(Provider::Claude)),
+            Ok(own(Provider::new("claude"))),
             Ok(api()),
             Err(text(
                 "this host has no instance claude me@example.com; its claude accounts are https://gateway.example"
@@ -407,14 +424,14 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
         ]
     );
     assert_eq!(
-        missing.launch_session(&own(Provider::Claude), true, None, None),
+        missing.launch_session(&own(Provider::new("claude")), true, None, None),
         Err(SessionRefusal::InstanceUnavailable {
             reason: text("no credential configured")
         })
     );
     assert_eq!(
         Registry::<&str, u8, &str>::new(&opened(), catalog()).launch_session(
-            &own(Provider::Claude),
+            &own(Provider::new("claude")),
             true,
             None,
             None
@@ -428,7 +445,7 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
 #[test]
 fn a_session_is_found_and_continued_only_while_its_instance_runs() {
     let mut registry = host_of(&[("api", api())]);
-    registry.admit(SessionId(1), own(Provider::Claude), 7);
+    registry.admit(SessionId(1), own(Provider::new("claude")), 7);
     registry.admit(SessionId(2), api(), 8);
     assert_eq!(
         (
@@ -448,7 +465,7 @@ fn a_session_is_found_and_continued_only_while_its_instance_runs() {
             Err(SessionRefusal::UnknownSession),
         )
     );
-    let _ = set(&mut registry, Provider::Claude, gateway("t"), "set");
+    let _ = set(&mut registry, Provider::new("claude"), gateway("t"), "set");
     assert_eq!(
         registry.relaunch(SessionId(2)),
         Err(SessionRefusal::InstanceUnavailable {
@@ -462,7 +479,12 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
     let mut registry = host_of(&[("api", api())]);
     let boot_jobs = registry.jobs;
     assert_eq!(
-        set(&mut registry, Provider::Claude, gateway("api"), "set"),
+        set(
+            &mut registry,
+            Provider::new("claude"),
+            gateway("api"),
+            "set"
+        ),
         Vec::from([
             stored_note(&api()),
             Effect::Refresh(job(
@@ -475,7 +497,7 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
     );
     assert_eq!(
         (
-            availability(&registry, &own(Provider::Claude)),
+            availability(&registry, &own(Provider::new("claude"))),
             availability(&registry, &api()),
         ),
         (
@@ -501,7 +523,7 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
     };
     assert_eq!(
         [
-            started(&registry, &own(Provider::Claude)),
+            started(&registry, &own(Provider::new("claude"))),
             started(&registry, &api())
         ],
         [Ok("claude"), Ok("api")]
@@ -510,11 +532,11 @@ fn two_instances_of_one_provider_keep_their_own_credentials_and_agents() {
 
 #[test]
 fn each_codex_instance_refreshes_its_own_app_server() {
-    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
+    let codex_api = InstanceId::named(Provider::new("codex"), GATEWAY);
     let mut registry = host_of(&[("codex-api", codex_api.clone())]);
     let boot_jobs = registry.jobs;
     assert_eq!(
-        set(&mut registry, Provider::Codex, gateway("key"), "set"),
+        set(&mut registry, Provider::new("codex"), gateway("key"), "set"),
         Vec::from([
             stored_note(&codex_api),
             Effect::Refresh(job(
@@ -525,11 +547,11 @@ fn each_codex_instance_refreshes_its_own_app_server() {
             )),
         ])
     );
-    registry.admit(SessionId(1), own(Provider::Codex), 1);
+    registry.admit(SessionId(1), own(Provider::new("codex")), 1);
     assert_eq!(
         (
             registry
-                .launch_session(&own(Provider::Codex), true, None, None)
+                .launch_session(&own(Provider::new("codex")), true, None, None)
                 .map(|launch| launch.start),
             registry.relaunch(SessionId(1)),
             registry
@@ -555,7 +577,7 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
         ..Instance::default()
     };
     assert_eq!(
-        registry.set_credential(Provider::Claude, gateway("t"), "add"),
+        registry.set_credential(Provider::new("claude"), gateway("t"), "add"),
         Vec::from([Effect::Save {
             roster: with_credential(defaults(&catalog()), &api(), "t"),
             change: Change::Added(api()),
@@ -563,7 +585,7 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
         }])
     );
     assert_eq!(
-        set(&mut registry, Provider::Claude, gateway("t"), "add"),
+        set(&mut registry, Provider::new("claude"), gateway("t"), "add"),
         Vec::from([
             Effect::Log(Note::InstanceAdded { instance: api() }),
             Effect::Start(Starting {
@@ -577,7 +599,7 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
     assert_eq!(
         (
             availability(&registry, &api()),
-            set(&mut registry, Provider::Claude, gateway("t2"), "set"),
+            set(&mut registry, Provider::new("claude"), gateway("t2"), "set"),
         ),
         (
             Some(unavailable("starting the instance's CLI")),
@@ -605,7 +627,11 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
         ])
     );
     assert_eq!(
-        registry.set_credential(Provider::Codex, gateway_at("", "t"), "none"),
+        registry.set_credential(
+            Provider::new("codex"),
+            gateway_at("", "t"),
+            "none"
+        ),
         Vec::from([Effect::Reply(
             "none",
             rejected(InstanceRefusal::InvalidCredential {
@@ -619,8 +645,8 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
 fn a_start_for_an_instance_since_removed_is_dropped() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
     let boot_jobs = registry.jobs;
-    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
-    let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
+    let codex_api = InstanceId::named(Provider::new("codex"), GATEWAY);
+    let _ = set(&mut registry, Provider::new("codex"), gateway("k"), "add");
     let removed =
         registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
     let result = InstanceResult::Accepted;
@@ -651,12 +677,13 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
 fn a_start_from_before_an_instance_was_added_again_is_dropped() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
     let boot_jobs = registry.jobs;
-    let codex_api = InstanceId::named(Provider::Codex, GATEWAY);
-    let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
+    let codex_api = InstanceId::named(Provider::new("codex"), GATEWAY);
+    let _ = set(&mut registry, Provider::new("codex"), gateway("k"), "add");
     let removed =
         registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
     let _ = saving(&mut registry, removed);
-    let again = set(&mut registry, Provider::Codex, gateway("k"), "again");
+    let again =
+        set(&mut registry, Provider::new("codex"), gateway("k"), "again");
     let stale = registry.started(Started {
         id: boot_jobs + 1,
         instance: codex_api.clone(),
@@ -697,7 +724,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
     let mut registry = host_of(&[("api", api())]);
     registry.admit(SessionId(1), api(), 1);
     registry.admit(SessionId(2), api(), 2);
-    registry.admit(SessionId(3), own(Provider::Codex), 3);
+    registry.admit(SessionId(3), own(Provider::new("codex")), 3);
     assert_eq!(
         registry.remove_instance(
             api(),
@@ -732,7 +759,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         )
     );
     let kept = registry.remove_instance(
-        own(Provider::Claude),
+        own(Provider::new("claude")),
         &BTreeSet::new(),
         "own",
     );
@@ -740,7 +767,12 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         kept,
         Vec::from([Effect::Reply("own", InstanceResult::Accepted)])
     );
-    assert!(registry.instances().of(&own(Provider::Claude)).is_some());
+    assert!(
+        registry
+            .instances()
+            .of(&own(Provider::new("claude")))
+            .is_some()
+    );
 }
 
 #[test]
@@ -759,7 +791,7 @@ fn continue_reopens_a_closed_session_for_instance_removal_checks() {
         event(
             1,
             EventKind::SessionCreated {
-                instance: own(Provider::Claude),
+                instance: own(Provider::new("claude")),
                 directory: HostPath(text("/work")),
                 by: ClientName(text("phone")),
                 model: None,
@@ -783,7 +815,12 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
     let mut registry = host_of(&[("api", api())]);
     let boot_jobs = registry.jobs;
     assert_eq!(
-        set(&mut registry, Provider::Claude, gateway("first"), "first"),
+        set(
+            &mut registry,
+            Provider::new("claude"),
+            gateway("first"),
+            "first"
+        ),
         Vec::from([
             stored_note(&api()),
             Effect::Refresh(job(
@@ -796,8 +833,18 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
     );
     assert_eq!(
         (
-            set(&mut registry, Provider::Claude, gateway("middle"), "middle"),
-            set(&mut registry, Provider::Claude, gateway("newest"), "newest"),
+            set(
+                &mut registry,
+                Provider::new("claude"),
+                gateway("middle"),
+                "middle"
+            ),
+            set(
+                &mut registry,
+                Provider::new("claude"),
+                gateway("newest"),
+                "newest"
+            ),
             availability(&registry, &api()),
         ),
         (
@@ -855,7 +902,7 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
 fn a_failed_refresh_leaves_the_instance_unavailable_until_the_next() {
     let mut registry = host_of(&[("api", api())]);
     let boot_jobs = registry.jobs;
-    let _ = set(&mut registry, Provider::Claude, gateway("t"), "set");
+    let _ = set(&mut registry, Provider::new("claude"), gateway("t"), "set");
     let failed = registry.refreshed(refreshed(
         boot_jobs + 1,
         &api(),
@@ -893,11 +940,15 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
             }),
         )])
     };
-    let codex = own(Provider::Codex);
+    let codex = own(Provider::new("codex"));
     assert_eq!(
         (
-            registry.set_credential(Provider::Claude, bad, "bad"),
-            registry.set_credential(Provider::Claude, gateway("t"), "set"),
+            registry.set_credential(Provider::new("claude"), bad, "bad"),
+            registry.set_credential(
+                Provider::new("claude"),
+                gateway("t"),
+                "set"
+            ),
             registry.remove_instance(api(), &BTreeSet::new(), "unknown"),
             registry.remove_instance(codex.clone(), &BTreeSet::new(), "remove"),
             registry.moved_aside(codex.clone(), "remove", Err(text("busy"))),
@@ -934,7 +985,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
         Vec::from([Effect::Reply("remove", InstanceResult::Accepted)])
     );
     assert_eq!(
-        registry.set_credential(Provider::Claude, gateway("t"), "set"),
+        registry.set_credential(Provider::new("claude"), gateway("t"), "set"),
         Vec::from([Effect::Save {
             roster: with_credential(defaults(&catalog()), &api(), "t"),
             change: Change::Added(api()),
@@ -946,7 +997,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
 #[test]
 fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
-    let codex = own(Provider::Codex);
+    let codex = own(Provider::new("codex"));
     assert_eq!(
         registry.saved(
             defaults(&catalog()),
@@ -994,7 +1045,7 @@ fn the_default_is_the_credential_s_model_then_the_chosen_then_the_cli_s() {
 fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
     let mut registry = registry(OwnSignIn::Missing, &opened());
     let boot_jobs = registry.jobs;
-    let claude = own(Provider::Claude);
+    let claude = own(Provider::new("claude"));
     let before = availability(&registry, &claude);
     let refresh =
         registry.signed_in(claude.clone(), None, &BTreeSet::new(), "signed in");
@@ -1039,8 +1090,8 @@ fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
 fn a_sign_in_that_names_an_account_makes_its_instance() {
     let mut registry = registry(OwnSignIn::Missing, &opened());
     let boot_jobs = registry.jobs;
-    let claude = own(Provider::Claude);
-    let me = InstanceId::named(Provider::Claude, "me@example.com");
+    let claude = own(Provider::new("claude"));
+    let me = InstanceId::named(Provider::new("claude"), "me@example.com");
     let signed = registry.signed_in(
         claude.clone(),
         Some(Account::Named(text("me@example.com"))),
@@ -1125,7 +1176,7 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
 /// credential of the instance it signed in from.
 #[test]
 fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
-    let me = InstanceId::named(Provider::Claude, "me@example.com");
+    let me = InstanceId::named(Provider::new("claude"), "me@example.com");
     let mut signed = defaults(&catalog());
     signed.0.insert(me.clone(), Instance::default());
     assert_eq!(
@@ -1158,8 +1209,9 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
             },
         )
     };
-    let own = InstanceId::own(Provider::Claude);
-    let other = InstanceId::named(Provider::Claude, "https://gateway.example");
+    let own = InstanceId::own(Provider::new("claude"));
+    let other =
+        InstanceId::named(Provider::new("claude"), "https://gateway.example");
     let history = Vec::from([
         created(1, own.clone()),
         event(1, EventKind::OnIssue { issue }),
@@ -1218,7 +1270,7 @@ fn a_brief_that_did_not_reach_the_agent_says_why() {
 
 fn start_request() -> super::StartRequest {
     super::StartRequest {
-        instance: own(Provider::Claude),
+        instance: own(Provider::new("claude")),
         model: None,
         effort: None,
         by: ClientName(text("phone")),
@@ -1347,7 +1399,7 @@ fn a_start_checks_the_directory_and_instance_after_branch_readiness()
 -> Result<(), &'static str> {
     let mut registry = registry(OwnSignIn::SignedIn, &opened());
     let unknown = super::StartRequest {
-        instance: InstanceId::named(Provider::Claude, "unknown"),
+        instance: InstanceId::named(Provider::new("claude"), "unknown"),
         ..start_request()
     };
     for (exists, reason) in [
@@ -1563,7 +1615,7 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
     let boot = registry.jobs;
     let _ = set(
         &mut registry,
-        Provider::Claude,
+        Provider::new("claude"),
         gateway("old"),
         "old credential",
     );
@@ -1582,7 +1634,7 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
     }
     let _ = set(
         &mut registry,
-        Provider::Claude,
+        Provider::new("claude"),
         gateway("replacement"),
         "re-add",
     );
@@ -1594,12 +1646,17 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
     });
     let _ = set(
         &mut registry,
-        Provider::Claude,
+        Provider::new("claude"),
         gateway("current"),
         "current",
     );
     let active = registry.jobs;
-    let _ = set(&mut registry, Provider::Claude, gateway("next"), "next");
+    let _ = set(
+        &mut registry,
+        Provider::new("claude"),
+        gateway("next"),
+        "next",
+    );
     let next = registry.jobs;
 
     assert_eq!(
@@ -1637,8 +1694,8 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
 
 #[test]
 fn adoption_protects_sessions_on_the_source_and_destination() {
-    let source = InstanceId::named(Provider::Claude, "source");
-    let destination = InstanceId::named(Provider::Claude, "destination");
+    let source = InstanceId::named(Provider::new("claude"), "source");
+    let destination = InstanceId::named(Provider::new("claude"), "destination");
     let mut registry = host_of(&[
         ("source", source.clone()),
         ("destination", destination.clone()),

@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Roster;
 
-pub const ALPN: &[u8] = b"conductor-fleet/3";
+pub const ALPN: &[u8] = b"conductor-fleet/4";
 
 pub type NodeId = [u8; 32];
 

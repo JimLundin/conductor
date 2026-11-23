@@ -10,6 +10,19 @@ use daemon::{Hosting, Plugins};
 use proto::Provider;
 use runtime::Settings;
 
+/// The providers this host runs, by the names their plugins declare.
+const PROVIDERS: [Provider; 2] = [claude::PROVIDER, codex::PROVIDER];
+
+/// The provider the command line calls `name`.
+fn provider(name: &str) -> Result<Provider, String> {
+    host::start::provider(name, &PROVIDERS)
+}
+
+/// A provider's setting on the command line, `<provider>=<value>`.
+fn setting(text: &str) -> Result<(Provider, String), String> {
+    host::start::setting(text, &PROVIDERS)
+}
+
 #[derive(Parser)]
 #[command(name = "conductord", about = "The Conductor host daemon")]
 struct Args {
@@ -87,7 +100,7 @@ enum FleetCommand {
 #[derive(Parser)]
 struct LoginArgs {
     /// The provider whose CLI signs in: `claude` or `codex`.
-    #[arg(value_parser = host::start::provider)]
+    #[arg(value_parser = provider)]
     provider: Provider,
     /// The account of the instance to sign in again, as the app's
     /// credentials screen shows it. Without it the provider's own sign-in
@@ -114,11 +127,11 @@ struct HostArgs {
     /// for tests and development, such as `codex=/opt/codex`: the default
     /// of each of its instances. An instance where it doesn't run offers no
     /// sessions. Give it once for each provider.
-    #[arg(long = "cli", value_name = "PROVIDER=PATH", value_parser = host::start::setting)]
+    #[arg(long = "cli", value_name = "PROVIDER=PATH", value_parser = setting)]
     clis: Vec<(Provider, String)>,
     /// The model the sessions of a provider's instances get when they name
     /// none, such as `claude=haiku`. Defaults to the CLI's.
-    #[arg(long = "model", value_name = "PROVIDER=MODEL", value_parser = host::start::setting)]
+    #[arg(long = "model", value_name = "PROVIDER=MODEL", value_parser = setting)]
     models: Vec<(Provider, String)>,
     /// The home's git remote (docs/home.md), such as
     /// `https://github.com/JimLundin/home.git`. The host clones it into its
@@ -237,20 +250,22 @@ fn plugins(
         model: models.get(&provider).cloned(),
     };
     Plugins::from_iter([
-        claude_cli::plugin(settings(Provider::Claude)),
-        codex_cli::plugin(settings(Provider::Codex)),
+        claude_cli::plugin(settings(claude::PROVIDER)),
+        codex_cli::plugin(settings(codex::PROVIDER)),
     ])
     .with_fleet_credentials(fleet_sharing)
 }
 
+/// Which credentials the fleet shares: every API key, and a setup token
+/// (which only Claude has) as the only one of its provider.
 fn fleet_sharing(
-    provider: Provider,
+    _: &Provider,
     credential: &proto::Credential,
 ) -> daemon::fleet::Sharing {
     use daemon::fleet::Sharing;
-    match (provider, credential.kind.as_str()) {
-        (Provider::Claude | Provider::Codex, "api_key") => Sharing::Shared,
-        (Provider::Claude, "setup_token") => Sharing::OnePerProvider,
+    match credential.kind.as_str() {
+        "api_key" => Sharing::Shared,
+        claude::SETUP_TOKEN => Sharing::OnePerProvider,
         _ => Sharing::Local,
     }
 }
@@ -260,6 +275,26 @@ mod tests {
     use clap::Parser as _;
 
     use super::Args;
+
+    #[test]
+    fn an_unknown_provider_is_refused_naming_the_ones_the_host_has() {
+        let refusal = r#"no provider is called "gemini"; the providers are claude, codex"#;
+        for given in [
+            ["conductord", "host", "--cli", "gemini=/opt/gemini"],
+            ["conductord", "host", "--model", "gemini=pro"],
+            ["conductord", "login", "gemini", "--account=me"],
+        ] {
+            assert!(
+                Args::try_parse_from(given)
+                    .is_err_and(|error| error.to_string().contains(refusal)),
+                "{given:?}"
+            );
+        }
+        assert!(
+            Args::try_parse_from(["conductord", "host", "--cli", "codex=/x"])
+                .is_ok()
+        );
+    }
 
     #[test]
     fn fleet_commands_exclude_release_management() {

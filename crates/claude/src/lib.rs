@@ -13,6 +13,7 @@ mod credentials;
 mod driver;
 mod launch;
 mod mapping;
+pub mod pin;
 mod prelude;
 mod protocol;
 pub mod runtime;
@@ -39,3 +40,6 @@ pub use sign_in::{
     SetupTokenOutput, setup_token_code, setup_token_link, setup_token_run,
     sign_in,
 };
+
+/// Claude, as its plugin names it.
+pub const PROVIDER: proto::Provider = proto::Provider::new("claude");

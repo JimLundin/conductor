@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/39";
+export type Alpn = "conductor/40";
 
-export const Alpn = Schema.Literal("conductor/39").annotate({
+export const Alpn = Schema.Literal("conductor/40").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -259,15 +259,9 @@ export const ProviderInfo = Schema.Struct({
 	identifier: "ProviderInfo",
 });
 
-export type Catalog = {
-	readonly Claude?: ProviderInfo;
-	readonly Codex?: ProviderInfo;
-};
+export type Catalog = { readonly [x: string]: ProviderInfo };
 
-export const Catalog = Schema.Struct({
-	Claude: Schema.optionalKey(ProviderInfo),
-	Codex: Schema.optionalKey(ProviderInfo),
-}).annotate({
+export const Catalog = Schema.Record(Schema.String, ProviderInfo).annotate({
 	description: "What the host's plugins describe, by provider.",
 	identifier: "Catalog",
 });
@@ -470,10 +464,11 @@ export const StartAt = Schema.Union(
 	identifier: "StartAt",
 });
 
-export type Provider = "Claude" | "Codex";
+export type Provider = string;
 
-export const Provider = Schema.Literals(["Claude", "Codex"]).annotate({
-	description: "The providers a host may run: the one place they are listed.",
+export const Provider = Schema.String.annotate({
+	description:
+		"A provider, by the name its plugin declares: what the host's command\nline, its data dir and the wire call it. Which providers there are is up\nto the plugins a host is given.",
 	identifier: "Provider",
 });
 

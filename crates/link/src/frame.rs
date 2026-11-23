@@ -118,7 +118,7 @@ mod tests {
             head_seq: HostSeq(0),
             instances: Instances(BTreeMap::from([
                 (
-                    InstanceId::own(Provider::Claude),
+                    InstanceId::own(Provider::new("claude")),
                     InstanceStatus {
                         availability: Availability::Available {
                             auth: Auth::Stored {
@@ -138,7 +138,7 @@ mod tests {
                     },
                 ),
                 (
-                    InstanceId::named(Provider::Codex, "a@b"),
+                    InstanceId::named(Provider::new("codex"), "a@b"),
                     InstanceStatus {
                         availability: Availability::Unavailable {
                             reason: String::from("no"),
@@ -180,7 +180,7 @@ mod tests {
         let open = Open::Command {
             id: CommandId(1),
             body: Command::Instance(InstanceCommand::SetCredential {
-                provider: Provider::Claude,
+                provider: Provider::new("claude"),
                 credential: Credential {
                     kind: String::from("gateway"),
                     values: BTreeMap::from([(
@@ -193,12 +193,12 @@ mod tests {
         assert_eq!(
             encode(&open)?,
             frame(
-                br#"{"Command":{"id":"00000000000000000000000001","body":{"Instance":{"SetCredential":{"provider":"Claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
+                br#"{"Command":{"id":"00000000000000000000000001","body":{"Instance":{"SetCredential":{"provider":"claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
             )
         );
         assert_eq!(
             format!("{open:?}"),
-            r#"Command { id: CommandId(1), body: Instance(SetCredential { provider: Claude, credential: Credential { kind: "gateway", .. } }) }"#
+            r#"Command { id: CommandId(1), body: Instance(SetCredential { provider: Provider("claude"), credential: Credential { kind: "gateway", .. } }) }"#
         );
         Ok(())
     }
@@ -234,7 +234,7 @@ mod tests {
     fn the_welcome_lists_its_instances_as_pairs()
     -> Result<(), Box<dyn std::error::Error>> {
         let reply = HelloReply::Welcome(welcome());
-        let body = br#"{"Welcome":{"host":"desk","epoch":"1","head_seq":0,"instances":[[{"provider":"Claude","account":"Own"},{"availability":{"Available":{"auth":{"Stored":{"kind":"g","url":"u"}},"models":{"choices":[{"id":"h","name":"H","description":"d","efforts":["High"]}],"default":"h"}}}}],[{"provider":"Codex","account":{"Named":"a@b"}},{"availability":{"Unavailable":{"reason":"no"}}}]],"catalog":{},"home":null}}"#;
+        let body = br#"{"Welcome":{"host":"desk","epoch":"1","head_seq":0,"instances":[[{"provider":"claude","account":"Own"},{"availability":{"Available":{"auth":{"Stored":{"kind":"g","url":"u"}},"models":{"choices":[{"id":"h","name":"H","description":"d","efforts":["High"]}],"default":"h"}}}}],[{"provider":"codex","account":{"Named":"a@b"}},{"availability":{"Unavailable":{"reason":"no"}}}]],"catalog":{},"home":null}}"#;
         assert_eq!(encode(&reply)?, frame(body));
         assert_eq!(decode::<HelloReply>(body)?, reply);
         Ok(())
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn an_instance_given_twice_is_refused() {
-        let own = r#"[{"provider":"Claude","account":"Own"},{"availability":{"Unavailable":{"reason":"no"}}}]"#;
+        let own = r#"[{"provider":"claude","account":"Own"},{"availability":{"Unavailable":{"reason":"no"}}}]"#;
         let body = format!(r#"{{"Instances":[{own},{own}]}}"#);
         assert!(decode::<Feed>(body.as_bytes()).is_err_and(|error| {
             error
@@ -358,7 +358,7 @@ mod tests {
         let bytes = postcard::to_allocvec(&welcome)?;
         assert_eq!(
             bytes,
-            b"\x04desk\x01\x00\x02\x00\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x03a@b\x01\x02no\x00\x00"
+            b"\x04desk\x01\x00\x02\x06claude\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x05codex\x01\x03a@b\x01\x02no\x00\x00"
         );
         assert_eq!(postcard::from_bytes::<Welcome>(&bytes)?, welcome);
         Ok(())

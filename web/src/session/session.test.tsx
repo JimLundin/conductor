@@ -81,7 +81,7 @@ const directory = "/conductor/target/tmp/conductor-e2e-0-approve";
 const ready = [created(directory), "SessionReady"] as const;
 
 test("a new session starts on the chosen instance in a directory, and opens ready for a message", async () => {
-	const draft = { ...blank, host: "laptop", instance: "Claude", directory };
+	const draft = { ...blank, host: "laptop", instance: "claude", directory };
 	const { before, commands, result, after } = await played(
 		{
 			feed: recordedSpan(0, 0),
@@ -100,13 +100,13 @@ test("a new session starts on the chosen instance in a directory, and opens read
 	expect(form).toContain(
 		'<option value="laptop" selected="">test-host</option>',
 	);
-	expect(form).toContain('<option value="Claude">Claude Code</option>');
+	expect(form).toContain('<option value="claude">Claude Code</option>');
 	expect(form).not.toContain("Codex");
 	expect(commands).toStrictEqual([
 		{
 			Session: {
 				Start: {
-					instance: { account: "Own", provider: "Claude" },
+					instance: { account: "Own", provider: "claude" },
 					at: { Directory: directory },
 					model: null,
 					effort: null,
@@ -134,11 +134,11 @@ test("a new session takes a model and an effort the instance offers, or a projec
 	expect(
 		effortsOf(claude?.models ?? { choices: [], default: null }, null),
 	).toStrictEqual(["Low", "High"]);
-	const draft = { ...blank, instance: "Claude", model: "small", effort: "Low" };
+	const draft = { ...blank, instance: "claude", model: "small", effort: "Low" };
 	expect(startOf(before, { ...draft, project: "0twr04e5" })).toStrictEqual({
 		Session: {
 			Start: {
-				instance: { account: "Own", provider: "Claude" },
+				instance: { account: "Own", provider: "claude" },
 				at: { Project: "0twr04e5" },
 				model: "small",
 				effort: "Low",
@@ -147,7 +147,7 @@ test("a new session takes a model and an effort the instance offers, or a projec
 	});
 	expect(startOf(before, draft)).toBeNull();
 	expect(
-		startOf(before, { ...draft, instance: "Codex", directory }),
+		startOf(before, { ...draft, instance: "codex", directory }),
 	).toBeNull();
 });
 

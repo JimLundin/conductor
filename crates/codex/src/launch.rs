@@ -3,7 +3,6 @@
 //! Also the version its handshake reports.
 
 use agents::{Config, HomeKind, Invocation, Profile, Reported, Var};
-use proto::Provider;
 
 use crate::CodexCredential;
 use crate::prelude::*;
@@ -50,7 +49,7 @@ pub fn login(home: HomeKind) -> Invocation {
 #[must_use]
 pub fn profile() -> Profile {
     Profile {
-        provider: Provider::Codex,
+        provider: crate::PROVIDER,
         info: crate::info(),
         instructions_file: String::from("AGENTS.md"),
         config: Config {
@@ -197,7 +196,6 @@ fn provider_edits(name: &str, base_url: &str) -> Vec<Edit> {
 #[cfg(test)]
 mod tests {
     use agents::{HomeKind, Invocation, Var};
-    use proto::Provider;
 
     use super::{Edit, app_server, cli, config_edits, login, profile, version};
     use crate::CodexCredential;
@@ -213,7 +211,7 @@ mod tests {
                 [profile.version, profile.status, profile.sign_in.run]
             ),
             (
-                Provider::Codex,
+                crate::PROVIDER,
                 "config.toml",
                 [
                     Invocation::of(private.clone(), &["--version"]),

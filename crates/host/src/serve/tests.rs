@@ -47,7 +47,7 @@ fn a_session_may_start_in_a_project() {
     assert_eq!(
         session(
             SessionCommand::Start {
-                instance: InstanceId::own(Provider::Claude),
+                instance: InstanceId::own(Provider::new("claude")),
                 at: proto::StartAt::Project(project()),
                 model: None,
                 effort: Some(Effort::High),
@@ -55,7 +55,7 @@ fn a_session_may_start_in_a_project() {
             phone()
         ),
         SessionRoute::Start {
-            instance: InstanceId::own(Provider::Claude),
+            instance: InstanceId::own(Provider::new("claude")),
             at: proto::StartAt::Project(project()),
             choice: (None, Some(Effort::High)),
             by: phone(),

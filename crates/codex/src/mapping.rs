@@ -5,8 +5,7 @@ use agents::{
     NativeRequest, NativeTurn, Note, Reply, Step, reasoning, reasoning_delta,
 };
 use proto::{
-    CloseReason, Decision as Chosen, EventKind, Provider, ToolCallId, ToolKind,
-    ToolPhase,
+    CloseReason, Decision as Chosen, EventKind, ToolCallId, ToolKind, ToolPhase,
 };
 
 use crate::prelude::*;
@@ -37,7 +36,7 @@ pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
 pub fn codex_note(event: &CodexEvent) -> Option<Note> {
     match event {
         CodexEvent::Unknown(_) => Some(Note::unmapped(
-            Provider::Codex,
+            crate::PROVIDER,
             String::from("unknown"),
             None,
         )),
@@ -45,7 +44,7 @@ pub fn codex_note(event: &CodexEvent) -> Option<Note> {
             thread,
             event: ThreadEvent::SettingsChanged(settings),
         } => Some(Note::ThreadSettings {
-            provider: Provider::Codex,
+            provider: crate::PROVIDER,
             thread: thread.0.clone(),
             settings: format!("{settings:?}"),
         }),
@@ -53,7 +52,7 @@ pub fn codex_note(event: &CodexEvent) -> Option<Note> {
             thread,
             event: ThreadEvent::Unknown(_),
         } => Some(Note::unmapped(
-            Provider::Codex,
+            crate::PROVIDER,
             String::from("unknown"),
             Some(thread.0.clone()),
         )),

@@ -7,7 +7,6 @@ use core::fmt;
 
 use agents::driver::{self, Command, FailureText};
 use agents::{Exit, Note};
-use proto::Provider;
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -136,7 +135,7 @@ impl<R> Server<R> {
             Input::Read(Ok(None)) => self.stop(After::Nothing),
             Input::Read(Err(error)) => logged(
                 Note::Unreadable {
-                    provider: Provider::Codex,
+                    provider: crate::PROVIDER,
                     error,
                 },
                 self.stop(After::Nothing),
@@ -157,7 +156,7 @@ impl<R> Server<R> {
         match parse_line(line) {
             Ok(inbound) => self.inbound(inbound),
             Err(error) => Vec::from([Effect::Log(Note::NotJson {
-                provider: Provider::Codex,
+                provider: crate::PROVIDER,
                 error: error.to_string(),
             })]),
         }
@@ -197,7 +196,7 @@ impl<R> Server<R> {
                 let message = format!("conductor does not handle {method}");
                 logged(
                     Note::Unsupported {
-                        provider: Provider::Codex,
+                        provider: crate::PROVIDER,
                         request: method.clone(),
                     },
                     self.reject(
@@ -210,7 +209,7 @@ impl<R> Server<R> {
             }
             Inbound::Declined { rpc_id, event } => logged(
                 Note::SecretDeclined {
-                    provider: Provider::Codex,
+                    provider: crate::PROVIDER,
                 },
                 self.reject(
                     rpc_id,
@@ -265,7 +264,7 @@ impl<R> Server<R> {
         };
         let Some((method, reply)) = waiting else {
             return Vec::from([Effect::Log(Note::UnknownResponse {
-                provider: Provider::Codex,
+                provider: crate::PROVIDER,
                 request: format!("{id:?}"),
             })]);
         };
@@ -336,7 +335,7 @@ impl<R> Server<R> {
         match answered {
             Ok(result) => logged(
                 Note::Answering {
-                    provider: Provider::Codex,
+                    provider: crate::PROVIDER,
                     approval: id.0,
                     thread: open.thread.0,
                 },
@@ -456,7 +455,7 @@ fn failed<R, S, E: fmt::Display>(
             Vec::from([Effect::Reply(reply, Err(failure))])
         }
         Then::Logged(context) => Vec::from([Effect::Log(Note::Unwritten {
-            provider: Provider::Codex,
+            provider: crate::PROVIDER,
             writing: context,
             error: failure.describe(&FAILURE_TEXT),
         })]),
@@ -476,7 +475,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use agents::{Exit, Note};
-    use proto::{Answer, Provider};
+    use proto::Answer;
     use serde_json::{Value, json};
 
     use super::{
@@ -507,7 +506,7 @@ mod tests {
         assert_eq!(
             seen,
             [Effect::Log(Note::NotJson {
-                provider: Provider::Codex,
+                provider: crate::PROVIDER,
                 error: String::from("expected value at line 1 column 1"),
             })]
         );
@@ -534,10 +533,10 @@ mod tests {
         assert!(matches!(
             seen.as_slice(),
             [
-                Effect::Log(Note::SecretDeclined { provider: Provider::Codex }),
+                Effect::Log(Note::SecretDeclined { provider }),
                 Effect::Write { .. },
                 Effect::Emit(event),
-            ] if event.diagnostic() == ("secret_question_declined", Some(&ThreadId(String::from("thread_1"))))
+            ] if *provider == crate::PROVIDER && event.diagnostic() == ("secret_question_declined", Some(&ThreadId(String::from("thread_1"))))
         ));
         assert!(!format!("{seen:?}").contains("private-test-marker"));
     }
@@ -625,11 +624,11 @@ mod tests {
                         Effect::Reply(1, Ok(json!({ "userAgent": "c/1" }))),
                     ]),
                     Vec::from([Effect::Log(Note::UnknownResponse {
-                        provider: Provider::Codex,
+                        provider: crate::PROVIDER,
                         request: String::from("Integer(1)"),
                     })]),
                     Vec::from([Effect::Log(Note::UnknownResponse {
-                        provider: Provider::Codex,
+                        provider: crate::PROVIDER,
                         request: String::from("String(\"1\")"),
                     })]),
                 ][..]
@@ -721,7 +720,7 @@ mod tests {
                 )]),
                 Vec::from([
                     Effect::Log(Note::Answering {
-                        provider: Provider::Codex,
+                        provider: crate::PROVIDER,
                         approval: String::from("integer:7"),
                         thread: String::from("th_1"),
                     }),
@@ -918,7 +917,7 @@ mod tests {
             &seen[..2],
             [
                 Effect::Log(Note::Unsupported {
-                    provider: Provider::Codex,
+                    provider: crate::PROVIDER,
                     request: String::from("item/tool/call"),
                 }),
                 written(
@@ -1015,14 +1014,14 @@ mod tests {
                 Vec::from([Effect::Stop(After::Nothing)]),
                 Vec::from([
                     Effect::Log(Note::Unreadable {
-                        provider: Provider::Codex,
+                        provider: crate::PROVIDER,
                         error: String::from("reset"),
                     }),
                     Effect::Stop(After::Nothing)
                 ]),
                 Vec::from([Effect::Reply(1, Err(Failure::Io("broken pipe")))]),
                 Vec::from([Effect::Log(Note::Unwritten {
-                    provider: Provider::Codex,
+                    provider: crate::PROVIDER,
                     writing: String::from("rejecting x"),
                     error: String::from("codex i/o: broken pipe"),
                 })]),
