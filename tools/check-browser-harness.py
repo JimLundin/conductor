@@ -23,12 +23,14 @@ class BrowserHarness(unittest.TestCase):
         with (ROOT / "checks.toml").open("rb") as config:
             suites = tomllib.load(config)["suite"]
         browser = next(suite for suite in suites if suite["name"] == "browser")
-        paths = next(rule["paths"] for rule in browser["when"] if rule["tier"] == "step")
-        for path in ("fixtures/e2e/claude-approve.jsonl",
-                     "crates/claude-cli/tests/fake-claude.sh",
-                     "crates/codex-cli/tests/fake-codex.sh"):
-            self.assertTrue(any(fnmatchcase(path, glob) for glob in paths), path)
-        self.assertFalse(any(fnmatchcase("docs/architecture.md", glob) for glob in paths))
+        step = next(rule for rule in browser["when"] if rule["tier"] == "step")
+        # The app holds the scenarios, and conductord the host they drive,
+        # with the fake CLIs of claude-cli and codex-cli among its dependencies.
+        self.assertEqual(step["packages"], ["app", "conductord"])
+        for path in ("fixtures/e2e/claude-approve.jsonl", "tools/e2e-browser.sh"):
+            self.assertTrue(any(fnmatchcase(path, glob) for glob in step["paths"]), path)
+        self.assertFalse(any(fnmatchcase("docs/architecture.md", glob) for glob in step["paths"]))
+        self.assertEqual(browser["tools"], ["NODE", "DX", "PYTHON"])
 
     def test_command_trace_correlation(self):
         lines = """INFO daemon::serve: command received command=123456789012345678901 operation="start_session"
