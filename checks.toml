@@ -38,6 +38,17 @@ command = "cargo clippy --target wasm32-unknown-unknown -p web-iroh --lib"
 tier = "commit"
 packages = ["web-iroh"]
 
+# The app's Effect Schemas in web/src/proto/, generated from proto's
+# JSON Schema (ADR 0002): regenerates them and fails on any difference.
+[[suite]]
+name = "schemas"
+command = "(cd web && npm ci --no-fund --no-audit --silent) && tools/schemas.sh --check"
+tools = ["NODE", "BIOME"]
+[[suite.when]]
+tier = "commit"
+paths = ["crates/proto/**", "web/src/proto/**", "web/scripts/schemas.ts", "web/package-lock.json", "web/biome.json", "tools/schemas.sh"]
+packages = ["proto"]
+
 # The web app, under the shared TypeScript standard, which keys and records
 # its own checks. Its key holds no tier, so the commit checks and the step's
 # tests are two suites: `web-step` reuses the passes `web` recorded and adds

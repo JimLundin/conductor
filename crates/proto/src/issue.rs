@@ -3,18 +3,20 @@
 //! (`crate::flow`) declares it: the issue names its kind, status and stage,
 //! and its fields and relations are the ones the flow declares.
 
+use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{IssueId, ProjectId};
 
 /// An issue as the flow reads its file.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Issue {
     pub id: IssueId,
     pub project: ProjectId,
@@ -56,7 +58,7 @@ impl Issue {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Section {
     /// Empty for the text before the first heading.
     pub heading: String,
@@ -123,6 +125,23 @@ impl Serialize for Datum {
     }
 }
 
+/// As JSON writes it: [`Datum`]'s schema is its human-readable form.
+impl JsonSchema for Datum {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("Datum")
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "anyOf": [
+                generator.subschema_for::<String>(),
+                generator.subschema_for::<Vec<String>>(),
+                generator.subschema_for::<bool>(),
+            ]
+        })
+    }
+}
+
 impl<'de> Deserialize<'de> for Datum {
     fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
         if input.is_human_readable() {
@@ -172,7 +191,7 @@ impl<'de> Visitor<'de> for Plain {
 }
 
 /// A line of an issue's log.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Entry {
     /// When and by whom, when the line says so.
     pub at: Option<String>,
@@ -181,7 +200,7 @@ pub struct Entry {
     pub text: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum LogEvent {
     Note,
     Stage { from: String, to: String },
@@ -252,14 +271,14 @@ impl fmt::Display for LogEvent {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChecklistItem {
     pub done: bool,
     pub text: String,
 }
 
 /// A new issue, as `home issue new` opens one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NewIssue {
     pub project: ProjectId,
     pub kind: String,
@@ -270,7 +289,9 @@ pub struct NewIssue {
 }
 
 /// What a move changes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Part {
     Stage,
     Status,
@@ -279,7 +300,7 @@ pub enum Part {
 /// One change to an issue, as the `home` command line and the app make
 /// it. The home reads the file it writes back against the flow before
 /// keeping it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum IssueChange {
     Move {
         part: Part,
@@ -300,7 +321,7 @@ pub enum IssueChange {
     Checklist(ChecklistChange),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ChecklistChange {
     Add(String),
     Check { item: Item, done: bool },
@@ -308,7 +329,7 @@ pub enum ChecklistChange {
 }
 
 /// A checklist item by its place, from 0.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Item {
     pub index: usize,
     /// The checklist the place was picked from; when the file's has

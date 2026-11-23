@@ -19,8 +19,8 @@
 		"noUnusedParameters": true,
 		"allowUnreachableCode": false,
 		"allowUnusedLabels": false,
-		"types": ["node"]
+		"types": ["node", "vite/client"]
 	},
-	"include": ["src", "profiles", "vite.config.ts"],
+	"include": ["src", "profiles", "scripts", "vite.config.ts"],
 	"exclude": ["node_modules", "dist"]
 }

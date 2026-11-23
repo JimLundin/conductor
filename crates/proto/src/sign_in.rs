@@ -7,17 +7,18 @@ use core::fmt;
 
 use alloc::string::String;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::InstanceId;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignIn {
     pub instance: InstanceId,
     pub step: SignInStep,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SignInStep {
     /// The host is starting the CLI's sign-in in the instance's home.
     Starting,
@@ -42,7 +43,7 @@ pub enum SignInStep {
 
 /// The code a person pastes from a sign-in page. It is a secret: its
 /// `Debug` doesn't print it, so no log line carries it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignInCode(pub String);
 
 impl fmt::Debug for SignInCode {

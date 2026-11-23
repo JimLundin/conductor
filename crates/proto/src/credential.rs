@@ -9,13 +9,16 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{Account, Auth, Provider};
 
 /// What a field holds, which says how the app shows it and how the host
 /// checks it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum FieldKind {
     Text,
     /// A plain `http(s)://host/path`. It is shown to every client and may
@@ -27,7 +30,7 @@ pub enum FieldKind {
 }
 
 /// One field of a credential form.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Field {
     /// The key of its value in a [`Credential`].
     pub id: String,
@@ -38,7 +41,7 @@ pub struct Field {
 }
 
 /// One kind of credential a provider takes, as the form it is entered in.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CredentialForm {
     /// The [`Credential::kind`] of what the form makes.
     pub kind: String,
@@ -54,7 +57,7 @@ pub struct CredentialForm {
 
 /// How a provider the host runs presents itself, as its plugin describes
 /// it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderInfo {
     pub label: String,
     /// What a new session's form says under the provider when it is
@@ -65,13 +68,15 @@ pub struct ProviderInfo {
 }
 
 /// What the host's plugins describe, by provider.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Catalog(pub BTreeMap<Provider, ProviderInfo>);
 
 /// One instance's credential: the values of its kind's form, by field id.
 /// As `SetCredential` carries it and as the host stores it. The instance
 /// it belongs to names the provider.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Credential {
     pub kind: String,
     pub values: BTreeMap<String, String>,

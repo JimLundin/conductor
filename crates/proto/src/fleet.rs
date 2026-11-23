@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::marker::PhantomData;
 
+use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -15,13 +16,15 @@ pub const ALPN: &[u8] = b"conductor-fleet/3";
 
 pub type NodeId = [u8; 32];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Role {
     Owner,
     Host,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Identity {
     pub fleet: NodeId,
     pub device: NodeId,
@@ -35,7 +38,7 @@ pub struct Identity {
 /// JSON has no canonical form, so nothing re-encodes it to verify it: a
 /// verifier checks `signature` over [`Payload::DOMAIN`] then `payload`,
 /// and only then parses `payload`.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(bound = "")]
 pub struct Signed<T> {
     pub payload: Vec<u8>,
@@ -99,7 +102,7 @@ impl<T> fmt::Debug for Signed<T> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HostEntry {
     pub node: NodeId,
     pub name: String,
@@ -107,7 +110,7 @@ pub struct HostEntry {
     pub added_at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Snapshot {
     pub fleet: NodeId,
     pub root: NodeId,
@@ -116,13 +119,13 @@ pub struct Snapshot {
     pub revoked: Vec<NodeId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Configuration {
     pub snapshot: Snapshot,
     pub instances: Roster,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignedConfiguration {
     pub config: Configuration,
     /// Over the configuration's postcard, which only hosts read.
@@ -131,19 +134,19 @@ pub struct SignedConfiguration {
     pub public: SignedSnapshot,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Peer {
     pub certificate: Certificate,
     pub version: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Sync {
     pub peer: Peer,
     pub config: Option<SignedConfiguration>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Request {
     EnrollmentReady(crate::AuthToken),
     Enroll {
@@ -158,7 +161,7 @@ pub enum Request {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Reply {
     EnrollmentReady,
     Enrolled,
@@ -171,7 +174,7 @@ pub enum Reply {
     Revoked(SignedSnapshot),
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct InviteSecret(pub [u8; 32]);
 
 impl core::fmt::Debug for InviteSecret {
@@ -180,7 +183,7 @@ impl core::fmt::Debug for InviteSecret {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Invite {
     pub fleet: NodeId,
     pub root: NodeId,
@@ -188,13 +191,13 @@ pub struct Invite {
     pub secret: InviteSecret,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct DeviceHello {
     pub certificate: Certificate,
     pub proof: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Pairing {
     pub certificate: Certificate,
     pub root: HostEntry,
@@ -212,7 +215,7 @@ pub fn device_proof(fleet: &NodeId, host: &NodeId, peer: &NodeId) -> Vec<u8> {
         .collect()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PairRequest {
     pub device: NodeId,
     pub name: String,

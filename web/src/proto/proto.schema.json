@@ -1,0 +1,4024 @@
+{
+	"$defs": {
+		"Account": {
+			"description": "Who the provider says an instance signs in as.",
+			"oneOf": [
+				{
+					"const": "Own",
+					"description": "The provider's own sign-in before it has named an account: where a\nsign-in runs, and a CLI given on the host's command line, signed in\nhowever it is. Each provider has one.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "As the provider names it: a subscription's email, or what the\ncredential's form names, such as a gateway's URL.",
+					"properties": {
+						"Named": {
+							"type": "string"
+						}
+					},
+					"required": ["Named"],
+					"type": "object"
+				}
+			]
+		},
+		"Answer": {
+			"description": "The answer to one question: the labels of the options chosen, and any\ntext the user typed instead, in that order.",
+			"items": {
+				"type": "string"
+			},
+			"type": "array"
+		},
+		"Auth": {
+			"description": "How an instance's CLI reaches its model. It names the kind and never\ncarries a secret: credentials are write-only (§6.3).",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "A credential the host stores, of this kind, reaching this URL if\nits form has one ([`ProviderInfo::auth`]).",
+					"properties": {
+						"Stored": {
+							"properties": {
+								"kind": {
+									"type": "string"
+								},
+								"url": {
+									"type": ["string", "null"]
+								}
+							},
+							"required": ["kind", "url"],
+							"type": "object"
+						}
+					},
+					"required": ["Stored"],
+					"type": "object"
+				},
+				{
+					"const": "SignedIn",
+					"description": "The CLI's own sign-in in the instance's private home, from the app\n(`StartSignIn`) or on the host (`conductord login <instance>`).",
+					"type": "string"
+				},
+				{
+					"const": "Unmanaged",
+					"description": "A CLI the host was started with (`--cli <provider>=<path>`),\nwhich signs in however it does.",
+					"type": "string"
+				}
+			]
+		},
+		"AuthToken": {
+			"description": "S3 placeholder for the fleet certificates of §4: a random secret the host\nprints in its ticket and requires in every `Hello`.",
+			"items": {
+				"format": "uint8",
+				"maximum": 255,
+				"minimum": 0,
+				"type": "integer"
+			},
+			"maxItems": 16,
+			"minItems": 16,
+			"type": "array"
+		},
+		"Availability": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Available": {
+							"properties": {
+								"auth": {
+									"$ref": "#/$defs/Auth"
+								},
+								"models": {
+									"$ref": "#/$defs/Models"
+								}
+							},
+							"required": ["auth", "models"],
+							"type": "object"
+						}
+					},
+					"required": ["Available"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host can't run this instance's sessions, for this reason.",
+					"properties": {
+						"Unavailable": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Unavailable"],
+					"type": "object"
+				}
+			]
+		},
+		"Catalog": {
+			"additionalProperties": false,
+			"description": "What the host's plugins describe, by provider.",
+			"properties": {
+				"Claude": {
+					"$ref": "#/$defs/ProviderInfo"
+				},
+				"Codex": {
+					"$ref": "#/$defs/ProviderInfo"
+				}
+			},
+			"type": "object"
+		},
+		"Change": {
+			"oneOf": [
+				{
+					"enum": ["Delete"],
+					"type": "string"
+				},
+				{
+					"const": "Write",
+					"description": "The whole file written, new or replaced.",
+					"type": "string"
+				},
+				{
+					"const": "Edit",
+					"description": "Part of an existing file changed.",
+					"type": "string"
+				}
+			]
+		},
+		"ChecklistChange": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Add": {
+							"type": "string"
+						}
+					},
+					"required": ["Add"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Check": {
+							"properties": {
+								"done": {
+									"type": "boolean"
+								},
+								"item": {
+									"$ref": "#/$defs/Item"
+								}
+							},
+							"required": ["item", "done"],
+							"type": "object"
+						}
+					},
+					"required": ["Check"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Remove": {
+							"$ref": "#/$defs/Item"
+						}
+					},
+					"required": ["Remove"],
+					"type": "object"
+				}
+			]
+		},
+		"ChecklistEntry": {
+			"properties": {
+				"status": {
+					"$ref": "#/$defs/ChecklistStatus"
+				},
+				"text": {
+					"type": "string"
+				}
+			},
+			"required": ["text", "status"],
+			"type": "object"
+		},
+		"ChecklistItem": {
+			"properties": {
+				"done": {
+					"type": "boolean"
+				},
+				"text": {
+					"type": "string"
+				}
+			},
+			"required": ["done", "text"],
+			"type": "object"
+		},
+		"ChecklistStatus": {
+			"enum": ["Pending", "InProgress", "Completed"],
+			"type": "string"
+		},
+		"Checkout": {
+			"description": "A repository on this host whose root commit and remote are a project's.\nA session's project follows from its worktree's repository, which is\none of these.",
+			"properties": {
+				"origin": {
+					"$ref": "#/$defs/Origin"
+				},
+				"path": {
+					"$ref": "#/$defs/HostPath"
+				}
+			},
+			"required": ["path", "origin"],
+			"type": "object"
+		},
+		"ClientName": {
+			"description": "The name a client gave in `Hello`. Shown as \"by\" on a resolution and a\nuser message.",
+			"type": "string"
+		},
+		"Cloning": {
+			"description": "Where the host's own clone of a project stands, after \"Clone here\".",
+			"oneOf": [
+				{
+					"enum": ["Idle", "Running"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Failed": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Failed"],
+					"type": "object"
+				}
+			]
+		},
+		"CloseReason": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FailedToStart": {
+							"properties": {
+								"message": {
+									"type": "string"
+								}
+							},
+							"required": ["message"],
+							"type": "object"
+						}
+					},
+					"required": ["FailedToStart"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Exited": {
+							"properties": {
+								"status": {
+									"type": "string"
+								}
+							},
+							"required": ["status"],
+							"type": "object"
+						}
+					},
+					"required": ["Exited"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host stopped the agent on purpose, for this reason.",
+					"properties": {
+						"Stopped": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Stopped"],
+					"type": "object"
+				}
+			]
+		},
+		"Command": {
+			"properties": {
+				"body": {
+					"$ref": "#/$defs/CommandBody"
+				},
+				"id": {
+					"$ref": "#/$defs/CommandId"
+				}
+			},
+			"required": ["id", "body"],
+			"type": "object"
+		},
+		"CommandBody": {
+			"description": "Every session command after `StartSession` names the session it acts\non, and every instance command the instance.",
+			"oneOf": [
+				{
+					"enum": ["PushPublicKey", "FleetStatus", "FleetInvite"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
+					"properties": {
+						"StartSession": {
+							"properties": {
+								"at": {
+									"$ref": "#/$defs/StartAt"
+								},
+								"effort": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/Effort"
+										},
+										{
+											"type": "null"
+										}
+									]
+								},
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								},
+								"model": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/ModelId"
+										},
+										{
+											"type": "null"
+										}
+									]
+								}
+							},
+							"required": ["instance", "at", "model", "effort"],
+							"type": "object"
+						}
+					},
+					"required": ["StartSession"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"SendMessage": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								},
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["session", "text"],
+							"type": "object"
+						}
+					},
+					"required": ["SendMessage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Interrupt": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Interrupt"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
+					"properties": {
+						"Continue": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Continue"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Resolve": {
+							"properties": {
+								"decision": {
+									"$ref": "#/$defs/Decision"
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session", "request", "decision"],
+							"type": "object"
+						}
+					},
+					"required": ["Resolve"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
+					"properties": {
+						"Answer": {
+							"properties": {
+								"answers": {
+									"items": {
+										"$ref": "#/$defs/Answer"
+									},
+									"type": "array"
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session", "request", "answers"],
+							"type": "object"
+						}
+					},
+					"required": ["Answer"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
+					"properties": {
+						"SetCredential": {
+							"properties": {
+								"credential": {
+									"$ref": "#/$defs/Credential"
+								},
+								"provider": {
+									"$ref": "#/$defs/Provider"
+								}
+							},
+							"required": ["provider", "credential"],
+							"type": "object"
+						}
+					},
+					"required": ["SetCredential"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A bounded diff between this snapshot and its predecessor.",
+					"properties": {
+						"GetDiff": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								},
+								"snapshot": {
+									"$ref": "#/$defs/HostSeq"
+								}
+							},
+							"required": ["session", "snapshot"],
+							"type": "object"
+						}
+					},
+					"required": ["GetDiff"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
+					"properties": {
+						"SetEffort": {
+							"properties": {
+								"effort": {
+									"$ref": "#/$defs/Effort"
+								},
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session", "effort"],
+							"type": "object"
+						}
+					},
+					"required": ["SetEffort"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
+					"properties": {
+						"RemoveInstance": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance"],
+							"type": "object"
+						}
+					},
+					"required": ["RemoveInstance"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
+					"properties": {
+						"StartSignIn": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance"],
+							"type": "object"
+						}
+					},
+					"required": ["StartSignIn"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
+					"properties": {
+						"SubmitSignInCode": {
+							"properties": {
+								"code": {
+									"$ref": "#/$defs/SignInCode"
+								},
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance", "code"],
+							"type": "object"
+						}
+					},
+					"required": ["SubmitSignInCode"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Stops the instance's sign-in, if one runs.",
+					"properties": {
+						"CancelSignIn": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								}
+							},
+							"required": ["instance"],
+							"type": "object"
+						}
+					},
+					"required": ["CancelSignIn"],
+					"type": "object"
+				},
+				{
+					"const": "SyncHome",
+					"description": "Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
+					"properties": {
+						"CloneProject": {
+							"properties": {
+								"project": {
+									"$ref": "#/$defs/ProjectId"
+								}
+							},
+							"required": ["project"],
+							"type": "object"
+						}
+					},
+					"required": ["CloneProject"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
+					"properties": {
+						"RemoveSession": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["RemoveSession"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.",
+					"properties": {
+						"CreateIssue": {
+							"$ref": "#/$defs/NewIssue"
+						}
+					},
+					"required": ["CreateIssue"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Answers `IssueWritten` once written, like `CreateIssue`.",
+					"properties": {
+						"ChangeIssue": {
+							"properties": {
+								"change": {
+									"$ref": "#/$defs/IssueChange"
+								},
+								"issue": {
+									"$ref": "#/$defs/IssueId"
+								}
+							},
+							"required": ["issue", "change"],
+							"type": "object"
+						}
+					},
+					"required": ["ChangeIssue"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
+					"properties": {
+						"FinishSession": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["FinishSession"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"RegisterPush": {
+							"$ref": "#/$defs/PushSubscription"
+						}
+					},
+					"required": ["RegisterPush"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetRevoke": {
+							"items": {
+								"format": "uint8",
+								"maximum": 255,
+								"minimum": 0,
+								"type": "integer"
+							},
+							"maxItems": 32,
+							"minItems": 32,
+							"type": "array"
+						}
+					},
+					"required": ["FleetRevoke"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetApprove": {
+							"$ref": "#/$defs/PairRequest"
+						}
+					},
+					"required": ["FleetApprove"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetAdmit": {
+							"properties": {
+								"name": {
+									"type": "string"
+								},
+								"ticket": {
+									"$ref": "#/$defs/Ticket"
+								}
+							},
+							"required": ["ticket", "name"],
+							"type": "object"
+						}
+					},
+					"required": ["FleetAdmit"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Runs the provider's live credential setup through its own instance.",
+					"properties": {
+						"StartCredentialSignIn": {
+							"properties": {
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								},
+								"kind": {
+									"type": "string"
+								},
+								"label": {
+									"type": "string"
+								}
+							},
+							"required": ["instance", "kind", "label"],
+							"type": "object"
+						}
+					},
+					"required": ["StartCredentialSignIn"],
+					"type": "object"
+				}
+			]
+		},
+		"CommandId": {
+			"description": "A client-generated, fleet-unique 128-bit random id for idempotent retries.",
+			"type": "string"
+		},
+		"CommandResult": {
+			"oneOf": [
+				{
+					"enum": ["Accepted", "PushUnavailable"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The answer to `StartSession`. `SessionCreated` follows in the log.",
+					"properties": {
+						"Started": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["Started"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Rejected": {
+							"$ref": "#/$defs/Rejection"
+						}
+					},
+					"required": ["Rejected"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Diff": {
+							"$ref": "#/$defs/SnapshotDiff"
+						}
+					},
+					"required": ["Diff"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
+					"properties": {
+						"IssueWritten": {
+							"properties": {
+								"issue": {
+									"$ref": "#/$defs/IssueId"
+								},
+								"warnings": {
+									"items": {
+										"type": "string"
+									},
+									"type": "array"
+								}
+							},
+							"required": ["issue", "warnings"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueWritten"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"PushPublicKey": {
+							"type": "string"
+						}
+					},
+					"required": ["PushPublicKey"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetStatus": {
+							"$ref": "#/$defs/Signed"
+						}
+					},
+					"required": ["FleetStatus"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetInvite": {
+							"$ref": "#/$defs/Invite"
+						}
+					},
+					"required": ["FleetInvite"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetPairing": {
+							"$ref": "#/$defs/Pairing"
+						}
+					},
+					"required": ["FleetPairing"],
+					"type": "object"
+				}
+			]
+		},
+		"Credential": {
+			"description": "One instance's credential: the values of its kind's form, by field id.\nAs `SetCredential` carries it and as the host stores it. The instance\nit belongs to names the provider.",
+			"properties": {
+				"kind": {
+					"type": "string"
+				},
+				"values": {
+					"additionalProperties": {
+						"type": "string"
+					},
+					"type": "object"
+				}
+			},
+			"required": ["kind", "values"],
+			"type": "object"
+		},
+		"CredentialForm": {
+			"description": "One kind of credential a provider takes, as the form it is entered in.",
+			"properties": {
+				"account": {
+					"description": "The id of the field whose value is the account the credential signs\nin as, since the provider's CLI names none for it. It is shown to\nevery client, so it is never a secret.",
+					"type": "string"
+				},
+				"fields": {
+					"items": {
+						"$ref": "#/$defs/Field"
+					},
+					"type": "array"
+				},
+				"kind": {
+					"description": "The [`Credential::kind`] of what the form makes.",
+					"type": "string"
+				},
+				"label": {
+					"type": "string"
+				},
+				"setup_sign_in": {
+					"description": "The action label when the host can obtain this credential via sign-in.",
+					"type": ["string", "null"]
+				}
+			},
+			"required": ["kind", "label", "fields", "account", "setup_sign_in"],
+			"type": "object"
+		},
+		"Datum": {
+			"anyOf": [
+				{
+					"type": "string"
+				},
+				{
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				{
+					"type": "boolean"
+				}
+			]
+		},
+		"Decision": {
+			"oneOf": [
+				{
+					"enum": ["Approve", "Deny"],
+					"type": "string"
+				},
+				{
+					"const": "ApproveForSession",
+					"description": "Approves this call and the calls the request's `for_session` names,\nuntil the session ends.",
+					"type": "string"
+				}
+			]
+		},
+		"DeviceHello": {
+			"properties": {
+				"certificate": {
+					"$ref": "#/$defs/Signed"
+				},
+				"proof": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"type": "array"
+				}
+			},
+			"required": ["certificate", "proof"],
+			"type": "object"
+		},
+		"DiffExtent": {
+			"enum": ["Complete", "Truncated"],
+			"type": "string"
+		},
+		"Effort": {
+			"description": "How hard the model reasons: Claude's `--effort`, Codex's\n`model_reasoning_effort`. Both CLIs spell the levels the same way.",
+			"enum": ["Low", "Medium", "High", "XHigh", "Max", "Ultra"],
+			"type": "string"
+		},
+		"Entry": {
+			"description": "A line of an issue's log.",
+			"properties": {
+				"at": {
+					"description": "When and by whom, when the line says so.",
+					"type": ["string", "null"]
+				},
+				"by": {
+					"type": ["string", "null"]
+				},
+				"event": {
+					"$ref": "#/$defs/LogEvent"
+				},
+				"text": {
+					"type": "string"
+				}
+			},
+			"required": ["at", "by", "event", "text"],
+			"type": "object"
+		},
+		"Epoch": {
+			"description": "Identifies one incarnation of a host's event log. A cursor from another\nepoch is meaningless, so the client starts over from seq 0 (§8).",
+			"type": "string"
+		},
+		"Event": {
+			"description": "Every event names its session. A stored event has a seq of its own; an\n`AssistantDelta` repeats the last one's.",
+			"properties": {
+				"kind": {
+					"$ref": "#/$defs/EventKind"
+				},
+				"seq": {
+					"$ref": "#/$defs/HostSeq"
+				},
+				"session": {
+					"$ref": "#/$defs/SessionId"
+				}
+			},
+			"required": ["seq", "session", "kind"],
+			"type": "object"
+		},
+		"EventKind": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "`model` and `effort` are what the agent runs with; `None` is the\nCLI's own default. A `Continue` runs on `instance` again.",
+					"properties": {
+						"SessionCreated": {
+							"properties": {
+								"by": {
+									"$ref": "#/$defs/ClientName"
+								},
+								"directory": {
+									"$ref": "#/$defs/HostPath"
+								},
+								"effort": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/Effort"
+										},
+										{
+											"type": "null"
+										}
+									]
+								},
+								"instance": {
+									"$ref": "#/$defs/InstanceId"
+								},
+								"model": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/ModelId"
+										},
+										{
+											"type": "null"
+										}
+									]
+								}
+							},
+							"required": ["instance", "directory", "by", "model", "effort"],
+							"type": "object"
+						}
+					},
+					"required": ["SessionCreated"],
+					"type": "object"
+				},
+				{
+					"const": "SessionReady",
+					"description": "The agent process is up and takes messages: at the start, and again\nafter a `Continue`.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"SessionClosed": {
+							"properties": {
+								"reason": {
+									"$ref": "#/$defs/CloseReason"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["SessionClosed"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"UserMessage": {
+							"properties": {
+								"by": {
+									"$ref": "#/$defs/ClientName"
+								},
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text", "by"],
+							"type": "object"
+						}
+					},
+					"required": ["UserMessage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A fragment of the assistant message being streamed. Live only: the\nhost stores none, so a subscription never replays one, and the\n`AssistantMessage` that follows replaces them. It carries the seq of\nthe stored event before it, which may be another session's, so a\nclient that has applied that seq takes it and one that hasn't sees a\ngap.",
+					"properties": {
+						"AssistantDelta": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["AssistantDelta"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
+					"properties": {
+						"AssistantMessage": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["AssistantMessage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A fragment of the agent's reasoning as it streams. Live only, like\n`AssistantDelta`; the `Reasoning` that follows replaces them.",
+					"properties": {
+						"ReasoningDelta": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["ReasoningDelta"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
+					"properties": {
+						"Reasoning": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["Reasoning"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"ToolCall": {
+							"properties": {
+								"call": {
+									"$ref": "#/$defs/ToolCallId"
+								},
+								"phase": {
+									"$ref": "#/$defs/ToolPhase"
+								}
+							},
+							"required": ["call", "phase"],
+							"type": "object"
+						}
+					},
+					"required": ["ToolCall"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "An approval the tool call `call` waits on. `tool` repeats what the\ncall's `Started` said, so a client can show the request on its own.\n`reason` is the agent's own words for why it asks, when it gives any.\n`for_session` names what `ApproveForSession` would allow, in the\nagent's words (`Bash(git status)`, or the command), when it offers\nthat.",
+					"properties": {
+						"RequestOpened": {
+							"properties": {
+								"call": {
+									"$ref": "#/$defs/ToolCallId"
+								},
+								"for_session": {
+									"type": ["string", "null"]
+								},
+								"reason": {
+									"type": ["string", "null"]
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"tool": {
+									"$ref": "#/$defs/ToolKind"
+								}
+							},
+							"required": ["request", "call", "tool", "reason", "for_session"],
+							"type": "object"
+						}
+					},
+					"required": ["RequestOpened"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The agent asks the user one or more questions and waits for an\n`Answer`. `RequestResolved` closes it, as it does an approval.",
+					"properties": {
+						"QuestionAsked": {
+							"properties": {
+								"questions": {
+									"items": {
+										"$ref": "#/$defs/Question"
+									},
+									"type": "array"
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								}
+							},
+							"required": ["request", "questions"],
+							"type": "object"
+						}
+					},
+					"required": ["QuestionAsked"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"RequestResolved": {
+							"properties": {
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"resolution": {
+									"$ref": "#/$defs/Resolution"
+								}
+							},
+							"required": ["request", "resolution"],
+							"type": "object"
+						}
+					},
+					"required": ["RequestResolved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"TurnCompleted": {
+							"properties": {
+								"outcome": {
+									"$ref": "#/$defs/TurnOutcome"
+								}
+							},
+							"required": ["outcome"],
+							"type": "object"
+						}
+					},
+					"required": ["TurnCompleted"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Something went wrong that did not end the session.",
+					"properties": {
+						"Error": {
+							"properties": {
+								"message": {
+									"type": "string"
+								}
+							},
+							"required": ["message"],
+							"type": "object"
+						}
+					},
+					"required": ["Error"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A `Continue` runs the agent on another model, because the current\ncredential no longer offers the one it ran, as `reason` says.",
+					"properties": {
+						"ModelChanged": {
+							"properties": {
+								"effort": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/Effort"
+										},
+										{
+											"type": "null"
+										}
+									]
+								},
+								"model": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/ModelId"
+										},
+										{
+											"type": "null"
+										}
+									]
+								},
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["model", "effort", "reason"],
+							"type": "object"
+						}
+					},
+					"required": ["ModelChanged"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The session's managed worktree, logged before its first snapshot.",
+					"properties": {
+						"WorkspaceCreated": {
+							"properties": {
+								"workspace": {
+									"$ref": "#/$defs/Workspace"
+								}
+							},
+							"required": ["workspace"],
+							"type": "object"
+						}
+					},
+					"required": ["WorkspaceCreated"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"SnapshotRecorded": {
+							"properties": {
+								"snapshot": {
+									"$ref": "#/$defs/Snapshot"
+								}
+							},
+							"required": ["snapshot"],
+							"type": "object"
+						}
+					},
+					"required": ["SnapshotRecorded"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"NativeTurnStarted": {
+							"properties": {
+								"turn_start": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/HostSeq"
+										},
+										{
+											"type": "null"
+										}
+									]
+								}
+							},
+							"required": ["turn_start"],
+							"type": "object"
+						}
+					},
+					"required": ["NativeTurnStarted"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"ChecklistChanged": {
+							"properties": {
+								"checklist": {
+									"items": {
+										"$ref": "#/$defs/ChecklistEntry"
+									},
+									"type": "array"
+								}
+							},
+							"required": ["checklist"],
+							"type": "object"
+						}
+					},
+					"required": ["ChecklistChanged"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The effort of the session's later turns, after a `SetEffort`.",
+					"properties": {
+						"EffortChanged": {
+							"properties": {
+								"effort": {
+									"$ref": "#/$defs/Effort"
+								}
+							},
+							"required": ["effort"],
+							"type": "object"
+						}
+					},
+					"required": ["EffortChanged"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A sub-agent belongs to its session: its events are the session's, in\nthe session's log, and it has no session of its own.",
+					"properties": {
+						"Subagent": {
+							"properties": {
+								"agent": {
+									"$ref": "#/$defs/SubagentId"
+								},
+								"event": {
+									"$ref": "#/$defs/SubagentEvent"
+								}
+							},
+							"required": ["agent", "event"],
+							"type": "object"
+						}
+					},
+					"required": ["Subagent"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The session's workspace is gone and its branch kept as `kept` says;\n`None` when it had no workspace. Nothing follows it.",
+					"properties": {
+						"SessionRemoved": {
+							"properties": {
+								"kept": {
+									"anyOf": [
+										{
+											"$ref": "#/$defs/Kept"
+										},
+										{
+											"type": "null"
+										}
+									]
+								}
+							},
+							"required": ["kept"],
+							"type": "object"
+						}
+					},
+					"required": ["SessionRemoved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The session works on this issue, on a branch cut from the issue's.\nIt follows `SessionCreated`.",
+					"properties": {
+						"OnIssue": {
+							"properties": {
+								"issue": {
+									"$ref": "#/$defs/IssueId"
+								}
+							},
+							"required": ["issue"],
+							"type": "object"
+						}
+					},
+					"required": ["OnIssue"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "What finishing the session did.",
+					"properties": {
+						"SessionFinished": {
+							"properties": {
+								"finished": {
+									"$ref": "#/$defs/Finished"
+								}
+							},
+							"required": ["finished"],
+							"type": "object"
+						}
+					},
+					"required": ["SessionFinished"],
+					"type": "object"
+				},
+				{
+					"const": "FinishStarted",
+					"description": "Finishing the session has begun; `SessionFinished` ends it.",
+					"type": "string"
+				},
+				{
+					"const": "FinishInterrupted",
+					"description": "A restarted host can resume the interrupted landing.",
+					"type": "string"
+				}
+			]
+		},
+		"Feed": {
+			"description": "A logged event or a live update to the host's sign-ins, home or offers.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Event": {
+							"$ref": "#/$defs/Event"
+						}
+					},
+					"required": ["Event"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"SignIn": {
+							"$ref": "#/$defs/SignIn"
+						}
+					},
+					"required": ["SignIn"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Home": {
+							"$ref": "#/$defs/Home"
+						}
+					},
+					"required": ["Home"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The current instance offers, replacing the previous snapshot.",
+					"properties": {
+						"Instances": {
+							"$ref": "#/$defs/Instances"
+						}
+					},
+					"required": ["Instances"],
+					"type": "object"
+				}
+			]
+		},
+		"Field": {
+			"description": "One field of a credential form.",
+			"properties": {
+				"id": {
+					"description": "The key of its value in a [`Credential`].",
+					"type": "string"
+				},
+				"kind": {
+					"$ref": "#/$defs/FieldKind"
+				},
+				"label": {
+					"type": "string"
+				},
+				"placeholder": {
+					"type": "string"
+				},
+				"required": {
+					"type": "boolean"
+				}
+			},
+			"required": ["id", "label", "kind", "placeholder", "required"],
+			"type": "object"
+		},
+		"FieldKind": {
+			"description": "What a field holds, which says how the app shows it and how the host\nchecks it.",
+			"oneOf": [
+				{
+					"enum": ["Text"],
+					"type": "string"
+				},
+				{
+					"const": "Url",
+					"description": "A plain `http(s)://host/path`. It is shown to every client and may\nbe written into a CLI's config, so it may not hide a secret in\nuserinfo, a query or a fragment.",
+					"type": "string"
+				},
+				{
+					"const": "Secret",
+					"description": "Write-only: the host never shows it again, and no `Debug` prints it.",
+					"type": "string"
+				}
+			]
+		},
+		"FieldRole": {
+			"description": "What a field means to Conductor, whatever the flow calls it. At most\none field has each.",
+			"oneOf": [
+				{
+					"const": "labels",
+					"description": "The words the app shows on an issue and edits beside its title.",
+					"type": "string"
+				},
+				{
+					"const": "branch",
+					"description": "The branch its sessions land on, in place of `issue/<id>`.",
+					"type": "string"
+				},
+				{
+					"const": "created",
+					"description": "When it was opened, which opening it writes.",
+					"type": "string"
+				}
+			]
+		},
+		"FieldType": {
+			"oneOf": [
+				{
+					"enum": ["Text", "Texts", "Time", "Bool"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "One of these words.",
+					"properties": {
+						"Enum": {
+							"items": {
+								"type": "string"
+							},
+							"type": "array"
+						}
+					},
+					"required": ["Enum"],
+					"type": "object"
+				}
+			]
+		},
+		"FileChange": {
+			"description": "One file a tool call changes, and how.",
+			"properties": {
+				"change": {
+					"$ref": "#/$defs/Change"
+				},
+				"path": {
+					"type": "string"
+				}
+			},
+			"required": ["path", "change"],
+			"type": "object"
+		},
+		"FilePatch": {
+			"oneOf": [
+				{
+					"enum": ["Binary", "TooLarge"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Text": {
+							"type": "string"
+						}
+					},
+					"required": ["Text"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Unsupported": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Unsupported"],
+					"type": "object"
+				}
+			]
+		},
+		"Finished": {
+			"description": "How finishing a session on an issue went.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "The session's branch landed on the issue's with this many commits\nthe issue's lacked, and the issue's branch was kept as `kept` says.",
+					"properties": {
+						"Landed": {
+							"properties": {
+								"commits": {
+									"format": "uint64",
+									"minimum": 0,
+									"type": "integer"
+								},
+								"kept": {
+									"$ref": "#/$defs/Kept"
+								}
+							},
+							"required": ["commits", "kept"],
+							"type": "object"
+						}
+					},
+					"required": ["Landed"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Nothing landed, for this reason; the session's branch stays.",
+					"properties": {
+						"Failed": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Failed"],
+					"type": "object"
+				}
+			]
+		},
+		"Flow": {
+			"properties": {
+				"default_kind": {
+					"description": "The kind of an issue that names none.",
+					"type": "string"
+				},
+				"fields": {
+					"description": "The fields every kind has.",
+					"items": {
+						"$ref": "#/$defs/FlowField"
+					},
+					"type": "array"
+				},
+				"kinds": {
+					"items": {
+						"$ref": "#/$defs/Kind"
+					},
+					"type": "array"
+				},
+				"relations": {
+					"items": {
+						"$ref": "#/$defs/Relation"
+					},
+					"type": "array"
+				},
+				"rules": {
+					"items": {
+						"$ref": "#/$defs/Rule"
+					},
+					"type": "array"
+				},
+				"stages": {
+					"items": {
+						"$ref": "#/$defs/Stage"
+					},
+					"type": "array"
+				},
+				"statuses": {
+					"items": {
+						"$ref": "#/$defs/Status"
+					},
+					"type": "array"
+				}
+			},
+			"required": [
+				"default_kind",
+				"statuses",
+				"fields",
+				"kinds",
+				"relations",
+				"stages",
+				"rules"
+			],
+			"type": "object"
+		},
+		"FlowField": {
+			"properties": {
+				"default": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/Datum"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "What an issue that leaves it out has, of its type."
+				},
+				"name": {
+					"type": "string"
+				},
+				"role": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/FieldRole"
+						},
+						{
+							"type": "null"
+						}
+					]
+				},
+				"value": {
+					"$ref": "#/$defs/FieldType"
+				}
+			},
+			"required": ["name", "value", "default", "role"],
+			"type": "object"
+		},
+		"Hello": {
+			"description": "S3 auth placeholder: the ticket's token stands in for the `DeviceCert`\nthat §4 puts here.",
+			"properties": {
+				"client": {
+					"$ref": "#/$defs/ClientName"
+				},
+				"token": {
+					"$ref": "#/$defs/AuthToken"
+				}
+			},
+			"required": ["client", "token"],
+			"type": "object"
+		},
+		"HelloReply": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Welcome": {
+							"$ref": "#/$defs/Welcome"
+						}
+					},
+					"required": ["Welcome"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Refused": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Refused"],
+					"type": "object"
+				}
+			]
+		},
+		"Home": {
+			"description": "The host's clone of the home, and the projects it lists.",
+			"properties": {
+				"flow": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/Flow"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "The clone's `docs/agents/flow.toml`, which its issues are read\nagainst; `None` while it has none that loads, and so no issues."
+				},
+				"projects": {
+					"description": "As the clone lists them, by id.",
+					"items": {
+						"$ref": "#/$defs/Project"
+					},
+					"type": "array"
+				},
+				"remote": {
+					"description": "The home's remote, as the host was given it.",
+					"type": "string"
+				},
+				"sync": {
+					"$ref": "#/$defs/HomeSync"
+				},
+				"synced": {
+					"description": "When the clone last matched the remote, in seconds since the Unix\nepoch on the host's clock.",
+					"format": "uint64",
+					"minimum": 0,
+					"type": ["integer", "null"]
+				},
+				"unpushed": {
+					"description": "Issue changes the host has made that the remote doesn't have yet.",
+					"format": "uint64",
+					"minimum": 0,
+					"type": "integer"
+				}
+			},
+			"required": ["remote", "synced", "sync", "unpushed", "flow", "projects"],
+			"type": "object"
+		},
+		"HomeSync": {
+			"oneOf": [
+				{
+					"const": "Syncing",
+					"description": "The first clone is under way.",
+					"type": "string"
+				},
+				{
+					"const": "Synced",
+					"description": "The last clone or pull succeeded.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host has a clone, but the last pull failed, for this reason: the\nprojects are as of the last sync.",
+					"properties": {
+						"Behind": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Behind"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host has no clone, for this reason, and so no projects.",
+					"properties": {
+						"Failed": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Failed"],
+					"type": "object"
+				}
+			]
+		},
+		"HostEntry": {
+			"properties": {
+				"added_at": {
+					"format": "uint64",
+					"minimum": 0,
+					"type": "integer"
+				},
+				"name": {
+					"type": "string"
+				},
+				"node": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"maxItems": 32,
+					"minItems": 32,
+					"type": "array"
+				},
+				"relay": {
+					"type": "string"
+				}
+			},
+			"required": ["node", "name", "relay", "added_at"],
+			"type": "object"
+		},
+		"HostPath": {
+			"description": "A path on the host, as the host's OS spells it. The client never\ninterprets it: a browser on a phone can't know a Windows path's rules.",
+			"type": "string"
+		},
+		"HostSeq": {
+			"description": "The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.",
+			"format": "uint64",
+			"minimum": 0,
+			"type": "integer"
+		},
+		"InstanceId": {
+			"description": "An instance by its key, the account of a provider on this host (the\nnode). The provider names the account, not the owner, so it never\nchanges and the instance is never renamed.",
+			"properties": {
+				"account": {
+					"$ref": "#/$defs/Account"
+				},
+				"provider": {
+					"$ref": "#/$defs/Provider"
+				}
+			},
+			"required": ["provider", "account"],
+			"type": "object"
+		},
+		"InstanceStatus": {
+			"description": "What a client learns of one instance.",
+			"properties": {
+				"availability": {
+					"$ref": "#/$defs/Availability"
+				}
+			},
+			"required": ["availability"],
+			"type": "object"
+		},
+		"Instances": {
+			"description": "Whether the host can run each of its instances, and how each signs in.",
+			"items": {
+				"maxItems": 2,
+				"minItems": 2,
+				"prefixItems": [
+					{
+						"$ref": "#/$defs/InstanceId"
+					},
+					{
+						"$ref": "#/$defs/InstanceStatus"
+					}
+				],
+				"type": "array"
+			},
+			"type": "array"
+		},
+		"Invite": {
+			"properties": {
+				"fleet": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"maxItems": 32,
+					"minItems": 32,
+					"type": "array"
+				},
+				"relay": {
+					"type": "string"
+				},
+				"root": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"maxItems": 32,
+					"minItems": 32,
+					"type": "array"
+				},
+				"secret": {
+					"$ref": "#/$defs/InviteSecret"
+				}
+			},
+			"required": ["fleet", "root", "relay", "secret"],
+			"type": "object"
+		},
+		"InviteSecret": {
+			"items": {
+				"format": "uint8",
+				"maximum": 255,
+				"minimum": 0,
+				"type": "integer"
+			},
+			"maxItems": 32,
+			"minItems": 32,
+			"type": "array"
+		},
+		"Issue": {
+			"description": "An issue as the flow reads its file.",
+			"properties": {
+				"body": {
+					"description": "The body before the checklist and the log, as its file has it.",
+					"type": "string"
+				},
+				"branch": {
+					"description": "The branch its sessions land on.",
+					"type": "string"
+				},
+				"checklist": {
+					"description": "The items of the `## Checklist` section.",
+					"items": {
+						"$ref": "#/$defs/ChecklistItem"
+					},
+					"type": "array"
+				},
+				"fields": {
+					"additionalProperties": {
+						"$ref": "#/$defs/Datum"
+					},
+					"description": "The declared fields it gives, by name.",
+					"type": "object"
+				},
+				"id": {
+					"$ref": "#/$defs/IssueId"
+				},
+				"kind": {
+					"type": "string"
+				},
+				"links": {
+					"additionalProperties": {
+						"items": {
+							"$ref": "#/$defs/IssueId"
+						},
+						"type": "array"
+					},
+					"description": "The issues each relation from it points to, by relation.",
+					"type": "object"
+				},
+				"log": {
+					"description": "The `## Notes` section, oldest first.",
+					"items": {
+						"$ref": "#/$defs/Entry"
+					},
+					"type": "array"
+				},
+				"project": {
+					"$ref": "#/$defs/ProjectId"
+				},
+				"sections": {
+					"description": "The body's sections in order, the text before the first heading\nas one with no heading; the checklist and the log aren't among them.",
+					"items": {
+						"$ref": "#/$defs/Section"
+					},
+					"type": "array"
+				},
+				"stage": {
+					"type": ["string", "null"]
+				},
+				"status": {
+					"type": "string"
+				},
+				"title": {
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"project",
+				"title",
+				"kind",
+				"status",
+				"stage",
+				"fields",
+				"links",
+				"body",
+				"sections",
+				"checklist",
+				"log",
+				"branch"
+			],
+			"type": "object"
+		},
+		"IssueChange": {
+			"description": "One change to an issue, as the `home` command line and the app make\nit. The home reads the file it writes back against the flow before\nkeeping it.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Move": {
+							"properties": {
+								"part": {
+									"$ref": "#/$defs/Part"
+								},
+								"reason": {
+									"type": "string"
+								},
+								"signed_off": {
+									"description": "The owner signed off, as leaving a stage with a sign-off needs.",
+									"type": "boolean"
+								},
+								"to": {
+									"type": "string"
+								}
+							},
+							"required": ["part", "to", "reason", "signed_off"],
+							"type": "object"
+						}
+					},
+					"required": ["Move"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A declared field's or relation's value.",
+					"properties": {
+						"Set": {
+							"properties": {
+								"field": {
+									"type": "string"
+								},
+								"value": {
+									"$ref": "#/$defs/Datum"
+								}
+							},
+							"required": ["field", "value"],
+							"type": "object"
+						}
+					},
+					"required": ["Set"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Title": {
+							"type": "string"
+						}
+					},
+					"required": ["Title"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A note, which the writer signs and dates.",
+					"properties": {
+						"Note": {
+							"type": "string"
+						}
+					},
+					"required": ["Note"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Body": {
+							"type": "string"
+						}
+					},
+					"required": ["Body"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Checklist": {
+							"$ref": "#/$defs/ChecklistChange"
+						}
+					},
+					"required": ["Checklist"],
+					"type": "object"
+				}
+			]
+		},
+		"IssueId": {
+			"maxLength": 8,
+			"minLength": 8,
+			"type": "string"
+		},
+		"Item": {
+			"description": "A checklist item by its place, from 0.",
+			"properties": {
+				"index": {
+					"format": "uint",
+					"minimum": 0,
+					"type": "integer"
+				},
+				"seen": {
+					"description": "The checklist the place was picked from; when the file's has\nchanged since, the change is refused. `None` takes the place in\nthe file as it is.",
+					"items": {
+						"$ref": "#/$defs/ChecklistItem"
+					},
+					"type": ["array", "null"]
+				}
+			},
+			"required": ["index", "seen"],
+			"type": "object"
+		},
+		"Kept": {
+			"description": "Where a removed session's branch was kept.",
+			"oneOf": [
+				{
+					"const": "Local",
+					"description": "In the checkout only: it has no `origin`.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Pushed": {
+							"properties": {
+								"remote": {
+									"type": "string"
+								}
+							},
+							"required": ["remote"],
+							"type": "object"
+						}
+					},
+					"required": ["Pushed"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "In the checkout only, since the push failed.",
+					"properties": {
+						"PushFailed": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["PushFailed"],
+					"type": "object"
+				}
+			]
+		},
+		"Kind": {
+			"properties": {
+				"colour": {
+					"type": ["string", "null"]
+				},
+				"fields": {
+					"description": "Its own fields, beyond those every kind has.",
+					"items": {
+						"$ref": "#/$defs/FlowField"
+					},
+					"type": "array"
+				},
+				"icon": {
+					"type": ["string", "null"]
+				},
+				"label": {
+					"type": "string"
+				},
+				"name": {
+					"type": "string"
+				},
+				"order": {
+					"description": "The fields and relations the app shows first, in this order.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"sections": {
+					"description": "The headings its body is expected to have.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				}
+			},
+			"required": [
+				"name",
+				"label",
+				"icon",
+				"colour",
+				"sections",
+				"fields",
+				"order"
+			],
+			"type": "object"
+		},
+		"Literal": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Text": {
+							"type": "string"
+						}
+					},
+					"required": ["Text"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Bool": {
+							"type": "boolean"
+						}
+					},
+					"required": ["Bool"],
+					"type": "object"
+				}
+			]
+		},
+		"LogEvent": {
+			"oneOf": [
+				{
+					"enum": ["Note"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Stage": {
+							"properties": {
+								"from": {
+									"type": "string"
+								},
+								"to": {
+									"type": "string"
+								}
+							},
+							"required": ["from", "to"],
+							"type": "object"
+						}
+					},
+					"required": ["Stage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Status": {
+							"properties": {
+								"from": {
+									"type": "string"
+								},
+								"to": {
+									"type": "string"
+								}
+							},
+							"required": ["from", "to"],
+							"type": "object"
+						}
+					},
+					"required": ["Status"],
+					"type": "object"
+				}
+			]
+		},
+		"ModelChoice": {
+			"properties": {
+				"description": {
+					"type": "string"
+				},
+				"efforts": {
+					"description": "The efforts this model takes, lowest first.",
+					"items": {
+						"$ref": "#/$defs/Effort"
+					},
+					"type": "array"
+				},
+				"id": {
+					"$ref": "#/$defs/ModelId"
+				},
+				"name": {
+					"type": "string"
+				}
+			},
+			"required": ["id", "name", "description", "efforts"],
+			"type": "object"
+		},
+		"ModelId": {
+			"description": "A model by the name its CLI takes (`haiku`, `gpt-6-luna`).",
+			"type": "string"
+		},
+		"Models": {
+			"description": "The models a provider's CLI offers on this host, as the CLI lists them\nwhen the host starts, and the one a session gets when it names none.",
+			"properties": {
+				"choices": {
+					"items": {
+						"$ref": "#/$defs/ModelChoice"
+					},
+					"type": "array"
+				},
+				"default": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/ModelId"
+						},
+						{
+							"type": "null"
+						}
+					]
+				}
+			},
+			"required": ["choices", "default"],
+			"type": "object"
+		},
+		"NewIssue": {
+			"description": "A new issue, as `home issue new` opens one.",
+			"properties": {
+				"fields": {
+					"description": "The fields and relations it starts with, each with its value, in\nthe order given.",
+					"items": {
+						"maxItems": 2,
+						"minItems": 2,
+						"prefixItems": [
+							{
+								"type": "string"
+							},
+							{
+								"$ref": "#/$defs/Datum"
+							}
+						],
+						"type": "array"
+					},
+					"type": "array"
+				},
+				"kind": {
+					"type": "string"
+				},
+				"project": {
+					"$ref": "#/$defs/ProjectId"
+				},
+				"title": {
+					"type": "string"
+				}
+			},
+			"required": ["project", "kind", "title", "fields"],
+			"type": "object"
+		},
+		"Open": {
+			"description": "The first frame on every client-opened bi-stream.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Hello": {
+							"$ref": "#/$defs/Hello"
+						}
+					},
+					"required": ["Hello"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Subscribe": {
+							"$ref": "#/$defs/Subscribe"
+						}
+					},
+					"required": ["Subscribe"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Command": {
+							"$ref": "#/$defs/Command"
+						}
+					},
+					"required": ["Command"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FleetHello": {
+							"$ref": "#/$defs/DeviceHello"
+						}
+					},
+					"required": ["FleetHello"],
+					"type": "object"
+				}
+			]
+		},
+		"Origin": {
+			"oneOf": [
+				{
+					"const": "Found",
+					"description": "Found in a directory the host searches.",
+					"type": "string"
+				},
+				{
+					"const": "Cloned",
+					"description": "The host cloned it into its data dir.",
+					"type": "string"
+				}
+			]
+		},
+		"PairRequest": {
+			"properties": {
+				"device": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"maxItems": 32,
+					"minItems": 32,
+					"type": "array"
+				},
+				"name": {
+					"type": "string"
+				}
+			},
+			"required": ["device", "name"],
+			"type": "object"
+		},
+		"Pairing": {
+			"properties": {
+				"certificate": {
+					"$ref": "#/$defs/Signed"
+				},
+				"root": {
+					"$ref": "#/$defs/HostEntry"
+				},
+				"signed": {
+					"$ref": "#/$defs/Signed"
+				}
+			},
+			"required": ["certificate", "root", "signed"],
+			"type": "object"
+		},
+		"Part": {
+			"description": "What a move changes.",
+			"enum": ["Stage", "Status"],
+			"type": "string"
+		},
+		"Predicate": {
+			"description": "A condition on an issue, among the issues it relates to.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Kind": {
+							"type": "string"
+						}
+					},
+					"required": ["Kind"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Stage": {
+							"type": "string"
+						}
+					},
+					"required": ["Stage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"StatusRole": {
+							"$ref": "#/$defs/Role"
+						}
+					},
+					"required": ["StatusRole"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Field": {
+							"properties": {
+								"name": {
+									"type": "string"
+								},
+								"value": {
+									"$ref": "#/$defs/Literal"
+								}
+							},
+							"required": ["name", "value"],
+							"type": "object"
+						}
+					},
+					"required": ["Field"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "It has this field, this relation, or a stage.",
+					"properties": {
+						"Has": {
+							"type": "string"
+						}
+					},
+					"required": ["Has"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"HasSection": {
+							"type": "string"
+						}
+					},
+					"required": ["HasSection"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "While a move is weighed: the issue as it was. Only a rule's\n`when` has it.",
+					"properties": {
+						"From": {
+							"$ref": "#/$defs/Predicate"
+						}
+					},
+					"required": ["From"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "While a move is weighed: the issue as it would be. Only a rule's\n`when` has it.",
+					"properties": {
+						"To": {
+							"$ref": "#/$defs/Predicate"
+						}
+					},
+					"required": ["To"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"All": {
+							"items": {
+								"$ref": "#/$defs/Predicate"
+							},
+							"type": "array"
+						}
+					},
+					"required": ["All"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Any": {
+							"items": {
+								"$ref": "#/$defs/Predicate"
+							},
+							"type": "array"
+						}
+					},
+					"required": ["Any"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Not": {
+							"$ref": "#/$defs/Predicate"
+						}
+					},
+					"required": ["Not"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The issues reached through a relation, or its reverse, meet the\ncondition: any, all or none of them.",
+					"properties": {
+						"Across": {
+							"properties": {
+								"condition": {
+									"$ref": "#/$defs/Predicate"
+								},
+								"quantifier": {
+									"$ref": "#/$defs/Quantifier"
+								},
+								"via": {
+									"type": "string"
+								}
+							},
+							"required": ["quantifier", "via", "condition"],
+							"type": "object"
+						}
+					},
+					"required": ["Across"],
+					"type": "object"
+				}
+			]
+		},
+		"Project": {
+			"description": "A project as the home describes it, and its checkouts on this host.",
+			"properties": {
+				"checkouts": {
+					"description": "Every checkout of it on this host, the one a session starts in\nfirst. None: it isn't checked out here.",
+					"items": {
+						"$ref": "#/$defs/Checkout"
+					},
+					"type": "array"
+				},
+				"cloning": {
+					"$ref": "#/$defs/Cloning"
+				},
+				"id": {
+					"$ref": "#/$defs/ProjectId"
+				},
+				"issues": {
+					"description": "By id, which orders them by when they were opened.",
+					"items": {
+						"$ref": "#/$defs/Issue"
+					},
+					"type": "array"
+				},
+				"name": {
+					"description": "Unique in the home: what a person types to name it.",
+					"type": "string"
+				},
+				"profiles": {
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"provides": {
+					"description": "The profiles whose checks and configs it holds, for any project\nthat names them.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"remote": {
+					"description": "`None` for a project that is local only, which can't be cloned.",
+					"type": ["string", "null"]
+				},
+				"title": {
+					"description": "What the app shows.",
+					"type": "string"
+				}
+			},
+			"required": [
+				"id",
+				"name",
+				"title",
+				"remote",
+				"profiles",
+				"provides",
+				"checkouts",
+				"cloning",
+				"issues"
+			],
+			"type": "object"
+		},
+		"ProjectId": {
+			"maxLength": 6,
+			"minLength": 6,
+			"type": "string"
+		},
+		"Provider": {
+			"description": "The providers a host may run: the one place they are listed.",
+			"enum": ["Claude", "Codex"],
+			"type": "string"
+		},
+		"ProviderInfo": {
+			"description": "How a provider the host runs presents itself, as its plugin describes\nit.",
+			"properties": {
+				"credentials": {
+					"description": "The kinds of credential it takes.",
+					"items": {
+						"$ref": "#/$defs/CredentialForm"
+					},
+					"type": "array"
+				},
+				"label": {
+					"type": "string"
+				},
+				"note": {
+					"description": "What a new session's form says under the provider when it is\npicked, such as what its agent does without asking.",
+					"type": ["string", "null"]
+				}
+			},
+			"required": ["label", "note", "credentials"],
+			"type": "object"
+		},
+		"PushSubscription": {
+			"properties": {
+				"auth": {
+					"type": "string"
+				},
+				"endpoint": {
+					"type": "string"
+				},
+				"p256dh": {
+					"type": "string"
+				}
+			},
+			"required": ["endpoint", "p256dh", "auth"],
+			"type": "object"
+		},
+		"Quantifier": {
+			"enum": ["Any", "All", "None"],
+			"type": "string"
+		},
+		"Question": {
+			"description": "One question. Both agents take any typed text as an answer, so every\nquestion also allows one besides its options.",
+			"properties": {
+				"header": {
+					"description": "A short label for the question, such as \"Color\".",
+					"type": "string"
+				},
+				"options": {
+					"items": {
+						"$ref": "#/$defs/QuestionOption"
+					},
+					"type": "array"
+				},
+				"selection": {
+					"$ref": "#/$defs/Selection"
+				},
+				"text": {
+					"type": "string"
+				}
+			},
+			"required": ["header", "text", "options", "selection"],
+			"type": "object"
+		},
+		"QuestionOption": {
+			"properties": {
+				"description": {
+					"type": "string"
+				},
+				"label": {
+					"type": "string"
+				}
+			},
+			"required": ["label", "description"],
+			"type": "object"
+		},
+		"Rejection": {
+			"oneOf": [
+				{
+					"enum": [
+						"NoSuchDirectory",
+						"UnknownSession",
+						"SessionClosed",
+						"TurnInProgress",
+						"NoTurnRunning",
+						"UnknownRequest",
+						"NotGitRepository",
+						"SnapshotUnavailable",
+						"UnknownInstance",
+						"SignInRunning",
+						"UnknownProject",
+						"SessionRemoved",
+						"UnknownIssue",
+						"FleetUnavailable"
+					],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"InstanceUnavailable": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["InstanceUnavailable"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host doesn't offer that model or effort, for this reason.",
+					"properties": {
+						"NotOffered": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["NotOffered"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"AlreadyResolved": {
+							"properties": {
+								"by": {
+									"$ref": "#/$defs/ClientName"
+								}
+							},
+							"required": ["by"],
+							"type": "object"
+						}
+					},
+					"required": ["AlreadyResolved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The reply doesn't fit the request, for this reason.",
+					"properties": {
+						"WrongReply": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["WrongReply"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The host could not store the credential, and kept the one it had.",
+					"properties": {
+						"CredentialNotSaved": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["CredentialNotSaved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The credential is malformed, for this reason, and was not stored.",
+					"properties": {
+						"InvalidCredential": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["InvalidCredential"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"WorkspaceFailure": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["WorkspaceFailure"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The instance can't be removed while sessions run on it.",
+					"properties": {
+						"InstanceInUse": {
+							"properties": {
+								"sessions": {
+									"format": "uint64",
+									"minimum": 0,
+									"type": "integer"
+								}
+							},
+							"required": ["sessions"],
+							"type": "object"
+						}
+					},
+					"required": ["InstanceInUse"],
+					"type": "object"
+				},
+				{
+					"const": "NoCodeAsked",
+					"description": "No sign-in runs on the instance, or it takes no code now.",
+					"type": "string"
+				},
+				{
+					"const": "NoHome",
+					"description": "The host was given no home.",
+					"type": "string"
+				},
+				{
+					"const": "NotCheckedOut",
+					"description": "The project has no checkout on the host.",
+					"type": "string"
+				},
+				{
+					"const": "NoRemote",
+					"description": "The project is local only: there is no remote to clone.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The home can't be written now, for this reason.",
+					"properties": {
+						"IssueNotSaved": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueNotSaved"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The flow refuses the edit, for this reason, as the `home` command\nline would.",
+					"properties": {
+						"IssueRefused": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueRefused"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The instance has this session on the issue already: one session\nper instance and issue.",
+					"properties": {
+						"IssueTaken": {
+							"properties": {
+								"session": {
+									"$ref": "#/$defs/SessionId"
+								}
+							},
+							"required": ["session"],
+							"type": "object"
+						}
+					},
+					"required": ["IssueTaken"],
+					"type": "object"
+				},
+				{
+					"const": "NotOnIssue",
+					"description": "The session works on no issue, so there is nothing to finish it on.",
+					"type": "string"
+				},
+				{
+					"const": "AlreadyFinished",
+					"description": "The session is finishing, or has done nothing since it finished.",
+					"type": "string"
+				}
+			]
+		},
+		"Relation": {
+			"additionalProperties": false,
+			"properties": {
+				"cycles": {
+					"default": false,
+					"type": "boolean"
+				},
+				"from": {
+					"default": [],
+					"description": "The kinds it may start from; any kind when empty.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"many": {
+					"default": false,
+					"type": "boolean"
+				},
+				"name": {
+					"type": "string"
+				},
+				"reverse": {
+					"description": "Its name followed backwards, from the issue it points to.",
+					"type": "string"
+				},
+				"shape": {
+					"$ref": "#/$defs/Shape"
+				},
+				"to": {
+					"default": [],
+					"description": "The kinds it may point to; any kind when empty.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				}
+			},
+			"required": ["name", "from", "to", "many", "cycles", "shape", "reverse"],
+			"type": "object"
+		},
+		"RequestId": {
+			"description": "An approval request or a question, assigned by the host per session, in\norder.",
+			"format": "uint64",
+			"minimum": 0,
+			"type": "integer"
+		},
+		"Resolution": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Decided": {
+							"properties": {
+								"by": {
+									"$ref": "#/$defs/ClientName"
+								},
+								"decision": {
+									"$ref": "#/$defs/Decision"
+								}
+							},
+							"required": ["decision", "by"],
+							"type": "object"
+						}
+					},
+					"required": ["Decided"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A question's answers, one per question.",
+					"properties": {
+						"Answered": {
+							"properties": {
+								"answers": {
+									"items": {
+										"$ref": "#/$defs/Answer"
+									},
+									"type": "array"
+								},
+								"by": {
+									"$ref": "#/$defs/ClientName"
+								}
+							},
+							"required": ["answers", "by"],
+							"type": "object"
+						}
+					},
+					"required": ["Answered"],
+					"type": "object"
+				},
+				{
+					"const": "Withdrawn",
+					"description": "The agent withdrew the request before anyone answered.",
+					"type": "string"
+				}
+			]
+		},
+		"Role": {
+			"description": "What a status means to Conductor, whatever the flow calls it.",
+			"oneOf": [
+				{
+					"const": "idle",
+					"description": "Waiting to be taken up.",
+					"type": "string"
+				},
+				{
+					"const": "startable",
+					"description": "Ready for a session to start on.",
+					"type": "string"
+				},
+				{
+					"const": "active",
+					"description": "Being worked on.",
+					"type": "string"
+				},
+				{
+					"const": "review",
+					"description": "Waiting for someone to look at what was done.",
+					"type": "string"
+				},
+				{
+					"const": "terminal",
+					"description": "Finished.",
+					"type": "string"
+				},
+				{
+					"const": "dropped",
+					"description": "Given up.",
+					"type": "string"
+				}
+			]
+		},
+		"Rule": {
+			"properties": {
+				"message": {
+					"type": "string"
+				},
+				"require": {
+					"$ref": "#/$defs/Predicate",
+					"description": "What those issues should meet."
+				},
+				"severity": {
+					"$ref": "#/$defs/Severity"
+				},
+				"when": {
+					"$ref": "#/$defs/Predicate",
+					"description": "The issues it applies to."
+				}
+			},
+			"required": ["message", "severity", "when", "require"],
+			"type": "object"
+		},
+		"Section": {
+			"properties": {
+				"heading": {
+					"description": "Empty for the text before the first heading.",
+					"type": "string"
+				},
+				"text": {
+					"type": "string"
+				}
+			},
+			"required": ["heading", "text"],
+			"type": "object"
+		},
+		"Selection": {
+			"description": "How many options the user may choose.",
+			"enum": ["One", "Many"],
+			"type": "string"
+		},
+		"SessionId": {
+			"description": "A fleet-unique ULID assigned by the host, represented as its 128 bits.",
+			"type": "string"
+		},
+		"Severity": {
+			"enum": ["warn", "error"],
+			"type": "string"
+		},
+		"Shape": {
+			"oneOf": [
+				{
+					"const": "hierarchy",
+					"description": "Drawn as a tree.",
+					"type": "string"
+				},
+				{
+					"const": "dependency",
+					"description": "Drawn as a graph.",
+					"type": "string"
+				}
+			]
+		},
+		"SignIn": {
+			"properties": {
+				"instance": {
+					"$ref": "#/$defs/InstanceId"
+				},
+				"step": {
+					"$ref": "#/$defs/SignInStep"
+				}
+			},
+			"required": ["instance", "step"],
+			"type": "object"
+		},
+		"SignInCode": {
+			"description": "The code a person pastes from a sign-in page. It is a secret: its\n`Debug` doesn't print it, so no log line carries it.",
+			"type": "string"
+		},
+		"SignInStep": {
+			"oneOf": [
+				{
+					"enum": ["SignedIn"],
+					"type": "string"
+				},
+				{
+					"const": "Starting",
+					"description": "The host is starting the CLI's sign-in in the instance's home.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitSignInCode`.",
+					"properties": {
+						"Open": {
+							"properties": {
+								"code": {
+									"type": ["string", "null"]
+								},
+								"paste": {
+									"type": "boolean"
+								},
+								"url": {
+									"type": "string"
+								}
+							},
+							"required": ["url", "code", "paste"],
+							"type": "object"
+						}
+					},
+					"required": ["Open"],
+					"type": "object"
+				},
+				{
+					"const": "Finishing",
+					"description": "The CLI has what it needs: it finishes, and the host checks the\nhome and lists the instance's models.",
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Failed": {
+							"properties": {
+								"reason": {
+									"type": "string"
+								}
+							},
+							"required": ["reason"],
+							"type": "object"
+						}
+					},
+					"required": ["Failed"],
+					"type": "object"
+				},
+				{
+					"const": "Cancelled",
+					"description": "Cancelled from a client: no sign-in runs on the instance.",
+					"type": "string"
+				}
+			]
+		},
+		"Signed": {
+			"description": "A value signed over the exact JSON bytes it was written as, and\ncarried as those bytes.\n\nJSON has no canonical form, so nothing re-encodes it to verify it: a\nverifier checks `signature` over [`Payload::DOMAIN`] then `payload`,\nand only then parses `payload`.",
+			"properties": {
+				"payload": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"type": "array"
+				},
+				"signature": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"type": "array"
+				}
+			},
+			"required": ["payload", "signature"],
+			"type": "object"
+		},
+		"Snapshot": {
+			"properties": {
+				"commit": {
+					"type": "string"
+				},
+				"turn_start": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/HostSeq"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "The existing `UserMessage` event for this turn; None for initial/autonomous turns."
+				}
+			},
+			"required": ["turn_start", "commit"],
+			"type": "object"
+		},
+		"SnapshotDiff": {
+			"properties": {
+				"extent": {
+					"$ref": "#/$defs/DiffExtent"
+				},
+				"files": {
+					"items": {
+						"$ref": "#/$defs/SnapshotFile"
+					},
+					"type": "array"
+				},
+				"snapshot": {
+					"$ref": "#/$defs/HostSeq"
+				}
+			},
+			"required": ["snapshot", "files", "extent"],
+			"type": "object"
+		},
+		"SnapshotFile": {
+			"properties": {
+				"change": {
+					"$ref": "#/$defs/Change"
+				},
+				"patch": {
+					"$ref": "#/$defs/FilePatch"
+				},
+				"path": {
+					"type": "string"
+				}
+			},
+			"required": ["path", "change", "patch"],
+			"type": "object"
+		},
+		"Stage": {
+			"additionalProperties": false,
+			"properties": {
+				"name": {
+					"type": "string"
+				},
+				"next": {
+					"default": [],
+					"description": "The stages it usually moves to; any other move is unusual.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				},
+				"sign_off": {
+					"default": false,
+					"description": "Whether the owner signs off before work moves on.",
+					"type": "boolean"
+				},
+				"skills": {
+					"default": [],
+					"description": "The skills that serve it, the first one leading.",
+					"items": {
+						"type": "string"
+					},
+					"type": "array"
+				}
+			},
+			"required": ["name", "skills", "next", "sign_off"],
+			"type": "object"
+		},
+		"StartAt": {
+			"description": "Where a new session runs: a directory, a project's checkout, or an\nissue's project's checkout on a branch cut from the issue's.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Directory": {
+							"$ref": "#/$defs/HostPath"
+						}
+					},
+					"required": ["Directory"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Project": {
+							"$ref": "#/$defs/ProjectId"
+						}
+					},
+					"required": ["Project"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Issue": {
+							"$ref": "#/$defs/IssueId"
+						}
+					},
+					"required": ["Issue"],
+					"type": "object"
+				}
+			]
+		},
+		"Status": {
+			"additionalProperties": false,
+			"properties": {
+				"colour": {
+					"type": ["string", "null"]
+				},
+				"name": {
+					"type": "string"
+				},
+				"role": {
+					"$ref": "#/$defs/Role"
+				}
+			},
+			"required": ["name", "role", "colour"],
+			"type": "object"
+		},
+		"SubagentActivity": {
+			"description": "One entry of a sub-agent's own transcript.",
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Message": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["Message"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Reasoning": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["Reasoning"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"ToolCall": {
+							"properties": {
+								"call": {
+									"$ref": "#/$defs/ToolCallId"
+								},
+								"phase": {
+									"$ref": "#/$defs/ToolPhase"
+								}
+							},
+							"required": ["call", "phase"],
+							"type": "object"
+						}
+					},
+					"required": ["ToolCall"],
+					"type": "object"
+				}
+			]
+		},
+		"SubagentEvent": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "The agent's tool call `call` started it. A sub-agent the agent\nresumes starts again under the same id.",
+					"properties": {
+						"Started": {
+							"properties": {
+								"call": {
+									"$ref": "#/$defs/ToolCallId"
+								},
+								"description": {
+									"type": "string"
+								}
+							},
+							"required": ["call", "description"],
+							"type": "object"
+						}
+					},
+					"required": ["Started"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Activity": {
+							"$ref": "#/$defs/SubagentActivity"
+						}
+					},
+					"required": ["Activity"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "`summary` is its final report, when its provider gives one.",
+					"properties": {
+						"Ended": {
+							"properties": {
+								"outcome": {
+									"$ref": "#/$defs/SubagentOutcome"
+								},
+								"summary": {
+									"type": ["string", "null"]
+								}
+							},
+							"required": ["outcome", "summary"],
+							"type": "object"
+						}
+					},
+					"required": ["Ended"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Kind": {
+							"properties": {
+								"kind": {
+									"type": "string"
+								}
+							},
+							"required": ["kind"],
+							"type": "object"
+						}
+					},
+					"required": ["Kind"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"ChecklistChanged": {
+							"properties": {
+								"checklist": {
+									"items": {
+										"$ref": "#/$defs/ChecklistEntry"
+									},
+									"type": "array"
+								}
+							},
+							"required": ["checklist"],
+							"type": "object"
+						}
+					},
+					"required": ["ChecklistChanged"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"RequestOpened": {
+							"properties": {
+								"call": {
+									"$ref": "#/$defs/ToolCallId"
+								},
+								"for_session": {
+									"type": ["string", "null"]
+								},
+								"reason": {
+									"type": ["string", "null"]
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								},
+								"tool": {
+									"$ref": "#/$defs/ToolKind"
+								}
+							},
+							"required": ["request", "call", "tool", "reason", "for_session"],
+							"type": "object"
+						}
+					},
+					"required": ["RequestOpened"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"QuestionAsked": {
+							"properties": {
+								"questions": {
+									"items": {
+										"$ref": "#/$defs/Question"
+									},
+									"type": "array"
+								},
+								"request": {
+									"$ref": "#/$defs/RequestId"
+								}
+							},
+							"required": ["request", "questions"],
+							"type": "object"
+						}
+					},
+					"required": ["QuestionAsked"],
+					"type": "object"
+				}
+			]
+		},
+		"SubagentId": {
+			"description": "A sub-agent's id as its provider gave it (Claude's `task_id`).",
+			"type": "string"
+		},
+		"SubagentOutcome": {
+			"enum": ["Finished", "Failed", "Stopped"],
+			"type": "string"
+		},
+		"Subscribe": {
+			"description": "Replays every stored event after `after_seq`, then streams live ones,\ndeltas included. A subscription from another epoch is refused by closing\nthe stream.",
+			"properties": {
+				"after_seq": {
+					"$ref": "#/$defs/HostSeq"
+				},
+				"epoch": {
+					"$ref": "#/$defs/Epoch"
+				}
+			},
+			"required": ["epoch", "after_seq"],
+			"type": "object"
+		},
+		"Ticket": {
+			"properties": {
+				"host": {
+					"items": {
+						"format": "uint8",
+						"maximum": 255,
+						"minimum": 0,
+						"type": "integer"
+					},
+					"maxItems": 32,
+					"minItems": 32,
+					"type": "array"
+				},
+				"relay": {
+					"type": "string"
+				},
+				"token": {
+					"$ref": "#/$defs/AuthToken"
+				}
+			},
+			"required": ["host", "relay", "token"],
+			"type": "object"
+		},
+		"ToolCallId": {
+			"description": "A tool call's id as the provider gave it (`toolu_…` or a Codex item id).",
+			"type": "string"
+		},
+		"ToolKind": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Command": {
+							"properties": {
+								"command": {
+									"type": "string"
+								}
+							},
+							"required": ["command"],
+							"type": "object"
+						}
+					},
+					"required": ["Command"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"FileChange": {
+							"properties": {
+								"files": {
+									"items": {
+										"$ref": "#/$defs/FileChange"
+									},
+									"type": "array"
+								}
+							},
+							"required": ["files"],
+							"type": "object"
+						}
+					},
+					"required": ["FileChange"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Other": {
+							"properties": {
+								"detail": {
+									"type": "string"
+								},
+								"name": {
+									"type": "string"
+								}
+							},
+							"required": ["name", "detail"],
+							"type": "object"
+						}
+					},
+					"required": ["Other"],
+					"type": "object"
+				}
+			]
+		},
+		"ToolOutcome": {
+			"enum": ["Succeeded", "Failed", "Declined"],
+			"type": "string"
+		},
+		"ToolPhase": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Started": {
+							"properties": {
+								"tool": {
+									"$ref": "#/$defs/ToolKind"
+								}
+							},
+							"required": ["tool"],
+							"type": "object"
+						}
+					},
+					"required": ["Started"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Finished": {
+							"properties": {
+								"outcome": {
+									"$ref": "#/$defs/ToolOutcome"
+								}
+							},
+							"required": ["outcome"],
+							"type": "object"
+						}
+					},
+					"required": ["Finished"],
+					"type": "object"
+				}
+			]
+		},
+		"TurnOutcome": {
+			"oneOf": [
+				{
+					"enum": ["Completed", "Interrupted"],
+					"type": "string"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"Failed": {
+							"properties": {
+								"message": {
+									"type": "string"
+								}
+							},
+							"required": ["message"],
+							"type": "object"
+						}
+					},
+					"required": ["Failed"],
+					"type": "object"
+				}
+			]
+		},
+		"Welcome": {
+			"properties": {
+				"catalog": {
+					"$ref": "#/$defs/Catalog",
+					"description": "How each provider presents itself and the credentials it takes.\nUnlike `instances` it doesn't change while the host runs."
+				},
+				"epoch": {
+					"$ref": "#/$defs/Epoch"
+				},
+				"head_seq": {
+					"$ref": "#/$defs/HostSeq"
+				},
+				"home": {
+					"anyOf": [
+						{
+							"$ref": "#/$defs/Home"
+						},
+						{
+							"type": "null"
+						}
+					],
+					"description": "`None` on a host given no home. `Feed::Home` brings each change."
+				},
+				"host": {
+					"type": "string"
+				},
+				"instances": {
+					"$ref": "#/$defs/Instances"
+				}
+			},
+			"required": ["host", "epoch", "head_seq", "instances", "catalog", "home"],
+			"type": "object"
+		},
+		"Workspace": {
+			"properties": {
+				"branch": {
+					"type": "string"
+				},
+				"directory": {
+					"$ref": "#/$defs/HostPath"
+				},
+				"original": {
+					"$ref": "#/$defs/HostPath"
+				},
+				"repository": {
+					"$ref": "#/$defs/HostPath"
+				},
+				"worktree": {
+					"$ref": "#/$defs/HostPath"
+				}
+			},
+			"required": ["repository", "original", "worktree", "directory", "branch"],
+			"type": "object"
+		}
+	},
+	"$schema": "https://json-schema.org/draft/2020-12/schema"
+}

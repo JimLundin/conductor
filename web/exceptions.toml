@@ -24,3 +24,41 @@ reason = "Vite and Vitest read their config from the file's default export"
 path = "knip.json"
 rule = "drift:ignoreBinaries:wasm-pack"
 reason = "`npm run pipe` runs wasm-pack, a Rust tool installed beside the toolchain, not an npm package"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/style/noRestrictedImports"
+reason = "the schema generator is a build step whose whole job is to read proto.schema.json and write index.ts"
+
+# src/proto/ is written by scripts/schemas.ts from proto's JSON Schema, in
+# the shape Effect's Codegen prints, and is never edited by hand.
+
+[[exception]]
+path = "src/proto/**"
+rule = "lint/performance/noNamespaceImport"
+reason = "generated: Codegen imports effect/Schema as a namespace"
+
+[[exception]]
+path = "src/proto/**"
+rule = "lint/security/noSecrets"
+reason = "generated: the flagged strings are proto's doc comments carried as descriptions, not secrets"
+
+[[exception]]
+path = "src/proto/**"
+rule = "lint/style/noExcessiveLinesPerFile"
+reason = "generated: one module holds every type the client link reaches"
+
+[[exception]]
+path = "src/proto/**"
+rule = "lint/style/noMagicNumbers"
+reason = "generated: the numbers are the bounds and lengths proto's types declare"
+
+[[exception]]
+path = "src/proto/**"
+rule = "lint/style/useConsistentObjectDefinitions"
+reason = "generated: Codegen prints object literals in its own form"
+
+[[exception]]
+path = "src/proto/**"
+rule = "lint/style/useConsistentTypeDefinitions"
+reason = "generated: Codegen declares every type as a type alias"

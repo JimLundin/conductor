@@ -30,6 +30,8 @@ mod id;
 mod instance;
 mod issue;
 mod json;
+#[cfg(test)]
+mod schema;
 mod sign_in;
 mod ticket;
 
@@ -40,6 +42,7 @@ use alloc::vec::Vec;
 
 use core::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use calendar::civil;
@@ -67,7 +70,7 @@ pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 pub const ALPN: &[u8] = b"conductor/38";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Feed {
     Event(Event),
     SignIn(SignIn),
@@ -88,6 +91,7 @@ pub enum Feed {
     Ord,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
 pub struct HostSeq(pub u64);
 
@@ -100,8 +104,14 @@ impl HostSeq {
 
 /// Identifies one incarnation of a host's event log. A cursor from another
 /// epoch is meaningless, so the client starts over from seq 0 (§8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Epoch(#[serde(with = "json::decimal")] pub u64);
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+pub struct Epoch(
+    #[serde(with = "json::decimal")]
+    #[schemars(with = "String")]
+    pub u64,
+);
 
 /// A client-generated, fleet-unique 128-bit random id for idempotent retries.
 #[derive(
@@ -115,8 +125,13 @@ pub struct Epoch(#[serde(with = "json::decimal")] pub u64);
     Ord,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
-pub struct CommandId(#[serde(with = "json::ulid")] pub u128);
+pub struct CommandId(
+    #[serde(with = "json::ulid")]
+    #[schemars(with = "String")]
+    pub u128,
+);
 
 /// An approval request or a question, assigned by the host per session, in
 /// order.
@@ -131,6 +146,7 @@ pub struct CommandId(#[serde(with = "json::ulid")] pub u128);
     Ord,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
 pub struct RequestId(pub u64);
 
@@ -142,7 +158,7 @@ impl RequestId {
 }
 
 /// The first frame on every client-opened bi-stream.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Open {
     Hello(Hello),
     Subscribe(Subscribe),
@@ -152,19 +168,19 @@ pub enum Open {
 
 /// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`
 /// that §4 puts here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Hello {
     pub client: ClientName,
     pub token: AuthToken,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum HelloReply {
     Welcome(Welcome),
     Refused { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Welcome {
     pub host: String,
     pub epoch: Epoch,
@@ -177,7 +193,7 @@ pub struct Welcome {
     pub home: Option<Home>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Availability {
     Available {
         auth: Auth,
@@ -232,13 +248,13 @@ impl Availability {
 
 /// The models a provider's CLI offers on this host, as the CLI lists them
 /// when the host starts, and the one a session gets when it names none.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Models {
     pub choices: Vec<ModelChoice>,
     pub default: Option<ModelId>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ModelChoice {
     pub id: ModelId,
     pub name: String,
@@ -248,12 +264,16 @@ pub struct ModelChoice {
 }
 
 /// A model by the name its CLI takes (`haiku`, `gpt-6-luna`).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ModelId(pub String);
 
 /// How hard the model reasons: Claude's `--effort`, Codex's
 /// `model_reasoning_effort`. Both CLIs spell the levels the same way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Effort {
     Low,
     Medium,
@@ -343,7 +363,7 @@ impl Models {
 
 /// How an instance's CLI reaches its model. It names the kind and never
 /// carries a secret: credentials are write-only (§6.3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Auth {
     /// A credential the host stores, of this kind, reaching this URL if
     /// its form has one ([`ProviderInfo::auth`]).
@@ -359,7 +379,9 @@ pub enum Auth {
 /// Replays every stored event after `after_seq`, then streams live ones,
 /// deltas included. A subscription from another epoch is refused by closing
 /// the stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub struct Subscribe {
     pub epoch: Epoch,
     pub after_seq: HostSeq,
@@ -377,21 +399,28 @@ pub struct Subscribe {
     Ord,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
-pub struct SessionId(#[serde(with = "json::ulid")] pub u128);
+pub struct SessionId(
+    #[serde(with = "json::ulid")]
+    #[schemars(with = "String")]
+    pub u128,
+);
 
 /// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
 pub struct ToolCallId(pub String);
 
 /// A path on the host, as the host's OS spells it. The client never
 /// interprets it: a browser on a phone can't know a Windows path's rules.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HostPath(pub String);
 
 /// The name a client gave in `Hello`. Shown as "by" on a resolution and a
 /// user message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ClientName(pub String);
 
 /// The providers a host may run: the one place they are listed.
@@ -406,6 +435,7 @@ pub struct ClientName(pub String);
     Ord,
     Serialize,
     Deserialize,
+    JsonSchema,
 )]
 pub enum Provider {
     Claude,
@@ -433,7 +463,7 @@ impl Provider {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Command {
     pub id: CommandId,
     pub body: CommandBody,
@@ -441,7 +471,7 @@ pub struct Command {
 
 /// Every session command after `StartSession` names the session it acts
 /// on, and every instance command the instance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CommandBody {
     /// `None` takes the instance's default model, or the CLI's default
     /// effort for the model.
@@ -573,7 +603,7 @@ pub enum CommandBody {
     },
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PushSubscription {
     pub endpoint: String,
     pub p256dh: String,
@@ -586,7 +616,9 @@ impl fmt::Debug for PushSubscription {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Decision {
     Approve,
     /// Approves this call and the calls the request's `for_session` names,
@@ -597,10 +629,10 @@ pub enum Decision {
 
 /// The answer to one question: the labels of the options chosen, and any
 /// text the user typed instead, in that order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Answer(pub Vec<String>);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CommandResult {
     Accepted,
     /// The answer to `StartSession`. `SessionCreated` follows in the log.
@@ -622,7 +654,7 @@ pub enum CommandResult {
     FleetPairing(Box<fleet::Pairing>),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Rejection {
     NoSuchDirectory,
     InstanceUnavailable {
@@ -782,14 +814,14 @@ impl Rejection {
 
 /// Every event names its session. A stored event has a seq of its own; an
 /// `AssistantDelta` repeats the last one's.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Event {
     pub seq: HostSeq,
     pub session: SessionId,
     pub kind: EventKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum EventKind {
     /// `model` and `effort` are what the agent runs with; `None` is the
     /// CLI's own default. A `Continue` runs on `instance` again.
@@ -945,7 +977,7 @@ impl FinishState {
 }
 
 /// How finishing a session on an issue went.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Finished {
     /// The session's branch landed on the issue's with this many commits
     /// the issue's lacked, and the issue's branch was kept as `kept` says.
@@ -972,7 +1004,7 @@ impl EventKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SubagentEvent {
     /// The agent's tool call `call` started it. A sub-agent the agent
     /// resumes starts again under the same id.
@@ -1007,39 +1039,52 @@ pub enum SubagentEvent {
 
 /// A sub-agent's id as its provider gave it (Claude's `task_id`).
 #[derive(
-    Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 pub struct SubagentId(pub String);
 
 /// One entry of a sub-agent's own transcript.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum SubagentActivity {
     Message { text: String },
     Reasoning { text: String },
     ToolCall { call: ToolCallId, phase: ToolPhase },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum SubagentOutcome {
     Finished,
     Failed,
     Stopped,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChecklistEntry {
     pub text: String,
     pub status: ChecklistStatus,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum ChecklistStatus {
     Pending,
     InProgress,
     Completed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Workspace {
     pub repository: HostPath,
     pub original: HostPath,
@@ -1049,7 +1094,7 @@ pub struct Workspace {
 }
 
 /// Where a removed session's branch was kept.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Kept {
     /// In the checkout only: it has no `origin`.
     Local,
@@ -1062,28 +1107,28 @@ pub enum Kept {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Snapshot {
     /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
     pub turn_start: Option<HostSeq>,
     pub commit: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SnapshotDiff {
     pub snapshot: HostSeq,
     pub files: Vec<SnapshotFile>,
     pub extent: DiffExtent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SnapshotFile {
     pub path: String,
     pub change: Change,
     pub patch: FilePatch,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum FilePatch {
     Text(String),
     Binary,
@@ -1091,7 +1136,9 @@ pub enum FilePatch {
     Unsupported { reason: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum DiffExtent {
     Complete,
     Truncated,
@@ -1099,7 +1146,7 @@ pub enum DiffExtent {
 
 /// One question. Both agents take any typed text as an answer, so every
 /// question also allows one besides its options.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Question {
     /// A short label for the question, such as "Color".
     pub header: String,
@@ -1109,25 +1156,27 @@ pub struct Question {
 }
 
 /// How many options the user may choose.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Selection {
     One,
     Many,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct QuestionOption {
     pub label: String,
     pub description: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ToolPhase {
     Started { tool: ToolKind },
     Finished { outcome: ToolOutcome },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum ToolKind {
     Command { command: String },
     FileChange { files: Vec<FileChange> },
@@ -1135,13 +1184,15 @@ pub enum ToolKind {
 }
 
 /// One file a tool call changes, and how.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileChange {
     pub path: String,
     pub change: Change,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum Change {
     /// The whole file written, new or replaced.
     Write,
@@ -1150,14 +1201,16 @@ pub enum Change {
     Delete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
 pub enum ToolOutcome {
     Succeeded,
     Failed,
     Declined,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Resolution {
     Decided {
         decision: Decision,
@@ -1172,14 +1225,14 @@ pub enum Resolution {
     Withdrawn,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum TurnOutcome {
     Completed,
     Interrupted,
     Failed { message: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CloseReason {
     FailedToStart {
         message: String,
