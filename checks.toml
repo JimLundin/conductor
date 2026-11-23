@@ -8,6 +8,7 @@
 [[suite]]
 name = "ip-scrub"
 command = "python3 tools/scrub-ips.py --check --run-records && echo 'no public addresses in the run records'"
+tools = ["PYTHON"]
 [[suite.when]]
 tier = "commit"
 paths = ["docs/**/*.txt", "docs/**/*.log", "docs/**/NOTES.md", "tools/scrub-ips.py"]
@@ -15,6 +16,7 @@ paths = ["docs/**/*.txt", "docs/**/*.log", "docs/**/NOTES.md", "tools/scrub-ips.
 [[suite]]
 name = "tooling"
 command = "python3 -B tools/test-tooling.py"
+tools = ["PYTHON"]
 [[suite.when]]
 tier = "commit"
 paths = ["tools/test-tooling.py", "tools/scrub-ips.py", "tools/pin", "tools/live-host.sh", "tools/live-host-child.py"]
@@ -29,6 +31,7 @@ packages = ["proto", "client", "ui", "net", "app"]
 [[suite]]
 name = "e2e-fixtures"
 command = "python3 -I tools/check-e2e-fixtures.py"
+tools = ["PYTHON"]
 [[suite.when]]
 tier = "commit"
 paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
@@ -39,9 +42,9 @@ name = "browser"
 # the hosts show, under a generous ceiling, so a loaded machine slows it
 # rather than fails it; it reuses the web build of an unchanged app. It reads
 # the web app with its scenarios (app), the host it drives (conductord, with
-# the fake CLIs of its dependencies), the files below, and Node and dx.
+# the fake CLIs of its dependencies), the files below, and Node, dx and Python.
 command = "node --test tools/test-push.mjs && python3 -I tools/check-browser-harness.py && tools/e2e-browser.sh"
-tools = ["NODE", "DX"]
+tools = ["NODE", "DX", "PYTHON"]
 [[suite.when]]
 tier = "release"
 [[suite.when]]
