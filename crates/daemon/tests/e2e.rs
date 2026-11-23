@@ -945,6 +945,53 @@ async fn raw_kinds_until(
         .collect())
 }
 
+/// The events a client subscribing from the start of the host's log
+/// replays.
+async fn raw_history(
+    target: &Target,
+    feed: &mut Recorder,
+) -> Fallible<Vec<Event>> {
+    let mut late = RawClient::open(target, "test-client", feed).await?;
+    late.subscribe(HostSeq(0)).await?;
+    let events = late
+        .caught_up()
+        .await?
+        .into_iter()
+        .filter_map(|frame| match frame.value {
+            Feed::Event(event) => Some(event),
+            _ => None,
+        })
+        .collect();
+    late.close().await;
+    Ok(events)
+}
+
+async fn raw_ping_turn(client: &mut RawClient, session: SessionId) -> Fallible {
+    client.accepted(message(session, "ping")).await?;
+    assert_eq!(
+        raw_kinds_until(client, Until::TurnEnd).await?,
+        [
+            user("ping"),
+            delta("pong"),
+            reply("pong"),
+            turn_end(TurnOutcome::Completed)
+        ]
+    );
+    Ok(())
+}
+
+async fn raw_resume_to_ready(
+    client: &mut RawClient,
+    session: SessionId,
+) -> Fallible {
+    client.accepted(continued(session)).await?;
+    assert_eq!(
+        raw_kinds_until(client, Until::Ready).await?,
+        [EventKind::SessionReady]
+    );
+    Ok(())
+}
+
 /// The events through the first that reaches `until`, without the workspace
 /// and snapshot metadata, which have tests of their own.
 async fn conversation_events_until(

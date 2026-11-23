@@ -24,7 +24,7 @@ use proto::{
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::{Fallible, STEP, endpoint, target_tmp};
+use crate::{Fallible, STEP, endpoint, started_session, target_tmp};
 
 /// One frame as it came, and what it decodes to.
 pub struct Received<T> {
@@ -389,6 +389,17 @@ impl RawClient {
         let result = read::<CommandResult>(&mut recv).await?;
         self.tap.hear("command", &result.raw)?;
         Ok(result)
+    }
+
+    /// Sends `body` and checks that the host accepted it.
+    pub async fn accepted(&self, body: CommandBody) -> Fallible {
+        assert_eq!(self.send(body).await?.value, CommandResult::Accepted);
+        Ok(())
+    }
+
+    /// Sends `body` and returns the session it started.
+    pub async fn started(&self, body: CommandBody) -> Fallible<SessionId> {
+        started_session(&self.send(body).await?.value)
     }
 
     pub async fn close(self) {
