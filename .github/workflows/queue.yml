@@ -94,6 +94,10 @@ jobs:
 
       - id: units
         uses: ./conductor/.github/actions/units
+        # Until the standards credit passes only on evidence and key suites
+        # by what they read, the queue trusts no recorded pass.
+        with:
+          check-args: --no-cache
 
       # A plain push only fast-forwards, so a main that moved since the
       # rebase rejects it.

@@ -1,7 +1,7 @@
 # Inactive branch consolidation
 
-Assessment began at `90cbb89` and incorporates the landing-queue work on
-`main` through `bff84bd`, 22 November 2026. The historical
+Assessment began at `90cbb89` and incorporates the CI and landing-queue work
+on `main` through `379a3c6`, 23 November 2026. The historical
 reviews describe older versions of Conductor; their proposals do not
 override the current glossary or the accepted product decisions.
 
@@ -71,18 +71,29 @@ is retained without changing its implementation.
 
 ## Validation and landing
 
-The consolidation passed its standards and intent reviews. Landing still
-requires a passing queue run. The baseline CI run on `main` at `bff84bd`
-reported 51 uses of `Box` or `Rc` forbidden by the current core standard,
-across `proto`, `home`, `host` and `ui`. Replacing those representations is
-a separate refactor; this consolidation adds no exception to bypass it.
+The owner authorized landing on 23 November 2026 despite the newer check
+limitations. The consolidation passed its standards and intent reviews.
+CI run `45075502078` on `f184931` passed native lint, all 802 Rust tests,
+the browser suite and the TypeScript checks. The local TypeScript commit
+gate also passed; the local Rust commit gate passed exceptions and format
+before its compilation was stopped after CI established the failures.
+
+The baseline CI run on `main` at `bff84bd` reported 51 uses of `Box` or `Rc`
+forbidden by the current core standard, across `proto`, `home`, `host` and
+`ui`. These core findings remain separate refactoring work; this
+consolidation adds no exception to bypass them.
 
 Queue run `45074034715` also exposed browser-only `future_not_send`
 failures after removing the blanket wasm lint suppression: browser
 JavaScript promises and iroh's local futures cannot move between threads.
 The existing standard rejects target-conditional lint expectations, while
 an unconditional expectation is unfulfilled on native targets. That needs
-a scoped policy solution before this stricter wasm check can land.
+a scoped policy solution for the stricter wasm check to pass.
+
+The final branch run also exposed an existing tooling test's assumption
+that Python provides `os.pidfd_open`. The pinned standalone Python build
+does not expose it, so that test's mock fails before its assertions. These
+remaining check failures are recorded here rather than reported as passes.
 
 That baseline also exposed a browser test which changed only the join
 fragment, leaving the existing document mounted. Pairing reads the fragment

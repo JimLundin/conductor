@@ -7,6 +7,11 @@
 name: Run the units without a recorded pass
 description: Set up the toolchain and tools, then run tools/check.sh step
 
+inputs:
+  check-args:
+    description: Extra arguments for tools/check.sh step.
+    default: ""
+
 outputs:
   failing:
     description: The failing units, space-separated
@@ -23,6 +28,8 @@ runs:
           echo CARGO_TERM_COLOR=never
           echo RUSTC_WRAPPER=sccache
           echo SCCACHE_GHA_ENABLED=true
+          echo "SCCACHE_ERROR_LOG=$RUNNER_TEMP/sccache.log"
+          echo SCCACHE_LOG=warn
           echo "STANDARDS=$GITHUB_WORKSPACE/standards"
         } >>"$GITHUB_ENV"
 
@@ -135,7 +142,10 @@ runs:
       name: Run tools/check.sh step
       shell: bash
       working-directory: conductor
-      run: tools/check.sh step 2>&1 | tee "$RUNNER_TEMP/check.txt"
+      env:
+        CHECK_ARGS: ${{ inputs.check-args }}
+      # CHECK_ARGS is word-split on purpose: it holds flags.
+      run: tools/check.sh step $CHECK_ARGS 2>&1 | tee "$RUNNER_TEMP/check.txt"
 
     # Each standard's run ends with `tier: <tier>, logs: <dir>`, after the
     # unit lines of that run; a failing unit's log is <dir>/<unit>.log.
@@ -199,7 +209,15 @@ runs:
         if-no-files-found: ignore
         retention-days: 14
 
+    # sccache logs a failed cache write only at warn, so its stats alone
+    # don't say why. RateLimited on a cold cache is GitHub's limit of 200
+    # cache uploads a minute a repository, which sccache doesn't retry; the
+    # next run that compiles those objects writes them.
     - name: Show sccache's hits
       if: always() && steps.check.outcome != 'skipped'
       shell: bash
-      run: sccache --show-stats
+      run: |
+        sccache --show-stats
+        echo "Failed cache writes by error:"
+        grep "write failed" "$RUNNER_TEMP/sccache.log" | grep -v "path=.sccache_check" |
+          grep -oE "write failed [A-Za-z]+" | sort | uniq -c || true
