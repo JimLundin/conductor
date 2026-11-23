@@ -95,10 +95,6 @@ jobs:
 
       - id: units
         uses: ./conductor/.github/actions/units
-        # Until the standards credit passes only on evidence and key suites
-        # by what they read, the queue trusts no recorded pass.
-        with:
-          check-args: --no-cache
 
       # Lands only a commit whose every unit key has a recorded pass, so a
       # unit that was skipped, or whose pass wasn't recorded, keeps it off
