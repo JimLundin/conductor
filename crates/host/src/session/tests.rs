@@ -1,12 +1,12 @@
 use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
-    Answer, ChecklistEntry, ChecklistStatus, Checkpoint, ClientName,
-    CloseReason, CommandResult, Decision, Effort, Event, EventKind, HostPath,
-    HostSeq, Kept, ModelChoice, ModelId, Models, Question, Rejection,
-    RequestId, Resolution, Selection, SessionId, SubagentActivity,
-    SubagentEvent, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
+    Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason,
+    CommandResult, Decision, Effort, Event, EventKind, HostPath, HostSeq, Kept,
+    ModelChoice, ModelId, Models, Question, Rejection, RequestId, Resolution,
+    Selection, SessionId, Snapshot, SubagentActivity, SubagentEvent,
+    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome, Workspace,
 };
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
@@ -251,8 +251,8 @@ fn a_message_the_agent_never_got_fails_the_turn() {
             (
                 Input::Snapshotted(Ok(text("c1"))),
                 Vec::from([Effect::Call(Call::Record(
-                    EventKind::CheckpointCreated {
-                        checkpoint: Checkpoint {
+                    EventKind::SnapshotRecorded {
+                        snapshot: Snapshot {
                             turn_start: Some(HostSeq(7)),
                             commit: text("c1"),
                         },
@@ -677,7 +677,7 @@ fn workspace() -> Workspace {
     }
 }
 
-fn tasks(label: &str, status: ChecklistStatus) -> Vec<ChecklistEntry> {
+fn entries(label: &str, status: ChecklistStatus) -> Vec<ChecklistEntry> {
     Vec::from([ChecklistEntry {
         text: text(label),
         status,
@@ -695,7 +695,7 @@ fn a_restored_session_keeps_its_checklist() {
     let _ = expect(
         restored(
             &[event(EventKind::ChecklistChanged {
-                tasks: tasks("plan", ChecklistStatus::Pending),
+                checklist: entries("plan", ChecklistStatus::Pending),
             })],
             None,
         ),
@@ -704,7 +704,7 @@ fn a_restored_session_keeps_its_checklist() {
             (
                 checklist(ChecklistStatus::Completed),
                 Vec::from([Effect::Emit(EventKind::ChecklistChanged {
-                    tasks: tasks("plan", ChecklistStatus::Completed),
+                    checklist: entries("plan", ChecklistStatus::Completed),
                 })]),
             ),
         ]),
@@ -713,7 +713,7 @@ fn a_restored_session_keeps_its_checklist() {
 
 #[test]
 fn main_and_child_checklists_replace_their_own_ordered_snapshots() {
-    let first = tasks("read", ChecklistStatus::Pending);
+    let first = entries("read", ChecklistStatus::Pending);
     let rewritten = Vec::from([
         ChecklistEntry {
             text: text("test"),
@@ -729,17 +729,18 @@ fn main_and_child_checklists_replace_their_own_ordered_snapshots() {
         },
     ]);
     let child = SubagentId(text("child"));
-    let child_step = |tasks| {
+    let child_step = |checklist| {
         Input::Step(Step::SubagentChecklist {
             agent: child.clone(),
-            steps: tasks,
+            steps: checklist,
         })
     };
-    let changed = |tasks| Effect::Emit(EventKind::ChecklistChanged { tasks });
-    let child_changed = |tasks| {
+    let changed =
+        |checklist| Effect::Emit(EventKind::ChecklistChanged { checklist });
+    let child_changed = |checklist| {
         Effect::Emit(EventKind::Subagent {
             agent: child.clone(),
-            event: SubagentEvent::ChecklistChanged { tasks },
+            event: SubagentEvent::ChecklistChanged { checklist },
         })
     };
     let _ = expect(
@@ -1007,7 +1008,7 @@ fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
 }
 
 #[test]
-fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
+fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
     let _ = expect(
         restored(&in_workspace(), None),
         Vec::from([
@@ -1045,7 +1046,7 @@ fn a_turn_whose_checkpoint_fails_still_ends_and_logs_why() {
                 Input::Snapshotted(Err(text("disk full"))),
                 Vec::from([
                     Effect::Emit(EventKind::Error {
-                        message: text("checkpoint failed: disk full"),
+                        message: text("snapshot failed: disk full"),
                     }),
                     completed(),
                 ]),
@@ -1120,8 +1121,8 @@ fn in_workspace() -> [Event; 2] {
         event(EventKind::WorkspaceCreated {
             workspace: workspace(),
         }),
-        event(EventKind::CheckpointCreated {
-            checkpoint: Checkpoint {
+        event(EventKind::SnapshotRecorded {
+            snapshot: Snapshot {
                 turn_start: None,
                 commit: text("c0"),
             },

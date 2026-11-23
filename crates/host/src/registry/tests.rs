@@ -1393,8 +1393,8 @@ fn workspace_and_snapshot_failures_stop_before_opening_records()
 }
 
 fn recorded(session: SessionId, seed: [EventKind; 2]) -> [Event; 2] {
-    let [workspace, checkpoint] = seed;
-    [workspace, checkpoint].map(|kind| Event {
+    let [workspace, snapshot] = seed;
+    [workspace, snapshot].map(|kind| Event {
         seq: HostSeq(1),
         session,
         kind,
@@ -1406,8 +1406,8 @@ fn initial_seed() -> [EventKind; 2] {
         EventKind::WorkspaceCreated {
             workspace: start_workspace(),
         },
-        EventKind::CheckpointCreated {
-            checkpoint: proto::Checkpoint {
+        EventKind::SnapshotRecorded {
+            snapshot: proto::Snapshot {
                 turn_start: None,
                 commit: text("initial commit"),
             },

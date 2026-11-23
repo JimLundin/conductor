@@ -11,13 +11,13 @@ use alloc::rc::Rc;
 use client::link::{LinkState, Status, Update};
 use proto::StartAt;
 use proto::{
-    Auth, AuthToken, Availability, Catalog, Checkpoint, CheckpointDiff,
-    CheckpointFile, ClientName, CloseReason, CommandBody, CommandResult,
-    Credential, CredentialForm, Decision, DiffExtent, Effort, Epoch, Event,
-    EventKind, Feed, Field, FieldKind, FilePatch, Home, HostPath, HostSeq,
-    InstanceId, InstanceStatus, Instances, ModelChoice, ModelId, Models,
-    Provider, ProviderInfo, Question, QuestionOption, Rejection, RequestId,
-    Resolution, Selection, SessionId, SignIn, SignInCode, SignInStep,
+    Auth, AuthToken, Availability, Catalog, ClientName, CloseReason,
+    CommandBody, CommandResult, Credential, CredentialForm, Decision,
+    DiffExtent, Effort, Epoch, Event, EventKind, Feed, Field, FieldKind,
+    FilePatch, Home, HostPath, HostSeq, InstanceId, InstanceStatus, Instances,
+    ModelChoice, ModelId, Models, Provider, ProviderInfo, Question,
+    QuestionOption, Rejection, RequestId, Resolution, Selection, SessionId,
+    SignIn, SignInCode, SignInStep, Snapshot, SnapshotDiff, SnapshotFile,
     SubagentActivity, SubagentEvent, SubagentId, SubagentOutcome, Ticket,
     TicketError, ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
     Welcome,
@@ -591,7 +591,7 @@ fn each_subagent_hangs_under_the_call_that_started_it() {
             Vec::from([AgentGroup {
                 kind: None,
                 needs_attention: false,
-                tasks: None,
+                checklist: None,
                 key: text("a"),
                 description: text("Find the docs"),
                 status: "failed",
@@ -608,7 +608,7 @@ fn each_subagent_hangs_under_the_call_that_started_it() {
             Vec::from([AgentGroup {
                 kind: None,
                 needs_attention: false,
-                tasks: None,
+                checklist: None,
                 key: text("b"),
                 description: text("Run the tests"),
                 status: "running",
@@ -1590,8 +1590,8 @@ fn a_turn() -> Vec<Intent> {
         ),
         event(
             5,
-            EventKind::CheckpointCreated {
-                checkpoint: Checkpoint {
+            EventKind::SnapshotRecorded {
+                snapshot: Snapshot {
                     turn_start: Some(HostSeq(3)),
                     commit: text("abc"),
                 },
@@ -1606,10 +1606,10 @@ fn changes(state: &State) -> Option<TurnChanges> {
     })
 }
 
-fn diff() -> CheckpointDiff {
-    CheckpointDiff {
-        checkpoint: HostSeq(5),
-        files: Vec::from([CheckpointFile {
+fn diff() -> SnapshotDiff {
+    SnapshotDiff {
+        snapshot: HostSeq(5),
+        files: Vec::from([SnapshotFile {
             path: text("a.txt"),
             change: proto::Change::Write,
             patch: FilePatch::Binary,
@@ -1646,8 +1646,8 @@ fn a_turns_changes_load_once_and_stay_open_during_later_work() {
             turn.panel,
         )),
         Some((
-            text("checkpoint-5"),
-            text("checkpoint-5-changes"),
+            text("snapshot-5"),
+            text("snapshot-5-changes"),
             true,
             DiffPanel::Loading,
         ))
@@ -1656,7 +1656,7 @@ fn a_turns_changes_load_once_and_stay_open_during_later_work() {
         sent(&asked),
         [CommandBody::GetDiff {
             session: SESSION,
-            checkpoint: HostSeq(5)
+            snapshot: HostSeq(5)
         }]
     );
     assert_eq!(panel(&loaded), Some(expected.clone()));
@@ -1691,8 +1691,8 @@ fn turns_sharing_a_commit_keep_independent_diff_requests_and_previews() {
             ),
             event(
                 8,
-                EventKind::CheckpointCreated {
-                    checkpoint: Checkpoint {
+                EventKind::SnapshotRecorded {
+                    snapshot: Snapshot {
                         commit: text("abc"),
                         turn_start: Some(HostSeq(6)),
                     },
@@ -1705,15 +1705,15 @@ fn turns_sharing_a_commit_keep_independent_diff_requests_and_previews() {
         sent(&second_request),
         [CommandBody::GetDiff {
             session: SESSION,
-            checkpoint: HostSeq(8)
+            snapshot: HostSeq(8)
         }]
     );
     let (loaded, _) = run(
         second_loading,
         Vec::from([answer(
             &second_request,
-            Ok(CommandResult::Diff(CheckpointDiff {
-                checkpoint: HostSeq(8),
+            Ok(CommandResult::Diff(SnapshotDiff {
+                snapshot: HostSeq(8),
                 files: Vec::new(),
                 extent: DiffExtent::Complete,
             })),
@@ -1723,7 +1723,7 @@ fn turns_sharing_a_commit_keep_independent_diff_requests_and_previews() {
         .into_iter()
         .flat_map(|shown| shown.entries)
         .filter_map(|entry| entry.changes)
-        .map(|changes| (changes.checkpoint, changes.panel))
+        .map(|changes| (changes.snapshot, changes.panel))
         .collect::<Vec<_>>();
     assert!(matches!(
         panels.as_slice(),

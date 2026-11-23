@@ -78,7 +78,7 @@ are never stored and can't disagree.
   issue's branch. The initial state and each turn's snapshot record a
   commit on the session's branch. An unchanged turn may reuse the same
   commit; per-turn diffs compare consecutive recorded snapshots.
-- **A session's transcript** holds its events, tasks, requests and
+- **A session's transcript** holds its events, checklist, requests and
   sub-agents. A sub-agent is something an agent does inside its session,
   like a tool call, so it can't belong to another issue.
 - **The harness's own id for the conversation** (Claude's session id,
@@ -194,9 +194,8 @@ checkout that can fetch it.
 
 **Continue this session.** Select **Continue** after its agent stops or
 the host restarts. The session resumes its provider conversation on the
-same node, with its workspace and recorded turn snapshots. Historical
-undo is unavailable; opening a turn's diff does not change its files or
-conversation.
+same node, with its workspace and recorded turn snapshots. Opening a
+turn's diff does not change its files or conversation.
 
 **Finish.** Select **Finish** in the session. The node asks the agent for a
 summary, stops it and tries to land the session branch on the issue branch.

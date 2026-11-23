@@ -12,7 +12,6 @@
 extern crate alloc;
 
 pub mod assignment;
-mod checkpoints;
 pub mod finish;
 pub mod fleet;
 pub mod log;
@@ -25,6 +24,7 @@ pub mod secret;
 pub mod serve;
 pub mod session;
 pub mod sign_in;
+mod snapshots;
 pub mod start;
 pub mod workspace;
 

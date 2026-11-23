@@ -214,7 +214,7 @@ pub struct Launch {
 /// protocol on stdio.
 #[must_use]
 pub fn session(launch: &Launch) -> Invocation {
-    // `TodoWrite`, the checklist the host keeps as tasks, rather than the
+    // `TodoWrite`, the checklist the host keeps, rather than the
     // task tools that would take its place (PROTOCOL.md).
     let tasks = Vec::from([
         Var::set("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),

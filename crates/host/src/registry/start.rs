@@ -4,8 +4,8 @@ use core::ops::ControlFlow::{self, Break, Continue};
 
 use home::Placement;
 use proto::{
-    Checkpoint, ClientName, CommandResult, Effort, Event, EventKind, HostPath,
-    InstanceId, IssueId, ModelId, Models, Provider, Rejection, SessionId,
+    ClientName, CommandResult, Effort, Event, EventKind, HostPath, InstanceId,
+    IssueId, ModelId, Models, Provider, Rejection, SessionId, Snapshot,
     Workspace,
 };
 
@@ -292,7 +292,7 @@ fn opening<S, H>(
         .on
         .as_ref()
         .map(|on| EventKind::OnIssue { issue: on.issue });
-    let checkpoint = Checkpoint {
+    let snapshot = Snapshot {
         turn_start: None,
         commit,
     };
@@ -301,7 +301,7 @@ fn opening<S, H>(
         before: core::iter::once(created).chain(attached).collect(),
         seed: Box::new([
             EventKind::WorkspaceCreated { workspace },
-            EventKind::CheckpointCreated { checkpoint },
+            EventKind::SnapshotRecorded { snapshot },
         ]),
     }
 }

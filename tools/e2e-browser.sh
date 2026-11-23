@@ -3,11 +3,13 @@
 # GitHub Pages does, and drives headless Chromium and WebKit at an iPhone
 # viewport against `conductord host` running the fake CLIs
 # (crates/*-cli/tests/fake-*.sh) through n0's relays. Each scenario gets its
-# own host: a Claude turn with approval in each engine (turn), two Codex
+# own host: a Claude turn with approval in each engine (turn), three turns'
+# diffs, one unchanged and one refused once, then Continue, in each engine
+# (worktrees), two Codex
 # sessions on one app-server (codex, Chromium only), a question and an
 # approval for the session (questions, WebKit), a picked model, a killed
-# CLI continued and the Thinking disclosure (continue), a checklist shown as the
-# session's tasks and the effort changed between turns (tasks, WebKit), a
+# CLI continued and the Thinking disclosure (continue), the agent's checklist
+# and the effort changed between turns (checklist, WebKit), a
 # sub-agent folded under the call that started it and opened (subagents,
 # Chromium), the
 # credentials forms and a second Claude instance added from the app
@@ -74,7 +76,7 @@ else
   (cd crates/app && dx build --platform web --release >/dev/null)
   echo "$built" >"$web/built-from"
 fi
-cargo build -q -p conductord
+cargo build -q -p conductord --bin conductord --example worktrees_browser
 start_browser_server
 
 # repo <dir>: a Git repository with one commit, which a session needs to
@@ -180,6 +182,40 @@ turn_in() {
 turn_chromium() { turn_in chromium; }
 turn_webkit() { turn_in webkit; }
 
+# worktrees_in <engine>: three turns seeded over the link (the
+# worktrees_browser example), one unchanged, with the middle turn's first
+# diff refused by a git that fails once, and Continue after it.
+worktrees_in() {
+  local name=worktrees-$1 dir=$scratch/worktrees-$1
+  session "$dir" claude-worktrees.jsonl
+  cp "$recordings/claude-worktrees-continued.jsonl" "$dir/stdout.2.jsonl"
+  mkdir -p "$scratch/$name-bin" "$scratch/$name-fail"
+  cat >"$scratch/$name-bin/git" <<'SH'
+#!/usr/bin/env bash
+if [[ " $* " == *" diff --no-ext-diff --no-textconv --no-renames --name-status "* ]] &&
+   rmdir "$PREVIEW_FAILURE" 2>/dev/null; then
+  echo 'fixture snapshot diff failure' >&2
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+SH
+  chmod +x "$scratch/$name-bin/git"
+  REAL_GIT=$(command -v git) PREVIEW_FAILURE=$scratch/$name-fail \
+    PATH="$scratch/$name-bin:$PATH" start_host "$name"
+  local ticket
+  ticket=$(awk '/^ticket:/ {print $2}' "$scratch/$name.log")
+  "$target"/debug/examples/worktrees_browser "$ticket" "$dir"
+  echo
+  echo "## Worktrees, $1"
+  run "$1" worktrees "$scratch/$name.png" "$dir"
+  echo
+  echo "## Worktrees, $1, host log"
+  host_log "$name"
+}
+
+worktrees_chromium() { worktrees_in chromium; }
+worktrees_webkit() { worktrees_in webkit; }
+
 codex_scenario() {
   # The app-server plays its recording in the Codex instance's work dir.
   mkdir -p "$scratch/codex/work/codex"
@@ -242,22 +278,22 @@ continue_scenario() {
   echo "ok: host continue-host: the CLI received the picked model and effort"
 }
 
-tasks() {
-  session "$scratch/tasks" claude-checklist-effort.jsonl
-  start_host tasks
+checklist_scenario() {
+  session "$scratch/checklist" claude-checklist-effort.jsonl
+  start_host checklist
   echo
-  echo "## Tasks and the effort changed between turns, webkit"
-  run webkit tasks "$record/screens/phone-light-tasks.png" "$scratch/tasks"
+  echo "## Checklist and the effort changed between turns, webkit"
+  run webkit checklist "$record/screens/phone-light-checklist.png" "$scratch/checklist"
   echo
-  echo "## Tasks, host log"
-  host_log tasks
+  echo "## Checklist, host log"
+  host_log checklist
   echo
-  expect_commands tasks 1 set_effort accepted
+  expect_commands checklist 1 set_effort accepted
   # The CLI gets the effort right before the next message, not mid-turn.
-  order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/tasks/stdin.jsonl" | tr '\n' ' ')
+  order=$(grep -o '"subtype":"[a-z_]*"\|"text":"[a-z]*"' "$scratch/checklist/stdin.jsonl" | tr '\n' ' ')
   [ "$order" = '"subtype":"initialize" "text":"plan" "subtype":"apply_flag_settings" "text":"pong" ' ] ||
-    { echo "FAILED: host tasks: what the CLI read ($order)"; return 1; }
-  echo "ok: host tasks: the CLI read apply_flag_settings right before the next message"
+    { echo "FAILED: host checklist: what the CLI read ($order)"; return 1; }
+  echo "ok: host checklist: the CLI read apply_flag_settings right before the next message"
 }
 
 subagents() {
@@ -456,10 +492,12 @@ out=$record/browser-run.txt
   echo "wasm: $(stat -c %s "$wasm") bytes raw, $(gzip -9 -c "$wasm" | wc -c) bytes gzip -9"
   scenario "turn, chromium" turn_chromium
   scenario "turn, webkit" turn_webkit
+  scenario "worktrees, chromium" worktrees_chromium
+  scenario "worktrees, webkit" worktrees_webkit
   scenario "codex, chromium" codex_scenario
   scenario "questions, webkit" questions
   scenario "continue, chromium" continue_scenario
-  scenario "tasks, webkit" tasks
+  scenario "checklist, webkit" checklist_scenario
   scenario "subagents, chromium" subagents
   scenario "credentials, webkit" credentials
   scenario "sign-in, webkit" sign_in

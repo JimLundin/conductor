@@ -924,8 +924,8 @@ mod durability_tests {
         );
         log.append(
             SessionId(1),
-            EventKind::CheckpointCreated {
-                checkpoint: proto::Checkpoint {
+            EventKind::SnapshotRecorded {
+                snapshot: proto::Snapshot {
                     turn_start: Some(HostSeq(4)),
                     commit: String::from("captured"),
                 },

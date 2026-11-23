@@ -1,5 +1,5 @@
 //! One session's decisions, as a state machine: its turn, its open
-//! requests, its effort, its tasks and its commit snapshots.
+//! requests, its effort, its checklist and its commit snapshots.
 //!
 //! `daemon` owns the agent, the log and the workspace. It turns what they do
 //! into an [`Input`], steps the session, and performs each [`Effect`] in
@@ -18,20 +18,20 @@
 
 use core::mem;
 
-use crate::checkpoints::Book;
-pub use crate::checkpoints::{Compared, SnapshotPlan};
 use crate::prelude::*;
+use crate::snapshots::Book;
+pub use crate::snapshots::{Compared, SnapshotPlan};
 use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use proto::{
-    ChecklistEntry, Checkpoint, CheckpointDiff, ClientName, CloseReason,
-    CommandResult, Decision, Effort, Event, EventKind, HostPath, HostSeq, Kept,
-    ModelId, Models, Rejection, RequestId, Resolution, SessionId,
-    SubagentActivity, SubagentEvent, SubagentId, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
+    ChecklistEntry, ClientName, CloseReason, CommandResult, Decision, Effort,
+    Event, EventKind, HostPath, HostSeq, Kept, ModelId, Models, Rejection,
+    RequestId, Resolution, SessionId, Snapshot, SnapshotDiff, SubagentActivity,
+    SubagentEvent, SubagentId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome, Workspace,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -154,7 +154,7 @@ pub enum Input {
     Recorded(HostSeq),
     /// The commit [`Call::Snapshot`] made.
     Snapshotted(Result<String, String>),
-    Diffed(Result<CheckpointDiff, String>),
+    Diffed(Result<SnapshotDiff, String>),
     /// Where [`Call::Remove`] kept the branch.
     Removed(Result<Kept, String>),
 }
@@ -280,7 +280,7 @@ impl Asked {
 enum Flow {
     Idle,
     Saving(Saving),
-    Capturing(Checkpoint, Saved),
+    Capturing(Snapshot, Saved),
     /// The user's message is being logged; `text` goes to the agent next.
     Recording(String),
     /// The message is being sent, changing the agent's effort to this.
@@ -326,8 +326,8 @@ pub struct Session {
     turn_start: Option<HostSeq>,
     /// Tool calls the user denied, whose failed result means `Declined`.
     declined: Vec<(Option<SubagentId>, ToolCallId)>,
-    tasks: Vec<ChecklistEntry>,
-    subagent_tasks: BTreeMap<SubagentId, Vec<ChecklistEntry>>,
+    checklist: Vec<ChecklistEntry>,
+    subagent_checklists: BTreeMap<SubagentId, Vec<ChecklistEntry>>,
     removed: bool,
     flow: Flow,
 }
@@ -362,14 +362,14 @@ impl Session {
                 .max()
                 .unwrap_or(RequestId(0)),
             declined: Vec::new(),
-            tasks: last_tasks(history.iter()),
-            subagent_tasks: history
+            checklist: last_checklist(history.iter()),
+            subagent_checklists: history
                 .iter()
                 .filter_map(|entry| match &entry.kind {
                     EventKind::Subagent {
                         agent,
-                        event: SubagentEvent::ChecklistChanged { tasks },
-                    } => Some((agent.clone(), tasks.clone())),
+                        event: SubagentEvent::ChecklistChanged { checklist },
+                    } => Some((agent.clone(), checklist.clone())),
                     _ => None,
                 })
                 .collect(),
@@ -410,8 +410,8 @@ impl Session {
             (Flow::Starting, Input::Agent(Outcome::Started(started))) => {
                 self.started(started)
             }
-            (Flow::Capturing(checkpoint, then), Input::Recorded(seq)) => {
-                self.book.record(seq, checkpoint);
+            (Flow::Capturing(snapshot, then), Input::Recorded(seq)) => {
+                self.book.record(seq, snapshot);
                 self.saved(then, Ok(()))
             }
             (Flow::Stopping, Input::Agent(Outcome::ShutDown(Ok(())))) => join(
@@ -454,7 +454,7 @@ impl Session {
             return rejected(Rejection::SessionRemoved);
         }
         match order {
-            Order::Diff(checkpoint) => self.diff(checkpoint),
+            Order::Diff(snapshot) => self.diff(snapshot),
             other => self.normal_order(other),
         }
     }
@@ -516,9 +516,7 @@ impl Session {
             (Order::Reply { request, reply, by }, _, _) => {
                 self.reply(request, reply, by)
             }
-            (Order::Diff(_), _, _) => {
-                rejected(Rejection::CheckpointUnavailable)
-            }
+            (Order::Diff(_), _, _) => rejected(Rejection::SnapshotUnavailable),
         }
     }
 
@@ -613,7 +611,7 @@ impl Session {
             Err(message) => {
                 self.turn_start = None;
                 Vec::from([
-                    self.checkpoint_event(EventKind::TurnCompleted {
+                    self.snapshot_event(EventKind::TurnCompleted {
                         outcome: TurnOutcome::Failed { message },
                     }),
                     Effect::Reply(CommandResult::Accepted),
@@ -873,27 +871,32 @@ impl Session {
         match agent {
             Some(scope) => {
                 let previous =
-                    self.subagent_tasks.entry(scope.clone()).or_default();
+                    self.subagent_checklists.entry(scope.clone()).or_default();
                 if *previous == snapshot {
                     Vec::new()
                 } else {
                     previous.clone_from(&snapshot);
                     subagent(
                         scope,
-                        SubagentEvent::ChecklistChanged { tasks: snapshot },
+                        SubagentEvent::ChecklistChanged {
+                            checklist: snapshot,
+                        },
                     )
                 }
             }
-            None => self.retask(snapshot),
+            None => self.replace_checklist(snapshot),
         }
     }
 
-    fn retask(&mut self, tasks: Vec<ChecklistEntry>) -> Vec<Effect> {
-        if tasks == self.tasks {
+    fn replace_checklist(
+        &mut self,
+        checklist: Vec<ChecklistEntry>,
+    ) -> Vec<Effect> {
+        if checklist == self.checklist {
             Vec::new()
         } else {
-            self.tasks.clone_from(&tasks);
-            Vec::from([Effect::Emit(EventKind::ChecklistChanged { tasks })])
+            self.checklist.clone_from(&checklist);
+            Vec::from([Effect::Emit(EventKind::ChecklistChanged { checklist })])
         }
     }
 
@@ -930,7 +933,7 @@ impl Session {
         self.conversation = self.agent.conversation();
         let saved = self.conversation.clone().map(Effect::Conversation);
         let started = self.book.workspace().is_some().then(|| {
-            self.checkpoint_event(EventKind::NativeTurnStarted {
+            self.snapshot_event(EventKind::NativeTurnStarted {
                 turn_start: self.turn_start,
             })
         });
@@ -989,7 +992,7 @@ impl Session {
         Vec::from([Effect::Emit(EventKind::SessionClosed { reason })])
     }
 
-    fn checkpoint_event(&mut self, kind: EventKind) -> Effect {
+    fn snapshot_event(&mut self, kind: EventKind) -> Effect {
         self.book.apply_kind(&kind);
         Effect::Emit(kind)
     }
@@ -1013,10 +1016,10 @@ impl Session {
         let Saving { plan, then } = saving;
         match taken {
             Ok(commit) => {
-                let checkpoint = plan.checkpoint(commit);
-                self.flow = Flow::Capturing(checkpoint.clone(), then);
+                let snapshot = plan.snapshot(commit);
+                self.flow = Flow::Capturing(snapshot.clone(), then);
                 Vec::from([Effect::Call(Call::Record(
-                    EventKind::CheckpointCreated { checkpoint },
+                    EventKind::SnapshotRecorded { snapshot },
                 ))])
             }
             Err(reason) => self.saved(then, Err(reason)),
@@ -1041,10 +1044,10 @@ impl Session {
                 Err(reason),
             ) => rejected(Rejection::WorkspaceFailure { reason }),
             (Saved::TurnEnded(outcome), taken) => {
-                join(checkpoint_failed(taken), self.turn_ended(outcome))
+                join(snapshot_failed(taken), self.turn_ended(outcome))
             }
             (Saved::Closed(reason), taken) => {
-                join(checkpoint_failed(taken), self.closed(reason))
+                join(snapshot_failed(taken), self.closed(reason))
             }
         }
     }
@@ -1089,7 +1092,7 @@ impl Session {
                 self.flow = Flow::Diffing;
                 Vec::from([Effect::Call(call)])
             }
-            None => rejected(Rejection::CheckpointUnavailable),
+            None => rejected(Rejection::SnapshotUnavailable),
         }
     }
 
@@ -1184,22 +1187,24 @@ fn replay_requests(history: &[Event]) -> BTreeMap<RequestId, Pending> {
         .collect()
 }
 
-fn last_tasks<'events>(
+fn last_checklist<'events>(
     history: impl DoubleEndedIterator<Item = &'events Event>,
 ) -> Vec<ChecklistEntry> {
     history
         .rev()
         .find_map(|event| match &event.kind {
-            EventKind::ChecklistChanged { tasks } => Some(tasks.clone()),
+            EventKind::ChecklistChanged { checklist } => {
+                Some(checklist.clone())
+            }
             _ => None,
         })
         .unwrap_or_default()
 }
 
-fn checkpoint_failed(saved: Result<(), String>) -> Option<Effect> {
+fn snapshot_failed(saved: Result<(), String>) -> Option<Effect> {
     saved.err().map(|message| {
         Effect::Emit(EventKind::Error {
-            message: format!("checkpoint failed: {message}"),
+            message: format!("snapshot failed: {message}"),
         })
     })
 }
@@ -1218,7 +1223,7 @@ fn noted(
     )
 }
 
-fn diffed(diff: Result<CheckpointDiff, String>) -> CommandResult {
+fn diffed(diff: Result<SnapshotDiff, String>) -> CommandResult {
     diff.map_or_else(
         |reason| {
             CommandResult::Rejected(Rejection::WorkspaceFailure { reason })

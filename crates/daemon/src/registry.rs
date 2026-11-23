@@ -1033,14 +1033,14 @@ impl RegistryActor {
         &self,
         id: SessionId,
         before: Vec<EventKind>,
-        [workspace, checkpoint]: [EventKind; 2],
+        [workspace, snapshot]: [EventKind; 2],
     ) -> Result<[Event; 2], Stopped> {
         for event in before {
             self.log.append(id, event).await?;
         }
         let workspace_event = self.log.record(id, workspace).await?;
-        let checkpoint_event = self.log.record(id, checkpoint).await?;
-        Ok([workspace_event, checkpoint_event])
+        let snapshot_event = self.log.record(id, snapshot).await?;
+        Ok([workspace_event, snapshot_event])
     }
 }
 

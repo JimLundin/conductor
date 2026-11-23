@@ -2,10 +2,10 @@
 //!
 //! `<data>/credentials` holds the
 //! postcard of [`Roster`], sealed with XChaCha20-Poly1305 under the
-//! 32-byte store key in `<data>/store.key`. The key sits beside the store,
-//! readable by the owner only, §6.3's variant for hosts without a platform
-//! keystore. [`Roster`] is what the fleet config will carry, so sharing it
-//! is a copy of this value.
+//! 32-byte store key, kept in the OS user's keystore or, on a host without
+//! one, in the owner-only `<data>/store.key` (`key`, `docs/credential-store.md`).
+//! [`Roster`] is what the fleet config carries, so sharing it is a copy of
+//! this value.
 //!
 //! The file is a format byte, the nonce and the ciphertext, sealed with the
 //! format and the file's purpose as associated data, so no other sealed

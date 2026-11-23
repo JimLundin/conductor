@@ -137,57 +137,19 @@ Write one line per finding: the time, the step, and what happened.
 Every step passed. Phone: iPhone, Safari and the Home Screen app, on the same
 Wi-Fi as the host.
 
-1. **Historical.** WebRTC was removed after this run, and every connection
-   now goes over iroh, so this finding no longer applies. It stays as the
-   record of the attempt.
-
-   **Step 1, WebRTC never upgrades; every client stays relayed.** Browsers
-   offer their LAN address only as an mDNS `.local` name, which the host
-   skips (`ICE bad candidate`), and the shared public address needs NAT
-   hairpinning, which the router doesn't do. The phone's checks never reach
-   the host (0 datagrams in), most likely the Hyper-V firewall blocking
-   inbound UDP to WSL. The desktop browser on the same machine exchanges
-   datagrams (59 in, 83 out) but ICE stays in Checking; Windows and WSL share
-   192.168.0.27 in mirrored mode. The client retries every 15 s, forever.
-
-   *Follow-up (branch `rtc-ports`).* The phone's case is the Hyper-V firewall:
-   `conductord host --rtc-ports 50000-50099` plus a Hyper-V firewall rule for
-   those ports. The client then retried after 15 s, 30 s, 60 s and 120 s,
-   then every 300 s.
-
-   *Same-machine hypothesis, untested.* The desktop browser and the host share
-   192.168.0.27, and WSL's `hostAddressLoopback` setting is off by default. Its
-   documentation says that only with it on can Windows and WSL reach each other
-   by an address assigned to the host; `127.0.0.1` always works. The browser's
-   checks reach the host (59 in), and the host learns the browser as a
-   peer-reflexive candidate at 192.168.0.27 on the browser's port. But inside
-   WSL, 192.168.0.27 is a local address, so Linux delivers the host's responses
-   (83 out) on its own loopback, where nothing listens on the browser's port.
-   They never reach Windows. The browser gets no binding response, so ICE stays
-   in Checking. The host's `webrtc session ended` line should show
-   `last_remote=192.168.0.27:<port>` with `connected=false`.
-
-   *Experiment.* (1) In WSL, `ip route get 192.168.0.27` should print `local
-   192.168.0.27 dev lo`. (2) During an attempt, `sudo tcpdump -ni any udp
-   portrange 50000-50099` should show the host's responses leaving on `lo`, not
-   on `eth0`. (3) Set `hostAddressLoopback=true` under `[experimental]` in
-   `%UserProfile%\.wslconfig`, run `wsl --shutdown`, start the host again, and
-   retry the desktop browser. If ICE then connects with a prflx pair, the
-   hypothesis holds. If it doesn't, compare `chrome://webrtc-internals`
-   (requests sent and responses received per candidate pair) with the host log.
-2. **Step 3, the checklist was wrong**: Codex may write under `/tmp` without
+1. **Step 3, the checklist was wrong**: Codex may write under `/tmp` without
    asking, so `/tmp/smoke-outside` never prompted. Fixed above.
-3. **Step 3, Codex shows nothing while it reasons.** The rebase turn sent no
+2. **Step 3, Codex shows nothing while it reasons.** The rebase turn sent no
    text for 18 s before the interrupt; the app looked stalled. The interrupt
    itself worked, and the turn ended as interrupted.
-4. **Step 4, every client is named "browser"**, so a card can't say which
+3. **Step 4, every client is named "browser"**, so a card can't say which
    device approved. The log showed the phone approved Claude's request and the
    desktop approved Codex's.
-5. **Step 6, a gap above the keyboard**: a band about a finger's height
+4. **Step 6, a gap above the keyboard**: a band about a finger's height
    between the composer and the keyboard's accessory bar, likely the
    home-indicator inset kept while the keyboard is up. Return sends the
    message; the owner accepts that as the design.
-6. **Step 7, Codex shows "unavailable" with no reason.** The host sends the
+5. **Step 7, Codex shows "unavailable" with no reason.** The host sends the
    reason in `Welcome`; the New Session form doesn't render it.
 
 ## Web Push on an iPhone

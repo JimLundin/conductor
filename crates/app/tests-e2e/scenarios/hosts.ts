@@ -201,14 +201,12 @@ const concurrentPairings = async (
 const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 	const { check } = tools(run);
 	const url = new URL(run.joinUrl);
-	const ticket = url.hash.slice("#join=".length);
 	url.searchParams.set("storage-test", "preserve");
-	await page.addInitScript((legacy) => {
+	await page.addInitScript(() => {
 		// Set up the failure before the app can read the hash or storage.
 		// sessionStorage keeps this a one-time setup across localStorage clears.
 		if (sessionStorage.getItem("test.storage-seeded") !== "1") {
 			localStorage.clear();
-			localStorage.setItem("conductor.ticket", legacy);
 			localStorage.setItem("test.deny-writes", "1");
 			sessionStorage.setItem("test.storage-seeded", "1");
 		}
@@ -224,13 +222,7 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 				write.call(this, key, value);
 			},
 		});
-	}, ticket);
-	await page.goto(`${url.origin}${url.pathname}${url.search}`);
-	await page.locator("form.pair input").waitFor({ timeout: run.patience });
-	check(
-		(await savedHosts(page)).length === 0,
-		"legacy tickets require pairing again",
-	);
+	});
 	await page.goto(url.href);
 	await page.reload();
 	const storageError = page.locator(".storage-error");
@@ -241,13 +233,6 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 		new URL(page.url()).hash === url.hash,
 		"failed join persistence keeps the original join fragment",
 	);
-	check(
-		await page.evaluate(
-			(legacy) => localStorage.getItem("conductor.ticket") === legacy,
-			ticket,
-		),
-		"pairing leaves obsolete storage untouched",
-	);
 	await page.evaluate(() => localStorage.removeItem("test.deny-writes"));
 	await page.reload();
 	await page.locator(".host-group").waitFor({ timeout: run.patience });
@@ -255,13 +240,6 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 		new URL(page.url()).search === url.search &&
 			new URL(page.url()).hash === "",
 		"successful persistence consumes the join fragment and preserves the query",
-	);
-	check(
-		await page.evaluate(
-			(legacy) => localStorage.getItem("conductor.ticket") === legacy,
-			ticket,
-		),
-		"successful pairing does not migrate obsolete storage",
 	);
 	await page.evaluate(() => {
 		const record = Object.keys(localStorage).find((key) =>

@@ -44,7 +44,7 @@ preview, cloud workers, multi-user use.
 | D2 | One Dioxus web app for every device | Dioxus renders real HTML, which mobile Safari needs for keyboard, scrolling and selection. An installed web app behaves like a native one on the desktop and the iPhone, so there is one build and one test target. A thin native shell can come later if a need appears (tray, global hotkey). |
 | D3 | iroh 1.x through n0's public relays; the relay map is one setting | Connections are authenticated and encrypted and dialed by public key. A browser can't send UDP, so in a browser every iroh connection is relayed. |
 | D4 | Each host is the only source of truth for its own sessions | No replication between hosts. Clients connect to each host and merge. Catching up is "events after seq N". |
-| D5 | Trust comes from a fleet root key that signs device certificates (planned, §6) | Hosts store only the root's public key, so pairing a device once gives it access to every host. |
+| D5 | Trust comes from a fleet root key that signs device certificates (§6) | Hosts store only the root's public key, so pairing a device once gives it access to every host. |
 | D6 | Speak each agent's native protocol, with owned wire types for only the messages we use | Claude's stream-json control protocol and Codex's app-server JSON-RPC carry approvals, interrupts and resume. Lowest-common-denominator protocols (ACP) lose them. |
 | D7 | Shell out to the `git` CLI | Worktrees, hooks and the user's git config behave exactly as on the command line. |
 | D8 | Length-prefixed postcard frames over bidirectional streams | Compact, and our own Rust types on both ends. postcard isn't self-describing, so every change to a wire type bumps `ALPN`. |
@@ -71,7 +71,7 @@ so one UI and one set of commands work for both agents.
   text; tool calls (`Command`, `FileChange`, `Other`) started and finished;
   approval requests opened and resolved (first decision wins, and a late
   one is told who decided); questions asked and answered; a turn
-  completes, is interrupted or fails; the session's tasks change
+  completes, is interrupted or fails; the session's checklist changes
   (`ChecklistChanged`, the whole list); its effort changes (`EffortChanged`);
   a sub-agent starts, acts and ends (`Subagent`).
 - **Model and effort:** `Welcome` lists, for each instance the host can
@@ -106,7 +106,7 @@ so one UI and one set of commands work for both agents.
 - **Checklists:** each agent reports its latest ordered list of text and
   status (pending, in progress or completed). Both providers use
   `proto::ChecklistEntry`; the host records the whole changed snapshot as
-  `ChecklistChanged { tasks }`. Entries have no persistent identity or
+  `ChecklistChanged { checklist }`. Entries have no persistent identity or
   owner beyond their session or sub-agent. Reordering, renaming, duplicate
   text and removal are represented exactly as the provider reports them.
   Repeated identical snapshots produce no event. Main and child
@@ -196,10 +196,9 @@ How each agent carries these, from the recordings of the real CLIs:
 | Sub-agent | The `Agent` call; `system/task_started` (`task_type: "local_agent"`, `task_id`, `tool_use_id`, `description`), its frames with `parent_tool_use_id` and `agent_id`, `system/task_notification` (`status` `completed`, `failed` or `stopped`, `summary`) | In the schema only: a `collabAgentToolCall` item (`spawnAgent`, the new thread in `receiverThreadIds`) and `subAgentActivity` items; not recorded, not mapped |
 
 The `AskUserQuestion` tool call is not shown as a tool call; its question
-card is. Nor is a `TodoWrite` call; the session's tasks are.
+card is. Nor is a `TodoWrite` call; the session's checklist is.
 
-Next in the model (`docs/roadmap.md`): handing tasks between sessions
-(#30), and Codex's sub-agents (#31).
+Next in the model (`docs/roadmap.md`): Codex's sub-agents (#31).
 
 ## 4. Transport
 
@@ -573,11 +572,11 @@ until someone re-records them by hand (§6.2).
   history. The worktree's index follows the branch while its files stay
   in place; staging choices separate from the files are not retained.
   Opening events are `SessionCreated`, `OnIssue` for an issue start,
-  `WorkspaceCreated`, and `CheckpointCreated`. The wire's `Checkpoint`
+  `WorkspaceCreated`, and `SnapshotRecorded`. The wire's `Snapshot`
   is only a commit and an optional `turn_start`; the initial snapshot has
   no turn. Each recorded snapshot event has its existing `HostSeq`, so
   two unchanged turns remain separate records even when they share a
-  commit. There is no separate checkpoint id, reservation, ancestry or
+  commit. There is no separate snapshot id, reservation, ancestry or
   provider-history anchor. Git owns the commit history; the session log
   records which workspace state belongs to each turn.
   A retention ref at `refs/conductor/<ulid>/<commit>` keeps each recorded
@@ -612,9 +611,9 @@ until someone re-records them by hand (§6.2).
   baseline. Diffs have bounded file counts and patch sizes; binary and
   oversized files get markers. `GetDiff` bypasses durable receipts so
   patches are never copied into the event log or receipt table.
-- **Historical undo is removed.** The app has no undo command, provider
-  histories are not rewound or forked, and snapshot recovery only captures
-  workspace state. Ordinary Continue still resumes the saved provider
+- **Diffs only read.** Opening a turn's diff changes no files and no
+  conversation; provider histories are never rewound or forked, and
+  snapshot recovery only captures workspace state. Ordinary Continue still resumes the saved provider
   conversation, including after a host restart. Finishing and removal
   keep the session's branch commits.
 
@@ -779,7 +778,7 @@ standards and issues, cloned on every host. Built so far are home steps
   commits that landed and where the branch went (`Kept`), or why nothing
   landed. The session stays, closed; *Remove* removes its workspace.
 
-## 6. Planned: the fleet
+## 6. The fleet
 
 The goal is one setup running in several places. Every host runs the
 Claude Code and Codex versions pinned by its Conductor release, installed
@@ -1309,10 +1308,11 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   the login Keychain. On Windows it is a user-private generic credential
   in Credential Manager with local-machine persistence. On Linux it
   goes in the user's unlocked default Secret Service collection over an
-  encrypted D-Bus session. If Linux has no usable service, new and
-  existing file-backed stores use `<data>/store.key` (mode 0600 on
-  Unix). An existing native-backed store requires its original native
-  key, even if the keyring is temporarily unavailable. The separate
+  encrypted D-Bus session. Where no keystore is usable when the store
+  is created, or `<data>/store.key.file` asks for it, the key is the
+  owner-only file `<data>/store.key` (mode 0600 on Unix) instead. A store
+  keeps the place chosen at its creation; one in a keystore requires that
+  entry, even if the keyring is temporarily unavailable. The separate
   `<data>/host.key` and `<data>/auth.key` still hold the iroh and pairing
   keys. See [credential store backup and recovery](credential-store.md).
 - The credentials are one value, `proto::Roster`, the host's instances
@@ -1329,10 +1329,9 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   `SetCredential` is refused then, so nothing overwrites it. A
   `RemoveInstance` for any of them moves it to
   `<data>/credentials.unreadable` and starts a store of the own
-  instances, which is the recovery from the phone. A missing, changed or
-  inaccessible active native key stops the host before it opens the
-  encrypted store. An existing encrypted store without its file key
-  also requires recovery before startup.
+  instances, which is the recovery from the phone. A missing or
+  inaccessible keystore entry stops the host before it opens the
+  encrypted store, and so does an encrypted store without its key file.
 - A Claude environment credential is kept from Claude's commands only where
   Claude's sandbox runs, which on Linux and WSL2 is the optional
   `sudo apt install bubblewrap socat` of §6.2. The Codex key is kept from
@@ -1546,7 +1545,8 @@ both the CLI's success message and the printed token after stripping terminal
 colors, then closed the CLI and discarded the token. This was a CLI probe;
 the code was entered on the test computer.
 
-E2 and E3 still need live observations. E4 and E5, the cross-host resume
+E2 and E3 still need live observations; `docs/verification/codex_manual_probe.py`
+runs E3's refresh and turn probes in a disposable `CODEX_HOME`. E4 and E5, the cross-host resume
 experiments, were retired with session migration (§6.8).
 
 **Owner consent (2026-11-12).** Each experiment may run in the phase that
@@ -1760,11 +1760,10 @@ fleet pairing (#14).
   WebKit against the real daemon and the fake CLIs, with the run record and
   screenshots under `target/e2e-browser/` and failure screenshots under
   `target/e2e-failures/`. Set `E2E_RECORD` to choose another run record
-  directory. Historical examples in `docs/p1/` use the earlier trace format. The
-  commit gate checks
+  directory. The commit gate checks
   generated recordings against their builders and checks retained run
   records for public IP addresses.
-- **Manual smoke** (`docs/p1/smoke.md`): real CLIs, the desktop browser and
+- **Manual smoke** (`docs/smoke.md`): real CLIs, the desktop browser and
   the iPhone on mobile data.
 
 ## 10. References

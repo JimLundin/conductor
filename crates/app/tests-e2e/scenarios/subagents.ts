@@ -47,8 +47,8 @@ export const subagents = async (run: Run): Promise<void> => {
 		"its transcript is hidden while folded",
 	);
 	check(
-		(await pane.locator(":scope > details.tasks").count()) === 0,
-		"the sub-agent's checklist is not the session's tasks",
+		(await pane.locator(":scope > details.agent-checklist").count()) === 0,
+		"the sub-agent's checklist is not the session's",
 	);
 	check(
 		(await text(".items > .reply")) === "done",
@@ -62,8 +62,11 @@ export const subagents = async (run: Run): Promise<void> => {
 	await heading.tap();
 	check(await isOpen(group), "a tap opens the group");
 	check(
-		(await group.locator('.tasks .task[data-status="completed"]').count()) ===
-			2,
+		(await group
+			.locator(
+				'.agent-checklist .agent-checklist-item[data-status="completed"]',
+			)
+			.count()) === 2,
 		"the opened group shows both completed checklist steps",
 	);
 	check(
@@ -83,8 +86,11 @@ export const subagents = async (run: Run): Promise<void> => {
 	);
 	await heading.tap();
 	check(
-		(await group.locator('.tasks .task[data-status="completed"]').count()) ===
-			2,
+		(await group
+			.locator(
+				'.agent-checklist .agent-checklist-item[data-status="completed"]',
+			)
+			.count()) === 2,
 		"the checklist replays after a reload",
 	);
 };

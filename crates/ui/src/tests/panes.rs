@@ -1,4 +1,4 @@
-//! A session's pane: what an empty transcript says, the agent's tasks, the
+//! A session's pane: what an empty transcript says, the agent's checklist, the
 //! changes under the turn they end, and the cards and lines it draws.
 
 use alloc::rc::Rc;
@@ -13,8 +13,8 @@ use super::{
     paired, pane, questions, rows, run, said, sent, text,
 };
 use crate::{
-    DiffPanel, Effect, Focus, Intent, Place, Row, SessionIntent, TaskRow,
-    Tasks, ToolDetail, ToolFile,
+    ChecklistPanel, ChecklistRow, DiffPanel, Effect, Focus, Intent, Place, Row,
+    SessionIntent, ToolDetail, ToolFile,
 };
 
 #[test]
@@ -50,25 +50,25 @@ fn the_agents_tasks_count_those_done() {
     let (state, _) = opened(Vec::from([event(
         3,
         EventKind::ChecklistChanged {
-            tasks: Vec::from([
+            checklist: Vec::from([
                 task("read", ChecklistStatus::Completed),
                 task("write", ChecklistStatus::InProgress),
                 task("test", ChecklistStatus::Pending),
             ]),
         },
     )]));
-    let row = |status, label, words: &str| TaskRow {
+    let row = |status, label, words: &str| ChecklistRow {
         status,
         label,
         text: text(words),
     };
     assert_eq!(
         (
-            pane(&state).map(|shown| shown.tasks),
-            pane(&opened(Vec::new()).0).map(|shown| shown.tasks),
+            pane(&state).map(|shown| shown.checklist),
+            pane(&opened(Vec::new()).0).map(|shown| shown.checklist),
         ),
         (
-            Some(Some(Tasks {
+            Some(Some(ChecklistPanel {
                 count: text("1 of 3 done"),
                 items: Vec::from([
                     row("completed", "Done", "read"),
@@ -188,7 +188,7 @@ fn a_file_change_lists_each_file_with_its_verb() {
 }
 
 #[test]
-fn a_diff_from_an_old_visit_does_not_answer_the_same_checkpoint_again() {
+fn a_diff_from_an_old_visit_does_not_answer_the_same_snapshot_again() {
     let show = || Intent::Session(SessionIntent::ShowChanges(HostSeq(5)));
     let (loading, old) = opened(a_turn().into_iter().chain([show()]).collect());
     let (reopened, new) = run(
@@ -258,8 +258,8 @@ fn a_host_reset_drops_the_old_sessions_draft_and_pending_diff() {
 
 #[test]
 fn failed_changes_can_close_with_focus_returned_or_retry() {
-    let checkpoint = HostSeq(5);
-    let show = Intent::Session(SessionIntent::ShowChanges(checkpoint));
+    let snapshot = HostSeq(5);
+    let show = Intent::Session(SessionIntent::ShowChanges(snapshot));
     let (loading, requested) =
         opened(a_turn().into_iter().chain([show.clone()]).collect());
     let (failed, _) = run(
@@ -274,7 +274,7 @@ fn failed_changes_can_close_with_focus_returned_or_retry() {
     assert_eq!(sent(&retry), sent(&requested));
     let (hidden, focus) = run(
         failed,
-        Vec::from([Intent::Session(SessionIntent::CloseChanges(checkpoint))]),
+        Vec::from([Intent::Session(SessionIntent::CloseChanges(snapshot))]),
     );
     assert_eq!(
         changes(&hidden).map(|shown| shown.panel),
@@ -282,24 +282,22 @@ fn failed_changes_can_close_with_focus_returned_or_retry() {
     );
     assert_eq!(
         focus,
-        [Effect::Focus(Focus::NextFrame(text(
-            "checkpoint-5-changes"
-        )))]
+        [Effect::Focus(Focus::NextFrame(text("snapshot-5-changes")))]
     );
 }
 
 #[test]
 fn a_transcript_rebuild_reuses_the_open_preview() {
-    let checkpoint = HostSeq(5);
+    let snapshot = HostSeq(5);
     let (loading, requested) = opened(
         a_turn()
             .into_iter()
-            .chain([Intent::Session(SessionIntent::ShowChanges(checkpoint))])
+            .chain([Intent::Session(SessionIntent::ShowChanges(snapshot))])
             .collect(),
     );
     let mut large = diff();
     large.files = (0..4)
-        .map(|index| proto::CheckpointFile {
+        .map(|index| proto::SnapshotFile {
             path: alloc::format!("{index}.txt"),
             change: Change::Edit,
             patch: proto::FilePatch::Text("a".repeat(64 * 1024)),

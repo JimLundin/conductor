@@ -116,7 +116,7 @@ mod tests {
         assert_eq!(
             checklist.kind,
             EventKind::ChecklistChanged {
-                tasks: Vec::from([
+                checklist: Vec::from([
                     crate::ChecklistEntry {
                         text: String::from("a"),
                         status: crate::ChecklistStatus::Completed

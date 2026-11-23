@@ -28,51 +28,51 @@ use crate::Shell;
 #[component]
 pub fn TurnChanges(changes: ui::TurnChanges) -> Element {
     let shell = use_context::<Shell>();
-    let checkpoint = changes.checkpoint;
+    let snapshot = changes.snapshot;
     rsx! {
         section { class: "turn-changes",
             button {
                 class: "show-changes",
                 id: "{changes.button}",
                 disabled: changes.button_disabled,
-                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::ShowChanges(checkpoint))),
+                onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::ShowChanges(snapshot))),
                 "Changes"
             }
             match changes.panel {
                 DiffPanel::Hidden => rsx! {},
                 DiffPanel::Loading => rsx! {
                     p { role: "status", "Loading changes…" }
-                    CloseDiff { checkpoint }
+                    CloseDiff { snapshot }
                 },
                 DiffPanel::Failed(reason) => rsx! {
                     p { class: "error", role: "alert", "{reason}" }
-                    CloseDiff { checkpoint }
+                    CloseDiff { snapshot }
                 },
-                DiffPanel::Loaded(preview) => rsx! { Diff { checkpoint, preview } },
+                DiffPanel::Loaded(preview) => rsx! { Diff { snapshot, preview } },
             }
         }
     }
 }
 
 #[component]
-fn CloseDiff(checkpoint: HostSeq) -> Element {
+fn CloseDiff(snapshot: HostSeq) -> Element {
     let shell = use_context::<Shell>();
     rsx! {
         button {
             class: "close-diff",
-            onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::CloseChanges(checkpoint))),
+            onclick: move |_| shell.dispatch(Intent::Session(SessionIntent::CloseChanges(snapshot))),
             "Close changes"
         }
     }
 }
 
 #[component]
-fn Diff(checkpoint: HostSeq, preview: Rc<ui::Preview>) -> Element {
+fn Diff(snapshot: HostSeq, preview: Rc<ui::Preview>) -> Element {
     rsx! {
         div { class: "diff-panel", "aria-label": "Changes for this turn",
             div { class: "diff-heading",
                 h2 { "Changes for this turn" }
-                CloseDiff { checkpoint }
+                CloseDiff { snapshot }
             }
             Preview { preview }
         }

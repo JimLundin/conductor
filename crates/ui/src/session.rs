@@ -14,9 +14,9 @@ use proto::{
     Instances, Models, Question, RequestId, Selection, SessionId,
 };
 
-use crate::checkpoints::{self, DiffState, TurnChanges};
 use crate::new_session::Choice;
 use crate::sessions::{agent, short};
+use crate::snapshots::{self, DiffState, TurnChanges};
 use crate::transcript::{self, AgentGroup, Row, card_id};
 use crate::{At, Effect, Focus, ReplyTo};
 
@@ -73,7 +73,7 @@ pub struct SessionPane {
     /// since it last finished, so it can finish.
     pub finish: bool,
     pub workspace: WorkspaceContext,
-    pub tasks: Option<Tasks>,
+    pub checklist: Option<ChecklistPanel>,
     /// What an empty transcript says.
     pub empty: Option<String>,
     pub entries: Vec<Entry>,
@@ -101,13 +101,13 @@ pub enum WorkspaceContext {
 
 /// The agent's checklist.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Tasks {
+pub struct ChecklistPanel {
     pub count: String,
-    pub items: Vec<TaskRow>,
+    pub items: Vec<ChecklistRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskRow {
+pub struct ChecklistRow {
     pub status: &'static str,
     pub label: &'static str,
     pub text: String,
@@ -231,12 +231,10 @@ impl Pane {
                 let effects = self.send_answer(request, id, session, at);
                 (self, effects)
             }
-            SessionIntent::ShowChanges(checkpoint) => {
-                self.load_diff(id, checkpoint, at)
+            SessionIntent::ShowChanges(snapshot) => {
+                self.load_diff(id, snapshot, at)
             }
-            SessionIntent::CloseChanges(checkpoint) => {
-                self.close_diff(checkpoint)
-            }
+            SessionIntent::CloseChanges(snapshot) => self.close_diff(snapshot),
             SessionIntent::Mounted(mount) => self.mounted(mount),
         }
     }
@@ -334,13 +332,13 @@ impl Pane {
             })
     }
 
-    fn close_diff(self, checkpoint: HostSeq) -> (Self, Vec<Effect>) {
+    fn close_diff(self, snapshot: HostSeq) -> (Self, Vec<Effect>) {
         let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::Hidden);
+        diffs.insert(snapshot, DiffState::Hidden);
         (
             Self { diffs, ..self },
             Vec::from([Effect::Focus(Focus::NextFrame(
-                checkpoints::changes_id(checkpoint),
+                snapshots::changes_id(snapshot),
             ))]),
         )
     }
@@ -396,15 +394,15 @@ impl Pane {
     fn load_diff(
         self,
         session: SessionId,
-        checkpoint: HostSeq,
+        snapshot: HostSeq,
         at: At,
     ) -> (Self, Vec<Effect>) {
-        if let Some(DiffState::Loading(_)) = self.diffs.get(&checkpoint) {
+        if let Some(DiffState::Loading(_)) = self.diffs.get(&snapshot) {
             return (self, Vec::new());
         }
         let request = self.requests.wrapping_add(1);
         let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::Loading(request));
+        diffs.insert(snapshot, DiffState::Loading(request));
         (
             Self {
                 diffs,
@@ -412,14 +410,8 @@ impl Pane {
                 ..self
             },
             Vec::from([at.send(
-                CommandBody::GetDiff {
-                    session,
-                    checkpoint,
-                },
-                ReplyTo::Diff {
-                    checkpoint,
-                    request,
-                },
+                CommandBody::GetDiff { session, snapshot },
+                ReplyTo::Diff { snapshot, request },
             )]),
         )
     }
@@ -427,16 +419,16 @@ impl Pane {
     /// A diff's answer, unless a later request or a close replaced it.
     pub fn diffed(
         self,
-        checkpoint: HostSeq,
+        snapshot: HostSeq,
         request: u64,
         answer: Result<CommandResult, String>,
         host: &str,
     ) -> Self {
-        if self.diffs.get(&checkpoint) != Some(&DiffState::Loading(request)) {
+        if self.diffs.get(&snapshot) != Some(&DiffState::Loading(request)) {
             return self;
         }
         let mut diffs = self.diffs;
-        diffs.insert(checkpoint, DiffState::answered(answer, host));
+        diffs.insert(snapshot, DiffState::answered(answer, host));
         Self { diffs, ..self }
     }
 
@@ -476,7 +468,7 @@ impl Pane {
                     directory: workspace.directory.0.clone(),
                 },
             ),
-            tasks: tasks(&session.tasks),
+            checklist: checklist(&session.checklist),
             empty: session
                 .empty_transcript()
                 .map(|kind| empty(kind, &provider)),
@@ -534,9 +526,9 @@ impl Pane {
     }
 
     fn entries(&self, session: &SessionView) -> Vec<Entry> {
-        let mut checkpoints = BTreeMap::new();
-        for turn in &session.checkpoints {
-            checkpoints.entry(turn.end).or_insert(turn);
+        let mut snapshots = BTreeMap::new();
+        for turn in &session.snapshots {
+            snapshots.entry(turn.end).or_insert(turn);
         }
         session
             .items
@@ -555,8 +547,8 @@ impl Pane {
                         })
                         .collect()
                 }),
-                changes: checkpoints.get(&index).map(|turn| {
-                    checkpoints::changes(turn, self.diffs.get(&turn.checkpoint))
+                changes: snapshots.get(&index).map(|turn| {
+                    snapshots::changes(turn, self.diffs.get(&turn.snapshot))
                 }),
             })
             .collect()
@@ -587,19 +579,19 @@ fn effort_control(effort: Option<Effort>, offered: &[Effort]) -> EffortControl {
     }
 }
 
-pub fn tasks(tasks: &[ChecklistEntry]) -> Option<Tasks> {
-    if tasks.is_empty() {
+pub fn checklist(checklist: &[ChecklistEntry]) -> Option<ChecklistPanel> {
+    if checklist.is_empty() {
         return None;
     }
-    let done = tasks
+    let done = checklist
         .iter()
         .filter(|task| task.status == ChecklistStatus::Completed)
         .count();
-    Some(Tasks {
-        count: format!("{done} of {} done", tasks.len()),
-        items: tasks
+    Some(ChecklistPanel {
+        count: format!("{done} of {} done", checklist.len()),
+        items: checklist
             .iter()
-            .map(|task| TaskRow {
+            .map(|task| ChecklistRow {
                 status: match task.status {
                     ChecklistStatus::Pending => "pending",
                     ChecklistStatus::InProgress => "in-progress",

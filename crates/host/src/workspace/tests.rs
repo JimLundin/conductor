@@ -4,7 +4,7 @@ use proto::{
     DiffExtent, FilePatch, HostPath, HostSeq, Kept, SessionId, Workspace,
 };
 
-use super::{Answer, GitError, Output, Plan, Step, checkpoints, head, kept};
+use super::{Answer, GitError, Output, Plan, Step, head, kept, snapshots};
 
 const SESSION: SessionId = SessionId(1);
 const WORKTREE: &str = "/data/worktrees/00000000000000000000000001";
@@ -129,7 +129,7 @@ fn create_probes_the_selected_base_and_writes_ownership_only_for_a_new_worktree(
  {
     let workspace = workspace();
     assert_eq!(head(&workspace), HEAD);
-    assert_eq!(checkpoints(&workspace).as_deref(), Ok(PREFIX));
+    assert_eq!(snapshots(&workspace).as_deref(), Ok(PREFIX));
     for exists in [false, true] {
         let mut created = Vec::new();
         let result = run(

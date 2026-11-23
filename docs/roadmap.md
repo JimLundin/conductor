@@ -14,8 +14,7 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
-  instance throughout the event log, recovery and client view (ALPN
-  `conductor/36`, log format 8). Requests have one durable source, the event
+  instance throughout the event log, recovery and client view. Requests have one durable source, the event
   log; the write-only request table is gone. Browser pairing reads only
   current per-host records, keeping concurrent-tab writes and fleet revocation
   without single-ticket or shared-map migrations. Older session databases
@@ -46,13 +45,11 @@ What is built and what comes next. Update it in the commit that changes it.
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `proto`, `client`,
   `agents`, `claude`, `codex`, `host`, `home` and `ui`; `net`, `daemon`,
-  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install` and `app` declare
-  themselves the shell.
+  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`,
+  `home-files` and `app` declare themselves the shell.
   `client` holds the host link's state machine, and `host` holds
-  workspace decisions and checklists. Next: the shell still makes most decisions, and
-  `exceptions.toml` lists each shell file that does as debt. Move the
-  registry, serve, log and workspace decisions into `host`, retiring an
-  entry with each.
+  workspace decisions and checklists. The shell still makes about a
+  quarter of the decisions (Next, item 1).
 
 - **Providers as plugins** (§5.2, §6.3). The daemon library takes a map of
   `runtime::Plugin`s and names no provider: each is its `agents::Profile`
@@ -60,11 +57,11 @@ What is built and what comes next. Update it in the commit that changes it.
   forms) plus an adapter for each account. The adapter applies credentials,
   discovers models and starts session agents. Credentials are generic form values the app draws
   from `Welcome.catalog`, checked by their form and read by each
-  provider's core (ALPN `conductor/13`, credential store format 3). The
-  binary moved to `crates/conductord`, the one place that wires the
+  provider's core. The binary moved to `crates/conductord`, the one place that wires the
   providers, with `--cli <provider>=<path>`, `--model <provider>=<model>`
-  and `login` (now per instance, below). Next: the pins in `agents::pin` and `Provider`
-  itself are the last places a new provider is listed.
+  and `login` (now per instance, below). The pins in `agents::pin` and
+  `Provider` itself are the last places a new provider is listed (Next,
+  item 3).
 
 - **Instances** (§5.2, §6.2, §6.3). A host runs instances, each one
   account of a provider, such as Claude through a gateway beside Claude on
@@ -80,11 +77,12 @@ What is built and what comes next. Update it in the commit that changes it.
   removes an instance (refused while a session runs on one), and the
   new-session picker lists instances. `--cli` and `--model` are each
   provider's defaults, and `conductord login <provider> [--account
-  <account>]` signs one in on the host (ALPN `conductor/18`, credential
-  store format 7, log format 4); the app signs one in too (item 3).
-  CLI pins come from the Conductor release; host model defaults and
-  session model choices remain. *Try:* save a gateway in *Credentials* and see its URL listed
-  as an instance beside the provider's own.
+  <account>]` signs one in on the host; the app signs one in too. CLI
+  pins come from the Conductor release; host model defaults and session
+  model choices remain. Per-instance model and CLI settings from the app
+  are Next, item 2.
+  *Try:* save a gateway in *Credentials* and see its URL listed as an
+  instance beside the provider's own.
 
 - **One agent runtime** (§5.2). The daemon asks one interface for agents:
   `agents::runtime`'s commands and events over a `runtime::Runtime`
@@ -101,8 +99,8 @@ What is built and what comes next. Update it in the commit that changes it.
   Code and Codex into its data dir, checks their hashes and runs only those,
   with private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off. Gateway
   credentials run them (`tools/live-host.sh --register`). Subscription
-  sign-in from the app is item 3; `conductord login <instance>` remains as
-  the host-terminal fallback.
+  sign-in from the app is built (below); `conductord login <instance>`
+  remains as the host-terminal fallback.
 
 - **Responsive provider refresh** (#23). Credential saves, model discovery
   and Codex reconfiguration no longer hold the registry or the global
@@ -110,20 +108,15 @@ What is built and what comes next. Update it in the commit that changes it.
   instance, coalesce superseded configurations and discard stale results.
   Pending and failed instances report unavailability; unrelated sessions
   and connections remain usable. At boot the stored instances start
-  independently. Subscribers receive `Feed::Instances` whenever offers change
-  (ALPN `conductor/27`). Instance commands keep their final durable
+  independently. Subscribers receive `Feed::Instances` whenever offers change.
+  Instance commands keep their final durable
   `Accepted` receipt. Current instance state comes only from `Welcome` and
   the live feed; sign-in completion carries no snapshot, and command
   answers return directly to their caller without a duplicate link update.
 
 - **Issue edits and landing recovery**. Issue status and checklist edits
   carry the browser's expected state. An interrupted landing can be
-  retried after the host restarts. These wire changes use ALPN
-  `conductor/24`.
-
-- **Notifications and subagent supervision** introduced wire protocol
-  ALPN `conductor/25`. Credential sign-in
-  from the paired app uses `conductor/26`.
+  retried after the host restarts.
 
 - **Worktrees and commit snapshots** (architecture §5.3). Each new session
   gets a managed Git worktree from committed HEAD, an initial snapshot
@@ -132,10 +125,8 @@ What is built and what comes next. Update it in the commit that changes it.
   immutable diffs between consecutive recorded snapshots, including all
   commits the agent made within a turn. Capture recovery retains pending
   work across failures and restart, and retention refs keep recorded
-  commits reachable. Historical undo, provider rewind and the independent
-  checkpoint identity and ancestry are removed. Continue still resumes
-  the provider conversation on the same host. The wire uses ALPN
-  `conductor/30` and the event store format is 7.
+  commits reachable. Diffs only read: there is no undo or provider
+  rewind. Continue resumes the provider conversation on the same host.
 
 - **Single CLI pin source** (#28). `tools/pin` writes only
   `crates/agents/src/pin/pins.rs`, including upstream verification notes.
@@ -163,9 +154,9 @@ What is built and what comes next. Update it in the commit that changes it.
   iPhone: session list, new session, session pane, phone layout. Browser e2e
   on the real daemon with fake CLIs. See [verification boundaries](verification.md).
 - **Several hosts in one app** (home step 2, architecture §8). The app keeps
-  every paired host in its own local-storage record (`conductor.host.<id>`,
-  with each host's name) and a live link to each at once. Obsolete
-  single-ticket records require pairing again. The list groups sessions by host
+  every paired host in local storage, a `conductor.host.<endpoint>` record
+  and a `conductor.name.<endpoint>` name per host, and a live link to each
+  at once. The list groups sessions by host
   under each one's name and link state, the credentials screen has a
   section per host with *Forget this host*, and a new session picks a host,
   then one of its instances. *Add host* takes a join link or ticket;
@@ -184,12 +175,12 @@ What is built and what comes next. Update it in the commit that changes it.
   remote in its `--projects <dir>` roots, keeps them in `<data>/home.state`,
   and clones one from the app into `<data>/projects/<project>`. The new
   `home` core crate holds the decisions. `StartSession` takes a project or
-  a directory (ALPN `conductor/17`); the app has a *Projects* view and a
+  a directory; the app has a *Projects* view and a
   project picker in the new-session form. *Try:* start a host with `--home
   https://github.com/JimLundin/home.git --projects <your projects dir>`,
   open *Projects*, clone a project you lack, and start a session in it.
 - **Removing a session** (home step 5, architecture §5.3). A closed
-  session's *Remove* (`RemoveSession`, ALPN `conductor/19`) stops its
+  session's *Remove* (`RemoveSession`) stops its
   agent between turns, commits what its worktree holds onto
   `conductor/<ulid>`, pushes that branch alone to the checkout's `origin`
   without force, and removes the worktree. The branch stays in the checkout;
@@ -202,7 +193,7 @@ What is built and what comes next. Update it in the commit that changes it.
   lists its issues by status, with a field that opens one; an issue's pane
   sets its status and priority, edits its title, body and labels, checks
   off its checklist and takes notes, which the host dates and signs with
-  its name and the device's (ALPN `conductor/20`). The host writes each
+  its name and the device's. The host writes each
   change to `projects/<project>/issues/<id>.md` in its clone of the home,
   one commit each, and pushes; when the remote has moved on it resets to
   it and applies its kept changes again on top, so concurrent notes both
@@ -214,14 +205,14 @@ What is built and what comes next. Update it in the commit that changes it.
   session works on a branch cut from the issue's `issue/<id>`, which the
   host takes from the project's remote when it has it; its first message
   is the issue's brief, and the issue moves to `in-progress`. One session
-  per instance and issue (ALPN `conductor/21`). *Try:* start a session on
+  per instance and issue. *Try:* start a session on
   an issue and read its first message.
 - **Finishing a session** (home step 7b, architecture §5.4). *Finish* on a
   session on an issue asks its agent for a summary, stops it, lands its
   branch on the issue's (fast-forward, or a merge commit; a conflict
   lands nothing), tries to push to the project remote, adds the summary
   to the issue's notes and moves the issue to `review` when it gained
-  commits (ALPN `conductor/22`). The transcript's **Finished** row shows
+  commits. The transcript's **Finished** row shows
   whether the branch was pushed or kept on the source host. *Try:* finish
   an issue session, verify the push and start one on another host with a
   checkout that can fetch the issue branch ([home](home.md#4-flows)).
@@ -239,90 +230,89 @@ What is built and what comes next. Update it in the commit that changes it.
   developer instructions for Codex. No protocol change. *Try:* start a
   Claude session in a project with only an `AGENTS.md` and ask it what its
   standards are.
-- **Issue notes.** Explicit notes and the summary produced by Finish remain.
-  Checklist changes stay in their session and no longer generate issue notes.
+- **Checklists in their sessions** (home step 9). Agent and sub-agent
+  checklists show in their sessions and make no issue notes; the summary
+  turn and explicit notes are what reach the issue. The home's build order
+  (home §8) is done. *Try:* start a session on an issue, let its agent
+  tick off a step, then finish it and read the summary note.
+
+- **A wider session model** (§3). Questions to the user (Claude's
+  `AskUserQuestion`, Codex's `requestUserInput`) as a card with options
+  and typed text; approve-for-session as a third button that names what it
+  allows; reasoning summaries as a streaming "Thinking" disclosure; a
+  model and an effort per session from what each CLI lists, the effort
+  changeable between turns from the header; and `Continue`, which starts a
+  closed session's CLI again with the provider's resume in the private
+  home. Claude's reasoning text needs experimental betas, which the
+  owner's gateway refuses, so through it Claude shows none (Claude
+  `PROTOCOL.md`). *Try:* restart a session's CLI and continue it
+  (`tools/live-host.sh` checks it as `continue=pass`).
+- **Sign in from the app** (#12, §6.3). Gateway credentials, direct
+  Anthropic and OpenAI API keys and a Claude setup token from the
+  credentials screen, encrypted in the host's credential store (macOS
+  Keychain, Windows Credential Manager, Linux Secret Service, or a private
+  file; [backup and recovery](credential-store.md)). An instance's
+  subscription sign-in runs the CLI's own sign-in in the instance's home
+  (`claude auth login --claudeai`, whose page gives a code to paste back;
+  `codex login --device-auth`), described by each provider's core as data
+  (`agents::SignIn`) and followed live as `Feed::SignIn`, stored nowhere.
+  A different account takes over the private home and work directory
+  through a journaled roster update. *Try:* on a fresh host, sign in to
+  Claude and Codex from the iPhone without touching the host's keyboard.
+- **Durability** (#11). redb and postcard store the event log, command
+  receipts, open requests and conversation ids; the host key, ticket token
+  and epoch persist, and clients resume their cursors after a restart.
+  Open requests are withdrawn and in-flight turns interrupted on restart,
+  and `Continue` resumes the native conversation. Session ids are
+  fleet-unique ULIDs, with `CLAUDE_CODE_PROJECT_DIR_NAME=<ulid>` isolating
+  Claude transcripts. External CLI actions sent before a crash can still
+  lack a receipt (architecture §5.3). *Try:* restart the host mid-session
+  and continue from the phone.
+- **Fleet and pairing** (#14, §6.1, §6.4 to §6.6). A fleet root key signs
+  device and host certificates; `conductord join` and *Add host*; a signed
+  fleet config with the roster, API keys and the Claude token, served by
+  any host; a per-host Codex ChatGPT sign-in after a join. *Try:* add a
+  second host from the phone and run a Claude session on it with the
+  fleet's token, without signing in again.
+- **Push** (#15). Web Push from the host when an approval or question
+  opens ([smoke checklist](smoke.md#web-push-on-an-iphone)).
+- **Subagents** (#31, home §6). Child session events record each
+  subagent's lifecycle, type, result, transcript, requests and checklist;
+  the phone shows the child beside the tool call that started it. *Try:*
+  ask a Claude session to delegate two pieces of work and watch each
+  child's progress and result.
 
 ## Next
 
 Each item ends in something to try. The fleet design is
 `docs/architecture.md` §6.
 
-2. **A wider session model** (§3). Built in round A, on
-   `session-questions`: questions to the user (Claude's `AskUserQuestion`,
-   Codex's `requestUserInput`) as a question card with options and typed
-   text, and approve-for-session as a third button that names what it
-   allows. Built in round B, on `session-model-b`: reasoning summaries as a
-   "Thinking" disclosure that streams live; a model and an effort picked per
-   session from what each CLI lists, shown in the session's header; and
-   `Continue`, which starts a closed session's CLI again with the
-   provider's resume in the private home. Claude's reasoning text needs
-   experimental betas on, which the owner's gateway refuses, so through it
-   Claude shows none (Claude `PROTOCOL.md`). Continue covers CLI and host restarts, with the durable log and native
-   conversation ids from item 4. Built in round C, on `session-model-c`:
-   the agent's checklist (Claude's `TodoWrite`, Codex's plan), now kept as
-   an ordered session-local snapshot and shown above the transcript;
-   and the effort changed between turns
-   from the session's header, which the next turn takes (Claude in its
-   running process, Codex on that `turn/start`). Both CLIs need a switch for
-   the checklist tool (§5.2). *Try:* restart a session's CLI and continue it
-   (`tools/live-host.sh` checks it as `continue=pass`); ask an agent to plan
-   a change as a checklist and watch it tick off on the phone, then lower
-   the effort from the header before the next message.
-3. **Sign in from the app** (#12) (§6.3), on one host. Built first, on
-   `credentials`: gateway credentials (Claude's `ANTHROPIC_BASE_URL` and
-   `ANTHROPIC_AUTH_TOKEN`, a Codex custom model provider) set from the
-   app's credentials screen and encrypted in the host's credential store;
-   `tools/live-host.sh --register` runs the pinned CLIs on them. Built on
-   `app-login`: an instance's subscription sign-in from the app, by the
-   CLI's own sign-in in the instance's home (`claude auth login
-   --claudeai`, whose page gives a code to paste back; `codex login
-   --device-auth`, a link and a one-time code). Each provider's core
-   describes its sign-in as data (`agents::SignIn`); `StartSignIn`,
-   `SubmitSignInCode` and `CancelSignIn` run it, and every client follows
-   it live as `Feed::SignIn`, stored nowhere. The app and terminal both
-   require the login and its status check to succeed before resolving the
-   account. A different account takes ownership of the private home and
-   work directory through a journaled roster update that can resume after
-   interruption. The app refreshes the resulting instance and lists its
-   models without a restart. The credentials screen also accepts direct
-   Anthropic and OpenAI API keys and a Claude setup token obtained
-   separately. The host supports macOS Keychain, Windows Credential
-   Manager and Linux Secret Service. See [credential store migration and
-   recovery](credential-store.md). The Claude setup-token form can also run
-   the CLI on the host. Open the provider page and submit its return code
-   on the same paired phone. Token revocation and native keystore verification
-   are tracked in #12.
-   *Try:* on a fresh host, sign in to Claude and Codex from the
-   iPhone without touching the host's keyboard.
-4. **Durability.** (#11) Built on `issue-11-durability`: redb + postcard
-   store the event log, command receipts, open requests and conversation ids.
-   The host key, ticket token and epoch persist; clients resume their cursors
-   after a host restart. Open requests are withdrawn and in-flight turns
-   interrupted on restart, and `Continue` resumes the native conversation.
-   Session ids are fleet-unique ULIDs, with
-   `CLAUDE_CODE_PROJECT_DIR_NAME=<ulid>` isolating Claude transcripts.
-   Receipts and durable command effects commit together; external CLI actions
-   sent before a crash can still lack a receipt (architecture §5.3).
-   *Try:* restart the host mid-session and continue from the phone.
-6. **Fleet and pairing** (#14) (§6.1, §6.4 to §6.6). A fleet root key signs
-   device and host certificates and replaces the shared ticket token;
-   `conductord join` and *Add host*; a signed fleet config with the roster,
-   API keys and the Claude token, served by any host; a
-   per-host Codex ChatGPT sign-in after a join. The app already holds
-   several hosts, each paired by its own ticket. *Try:* add a second host from the phone and run a Claude
-   session on it with the fleet's token, without signing in again.
-7. **Push.** (#15) Web Push from the host when an approval or question opens.
-   *Try:* lock the phone and get the approval notification.
-8. **Monitor the subagents** (#31) each session runs (home step 1,
-    `docs/home.md` §6). Child session events record each subagent's
-    lifecycle, type, result, transcript, requests, and checklist.
-    The phone shows the child next to the tool call that started it when
-    that call is in the session transcript. Each child has its own ordered
-    checklist snapshot. The Claude probe and synthetic Codex replay cover
-    these paths. Live Codex events and child approvals still need validation.
-    *Try:* ask a Claude and a Codex session to delegate two pieces of work
-    and watch each child's progress, approvals, and result on the phone.
-
+1. **Decisions out of the shell.** The shell crates still make about a
+   quarter of the decisions, and `exceptions.toml` lists each shell file
+   that does as debt. Move the registry, serve, log and workspace
+   decisions into `host`, retiring an entry with each. *Try:* `tools/check.sh
+   commit` passes with that entry gone from `exceptions.toml`.
+2. **Instance settings from the app.** Per-instance model and CLI
+   settings; the store already keeps both. *Try:* change a gateway
+   instance's default model from the phone and start a session on it.
+3. **One place to list a provider.** The pins in `agents::pin` and
+   `Provider` itself are the last places a new provider is named outside
+   its plugin. *Try:* a test plugin registered only in `conductord` runs a
+   session.
+4. **Live checks still owed.** Experiments E2 (one Claude setup token on
+   two hosts) and E3 (a second ChatGPT device-code sign-in;
+   `docs/verification/codex_manual_probe.py`), architecture §6.9; live
+   Codex subagent events and child approvals; token revocation and native
+   keystore verification (#12). *Try:* run E3's probes in a disposable
+   `CODEX_HOME` and record the result in §6.9.
+5. **Every session has a workspace.** Every session started now records
+   `WorkspaceCreated` before anything else, but the host session, its
+   `Book` and Continue still handle a logged session without one by running
+   in its original directory (daemon e2e
+   `a_session_without_a_worktree_continues_in_its_original_directory`).
+   Old logs are disposable, so refuse such a session at restore and make
+   the workspace required. *Try:* the host tests build every session with
+   its workspace, and that e2e test is gone.
 
 ## Known bugs
 

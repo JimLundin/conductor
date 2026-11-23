@@ -24,8 +24,8 @@ use ui::{
     SessionIntent, ToolDetail, WorkspaceContext,
 };
 
-use crate::checkpoints::TurnChanges;
 use crate::sessions::Options;
+use crate::snapshots::TurnChanges;
 use crate::{PaneHeader, Shell};
 
 #[component]
@@ -53,8 +53,8 @@ pub fn SessionPane(pane: ui::SessionPane) -> Element {
                 }
             }
             Workspace { context: pane.workspace }
-            if let Some(tasks) = pane.tasks {
-                Tasks { tasks }
+            if let Some(checklist) = pane.checklist {
+                ChecklistPanel { checklist }
             }
             div { class: "transcript",
                 div { class: "items", role: "log",
@@ -126,18 +126,18 @@ fn Workspace(context: WorkspaceContext) -> Element {
 /// The agent's checklist: open by default, and collapsible so a phone
 /// keeps room for the transcript.
 #[component]
-fn Tasks(tasks: ui::Tasks) -> Element {
+fn ChecklistPanel(checklist: ui::ChecklistPanel) -> Element {
     rsx! {
-        details { class: "tasks", open: true,
+        details { class: "agent-checklist", open: true,
             summary {
-                span { class: "tasks-title", "Checklist" }
-                span { class: "tasks-count", "{tasks.count}" }
+                span { class: "agent-checklist-title", "Checklist" }
+                span { class: "agent-checklist-count", "{checklist.count}" }
             }
             ol {
-                for task in tasks.items {
-                    li { class: "task", "data-status": task.status,
-                        span { class: "task-mark", role: "img", "aria-label": task.label }
-                        span { class: "task-text", "{task.text}" }
+                for item in checklist.items {
+                    li { class: "agent-checklist-item", "data-status": item.status,
+                        span { class: "agent-checklist-mark", role: "img", "aria-label": item.label }
+                        span { class: "agent-checklist-text", "{item.text}" }
                     }
                 }
             }
@@ -168,8 +168,8 @@ fn Subagent(group: ui::AgentGroup) -> Element {
                 span { class: "subagent-status", "{group.label}" }
             }
             div { class: "subagent-items",
-                if let Some(tasks) = group.tasks {
-                    Tasks { tasks }
+                if let Some(checklist) = group.checklist {
+                    ChecklistPanel { checklist }
                 }
                 if let Some(text) = group.empty {
                     p { class: "subagent-empty", "{text}" }
