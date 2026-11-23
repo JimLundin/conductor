@@ -11,7 +11,7 @@ interface Device {
 // Checked in this order: an iPhone's or iPad's user agent also says "Mac OS X", and Android's
 // and ChromeOS's also say "Linux". iPadOS Safari sends a Mac's user agent, so a "Mac" with a
 // touchscreen is an iPad.
-const devices: readonly Device[] = [
+const devices = [
 	{ marker: "iPhone", name: "iPhone", touchName: "iPhone" },
 	{ marker: "iPad", name: "iPad", touchName: "iPad" },
 	{ marker: "Android", name: "Android", touchName: "Android" },
@@ -19,7 +19,7 @@ const devices: readonly Device[] = [
 	{ marker: "Windows", name: "Windows", touchName: "Windows" },
 	{ marker: "Macintosh", name: "Mac", touchName: "iPad" },
 	{ marker: "Linux", name: "Linux", touchName: "Linux" },
-];
+] as const satisfies readonly Device[];
 
 // More than one touch point is a touchscreen; a user agent naming no known device is a
 // "Browser".
