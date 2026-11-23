@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use crate::{CommandResult, Feed, HelloReply, Open};
+use crate::{ALPN, CommandResult, Feed, HelloReply, Open};
 
 fn path() -> PathBuf {
     [
@@ -25,8 +25,8 @@ fn path() -> PathBuf {
 }
 
 /// Every frame on the link and every type they reach, in `$defs`, as
-/// serde writes them.
-fn document() -> Value {
+/// serde writes them, and the link's ALPN as `Alpn`.
+fn document() -> Result<Value, std::str::Utf8Error> {
     let settings = SchemaSettings::draft2020_12().for_serialize();
     let meta = settings.meta_schema.clone();
     let mut generator = settings.into_generator();
@@ -34,10 +34,19 @@ fn document() -> Value {
     generator.subschema_for::<HelloReply>();
     generator.subschema_for::<CommandResult>();
     generator.subschema_for::<Feed>();
-    json!({
+    let mut definitions = generator.take_definitions(true);
+    definitions.insert(
+        String::from("Alpn"),
+        json!({
+            "description": "The ALPN a client dials a host with.",
+            "type": "string",
+            "const": std::str::from_utf8(ALPN)?,
+        }),
+    );
+    Ok(json!({
         "$schema": meta,
-        "$defs": generator.take_definitions(true),
-    })
+        "$defs": definitions,
+    }))
 }
 
 /// Rewritten only when it no longer reads as the frames' document, so a
@@ -46,7 +55,7 @@ fn document() -> Value {
 fn the_frames_schema_is_written_for_the_web_app()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = path();
-    let document = document();
+    let document = document()?;
     let written = std::fs::read(&path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());

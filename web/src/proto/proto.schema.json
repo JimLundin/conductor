@@ -21,6 +21,11 @@
 				}
 			]
 		},
+		"Alpn": {
+			"const": "conductor/38",
+			"description": "The ALPN a client dials a host with.",
+			"type": "string"
+		},
 		"Answer": {
 			"description": "The answer to one question: the labels of the options chosen, and any\ntext the user typed instead, in that order.",
 			"items": {

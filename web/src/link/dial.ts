@@ -1,14 +1,13 @@
 // Dials a host through its relay, and once more beside a dial that stalls.
 import { type Duration, Effect, Exit, Option, Ref, type Scope } from "effect";
 import type { Connection, Pipe } from "../pipe.ts";
-import type { Ticket } from "../proto/index.ts";
+import { Alpn, type Ticket } from "../proto/index.ts";
 import { close, described } from "./frames.ts";
 
 // A relay connection can stall for seconds while a fresh one is up in well under a second.
 const hedgeAfter: Duration.Input = "1500 millis";
 
-// proto's ALPN, which changes with every change to the client link's frames.
-const alpn = (): Uint8Array => new TextEncoder().encode("conductor/38");
+const alpn = (): Uint8Array => new TextEncoder().encode(Alpn.literal);
 
 type Dials = Ref.Ref<readonly Promise<Connection>[]>;
 

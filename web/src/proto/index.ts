@@ -20,6 +20,13 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
+export type Alpn = "conductor/38";
+
+export const Alpn = Schema.Literal("conductor/38").annotate({
+	description: "The ALPN a client dials a host with.",
+	identifier: "Alpn",
+});
+
 export type Answer = globalThis.ReadonlyArray<string>;
 
 export const Answer = Schema.Array(Schema.String).annotate({
