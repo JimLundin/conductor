@@ -17,7 +17,7 @@ def main():
     target = ROOT / "target"
     target.mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="feeds-", dir=target) as scratch:
-        scenarios = sorted(Path(name).stem for name in committed)
+        scenarios = sorted(Path(name).stem.replace(".", "::") for name in committed)
         subprocess.run(
             ["cargo", "test", "--quiet", "-p", "daemon", "--test", "e2e", "--",
              "--exact", "--test-threads=1", *scenarios],
