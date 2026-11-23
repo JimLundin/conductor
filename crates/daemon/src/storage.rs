@@ -2,7 +2,8 @@
 use anyhow::Context;
 use std::path::Path;
 
-use proto::{CommandId, CommandResult, Epoch, Event, SessionId};
+use link::CommandResult;
+use proto::{CommandId, Epoch, Event, SessionId};
 use redb::{
     Database, ReadableDatabase, ReadableTable, TableDefinition,
     WriteTransaction,
@@ -113,7 +114,8 @@ fn conversation(
     Ok(())
 }
 
-fn receipt(
+/// Stores the command's receipt in `write`.
+pub fn store_receipt(
     write: &WriteTransaction,
     key: CommandId,
     result: &CommandResult,
@@ -123,14 +125,13 @@ fn receipt(
     Ok(())
 }
 
-/// Performs one of the log's writes in `write`.
+/// Performs one of the event log's writes in `write`.
 pub fn write(
     write: &WriteTransaction,
     what: &host::log::Write,
 ) -> anyhow::Result<()> {
     match what {
         host::log::Write::Event(logged) => event(write, logged),
-        host::log::Write::Receipt(key, result) => receipt(write, *key, result),
         host::log::Write::Conversation(session, id) => {
             conversation(write, *session, id)
         }
@@ -147,12 +148,10 @@ fn decode<T: DeserializeOwned>(value: &[u8]) -> anyhow::Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use proto::{
-        CommandResult, Event, EventKind, HostSeq, RequestId, SessionId,
-        ToolCallId,
-    };
+    use link::CommandResult;
+    use proto::{Event, EventKind, HostSeq, RequestId, SessionId, ToolCallId};
 
-    use super::{Storage, conversation, event, receipt};
+    use super::{Storage, conversation, event, store_receipt};
 
     #[test]
     fn committed_events_receipts_and_conversations_reopen_together()
@@ -179,7 +178,7 @@ mod tests {
         let write = first.begin()?;
         event(&write, &opened)?;
         conversation(&write, SessionId(7), "native-conversation")?;
-        receipt(
+        store_receipt(
             &write,
             proto::CommandId(1),
             &CommandResult::Session(proto::SessionResult::Accepted),
@@ -218,7 +217,7 @@ mod tests {
                 kind: EventKind::SessionReady,
             },
         )?;
-        receipt(
+        store_receipt(
             &write,
             proto::CommandId(1),
             &CommandResult::Session(proto::SessionResult::Accepted),

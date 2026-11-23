@@ -35,8 +35,9 @@ Home Screen. The design is in
   `web/web-iroh` with wasm-pack (`npm run pipe`), which needs wasm-pack and
   clang besides the toolchain. Nothing it generates is committed.
 - **Generated and recorded files.** `web/src/proto/` is generated from
-  `proto` (ADR 0002) and never edited by hand: after changing a type the
-  client link reaches, bump `proto::ALPN` and run `tools/schemas.sh`
+  `link`'s root types (ADR 0002, ADR 0003) and never edited by hand: after
+  changing a type the client link reaches, bump `link::ALPN` and run
+  `tools/schemas.sh`
   (needs `npm ci` in `web/`), then commit both. `web/fixtures/feeds/` holds
   host feeds the web app's tests replay, as frozen data: when the client
   link changes, edit them to its new shape.
@@ -107,7 +108,7 @@ Home Screen. The design is in
   `conductord login <provider> [--account <account>]`, which picks the
   instance of that account, or without one the provider's own; build it
   with `cargo build -p conductord`. Keep provider-specific code out of `daemon`, `host`,
-  `proto` and the web app.
+  `proto`, `link` and the web app.
 - **Instances.** A host runs instances, not providers: each one account
   of a provider, keyed by `InstanceId { provider, account }`, with its own
   credential, private home (`<data>/home/<dir>`), work dir

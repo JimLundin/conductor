@@ -6,7 +6,12 @@ rule = "drift:lints.clippy.multiple_crate_versions"
 reason = "iroh's dependencies pin different majors of rand, digest, thiserror, syn, windows-sys and others; only upstream can unify them"
 
 [[exception]]
-path = "crates/proto/src/frame.rs"
+path = "crates/link/src/frame.rs"
+rule = "api"
+reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
+
+[[exception]]
+path = "crates/host/src/fleet/frame.rs"
 rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
 

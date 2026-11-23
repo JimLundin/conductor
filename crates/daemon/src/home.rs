@@ -37,12 +37,13 @@ use home::issue::{
 use home::skills;
 use home::sync::{self, Git, Sync};
 use home::{Found, Stored};
-use host::log::Completion;
 use issue_file::{read_issue, write_issue};
+use link::CommandResult;
+use link::log::Completion;
 use proto::{
-    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeCommand,
-    HomeRefusal, HomeResult, HomeSync, HostPath, IssueChange, IssueId,
-    NewIssue, ProjectId, SessionRefusal, StartAt,
+    Checkout, ClientName, Cloning, CommandId, Home, HomeCommand, HomeRefusal,
+    HomeResult, HomeSync, HostPath, IssueChange, IssueId, NewIssue, ProjectId,
+    SessionRefusal, StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;

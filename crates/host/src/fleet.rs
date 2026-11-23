@@ -1,4 +1,7 @@
-//! Fleet credential policy and configuration ordering.
+//! Fleet credential policy and configuration ordering, and the fleet
+//! protocol's framing between hosts ([`frame`]).
+
+pub mod frame;
 
 use alloc::collections::BTreeSet;
 

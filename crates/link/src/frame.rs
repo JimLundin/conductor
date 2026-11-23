@@ -1,8 +1,8 @@
-//! A frame is a `u32` big-endian body length followed by its body: JSON
-//! on the client link and postcard between hosts. Each [`Frame`] names its
-//! codec, so a message can only travel in its link's. Callers own the I/O:
-//! read [`HEADER_LEN`] bytes, pass them to [`body_len`], read that many
-//! bytes, pass them to [`decode`].
+//! A frame is a `u32` big-endian body length followed by its JSON body.
+//!
+//! Only the link's own frames ([`Frame`]) travel in it. Callers own the
+//! I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`], read that
+//! many bytes, pass them to [`decode`].
 
 use alloc::vec::Vec;
 
@@ -14,25 +14,21 @@ pub const HEADER_LEN: usize = 4;
 /// Larger frames are refused before their body is read. 16 MiB.
 pub const MAX_FRAME_LEN: u32 = 16_777_216;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Codec {
-    /// serde's JSON, on the link between a client and a host.
-    Json,
-    /// postcard, between hosts.
-    Postcard,
-}
+/// A message that opens or answers a stream on the client link.
+pub trait Frame: Serialize + DeserializeOwned {}
 
-/// A message that opens or answers a stream, in its link's codec.
-pub trait Frame: Serialize + DeserializeOwned {
-    const CODEC: Codec;
-}
+impl Frame for crate::Open {}
+
+impl Frame for crate::HelloReply {}
+
+impl Frame for crate::CommandResult {}
+
+impl Frame for crate::Feed {}
 
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
     #[error("frame of {0} bytes exceeds the {MAX_FRAME_LEN}-byte limit")]
     TooLarge(u64),
-    #[error("malformed frame body: {0}")]
-    Postcard(#[from] postcard::Error),
     #[error("malformed frame body: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -41,14 +37,10 @@ pub enum FrameError {
 ///
 /// # Errors
 ///
-/// [`FrameError::Postcard`] or [`FrameError::Json`] when `msg` doesn't
-/// serialize, and [`FrameError::TooLarge`] when its body exceeds the
-/// 16 MiB limit.
+/// [`FrameError::Json`] when `msg` doesn't serialize, and
+/// [`FrameError::TooLarge`] when its body exceeds the 16 MiB limit.
 pub fn encode<T: Frame>(msg: &T) -> Result<Vec<u8>, FrameError> {
-    let body = match T::CODEC {
-        Codec::Json => serde_json::to_vec(msg)?,
-        Codec::Postcard => postcard::to_allocvec(msg)?,
-    };
+    let body = serde_json::to_vec(msg)?;
     Ok(header(body.len())?
         .into_iter()
         .chain(body)
@@ -87,41 +79,9 @@ pub fn body_len(header: [u8; HEADER_LEN]) -> Result<usize, FrameError> {
 ///
 /// # Errors
 ///
-/// [`FrameError::Postcard`] or [`FrameError::Json`] when the body is not a
-/// `T`.
+/// [`FrameError::Json`] when the body is not a `T`.
 pub fn decode<T: Frame>(body: &[u8]) -> Result<T, FrameError> {
-    Ok(match T::CODEC {
-        Codec::Json => serde_json::from_slice(body)?,
-        Codec::Postcard => postcard::from_bytes(body)?,
-    })
-}
-
-impl Frame for crate::Open {
-    const CODEC: Codec = Codec::Json;
-}
-
-impl Frame for crate::HelloReply {
-    const CODEC: Codec = Codec::Json;
-}
-
-impl Frame for crate::CommandResult {
-    const CODEC: Codec = Codec::Json;
-}
-
-impl Frame for crate::Feed {
-    const CODEC: Codec = Codec::Json;
-}
-
-impl Frame for crate::fleet::Request {
-    const CODEC: Codec = Codec::Postcard;
-}
-
-impl Frame for crate::fleet::Reply {
-    const CODEC: Codec = Codec::Postcard;
-}
-
-impl Frame for crate::fleet::SignedConfiguration {
-    const CODEC: Codec = Codec::Postcard;
+    Ok(serde_json::from_slice(body)?)
 }
 
 #[cfg(test)]
@@ -129,13 +89,17 @@ mod tests {
     use alloc::collections::BTreeMap;
 
     use super::{HEADER_LEN, body_len, decode, encode, header};
+    use proto::{
+        Auth, AuthToken, Availability, Catalog, ClientName, CommandId,
+        Credential, Decision, Effort, Epoch, Event, EventKind, HostSeq,
+        InstanceCommand, InstanceId, InstanceStatus, Instances, ModelChoice,
+        ModelId, Models, Provider, RequestId, Resolution, SessionCommand,
+        SessionId, SessionRefusal, SessionResult, TurnOutcome,
+    };
+
     use crate::{
-        Auth, AuthToken, Availability, Catalog, ClientName, Command, CommandId,
-        CommandResult, Credential, Decision, Effort, Epoch, Event, EventKind,
-        Feed, Hello, HelloReply, HostSeq, InstanceCommand, InstanceId,
-        InstanceStatus, Instances, ModelChoice, ModelId, Models, Open,
-        Provider, RequestId, Resolution, Roster, SessionCommand, SessionId,
-        SessionRefusal, SessionResult, Subscribe, TurnOutcome, Welcome,
+        Command, CommandResult, Feed, Hello, HelloReply, Open, Subscribe,
+        Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -397,20 +361,6 @@ mod tests {
             b"\x04desk\x01\x00\x02\x00\x00\x00\x00\x01g\x01\x01u\x01\x01h\x01H\x01d\x01\x02\x01\x01h\x01\x01\x03a@b\x01\x02no\x00\x00"
         );
         assert_eq!(postcard::from_bytes::<Welcome>(&bytes)?, welcome);
-        let roster = Roster(BTreeMap::from([(
-            InstanceId::own(Provider::Codex),
-            crate::Instance::default(),
-        )]));
-        let bytes = postcard::to_allocvec(&roster)?;
-        assert_eq!(bytes, b"\x01\x01\x00\x00\x00\x00");
-        assert_eq!(postcard::from_bytes::<Roster>(&bytes)?, roster);
-        Ok(())
-    }
-
-    #[test]
-    fn fleet_traffic_stays_postcard() -> Result<(), Box<dyn std::error::Error>>
-    {
-        assert_eq!(encode(&crate::fleet::Reply::Refused)?, frame(b"\x04"));
         Ok(())
     }
 
