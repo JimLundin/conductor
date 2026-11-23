@@ -38,6 +38,16 @@ rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"
 
 [[exception]]
+path = "crates/home/src/flow/vocabulary.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home/src/home.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
 path = "crates/home/src/issue/operation.rs"
 rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"
@@ -64,16 +74,6 @@ reason = "boxes recursive or large values, which predates the plain-values rule"
 
 [[exception]]
 path = "crates/proto/src/fleet.rs"
-rule = "box"
-reason = "boxes recursive or large values, which predates the plain-values rule"
-
-[[exception]]
-path = "crates/proto/src/flow.rs"
-rule = "box"
-reason = "boxes recursive or large values, which predates the plain-values rule"
-
-[[exception]]
-path = "crates/proto/src/home.rs"
 rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"
 
