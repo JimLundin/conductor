@@ -11,6 +11,7 @@ import type {
 	InstanceId,
 	IssueId,
 	ModelId,
+	Output,
 	RequestId,
 	Resolution,
 	ToolCallId,
@@ -191,30 +192,44 @@ const requestOpened =
 
 const unchanged: Step = (session) => session;
 
+const errored =
+	(message: string): Step =>
+	(session) =>
+		pushed(session, Item.Error({ message }));
+
+const output = Match.type<Output>().pipe(
+	Match.withReturnType<Step>(),
+	Match.when({ AssistantDelta: Match.any }, ({ AssistantDelta: { text } }) =>
+		streamed("Reply", text, "Streaming"),
+	),
+	Match.when(
+		{ AssistantMessage: Match.any },
+		({ AssistantMessage: { text } }) => streamed("Reply", text, "Done"),
+	),
+	Match.when({ ReasoningDelta: Match.any }, ({ ReasoningDelta: { text } }) =>
+		streamed("Reasoning", text, "Streaming"),
+	),
+	Match.when({ Reasoning: Match.any }, ({ Reasoning: { text } }) =>
+		streamed("Reasoning", text, "Done"),
+	),
+	Match.when({ ToolCall: Match.any }, ({ ToolCall: { call, phase } }) =>
+		"Finished" in phase
+			? amended(Change.Finish({ call, outcome: phase.Finished.outcome }))
+			: toolStarted(call, phase.Started.tool),
+	),
+	Match.when({ Error: Match.any }, ({ Error: { message } }) =>
+		errored(message),
+	),
+	Match.exhaustive,
+);
+
 const step = Match.type<EventKind>()
 	.pipe(
 		Match.withReturnType<Step>(),
 		Match.when({ UserMessage: Match.any }, ({ UserMessage: { text, by } }) =>
 			userMessage(text, by),
 		),
-		Match.when({ AssistantDelta: Match.any }, ({ AssistantDelta: { text } }) =>
-			streamed("Reply", text, "Streaming"),
-		),
-		Match.when(
-			{ AssistantMessage: Match.any },
-			({ AssistantMessage: { text } }) => streamed("Reply", text, "Done"),
-		),
-		Match.when({ ReasoningDelta: Match.any }, ({ ReasoningDelta: { text } }) =>
-			streamed("Reasoning", text, "Streaming"),
-		),
-		Match.when({ Reasoning: Match.any }, ({ Reasoning: { text } }) =>
-			streamed("Reasoning", text, "Done"),
-		),
-		Match.when({ ToolCall: Match.any }, ({ ToolCall: { call, phase } }) =>
-			"Finished" in phase
-				? amended(Change.Finish({ call, outcome: phase.Finished.outcome }))
-				: toolStarted(call, phase.Started.tool),
-		),
+		Match.when({ Agent: Match.any }, ({ Agent }) => output(Agent)),
 		Match.when({ RequestOpened: Match.any }, ({ RequestOpened: body }) =>
 			requestOpened(body),
 		),
@@ -235,11 +250,8 @@ const step = Match.type<EventKind>()
 		Match.when({ TurnCompleted: Match.any }, ({ TurnCompleted: { outcome } }) =>
 			turnCompleted(outcome),
 		),
-		Match.when(
-			{ Error: Match.any },
-			({ Error: { message } }) =>
-				(session: Session) =>
-					pushed(session, Item.Error({ message })),
+		Match.when({ Error: Match.any }, ({ Error: { message } }) =>
+			errored(message),
 		),
 		Match.when(
 			{ Subagent: Match.any },

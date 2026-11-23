@@ -5,10 +5,10 @@
 use std::sync::Arc;
 
 use agents::Configuration;
+use agents::Credential;
 use codex::ThreadId;
 use codex::hub::Routed;
 use codex::runtime::{Call, Effect, Input, Open};
-use proto::Credential;
 use runtime::agent::{self, Agent, Performed};
 use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::mpsc;

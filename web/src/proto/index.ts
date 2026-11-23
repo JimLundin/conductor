@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/40";
+export type Alpn = "conductor/41";
 
-export const Alpn = Schema.Literal("conductor/40").annotate({
+export const Alpn = Schema.Literal("conductor/41").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -381,7 +381,7 @@ export type ClientName = string;
 
 export const ClientName = Schema.String.annotate({
 	description:
-		'The name a client gave in `Hello`. Shown as "by" on a resolution and a\nuser message.',
+		"The name a client gave when it connected: who answered a request, or\nsent a message.",
 	identifier: "ClientName",
 });
 
@@ -1705,6 +1705,57 @@ export const ToolPhase = Schema.Union(
 	{ mode: "oneOf" },
 ).annotate({ identifier: "ToolPhase" });
 
+export type Output =
+	| { readonly AssistantDelta: { readonly text: string } }
+	| { readonly AssistantMessage: { readonly text: string } }
+	| { readonly ReasoningDelta: { readonly text: string } }
+	| { readonly Reasoning: { readonly text: string } }
+	| {
+			readonly ToolCall: {
+				readonly call: ToolCallId;
+				readonly phase: ToolPhase;
+			};
+	  }
+	| { readonly Error: { readonly message: string } };
+
+export const Output = Schema.Union(
+	[
+		Schema.Struct({
+			AssistantDelta: Schema.Struct({ text: Schema.String }),
+		}).annotate({
+			description:
+				"A fragment of the assistant message being streamed. The\n`AssistantMessage` that follows replaces them.",
+		}),
+		Schema.Struct({
+			AssistantMessage: Schema.Struct({ text: Schema.String }),
+		}).annotate({
+			description:
+				"The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
+		}),
+		Schema.Struct({
+			ReasoningDelta: Schema.Struct({ text: Schema.String }),
+		}).annotate({
+			description:
+				"A fragment of the agent's reasoning as it streams. The `Reasoning`\nthat follows replaces them.",
+		}),
+		Schema.Struct({
+			Reasoning: Schema.Struct({ text: Schema.String }),
+		}).annotate({
+			description:
+				"The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
+		}),
+		Schema.Struct({
+			ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }),
+		}),
+		Schema.Struct({
+			Error: Schema.Struct({ message: Schema.String }),
+		}).annotate({
+			description: "Something went wrong that did not end the session.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({ identifier: "Output" });
+
 export type QuestionOption = {
 	readonly description: string;
 	readonly label: string;
@@ -2005,16 +2056,7 @@ export type EventKind =
 	| "SessionReady"
 	| { readonly SessionClosed: { readonly reason: CloseReason } }
 	| { readonly UserMessage: { readonly by: ClientName; readonly text: string } }
-	| { readonly AssistantDelta: { readonly text: string } }
-	| { readonly AssistantMessage: { readonly text: string } }
-	| { readonly ReasoningDelta: { readonly text: string } }
-	| { readonly Reasoning: { readonly text: string } }
-	| {
-			readonly ToolCall: {
-				readonly call: ToolCallId;
-				readonly phase: ToolPhase;
-			};
-	  }
+	| { readonly Agent: Output }
 	| {
 			readonly RequestOpened: {
 				readonly call: ToolCallId;
@@ -2088,32 +2130,9 @@ export const EventKind = Schema.Union(
 		Schema.Struct({
 			UserMessage: Schema.Struct({ by: ClientName, text: Schema.String }),
 		}),
-		Schema.Struct({
-			AssistantDelta: Schema.Struct({ text: Schema.String }),
-		}).annotate({
+		Schema.Struct({ Agent: Output }).annotate({
 			description:
-				"A fragment of the assistant message being streamed. Live only: the\nhost stores none, so a subscription never replays one, and the\n`AssistantMessage` that follows replaces them. It carries the seq of\nthe stored event before it, which may be another session's, so a\nclient that has applied that seq takes it and one that hasn't sees a\ngap.",
-		}),
-		Schema.Struct({
-			AssistantMessage: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
-		}),
-		Schema.Struct({
-			ReasoningDelta: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"A fragment of the agent's reasoning as it streams. Live only, like\n`AssistantDelta`; the `Reasoning` that follows replaces them.",
-		}),
-		Schema.Struct({
-			Reasoning: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
-		}),
-		Schema.Struct({
-			ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }),
+				"What the agent produced. An `AssistantDelta` or a `ReasoningDelta`\nis live only: the host stores none, so a subscription never replays\none, and the message or reasoning that follows replaces them. It\ncarries the seq of the stored event before it, which may be another\nsession's, so a client that has applied that seq takes it and one\nthat hasn't sees a gap.",
 		}),
 		Schema.Struct({
 			RequestOpened: Schema.Struct({
@@ -2146,7 +2165,8 @@ export const EventKind = Schema.Union(
 		Schema.Struct({
 			Error: Schema.Struct({ message: Schema.String }),
 		}).annotate({
-			description: "Something went wrong that did not end the session.",
+			description:
+				"Something went wrong in the host, such as a snapshot or a removal,\nthat did not end the session. An error the agent reports is its\n`Output::Error`.",
 		}),
 		Schema.Struct({
 			ModelChanged: Schema.Struct({

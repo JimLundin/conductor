@@ -21,7 +21,8 @@ use core::mem;
 use crate::prelude::*;
 use crate::snapshots::Book;
 pub use crate::snapshots::{Compared, SnapshotPlan};
-use agents::runtime::{Command, Outcome, Start, Started};
+use agents::Output;
+use agents::runtime::{Command, Directory, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -685,7 +686,9 @@ impl Session {
 
     fn agent_step(&mut self, step: Step) -> Vec<Effect> {
         match step {
-            Step::Emit(kind) => Vec::from([Effect::Emit(kind)]),
+            Step::Emit(output) => {
+                Vec::from([Effect::Emit(EventKind::Agent(output))])
+            }
             Step::Open {
                 agent,
                 native,
@@ -822,10 +825,10 @@ impl Session {
         outcome: ToolOutcome,
     ) -> Vec<Effect> {
         let finished = self.finished(None, &call, outcome);
-        Vec::from([Effect::Emit(EventKind::ToolCall {
+        Vec::from([Effect::Emit(EventKind::Agent(Output::ToolCall {
             call,
             phase: ToolPhase::Finished { outcome: finished },
-        })])
+        }))])
     }
 
     fn subagent_activity(
@@ -1057,8 +1060,8 @@ impl Session {
     fn start(&mut self) -> Vec<Effect> {
         self.flow = Flow::Starting;
         Vec::from([Effect::Call(Call::Agent(Command::Start(Start {
-            session: self.id,
-            directory: self.directory.clone(),
+            session: agents::runtime::Session(self.id.0),
+            directory: Directory(self.directory.0.clone()),
             model: self.choice.model.clone(),
             effort: self.choice.effort,
             conversation: self.conversation.clone(),

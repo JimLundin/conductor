@@ -1,8 +1,6 @@
-use proto::CloseReason;
-
 use super::{Command, Event, Outcome, Started};
 use crate::prelude::*;
-use crate::{Note, Step};
+use crate::{CloseReason, Note, Step};
 
 pub const NOT_RUNNING: &str = "the agent is not running";
 
@@ -109,8 +107,8 @@ impl Lifecycle {
 mod tests {
     use super::{Lifecycle, Report};
     use crate::runtime::{Command, Event, Outcome, Started};
+    use crate::{CloseReason, Provider};
     use crate::{NativeTurn, Note, Step};
-    use proto::{CloseReason, Provider};
 
     fn start(lifecycle: &mut Lifecycle) {
         let started = Started {

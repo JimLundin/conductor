@@ -26,7 +26,9 @@ type Sessions = Host["sessions"];
 // A live delta repeats the last stored seq, which may be another session's.
 const isDelta = (event: Event): boolean =>
 	typeof event.kind === "object" &&
-	("AssistantDelta" in event.kind || "ReasoningDelta" in event.kind);
+	"Agent" in event.kind &&
+	("AssistantDelta" in event.kind.Agent ||
+		"ReasoningDelta" in event.kind.Agent);
 
 const without = (sessions: Sessions, id: SessionId): Sessions =>
 	new Map([...sessions].filter(([known]) => known !== id));

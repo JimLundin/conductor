@@ -336,7 +336,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Hel" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Hel" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -347,7 +347,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "lo" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "lo" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -358,7 +358,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Hello" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "Hello" } } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -731,7 +731,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Hel" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Hel" } } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -742,7 +742,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "lo" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "lo" } } },
 				"seq": 6,
 				"session": "00000000000000000000000002"
 			}
@@ -753,7 +753,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Hello" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "Hello" } } },
 				"seq": 7,
 				"session": "00000000000000000000000002"
 			}
@@ -1073,7 +1073,7 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Hello" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "Hello" } } },
 				"seq": 7,
 				"session": "00000000000000000000000002"
 			}
@@ -1438,7 +1438,7 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Hello" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "Hello" } } },
 				"seq": 7,
 				"session": "00000000000000000000000002"
 			}

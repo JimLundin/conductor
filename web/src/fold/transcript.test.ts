@@ -76,7 +76,7 @@ test("reasoning streams into one item that its text replaces, and a continue sho
 		[1, "SessionReady"],
 		[1, reasoned("Look")],
 		[1, reasoned("ing")],
-		[1, { Reasoning: { text: "Looking." } }],
+		[1, { Agent: { Reasoning: { text: "Looking." } } }],
 		[1, reasoned("Again")],
 		[1, delta("Hi")],
 		[1, exited("9")],

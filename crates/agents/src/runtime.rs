@@ -10,16 +10,24 @@ mod lifecycle;
 
 pub use lifecycle::{Lifecycle, NOT_RUNNING, Report};
 
-use proto::{ClientName, Effort, HostPath, ModelId, SessionId};
-
 use crate::prelude::*;
-use crate::{NativeRequest, NativeTurn, Reply, Step};
+use crate::{
+    ClientName, Effort, ModelId, NativeRequest, NativeTurn, Reply, Step,
+};
+
+/// The session an agent runs for, by the id its host gave it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Session(pub u128);
+
+/// The directory an agent works in, as the host's OS spells it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Directory(pub String);
 
 /// Providers decide how to fall back when the saved conversation is missing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Start {
-    pub session: SessionId,
-    pub directory: HostPath,
+    pub session: Session,
+    pub directory: Directory,
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
     /// The conversation the session saved once a turn started in it.

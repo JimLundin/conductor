@@ -339,13 +339,15 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Command": {
-										"command": "/usr/bin/zsh -lc 'printf %s d > d.txt'"
+					"Agent": {
+						"ToolCall": {
+							"call": "exec-c1e73e4d-1cac-431e-baf8-8bf5b779606b",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Command": {
+											"command": "/usr/bin/zsh -lc 'printf %s d > d.txt'"
+										}
 									}
 								}
 							}
@@ -454,7 +456,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "pong" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -465,7 +467,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "pong" } } },
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}

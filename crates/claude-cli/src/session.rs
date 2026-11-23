@@ -3,8 +3,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::{Effort, Models};
 use claude::ClaudeCredential;
-use proto::{Effort, Models};
 use serde_json::Value;
 
 use agents::Exit;
@@ -382,7 +382,7 @@ fn command(opts: &ClaudeOptions, id: &SessionId, sandbox: Sandbox) -> Command {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use proto::Effort;
+    use agents::Effort;
 
     use super::{
         ClaudeOptions, PermissionMode, Resume, Sandbox, SessionId,

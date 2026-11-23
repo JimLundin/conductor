@@ -42,4 +42,4 @@ pub use sign_in::{
 };
 
 /// Claude, as its plugin names it.
-pub const PROVIDER: proto::Provider = proto::Provider::new("claude");
+pub const PROVIDER: agents::Provider = agents::Provider::new("claude");

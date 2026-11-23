@@ -5,7 +5,7 @@
 use alloc::collections::BTreeSet;
 
 use agents::Exit;
-use proto::{
+use agents::{
     Answer, Change, ChecklistEntry, ChecklistStatus, Effort, FileChange,
     ModelChoice, ModelId, Models, Question, QuestionOption, Selection,
     SubagentOutcome, ToolKind, ToolOutcome, TurnOutcome,
@@ -1161,7 +1161,7 @@ fn answered(input: Value, given: Vec<Answer>) -> serde_json::Result<Value> {
 mod tests {
     use serde_json::Value;
 
-    use proto::{
+    use agents::{
         Answer, Change, Effort, FileChange, ModelId, Question, QuestionOption,
         Selection, SubagentOutcome, ToolKind, ToolOutcome, TurnOutcome,
     };

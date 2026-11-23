@@ -337,12 +337,17 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-alpha",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Other": { "detail": "Inspect alpha", "name": "Spawn agent" }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-alpha",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Other": {
+											"detail": "Inspect alpha",
+											"name": "Spawn agent"
+										}
+									}
 								}
 							}
 						}
@@ -359,9 +364,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-alpha",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-alpha",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 8,
@@ -412,12 +419,14 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-beta",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Other": { "detail": "/root/beta", "name": "Spawn agent" }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-beta",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Other": { "detail": "/root/beta", "name": "Spawn agent" }
+									}
 								}
 							}
 						}
@@ -434,9 +443,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-beta",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-beta",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 12,
@@ -652,7 +663,9 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Delegation done." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Delegation done." } }
+				},
 				"seq": 23,
 				"session": "00000000000000000000000001"
 			}
@@ -973,12 +986,17 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-alpha",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Other": { "detail": "Inspect alpha", "name": "Spawn agent" }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-alpha",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Other": {
+											"detail": "Inspect alpha",
+											"name": "Spawn agent"
+										}
+									}
 								}
 							}
 						}
@@ -995,9 +1013,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-alpha",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-alpha",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 8,
@@ -1048,12 +1068,14 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-beta",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Other": { "detail": "/root/beta", "name": "Spawn agent" }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-beta",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Other": { "detail": "/root/beta", "name": "Spawn agent" }
+									}
 								}
 							}
 						}
@@ -1070,9 +1092,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "spawn-beta",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "spawn-beta",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 12,
@@ -1287,7 +1311,9 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Delegation done." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Delegation done." } }
+				},
 				"seq": 23,
 				"session": "00000000000000000000000001"
 			}

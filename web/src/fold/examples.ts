@@ -46,11 +46,11 @@ const created = (directory: string): EventKind => ({
 const ls = { Command: { command: "ls" } } as const;
 
 const started = (call: string): EventKind => ({
-	ToolCall: { call, phase: { Started: { tool: ls } } },
+	Agent: { ToolCall: { call, phase: { Started: { tool: ls } } } },
 });
 
 const finished = (call: string): EventKind => ({
-	ToolCall: { call, phase: { Finished: { outcome: "Succeeded" } } },
+	Agent: { ToolCall: { call, phase: { Finished: { outcome: "Succeeded" } } } },
 });
 
 const opened = (request: number): EventKind => ({
@@ -63,9 +63,13 @@ const opened = (request: number): EventKind => ({
 	},
 });
 
-const delta = (text: string): EventKind => ({ AssistantDelta: { text } });
+const delta = (text: string): EventKind => ({
+	Agent: { AssistantDelta: { text } },
+});
 
-const reasoned = (text: string): EventKind => ({ ReasoningDelta: { text } });
+const reasoned = (text: string): EventKind => ({
+	Agent: { ReasoningDelta: { text } },
+});
 
 const user = (text: string): EventKind => ({
 	UserMessage: { text, by: "phone" },

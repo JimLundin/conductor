@@ -387,8 +387,8 @@ test("a reply shows streaming while its deltas arrive", () => {
 		[1, created(directory)],
 		[1, "SessionReady"],
 		[1, user("hi")],
-		[1, { AssistantDelta: { text: "Hel" } }],
-		[1, { AssistantDelta: { text: "lo" } }],
+		[1, { Agent: { AssistantDelta: { text: "Hel" } } }],
+		[1, { Agent: { AssistantDelta: { text: "lo" } } }],
 	]);
 	expect(view(host)).toContain(
 		'<div class="reply streaming"><div class="markdown"><p><span>Hello</span>',

@@ -2,8 +2,8 @@
 //! decides: its command line, its environment and whether its version
 //! runs.
 
+use agents::Effort;
 use agents::{Config, HomeKind, Invocation, Note, Profile, Reported, Var};
-use proto::Effort;
 use serde_json::Value;
 
 use crate::prelude::*;
@@ -391,8 +391,8 @@ pub const fn unprotected(
 
 #[cfg(test)]
 mod tests {
+    use agents::Effort;
     use agents::{HomeKind, Invocation, Note, Var};
-    use proto::Effort;
     use serde_json::json;
 
     use super::{
@@ -654,7 +654,7 @@ mod tests {
     fn the_first_result_with_errors_says_why_the_cli_refused() {
         let finished = |errors: &[&str]| ClaudeEvent::TurnFinished {
             subtype: String::from("error_during_execution"),
-            outcome: proto::TurnOutcome::Failed {
+            outcome: agents::TurnOutcome::Failed {
                 message: String::from("failed"),
             },
             terminal_reason: None,

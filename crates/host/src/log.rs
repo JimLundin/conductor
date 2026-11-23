@@ -11,6 +11,7 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
 use core::mem;
 
+use agents::Output;
 use proto::{
     Catalog, CommandId, CommandResult, Epoch, Event, EventKind, Home, HostSeq,
     Instances, SessionId, Subscribe, Welcome,
@@ -155,12 +156,13 @@ pub struct Log {
 }
 
 /// A streaming delta goes live with the last stored event's seq and is
-/// never stored (see `EventKind::AssistantDelta`).
+/// never stored (see `Output::AssistantDelta`).
 #[must_use]
 pub const fn live_only(kind: &EventKind) -> bool {
     matches!(
         kind,
-        EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. }
+        EventKind::Agent(Output::AssistantDelta { .. })
+            | EventKind::Agent(Output::ReasoningDelta { .. })
     )
 }
 

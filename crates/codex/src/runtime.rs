@@ -12,7 +12,7 @@ use agents::Step;
 use agents::runtime::{
     Command, Event, Lifecycle, Outcome, Report, Start, Started,
 };
-use proto::{CloseReason, Effort};
+use agents::{CloseReason, Effort};
 
 use crate::hub::Routed;
 use crate::mapping::codex_note;
@@ -193,12 +193,13 @@ fn call(call: Call, then: Then) -> Vec<Effect> {
 
 #[cfg(test)]
 mod tests {
-    use agents::runtime::{Command, Event, Outcome, Report, Start, Started};
-    use agents::{NativeRequest, NativeTurn, Note, Reply, Step};
-    use proto::{
-        ClientName, CloseReason, Decision as Chosen, Effort, HostPath, ModelId,
-        SessionId,
+    use agents::runtime::{
+        Command, Directory, Event, Outcome, Report, Session, Start, Started,
     };
+    use agents::{
+        ClientName, CloseReason, Decision as Chosen, Effort, ModelId,
+    };
+    use agents::{NativeRequest, NativeTurn, Note, Reply, Step};
     use serde_json::json;
 
     use super::{Call, Effect, Input, Open, Runtime, Then};
@@ -237,8 +238,8 @@ mod tests {
             Vec::from([
                 Input::Command(Command::Start(Start {
                     instructions: None,
-                    session: SessionId(1),
-                    directory: HostPath(text("/work")),
+                    session: Session(1),
+                    directory: Directory(text("/work")),
                     model: Some(ModelId(text("gpt"))),
                     effort: Some(Effort::High),
                     conversation: Some(text("th_1")),

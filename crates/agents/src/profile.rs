@@ -4,10 +4,8 @@
 //! that probe the CLI and sign it in. Each provider's core describes its
 //! own (`claude::profile`, `codex::profile`).
 
-use proto::{Provider, ProviderInfo};
-
 use crate::prelude::*;
-use crate::{Invocation, SignIn};
+use crate::{Invocation, Provider, ProviderInfo, SignIn};
 
 /// The file a CLI's private home gets on its first start only, since the
 /// CLI edits its own config too.

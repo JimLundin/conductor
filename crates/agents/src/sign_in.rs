@@ -4,8 +4,24 @@
 //! back on the CLI's stdin, and what its failures mean. The host reads the
 //! output line by line against the description; it never keeps or logs it.
 
+use core::fmt;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::Invocation;
 use crate::prelude::*;
+
+/// The code a person pastes from a sign-in page. It is a secret: its
+/// `Debug` doesn't print it, so no log line carries it.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SignInCode(pub String);
+
+impl fmt::Debug for SignInCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SignInCode(..)")
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignIn {
@@ -153,6 +169,7 @@ fn skip_escape(chars: &mut core::str::Chars<'_>) {
 
 #[cfg(test)]
 mod tests {
+
     use super::{Failure, Pick, Shown, SignIn, Word, plain};
     use crate::Invocation;
 
@@ -275,6 +292,14 @@ mod tests {
                 device.failure("something else"),
             ],
             [Some("The code expired."), None]
+        );
+    }
+
+    #[test]
+    fn a_code_never_prints() {
+        assert_eq!(
+            format!("{:?}", super::SignInCode(String::from("abc#def"))),
+            "SignInCode(..)"
         );
     }
 }

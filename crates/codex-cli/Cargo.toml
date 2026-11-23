@@ -12,7 +12,6 @@ layer = "shell"
 agents = { path = "../agents" }
 codex = { path = "../codex" }
 install = { path = "../install" }
-proto = { path = "../proto" }
 runtime = { path = "../runtime" }
 serde_json = { workspace = true, features = ["std"] }
 tempfile = "3.27"

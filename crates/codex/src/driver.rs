@@ -474,8 +474,8 @@ fn logged<R, S, E>(
 mod tests {
     use std::collections::BTreeMap;
 
+    use agents::Answer;
     use agents::{Exit, Note};
-    use proto::Answer;
     use serde_json::{Value, json};
 
     use super::{

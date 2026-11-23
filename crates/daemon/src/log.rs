@@ -555,6 +555,7 @@ impl LogActor {
 
 #[cfg(test)]
 mod tests {
+    use agents::Output;
     use proto::{
         Auth, Availability, Catalog, Epoch, EventKind, HostSeq, InstanceId,
         InstanceStatus, Instances, Models, Provider, SessionId, Welcome,
@@ -563,15 +564,15 @@ mod tests {
     use super::Log;
 
     fn delta(text: &str) -> EventKind {
-        EventKind::AssistantDelta {
+        EventKind::Agent(Output::AssistantDelta {
             text: String::from(text),
-        }
+        })
     }
 
     fn message(text: &str) -> EventKind {
-        EventKind::AssistantMessage {
+        EventKind::Agent(Output::AssistantMessage {
             text: String::from(text),
-        }
+        })
     }
 
     fn instances() -> Instances {
@@ -603,9 +604,9 @@ mod tests {
         log.append(SessionId(1), delta("a")).await?;
         log.append(
             SessionId(1),
-            EventKind::ReasoningDelta {
+            EventKind::Agent(Output::ReasoningDelta {
                 text: String::from("thinking"),
-            },
+            }),
         )
         .await?;
         log.append(SessionId(1), message("a")).await?;
@@ -635,9 +636,9 @@ mod tests {
                 (HostSeq(1), delta("a")),
                 (
                     HostSeq(1),
-                    EventKind::ReasoningDelta {
+                    EventKind::Agent(Output::ReasoningDelta {
                         text: String::from("thinking"),
-                    },
+                    }),
                 ),
                 (HostSeq(2), message("a")),
             ]
@@ -658,6 +659,7 @@ mod tests {
 mod durability_tests {
     use std::time::Duration;
 
+    use agents::Output;
     use proto::{CommandId, CommandResult, EventKind, HostSeq, SessionId};
 
     use super::{BeginCommand, CommandLease, CommandStart, Kind, Log, LogMsg};
@@ -858,9 +860,9 @@ mod durability_tests {
         log.append(SessionId(1), EventKind::SessionReady).await?;
         log.append(
             SessionId(1),
-            EventKind::AssistantDelta {
+            EventKind::Agent(Output::AssistantDelta {
                 text: String::from("a"),
-            },
+            }),
         )
         .await?;
         assert_eq!(log.subscribe(HostSeq(0)).await?.replay, Vec::new());

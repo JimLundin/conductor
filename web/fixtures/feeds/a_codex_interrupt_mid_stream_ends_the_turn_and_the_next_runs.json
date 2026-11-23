@@ -338,7 +338,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "1" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "1" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -350,7 +350,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "\n" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "\n" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -413,7 +413,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "pong" } } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -424,7 +424,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "pong" } } },
 				"seq": 11,
 				"session": "00000000000000000000000001"
 			}

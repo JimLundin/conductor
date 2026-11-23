@@ -337,7 +337,9 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ReasoningDelta": { "text": "**Assessing primality**\n\nI" }
+					"Agent": {
+						"ReasoningDelta": { "text": "**Assessing primality**\n\nI" }
+					}
 				},
 				"seq": 6,
 				"session": "00000000000000000000000001"
@@ -349,7 +351,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " need" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -360,7 +362,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -371,7 +373,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " determine" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " determine" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -382,7 +384,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " if" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " if" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -393,7 +395,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " 1" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -404,7 +406,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -415,7 +417,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "000" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -426,7 +428,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -437,7 +439,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "003" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -448,7 +450,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " is" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -459,7 +461,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " prime" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -470,7 +472,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -481,7 +483,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " To" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " To" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -492,7 +494,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " do" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " do" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -503,7 +505,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " this" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " this" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -514,7 +516,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -525,7 +527,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -536,7 +538,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " should" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " should" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -547,7 +549,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " check" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " check" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -558,7 +560,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " its" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " its" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -569,7 +571,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " divis" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " divis" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -580,7 +582,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "ors" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "ors" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -591,7 +593,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " up" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " up" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -602,7 +604,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -613,7 +615,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " the" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -624,7 +626,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " square" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " square" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -635,7 +637,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " root" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " root" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -646,7 +648,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " of" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " of" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -657,7 +659,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " about" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " about" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -668,7 +670,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " 1" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -679,7 +681,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -690,7 +692,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "000" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -701,7 +703,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -712,7 +714,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " It" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -723,7 +725,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " seems" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " seems" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -734,7 +736,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -745,7 +747,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " recall" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " recall" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -756,7 +758,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " that" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " that" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -767,7 +769,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " 1" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -778,7 +780,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -789,7 +791,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "000" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -800,7 +802,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -811,7 +813,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "003" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -822,7 +824,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " is" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -833,7 +835,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " a" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " a" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -844,7 +846,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " known" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " known" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -855,7 +857,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " prime" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -866,7 +868,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " number" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " number" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -877,7 +879,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -888,7 +890,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " often" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " often" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -899,7 +901,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " recognized" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " recognized" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -910,7 +912,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " as" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " as" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -921,7 +923,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " the" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -932,7 +934,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " first" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " first" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -943,7 +945,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " prime" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -954,7 +956,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " above" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " above" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -965,7 +967,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " one" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " one" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -976,7 +978,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " million" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " million" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -987,7 +989,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -998,7 +1000,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1009,7 +1011,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " think" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " think" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1020,7 +1022,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1031,7 +1033,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " can" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " can" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1042,7 +1044,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " confidently" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " confidently" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1053,7 +1055,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " answer" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " answer" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1064,7 +1066,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " \"" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " \"" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1075,7 +1077,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "yes" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "yes" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1086,7 +1088,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "\"" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "\"" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1097,7 +1099,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1108,7 +1110,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " the" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1119,7 +1121,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " user's" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " user's" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1130,7 +1132,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " question" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " question" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1141,7 +1143,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " without" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " without" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1152,7 +1154,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " needing" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " needing" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1163,7 +1165,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " any" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " any" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1174,7 +1176,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " tools" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " tools" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1185,7 +1187,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1196,7 +1198,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " It" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1207,7 +1209,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "\u2019s" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "\u2019s" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1218,7 +1220,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " important" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " important" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1229,7 +1231,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1240,7 +1242,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " verify" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " verify" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1251,7 +1253,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " my" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " my" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1262,7 +1264,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " information" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " information" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1273,7 +1275,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " carefully" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " carefully" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1284,7 +1286,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1295,7 +1297,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " though" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " though" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1306,7 +1308,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "!" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "!" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -1318,8 +1320,10 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"Reasoning": {
-						"text": "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It\u2019s important to verify my information carefully, though!"
+					"Agent": {
+						"Reasoning": {
+							"text": "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It\u2019s important to verify my information carefully, though!"
+						}
 					}
 				},
 				"seq": 7,
@@ -1332,7 +1336,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Yes" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Yes" } } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -1343,7 +1347,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "." } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "." } } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -1354,7 +1358,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Yes." } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "Yes." } } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -1423,7 +1427,9 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ReasoningDelta": { "text": "**Compiling numbers**\n\nI'm" }
+					"Agent": {
+						"ReasoningDelta": { "text": "**Compiling numbers**\n\nI'm" }
+					}
 				},
 				"seq": 12,
 				"session": "00000000000000000000000001"
@@ -1435,7 +1441,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " tasked" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " tasked" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1446,7 +1452,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " with" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " with" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1457,7 +1463,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " creating" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " creating" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1468,7 +1474,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " a" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " a" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1479,7 +1485,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " list" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " list" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1490,7 +1496,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " of" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " of" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1501,7 +1507,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " 300" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " 300" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1512,7 +1518,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " numbers" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " numbers" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1523,7 +1529,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1534,7 +1540,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " one" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " one" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1545,7 +1551,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " per" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " per" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1556,7 +1562,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " line" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " line" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1567,7 +1573,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1578,7 +1584,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " It" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1589,7 +1595,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " sounds" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " sounds" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1600,7 +1606,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " massive" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " massive" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -1611,722 +1617,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " but" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " straightforward" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "\u2014" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "I'll" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " ensure" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " each" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " number" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " is" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " on" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " its" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " own" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " line" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " need" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " focus" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " on" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " accuracy" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " while" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " keeping" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " the" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " format" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " neat" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " There" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " are" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " around" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " 600" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " tokens" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " work" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " with" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " overall" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " Luckily" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "," } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " it" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " seems" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " won" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "\u2019t" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " need" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " any" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " tools" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " for" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " this" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " task" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": ";" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " I" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " just" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " need" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " to" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " produce" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " the" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " exact" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " output" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " as" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " required" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "." } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " Let's" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " get" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " started" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " on" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " this" } },
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "!" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " but" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -2338,8 +1629,727 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"Reasoning": {
-						"text": "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward\u2014I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won\u2019t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!"
+					"Agent": { "ReasoningDelta": { "text": " straightforward" } }
+				},
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "\u2014" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "I'll" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " ensure" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " each" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " number" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " on" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " its" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " own" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " line" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " focus" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " on" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " accuracy" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " while" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " keeping" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " format" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " neat" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " There" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " are" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " around" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " 600" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " tokens" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " work" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " with" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " overall" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " Luckily" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " it" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " seems" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " won" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "\u2019t" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " any" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " tools" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " for" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " this" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " task" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": ";" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " just" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " produce" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " exact" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " output" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " as" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " required" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " Let's" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " get" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " started" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " on" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " this" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "!" } } },
+				"seq": 12,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"Reasoning": {
+							"text": "**Compiling numbers**\n\nI'm tasked with creating a list of 300 numbers, one per line. It sounds massive but straightforward\u2014I'll ensure each number is on its own line. I need to focus on accuracy while keeping the format neat. There are around 600 tokens to work with overall. Luckily, it seems I won\u2019t need any tools for this task; I just need to produce the exact output as required. Let's get started on this!"
+						}
 					}
 				},
 				"seq": 13,
@@ -2352,7 +2362,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "1" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "1" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -2363,7 +2373,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "\n" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "\n" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -2374,7 +2384,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "2" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "2" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -2453,7 +2463,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "qu" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "qu" } } },
 				"seq": 18,
 				"session": "00000000000000000000000001"
 			}
@@ -2464,7 +2474,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "ince" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "ince" } } },
 				"seq": 18,
 				"session": "00000000000000000000000001"
 			}
@@ -2475,7 +2485,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "quince" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "quince" } } },
 				"seq": 19,
 				"session": "00000000000000000000000001"
 			}

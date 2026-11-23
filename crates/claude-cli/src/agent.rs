@@ -7,12 +7,12 @@ use std::sync::Arc;
 
 use agents::Configuration;
 use agents::runtime::NOT_RUNNING;
+use agents::{Credential, Models, SignInCode};
 use claude::ClaudeCredential;
 use claude::runtime::{Call, Effect, Input, Refusal, Spawn};
 use claude::{
     ClaudeEvent, PermissionMode, Resume, SettingSource, VersionPolicy,
 };
-use proto::{Credential, Models, SignInCode};
 use runtime::agent::{self, Agent, Performed};
 use runtime::{
     Configuring, CredentialSigningIn, Instance, Launch, ProviderInstance,

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use agents::Effort;
 use codex::CodexCredential;
-use proto::Effort;
 use serde_json::Value;
 
 use agents::Exit;
@@ -154,7 +154,7 @@ impl CodexServer {
     /// # Errors
     /// Fails when Codex has exited, does not answer in time, rejects the
     /// request or answers with something we cannot read.
-    pub async fn list_models(&self) -> Result<proto::Models, Error> {
+    pub async fn list_models(&self) -> Result<agents::Models, Error> {
         Ok(models(request(&self.commands, Call::ModelList).await?)?)
     }
 

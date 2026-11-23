@@ -306,7 +306,10 @@ A session asks one interface for its agent, whichever provider runs it:
 the runtime protocol `agents::runtime`. The session sends a `Command`
 (start or resume at a history anchor, send, interrupt, reply, list or
 revert turns, shut down) and waits for its
-`Outcome`; meanwhile the agent reports `Step`s. The handle is
+`Outcome`; meanwhile the agent reports `Step`s, among them `Step::Emit`
+of an `agents::Output` (the assistant and reasoning text, streamed and
+finished, a tool call, an error), which the host logs as
+`EventKind::Agent`. The handle is
 `runtime::Runtime`, a channel pair.
 
 The daemon knows each provider only by the `runtime::Plugin` it is handed,
@@ -1704,7 +1707,7 @@ type and a message can only travel in its link's:
 
 | Link | Codec | Messages |
 |---|---|---|
-| Client and host (`proto::ALPN`, `conductor/40`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`proto::ALPN`, `conductor/41`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` on a host, `web-iroh` in the browser.

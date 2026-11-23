@@ -8,9 +8,11 @@
 //! `claude-cli` runs it: it turns each command, call outcome and Claude
 //! event into an [`Input`], and performs each [`Effect`] in order.
 
+use agents::Effort;
 use agents::Note;
-use agents::runtime::{Command, Lifecycle, Outcome, Report, Start, Started};
-use proto::{Effort, HostPath, SessionId as Session};
+use agents::runtime::{
+    Command, Directory, Lifecycle, Outcome, Report, Session, Start, Started,
+};
 
 use crate::prelude::*;
 use crate::{
@@ -30,7 +32,7 @@ pub struct Refusal {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spawn {
     pub session: Session,
-    pub directory: HostPath,
+    pub directory: Directory,
     pub model: Option<String>,
     pub effort: Option<Effort>,
     pub resume: Resume,
@@ -240,11 +242,11 @@ fn called(then: Then, outcome: Result<(), String>) -> Vec<Effect> {
 
 #[cfg(test)]
 mod tests {
-    use agents::runtime::{Command, Event, Outcome, Report, Start, Started};
-    use agents::{NativeRequest, NativeTurn, Reply};
-    use proto::{
-        ClientName, Decision, Effort, HostPath, ModelId, SessionId as Session,
+    use agents::runtime::{
+        Command, Directory, Event, Outcome, Report, Session, Start, Started,
     };
+    use agents::{ClientName, Decision, Effort, ModelId};
+    use agents::{NativeRequest, NativeTurn, Reply};
 
     use super::{Call, Effect, Input, Refusal, Runtime, Spawn, Then};
     use crate::{PermissionDecision, PermissionRequestId, Resume, SessionId};
@@ -272,7 +274,7 @@ mod tests {
         Input::Command(Command::Start(Start {
             instructions: None,
             session: Session(1),
-            directory: HostPath(text("/work")),
+            directory: Directory(text("/work")),
             model: Some(ModelId(text("haiku"))),
             effort: Some(Effort::Low),
             conversation: conversation.map(text),
@@ -283,7 +285,7 @@ mod tests {
         Effect::Spawn(Spawn {
             instructions: None,
             session: Session(1),
-            directory: HostPath(text("/work")),
+            directory: Directory(text("/work")),
             model: Some(text("haiku")),
             effort: Some(Effort::Low),
             resume,

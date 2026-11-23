@@ -5,11 +5,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use agents::Var;
+use agents::{Credential, SignInCode};
 use install::Home;
 use portable_pty::{
     Child, CommandBuilder, MasterPty, PtySize, native_pty_system,
 };
-use proto::{Credential, SignInCode};
 use runtime::Launch;
 use tokio::sync::{mpsc, oneshot};
 

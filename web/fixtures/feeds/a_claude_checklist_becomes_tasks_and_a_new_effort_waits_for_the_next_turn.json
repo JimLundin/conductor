@@ -380,9 +380,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_011tjQErEH9xFD9gKFRe5PbD",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 9,
@@ -415,9 +417,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_01WekQbhpc1TdMBHbx5kf7e9",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 11,
@@ -450,9 +454,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_017z4Mk6iLT8HvumDv3paetP",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 13,
@@ -465,7 +471,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Done. I" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Done. I" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -476,7 +482,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " made" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " made" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -487,7 +493,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " the three" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " the three" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -498,73 +504,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "-item" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " checklist, then" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " marked \"" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "Write a.txt\" in" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " progress and completed." } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " I sent the in" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "-progress and completed upd" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "-item" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -576,7 +516,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantDelta": { "text": "ates in one batch rather than" }
+					"Agent": { "AssistantDelta": { "text": " checklist, then" } }
 				},
 				"seq": 13,
 				"session": "00000000000000000000000001"
@@ -588,51 +528,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " wa" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "iting between" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " them, so the in-progress" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " state was never sh" } },
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "own on" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " marked \"" } } },
 				"seq": 13,
 				"session": "00000000000000000000000001"
 			}
@@ -644,7 +540,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantDelta": { "text": " its own. No files were created." }
+					"Agent": { "AssistantDelta": { "text": "Write a.txt\" in" } }
 				},
 				"seq": 13,
 				"session": "00000000000000000000000001"
@@ -657,8 +553,138 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantMessage": {
-						"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+					"Agent": { "AssistantDelta": { "text": " progress and completed." } }
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " I sent the in" } } },
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantDelta": { "text": "-progress and completed upd" }
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantDelta": { "text": "ates in one batch rather than" }
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " wa" } } },
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": "iting between" } } },
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": " them, so the in-progress" } }
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": " state was never sh" } }
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": "own on" } } },
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantDelta": { "text": " its own. No files were created." }
+					}
+				},
+				"seq": 13,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantMessage": {
+							"text": "Done. I made the three-item checklist, then marked \"Write a.txt\" in progress and completed. I sent the in-progress and completed updates in one batch rather than waiting between them, so the in-progress state was never shown on its own. No files were created."
+						}
 					}
 				},
 				"seq": 14,
@@ -723,7 +749,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "pong" } } },
 				"seq": 18,
 				"session": "00000000000000000000000001"
 			}
@@ -734,7 +760,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "pong" } } },
 				"seq": 19,
 				"session": "00000000000000000000000001"
 			}

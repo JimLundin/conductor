@@ -6,7 +6,7 @@
 use alloc::collections::BTreeSet;
 
 use agents::Exit;
-use proto::{
+use agents::{
     Answer, Change, ChecklistEntry, ChecklistStatus, Effort, FileChange,
     ModelChoice, ModelId, Models, Question, QuestionOption, Selection,
     ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
@@ -1547,7 +1547,7 @@ pub fn encode(msg: Outbound) -> serde_json::Result<String> {
 mod tests {
     use std::collections::BTreeMap;
 
-    use proto::{Answer, Effort, Question, QuestionOption, Selection};
+    use agents::{Answer, Effort, Question, QuestionOption, Selection};
     use serde_json::Value;
 
     use super::{
@@ -2094,7 +2094,7 @@ mod tests {
     #[test]
     fn tool_notifications_emit_shared_phases_and_file_changes()
     -> Result<(), Box<dyn std::error::Error>> {
-        use proto::{
+        use agents::{
             Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
         };
         let cases = [
@@ -2177,7 +2177,7 @@ mod tests {
     #[test]
     fn completed_turns_emit_shared_outcomes_with_failure_messages()
     -> Result<(), Box<dyn std::error::Error>> {
-        use proto::TurnOutcome;
+        use agents::TurnOutcome;
         let cases = [
             (
                 r#"{"method":"turn/completed","params":{"threadId":"th","turn":{"id":"tu","status":"completed"}}}"#,
@@ -2250,7 +2250,7 @@ mod tests {
         );
         assert_eq!(
             models.default,
-            Some(proto::ModelId(String::from("gpt-6-luna")))
+            Some(agents::ModelId(String::from("gpt-6-luna")))
         );
         Ok(())
     }

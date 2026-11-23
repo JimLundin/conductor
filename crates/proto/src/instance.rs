@@ -11,7 +11,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{Availability, Credential, HostPath, ModelId, Provider};
+use crate::{Account, Availability, Credential, HostPath, ModelId, Provider};
 
 /// An instance by its key, the account of a provider on this host (the
 /// node). The provider names the account, not the owner, so it never
@@ -31,29 +31,6 @@ use crate::{Availability, Credential, HostPath, ModelId, Provider};
 pub struct InstanceId {
     pub provider: Provider,
     pub account: Account,
-}
-
-/// Who the provider says an instance signs in as.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    JsonSchema,
-)]
-pub enum Account {
-    /// The provider's own sign-in before it has named an account: where a
-    /// sign-in runs, and a CLI given on the host's command line, signed in
-    /// however it is. Each provider has one.
-    Own,
-    /// As the provider names it: a subscription's email, or what the
-    /// credential's form names, such as a gateway's URL.
-    Named(String),
 }
 
 /// An instance as its host keeps it.

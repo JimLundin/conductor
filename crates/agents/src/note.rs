@@ -1,8 +1,7 @@
 //! What an agent's core decides is worth logging, as data: the shell logs
 //! each kind with its fields.
 
-use proto::Provider;
-
+use crate::Provider;
 use crate::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

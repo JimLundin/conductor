@@ -1,3 +1,4 @@
+use agents::Output;
 use proto::{
     Availability, CommandId, CommandResult, Epoch, Event, EventKind, HostSeq,
     InstanceId, InstanceStatus, Instances, Models, Provider, SessionId,
@@ -11,9 +12,9 @@ fn log() -> Log {
 }
 
 fn delta(text: &str) -> EventKind {
-    EventKind::AssistantDelta {
+    EventKind::Agent(Output::AssistantDelta {
         text: String::from(text),
-    }
+    })
 }
 
 fn event(seq: u64, kind: EventKind) -> Event {

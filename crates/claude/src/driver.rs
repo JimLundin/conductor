@@ -443,8 +443,8 @@ fn failed<R, S, E: fmt::Display>(
 
 #[cfg(test)]
 mod tests {
+    use agents::Answer;
     use agents::{Exit, Note};
-    use proto::Answer;
     use serde_json::{Value, json};
 
     use super::{

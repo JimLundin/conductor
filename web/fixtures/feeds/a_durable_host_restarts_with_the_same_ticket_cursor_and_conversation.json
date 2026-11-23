@@ -339,15 +339,17 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD",
-						"phase": {
-							"Started": {
-								"tool": {
-									"FileChange": {
-										"files": [
-											{ "change": "Write", "path": "/tmp/s1-scratch/a.txt" }
-										]
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD",
+							"phase": {
+								"Started": {
+									"tool": {
+										"FileChange": {
+											"files": [
+												{ "change": "Write", "path": "/tmp/s1-scratch/a.txt" }
+											]
+										}
 									}
 								}
 							}
@@ -727,7 +729,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "18" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "18" } } },
 				"seq": 15,
 				"session": "00000000000000000000000001"
 			}
@@ -738,7 +740,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "18" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "18" } } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}

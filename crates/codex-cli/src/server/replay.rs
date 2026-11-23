@@ -9,15 +9,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agents::{
+    Answer, ChecklistStatus, Effort, ToolKind, ToolPhase, TurnOutcome,
+};
 use codex::{
     ApprovalId, ApprovalKind, ApprovalPolicy, CodexEvent, Decision, Sandbox,
     ThreadEvent, ThreadId, ThreadOptions, ThreadSettings, TurnId,
 };
 use install::Home;
 use n0_future::StreamExt;
-use proto::{
-    Answer, ChecklistStatus, Effort, ToolKind, ToolPhase, TurnOutcome,
-};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
