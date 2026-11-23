@@ -6,6 +6,7 @@ import {
 	applyWelcome,
 	emptyHost,
 	type Host,
+	isDelta,
 	resetHistory,
 } from "./host.ts";
 import { sessionOf } from "./examples.ts";
@@ -48,10 +49,6 @@ const folded = (frames: readonly Frame[]): Host =>
 
 const stored = (frame: Frame): Event | undefined =>
 	"Event" in frame && !isDelta(frame.Event) ? frame.Event : undefined;
-
-const isDelta = (event: Event): boolean =>
-	typeof event.kind === "object" &&
-	("AssistantDelta" in event.kind || "ReasoningDelta" in event.kind);
 
 const at = (frames: readonly Frame[], seq: number): number =>
 	frames.findIndex((frame) => stored(frame)?.seq === seq);

@@ -5,7 +5,7 @@ import type {
 	SubagentEvent,
 	ToolPhase,
 } from "../proto/index.ts";
-import { applyFeed, emptyHost, type Host } from "./host.ts";
+import { applyFeed, emptyHost, type Host, isDelta } from "./host.ts";
 import type { Session } from "./session.ts";
 import { Approval, Item, RequestState, type ToolState } from "./transcript.ts";
 
@@ -14,19 +14,13 @@ type Numbered = readonly (readonly [number, EventKind])[];
 const id = (session: number): SessionId =>
 	`0000000000000000000000000${session}`;
 
-const isDelta = (kind: EventKind): boolean =>
-	typeof kind === "object" &&
-	("AssistantDelta" in kind || "ReasoningDelta" in kind);
-
 // Numbers each session's events as the host does: a delta repeats the last seq.
 const foldEvents = (events: Numbered): Host =>
 	events.reduce<readonly [Host, number]>(
 		([host, last], [session, kind]) => {
-			const seq = isDelta(kind) ? last : last + 1;
-			return [
-				applyFeed(host, { Event: { seq, session: id(session), kind } }),
-				seq,
-			];
+			const event = { seq: last + 1, session: id(session), kind };
+			const seq = isDelta(event) ? last : event.seq;
+			return [applyFeed(host, { Event: { ...event, seq } }), seq];
 		},
 		[emptyHost(), 0],
 	)[0];
