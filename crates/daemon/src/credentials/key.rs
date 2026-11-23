@@ -7,7 +7,7 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{Context, bail, ensure};
-use host::secret::Secret;
+use host::secret::{Secret, StoreFiles, StoreKey};
 
 const FILE: &str = "store.key";
 const SLOT: &str = "store.key.slot";
@@ -32,22 +32,27 @@ pub(super) fn open(dir: &Path) -> anyhow::Result<Key> {
 }
 
 fn open_with(dir: &Path, vault: &mut impl Vault) -> anyhow::Result<Key> {
-    if let Some(slot) = read_file(dir, SLOT)? {
-        return open_native(vault, &slot);
+    let found = StoreFiles {
+        slot: read_file(dir, SLOT)?,
+        file: read_file(dir, FILE)?,
+        sealed: sealed(dir)?,
+        file_only: exists(dir, FILE_ONLY)?,
+    };
+    match host::secret::store_key(&found) {
+        StoreKey::Keystore(slot) => open_native(vault, &slot),
+        StoreKey::File(key) => Ok(key),
+        StoreKey::NewInKeystore => create(dir, vault),
+        StoreKey::NewInFile => crate::load_or_create_secret(dir, FILE),
+        StoreKey::Lost => bail!(
+            "credential files exist without a store key; restore the original store key before starting Conductor"
+        ),
     }
-    if let Some(key) = read_file(dir, FILE)? {
-        return Ok(key);
-    }
-    ensure!(
-        !exists(dir, "credentials")?
-            && !exists(dir, "credentials.new")?
-            && !exists(dir, "credentials.unreadable")?,
-        "credential files exist without a store key; restore the original store key before starting Conductor"
-    );
-    if exists(dir, FILE_ONLY)? {
-        return crate::load_or_create_secret(dir, FILE);
-    }
-    create(dir, vault)
+}
+
+fn sealed(dir: &Path) -> anyhow::Result<bool> {
+    Ok(exists(dir, "credentials")?
+        || exists(dir, "credentials.new")?
+        || exists(dir, "credentials.unreadable")?)
 }
 
 fn open_native(vault: &impl Vault, slot: &Key) -> anyhow::Result<Key> {

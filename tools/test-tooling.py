@@ -97,8 +97,8 @@ class ToolingTests(unittest.TestCase):
             (proc / "exe").symlink_to(exe)
             (proc / "cwd").symlink_to(cwd)
         fd = os.open(os.devnull, os.O_RDONLY)
-        with patch.object(os, "pidfd_open", return_value=fd) as opened:
-            with patch.object(signal, "pidfd_send_signal") as sent:
+        with patch.object(os, "pidfd_open", return_value=fd, create=True) as opened:
+            with patch.object(signal, "pidfd_send_signal", create=True) as sent:
                 child.interrupt(self.scratch, 70, cli, workspace)
         opened.assert_called_once_with(101)
         sent.assert_called_once_with(fd, signal.SIGKILL)

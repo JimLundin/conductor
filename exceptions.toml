@@ -47,3 +47,87 @@ reason = "the link tasks run on the single-threaded UI executor and hold Dioxus 
 path = "Cargo.toml"
 rule = "shell"
 reason = "the shell makes about a quarter of the decisions: the shells' dispatch of each core's effects plus their branches on I/O results (process exits, file, socket and lock errors, closed channels, which subscription or stream fired), which a core can't take"
+
+# Debt: core values in Box or Rc, which predate the standard's plain-values
+# rule. Each entry goes when its file keeps recursive parts in a Vec and
+# refers to them by index.
+
+[[exception]]
+path = "crates/home/src/flow.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home/src/flow/eval.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home/src/flow/role.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home/src/issue/operation.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home/src/lib.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/host/src/registry/start.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/host/src/session.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/host/src/workspace/plan.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/proto/src/fleet.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/proto/src/flow.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/proto/src/home.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/proto/src/lib.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/ui/src/lib.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/ui/src/prelude.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/ui/src/snapshots.rs"
+rule = "box"
+reason = "snapshot previews share their patch text through Rc, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/ui/src/state.rs"
+rule = "box"
+reason = "boxes recursive or large values, which predates the plain-values rule"

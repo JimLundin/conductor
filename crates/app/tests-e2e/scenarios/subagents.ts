@@ -62,8 +62,11 @@ export const subagents = async (run: Run): Promise<void> => {
 	await heading.tap();
 	check(await isOpen(group), "a tap opens the group");
 	check(
-		(await group.locator('.agent-checklist .agent-checklist-item[data-status="completed"]').count()) ===
-			2,
+		(await group
+			.locator(
+				'.agent-checklist .agent-checklist-item[data-status="completed"]',
+			)
+			.count()) === 2,
 		"the opened group shows both completed checklist steps",
 	);
 	check(
@@ -83,8 +86,11 @@ export const subagents = async (run: Run): Promise<void> => {
 	);
 	await heading.tap();
 	check(
-		(await group.locator('.agent-checklist .agent-checklist-item[data-status="completed"]').count()) ===
-			2,
+		(await group
+			.locator(
+				'.agent-checklist .agent-checklist-item[data-status="completed"]',
+			)
+			.count()) === 2,
 		"the checklist replays after a reload",
 	);
 };
