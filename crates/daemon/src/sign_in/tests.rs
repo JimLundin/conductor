@@ -6,7 +6,7 @@ use proto::{Instance, InstanceId, Instances, Provider, SignInStep};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
 use tokio::time::timeout;
 
-use super::{CommandResult, Key, Report, Runs, oneshot};
+use super::{InstanceResult, Key, Report, Runs, oneshot};
 
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -46,7 +46,7 @@ async fn a_stalled_input_leaves_another_instance_responsive()
     let (answer, listed) = oneshot::channel();
     runs.listen(other.clone(), listed);
     answer
-        .send(CommandResult::Accepted)
+        .send(InstanceResult::Accepted)
         .map_err(|_| anyhow!("the listing task stopped"))?;
     let (listed_key, report) = timeout(WAIT, runs.next())
         .await?
@@ -54,7 +54,7 @@ async fn a_stalled_input_leaves_another_instance_responsive()
     assert_eq!(listed_key, other);
     assert!(matches!(
         report,
-        Report::Listed(Some(CommandResult::Accepted))
+        Report::Listed(Some(InstanceResult::Accepted))
     ));
 
     let mut other_reader = blocked_input(&mut runs, other.clone()).await?;

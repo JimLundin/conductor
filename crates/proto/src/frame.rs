@@ -130,12 +130,12 @@ mod tests {
 
     use super::{HEADER_LEN, body_len, decode, encode, header};
     use crate::{
-        Auth, AuthToken, Availability, Catalog, ClientName, Command,
-        CommandBody, CommandId, CommandResult, Credential, Decision, Effort,
-        Epoch, Event, EventKind, Feed, Hello, HelloReply, HostSeq, InstanceId,
+        Auth, AuthToken, Availability, Catalog, ClientName, Command, CommandId,
+        CommandResult, Credential, Decision, Effort, Epoch, Event, EventKind,
+        Feed, Hello, HelloReply, HostSeq, InstanceCommand, InstanceId,
         InstanceStatus, Instances, ModelChoice, ModelId, Models, Open,
-        Provider, Rejection, RequestId, Resolution, Roster, SessionId,
-        Subscribe, TurnOutcome, Welcome,
+        Provider, RequestId, Resolution, Roster, SessionCommand, SessionId,
+        SessionRefusal, SessionResult, Subscribe, TurnOutcome, Welcome,
     };
 
     fn frame(body: &[u8]) -> Vec<u8> {
@@ -192,15 +192,15 @@ mod tests {
     /// its 26-digit lower-case ULID.
     fn command_frame_is_length_then_json()
     -> Result<(), Box<dyn std::error::Error>> {
-        let open = Open::Command(Command {
+        let open = Open::Command {
             id: CommandId(7),
-            body: CommandBody::SendMessage {
+            body: Command::Session(SessionCommand::SendMessage {
                 session: SessionId(u128::MAX),
                 text: String::from("hi"),
-            },
-        });
+            }),
+        };
         let bytes = encode(&open)?;
-        let body = br#"{"Command":{"id":"00000000000000000000000007","body":{"SendMessage":{"session":"7zzzzzzzzzzzzzzzzzzzzzzzzz","text":"hi"}}}}"#;
+        let body = br#"{"Command":{"id":"00000000000000000000000007","body":{"Session":{"SendMessage":{"session":"7zzzzzzzzzzzzzzzzzzzzzzzzz","text":"hi"}}}}}"#;
         assert_eq!(bytes, frame(body));
         let (header, rest) = bytes
             .split_first_chunk::<HEADER_LEN>()
@@ -213,9 +213,9 @@ mod tests {
     #[test]
     fn a_credential_goes_out_whole_and_debugs_as_its_kind()
     -> Result<(), Box<dyn std::error::Error>> {
-        let open = Open::Command(Command {
+        let open = Open::Command {
             id: CommandId(1),
-            body: CommandBody::SetCredential {
+            body: Command::Instance(InstanceCommand::SetCredential {
                 provider: Provider::Claude,
                 credential: Credential {
                     kind: String::from("gateway"),
@@ -224,17 +224,17 @@ mod tests {
                         String::from("k"),
                     )]),
                 },
-            },
-        });
+            }),
+        };
         assert_eq!(
             encode(&open)?,
             frame(
-                br#"{"Command":{"id":"00000000000000000000000001","body":{"SetCredential":{"provider":"Claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}"#
+                br#"{"Command":{"id":"00000000000000000000000001","body":{"Instance":{"SetCredential":{"provider":"Claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
             )
         );
         assert_eq!(
             format!("{open:?}"),
-            r#"Command(Command { id: CommandId(1), body: SetCredential { provider: Claude, credential: Credential { kind: "gateway", .. } } })"#
+            r#"Command { id: CommandId(1), body: Instance(SetCredential { provider: Claude, credential: Credential { kind: "gateway", .. } }) }"#
         );
         Ok(())
     }
@@ -321,20 +321,27 @@ mod tests {
             )
         );
         assert_eq!(
-            encode(&CommandResult::Rejected(Rejection::InstanceUnavailable {
-                reason: String::from("no codex"),
-            }))?,
+            encode(&CommandResult::Session(SessionResult::Refused(
+                SessionRefusal::InstanceUnavailable {
+                    reason: String::from("no codex"),
+                }
+            )))?,
             frame(
-                br#"{"Rejected":{"InstanceUnavailable":{"reason":"no codex"}}}"#
+                br#"{"Session":{"Refused":{"InstanceUnavailable":{"reason":"no codex"}}}}"#
             )
         );
         assert_eq!(
-            encode(&CommandResult::Started {
+            encode(&CommandResult::Session(SessionResult::Started {
                 session: SessionId(3),
-            })?,
-            frame(br#"{"Started":{"session":"00000000000000000000000003"}}"#)
+            }))?,
+            frame(
+                br#"{"Session":{"Started":{"session":"00000000000000000000000003"}}}"#
+            )
         );
-        assert_eq!(encode(&CommandResult::Accepted)?, frame(br#""Accepted""#));
+        assert_eq!(
+            encode(&CommandResult::Session(SessionResult::Accepted))?,
+            frame(br#"{"Session":"Accepted"}"#)
+        );
         Ok(())
     }
 
@@ -342,7 +349,8 @@ mod tests {
     fn an_id_or_epoch_not_in_its_text_is_refused() {
         let session = |text: &str| {
             decode::<CommandResult>(
-                format!(r#"{{"Started":{{"session":{text}}}}}"#).as_bytes(),
+                format!(r#"{{"Session":{{"Started":{{"session":{text}}}}}}}"#)
+                    .as_bytes(),
             )
             .is_err()
         };
@@ -367,14 +375,13 @@ mod tests {
     /// link became JSON.
     fn postcard_keeps_its_bytes() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
-            postcard::to_allocvec(&Command {
-                id: CommandId(7),
-                body: CommandBody::SendMessage {
+            postcard::to_allocvec(&Command::Session(
+                SessionCommand::SendMessage {
                     session: SessionId(2),
                     text: String::from("hi"),
-                },
-            })?,
-            b"\x07\x01\x02\x02hi"
+                }
+            ))?,
+            b"\x00\x01\x02\x02hi"
         );
         assert_eq!(
             postcard::to_allocvec(&Subscribe {

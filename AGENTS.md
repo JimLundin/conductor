@@ -117,7 +117,7 @@ Home Screen. The design is in
   names it, and a sign-in in the provider's own instance (`Account::Own`,
   which every host has) names it once the CLI reports it. Whatever is per
   account is keyed by `InstanceId` (the registry, `Welcome`,
-  `StartSession`, `SessionCreated`, the store); only what the plugin itself
+  `Session::Start`, `SessionCreated`, the store); only what the plugin itself
   describes (`Catalog`: label, note, credential forms) is keyed by
   `Provider`.
 - **Sign-ins are live only.** A sign-in from the app reaches clients as

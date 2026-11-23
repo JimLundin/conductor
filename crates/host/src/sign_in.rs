@@ -21,8 +21,9 @@ use core::time::Duration;
 
 use agents::{SignIn as Flow, plain};
 use proto::{
-    Account, Auth, Availability, Catalog, CommandResult, Credential, Instance,
-    InstanceId, Instances, Rejection, SignIn, SignInCode, SignInStep,
+    Account, Auth, Availability, Catalog, Credential, Instance, InstanceId,
+    InstanceRefusal, InstanceResult, Instances, SignIn, SignInCode,
+    SignInRefusal, SignInResult, SignInStep,
 };
 
 use crate::Note;
@@ -95,14 +96,14 @@ impl CredentialTarget {
         source: &InstanceId,
         kind: String,
         label: &str,
-    ) -> Result<Self, Rejection> {
+    ) -> Result<Self, SignInRefusal> {
         let account = label.trim();
         if source.account != Account::Own
             || account.is_empty()
             || account.len() > 256
             || account.chars().any(char::is_control)
         {
-            return Err(Rejection::InvalidCredential {
+            return Err(SignInRefusal::InvalidCredential {
                 reason: String::from(
                     "a credential sign-in needs a valid account label",
                 ),
@@ -113,7 +114,7 @@ impl CredentialTarget {
             .and_then(|info| info.form(&kind))
             .is_none_or(|form| form.setup_sign_in.is_none())
         {
-            return Err(Rejection::InvalidCredential {
+            return Err(SignInRefusal::InvalidCredential {
                 reason: String::from(
                     "this credential kind does not support sign-in",
                 ),
@@ -195,16 +196,16 @@ impl SignIns {
         &mut self,
         instance: InstanceId,
         known: Option<Instance>,
-    ) -> (CommandResult, Vec<Effect>) {
+    ) -> (SignInResult, Vec<Effect>) {
         let Some(settings) = known else {
-            return (rejected(Rejection::UnknownInstance), Vec::new());
+            return (rejected(SignInRefusal::UnknownInstance), Vec::new());
         };
         let Ok(key) = self.begin(instance.clone(), SignInStep::Starting, None)
         else {
-            return (rejected(Rejection::SignInRunning), Vec::new());
+            return (rejected(SignInRefusal::SignInRunning), Vec::new());
         };
         (
-            CommandResult::Accepted,
+            SignInResult::Accepted,
             Vec::from([
                 Effect::Spawn { key, settings },
                 publish(instance, SignInStep::Starting),
@@ -216,16 +217,16 @@ impl SignIns {
         &mut self,
         instance: InstanceId,
         target: CredentialTarget,
-    ) -> (CommandResult, Vec<Effect>) {
+    ) -> (SignInResult, Vec<Effect>) {
         let Ok(key) = self.begin(
             instance.clone(),
             SignInStep::Starting,
             Some(target.clone()),
         ) else {
-            return (rejected(Rejection::SignInRunning), Vec::new());
+            return (rejected(SignInRefusal::SignInRunning), Vec::new());
         };
         (
-            CommandResult::Accepted,
+            SignInResult::Accepted,
             Vec::from([
                 Effect::SpawnCredential(key, target),
                 publish(instance, SignInStep::Starting),
@@ -286,7 +287,7 @@ impl SignIns {
         &mut self,
         requested: &InstanceId,
         adoption: &AccountAdoption,
-    ) -> Result<Option<Key>, Rejection> {
+    ) -> Result<Option<Key>, SignInRefusal> {
         adoption
             .destination_for(requested)
             .map(|_| {
@@ -305,9 +306,9 @@ impl SignIns {
         instance: InstanceId,
         step: SignInStep,
         credential: Option<CredentialTarget>,
-    ) -> Result<Key, Rejection> {
+    ) -> Result<Key, SignInRefusal> {
         if self.running.contains_key(&instance) {
-            return Err(Rejection::SignInRunning);
+            return Err(SignInRefusal::SignInRunning);
         }
         self.runs = self.runs.saturating_add(1);
         let run = Run(self.runs);
@@ -331,7 +332,7 @@ impl SignIns {
         &mut self,
         instance: InstanceId,
         code: SignInCode,
-    ) -> (CommandResult, Vec<Effect>) {
+    ) -> (SignInResult, Vec<Effect>) {
         match self.running.get_mut(&instance) {
             Some(running)
                 if matches!(
@@ -345,14 +346,16 @@ impl SignIns {
                     run: running.run,
                 };
                 (
-                    CommandResult::Accepted,
+                    SignInResult::Accepted,
                     Vec::from([
                         Effect::Write(key, code),
                         publish(instance, SignInStep::Finishing),
                     ]),
                 )
             }
-            Some(_) | None => (rejected(Rejection::NoCodeAsked), Vec::new()),
+            Some(_) | None => {
+                (rejected(SignInRefusal::NoCodeAsked), Vec::new())
+            }
         }
     }
 
@@ -360,13 +363,13 @@ impl SignIns {
     pub fn cancel(
         &mut self,
         instance: InstanceId,
-    ) -> (CommandResult, Vec<Effect>) {
+    ) -> (SignInResult, Vec<Effect>) {
         if self
             .running
             .get(&instance)
             .is_some_and(|run| run.committing)
         {
-            return (CommandResult::Accepted, Vec::new());
+            return (SignInResult::Accepted, Vec::new());
         }
         let effects =
             self.running
@@ -381,7 +384,7 @@ impl SignIns {
                         publish(instance, SignInStep::Cancelled),
                     ])
                 });
-        (CommandResult::Accepted, effects)
+        (SignInResult::Accepted, effects)
     }
 
     pub fn write_failed(&mut self, key: &Key, reason: String) -> Vec<Effect> {
@@ -483,7 +486,7 @@ impl SignIns {
     pub fn listed(
         &mut self,
         key: &Key,
-        result: Option<CommandResult>,
+        result: Option<InstanceResult>,
         instances: &Instances,
     ) -> Vec<Effect> {
         let Some(running) = self.current(key) else {
@@ -492,7 +495,7 @@ impl SignIns {
         let credential = running.credential.take();
         self.running.remove(&key.instance);
         let step = match (credential, result) {
-            (expected, Some(CommandResult::Accepted))
+            (expected, Some(InstanceResult::Accepted))
                 if expected.as_ref().is_none_or(|target| {
                     matches!(
                         instances.availability(&target.destination),
@@ -500,7 +503,7 @@ impl SignIns {
                             if *kind == target.kind
                     )
                 }) => SignInStep::SignedIn,
-            (Some(_), Some(CommandResult::Rejected(Rejection::FleetUnavailable))) => SignInStep::Failed {
+            (Some(_), Some(InstanceResult::Refused(InstanceRefusal::FleetUnavailable))) => SignInStep::Failed {
                 reason: String::from("the fleet could not save the credential"),
             },
             (Some(_), _) => SignInStep::Failed {
@@ -601,8 +604,8 @@ pub fn note(sign_in: &SignIn) -> Note {
     }
 }
 
-const fn rejected(rejection: Rejection) -> CommandResult {
-    CommandResult::Rejected(rejection)
+const fn rejected(rejection: SignInRefusal) -> SignInResult {
+    SignInResult::Refused(rejection)
 }
 
 const fn publish(instance: InstanceId, step: SignInStep) -> Effect {

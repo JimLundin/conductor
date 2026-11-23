@@ -5,7 +5,8 @@
 //! Every bi-stream starts with one [`Open`] frame from the client. The first
 //! stream of a connection must be [`Open::Hello`], answered by one
 //! [`HelloReply`]. A [`Open::Command`] stream gets one [`CommandResult`] and
-//! closes. A [`Open::Subscribe`] stream then carries [`Feed`] frames, the
+//! closes; both name the domain the command acts on, whose own enum the
+//! link wraps. A [`Open::Subscribe`] stream then carries [`Feed`] frames, the
 //! events and the sign-ins, until either side closes it.
 //!
 //! Frame bodies on this link are JSON (`frame`), which names each variant
@@ -30,17 +31,15 @@ mod id;
 mod instance;
 mod issue;
 mod json;
+mod push;
 #[cfg(test)]
 mod schema;
 mod sign_in;
 mod ticket;
 
-use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
-
-use core::fmt;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -52,22 +51,29 @@ pub use credential::{
 pub use frame::{
     Codec, Frame, FrameError, HEADER_LEN, body_len, decode, encode, header,
 };
-pub use home::{Checkout, Cloning, Home, HomeSync, Origin, Project, StartAt};
+pub use home::{
+    Checkout, Cloning, Home, HomeCommand, HomeRefusal, HomeResult, HomeSync,
+    Origin, Project, StartAt,
+};
 pub use id::{DRAWS, Draws, IssueId, ProjectId};
 pub use instance::{
-    Account, Instance, InstanceId, InstanceStatus, Instances, Roster,
+    Account, Instance, InstanceCommand, InstanceId, InstanceRefusal,
+    InstanceResult, InstanceStatus, Instances, Roster,
 };
 pub use issue::{
     ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, Item,
     LogEvent, NewIssue, Part, Section,
 };
-pub use sign_in::{SignIn, SignInCode, SignInStep};
+pub use push::{PushCommand, PushResult, PushSubscription};
+pub use sign_in::{
+    SignIn, SignInCode, SignInCommand, SignInRefusal, SignInResult, SignInStep,
+};
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 /// The ALPN of the protocol. It changes with every change to the wire types
 /// (see the crate docs), so an old client fails at the handshake instead of
 /// mid-stream.
-pub const ALPN: &[u8] = b"conductor/38";
+pub const ALPN: &[u8] = b"conductor/39";
 
 /// A logged event or a live update to the host's sign-ins, home or offers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -162,7 +168,7 @@ impl RequestId {
 pub enum Open {
     Hello(Hello),
     Subscribe(Subscribe),
-    Command(Command),
+    Command { id: CommandId, body: Command },
     FleetHello(fleet::DeviceHello),
 }
 
@@ -463,20 +469,35 @@ impl Provider {
     }
 }
 
+/// A command, in the domain it acts on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Command {
-    pub id: CommandId,
-    pub body: CommandBody,
+pub enum Command {
+    Session(SessionCommand),
+    Instance(InstanceCommand),
+    SignIn(SignInCommand),
+    Home(HomeCommand),
+    Push(PushCommand),
+    Fleet(fleet::FleetCommand),
 }
 
-/// Every session command after `StartSession` names the session it acts
-/// on, and every instance command the instance.
+/// A command's answer, in the domain of the command.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum CommandBody {
+pub enum CommandResult {
+    Session(SessionResult),
+    Instance(InstanceResult),
+    SignIn(SignInResult),
+    Home(HomeResult),
+    Push(PushResult),
+    Fleet(fleet::FleetResult),
+}
+
+/// Every command after `Start` names the session it acts on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum SessionCommand {
     /// `None` takes the instance's default model, or the CLI's default
     /// effort for the model.
     /// A session in a project starts in its first checkout on the host.
-    StartSession {
+    Start {
         instance: InstanceId,
         at: StartAt,
         model: Option<ModelId>,
@@ -507,16 +528,6 @@ pub enum CommandBody {
         request: RequestId,
         answers: Vec<Answer>,
     },
-    /// Stores a credential of `provider` on the host. The account its form
-    /// names makes the instance: one that has it takes the credential in
-    /// place of its own, and otherwise the host adds the instance and
-    /// starts its CLI before it answers. The host never sends it back.
-    /// Like every command it needs a client admitted by the ticket's
-    /// token, which device certificates replace with the fleet (§6.1).
-    SetCredential {
-        provider: Provider,
-        credential: Credential,
-    },
     /// A bounded diff between this snapshot and its predecessor.
     GetDiff {
         session: SessionId,
@@ -529,91 +540,21 @@ pub enum CommandBody {
         session: SessionId,
         effort: Effort,
     },
-    /// Refused while a session runs on the instance. Its closed sessions
-    /// stay, and can't continue. A provider's own sign-in stays; on a host
-    /// whose store doesn't open, removing it moves the store aside.
-    RemoveInstance {
-        instance: InstanceId,
-    },
-    /// Runs the CLI's own sign-in in the instance's home; every client
-    /// follows it as `Feed::SignIn`. Refused while one runs on it. Once
-    /// the CLI names the account it signed in as, the instance is that
-    /// account's, and its provider has a new own sign-in.
-    StartSignIn {
-        instance: InstanceId,
-    },
-    /// The code the sign-in page gave, for a sign-in whose step asks for
-    /// one to be pasted.
-    SubmitSignInCode {
-        instance: InstanceId,
-        code: SignInCode,
-    },
-    /// Stops the instance's sign-in, if one runs.
-    CancelSignIn {
-        instance: InstanceId,
-    },
-    /// Pulls the home now. `Accepted` once it has; how it went is in the
-    /// home's `sync`.
-    SyncHome,
-    /// Clones the project into the host's data dir, for a project with no
-    /// checkout here. `Accepted` once it has; how it went is in the
-    /// project's `cloning`.
-    CloneProject {
-        project: ProjectId,
-    },
     /// Stops the session's agent between turns, commits what its workspace
     /// holds onto its branch, pushes that branch to the checkout's
     /// `origin`, and removes the workspace. `SessionRemoved` follows in the
     /// log; the session takes no command after it.
-    RemoveSession {
+    Remove {
         session: SessionId,
-    },
-    /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
-    /// once the host has written it to its clone of the home; pushing it
-    /// follows, and how that went is in the home's `sync`.
-    CreateIssue(NewIssue),
-    /// Answers `IssueWritten` once written, like `CreateIssue`.
-    ChangeIssue {
-        issue: IssueId,
-        change: IssueChange,
     },
     /// Finishes a session on an issue between turns. `Accepted` at once;
     /// the host then asks a running agent for a summary and stops it, adds
     /// the summary to the issue's notes, lands the session's branch on the
     /// issue's, pushes that, and moves the issue to `review` when it
     /// gained commits. `SessionFinished` says how it went.
-    FinishSession {
+    Finish {
         session: SessionId,
     },
-    PushPublicKey,
-    RegisterPush(PushSubscription),
-    FleetStatus,
-    FleetInvite,
-    FleetRevoke(fleet::NodeId),
-    FleetApprove(fleet::PairRequest),
-    FleetAdmit {
-        ticket: Ticket,
-        name: String,
-    },
-    /// Runs the provider's live credential setup through its own instance.
-    StartCredentialSignIn {
-        instance: InstanceId,
-        kind: String,
-        label: String,
-    },
-}
-
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct PushSubscription {
-    pub endpoint: String,
-    pub p256dh: String,
-    pub auth: String,
-}
-
-impl fmt::Debug for PushSubscription {
-    fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
-        output.write_str("PushSubscription")
-    }
 }
 
 #[derive(
@@ -633,29 +574,18 @@ pub enum Decision {
 pub struct Answer(pub Vec<String>);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum CommandResult {
+pub enum SessionResult {
     Accepted,
-    /// The answer to `StartSession`. `SessionCreated` follows in the log.
+    /// The answer to `Start`. `SessionCreated` follows in the log.
     Started {
         session: SessionId,
     },
-    Rejected(Rejection),
+    Refused(SessionRefusal),
     Diff(SnapshotDiff),
-    /// The issue a `CreateIssue` or `ChangeIssue` wrote, and what the
-    /// flow warns of it.
-    IssueWritten {
-        issue: IssueId,
-        warnings: Vec<String>,
-    },
-    PushPublicKey(String),
-    PushUnavailable,
-    FleetStatus(fleet::SignedSnapshot),
-    FleetInvite(fleet::Invite),
-    FleetPairing(Box<fleet::Pairing>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum Rejection {
+pub enum SessionRefusal {
     NoSuchDirectory,
     InstanceUnavailable {
         reason: String,
@@ -676,45 +606,16 @@ pub enum Rejection {
     WrongReply {
         reason: String,
     },
-    /// The host could not store the credential, and kept the one it had.
-    CredentialNotSaved {
-        reason: String,
-    },
-    /// The credential is malformed, for this reason, and was not stored.
-    InvalidCredential {
-        reason: String,
-    },
     NotGitRepository,
     SnapshotUnavailable,
     WorkspaceFailure {
         reason: String,
     },
     UnknownInstance,
-    /// The instance can't be removed while sessions run on it.
-    InstanceInUse {
-        sessions: u64,
-    },
-    SignInRunning,
-    /// No sign-in runs on the instance, or it takes no code now.
-    NoCodeAsked,
-    /// The host was given no home.
-    NoHome,
-    UnknownProject,
-    /// The project has no checkout on the host.
-    NotCheckedOut,
-    /// The project is local only: there is no remote to clone.
-    NoRemote,
     SessionRemoved,
-    UnknownIssue,
-    /// The home can't be written now, for this reason.
-    IssueNotSaved {
-        reason: String,
-    },
-    /// The flow refuses the edit, for this reason, as the `home` command
-    /// line would.
-    IssueRefused {
-        reason: String,
-    },
+    /// The session can't start where it was asked to: the home refuses
+    /// the project or issue.
+    Home(HomeRefusal),
     /// The instance has this session on the issue already: one session
     /// per instance and issue.
     IssueTaken {
@@ -724,17 +625,13 @@ pub enum Rejection {
     NotOnIssue,
     /// The session is finishing, or has done nothing since it finished.
     AlreadyFinished,
-    FleetUnavailable,
 }
 
-impl Rejection {
+impl SessionRefusal {
     /// Why the host refused the command, for a person to read.
     #[must_use]
     pub fn label(&self) -> String {
         match self {
-            Self::FleetUnavailable => {
-                String::from("fleet changes need the root host")
-            }
             Self::NoSuchDirectory => {
                 String::from("no directory at that path on the host")
             }
@@ -744,12 +641,6 @@ impl Rejection {
             Self::UnknownInstance => {
                 String::from("the host has no such instance")
             }
-            Self::InstanceInUse { sessions: 1 } => String::from(
-                "a session is running on it; stop it before removing the instance",
-            ),
-            Self::InstanceInUse { sessions } => format!(
-                "{sessions} sessions are running on it; stop them before removing the instance"
-            ),
             Self::UnknownSession => String::from("no session with that id"),
             Self::SessionClosed => String::from("the session has closed"),
             Self::SessionRemoved => {
@@ -761,42 +652,13 @@ impl Rejection {
             Self::AlreadyResolved { by } => {
                 format!("already resolved by {}", by.0)
             }
-            Self::CredentialNotSaved { reason } => {
-                format!("the host could not store the change: {reason}")
-            }
-            Self::InvalidCredential { reason } => {
-                format!("the credential is not valid: {reason}")
-            }
             Self::NotGitRepository => {
                 String::from("choose a Git repository with a committed HEAD")
             }
             Self::SnapshotUnavailable => {
                 String::from("this snapshot has no available comparison")
             }
-            Self::SignInRunning => String::from(
-                "a sign-in is already running on it; cancel it to start again",
-            ),
-            Self::NoCodeAsked => {
-                String::from("its sign-in isn't waiting for a code")
-            }
-            Self::NoHome => String::from(
-                "the host has no home; start it with --home <remote>",
-            ),
-            Self::UnknownProject => {
-                String::from("the host's home lists no such project")
-            }
-            Self::NotCheckedOut => String::from(
-                "the project isn't checked out on the host; clone it there first",
-            ),
-            Self::NoRemote => String::from(
-                "the project is local only, so there is nothing to clone",
-            ),
-            Self::UnknownIssue => {
-                String::from("the host's home lists no such issue")
-            }
-            Self::IssueNotSaved { reason } => {
-                format!("the issue was not saved: {reason}")
-            }
+            Self::Home(refusal) => refusal.label(),
             Self::NotOnIssue => String::from("the session works on no issue"),
             Self::AlreadyFinished => String::from(
                 "the session is finishing, or has done nothing since it finished",
@@ -805,7 +667,6 @@ impl Rejection {
                 "that instance has a session on the issue already; continue it, or remove it first",
             ),
             Self::NotOffered { reason }
-            | Self::IssueRefused { reason }
             | Self::WrongReply { reason }
             | Self::WorkspaceFailure { reason } => reason.clone(),
         }
@@ -1364,12 +1225,14 @@ mod tests {
             }
         );
         assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[0])?,
-            super::CommandResult::Accepted
+            postcard::from_bytes::<super::CommandResult>(&[0, 0])?,
+            super::CommandResult::Session(super::SessionResult::Accepted)
         );
         assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[2, 3])?,
-            super::CommandResult::Rejected(super::Rejection::SessionClosed)
+            postcard::from_bytes::<super::CommandResult>(&[0, 2, 3])?,
+            super::CommandResult::Session(super::SessionResult::Refused(
+                super::SessionRefusal::SessionClosed
+            ))
         );
         assert_eq!(
             postcard::to_allocvec(&super::Event {
@@ -1426,7 +1289,7 @@ mod tests {
     #[test]
     fn a_rejection_says_why_for_a_person() {
         assert_eq!(
-            super::Rejection::NoSuchDirectory.label(),
+            super::SessionRefusal::NoSuchDirectory.label(),
             "no directory at that path on the host"
         );
     }

@@ -38,11 +38,11 @@ use home::skills;
 use home::sync::{self, Git, Sync};
 use home::{Found, Stored};
 use host::log::Completion;
-use host::serve::HomeOrder;
 use issue_file::{read_issue, write_issue};
 use proto::{
-    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeSync,
-    HostPath, IssueChange, IssueId, NewIssue, ProjectId, Rejection, StartAt,
+    Checkout, ClientName, Cloning, CommandId, CommandResult, Home, HomeCommand,
+    HomeRefusal, HomeResult, HomeSync, HostPath, IssueChange, IssueId,
+    NewIssue, ProjectId, SessionRefusal, StartAt,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -82,45 +82,48 @@ pub struct HomeClone {
 
 pub use home::Placement;
 
-type Placed = Result<Placement, Rejection>;
+type Placed = Result<Placement, HomeRefusal>;
 
 #[derive(Debug)]
 enum IssueError {
-    Rejected(Rejection),
+    Refused(HomeRefusal),
     Retryable(String),
 }
 
 impl IssueError {
-    fn local(rejection: Rejection) -> Self {
-        match rejection {
-            Rejection::IssueNotSaved { reason } => Self::Retryable(reason),
+    fn local(refusal: HomeRefusal) -> Self {
+        match refusal {
+            HomeRefusal::IssueNotSaved { reason } => Self::Retryable(reason),
             other => other.into(),
         }
     }
 
     fn completion(self) -> Completion {
         match self {
-            Self::Rejected(rejection) => {
-                CommandResult::Rejected(rejection).into()
+            Self::Refused(refusal) => {
+                CommandResult::Home(HomeResult::Refused(refusal)).into()
             }
-            Self::Retryable(reason) => Completion::Retryable(
-                CommandResult::Rejected(Rejection::IssueNotSaved { reason }),
-            ),
+            Self::Retryable(reason) => {
+                Completion::Retryable(CommandResult::Home(HomeResult::Refused(
+                    HomeRefusal::IssueNotSaved { reason },
+                )))
+            }
         }
     }
 }
 
-impl From<Rejection> for IssueError {
-    fn from(rejection: Rejection) -> Self {
-        Self::Rejected(rejection)
+impl From<HomeRefusal> for IssueError {
+    fn from(refusal: HomeRefusal) -> Self {
+        Self::Refused(refusal)
     }
 }
 
 #[derive(Debug)]
 enum Msg {
     Tick,
-    Order {
-        order: HomeOrder,
+    Command {
+        command: HomeCommand,
+        by: ClientName,
         id: CommandId,
         reply: oneshot::Sender<Completion>,
     },
@@ -130,7 +133,7 @@ enum Msg {
     },
     Ready {
         start: home::issue::Start,
-        reply: oneshot::Sender<Result<(), Rejection>>,
+        reply: oneshot::Sender<Result<(), SessionRefusal>>,
     },
     Started {
         issue: IssueId,
@@ -223,10 +226,17 @@ impl HomeClone {
     /// Fails if the task has stopped.
     pub(crate) async fn order(
         &self,
-        order: HomeOrder,
+        command: HomeCommand,
+        by: ClientName,
         id: CommandId,
     ) -> Result<Completion, Stopped> {
-        self.ask(|reply| Msg::Order { order, id, reply }).await
+        self.ask(|reply| Msg::Command {
+            command,
+            by,
+            id,
+            reply,
+        })
+        .await
     }
 
     /// Where a session starts: a directory as it is, or a project's or an
@@ -254,7 +264,7 @@ impl HomeClone {
     pub async fn ready(
         &self,
         start: home::issue::Start,
-    ) -> Result<Result<(), Rejection>, Stopped> {
+    ) -> Result<Result<(), SessionRefusal>, Stopped> {
         self.ask(|reply| Msg::Ready { start, reply }).await
     }
 
@@ -393,45 +403,13 @@ impl Actor {
     async fn handle(&mut self, msg: Msg) {
         match msg {
             Msg::Tick => self.refresh().await,
-            Msg::Order {
-                order: HomeOrder::Sync,
-                reply,
-                ..
-            } => {
-                let _ = reply.send(self.pull_now().await.into());
-            }
-            Msg::Order {
-                order: HomeOrder::Clone(project),
-                reply,
-                ..
-            } => {
-                let _ = reply.send(self.clone_project(project).await.into());
-            }
-            Msg::Order {
-                order: HomeOrder::Create(new, client),
+            Msg::Command {
+                command,
+                by,
                 id,
                 reply,
             } => {
-                let answer = self.create(new, &client, id).await.map_or_else(
-                    IssueError::completion,
-                    |(issue, warnings)| {
-                        CommandResult::IssueWritten { issue, warnings }.into()
-                    },
-                );
-                let _ = reply.send(answer);
-            }
-            Msg::Order {
-                order: HomeOrder::Change(issue, change, client),
-                id,
-                reply,
-            } => {
-                let answer = self
-                    .change(issue, change, &client, id)
-                    .await
-                    .map_or_else(IssueError::completion, |warnings| {
-                        CommandResult::IssueWritten { issue, warnings }.into()
-                    });
-                let _ = reply.send(answer);
+                let _ = reply.send(self.command(command, &by, id).await);
             }
             Msg::Place { at, reply } => {
                 self.fresh().await;
@@ -439,9 +417,9 @@ impl Actor {
                 let _ = reply.send(home::place(at, shown.as_ref()));
             }
             Msg::Ready { start, reply } => {
-                let readied = ready_branch(&start)
-                    .await
-                    .map_err(|reason| Rejection::WorkspaceFailure { reason });
+                let readied = ready_branch(&start).await.map_err(|reason| {
+                    SessionRefusal::WorkspaceFailure { reason }
+                });
                 let _ = reply.send(readied);
             }
             Msg::Started {
@@ -509,7 +487,33 @@ impl Actor {
         update.next(&self.home, issue)
     }
 
-    async fn pull_now(&mut self) -> CommandResult {
+    async fn command(
+        &mut self,
+        command: HomeCommand,
+        by: &ClientName,
+        id: CommandId,
+    ) -> Completion {
+        match command {
+            HomeCommand::Sync => home(self.pull_now().await),
+            HomeCommand::Clone { project } => {
+                home(self.clone_project(project).await)
+            }
+            HomeCommand::CreateIssue(new) => self
+                .create(new, by, id)
+                .await
+                .map_or_else(IssueError::completion, |(issue, warnings)| {
+                    home(HomeResult::IssueWritten { issue, warnings })
+                }),
+            HomeCommand::ChangeIssue { issue, change } => self
+                .change(issue, change, by, id)
+                .await
+                .map_or_else(IssueError::completion, |warnings| {
+                    home(HomeResult::IssueWritten { issue, warnings })
+                }),
+        }
+    }
+
+    async fn pull_now(&mut self) -> HomeResult {
         let configured = home::configured(self.remote.as_deref());
         if configured.is_ok() {
             self.refresh().await;
@@ -749,7 +753,7 @@ impl Actor {
     ) -> Result<Vec<String>, IssueError> {
         self.home
             .flow()
-            .map_err(|reason| Rejection::IssueNotSaved {
+            .map_err(|reason| HomeRefusal::IssueNotSaved {
                 reason: String::from(reason),
             })?;
         let current = read_issue(&self.clone, &request.read().path)
@@ -897,7 +901,7 @@ impl Actor {
         result
     }
 
-    async fn clone_project(&mut self, project: ProjectId) -> CommandResult {
+    async fn clone_project(&mut self, project: ProjectId) -> HomeResult {
         self.fresh().await;
         let remote = home::remote_of(self.home.projects(), &project);
         if let Ok(from) = &remote {
@@ -1468,6 +1472,10 @@ fn now() -> u64 {
 /// The randomness a new issue's id is minted with.
 fn draws() -> proto::Draws {
     core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
+}
+
+fn home(result: HomeResult) -> Completion {
+    CommandResult::Home(result).into()
 }
 
 #[cfg(test)]

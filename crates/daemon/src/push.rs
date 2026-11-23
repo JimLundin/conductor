@@ -7,8 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use host::log::FreshRequest;
 use host::push::{Devices, Registration};
-use host::serve::PushOrder;
-use proto::{CommandResult, PushSubscription};
+use proto::{PushCommand, PushResult, PushSubscription};
 use sad_web_push::{
     ContentEncoding, HyperWebPushClient, PartialVapidSignatureBuilder,
     SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushError,
@@ -65,17 +64,17 @@ impl Push {
         Ok(Self { inner })
     }
 
-    pub(super) async fn command(&self, order: PushOrder) -> CommandResult {
-        match order {
-            PushOrder::PublicKey => CommandResult::PushPublicKey(
+    pub(super) async fn command(&self, command: PushCommand) -> PushResult {
+        match command {
+            PushCommand::PublicKey => PushResult::PublicKey(
                 BASE64URL_NOPAD
                     .encode(&self.inner.signing_key.get_public_key()),
             ),
-            PushOrder::Register(subscription) => {
+            PushCommand::Register(subscription) => {
                 if self.inner.register(subscription).await {
-                    CommandResult::Accepted
+                    PushResult::Accepted
                 } else {
-                    CommandResult::PushUnavailable
+                    PushResult::Unavailable
                 }
             }
         }

@@ -1,10 +1,10 @@
 use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
-    Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason,
-    CommandResult, Decision, Effort, Event, EventKind, HostPath, HostSeq, Kept,
-    ModelChoice, ModelId, Models, Question, Rejection, RequestId, Resolution,
-    Selection, SessionId, Snapshot, SubagentActivity, SubagentEvent,
+    Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason, Decision,
+    Effort, Event, EventKind, HostPath, HostSeq, Kept, ModelChoice, ModelId,
+    Models, Question, RequestId, Resolution, Selection, SessionId,
+    SessionRefusal, SessionResult, Snapshot, SubagentActivity, SubagentEvent,
     SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
     TurnOutcome, Workspace,
 };
@@ -125,11 +125,11 @@ fn saved() -> Effect {
 }
 
 fn accepted() -> Effect {
-    Effect::Reply(CommandResult::Accepted)
+    Effect::Reply(SessionResult::Accepted)
 }
 
-fn rejected(rejection: Rejection) -> Effect {
-    Effect::Reply(CommandResult::Rejected(rejection))
+fn rejected(rejection: SessionRefusal) -> Effect {
+    Effect::Reply(SessionResult::Refused(rejection))
 }
 
 fn ready() -> Session {
@@ -193,7 +193,7 @@ fn a_turn_runs_from_the_message_to_its_end() {
             (sent(), Vec::from([saved(), accepted()])),
             (
                 send("again"),
-                Vec::from([rejected(Rejection::TurnInProgress)]),
+                Vec::from([rejected(SessionRefusal::TurnInProgress)]),
             ),
             (turn_started(), Vec::from([saved()])),
             (turn_ended(), Vec::from([completed()])),
@@ -409,7 +409,7 @@ fn a_request_is_opened_answered_once_and_withdrawn_when_the_turn_ends() {
             ),
             (
                 reply(1, deny(), "laptop"),
-                Vec::from([rejected(Rejection::AlreadyResolved {
+                Vec::from([rejected(SessionRefusal::AlreadyResolved {
                     by: phone(),
                 })]),
             ),
@@ -448,7 +448,7 @@ fn a_request_is_opened_answered_once_and_withdrawn_when_the_turn_ends() {
             ),
             (
                 reply(2, Reply::Answer(Vec::new()), "phone"),
-                Vec::from([rejected(Rejection::UnknownRequest)]),
+                Vec::from([rejected(SessionRefusal::UnknownRequest)]),
             ),
         ]),
     );
@@ -478,13 +478,13 @@ fn a_reply_that_does_not_fit_the_request_is_rejected() {
             ),
             (
                 reply(1, Reply::Decide(Decision::Approve), "phone"),
-                Vec::from([rejected(Rejection::WrongReply {
+                Vec::from([rejected(SessionRefusal::WrongReply {
                     reason: text("a question takes answers, not a decision"),
                 })]),
             ),
             (
                 reply(9, Reply::Answer(Vec::new()), "phone"),
-                Vec::from([rejected(Rejection::UnknownRequest)]),
+                Vec::from([rejected(SessionRefusal::UnknownRequest)]),
             ),
         ]),
     );
@@ -500,7 +500,10 @@ fn an_interrupt_before_the_turn_starts_waits_for_it() {
     let _ = expect(
         ready(),
         Vec::from([
-            (interrupt(), Vec::from([rejected(Rejection::NoTurnRunning)])),
+            (
+                interrupt(),
+                Vec::from([rejected(SessionRefusal::NoTurnRunning)]),
+            ),
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (sent(), Vec::from([saved(), accepted()])),
@@ -580,7 +583,7 @@ fn an_effort_the_model_takes_applies_from_the_next_turn() {
             ),
             (
                 set(Effort::Medium),
-                Vec::from([rejected(Rejection::NotOffered {
+                Vec::from([rejected(SessionRefusal::NotOffered {
                     reason: text("Opus doesn't take the effort medium"),
                 })]),
             ),
@@ -628,7 +631,10 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
                     },
                 })]),
             ),
-            (send("hi"), Vec::from([rejected(Rejection::SessionClosed)])),
+            (
+                send("hi"),
+                Vec::from([rejected(SessionRefusal::SessionClosed)]),
+            ),
             (start(), Vec::from([launching("/work", Some("conv"))])),
             (
                 started("conv"),
@@ -640,7 +646,7 @@ fn an_agent_that_exits_mid_turn_closes_the_session_until_it_starts_again() {
             ),
             (
                 reply(1, Reply::Decide(Decision::Approve), "phone"),
-                Vec::from([rejected(Rejection::UnknownRequest)]),
+                Vec::from([rejected(SessionRefusal::UnknownRequest)]),
             ),
         ]),
     );
@@ -928,13 +934,13 @@ fn a_restored_session_keeps_its_request_ids_and_who_answered_them() {
             ),
             (
                 reply(1, Reply::Decide(Decision::Approve), "laptop"),
-                Vec::from([rejected(Rejection::AlreadyResolved {
+                Vec::from([rejected(SessionRefusal::AlreadyResolved {
                     by: phone(),
                 })]),
             ),
             (
                 reply(2, Reply::Answer(Vec::new()), "phone"),
-                Vec::from([rejected(Rejection::UnknownRequest)]),
+                Vec::from([rejected(SessionRefusal::UnknownRequest)]),
             ),
             (
                 asking("perm-3", "toolu_3"),
@@ -1060,7 +1066,7 @@ fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
             ),
             (
                 Input::Snapshotted(Err(text("disk full"))),
-                Vec::from([rejected(Rejection::WorkspaceFailure {
+                Vec::from([rejected(SessionRefusal::WorkspaceFailure {
                     reason: text("disk full"),
                 })]),
             ),
@@ -1176,8 +1182,14 @@ fn removing_stops_the_agent_between_turns_then_removes_the_workspace() {
     let _ = expect(
         removed,
         Vec::from([
-            (start(), Vec::from([rejected(Rejection::SessionRemoved)])),
-            (remove(), Vec::from([rejected(Rejection::SessionRemoved)])),
+            (
+                start(),
+                Vec::from([rejected(SessionRefusal::SessionRemoved)]),
+            ),
+            (
+                remove(),
+                Vec::from([rejected(SessionRefusal::SessionRemoved)]),
+            ),
         ]),
     );
 }
@@ -1188,7 +1200,7 @@ fn a_session_is_not_removed_while_a_turn_runs() {
         running(),
         Vec::from([(
             remove(),
-            Vec::from([rejected(Rejection::TurnInProgress)]),
+            Vec::from([rejected(SessionRefusal::TurnInProgress)]),
         )]),
     );
 }
@@ -1210,7 +1222,7 @@ fn a_removal_that_fails_keeps_the_session_to_try_again() {
                             "the session was not removed: worktree locked",
                         ),
                     }),
-                    rejected(Rejection::WorkspaceFailure {
+                    rejected(SessionRefusal::WorkspaceFailure {
                         reason: text("worktree locked"),
                     }),
                 ]),
@@ -1236,7 +1248,7 @@ fn a_session_without_a_workspace_is_removed_at_once_and_stays_removed() {
         restored(&[event(EventKind::SessionRemoved { kept: None })], None),
         Vec::from([(
             start(),
-            Vec::from([rejected(Rejection::SessionRemoved)]),
+            Vec::from([rejected(SessionRefusal::SessionRemoved)]),
         )]),
     );
 }
@@ -1252,7 +1264,7 @@ fn a_failed_shutdown_keeps_the_agent_and_workspace_available_for_retry() {
                     "the agent did not confirm shutdown: still running",
                 ),
             }),
-            rejected(Rejection::InstanceUnavailable {
+            rejected(SessionRefusal::InstanceUnavailable {
                 reason: text("still running"),
             }),
         ])
@@ -1292,6 +1304,9 @@ fn a_stop_closes_the_session_between_turns() {
     );
     let _ = expect(
         running(),
-        Vec::from([(stop(), Vec::from([rejected(Rejection::TurnInProgress)]))]),
+        Vec::from([(
+            stop(),
+            Vec::from([rejected(SessionRefusal::TurnInProgress)]),
+        )]),
     );
 }

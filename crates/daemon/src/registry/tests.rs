@@ -4,12 +4,12 @@ use std::time::Duration;
 
 use agents::runtime::{Command, Event as AgentEvent};
 use host::registry::{OwnSignIn, Stored};
-use host::serve::{Configure, Relaunch};
+use host::serve::Relaunch;
 use host::sign_in::{Effect as SignInEffect, Key};
 use proto::{
-    Account, Availability, CommandId, CommandResult, Credential, Epoch,
-    HostPath, InstanceId, Models, Provider, Rejection, Roster, SessionId,
-    SignInStep,
+    Account, Availability, CommandId, Credential, Epoch, HostPath,
+    InstanceCommand, InstanceId, InstanceRefusal, InstanceResult, Models,
+    Provider, Roster, SessionId, SessionRefusal, SessionResult, SignInStep,
 };
 use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -162,7 +162,7 @@ impl Fixture {
 
     async fn launch(
         &mut self,
-    ) -> anyhow::Result<JoinHandle<Result<CommandResult, crate::Stopped>>> {
+    ) -> anyhow::Result<JoinHandle<Result<SessionResult, crate::Stopped>>> {
         let Ok((session, adapter, offered, reservation)) =
             self.adapter().await?
         else {
@@ -188,7 +188,7 @@ impl Fixture {
 
     async fn adapter(
         &mut self,
-    ) -> anyhow::Result<Result<super::Relaunch, Rejection>> {
+    ) -> anyhow::Result<Result<super::Relaunch, SessionRefusal>> {
         let (reply, answer) = oneshot::channel();
         self.actor
             .on(RegistryMsg::Continue {
@@ -199,11 +199,16 @@ impl Fixture {
         Ok(answer.await?)
     }
 
-    async fn remove(&mut self, id: CommandId) -> anyhow::Result<CommandResult> {
+    async fn remove(
+        &mut self,
+        id: CommandId,
+    ) -> anyhow::Result<InstanceResult> {
         let (reply, answer) = oneshot::channel();
         self.actor
             .on(RegistryMsg::Configure {
-                configure: Configure::Remove(self.source.clone()),
+                configure: InstanceCommand::Remove {
+                    instance: self.source.clone(),
+                },
                 id,
                 reply,
             })
@@ -245,15 +250,15 @@ async fn a_pending_relaunch_blocks_removal_then_removal_blocks_relaunch()
     let launch = fx.launch().await?;
     assert_eq!(
         fx.remove(CommandId(1)).await?,
-        CommandResult::Rejected(Rejection::InstanceInUse { sessions: 1 }),
+        InstanceResult::Refused(InstanceRefusal::InstanceInUse { sessions: 1 }),
     );
     fx.release.send_replace(true);
     let _ = tokio::time::timeout(DEADLINE, launch).await???;
-    assert_eq!(fx.remove(CommandId(2)).await?, CommandResult::Accepted);
+    assert_eq!(fx.remove(CommandId(2)).await?, InstanceResult::Accepted);
     assert!(fx.actor.offers.borrow().of(&fx.source).is_none());
     assert!(matches!(
         fx.adapter().await?,
-        Err(Rejection::InstanceUnavailable { .. })
+        Err(SessionRefusal::InstanceUnavailable { .. })
     ));
     Ok(())
 }
@@ -283,7 +288,7 @@ async fn a_pending_relaunch_blocks_adoption_then_adoption_blocks_relaunch()
     assert!(fx.actor.store.read_roster()?.of(&fx.source).is_none());
     assert!(matches!(
         fx.adapter().await?,
-        Err(Rejection::InstanceUnavailable { .. })
+        Err(SessionRefusal::InstanceUnavailable { .. })
     ));
     Ok(())
 }
@@ -314,7 +319,7 @@ async fn a_cancelled_refresh_settles_its_availability_and_waiter()
     let registry = fx.actor.spawn();
     assert_eq!(
         tokio::time::timeout(DEADLINE, answer).await??,
-        CommandResult::Accepted
+        InstanceResult::Accepted
     );
     let (offers, _) =
         tokio::time::timeout(DEADLINE, registry.instances()).await??;

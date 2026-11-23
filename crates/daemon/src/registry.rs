@@ -18,12 +18,13 @@ use host::registry::{
     brief_sent,
 };
 use host::restore::{Created, Recovery, Step, events_of};
-use host::serve::{Configure, SignInOrder};
+
 use host::sign_in::{CredentialTarget, Effect as SignInEffect, Key, SignIns};
 use proto::{
-    Catalog, ClientName, CommandId, CommandResult, Credential, Effort, Event,
-    EventKind, InstanceId, Instances, ModelId, Models, Provider, Rejection,
-    Roster, SessionId, SignIn, StartAt,
+    Catalog, ClientName, CommandId, Credential, Effort, Event, EventKind,
+    HomeRefusal, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
+    Instances, ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
+    SessionResult, SignIn, SignInCommand, SignInRefusal, SignInResult, StartAt,
 };
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -53,7 +54,7 @@ pub type Launcher = host::registry::Launcher<Instance>;
 struct Reply {
     removal: Option<CommandId>,
     credential: Option<CredentialLease>,
-    channel: oneshot::Sender<CommandResult>,
+    channel: oneshot::Sender<InstanceResult>,
 }
 type Core = host::registry::Registry<Instance, Session, Reply>;
 type Effect = host::registry::Effect<Instance, Reply>;
@@ -77,13 +78,13 @@ enum RegistryMsg {
     Started(Started<Instance>),
     Start {
         request: StartRequest,
-        placed: Box<Result<Placement, Rejection>>,
+        placed: Box<Result<Placement, HomeRefusal>>,
         reply: StartReply,
     },
     BranchReady(Box<BranchReady>),
     Continue {
         session: SessionId,
-        reply: oneshot::Sender<Result<Relaunch, Rejection>>,
+        reply: oneshot::Sender<Result<Relaunch, SessionRefusal>>,
     },
     Find {
         session: SessionId,
@@ -93,13 +94,13 @@ enum RegistryMsg {
         reply: oneshot::Sender<(Instances, Catalog)>,
     },
     Configure {
-        configure: Configure,
+        configure: InstanceCommand,
         id: CommandId,
-        reply: oneshot::Sender<CommandResult>,
+        reply: oneshot::Sender<InstanceResult>,
     },
     SignIn {
-        order: SignInOrder,
-        reply: oneshot::Sender<CommandResult>,
+        command: SignInCommand,
+        reply: oneshot::Sender<SignInResult>,
     },
     Watch {
         reply: oneshot::Sender<Watch>,
@@ -158,7 +159,7 @@ impl Registry {
         at: StartAt,
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<SessionResult, Stopped> {
         let placed = self.home.place(at).await?;
         let (model, effort) = choice;
         let request = StartRequest {
@@ -192,7 +193,7 @@ impl Registry {
     pub async fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<Result<Relaunch, Rejection>, Stopped> {
+    ) -> Result<Result<Relaunch, SessionRefusal>, Stopped> {
         self.ask(|reply| RegistryMsg::Continue { session, reply })
             .await
     }
@@ -227,9 +228,9 @@ impl Registry {
     /// Fails if the registry has stopped.
     pub async fn configure(
         &self,
-        configure: Configure,
+        configure: InstanceCommand,
         id: CommandId,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<InstanceResult, Stopped> {
         self.ask(|reply| RegistryMsg::Configure {
             configure,
             id,
@@ -245,9 +246,10 @@ impl Registry {
     /// Fails if the registry has stopped.
     pub async fn sign_in(
         &self,
-        order: SignInOrder,
-    ) -> Result<CommandResult, Stopped> {
-        self.ask(|reply| RegistryMsg::SignIn { order, reply }).await
+        command: SignInCommand,
+    ) -> Result<SignInResult, Stopped> {
+        self.ask(|reply| RegistryMsg::SignIn { command, reply })
+            .await
     }
 
     /// Captures the sign-ins, offers and their live updates in one registry turn.
@@ -387,8 +389,8 @@ impl RegistryActor {
                 let effects = self.configure(configure, id, reply).await?;
                 self.perform(effects);
             }
-            RegistryMsg::SignIn { order, reply } => {
-                let (result, effects) = self.order(order).await?;
+            RegistryMsg::SignIn { command, reply } => {
+                let (result, effects) = self.sign_in_command(command).await?;
                 self.signs_in(effects).await?;
                 let _ = reply.send(result);
             }
@@ -407,16 +409,16 @@ impl RegistryActor {
         Ok(())
     }
 
-    async fn order(
+    async fn sign_in_command(
         &mut self,
-        order: SignInOrder,
-    ) -> Result<(CommandResult, Vec<SignInEffect>), Stopped> {
-        Ok(match order {
-            SignInOrder::Start(instance) => {
+        command: SignInCommand,
+    ) -> Result<(SignInResult, Vec<SignInEffect>), Stopped> {
+        Ok(match command {
+            SignInCommand::Start { instance } => {
                 let running = self.running_sessions().await?;
                 self.start_sign_in(instance, &running)
             }
-            SignInOrder::Credential {
+            SignInCommand::StartCredential {
                 instance,
                 kind,
                 label,
@@ -428,15 +430,17 @@ impl RegistryActor {
                     Ok(target) => {
                         self.sign_ins.start_credential(instance, target)
                     }
-                    Err(rejection) => {
-                        (CommandResult::Rejected(rejection), Vec::new())
+                    Err(refusal) => {
+                        (SignInResult::Refused(refusal), Vec::new())
                     }
                 }
             }
-            SignInOrder::Submit(instance, code) => {
+            SignInCommand::SubmitCode { instance, code } => {
                 self.sign_ins.submit(instance, code)
             }
-            SignInOrder::Cancel(instance) => self.sign_ins.cancel(instance),
+            SignInCommand::Cancel { instance } => {
+                self.sign_ins.cancel(instance)
+            }
         })
     }
 
@@ -444,11 +448,11 @@ impl RegistryActor {
         &mut self,
         instance: InstanceId,
         running: &BTreeSet<SessionId>,
-    ) -> (CommandResult, Vec<SignInEffect>) {
+    ) -> (SignInResult, Vec<SignInEffect>) {
         match self.prepare_sign_in(&instance, running) {
             Ok(Some(settings)) => self.sign_ins.start(instance, Some(settings)),
-            Ok(None) => (CommandResult::Accepted, Vec::new()),
-            Err(rejection) => (CommandResult::Rejected(rejection), Vec::new()),
+            Ok(None) => (SignInResult::Accepted, Vec::new()),
+            Err(refusal) => (SignInResult::Refused(refusal), Vec::new()),
         }
     }
 
@@ -456,9 +460,9 @@ impl RegistryActor {
         &mut self,
         instance: &InstanceId,
         running: &BTreeSet<SessionId>,
-    ) -> Result<Option<proto::Instance>, Rejection> {
+    ) -> Result<Option<proto::Instance>, SignInRefusal> {
         if self.sign_ins.is_running(instance) {
-            return Err(Rejection::SignInRunning);
+            return Err(SignInRefusal::SignInRunning);
         }
         let recovered = self
             .store
@@ -467,7 +471,7 @@ impl RegistryActor {
                     .instance_in_use(&[&account.from, &account.to], running)
                     .is_none()
             })
-            .map_err(|err| Rejection::CredentialNotSaved {
+            .map_err(|err| SignInRefusal::CredentialNotSaved {
                 reason: format!("{err:#}"),
             })?;
         if recovered.map_or(Ok(false), |adoption| {
@@ -477,9 +481,9 @@ impl RegistryActor {
         }
         self.core
             .settings(instance)
-            .ok_or(Rejection::UnknownInstance)?;
+            .ok_or(SignInRefusal::UnknownInstance)?;
         let lease = self.store.signing(instance).map_err(|err| {
-            Rejection::InstanceUnavailable {
+            SignInRefusal::InstanceUnavailable {
                 reason: format!("{err:#}"),
             }
         })?;
@@ -494,9 +498,9 @@ impl RegistryActor {
         kind: String,
         label: &str,
         running: &BTreeSet<SessionId>,
-    ) -> Result<CredentialTarget, Rejection> {
+    ) -> Result<CredentialTarget, SignInRefusal> {
         if self.sign_ins.is_running(source) {
-            return Err(Rejection::SignInRunning);
+            return Err(SignInRefusal::SignInRunning);
         }
         let target = CredentialTarget::requested(
             self.core.catalog(),
@@ -504,16 +508,16 @@ impl RegistryActor {
             kind,
             label,
         )?;
-        if let Some(reason) =
+        if let Some(sessions) =
             self.core.instance_in_use(&[&target.destination], running)
         {
-            return Err(reason);
+            return Err(SignInRefusal::InstanceInUse { sessions });
         }
         self.core
             .settings(source)
-            .ok_or(Rejection::UnknownInstance)?;
+            .ok_or(SignInRefusal::UnknownInstance)?;
         let lease = self.store.signing(source).map_err(|err| {
-            Rejection::InstanceUnavailable {
+            SignInRefusal::InstanceUnavailable {
                 reason: format!("{err:#}"),
             }
         })?;
@@ -551,7 +555,7 @@ impl RegistryActor {
                 reply,
             ),
             Err(reason) => {
-                vec![Effect::Reply(reply, CommandResult::Rejected(reason))]
+                vec![Effect::Reply(reply, InstanceResult::Refused(reason))]
             }
         };
         self.perform(effects);
@@ -564,22 +568,22 @@ impl RegistryActor {
         target: &CredentialTarget,
         credential: &Credential,
         running: &BTreeSet<SessionId>,
-    ) -> Result<CredentialLease, Rejection> {
+    ) -> Result<CredentialLease, InstanceRefusal> {
         if !target.accepts(self.core.catalog(), credential) {
-            return Err(Rejection::InvalidCredential {
+            return Err(InstanceRefusal::InvalidCredential {
                 reason: String::from(
                     "the provider returned an invalid credential",
                 ),
             });
         }
-        if let Some(reason) =
+        if let Some(sessions) =
             self.core.instance_in_use(&[&target.destination], running)
         {
-            return Err(reason);
+            return Err(InstanceRefusal::InstanceInUse { sessions });
         }
         self.store
             .claim_credential(target.destination.clone())
-            .map_err(|err| Rejection::CredentialNotSaved {
+            .map_err(|err| InstanceRefusal::CredentialNotSaved {
                 reason: format!("{err:#}"),
             })
     }
@@ -588,7 +592,7 @@ impl RegistryActor {
         &mut self,
         requested: &InstanceId,
         adoption: RecoveredAdoption,
-    ) -> Result<bool, Rejection> {
+    ) -> Result<bool, SignInRefusal> {
         let RecoveredAdoption { account, roster } = adoption;
         let run = self.sign_ins.resume(requested, &account)?;
         let (channel, answer) = oneshot::channel();
@@ -726,26 +730,27 @@ impl RegistryActor {
 
     async fn configure(
         &mut self,
-        configure: Configure,
+        configure: InstanceCommand,
         id: CommandId,
-        channel: oneshot::Sender<CommandResult>,
+        channel: oneshot::Sender<InstanceResult>,
     ) -> Result<Vec<Effect>, Stopped> {
-        let removal = matches!(configure, Configure::Remove(_)).then_some(id);
+        let removal =
+            matches!(configure, InstanceCommand::Remove { .. }).then_some(id);
         let reply = Reply {
             removal,
             credential: None,
             channel,
         };
         Ok(match configure {
-            Configure::SetCredential {
+            InstanceCommand::SetCredential {
                 provider,
                 credential,
             } => self.core.set_credential(provider, credential, reply),
-            Configure::Remove(instance) => {
+            InstanceCommand::Remove { instance } => {
                 if self.store.removal(id) {
                     return Ok(vec![Effect::Reply(
                         reply,
-                        CommandResult::Accepted,
+                        InstanceResult::Accepted,
                     )]);
                 }
                 let running = self.running_sessions().await?;
@@ -916,7 +921,7 @@ impl RegistryActor {
     async fn start(
         &mut self,
         request: StartRequest,
-        placed: Result<Placement, Rejection>,
+        placed: Result<Placement, HomeRefusal>,
         reply: StartReply,
     ) -> Result<(), Stopped> {
         let history = if placed.as_ref().is_ok_and(|at| at.on.is_some()) {

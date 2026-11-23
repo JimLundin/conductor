@@ -1,17 +1,16 @@
-//! The protocol's rules on one connection (architecture §8): who is
+//! The client link's rules on one connection (architecture §8): who is
 //! admitted, what each later stream may carry, which commands the command
-//! log records, and what each command asks of the host.
+//! log records, and what a session command asks of the host.
 
 use agents::Reply;
 use proto::{
-    AuthToken, ClientName, Command, CommandBody, Credential, Effort, HostSeq,
-    InstanceId, IssueChange, IssueId, ModelId, Models, NewIssue, Open,
-    ProjectId, Provider, RequestId, SessionId, SignInCode, StartAt, Subscribe,
+    AuthToken, ClientName, Command, CommandId, Effort, HomeCommand, InstanceId,
+    ModelId, Models, Open, SessionCommand, SessionId, StartAt, Subscribe,
 };
 
 use crate::log::Kind;
 use crate::prelude::*;
-use crate::session;
+use crate::session::Order;
 
 /// What the connection's first stream decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +31,9 @@ pub fn admit(first: Option<Open>, token: &AuthToken) -> Admission {
             |_| refused("wrong token"),
             |()| Admission::Admitted(hello.client),
         ),
-        Some(Open::Subscribe(_) | Open::Command(_) | Open::FleetHello(_))
+        Some(
+            Open::Subscribe(_) | Open::Command { .. } | Open::FleetHello(_),
+        )
         | None => refused("the first stream must be a hello"),
     }
 }
@@ -47,7 +48,7 @@ fn refused(reason: &str) -> Admission {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stream {
     /// Answered with one `CommandResult`, then finished.
-    Command(Command),
+    Command(CommandId, Command),
     /// Answered with events until the client falls behind or the
     /// connection goes.
     Subscribe(Subscribe),
@@ -58,52 +59,28 @@ pub enum Stream {
 #[must_use]
 pub fn stream(open: Option<Open>) -> Stream {
     match open {
-        Some(Open::Command(command)) => Stream::Command(command),
+        Some(Open::Command { id, body }) => Stream::Command(id, body),
         Some(Open::Subscribe(subscribe)) => Stream::Subscribe(subscribe),
         Some(Open::Hello(_) | Open::FleetHello(_)) | None => Stream::Finish,
     }
 }
 
-/// A command for one session, already routed to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Order {
-    Send {
-        text: String,
-        by: ClientName,
-    },
-    Interrupt,
-    Diff(HostSeq),
-    Reply {
-        request: RequestId,
-        reply: Reply,
-        by: ClientName,
-    },
-    /// Starts the agent, resuming the conversation if the session has one:
-    /// when the session starts, and on `Continue`. The models are what the
-    /// provider offers now.
-    Start(Models),
-    /// Sets the effort of later turns, if the session's model in these
-    /// models takes it. The agent gets it when the next turn starts.
-    Effort(Effort, Models),
-    /// Stops the agent between turns and removes the session's workspace.
-    Remove,
-}
-
-impl Order {
-    #[must_use]
-    pub fn session(self) -> session::Order {
-        use session::Order as Core;
-        match self {
-            Self::Send { text, by } => Core::Send { text, by },
-            Self::Interrupt => Core::Interrupt,
-            Self::Diff(snapshot) => Core::Diff(snapshot),
-            Self::Reply { request, reply, by } => {
-                Core::Reply { request, reply, by }
-            }
-            Self::Start(offered) => Core::Start { offered },
-            Self::Effort(effort, offered) => Core::Effort(effort, offered),
-            Self::Remove => Core::Remove,
-        }
+/// Which log a command's receipt goes to, if it keeps one: sign-ins, push,
+/// the fleet, a diff and the home's sync and clone run every time.
+#[must_use]
+pub const fn ledger(command: &Command) -> Option<Kind> {
+    match command {
+        Command::Session(SessionCommand::GetDiff { .. })
+        | Command::SignIn(_)
+        | Command::Push(_)
+        | Command::Fleet(_)
+        | Command::Home(HomeCommand::Sync | HomeCommand::Clone { .. }) => None,
+        Command::Instance(_)
+        | Command::Session(SessionCommand::Finish { .. })
+        | Command::Home(
+            HomeCommand::CreateIssue(_) | HomeCommand::ChangeIssue { .. },
+        ) => Some(Kind::Receipt),
+        Command::Session(_) => Some(Kind::Session),
     }
 }
 
@@ -119,15 +96,15 @@ impl Relaunch {
     #[must_use]
     pub const fn order(self, offered: Models) -> Order {
         match self {
-            Self::Continue => Order::Start(offered),
+            Self::Continue => Order::Start { offered },
             Self::Effort(effort) => Order::Effort(effort, offered),
         }
     }
 }
 
-/// What a command asks of the host.
+/// What a session command asks of the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Route {
+pub enum SessionRoute {
     /// Hand the running session an order; a session the host doesn't have
     /// answers `UnknownSession`, and one that stopped `SessionClosed`.
     Order(SessionId, Order),
@@ -138,202 +115,61 @@ pub enum Route {
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     },
-    Configure(Configure),
-    SignIn(SignInOrder),
-    Home(HomeOrder),
     /// Finishes the session on its issue, in the background.
     Finish(SessionId, ClientName),
-    Push(PushOrder),
-    Fleet(FleetAction),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FleetAction {
-    Status,
-    Invite,
-    Revoke(proto::fleet::NodeId),
-    Approve(proto::fleet::PairRequest),
-    Admit { ticket: proto::Ticket, name: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PushOrder {
-    PublicKey,
-    Register(proto::PushSubscription),
-}
-
-/// A command about the host's clone of the home.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HomeOrder {
-    Sync,
-    Clone(ProjectId),
-    /// The client signs the lines each edit adds to the log.
-    Create(NewIssue, ClientName),
-    Change(IssueId, IssueChange, ClientName),
-}
-
-/// A command about an instance's sign-in from the app.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SignInOrder {
-    Start(InstanceId),
-    Credential {
-        instance: InstanceId,
-        kind: String,
-        label: String,
-    },
-    Submit(InstanceId, SignInCode),
-    Cancel(InstanceId),
-}
-
-/// A command that changes the host's instances.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Configure {
-    SetCredential {
-        provider: Provider,
-        credential: Credential,
-    },
-    Remove(InstanceId),
-}
-
-impl Route {
-    #[must_use]
-    pub const fn ledger(&self) -> Option<Kind> {
-        match self {
-            Self::Order(_, Order::Diff(_))
-            | Self::SignIn(_)
-            | Self::Push(_)
-            | Self::Fleet(_)
-            | Self::Home(HomeOrder::Sync | HomeOrder::Clone(_)) => None,
-            Self::Configure(_)
-            | Self::Finish(..)
-            | Self::Home(HomeOrder::Create(..) | HomeOrder::Change(..)) => {
-                Some(Kind::Receipt)
-            }
-            Self::Order(..) | Self::Relaunch(..) | Self::Start { .. } => {
-                Some(Kind::Session)
-            }
-        }
-    }
-}
-
+/// What `command`, from the client `by`, asks of the host.
 #[must_use]
-pub fn route(body: CommandBody, by: ClientName) -> Route {
-    match body {
-        CommandBody::PushPublicKey => Route::Push(PushOrder::PublicKey),
-        CommandBody::RegisterPush(subscription) => {
-            Route::Push(PushOrder::Register(subscription))
-        }
-        CommandBody::FleetApprove(request) => {
-            Route::Fleet(FleetAction::Approve(request))
-        }
-        CommandBody::FleetAdmit { ticket, name } => {
-            Route::Fleet(FleetAction::Admit { ticket, name })
-        }
-        CommandBody::FleetStatus => Route::Fleet(FleetAction::Status),
-        CommandBody::FleetInvite => Route::Fleet(FleetAction::Invite),
-        CommandBody::FleetRevoke(node) => {
-            Route::Fleet(FleetAction::Revoke(node))
-        }
-        CommandBody::GetDiff { session, snapshot } => {
-            Route::Order(session, Order::Diff(snapshot))
-        }
-        CommandBody::StartSession {
+pub fn session(command: SessionCommand, by: ClientName) -> SessionRoute {
+    match command {
+        SessionCommand::Start {
             instance,
             at,
             model,
             effort,
-        } => Route::Start {
+        } => SessionRoute::Start {
             instance,
             at,
             choice: (model, effort),
             by,
         },
-        CommandBody::SyncHome => Route::Home(HomeOrder::Sync),
-        CommandBody::CloneProject { project } => {
-            Route::Home(HomeOrder::Clone(project))
+        SessionCommand::SendMessage { session, text } => {
+            SessionRoute::Order(session, Order::Send { text, by })
         }
-        CommandBody::Continue { session } => {
-            Route::Relaunch(session, Relaunch::Continue)
+        SessionCommand::Interrupt { session } => {
+            SessionRoute::Order(session, Order::Interrupt)
         }
-        CommandBody::CreateIssue(new) => {
-            Route::Home(HomeOrder::Create(new, by))
+        SessionCommand::Continue { session } => {
+            SessionRoute::Relaunch(session, Relaunch::Continue)
         }
-        CommandBody::ChangeIssue { issue, change } => {
-            Route::Home(HomeOrder::Change(issue, change, by))
-        }
-        CommandBody::FinishSession { session } => Route::Finish(session, by),
-        CommandBody::RemoveSession { session } => {
-            Route::Order(session, Order::Remove)
-        }
-        CommandBody::SetEffort { session, effort } => {
-            Route::Relaunch(session, Relaunch::Effort(effort))
-        }
-        CommandBody::SendMessage { session, text } => {
-            Route::Order(session, Order::Send { text, by })
-        }
-        CommandBody::Interrupt { session } => {
-            Route::Order(session, Order::Interrupt)
-        }
-        CommandBody::Resolve {
+        SessionCommand::Resolve {
             session,
             request,
             decision,
-        } => reply(session, request, Reply::Decide(decision), by),
-        CommandBody::Answer {
+        } => {
+            let reply = Reply::Decide(decision);
+            SessionRoute::Order(session, Order::Reply { request, reply, by })
+        }
+        SessionCommand::Answer {
             session,
             request,
             answers,
-        } => reply(session, request, Reply::Answer(answers), by),
-        CommandBody::SetCredential {
-            provider,
-            credential,
-        } => set_credential(provider, credential),
-        CommandBody::RemoveInstance { instance } => {
-            Route::Configure(Configure::Remove(instance))
+        } => {
+            let reply = Reply::Answer(answers);
+            SessionRoute::Order(session, Order::Reply { request, reply, by })
         }
-        CommandBody::StartCredentialSignIn {
-            instance,
-            kind,
-            label,
-        } => credential_sign_in(instance, kind, label),
-        CommandBody::StartSignIn { instance } => {
-            Route::SignIn(SignInOrder::Start(instance))
+        SessionCommand::GetDiff { session, snapshot } => {
+            SessionRoute::Order(session, Order::Diff(snapshot))
         }
-        CommandBody::SubmitSignInCode { instance, code } => {
-            Route::SignIn(SignInOrder::Submit(instance, code))
+        SessionCommand::SetEffort { session, effort } => {
+            SessionRoute::Relaunch(session, Relaunch::Effort(effort))
         }
-        CommandBody::CancelSignIn { instance } => {
-            Route::SignIn(SignInOrder::Cancel(instance))
+        SessionCommand::Remove { session } => {
+            SessionRoute::Order(session, Order::Remove)
         }
+        SessionCommand::Finish { session } => SessionRoute::Finish(session, by),
     }
-}
-
-const fn set_credential(provider: Provider, credential: Credential) -> Route {
-    Route::Configure(Configure::SetCredential {
-        provider,
-        credential,
-    })
-}
-
-const fn credential_sign_in(
-    instance: InstanceId,
-    kind: String,
-    label: String,
-) -> Route {
-    Route::SignIn(SignInOrder::Credential {
-        instance,
-        kind,
-        label,
-    })
-}
-
-const fn reply(
-    session: SessionId,
-    request: RequestId,
-    reply: Reply,
-    by: ClientName,
-) -> Route {
-    Route::Order(session, Order::Reply { request, reply, by })
 }
 
 #[cfg(test)]

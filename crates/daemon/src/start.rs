@@ -134,7 +134,7 @@ impl Providers {
         &self,
         id: InstanceId,
         credential: &proto::Credential,
-    ) -> Result<(), proto::Rejection> {
+    ) -> Result<(), proto::InstanceRefusal> {
         let membership = self.fleet.borrow().clone();
         if let Some(fleet) = membership {
             let sharing = self.plugins.sharing(id.provider, credential);

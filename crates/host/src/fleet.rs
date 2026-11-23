@@ -4,10 +4,9 @@ use alloc::collections::BTreeSet;
 
 use proto::fleet::{NodeId, Snapshot};
 use proto::{
-    CommandResult, Credential, Instance, InstanceId, Rejection, Roster,
+    Credential, Instance, InstanceCommand, InstanceId, InstanceRefusal,
+    InstanceResult, Roster,
 };
-
-use crate::serve::Configure;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sharing {
@@ -57,13 +56,16 @@ pub fn wants_update(
 }
 
 #[must_use]
-pub const fn applied(command: &Configure, result: &CommandResult) -> bool {
-    matches!(result, CommandResult::Accepted)
+pub const fn applied(
+    command: &InstanceCommand,
+    result: &InstanceResult,
+) -> bool {
+    matches!(result, InstanceResult::Accepted)
         || matches!(
             (command, result),
             (
-                Configure::Remove(_),
-                CommandResult::Rejected(Rejection::UnknownInstance)
+                InstanceCommand::Remove { .. },
+                InstanceResult::Refused(InstanceRefusal::UnknownInstance)
             )
         )
 }

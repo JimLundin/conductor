@@ -58,11 +58,15 @@ the session steps of the provider-agnostic `crates/agents`; the daemon
 assigns request ids and applies session state and approval wording. The app only ever sees the provider-neutral model,
 so one UI and one set of commands work for both agents.
 
-- **Commands:** `StartSession { provider, directory, model, effort }`,
+- **Commands:** each domain has its own commands, results and refusals,
+  and the client link wraps them by domain (`Command::Session`,
+  `Instance`, `SignIn`, `Home`, `Push`, `Fleet`; ADR 0003), so
+  `Session::Start` below is `Command::Session(SessionCommand::Start)`. A
+  session's are `Session::Start { instance, at, model, effort }`,
   `SendMessage`, `Interrupt`, `Continue`, `SetEffort { session, effort }`,
   `Resolve { request, Approve | ApproveForSession | Deny }`, `Answer {
   request, answers }`. Each command
-  gets one `CommandResult`. A reply that doesn't fit its request (a
+  gets one `CommandResult`, in its domain. A reply that doesn't fit its request (a
   decision for a question, the wrong number of answers, `ApproveForSession`
   where none is offered) is refused as `WrongReply`.
 - **Events:** a session is created, becomes ready, closes, and becomes
@@ -79,7 +83,7 @@ so one UI and one set of commands work for both agents.
   credential (`Models`: each model's id, name, description and efforts,
   and the default). The host lists them when it starts and again after
   each credential change, for each instance.
-  `StartSession` may name one of them and one of its efforts (`low` to
+  `Session::Start` may name one of them and one of its efforts (`low` to
   `ultra`); a model or an effort the host doesn't list is refused as
   `NotOffered`. With none named, the session gets the default: a Codex provider
   credential's model, which is what its gateway serves; else the host's
@@ -93,7 +97,7 @@ so one UI and one set of commands work for both agents.
 - **Effort between turns:** `SetEffort { session, effort }` sets the
   effort of the session's later turns. It must be one the session's model
   (or, with none named, the default) lists, else `NotOffered`, by the same
-  rule as `StartSession`: a model the host doesn't list takes any effort.
+  rule as `Session::Start`: a model the host doesn't list takes any effort.
   The same effort again is `Accepted` and logs nothing. The host checks it
   against what the session's instance offers now, so it needs the instance
   available (`InstanceUnavailable`). It is taken while a turn runs and on a closed
@@ -375,15 +379,15 @@ each instance has its own CLI sign-in and config, its own agents and
 credential, and each Codex instance its own app-server (below). Whatever
 is per account is keyed by `InstanceId`: the registry's launchers,
 availability, models, refreshes and sessions, `Welcome.instances`,
-`StartSession { instance }`, and `SessionCreated { instance, .. }`,
+`Session::Start { instance }`, and `SessionCreated { instance, .. }`,
 so `Continue` runs on the session's own instance. What the plugin
 describes stays keyed by `Provider`: the catalog's label, note and
 credential forms. The app shows an instance by its account, and the own
 instance by its provider's label. `SetCredential { provider, credential }`
-and `RemoveInstance { instance }` change the instances from the app; each
-answers `CommandResult::Accepted`, once a credential change has refreshed
+and `Instance::Remove { instance }` change the instances from the app; each
+answers `Accepted`, once a credential change has refreshed
 the instance and once an added instance's CLI has started.
-`RemoveInstance` is refused with `InstanceInUse { sessions }` while a
+`Instance::Remove` is refused with `InstanceInUse { sessions }` while a
 session runs on the instance (created or ready, and not closed since):
 stopping a running agent on someone's behalf would lose its turn. The
 instance's closed sessions stay and can't continue, and its home stays,
@@ -543,7 +547,7 @@ until someone re-records them by hand (§6.2).
   receipt. Restart withdraws its requests and interrupts its turn; it does
   not promise exactly-once execution inside a CLI.
 - **Credential receipts:** the instance commands (`SetCredential` and
-  `RemoveInstance`) reserve their command id without holding
+  `Instance::Remove`) reserve their command id without holding
   the global event transaction during an instance's refresh or start.
   Other commands and live events can proceed. Duplicate ids wait for the
   original result; superseded saves wait for the newest refresh. The final
@@ -597,7 +601,7 @@ until someone re-records them by hand (§6.2).
   A retry captures the current files against the current session branch,
   without resetting it to an earlier snapshot. Branch updates check the
   expected tip, so a concurrent or later commit cannot be silently dropped.
-- **Removal (built):** `RemoveSession` is refused while a turn runs. It
+- **Removal (built):** `Session::Remove` is refused while a turn runs. It
   stops a running agent (`SessionClosed`), then follows
   the workspace removal plan: commit the worktree's untracked and changed
   files onto `conductor/<ulid>` with `commit-tree` and `update-ref` (files
@@ -655,7 +659,7 @@ standards and issues, cloned on every host. Built so far are home steps
   `<data>/home-repo` (`<data>/home` holds the instances' private homes) and
   runs plain `git`, as the workspaces do. It clones when there is no clone
   and otherwise pulls (`git pull --rebase`, which fast-forwards; a rebase
-  that stops is aborted) every five minutes, on `SyncHome`, and before a
+  that stops is aborted) every five minutes, on `Home::Sync`, and before a
   read that needs it (a session started in a project, a clone) unless it
   tried within 30 seconds. A failure is state, not an error:
   `proto::HomeSync` is `Syncing` (first clone), `Synced`, `Behind` (a
@@ -678,11 +682,11 @@ standards and issues, cloned on every host. Built so far are home steps
   does the same with the home's folder as its one root, running Git with
   std's processes. A project may have several checkouts on a host
   (`proto::Checkout { path, origin: Found | Cloned }`), kept by path in
-  `<data>/home.state`. `CloneProject` clones a project with a remote into
+  `<data>/home.state`. `Home::Clone` clones a project with a remote into
   `<data>/projects/<project>` (`Project.cloning` is `Running`, then `Idle`
   or `Failed`). The host only reads the checkouts it finds; sessions run in
   worktrees made from them (§5.3).
-- **Sessions in a project.** `StartSession { at: StartAt::Directory |
+- **Sessions in a project.** `Session::Start { at: StartAt::Directory |
   StartAt::Project }`: a project starts in its first checkout, or is
   refused with `NoHome`, `UnknownProject` or `NotCheckedOut`. The session
   stores no project of its own: its worktree's repository, which
@@ -740,7 +744,7 @@ standards and issues, cloned on every host. Built so far are home steps
   The host retries reading a temporarily unreadable queue before saving
   new edits and moves an undecodable queue aside to
   `home-edits.unreadable`.
-- **Sessions on issues** (home step 7, started). `StartSession { at:
+- **Sessions on issues** (home step 7, started). `Session::Start { at:
   StartAt::Issue(issue) }` starts in the issue's project's first
   checkout (`NotCheckedOut` without one). An instance has one session on
   an issue until it is removed (`IssueTaken`),
@@ -763,7 +767,7 @@ standards and issues, cloned on every host. Built so far are home steps
   is then (`home::issue::SessionUpdate`). The fetch runs in the
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
-- **Finishing** (home step 7). `FinishSession { session }`, for a session
+- **Finishing** (home step 7). `Session::Finish { session }`, for a session
   on an issue between turns (`NotOnIssue`, `TurnInProgress`) that has done
   something since it last finished (`AlreadyFinished`; its own summary
   turn doesn't count, `proto::FinishState`), keeps a receipt, logs
@@ -1119,7 +1123,7 @@ The owner reaches both models through gateways, so their forms remain first in t
   and discovery starts a server with the new key after the private config
   has been updated.
 - **Protocol:** `SetCredential { provider, credential }` and
-  `RemoveInstance { instance }` answer `Accepted` when the command completes.
+  `Instance::Remove { instance }` answer `Accepted` when the command completes.
   A retry returns its original receipt even after the offer has changed.
   Clients follow the current roster through `Welcome` and `Feed::Instances`;
   neither command results nor sign-in completion carry snapshots. Completion
@@ -1214,13 +1218,13 @@ Built: the per-host subscription sign-in of each provider, on one host.
 
 1. On the credentials screen, each instance's section offers *Sign in*;
    the provider's own instance's signs in an account the host has no
-   instance of yet. The app sends `StartSignIn { instance }`, and the host
+   instance of yet. The app sends `SignIn::Start { instance }`, and the host
    runs the
    instance's CLI sign-in in its private home, its stdin, stdout and
    stderr on pipes. A host runs one sign-in per instance at a time and
-   refuses a second start (`Rejection::SignInRunning`) until the first ends
+   refuses a second start (`SignInRefusal::SignInRunning`) until the first ends
    or is cancelled, so two devices never race one CLI; *Cancel*
-   (`CancelSignIn { instance }`) kills it, as do a 15-minute limit (Codex's
+   (`SignIn::Cancel { instance }`) kills it, as do a 15-minute limit (Codex's
    one-time code expires then) and the host stopping.
 2. **What the CLI prints is read as its plugin describes.** Each provider's
    core gives an `agents::SignIn` in its `Profile`: the run; where the
@@ -1238,7 +1242,7 @@ Built: the per-host subscription sign-in of each provider, on one host.
    ([troubleshoot], verified), then waits at "Paste code here if prompted >"
    (observed with 2.1.316, `fixtures/claude/sign-in.txt`). The app shows
    *Open the sign-in page* (a new tab) and a password field; the code goes
-   in `SubmitSignInCode { instance, code }` and the host writes it to the
+   in `SignIn::SubmitCode { instance, code }` and the host writes it to the
    CLI's stdin. A wrong code prints "Login failed: That code wasn't
    accepted…" on stderr and exits 1 (observed). The CLI stores the result
    itself; nothing goes to a fleet config.
@@ -1341,7 +1345,7 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   the host running with its own instances `Unavailable` for that reason,
   since it may hold a credential that would come before a sign-in.
   `SetCredential` is refused then, so nothing overwrites it. A
-  `RemoveInstance` for any of them moves it to
+  `Instance::Remove` for any of them moves it to
   `<data>/credentials.unreadable` and starts a store of the own
   instances, which is the recovery from the phone. A missing or
   inaccessible keystore entry stops the host before it opens the
@@ -1699,7 +1703,7 @@ type and a message can only travel in its link's:
 
 | Link | Codec | Messages |
 |---|---|---|
-| Client and host (`proto::ALPN`, `conductor/38`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`proto::ALPN`, `conductor/39`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`proto::fleet::ALPN`, `conductor-fleet/3`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` on a host, `web-iroh` in the browser.

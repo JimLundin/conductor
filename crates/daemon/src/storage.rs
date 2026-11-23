@@ -179,7 +179,11 @@ mod tests {
         let write = first.begin()?;
         event(&write, &opened)?;
         conversation(&write, SessionId(7), "native-conversation")?;
-        receipt(&write, proto::CommandId(1), &CommandResult::Accepted)?;
+        receipt(
+            &write,
+            proto::CommandId(1),
+            &CommandResult::Session(proto::SessionResult::Accepted),
+        )?;
         write.commit()?;
         drop(first);
         let second = Storage::open(&path)?;
@@ -191,7 +195,7 @@ mod tests {
         );
         assert_eq!(
             second.receipt(proto::CommandId(1))?,
-            Some(CommandResult::Accepted)
+            Some(CommandResult::Session(proto::SessionResult::Accepted))
         );
         drop(second);
         let _ = std::fs::remove_file(path);
@@ -214,7 +218,11 @@ mod tests {
                 kind: EventKind::SessionReady,
             },
         )?;
-        receipt(&write, proto::CommandId(1), &CommandResult::Accepted)?;
+        receipt(
+            &write,
+            proto::CommandId(1),
+            &CommandResult::Session(proto::SessionResult::Accepted),
+        )?;
         drop(write);
         drop(first);
         let second = Storage::open(&path)?;

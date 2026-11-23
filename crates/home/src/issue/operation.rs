@@ -2,8 +2,8 @@ use alloc::boxed::Box;
 use alloc::string::ToString;
 
 use proto::{
-    CommandId, Issue, IssueChange, IssueId, NewIssue, Part, ProjectId,
-    Rejection,
+    CommandId, HomeRefusal, Issue, IssueChange, IssueId, NewIssue, Part,
+    ProjectId,
 };
 
 use super::{
@@ -91,7 +91,7 @@ impl Recorded {
     pub fn next(
         &mut self,
         outcome: Result<(), String>,
-    ) -> Result<Option<RecordEffect>, Rejection> {
+    ) -> Result<Option<RecordEffect>, HomeRefusal> {
         let effect = match core::mem::replace(&mut self.0, Recording::Done) {
             Recording::Keep(edit, commit, id) => {
                 self.0 = Recording::Write(id, commit);
@@ -99,7 +99,7 @@ impl Recorded {
             }
             Recording::Write(id, commit) => {
                 outcome
-                    .map_err(|reason| Rejection::IssueNotSaved { reason })?;
+                    .map_err(|reason| HomeRefusal::IssueNotSaved { reason })?;
                 let (next, effect) = commit.map_or(
                     (
                         Recording::Scan,
@@ -283,7 +283,7 @@ impl Context<'_> {
         issue: IssueId,
         new: NewIssue,
         client: &str,
-    ) -> Result<Record, Rejection> {
+    ) -> Result<Record, HomeRefusal> {
         crate::configured(self.remote)?;
         let project = self
             .home
@@ -291,7 +291,7 @@ impl Context<'_> {
             .iter()
             .find(|known| known.id == new.project)
             .map(|known| known.id)
-            .ok_or(Rejection::UnknownProject)?;
+            .ok_or(HomeRefusal::UnknownProject)?;
         Ok(self.record(
             project,
             signer(self.host, client),
@@ -312,13 +312,13 @@ impl Context<'_> {
         issue: IssueId,
         change: IssueChange,
         client: &str,
-    ) -> Result<Record, Rejection> {
+    ) -> Result<Record, HomeRefusal> {
         crate::configured(self.remote)?;
         let project = self
             .home
             .issue(issue)
             .map(|known| known.project)
-            .ok_or(Rejection::UnknownIssue)?;
+            .ok_or(HomeRefusal::UnknownIssue)?;
         Ok(self.record(
             project,
             signer(self.host, client),
@@ -371,7 +371,7 @@ impl Record {
         current: Option<&str>,
         home: &Snapshot,
         pending: &PendingEdits,
-    ) -> Result<Recorded, Rejection> {
+    ) -> Result<Recorded, HomeRefusal> {
         self.data.was = was(home.flow().ok(), current, &self.data);
         let edit = Edit {
             command: self.command,
@@ -386,12 +386,12 @@ impl Record {
                 return Ok(Recorded(Recording::Done, Vec::new()));
             }
             Applied::Unchanged => (None, Vec::new()),
-            Applied::Gone => return Err(Rejection::UnknownIssue),
+            Applied::Gone => return Err(HomeRefusal::UnknownIssue),
             Applied::Unreadable(reason) => {
-                return Err(Rejection::IssueNotSaved { reason });
+                return Err(HomeRefusal::IssueNotSaved { reason });
             }
             Applied::Refused(reason) => {
-                return Err(Rejection::IssueRefused { reason });
+                return Err(HomeRefusal::IssueRefused { reason });
             }
         };
         let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue()));

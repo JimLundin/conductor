@@ -14,11 +14,11 @@ use std::time::Duration;
 use agents::Step;
 use agents::runtime::{Command, Event, Outcome, Start};
 use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
-pub use host::serve::Order;
+pub use host::session::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
 use proto::{
-    ClientName, CommandId, CommandResult, EventKind, HostPath, HostSeq, Models,
-    SessionId, Workspace,
+    ClientName, CommandId, EventKind, HostPath, HostSeq, Models, SessionId,
+    SessionResult, Workspace,
 };
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -48,7 +48,7 @@ pub struct Session {
 #[derive(Debug)]
 struct SessionMsg {
     request: Request,
-    reply: oneshot::Sender<CommandResult>,
+    reply: oneshot::Sender<SessionResult>,
 }
 
 #[derive(Debug)]
@@ -85,7 +85,7 @@ struct Actor {
     held: VecDeque<Step>,
     log: Log,
     /// Where the order being performed is answered.
-    reply: Option<oneshot::Sender<CommandResult>>,
+    reply: Option<oneshot::Sender<SessionResult>>,
 }
 
 impl Session {
@@ -107,7 +107,7 @@ impl Session {
             Self::restore(id, directory, choice, told, restored, history, log);
         let (reply, _) = oneshot::channel();
         let _ = session.inbox.try_send(SessionMsg {
-            request: Request::Order(Order::Start(offered)),
+            request: Request::Order(Order::Start { offered }),
             reply,
         });
         session
@@ -147,7 +147,7 @@ impl Session {
     /// # Errors
     ///
     /// Fails if the session has stopped.
-    pub async fn order(&self, order: Order) -> Result<CommandResult, Stopped> {
+    pub async fn order(&self, order: Order) -> Result<SessionResult, Stopped> {
         self.request(Request::Order(order)).await
     }
 
@@ -156,7 +156,7 @@ impl Session {
         order: Order,
         adapter: Instance,
         reservation: std::sync::Arc<()>,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<SessionResult, Stopped> {
         self.request(Request::Relaunch(order, adapter, reservation))
             .await
     }
@@ -164,14 +164,14 @@ impl Session {
     pub(crate) async fn finish(
         &self,
         by: ClientName,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<SessionResult, Stopped> {
         self.request(Request::Finish(by)).await
     }
 
     async fn request(
         &self,
         request: Request,
-    ) -> Result<CommandResult, Stopped> {
+    ) -> Result<SessionResult, Stopped> {
         let (reply, answer) = oneshot::channel();
         self.inbox
             .send(SessionMsg { request, reply })
@@ -232,7 +232,7 @@ impl Actor {
                     Request::Relaunch(order, adapter, reservation) => {
                         self.runtime.get_or_insert_with(|| adapter.start());
                         self.reply = Some(reply);
-                        let input = Input::Order(order.session());
+                        let input = Input::Order(order);
                         let result = self.react(core, input).await;
                         drop(reservation);
                         return result;
@@ -242,7 +242,7 @@ impl Actor {
                     }
                 };
                 self.reply = Some(reply);
-                Input::Order(order.session())
+                Input::Order(order)
             }
             Happening::Agent(Event::Step(step)) => Input::Step(step),
             Happening::Agent(Event::Outcome(outcome)) => Input::Agent(outcome),
@@ -435,7 +435,7 @@ impl Actor {
         }
     }
 
-    fn answer(&mut self, result: CommandResult) {
+    fn answer(&mut self, result: SessionResult) {
         if let Some(waiting) = self.reply.take() {
             let _ = waiting.send(result);
         }

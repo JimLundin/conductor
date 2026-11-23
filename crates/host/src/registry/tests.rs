@@ -4,11 +4,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow::{Break, Continue};
 
 use proto::{
-    Account, Auth, Availability, Catalog, ClientName, CloseReason,
-    CommandResult, Credential, CredentialForm, Effort, Event, EventKind, Field,
-    FieldKind, HostPath, HostSeq, Instance, InstanceId, InstanceStatus,
-    Instances, ModelChoice, ModelId, Models, Provider, ProviderInfo, Rejection,
-    Roster, SessionId,
+    Account, Auth, Availability, Catalog, ClientName, CloseReason, Credential,
+    CredentialForm, Effort, Event, EventKind, Field, FieldKind, HomeRefusal,
+    HostPath, HostSeq, Instance, InstanceId, InstanceRefusal, InstanceResult,
+    InstanceStatus, Instances, ModelChoice, ModelId, Models, Provider,
+    ProviderInfo, Roster, SessionId, SessionRefusal, SessionResult,
 };
 
 use super::{
@@ -199,8 +199,8 @@ fn availability(registry: &Test, id: &InstanceId) -> Option<Availability> {
     registry.instances().availability(id).cloned()
 }
 
-fn rejected(rejection: Rejection) -> CommandResult {
-    CommandResult::Rejected(rejection)
+fn rejected(refusal: InstanceRefusal) -> InstanceResult {
+    InstanceResult::Refused(refusal)
 }
 
 fn stored_note(id: &InstanceId) -> Effect<&'static str, &'static str> {
@@ -289,15 +289,15 @@ fn a_start_is_refused_until_directory_instance_and_model_all_hold() {
             registry.launch_session(&claude, true, None, Some(Effort::Max)),
         ],
         [
-            Err(Rejection::NoSuchDirectory),
-            Err(Rejection::UnknownInstance),
-            Err(Rejection::InstanceUnavailable {
+            Err(SessionRefusal::NoSuchDirectory),
+            Err(SessionRefusal::UnknownInstance),
+            Err(SessionRefusal::InstanceUnavailable {
                 reason: text("no codex")
             }),
-            Err(Rejection::NotOffered {
+            Err(SessionRefusal::NotOffered {
                 reason: text("this host doesn't offer the model tiny")
             }),
-            Err(Rejection::NotOffered {
+            Err(SessionRefusal::NotOffered {
                 reason: text("Big doesn't take the effort max")
             }),
         ]
@@ -408,7 +408,7 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
     );
     assert_eq!(
         missing.launch_session(&own(Provider::Claude), true, None, None),
-        Err(Rejection::InstanceUnavailable {
+        Err(SessionRefusal::InstanceUnavailable {
             reason: text("no credential configured")
         })
     );
@@ -419,7 +419,7 @@ fn an_instance_without_a_sign_in_or_a_readable_store_is_unavailable() {
             None,
             None
         ),
-        Err(Rejection::InstanceUnavailable {
+        Err(SessionRefusal::InstanceUnavailable {
             reason: text("this host has no instance claude")
         })
     );
@@ -442,16 +442,16 @@ fn a_session_is_found_and_continued_only_while_its_instance_runs() {
             Some(7),
             None,
             Ok((7, "claude", listed())),
-            Err(Rejection::InstanceUnavailable {
+            Err(SessionRefusal::InstanceUnavailable {
                 reason: text("no credential configured")
             }),
-            Err(Rejection::UnknownSession),
+            Err(SessionRefusal::UnknownSession),
         )
     );
     let _ = set(&mut registry, Provider::Claude, gateway("t"), "set");
     assert_eq!(
         registry.relaunch(SessionId(2)),
-        Err(Rejection::InstanceUnavailable {
+        Err(SessionRefusal::InstanceUnavailable {
             reason: text("refreshing the instance's models")
         })
     );
@@ -539,7 +539,7 @@ fn each_codex_instance_refreshes_its_own_app_server() {
         (
             Ok("codex"),
             Ok((1, "codex", listed())),
-            Err(Rejection::InstanceUnavailable {
+            Err(SessionRefusal::InstanceUnavailable {
                 reason: text("refreshing the instance's models")
             }),
         )
@@ -600,15 +600,15 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
     assert_eq!(
         registry.refreshed(refreshed(boot_jobs + 2, &api(), Ok(listing()))),
         Vec::from([
-            Effect::Reply("add", CommandResult::Accepted),
-            Effect::Reply("set", CommandResult::Accepted),
+            Effect::Reply("add", InstanceResult::Accepted),
+            Effect::Reply("set", InstanceResult::Accepted),
         ])
     );
     assert_eq!(
         registry.set_credential(Provider::Codex, gateway_at("", "t"), "none"),
         Vec::from([Effect::Reply(
             "none",
-            rejected(Rejection::InvalidCredential {
+            rejected(InstanceRefusal::InvalidCredential {
                 reason: text("base_url is required")
             })
         )])
@@ -623,7 +623,7 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
     let _ = set(&mut registry, Provider::Codex, gateway("k"), "add");
     let removed =
         registry.remove_instance(codex_api.clone(), &BTreeSet::new(), "remove");
-    let result = CommandResult::Accepted;
+    let result = InstanceResult::Accepted;
     assert_eq!(
         saving(&mut registry, removed),
         Vec::from([
@@ -687,7 +687,7 @@ fn a_start_from_before_an_instance_was_added_again_is_dropped() {
             ]),
             Vec::new(),
             Some(unavailable("starting the instance's CLI")),
-            Vec::from([Effect::Reply("again", CommandResult::Accepted)]),
+            Vec::from([Effect::Reply("again", InstanceResult::Accepted)]),
         )
     );
 }
@@ -706,7 +706,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         ),
         Vec::from([Effect::Reply(
             "busy",
-            rejected(Rejection::InstanceInUse { sessions: 1 })
+            rejected(InstanceRefusal::InstanceInUse { sessions: 1 })
         )])
     );
     let removed = registry.remove_instance(
@@ -723,7 +723,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         ),
         (
             None,
-            Err(Rejection::InstanceUnavailable {
+            Err(SessionRefusal::InstanceUnavailable {
                 reason: text(
                     "this host has no instance claude https://gateway.example"
                 )
@@ -738,7 +738,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
     );
     assert_eq!(
         kept,
-        Vec::from([Effect::Reply("own", CommandResult::Accepted)])
+        Vec::from([Effect::Reply("own", InstanceResult::Accepted)])
     );
     assert!(registry.instances().of(&own(Provider::Claude)).is_some());
 }
@@ -835,7 +835,7 @@ fn credential_changes_coalesce_and_a_stale_refresh_is_dropped() {
         &api(),
         Ok(offered.clone()),
     ));
-    let result = CommandResult::Accepted;
+    let result = InstanceResult::Accepted;
     assert_eq!(
         answered,
         Vec::from([
@@ -868,7 +868,7 @@ fn a_failed_refresh_leaves_the_instance_unavailable_until_the_next() {
                 instance: api(),
                 reason: text("probe failed"),
             }),
-            Effect::Reply("set", CommandResult::Accepted),
+            Effect::Reply("set", InstanceResult::Accepted),
         ])
     );
     assert_eq!(
@@ -888,7 +888,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
     let not_saved = |reply, reason: &str| {
         Vec::from([Effect::Reply(
             reply,
-            rejected(Rejection::CredentialNotSaved {
+            rejected(InstanceRefusal::CredentialNotSaved {
                 reason: text(reason),
             }),
         )])
@@ -911,14 +911,14 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
         (
             Vec::from([Effect::Reply(
                 "bad",
-                rejected(Rejection::InvalidCredential {
+                rejected(InstanceRefusal::InvalidCredential {
                     reason: text("base_url must be http or https")
                 })
             )]),
             not_saved("set", "sealed"),
             Vec::from([Effect::Reply(
                 "unknown",
-                rejected(Rejection::UnknownInstance)
+                rejected(InstanceRefusal::UnknownInstance)
             )]),
             Vec::from([Effect::MoveAside {
                 instance: codex.clone(),
@@ -931,7 +931,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
     let moved = registry.moved_aside(codex, "remove", Ok(()));
     assert_eq!(
         moved,
-        Vec::from([Effect::Reply("remove", CommandResult::Accepted)])
+        Vec::from([Effect::Reply("remove", InstanceResult::Accepted)])
     );
     assert_eq!(
         registry.set_credential(Provider::Claude, gateway("t"), "set"),
@@ -956,12 +956,12 @@ fn an_instance_the_host_cannot_run_answers_a_credential_change_at_once() {
         ),
         Vec::from([
             stored_note(&codex),
-            Effect::Reply("set", CommandResult::Accepted),
+            Effect::Reply("set", InstanceResult::Accepted),
         ])
     );
     assert_eq!(
         registry.launch_session(&codex, true, None, None),
-        Err(Rejection::InstanceUnavailable {
+        Err(SessionRefusal::InstanceUnavailable {
             reason: text("no codex")
         })
     );
@@ -1029,7 +1029,7 @@ fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
     );
     assert_eq!(
         answered,
-        Vec::from([Effect::Reply("signed in", CommandResult::Accepted)])
+        Vec::from([Effect::Reply("signed in", InstanceResult::Accepted)])
     );
 }
 
@@ -1096,7 +1096,7 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
         (
             Some(unavailable("starting the instance's CLI")),
             Vec::new(),
-            Vec::from([Effect::Reply("signed in", CommandResult::Accepted)]),
+            Vec::from([Effect::Reply("signed in", InstanceResult::Accepted)]),
         )
     );
     assert_eq!(
@@ -1167,7 +1167,7 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
     ]);
     assert_refused(
         start_request().placed(Ok(placement(true)), &history),
-        Rejection::IssueTaken {
+        SessionRefusal::IssueTaken {
             session: SessionId(1),
         },
     );
@@ -1192,10 +1192,10 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
 
 #[test]
 fn a_brief_that_did_not_reach_the_agent_says_why() {
-    assert_eq!(super::brief_sent(Some(&CommandResult::Accepted)), None);
+    assert_eq!(super::brief_sent(Some(&SessionResult::Accepted)), None);
     assert_eq!(
-        super::brief_sent(Some(&CommandResult::Rejected(
-            Rejection::SessionClosed
+        super::brief_sent(Some(&SessionResult::Refused(
+            SessionRefusal::SessionClosed
         ))),
         Some(EventKind::Error {
             message: text(
@@ -1205,7 +1205,7 @@ fn a_brief_that_did_not_reach_the_agent_says_why() {
     );
     for answer in [
         None,
-        Some(&CommandResult::Started {
+        Some(&SessionResult::Started {
             session: SessionId(1),
         }),
     ] {
@@ -1251,9 +1251,9 @@ fn start_workspace() -> proto::Workspace {
 type Decision = StartDecision<&'static str, u8>;
 type Workflow = StartSession<&'static str, u8>;
 
-fn assert_refused(decision: Decision, reason: Rejection) {
+fn assert_refused(decision: Decision, reason: SessionRefusal) {
     assert!(matches!(decision, Break(StartEnd::Finished(outcome))
-        if outcome.result == CommandResult::Rejected(reason) && outcome.progress.is_none()));
+        if outcome.result == SessionResult::Refused(reason) && outcome.progress.is_none()));
 }
 
 fn at_directory(
@@ -1322,8 +1322,8 @@ fn at_snapshot(
 fn placement_and_branch_failures_end_the_start() -> Result<(), &'static str> {
     let mut registry = registry(OwnSignIn::SignedIn, &opened());
     assert_refused(
-        start_request().placed(Err(Rejection::NoHome), &[]),
-        Rejection::NoHome,
+        start_request().placed(Err(HomeRefusal::NoHome), &[]),
+        SessionRefusal::Home(HomeRefusal::NoHome),
     );
     let Continue(StartStep {
         effect: StartEffect::ReadyBranch(_),
@@ -1332,7 +1332,7 @@ fn placement_and_branch_failures_end_the_start() -> Result<(), &'static str> {
     else {
         return Err("expected branch readiness");
     };
-    let reason = Rejection::WorkspaceFailure {
+    let reason = SessionRefusal::WorkspaceFailure {
         reason: text("issue branches diverged"),
     };
     assert_refused(
@@ -1351,8 +1351,8 @@ fn a_start_checks_the_directory_and_instance_after_branch_readiness()
         ..start_request()
     };
     for (exists, reason) in [
-        (false, Rejection::NoSuchDirectory),
-        (true, Rejection::UnknownInstance),
+        (false, SessionRefusal::NoSuchDirectory),
+        (true, SessionRefusal::UnknownInstance),
     ] {
         let check = at_directory(unknown.clone(), &mut registry)?;
         assert_refused(
@@ -1368,11 +1368,11 @@ fn workspace_and_snapshot_failures_stop_before_opening_records()
 -> Result<(), &'static str> {
     let mut registry = registry(OwnSignIn::SignedIn, &opened());
     let session = SessionId(1);
-    let reason = Rejection::WorkspaceFailure {
+    let reason = SessionRefusal::WorkspaceFailure {
         reason: text("git failed"),
     };
     for (error, rejection) in [
-        (GitError::NotRepository, Rejection::NotGitRepository),
+        (GitError::NotRepository, SessionRefusal::NotGitRepository),
         (GitError::Failed(text("git failed")), reason.clone()),
     ] {
         let prepare = at_workspace(&mut registry)?;
@@ -1501,7 +1501,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
         return Err("expected completion");
     };
     assert_eq!(registry.find(session), Some(7));
-    assert_eq!(done.result, CommandResult::Started { session });
+    assert_eq!(done.result, SessionResult::Started { session });
     assert_eq!(
         done.progress,
         Some((proto::IssueId::new(0, 5), ClientName(text("phone"))))
@@ -1625,7 +1625,7 @@ fn a_refresh_from_a_removed_instance_cannot_advance_its_replacement() {
     );
     let complete =
         registry.refreshed(refreshed(next, &instance, Ok(listing())));
-    let outcome = CommandResult::Accepted;
+    let outcome = InstanceResult::Accepted;
     assert_eq!(
         complete,
         [
@@ -1655,7 +1655,7 @@ fn adoption_protects_sessions_on_the_source_and_destination() {
             ),
             [Effect::Reply(
                 "sign in",
-                rejected(Rejection::InstanceInUse { sessions: 1 })
+                rejected(InstanceRefusal::InstanceInUse { sessions: 1 })
             )],
         );
     }

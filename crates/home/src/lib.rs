@@ -26,8 +26,8 @@ use alloc::collections::BTreeMap;
 
 use proto::flow::Flow;
 use proto::{
-    Checkout, Cloning, CommandResult, Home, HostPath, Issue, ProjectId,
-    Rejection, StartAt,
+    Checkout, Cloning, Home, HomeRefusal, HomeResult, HostPath, Issue,
+    ProjectId, StartAt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -140,21 +140,26 @@ pub fn view(
 ///
 /// The host has no home, its home lists no such project, or the project
 /// has no checkout on the host.
-pub fn place(at: StartAt, home: Option<&Home>) -> Result<Placement, Rejection> {
+pub fn place(
+    at: StartAt,
+    home: Option<&Home>,
+) -> Result<Placement, HomeRefusal> {
     match at {
         StartAt::Directory(directory) => Ok(Placement {
             directory,
             on: None,
         }),
         StartAt::Project(id) => {
-            let known = home.ok_or(Rejection::NoHome)?;
+            let known = home.ok_or(HomeRefusal::NoHome)?;
             let project = known
                 .projects
                 .iter()
                 .find(|project| project.id == id)
-                .ok_or(Rejection::UnknownProject)?;
-            let checkout =
-                project.checkouts.first().ok_or(Rejection::NotCheckedOut)?;
+                .ok_or(HomeRefusal::UnknownProject)?;
+            let checkout = project
+                .checkouts
+                .first()
+                .ok_or(HomeRefusal::NotCheckedOut)?;
             Ok(Placement {
                 directory: checkout.path.clone(),
                 on: None,
@@ -182,32 +187,32 @@ pub struct Placement {
 pub fn remote_of(
     projects: &[Project],
     id: &ProjectId,
-) -> Result<String, Rejection> {
+) -> Result<String, HomeRefusal> {
     projects
         .iter()
         .find(|project| &project.id == id)
-        .ok_or(Rejection::UnknownProject)?
+        .ok_or(HomeRefusal::UnknownProject)?
         .remote
         .clone()
-        .ok_or(Rejection::NoRemote)
+        .ok_or(HomeRefusal::NoRemote)
 }
 
 /// A home command runs only on a host given a home.
 ///
 /// # Errors
 ///
-/// [`Rejection::NoHome`] without a remote.
-pub const fn configured(remote: Option<&str>) -> Result<(), Rejection> {
+/// [`HomeRefusal::NoHome`] without a remote.
+pub const fn configured(remote: Option<&str>) -> Result<(), HomeRefusal> {
     match remote {
         Some(_) => Ok(()),
-        None => Err(Rejection::NoHome),
+        None => Err(HomeRefusal::NoHome),
     }
 }
 
 /// A home command's answer once it has run: how it went is in the home.
 #[must_use]
-pub fn answer(done: Result<(), Rejection>) -> CommandResult {
-    done.map_or_else(CommandResult::Rejected, |()| CommandResult::Accepted)
+pub fn answer(done: Result<(), HomeRefusal>) -> HomeResult {
+    done.map_or_else(HomeResult::Refused, |()| HomeResult::Accepted)
 }
 
 /// Where a clone of the project stands once `git clone` has ended.
