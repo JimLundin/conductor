@@ -26,20 +26,46 @@ use super::role::opening;
 use super::snapshot::Snapshot;
 use crate::prelude::*;
 
-pub const USAGE: &str = "usage:
+/// What `home` says alone: every command and what it means.
+pub const USAGE: &str = "usage: home <command>, from anywhere in the home
+
   home check
+      Checks every project and issue against the flow; fails only on errors.
   home issue new <project> <kind> <title> [<field>=<value>...]
+      Opens an issue of the kind in the project, named by its name or id,
+      with the kind's sections and a fresh id, which it prints. Give the
+      title as one argument.
   home issue move <id> stage|status <to> [--signed-off] [<reason>...]
+      Moves the stage or status, the only way to change either, and logs
+      the move and its reason, marking a move off the stage's usual next
+      ones as unusual. Leaving a stage with a sign-off takes --signed-off.
   home issue set <id> <field>=<value>...
+      Sets any other field or relation, title, parent and blocked_by among
+      them. A list's value is comma-separated: blocked_by=<id>,<id>.
   home issue note <id> <text>...
+      Appends a note to the log.
   home issue body <id> <text>...
   home issue body <id> --file <path>
+      Replaces the body, everything above its checklist and notes, with the
+      text or the file's; give a body of several lines or sections by file.
   home issue checklist <id> add <text>...
+      Adds an item to the checklist.
   home issue checklist <id> check|uncheck|remove <n>
-  home repos [sync|scan]
+      Checks, unchecks or removes the checklist's nth item, from 1.
+  home repos
+      Shows each project's checkouts on this machine and their state.
+  home repos sync
+      Clones each project with a remote and no checkout here.
+  home repos scan
+      Registers each repository here that matches no project, under a fresh
+      id, and rewrites the project list in AGENTS.md.
   home skills
-A list's value is comma-separated: blocked_by=<id>,<id>.
-A checklist's items are numbered from 1.
+      Installs the home's skills for every harness, at user level, keeping
+      any skill installed some other way.
+
+Each write signs and dates the log and is read back against the flow: a
+structural problem or a broken error rule refuses it, and anything softer
+is written with a warning.
 ";
 
 /// What the command line's words ask for: a command on the home's issues,
