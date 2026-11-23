@@ -161,8 +161,9 @@ pub struct Log {
 pub const fn live_only(kind: &EventKind) -> bool {
     matches!(
         kind,
-        EventKind::Agent(Output::AssistantDelta { .. })
-            | EventKind::Agent(Output::ReasoningDelta { .. })
+        EventKind::Agent(
+            Output::AssistantDelta { .. } | Output::ReasoningDelta { .. }
+        )
     )
 }
 
