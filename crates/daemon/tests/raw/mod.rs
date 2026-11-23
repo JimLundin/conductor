@@ -296,8 +296,8 @@ impl RawClient {
         )
         .await?;
         send.finish()?;
-        let reply = read::<HelloReply>(&mut recv).await?;
         let tap = recorder.connect(target);
+        let reply = read::<HelloReply>(&mut recv, &tap, "hello").await?;
         tap.hear("hello", &reply.raw)?;
         let welcome = match reply.value {
             HelloReply::Welcome(welcome) => welcome,
@@ -350,7 +350,7 @@ impl RawClient {
     /// The next frame of the subscription.
     pub async fn next(&mut self) -> Fallible<Received<Feed>> {
         let feed = self.feed.as_mut().ok_or("not subscribed")?;
-        let frame = read::<Feed>(feed).await?;
+        let frame = read::<Feed>(feed, &self.tap, "feed").await?;
         self.tap.hear("feed", &frame.raw)?;
         match &frame.value {
             Feed::Instances(instances) => self.instances = instances.clone(),
@@ -404,7 +404,8 @@ impl RawClient {
         };
         net::wire::write(&mut send, &Open::Command(command)).await?;
         send.finish()?;
-        let result = read::<CommandResult>(&mut recv).await?;
+        let result =
+            read::<CommandResult>(&mut recv, &self.tap, "command").await?;
         self.tap.hear("command", &result.raw)?;
         Ok(result)
     }
@@ -426,11 +427,21 @@ impl RawClient {
     }
 }
 
-async fn read<T: Frame>(recv: &mut RecvStream) -> Fallible<Received<T>> {
+/// The next frame on `recv`, the `stream` stream of the tapped connection.
+async fn read<T: Frame>(
+    recv: &mut RecvStream,
+    tap: &Tap,
+    stream: &str,
+) -> Fallible<Received<T>> {
     let raw =
         tokio::time::timeout(STEP, net::wire::read_body(recv, usize::MAX))
             .await
-            .map_err(|_| "no frame within the step timeout")??
+            .map_err(|_| {
+                format!(
+                    "no {stream} frame on connection {} within the step timeout",
+                    tap.connection
+                )
+            })??
             .ok_or("the host finished the stream")?;
     let value = proto::decode(&raw)?;
     Ok(Received { raw, value })
