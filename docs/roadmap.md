@@ -180,9 +180,8 @@ What is built and what comes next. Update it in the commit that changes it.
   state, start a session on a host and instance in a project or directory,
   and a session's live transcript with tool cards, where you send, approve
   or deny, answer, stop, continue and finish. Pages builds `web/` with npm.
-  The daemon e2e speaks raw frames and records its JSON feeds in
-  `fixtures/feeds/` (`tools/check-feeds.py`, the `e2e-feeds` suite), which
-  the app's Vitest tests replay. The screens in this list that the thin app
+  The app's Vitest tests replay recorded host feeds in
+  `web/fixtures/feeds/`. The screens in this list that the thin app
   lacks (turn diffs, *Projects*, issues, credentials and sign-ins, fleet
   invites, *Remove*, checklists, Web Push) are Next, item 6; their *Try*
   steps wait for it. *Try:* add the app from Pages to the iPhone's Home

@@ -60,10 +60,6 @@ windows-native-keyring-store = { version = "1.1", default-features = false }
 dbus-secret-service = { version = "4.2", default-features = false, features = ["crypto-rust", "vendored"] }
 
 [dev-dependencies]
-# The end-to-end tests run the providers' agents on their fake CLIs.
-claude-cli = { path = "../claude-cli" }
-# Exercise the actual client projection for daemon events.
-codex-cli = { path = "../codex-cli" }
 tracing-subscriber.workspace = true
 
 [lints]

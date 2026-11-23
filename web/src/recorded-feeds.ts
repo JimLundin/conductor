@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-// The daemon e2e's recorded host feeds in fixtures/feeds/, for tests: each frame a host sent,
+// Recorded host feeds in web/fixtures/feeds/, for tests: each frame a host sent,
 // on which of the test client's connections and streams.
 import { Schema } from "effect";
 import { CommandResult, Feed, HelloReply } from "./proto/index.ts";
@@ -32,7 +32,7 @@ type RecordedFeed = typeof RecordedFeed.Type;
 const recordedFeeds = (): ReadonlyMap<string, unknown> =>
 	new Map(
 		Object.entries(
-			import.meta.glob<unknown>("../../fixtures/feeds/*.json", {
+			import.meta.glob<unknown>("../fixtures/feeds/*.json", {
 				eager: true,
 				import: "default",
 			}),

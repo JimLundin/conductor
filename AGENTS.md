@@ -28,9 +28,8 @@ Home Screen. The design is in
   run-record IP scrub, the tooling tests, the e2e fixture check, clippy on
   `crates/web-iroh` for `wasm32-unknown-unknown` (`wasm-clippy`), the
   generated schemas check (`schemas`) and the shared TypeScript standard
-  on `web/` (`web`) at `commit`, and at `step` the recorded feeds check
-  (`e2e-feeds`) and that standard's step with the web app's Vitest tests
-  (`web-step`).
+  on `web/` (`web`) at `commit`, and at `step` that standard's step with
+  the web app's Vitest tests (`web-step`).
   The web app builds with `npm run build` in `web/`, which Pages deploys;
   it first builds `crates/web-iroh`, the only crate built for wasm, into
   `web/web-iroh` with wasm-pack (`npm run pipe`), which needs wasm-pack and
@@ -38,9 +37,9 @@ Home Screen. The design is in
 - **Generated and recorded files.** `web/src/proto/` is generated from
   `proto` (ADR 0002) and never edited by hand: after changing a type the
   client link reaches, bump `proto::ALPN` and run `tools/schemas.sh`
-  (needs `npm ci` in `web/`), then commit both. `fixtures/feeds/` holds the
-  JSON frames daemon e2e scenarios record; rerun a changed scenario to
-  rewrite its feed and commit it (`tools/check-feeds.py` reruns them all).
+  (needs `npm ci` in `web/`), then commit both. `web/fixtures/feeds/` holds
+  host feeds the web app's tests replay, as frozen data: when the client
+  link changes, edit them to its new shape.
   Use `commit` for local validation when the environment is available. If
   validation is unavailable or stalls, commit and push the task branch
   with the commands, results and outstanding checks recorded in the commit

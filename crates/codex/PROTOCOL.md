@@ -188,8 +188,7 @@ From a run on 2026-11-16 and probes the same day.
 
 No run started a Codex subagent: no scripted step or probe asked for one,
 and a live run needs a sign-in, so their frames are unrecorded. The
-adapter and the [synthetic daemon replay](../daemon/tests/fixtures/codex-subagents.jsonl)
-use the shapes described by the pinned 0.166.0, from
+adapter uses the shapes described by the pinned 0.166.0, from
 `codex app-server generate-json-schema` and `codex features list` in a
 scratch `CODEX_HOME`, unsigned, on 2026-11-18:
 

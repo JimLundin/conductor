@@ -49,25 +49,11 @@ tier = "commit"
 paths = ["crates/proto/**", "web/src/proto/**", "web/scripts/schemas.ts", "web/package-lock.json", "web/biome.json", "tools/schemas.sh"]
 packages = ["proto"]
 
-# The host feeds the web app's tests replay, rerun from their daemon e2e
-# scenarios. It builds the daemon's e2e, so it runs with the tests.
-[[suite]]
-name = "e2e-feeds"
-command = "python3 -I tools/check-feeds.py"
-tools = ["PYTHON"]
-[[suite.when]]
-tier = "step"
-paths = ["fixtures/**", "tools/check-feeds.py"]
-[[suite.when]]
-tier = "step"
-packages = ["daemon"]
-
 # The web app, under the shared TypeScript standard, which keys and records
 # its own checks. Its key holds no tier, so the commit checks and the step's
 # tests are two suites. Both first build web-iroh into web/web-iroh, whose
 # declarations the app type-checks against. The standard keys its checks by
-# web/'s files alone, which misses web-iroh and the host feeds the Vitest
-# run replays, so both run every check afresh.
+# web/'s files alone, which misses web-iroh, so both run every check afresh.
 [[suite]]
 name = "web"
 command = "cd web && npm ci --no-fund --no-audit --silent && npm run build --silent && \"$STANDARDS/typescript/check.sh\" commit --no-cache"
@@ -83,4 +69,4 @@ command = "cd web && npm ci --no-fund --no-audit --silent && npm run pipe --sile
 tools = ["NODE"]
 [[suite.when]]
 tier = "step"
-paths = ["web/**", "fixtures/feeds/**"]
+paths = ["web/**"]

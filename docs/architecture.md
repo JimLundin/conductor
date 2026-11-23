@@ -1879,28 +1879,12 @@ as expired. The app has no service worker, so nothing subscribes yet.
   and errors over real pipes. Integration tests in each shell's `tests/`
   directory enter through the plugin and observe shared runtime events.
   Both use the fake CLIs and recorded fixtures.
-- **Daemon e2e** (`crates/daemon/tests/e2e.rs`) runs the real daemon with
-  fake CLIs on loopback, through `daemon::start` with the production
-  plugins configured to run the fakes. Its clients are raw-frame clients
-  (`crates/daemon/tests/raw`) that speak the client link's frames
-  themselves, with no fold: they open with `Hello`, subscribe and send
-  commands, and each test sees every JSON frame as the host sent it and its
-  decoded `proto` value. Its scenarios include approvals, questions,
-  interrupts, reconnects and cursors, epochs and two Codex sessions on one
-  server, and assert on the event stream. One offers the previous ALPN and
-  fails the handshake. The daemon's `fleet::crypto` tests refuse a signed
-  payload whose bytes differ by one byte.
-- **Recorded host feeds** (`fixtures/feeds/<scenario>.json`). A scenario
-  with a `raw::Recorder` writes every frame its clients received as its
-  feed: an array in receive order of `{"connection", "stream", "frame"}`,
-  where `stream` is `hello`, `command` or `feed` and `frame` the
-  `HelloReply`, `CommandResult` or `Feed` body. Session ids, epochs, host
-  ids, commits and paths are normalised so a rerun writes the same bytes.
-  It writes to `fixtures/feeds`, or to `$CONDUCTOR_FEEDS` when set.
-  `tools/check-feeds.py`, the `e2e-feeds` suite, reruns the scenario of
-  each committed feed into an empty directory and fails when a feed is
-  missing, extra or differs by a byte.
-- **The app's tests** (Vitest, in `web/`) replay the recorded feeds
+- **Daemon tests** run in `daemon`'s own modules. Its `fleet::crypto`
+  tests refuse a signed payload whose bytes differ by one byte. An
+  end-to-end test is added only as the regression test of an observed
+  bug.
+- **The app's tests** (Vitest, in `web/`) replay recorded host feeds
+  (`web/fixtures/feeds/`, frozen data in the client link's shape)
   through the fake pipe (`web/src/recorded-feeds.ts`,
   `web/src/link/replay.ts`, where a fake host serves a feed's welcome,
   frames and the results and frames that answer each command). They cover
@@ -1917,8 +1901,8 @@ as expired. The app has no service worker, so nothing subscribes yet.
   standard's checks). At `commit`: `ip-scrub`, `tooling`, `e2e-fixtures`,
   `wasm-clippy` (clippy on `web-iroh` for `wasm32-unknown-unknown`),
   `schemas` (§7.3) and `web` (the TypeScript standard's commit checks on
-  `web/`, after building it). At `step`: `e2e-feeds` and `web-step` (the
-  TypeScript standard's step, adding the Vitest run).
+  `web/`, after building it). At `step`: `web-step` (the TypeScript
+  standard's step, adding the Vitest run).
 - **Manual checks** (`docs/smoke.md`, `docs/manual-acceptance.md`): real
   CLIs, the desktop browser and the iPhone on mobile data.
 

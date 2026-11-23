@@ -881,8 +881,6 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "chacha20poly1305",
- "claude-cli",
- "codex-cli",
  "data-encoding",
  "dbus-secret-service",
  "directories",
