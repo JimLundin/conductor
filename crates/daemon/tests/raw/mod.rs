@@ -19,13 +19,13 @@ use iroh::endpoint::{Connection, RecvStream};
 use net::Target;
 use proto::{
     ClientName, Command, CommandBody, CommandId, CommandResult, Epoch, Event,
-    Feed, Frame, Hello, HelloReply, HostSeq, Instances, Open, SessionId,
+    Feed, Frame, Hello, HelloReply, Home, HostSeq, Instances, Open, SessionId,
     Subscribe, Welcome,
 };
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use crate::{Fallible, STEP, endpoint, target_tmp};
+use crate::{Fallible, STEP, endpoint, started_session, target_tmp};
 
 /// One frame as it came, and what it decodes to.
 pub struct Received<T> {
@@ -270,8 +270,10 @@ pub struct RawClient {
     endpoint: Endpoint,
     conn: Connection,
     pub welcome: Welcome,
-    /// The offers of the last `Feed::Instances` read, at first `Welcome`'s.
+    /// The last `Feed::Instances` read, at first `Welcome`'s.
     pub instances: Instances,
+    /// The last `Feed::Home` read, at first `Welcome`'s.
+    pub home: Option<Home>,
     feed: Option<RecvStream>,
 }
 
@@ -294,8 +296,8 @@ impl RawClient {
         )
         .await?;
         send.finish()?;
-        let reply = read::<HelloReply>(&mut recv).await?;
         let tap = recorder.connect(target);
+        let reply = read::<HelloReply>(&mut recv, &tap, "hello").await?;
         tap.hear("hello", &reply.raw)?;
         let welcome = match reply.value {
             HelloReply::Welcome(welcome) => welcome,
@@ -306,6 +308,7 @@ impl RawClient {
             endpoint,
             conn,
             instances: welcome.instances.clone(),
+            home: welcome.home.clone(),
             welcome,
             feed: None,
         })
@@ -347,10 +350,12 @@ impl RawClient {
     /// The next frame of the subscription.
     pub async fn next(&mut self) -> Fallible<Received<Feed>> {
         let feed = self.feed.as_mut().ok_or("not subscribed")?;
-        let frame = read::<Feed>(feed).await?;
+        let frame = read::<Feed>(feed, &self.tap, "feed").await?;
         self.tap.hear("feed", &frame.raw)?;
-        if let Feed::Instances(instances) = &frame.value {
-            self.instances = instances.clone();
+        match &frame.value {
+            Feed::Instances(instances) => self.instances = instances.clone(),
+            Feed::Home(home) => self.home = Some(home.clone()),
+            Feed::Event(_) | Feed::SignIn(_) => {}
         }
         Ok(frame)
     }
@@ -399,27 +404,21 @@ impl RawClient {
         };
         net::wire::write(&mut send, &Open::Command(command)).await?;
         send.finish()?;
-        let result = read::<CommandResult>(&mut recv).await?;
+        let result =
+            read::<CommandResult>(&mut recv, &self.tap, "command").await?;
         self.tap.hear("command", &result.raw)?;
         Ok(result)
     }
 
-    /// Sends `body`, which the host must accept.
+    /// Sends `body` and checks that the host accepted it.
     pub async fn accepted(&self, body: CommandBody) -> Fallible {
-        match self.send(body).await?.value {
-            CommandResult::Accepted => Ok(()),
-            other => Err(format!("expected Accepted, not {other:?}").into()),
-        }
+        assert_eq!(self.send(body).await?.value, CommandResult::Accepted);
+        Ok(())
     }
 
-    /// Sends `body`, which must start a session, and names the session.
+    /// Sends `body` and returns the session it started.
     pub async fn started(&self, body: CommandBody) -> Fallible<SessionId> {
-        match self.send(body).await?.value {
-            CommandResult::Started { session } => Ok(session),
-            other => {
-                Err(format!("expected a started session, not {other:?}").into())
-            }
-        }
+        started_session(&self.send(body).await?.value)
     }
 
     pub async fn close(self) {
@@ -428,11 +427,21 @@ impl RawClient {
     }
 }
 
-async fn read<T: Frame>(recv: &mut RecvStream) -> Fallible<Received<T>> {
+/// The next frame on `recv`, the `stream` stream of the tapped connection.
+async fn read<T: Frame>(
+    recv: &mut RecvStream,
+    tap: &Tap,
+    stream: &str,
+) -> Fallible<Received<T>> {
     let raw =
         tokio::time::timeout(STEP, net::wire::read_body(recv, usize::MAX))
             .await
-            .map_err(|_| "no frame within the step timeout")??
+            .map_err(|_| {
+                format!(
+                    "no {stream} frame on connection {} within the step timeout",
+                    tap.connection
+                )
+            })??
             .ok_or("the host finished the stream")?;
     let value = proto::decode(&raw)?;
     Ok(Received { raw, value })

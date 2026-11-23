@@ -1486,11 +1486,16 @@ async fn held_interrupt(
     fx.shutdown().await
 }
 
+/// The host's log stays in `target/tmp` when this fails, to show which step
+/// the turn stalled on.
 #[tokio::test]
 async fn an_interrupt_before_the_turn_starts_is_held_until_it_does() -> Fallible
 {
+    let (log, _logging) = capture_log("held")?;
     let dir = scratch("held", "claude-held-interrupt.jsonl")?;
-    held_interrupt(host().await?, dir, Provider::Claude).await
+    held_interrupt(host().await?, dir, Provider::Claude).await?;
+    let _ = captured(&log)?;
+    Ok(())
 }
 
 /// The CLI withdraws the open request when the turn is interrupted, and the
