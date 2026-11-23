@@ -1,8 +1,7 @@
 //! `home repos` and `home skills`: the home's projects among the
-//! repositories on this machine, and its skills in each harness's folder.
-//! It lists folders, runs Git, and writes and copies files.
+//! repositories on this machine, and its skills installed for the user
+//! (`home_files::install`). It lists folders, runs Git, and writes files.
 
-use std::env;
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
@@ -13,7 +12,6 @@ use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
 use home::repos::{self, New, Scanning};
-use home::skills::{self, HARNESSES, LISTING, SKILL_FILE, SKILLS};
 use home_files::git;
 
 /// What doing `local` in the home at `root` says, and its exit code.
@@ -22,7 +20,13 @@ pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
         Local::Status => (status(root, home), 0),
         Local::Sync => sync(root, home.projects()),
         Local::Scan => ended(scan(root, home)),
-        Local::Skills => ended(copied(root)),
+        Local::Skills => ended(
+            home_files::user()
+                .ok_or_else(|| {
+                    String::from("no HOME or USERPROFILE to install skills in")
+                })
+                .and_then(|user| home_files::install(root, &user)),
+        ),
     }
 }
 
@@ -107,69 +111,6 @@ fn probes(root: &Path) -> Vec<Probe> {
         std::slice::from_ref(&shown),
     );
     repos::local(&shown, home_files::probes(&paths))
-}
-
-/// Copies the home's skills into each harness's folder in the user's home.
-fn copied(root: &Path) -> Result<String, String> {
-    let user = env::var("HOME")
-        .or_else(|_| env::var("USERPROFILE"))
-        .map_err(|_| {
-            String::from("no HOME or USERPROFILE to copy skills into")
-        })?;
-    let source = root.join(SKILLS);
-    let offered: Vec<(String, bool)> = home_files::names(&source)
-        .into_iter()
-        .map(|name| {
-            let skill = source.join(&name).join(SKILL_FILE).is_file();
-            (name, skill)
-        })
-        .collect();
-    HARNESSES
-        .iter()
-        .map(|harness| {
-            harnessed(&format!("{user}/{harness}"), &source, offered.clone())
-                .map_err(|err| format!("{user}/{harness}: {err}"))
-        })
-        .collect()
-}
-
-fn harnessed(
-    folder: &str,
-    source: &Path,
-    offered: Vec<(String, bool)>,
-) -> io::Result<String> {
-    let at = Path::new(folder);
-    fs::create_dir_all(at)?;
-    let listing = fs::read_to_string(at.join(LISTING)).ok();
-    let plan = skills::plan(
-        folder,
-        listing.as_deref(),
-        &home_files::names(at),
-        offered,
-    );
-    plan.remove
-        .iter()
-        .map(|name| at.join(name))
-        .filter(|path| path.exists())
-        .try_for_each(fs::remove_dir_all)?;
-    fs::write(at.join(LISTING), &plan.listing)?;
-    plan.copy
-        .iter()
-        .try_for_each(|name| copy(&source.join(name), &at.join(name)))?;
-    Ok(plan.said)
-}
-
-fn copy(from: &Path, to: &Path) -> io::Result<()> {
-    fs::create_dir_all(to)?;
-    fs::read_dir(from)?.try_for_each(|read| {
-        let entry = read?;
-        let target = to.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy(&entry.path(), &target)
-        } else {
-            fs::copy(entry.path(), target).map(drop)
-        }
-    })
 }
 
 fn read(path: &Path) -> Result<String, String> {

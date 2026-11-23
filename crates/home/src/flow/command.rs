@@ -86,7 +86,7 @@ pub enum Local {
     Sync,
     /// `home repos scan`: registers each repository no project has.
     Scan,
-    /// `home skills`: copies the home's skills into each harness's folder.
+    /// `home skills`: installs the home's skills for each harness.
     Skills,
 }
 

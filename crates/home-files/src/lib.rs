@@ -1,15 +1,18 @@
-//! A home read from a folder on disk, as `home::layout` lays it out, and
-//! the repositories on this machine as Git describes them: the one reading
-//! of each that the `home` command line and the host share.
+//! A home read from a folder on disk, as `home::layout` lays it out, the
+//! repositories on this machine as Git describes them, and the home's
+//! skills installed for the user: the one reading and the one install of
+//! each that the `home` command line and the host share.
 
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use home::checkout::{self, Probe, Root};
 use home::flow::PATH;
 use home::flow::snapshot::Snapshot;
 use home::layout::{self, IssueLocation};
+use home::skills;
 use proto::ProjectId;
 
 /// The home whose root is `root`.
@@ -149,6 +152,82 @@ fn entries(path: &Path) -> impl Iterator<Item = (String, bool)> {
         })
 }
 
+/// The user's home folder, from `HOME`, else `USERPROFILE`.
+#[must_use]
+pub fn user() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
+/// Installs the skills of the home at `home` for the user at `user`, and
+/// says what it did.
+///
+/// Each harness's skills folder takes them in place of the copies made
+/// before; a skill installed there some other way is kept, and the home's
+/// skill of its name skipped.
+///
+/// # Errors
+///
+/// A folder couldn't be read, written or removed.
+pub fn install(home: &Path, user: &Path) -> Result<String, String> {
+    let source = home.join(skills::SKILLS);
+    let offered: Vec<(String, bool)> = folders(&source)
+        .into_iter()
+        .map(|name| {
+            let skill = source.join(&name).join(skills::SKILL_FILE).is_file();
+            (name, skill)
+        })
+        .collect();
+    skills::HARNESSES
+        .iter()
+        .map(|harness| {
+            let folder = user.join(harness);
+            harnessed(&folder, &source, offered.clone())
+                .map_err(|err| format!("{}: {err}", folder.display()))
+        })
+        .collect()
+}
+
+/// [`install`] into one harness's folder, as [`skills::plan`] decides.
+fn harnessed(
+    folder: &Path,
+    source: &Path,
+    offered: Vec<(String, bool)>,
+) -> io::Result<String> {
+    fs::create_dir_all(folder)?;
+    let listing = fs::read_to_string(folder.join(skills::LISTING)).ok();
+    let plan = skills::plan(
+        &folder.display().to_string(),
+        listing.as_deref(),
+        &names(folder),
+        offered,
+    );
+    plan.remove
+        .iter()
+        .map(|name| folder.join(name))
+        .filter(|path| path.exists())
+        .try_for_each(fs::remove_dir_all)?;
+    fs::write(folder.join(skills::LISTING), &plan.listing)?;
+    plan.copy
+        .iter()
+        .try_for_each(|name| copy(&source.join(name), &folder.join(name)))?;
+    Ok(plan.said)
+}
+
+fn copy(from: &Path, to: &Path) -> io::Result<()> {
+    fs::create_dir_all(to)?;
+    fs::read_dir(from)?.try_for_each(|read| {
+        let entry = read?;
+        let target = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy(&entry.path(), &target)
+        } else {
+            fs::copy(entry.path(), target).map(drop)
+        }
+    })
+}
+
 /// The text of the file at `path` from `root`, or why it couldn't be read.
 fn text(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|err| err.to_string())
@@ -165,6 +244,75 @@ mod tests {
         fn drop(&mut self) {
             let _removed = fs::remove_dir_all(&self.0);
         }
+    }
+
+    fn skill(at: &std::path::Path, text: &str) -> std::io::Result<()> {
+        fs::create_dir_all(at)?;
+        fs::write(at.join("SKILL.md"), text)
+    }
+
+    #[test]
+    fn install_replaces_its_own_copies_and_keeps_skills_installed_some_other_way()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = Scratch(
+            std::env::temp_dir()
+                .join(format!("home-files-skills-{}", std::process::id())),
+        );
+        let (home, user) = (scratch.0.join("home"), scratch.0.join("user"));
+        let skills = home.join("skills");
+        skill(&skills.join("build"), "build")?;
+        skill(&skills.join("tdd"), "tdd")?;
+        fs::create_dir_all(skills.join("tdd/more"))?;
+        fs::write(skills.join("tdd/more/cycle.md"), "red, green")?;
+        skill(&skills.join("theirs"), "the home's")?;
+        fs::create_dir_all(skills.join("notes"))?;
+        let folders =
+            [".claude/skills", ".agents/skills"].map(|at| user.join(at));
+        skill(&folders[0].join("theirs"), "installed by hand")?;
+
+        super::install(&home, &user)?;
+        for folder in &folders {
+            assert_eq!(
+                fs::read_to_string(folder.join("build/SKILL.md"))?,
+                "build"
+            );
+            assert_eq!(
+                fs::read_to_string(folder.join("tdd/more/cycle.md"))?,
+                "red, green"
+            );
+            assert!(!folder.join("notes").exists());
+        }
+        assert_eq!(
+            fs::read_to_string(folders[0].join("theirs/SKILL.md"))?,
+            "installed by hand"
+        );
+        assert_eq!(
+            fs::read_to_string(folders[1].join("theirs/SKILL.md"))?,
+            "the home's"
+        );
+
+        fs::remove_dir_all(skills.join("tdd"))?;
+        fs::write(skills.join("build/SKILL.md"), "build again")?;
+        let outside = user.join(".claude/outside");
+        fs::create_dir_all(&outside)?;
+        let listing = folders[0].join(".home-skills");
+        let listed = fs::read_to_string(&listing)?;
+        fs::write(&listing, format!("{listed}../outside\n"))?;
+        let said = super::install(&home, &user)?;
+        assert!(outside.is_dir(), "a listed path out of the folder stays");
+        for folder in &folders {
+            assert!(!folder.join("tdd").exists(), "{said}");
+            assert_eq!(
+                fs::read_to_string(folder.join("build/SKILL.md"))?,
+                "build again"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(folders[0].join("theirs/SKILL.md"))?,
+            "installed by hand"
+        );
+        assert!(said.contains("theirs"), "{said}");
+        Ok(())
     }
 
     #[test]

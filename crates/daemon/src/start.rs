@@ -254,6 +254,7 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
             name,
             home: remote,
             projects,
+            user: home_files::user(),
         },
     )
     .await?;
@@ -294,6 +295,9 @@ pub struct HostOptions {
     pub home: Option<String>,
     /// Directories scanned for project checkouts.
     pub projects: Vec<PathBuf>,
+    /// The user's home, whose harness folders take the home's skills after
+    /// each sync; `None` installs none.
+    pub user: Option<PathBuf>,
 }
 
 /// A running host.
@@ -439,6 +443,7 @@ async fn assemble(
         name,
         home: remote,
         projects,
+        user,
     } = options;
     let token = crate::load_or_create_token(&data_dir)?;
     let (store, stored) = Store::open(&data_dir, plugins.catalog())?;
@@ -453,6 +458,7 @@ async fn assemble(
         data_dir: data_dir.clone(),
         remote,
         roots: projects,
+        user,
     });
     let (registry, initialized) = Registry::spawn(
         log.clone(),

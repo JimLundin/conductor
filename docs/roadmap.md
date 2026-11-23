@@ -17,9 +17,10 @@ What is built and what comes next. Update it in the commit that changes it.
   one's branch and changes; `sync` clones a project with a remote and no
   checkout into `<home>/<name>`; `scan` registers each repository matching
   no project under a fresh `ProjectId` and rewrites the `AGENTS.md` table;
-  `home skills` copies the home's `skills/` to `~/.claude/skills` and
-  `~/.agents/skills`. `home::repos` and `home::skills` decide; the shell
-  runs only Git.
+  `home skills` installs the home's `skills/` in `~/.claude/skills` and
+  `~/.agents/skills` through `home_files::install`, which the host also
+  runs each time its clone of the home moves. `home::repos` decides; the
+  shell runs only Git.
 
 - **Short issue and project ids.** An issue id is 8 lowercase base 32
   digits, the seconds since 2026-01-01T00:00:00Z then 2 random, drawn

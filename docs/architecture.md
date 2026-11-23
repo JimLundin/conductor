@@ -747,10 +747,11 @@ standards and issues, cloned on every host. Built so far are home steps
   so a session never leaves the remote's work out. The session's own
   branch is cut from it, `OnIssue { issue }` follows `SessionCreated`, and
   the agent's first message is the issue's brief (`home::issue::start`):
-  its title, body, checklist and notes, the branch, and what to do when
-  done; one that doesn't reach the agent leaves an `Error` in the session.
-  The home actor then moves an issue whose status has the flow's role
-  `idle` or `startable` to its first status of role `active`, as the issue
+  its title, body, checklist and notes, its stage and the skills that
+  serve it, the branch, and what to do when done; one that doesn't reach
+  the agent leaves an `Error` in the session. The home actor then moves
+  the issue to the flow's first status of role `active`, unless it is
+  active already or the move breaks one of the flow's rules, as the issue
   is then (`home::issue::SessionUpdate`). The fetch runs in the
   home actor, so issue commands wait for it. The app's issue pane lists
   its sessions on every paired host and opens the new-session form on it.
