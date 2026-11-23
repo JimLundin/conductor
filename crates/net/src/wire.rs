@@ -58,6 +58,23 @@ pub async fn read_bounded<T: Frame>(
     recv: &mut RecvStream,
     limit: usize,
 ) -> Result<Option<T>, WireError> {
+    match read_body(recv, limit).await? {
+        Some(body) => Ok(Some(proto::decode(&body)?)),
+        None => Ok(None),
+    }
+}
+
+/// Reads one frame's body undecoded: `Ok(None)` when the peer finished the
+/// stream between frames.
+///
+/// # Errors
+///
+/// Returns the read error, or rejects a body over `limit` before
+/// allocating it.
+pub async fn read_body(
+    recv: &mut RecvStream,
+    limit: usize,
+) -> Result<Option<Vec<u8>>, WireError> {
     let mut header = [0u8; proto::HEADER_LEN];
     match recv.read_exact(&mut header).await {
         Ok(()) => {
@@ -68,7 +85,7 @@ pub async fn read_bounded<T: Frame>(
             let mut body =
                 std::iter::repeat_n(0u8, length).collect::<Vec<u8>>();
             recv.read_exact(&mut body).await?;
-            Ok(Some(proto::decode(&body)?))
+            Ok(Some(body))
         }
         Err(ReadExactError::FinishedEarly(0)) => Ok(None),
         Err(err) => Err(err.into()),

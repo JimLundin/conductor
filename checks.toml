@@ -29,10 +29,24 @@ tools = ["PYTHON"]
 tier = "commit"
 paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
 
+# The host feeds the web app's tests replay, rerun from their daemon e2e
+# scenarios. It builds the daemon's e2e, so it runs with the tests.
+[[suite]]
+name = "e2e-feeds"
+command = "python3 -I tools/check-feeds.py"
+tools = ["PYTHON"]
+[[suite.when]]
+tier = "step"
+paths = ["fixtures/**", "tools/check-feeds.py"]
+[[suite.when]]
+tier = "step"
+packages = ["daemon"]
+
 # The web app, under the shared TypeScript standard, which keys and records
 # its own checks. Its key holds no tier, so the commit checks and the step's
-# tests are two suites: `web-step` reuses the passes `web` recorded and adds
-# the Vitest run.
+# tests are two suites. `web-step`'s Vitest run also replays the host feeds,
+# which the standard's keys, read from web/ alone, miss, so it runs every
+# check afresh.
 [[suite]]
 name = "web"
 command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" commit"
@@ -43,8 +57,8 @@ paths = ["web/**"]
 
 [[suite]]
 name = "web-step"
-command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" step"
+command = "cd web && npm ci --no-fund --no-audit --silent && \"$STANDARDS/typescript/check.sh\" step --no-cache"
 tools = ["NODE"]
 [[suite.when]]
 tier = "step"
-paths = ["web/**"]
+paths = ["web/**", "fixtures/feeds/**"]
