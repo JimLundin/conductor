@@ -232,6 +232,7 @@ const storageRecovery = async (run: Run, page: Page): Promise<void> => {
 		"legacy tickets require pairing again",
 	);
 	await page.goto(url.href);
+	await page.reload();
 	const storageError = page.locator(".storage-error");
 	await storageError.waitFor({ timeout: run.patience });
 	await page.reload();

@@ -21,10 +21,10 @@ paths = ["tools/test-tooling.py", "tools/scrub-ips.py", "tools/pin", "tools/live
 
 [[suite]]
 name = "wasm-clippy"
-command = "tools/wasm-clippy.sh"
+command = "cargo clippy --target wasm32-unknown-unknown -p proto -p client -p ui -p net -p app --features app/web"
 [[suite.when]]
 tier = "commit"
-packages = ["proto", "client", "net", "app"]
+packages = ["proto", "client", "ui", "net", "app"]
 
 [[suite]]
 name = "e2e-fixtures"

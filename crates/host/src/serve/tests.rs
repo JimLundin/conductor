@@ -4,9 +4,11 @@ use proto::{
     Provider, SessionId, SignInCode, Subscribe,
 };
 
+use crate::log::Kind;
+
 use super::{
-    Admission, Configure, HomeOrder, Ledger, Order, Relaunch, Route,
-    SignInOrder, Stream, admit, route, stream,
+    Admission, Configure, HomeOrder, Order, Relaunch, Route, SignInOrder,
+    Stream, admit, route, stream,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -102,7 +104,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
         phone(),
     );
     assert_eq!(diff, Route::Order(SessionId(1), Order::Diff(HostSeq(2))));
-    assert_eq!(diff.ledger(), Ledger::Unrecorded);
+    assert_eq!(diff.ledger(), None);
     let work = || InstanceId::named(Provider::Codex, "https://gw.example");
     let gateway = || proto::Credential {
         kind: String::from("provider"),
@@ -118,7 +120,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
     .map(|body| route(body, phone()));
     assert_eq!(
         configured.each_ref().map(Route::ledger),
-        [Ledger::Receipt; 2]
+        [Some(Kind::Receipt); 2]
     );
     assert_eq!(
         configured,
@@ -147,7 +149,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
             }
         )
     );
-    assert_eq!(send.ledger(), Ledger::Session);
+    assert_eq!(send.ledger(), Some(Kind::Session));
 }
 
 #[test]
@@ -167,7 +169,10 @@ fn issue_commands_keep_a_receipt_and_name_their_client() {
         },
     ]
     .map(|body| route(body, phone()));
-    assert_eq!(routed.each_ref().map(Route::ledger), [Ledger::Receipt; 2]);
+    assert_eq!(
+        routed.each_ref().map(Route::ledger),
+        [Some(Kind::Receipt); 2]
+    );
     assert_eq!(
         routed,
         [
@@ -185,10 +190,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
         CommandBody::CloneProject { project: project() },
     ]
     .map(|body| route(body, phone()));
-    assert_eq!(
-        routed.each_ref().map(Route::ledger),
-        [Ledger::Unrecorded; 2]
-    );
+    assert_eq!(routed.each_ref().map(Route::ledger), [None; 2]);
     assert_eq!(
         routed,
         [
@@ -205,7 +207,7 @@ fn home_commands_run_every_time_and_a_session_may_start_in_a_project() {
         },
         phone(),
     );
-    assert_eq!(started.ledger(), Ledger::Session);
+    assert_eq!(started.ledger(), Some(Kind::Session));
     assert_eq!(
         started,
         Route::Start {
@@ -235,10 +237,7 @@ fn sign_in_commands_keep_no_receipt() {
         },
     ]
     .map(|body| route(body, phone()));
-    assert_eq!(
-        routed.each_ref().map(Route::ledger),
-        [Ledger::Unrecorded; 4]
-    );
+    assert_eq!(routed.each_ref().map(Route::ledger), [None; 4]);
     assert_eq!(
         routed,
         [
@@ -285,5 +284,5 @@ fn finishing_keeps_a_receipt_so_a_retry_doesnt_finish_twice() {
         phone(),
     );
     assert_eq!(routed, Route::Finish(SessionId(3), phone()));
-    assert_eq!(routed.ledger(), Ledger::Receipt);
+    assert_eq!(routed.ledger(), Some(Kind::Receipt));
 }

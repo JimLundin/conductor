@@ -4,6 +4,14 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Inactive branch consolidation.** The architecture reviews are reconciled
+  against the retained product in [the consolidation assessment](reviews/consolidation.md).
+  Their completed cuts remain in place. Remaining cleanup borrows question
+  and credential drafts, uses the log's command kind for routing, encodes
+  Codex calls without duplicate parameter records and uses the provider's
+  parser in the headless client. The browser lint suite also checks `ui`
+  without a separate lint-suppression script.
+
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
   instance throughout the event log, recovery and client view (ALPN
@@ -73,9 +81,9 @@ What is built and what comes next. Update it in the commit that changes it.
   new-session picker lists instances. `--cli` and `--model` are each
   provider's defaults, and `conductord login <provider> [--account
   <account>]` signs one in on the host (ALPN `conductor/18`, credential
-  store format 7, log format 4); the app signs one in too (item 3). Next:
-  per-instance model and CLI settings from the app; the store already
-  keeps both. *Try:* save a gateway in *Credentials* and see its URL listed
+  store format 7, log format 4); the app signs one in too (item 3).
+  CLI pins come from the Conductor release; host model defaults and
+  session model choices remain. *Try:* save a gateway in *Credentials* and see its URL listed
   as an instance beside the provider's own.
 
 - **One agent runtime** (§5.2). The daemon asks one interface for agents:
@@ -155,9 +163,9 @@ What is built and what comes next. Update it in the commit that changes it.
   iPhone: session list, new session, session pane, phone layout. Browser e2e
   on the real daemon with fake CLIs. See [verification boundaries](verification.md).
 - **Several hosts in one app** (home step 2, architecture §8). The app keeps
-  every paired host in local storage (`conductor.hosts`, keyed by endpoint
-  id, with each host's name; the old single ticket moves in on first
-  load) and a live link to each at once. The list groups sessions by host
+  every paired host in its own local-storage record (`conductor.host.<id>`,
+  with each host's name) and a live link to each at once. Obsolete
+  single-ticket records require pairing again. The list groups sessions by host
   under each one's name and link state, the credentials screen has a
   section per host with *Forget this host*, and a new session picks a host,
   then one of its instances. *Add host* takes a join link or ticket;
@@ -231,11 +239,8 @@ What is built and what comes next. Update it in the commit that changes it.
   developer instructions for Codex. No protocol change. *Try:* start a
   Claude session in a project with only an `AGENTS.md` and ask it what its
   standards are.
-- **Progress notes** (home step 9, §4). When a turn of a session on an
-  issue ends, the checklist items its agent finished in it become a note
-  on the issue, signed by its instance. No protocol change. The home's
-  build order (home §8) is done. *Try:* start a session on an issue, let
-  its agent tick off a step, and watch the issue's notes.
+- **Issue notes.** Explicit notes and the summary produced by Finish remain.
+  Checklist changes stay in their session and no longer generate issue notes.
 
 ## Next
 
@@ -254,9 +259,9 @@ Each item ends in something to try. The fleet design is
    experimental betas on, which the owner's gateway refuses, so through it
    Claude shows none (Claude `PROTOCOL.md`). Continue covers CLI and host restarts, with the durable log and native
    conversation ids from item 4. Built in round C, on `session-model-c`:
-   the agent's checklist (Claude's `TodoWrite`, Codex's plan) kept by the
-   host as its own tasks, each with a stable id and the session that holds
-   it, shown above the transcript; and the effort changed between turns
+   the agent's checklist (Claude's `TodoWrite`, Codex's plan), now kept as
+   an ordered session-local snapshot and shown above the transcript;
+   and the effort changed between turns
    from the session's header, which the next turn takes (Claude in its
    running process, Codex on that `turn/start`). Both CLIs need a switch for
    the checklist tool (§5.2). *Try:* restart a session's CLI and continue it

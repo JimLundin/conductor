@@ -12,7 +12,7 @@ use proto::{
     ToolCallId, ToolKind, ToolOutcome, ToolPhase, TurnOutcome,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::prelude::*;
 
@@ -1192,93 +1192,6 @@ impl Call {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct InitializeParams {
-    client_info: ClientInfo,
-    capabilities: Capabilities,
-}
-
-#[derive(Serialize)]
-struct ClientInfo {
-    name: String,
-    version: String,
-}
-
-/// `experimentalApi` is `true`, which brings `availableDecisions` on approvals.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Capabilities {
-    experimental_api: bool,
-}
-
-/// `thread/start` and `thread/resume`; absent optional values are omitted.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ThreadParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    thread_id: Option<String>,
-    approval_policy: ApprovalPolicy,
-    sandbox: Sandbox,
-    cwd: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    developer_instructions: Option<String>,
-    config: ThreadConfig,
-}
-
-/// The `config` overrides of every thread: the reasoning effort, if set;
-/// reasoning summaries, which a custom model provider gets none of by
-/// default (PROTOCOL.md); the feature that lets the model ask the user
-/// questions outside plan mode, which Codex 0.166 marks under development;
-/// and the plan tool, which the model has only when it is on.
-#[derive(Serialize)]
-struct ThreadConfig {
-    features: Features,
-    tools: Tools,
-    model_reasoning_summary: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    model_reasoning_effort: Option<String>,
-}
-
-#[derive(Serialize)]
-struct Features {
-    default_mode_request_user_input: bool,
-}
-
-#[derive(Serialize)]
-struct Tools {
-    update_plan: Enabled,
-}
-
-#[derive(Serialize)]
-struct Enabled {
-    enabled: bool,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TurnStartParams {
-    thread_id: String,
-    input: Vec<UserInput>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    effort: Option<String>,
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-enum UserInput {
-    Text { text: String },
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TurnInterruptParams {
-    thread_id: String,
-    turn_id: String,
-}
-
 impl Call {
     #[must_use]
     pub const fn method(&self) -> &'static str {
@@ -1292,65 +1205,62 @@ impl Call {
         }
     }
 
-    fn params(&self) -> serde_json::Result<Value> {
+    fn params(&self) -> Value {
         match self {
-            Self::Initialize => serde_json::to_value(InitializeParams {
-                client_info: ClientInfo {
-                    name: String::from("conductor"),
-                    version: String::from(env!("CARGO_PKG_VERSION")),
-                },
-                capabilities: Capabilities {
-                    experimental_api: true,
-                },
+            Self::Initialize => json!({
+                "clientInfo": {"name": "conductor", "version": env!("CARGO_PKG_VERSION")},
+                "capabilities": {"experimentalApi": true},
             }),
-            Self::ModelList => Ok(Value::Object(serde_json::Map::new())),
+            Self::ModelList => json!({}),
             Self::ThreadStart(opts) => thread_params(None, opts),
             Self::ThreadResume(thread, opts) => {
-                thread_params(Some(thread.0.clone()), opts)
+                thread_params(Some(thread), opts)
             }
             Self::TurnStart {
                 thread,
                 text,
                 effort,
-            } => serde_json::to_value(TurnStartParams {
-                thread_id: thread.0.clone(),
-                input: Vec::from([UserInput::Text { text: text.clone() }]),
-                effort: effort.map(|level| String::from(level.wire())),
-            }),
+            } => {
+                let mut params = json!({
+                    "threadId": thread.0, "input": [{"type": "text", "text": text}],
+                });
+                if let Some(level) = effort {
+                    params["effort"] = Value::from(level.wire());
+                }
+                params
+            }
             Self::TurnInterrupt { thread, turn } => {
-                serde_json::to_value(TurnInterruptParams {
-                    thread_id: thread.0.clone(),
-                    turn_id: turn.0.clone(),
-                })
+                json!({"threadId": thread.0, "turnId": turn.0})
             }
         }
     }
 }
 
-fn thread_params(
-    thread_id: Option<String>,
-    opts: &ThreadOptions,
-) -> serde_json::Result<Value> {
-    serde_json::to_value(ThreadParams {
-        thread_id,
-        approval_policy: opts.approval_policy,
-        sandbox: opts.sandbox,
-        cwd: opts.cwd.clone(),
-        model: opts.model.clone(),
-        developer_instructions: opts.instructions.clone(),
-        config: ThreadConfig {
-            features: Features {
-                default_mode_request_user_input: true,
-            },
-            tools: Tools {
-                update_plan: Enabled { enabled: true },
-            },
-            model_reasoning_summary: String::from("auto"),
-            model_reasoning_effort: opts
-                .effort
-                .map(|effort| String::from(effort.wire())),
+// Custom providers need reasoning summaries enabled explicitly.
+fn thread_params(resume: Option<&ThreadId>, opts: &ThreadOptions) -> Value {
+    let mut params = json!({
+        "approvalPolicy": opts.approval_policy,
+        "sandbox": opts.sandbox,
+        "cwd": opts.cwd,
+        "config": {
+            "features": {"default_mode_request_user_input": true},
+            "tools": {"update_plan": {"enabled": true}},
+            "model_reasoning_summary": "auto",
         },
-    })
+    });
+    if let Some(thread) = resume {
+        params["threadId"] = Value::from(thread.0.as_str());
+    }
+    if let Some(model) = &opts.model {
+        params["model"] = Value::from(model.as_str());
+    }
+    if let Some(instructions) = &opts.instructions {
+        params["developerInstructions"] = Value::from(instructions.as_str());
+    }
+    if let Some(effort) = &opts.effort {
+        params["config"]["model_reasoning_effort"] = Value::from(effort.wire());
+    }
+    params
 }
 
 #[derive(Deserialize)]
@@ -1607,28 +1517,6 @@ fn encoded<T: Serialize>(answer: T) -> Result<Value, AnswerError> {
 /// JSON-RPC "method not found".
 const METHOD_NOT_FOUND: i64 = 32_601_i64.wrapping_neg();
 
-// Fields are in alphabetical order, the order `serde_json::json!` wrote them in.
-#[derive(Serialize)]
-#[serde(untagged)]
-enum OutboundFrame {
-    Request {
-        id: RequestId,
-        method: String,
-        params: Value,
-    },
-    Notification {
-        method: String,
-    },
-    Answer {
-        id: RequestId,
-        result: Value,
-    },
-    Reject {
-        error: RpcError,
-        id: RequestId,
-    },
-}
-
 #[derive(Serialize, Deserialize)]
 struct RpcError {
     code: i64,
@@ -1639,24 +1527,16 @@ struct RpcError {
 /// Fails when a request's params won't encode.
 pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
-        Outbound::Request { id, call } => OutboundFrame::Request {
-            id: RequestId::Integer(id),
-            method: String::from(call.method()),
-            params: call.params()?,
-        },
-        Outbound::Initialized => OutboundFrame::Notification {
-            method: String::from("initialized"),
-        },
+        Outbound::Request { id, call } => json!({
+            "id": id, "method": call.method(), "params": call.params(),
+        }),
+        Outbound::Initialized => json!({"method": "initialized"}),
         Outbound::Answer { rpc_id, result } => {
-            OutboundFrame::Answer { id: rpc_id, result }
+            json!({"id": rpc_id, "result": result})
         }
-        Outbound::Reject { rpc_id, message } => OutboundFrame::Reject {
-            error: RpcError {
-                code: METHOD_NOT_FOUND,
-                message,
-            },
-            id: rpc_id,
-        },
+        Outbound::Reject { rpc_id, message } => json!({
+            "error": {"code": METHOD_NOT_FOUND, "message": message}, "id": rpc_id,
+        }),
     })
 }
 

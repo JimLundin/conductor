@@ -709,8 +709,8 @@ impl Draft {
 
     /// The labels chosen for `question`.
     #[must_use]
-    pub(crate) fn chosen(&self, question: usize) -> Vec<String> {
-        self.chosen.get(question).cloned().unwrap_or_default()
+    pub(crate) fn chosen(&self, question: usize) -> &[String] {
+        self.chosen.get(question).map_or(&[], Vec::as_slice)
     }
 
     #[must_use]
