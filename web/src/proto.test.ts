@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { Schema } from "effect";
 import { expect, test } from "vitest";
 import { CommandResult, Feed, HelloReply } from "./proto/index.ts";

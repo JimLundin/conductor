@@ -42,7 +42,7 @@ packages = ["web-iroh"]
 # JSON Schema (ADR 0002): regenerates them and fails on any difference.
 [[suite]]
 name = "schemas"
-command = "(cd web && npm ci --no-fund --no-audit --silent) && tools/schemas.sh --check"
+command = "cd web && npm ci --no-fund --no-audit --silent && ../tools/schemas.sh --check"
 tools = ["NODE", "BIOME"]
 [[suite.when]]
 tier = "commit"

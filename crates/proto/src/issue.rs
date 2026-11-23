@@ -9,9 +9,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
@@ -132,13 +133,15 @@ impl JsonSchema for Datum {
     }
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({
-            "anyOf": [
-                generator.subschema_for::<String>(),
-                generator.subschema_for::<Vec<String>>(),
-                generator.subschema_for::<bool>(),
-            ]
-        })
+        let kinds = [
+            generator.subschema_for::<String>(),
+            generator.subschema_for::<Vec<String>>(),
+            generator.subschema_for::<bool>(),
+        ];
+        Schema::from(Map::from_iter([(
+            String::from("anyOf"),
+            Value::Array(kinds.into_iter().map(Schema::to_value).collect()),
+        )]))
     }
 }
 

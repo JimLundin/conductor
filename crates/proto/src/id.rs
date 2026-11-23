@@ -3,11 +3,13 @@
 //! order is number order. A shell gives the clock and the randomness.
 
 use alloc::borrow::Cow;
+use alloc::string::String;
 use core::fmt;
 
-use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::{Map, Value};
 
 const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
@@ -152,11 +154,11 @@ macro_rules! textual {
             }
 
             fn json_schema(_: &mut SchemaGenerator) -> Schema {
-                json_schema!({
-                    "type": "string",
-                    "minLength": $id::DIGITS,
-                    "maxLength": $id::DIGITS,
-                })
+                Schema::from(Map::from_iter([
+                    (String::from("type"), Value::from("string")),
+                    (String::from("minLength"), Value::from($id::DIGITS)),
+                    (String::from("maxLength"), Value::from($id::DIGITS)),
+                ]))
             }
         }
 
