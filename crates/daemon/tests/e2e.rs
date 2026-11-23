@@ -4,9 +4,7 @@
 //! relays off so the test needs no network.
 
 use std::collections::BTreeMap;
-use std::convert::Infallible;
 use std::fmt::Write as _;
-use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -17,7 +15,7 @@ mod credential_sign_in;
 mod disk;
 mod raw;
 use iroh::endpoint::presets;
-use iroh::{Endpoint, EndpointAddr, RelayMode};
+use iroh::{Endpoint, RelayMode};
 use net::Target;
 use proto::{
     Answer, Auth, AuthToken, Availability, Change, ChecklistEntry,
@@ -32,8 +30,7 @@ use proto::{
 use raw::{RawClient, Received, Recorder};
 use runtime::Settings;
 use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, UdpSocket};
-use tokio::sync::mpsc;
+use tokio::net::TcpListener;
 
 const STEP: Duration = Duration::from_secs(10);
 const REFUSING_CLI: &str = concat!(
@@ -73,9 +70,6 @@ impl Fixture {
     async fn shutdown(self) -> Fallible {
         Ok(self.host.shutdown().await?)
     }
-
-
-
 }
 
 fn fake_claude() -> PathBuf {
@@ -326,12 +320,6 @@ async fn durable_endpoint(
         .await?)
 }
 
-
-
-
-
-
-
 /// The events up to and including `last`.
 async fn events_through(
     client: &mut RawClient,
@@ -350,7 +338,6 @@ fn legacy_created(instance: InstanceId, directory: &Path) -> EventKind {
     }
 }
 
-
 fn delta(text: &str) -> EventKind {
     EventKind::AssistantDelta {
         text: String::from(text),
@@ -360,7 +347,6 @@ fn delta(text: &str) -> EventKind {
 fn seqs(events: &[Event]) -> Vec<HostSeq> {
     events.iter().map(|event| event.seq).collect()
 }
-
 
 /// One command and the host's literal answer.
 struct Case {
@@ -833,7 +819,6 @@ const fn reached(until: &Until, kind: &EventKind) -> bool {
     )
 }
 
-
 /// The kinds of the conversation events the raw client receives, through
 /// the first that reaches `until`, for tests that start one session.
 async fn raw_kinds_until(
@@ -929,7 +914,6 @@ fn raw_events(frames: Vec<Received<Feed>>) -> Vec<Event> {
         .collect()
 }
 
-
 const fn conversation_event(kind: &EventKind) -> bool {
     !matches!(
         kind,
@@ -938,8 +922,6 @@ const fn conversation_event(kind: &EventKind) -> bool {
             | EventKind::NativeTurnStarted { .. }
     )
 }
-
-
 
 /// The kinds of `session`'s events.
 fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
@@ -951,8 +933,6 @@ fn of(session: SessionId, events: &[Event]) -> Vec<EventKind> {
         .collect()
 }
 
-
-
 /// An issue command is answered with the issue it wrote and no warning.
 async fn wrote(client: &RawClient, body: CommandBody) -> Fallible {
     assert!(matches!(
@@ -961,7 +941,6 @@ async fn wrote(client: &RawClient, body: CommandBody) -> Fallible {
     ));
     Ok(())
 }
-
 
 async fn configured(
     client: &RawClient,
@@ -979,7 +958,6 @@ async fn current_offers(target: &Target) -> Fallible<Instances> {
     observer.close().await;
     offers
 }
-
 
 fn started_session(result: &CommandResult) -> Fallible<SessionId> {
     match result {
@@ -1094,14 +1072,6 @@ fn decided(
             phase: ToolPhase::Finished { outcome },
         },
     ])
-}
-
-
-fn done(text: &str) -> Item {
-    Item::Reply {
-        text: String::from(text),
-        state: ReplyState::Done,
-    }
 }
 
 /// A Codex command the user decided on, as the client shows it.
@@ -2214,95 +2184,6 @@ async fn a_wrong_token_is_refused_and_never_goes_live() -> Fallible {
     feed.write()?;
     fx.shutdown().await
 }
-
-/// What iroh logs when an endpoint is dropped before anyone closed it.
-const UNGRACEFUL: &str = "Endpoint dropped without calling `Endpoint::close`";
-
-/// The largest datagram the hop carries.
-const DATAGRAM: usize = 65536;
-
-/// A UDP hop in front of the host that drops everything from the first
-/// client address it hears and forwards for the next, like a path that went
-/// dead for one endpoint only.
-struct Hop {
-    /// Where clients send.
-    outer: UdpSocket,
-    /// Connected to the host.
-    inner: UdpSocket,
-    dead: Option<SocketAddr>,
-    live: Option<SocketAddr>,
-}
-
-enum Datagram {
-    FromClient { bytes: Vec<u8>, from: SocketAddr },
-    FromHost(Vec<u8>),
-}
-
-impl Hop {
-    async fn spawn(host: SocketAddr) -> Fallible<SocketAddr> {
-        let outer = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        let inner = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
-        inner.connect(host).await?;
-        let addr = outer.local_addr()?;
-        let hop = Self {
-            outer,
-            inner,
-            dead: None,
-            live: None,
-        };
-        tokio::spawn(hop.run());
-        Ok(addr)
-    }
-
-    async fn run(mut self) -> io::Result<Infallible> {
-        loop {
-            let datagram = self.next_input().await?;
-            self.on(datagram).await?;
-        }
-    }
-
-    async fn next_input(&self) -> io::Result<Datagram> {
-        tokio::select! {
-            datagram = from_client(&self.outer) => datagram,
-            datagram = from_host(&self.inner) => datagram,
-        }
-    }
-
-    async fn on(&mut self, datagram: Datagram) -> io::Result<()> {
-        match (datagram, self.dead, self.live) {
-            (Datagram::FromClient { from, .. }, None, _) => {
-                self.dead = Some(from);
-                Ok(())
-            }
-            (Datagram::FromClient { bytes, from }, Some(dead), _)
-                if from != dead =>
-            {
-                self.live = Some(from);
-                let _ = self.inner.send(&bytes).await?;
-                Ok(())
-            }
-            (Datagram::FromClient { .. }, Some(_), _)
-            | (Datagram::FromHost(_), _, None) => Ok(()),
-            (Datagram::FromHost(bytes), _, Some(live)) => {
-                let _ = self.outer.send_to(&bytes, live).await?;
-                Ok(())
-            }
-        }
-    }
-}
-
-async fn from_client(socket: &UdpSocket) -> io::Result<Datagram> {
-    let mut bytes = Vec::with_capacity(DATAGRAM);
-    let (_, from) = socket.recv_buf_from(&mut bytes).await?;
-    Ok(Datagram::FromClient { bytes, from })
-}
-
-async fn from_host(socket: &UdpSocket) -> io::Result<Datagram> {
-    let mut bytes = Vec::with_capacity(DATAGRAM);
-    let _ = socket.recv_buf(&mut bytes).await?;
-    Ok(Datagram::FromHost(bytes))
-}
-
 
 /// Sends this thread's logs, at debug and above, to a file named after
 /// `test`. A `tokio::test` runs on one thread, so they include the host's.

@@ -433,16 +433,18 @@ async fn read<T: Frame>(
     tap: &Tap,
     stream: &str,
 ) -> Fallible<Received<T>> {
-    let raw =
-        tokio::time::timeout(STEP, net::wire::read_body(recv, usize::MAX))
-            .await
-            .map_err(|_| {
-                format!(
-                    "no {stream} frame on connection {} within the step timeout",
-                    tap.connection
-                )
-            })??
-            .ok_or("the host finished the stream")?;
+    let raw = tokio::time::timeout(
+        STEP,
+        net::wire::read_body(recv, usize::MAX),
+    )
+    .await
+    .map_err(|_| {
+        format!(
+            "no {stream} frame on connection {} within the step timeout",
+            tap.connection
+        )
+    })??
+    .ok_or("the host finished the stream")?;
     let value = proto::decode(&raw)?;
     Ok(Received { raw, value })
 }
