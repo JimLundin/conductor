@@ -1,5 +1,5 @@
 // The recorded host feeds, and a fake host that replays one to a link over the fake pipe.
-import { Effect, Ref, Schema, type Scope, Stream } from "effect";
+import { Deferred, Effect, Ref, Schema, type Scope, Stream } from "effect";
 import type { FakeHost } from "../fake-pipe.ts";
 import { isDelta } from "../fold/host.ts";
 import type { HostLink, LinkState, Update } from "./host.ts";
@@ -156,13 +156,37 @@ interface Replay {
 	readonly reply: HelloReply;
 	readonly feed: readonly Feed[];
 	readonly results: readonly CommandResult[];
+	// The frames each command's result is followed by on the subscription, in the order of the
+	// commands, as the host's log answers a command.
+	readonly answers?: readonly (readonly Feed[])[];
 }
+
+// What the host has left to say: the next results and answers, and where its feed goes.
+interface Script {
+	readonly results: Ref.Ref<readonly CommandResult[]>;
+	readonly answers: Ref.Ref<readonly (readonly Feed[])[]>;
+	readonly subscribed: Deferred.Deferred<HostStream>;
+}
+
+const next = <T>(left: Ref.Ref<readonly T[]>): Effect.Effect<readonly T[]> =>
+	Ref.modify(left, (all) => [all.slice(0, 1), all.slice(1)]);
+
+const answered = (script: Script): Effect.Effect<void> =>
+	next(script.answers).pipe(
+		Effect.flatMap((frames) =>
+			Effect.forEach(frames.flat(), (frame) =>
+				Deferred.await(script.subscribed).pipe(
+					Effect.flatMap((feed) => sendFrame(Feed, feed, frame)),
+				),
+			),
+		),
+	);
 
 const answer = (
 	stream: HostStream,
 	replay: Replay,
 	served: Served,
-	results: Ref.Ref<readonly CommandResult[]>,
+	script: Script,
 ): Effect.Effect<void> =>
 	opened(stream).pipe(
 		Effect.flatMap((open) => {
@@ -179,6 +203,7 @@ const answer = (
 							sendFrame(Feed, stream, frame),
 						),
 					),
+					Effect.andThen(Deferred.succeed(script.subscribed, stream)),
 				);
 			}
 			if ("Command" in open) {
@@ -186,15 +211,14 @@ const answer = (
 					...all,
 					open.Command,
 				]).pipe(
-					Effect.andThen(
-						Ref.modify(results, (left) => [left.slice(0, 1), left.slice(1)]),
-					),
-					Effect.flatMap((next) =>
-						Effect.forEach(next, (result) =>
+					Effect.andThen(next(script.results)),
+					Effect.flatMap((results) =>
+						Effect.forEach(results, (result) =>
 							sendFrame(CommandResult, stream, result),
 						),
 					),
 					Effect.andThen(Effect.sync(() => stream.finish())),
+					Effect.andThen(answered(script)),
 				);
 			}
 			return Effect.void;
@@ -202,7 +226,7 @@ const answer = (
 	);
 
 // Plays one connection of a host: `reply` to the hello, `feed` on each subscription, and the
-// next of `results` to each command.
+// next of `results` to each command, followed on the feed by the next of `answers`.
 const serve = (
 	host: FakeHost,
 	replay: Replay,
@@ -212,10 +236,14 @@ const serve = (
 			subscribes: yield* Ref.make<readonly Subscribe[]>([]),
 			commands: yield* Ref.make<readonly Command[]>([]),
 		};
-		const results = yield* Ref.make(replay.results);
+		const script: Script = {
+			results: yield* Ref.make(replay.results),
+			answers: yield* Ref.make(replay.answers ?? []),
+			subscribed: yield* Deferred.make<HostStream>(),
+		};
 		yield* Effect.promise(() => host.accept()).pipe(
 			Effect.flatMap((stream) =>
-				Effect.forkScoped(answer(stream, replay, served, results)),
+				Effect.forkScoped(answer(stream, replay, served, script)),
 			),
 			Effect.forever,
 			Effect.forkScoped,
