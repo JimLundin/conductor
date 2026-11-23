@@ -200,7 +200,10 @@ async fn stop_completes_while_a_dial_is_pending() -> TestResult<()> {
     let (link, _updates) = link(&host).await?;
     let incoming = tokio::time::timeout(STEP, host.accept()).await?;
     assert!(incoming.is_some());
-    tokio::time::timeout(Duration::from_secs(3), link.stop()).await??;
+    // The dial heard nothing back, so closing it waits out QUIC's closing
+    // period of three probe timeouts at the initial 333 ms RTT: 2.997 s,
+    // before any scheduling. A hung stop outlasts `STEP`; the drain doesn't.
+    tokio::time::timeout(STEP, link.stop()).await??;
     drop(incoming);
     host.close().await;
     Ok(())

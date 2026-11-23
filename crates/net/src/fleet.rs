@@ -122,6 +122,7 @@ mod browser {
 #[cfg(target_family = "wasm")]
 mod browser {
     use js_sys::{Promise, Uint8Array};
+    use tokio::sync::oneshot;
     use wasm_bindgen::prelude::*;
     use wasm_bindgen_futures::JsFuture;
 
@@ -135,20 +136,36 @@ mod browser {
         fn sign_fleet(data: Uint8Array) -> Promise;
     }
 
+    /// Awaits `promise` in a task of its own and hands back its bytes, so a
+    /// caller's future holds only the `Send` receiver: a `JsFuture` is
+    /// never `Send`. Not an `async fn`, whose future would hold the promise.
+    fn bytes(promise: Promise) -> oneshot::Receiver<Option<Vec<u8>>> {
+        let (reply, answer) = oneshot::channel();
+        wasm_bindgen_futures::spawn_local(async move {
+            let result = JsFuture::from(promise)
+                .await
+                .ok()
+                .map(|value| Uint8Array::new(&value).to_vec());
+            let _ = reply.send(result);
+        });
+        answer
+    }
+
     pub async fn public_key() -> Result<NodeId, IdentityError> {
-        let result = JsFuture::from(fleet_public_key())
+        bytes(fleet_public_key())
             .await
-            .map_err(|_| IdentityError::Key)?;
-        Uint8Array::new(&result)
-            .to_vec()
+            .ok()
+            .flatten()
+            .ok_or(IdentityError::Key)?
             .try_into()
             .map_err(|_| IdentityError::Key)
     }
 
     pub async fn signature(data: &[u8]) -> Result<Vec<u8>, IdentityError> {
-        let result = JsFuture::from(sign_fleet(Uint8Array::from(data)))
+        bytes(sign_fleet(Uint8Array::from(data)))
             .await
-            .map_err(|_| IdentityError::Signature)?;
-        Ok(Uint8Array::new(&result).to_vec())
+            .ok()
+            .flatten()
+            .ok_or(IdentityError::Signature)
     }
 }
