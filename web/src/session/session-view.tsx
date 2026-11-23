@@ -20,10 +20,17 @@ const emptyText = {
 	Closed: "The agent closed before any message.",
 } as const;
 
-const Header = ({ session }: { readonly session: Session }): ReactElement => (
+const Header = ({
+	hostName,
+	session,
+}: {
+	readonly hostName: string;
+	readonly session: Session;
+}): ReactElement => (
 	<header className="session-bar">
 		<h1 title={session.directory}>{session.directory}</h1>
 		<p className="meta">
+			<span>{hostName}</span>
 			<span>{session.instance.provider}</span>
 			{session.model === null ? null : <span>{session.model}</span>}
 			{session.effort === null ? null : <span>{session.effort}</span>}
@@ -86,10 +93,13 @@ const Composer = ({
 };
 
 export const SessionView = ({
+	hostName,
 	id,
 	session,
 	send,
 }: {
+	// The name of the host it runs on, as the app calls it.
+	readonly hostName: string;
 	readonly id: SessionId;
 	readonly session: Session;
 	readonly send: Send;
@@ -97,7 +107,7 @@ export const SessionView = ({
 	const empty = emptyTranscript(session);
 	return (
 		<section className="session">
-			<Header session={session} />
+			<Header hostName={hostName} session={session} />
 			<div className="transcript">
 				{empty === null ? (
 					<Items items={session.items} subagents={session.subagents} />

@@ -42,5 +42,3 @@ export const useSession = (
 ): Session | undefined => sessionOf(useView(), host, session);
 
 export const useRoute = (): Route => useView().route;
-
-export const useSend = (): Store["send"] => useStore().send;

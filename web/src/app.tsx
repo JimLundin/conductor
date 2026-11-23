@@ -1,5 +1,5 @@
 import { Result } from "effect";
-import { type ReactElement, useState } from "react";
+import { type ReactElement, useId, useState } from "react";
 import { type ListStatus, listStatus } from "./fold/offers.ts";
 import type { Session } from "./fold/session.ts";
 import type { LinkState, Status } from "./link/host.ts";
@@ -11,6 +11,7 @@ import type { HostKey } from "./saved.ts";
 import { nameOf, type PairedHost, type Store } from "./store.ts";
 import { describeTicketError } from "./ticket.ts";
 import {
+	useHost,
 	useHosts,
 	useRoute,
 	useSession,
@@ -19,13 +20,13 @@ import {
 	useView,
 } from "./use-store.ts";
 
-const linkStates: Readonly<Record<LinkState, string>> = {
+const linkStates = {
 	Disconnected: "Offline",
 	Connecting: "Connecting",
 	Authenticating: "Authenticating",
 	CatchingUp: "Catching up",
 	Live: "Live",
-};
+} as const satisfies Readonly<Record<LinkState, string>>;
 
 const describeListStatus: (status: ListStatus) => string = (status) => {
 	if (status._tag === "Requests") {
@@ -134,6 +135,7 @@ const PairForm = (): ReactElement => {
 	const store = useStore();
 	const notice = useView().notice;
 	const [error, setError] = useState<string | null>(null);
+	const field = useId();
 	const pair = (data: FormData): void => {
 		const ticket = data.get("ticket");
 		const paired = store.pair(typeof ticket === "string" ? ticket : "");
@@ -144,11 +146,11 @@ const PairForm = (): ReactElement => {
 	const shown = error ?? (notice === null ? null : describeTicketError(notice));
 	return (
 		<form action={pair} className="pair-form">
-			<label htmlFor="ticket">Join link or ticket</label>
+			<label htmlFor={field}>Join link or ticket</label>
 			<textarea
 				autoCapitalize="off"
 				autoComplete="off"
-				id="ticket"
+				id={field}
 				name="ticket"
 				required={true}
 				rows={3}
@@ -217,6 +219,7 @@ const SessionPane = ({
 	readonly host: HostKey;
 	readonly session: SessionId;
 }): ReactElement => {
+	const paired = useHost(host);
 	const found = useSession(host, session);
 	const { send } = useStore();
 	return (
@@ -226,6 +229,7 @@ const SessionPane = ({
 				<p className="empty">The host has no such session.</p>
 			) : (
 				<SessionView
+					hostName={paired === undefined ? host : nameOf(paired)}
 					id={session}
 					send={(body) => send(host, body)}
 					session={found}

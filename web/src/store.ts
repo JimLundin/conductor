@@ -73,7 +73,10 @@ interface Store {
 	readonly reconnect: () => void;
 }
 
-const disconnected: Status = { state: "Disconnected", error: undefined };
+const disconnected = {
+	state: "Disconnected",
+	error: undefined,
+} as const satisfies Status;
 
 const hostLength = 8;
 
@@ -84,8 +87,7 @@ const nameOf = (host: PairedHost): string =>
 // The hosts as the app lists them: by name, then by id.
 const listed = (view: View): readonly PairedHost[] =>
 	[...view.hosts.values()].toSorted(
-		(a, b) =>
-			nameOf(a).localeCompare(nameOf(b)) || a.key.localeCompare(b.key),
+		(a, b) => nameOf(a).localeCompare(nameOf(b)) || a.key.localeCompare(b.key),
 	);
 
 // A host's sessions, the most recently active first.
@@ -100,17 +102,22 @@ const sessionOf = (
 	session: SessionId,
 ): Session | undefined => view.hosts.get(host)?.fold.sessions.get(session);
 
-const applyUpdate = (host: PairedHost, update: Update): PairedHost =>
-	Update.$match(update, {
-		Status: ({ state, error }) => ({ ...host, status: { state, error } }),
-		Reset: () => ({ ...host, fold: resetHistory(host.fold) }),
-		Welcome: ({ welcome }) => ({
-			...host,
-			saved: welcome.host,
-			fold: applyWelcome(host.fold, welcome),
-		}),
-		Feed: ({ frame }) => ({ ...host, fold: applyFeed(host.fold, frame) }),
-	});
+const applyUpdate = (host: PairedHost, update: Update): PairedHost => {
+	switch (update._tag) {
+		case "Status":
+			return { ...host, status: { state: update.state, error: update.error } };
+		case "Reset":
+			return { ...host, fold: resetHistory(host.fold) };
+		case "Welcome":
+			return {
+				...host,
+				saved: update.welcome.host,
+				fold: applyWelcome(host.fold, update.welcome),
+			};
+		case "Feed":
+			return { ...host, fold: applyFeed(host.fold, update.frame) };
+	}
+};
 
 // A screen of a host no longer paired shows the sessions instead.
 const shown = (fragment: string, hosts: View["hosts"]): Route => {
@@ -128,7 +135,9 @@ const sameTicket = (a: Ticket, b: Ticket): boolean =>
 	JSON.stringify(a) === JSON.stringify(b);
 
 // The store over `boundary`'s storage and pipe, its links closing with the scope.
-const makeStore = (boundary: Boundary): Effect.Effect<Store, never, Scope.Scope> =>
+const makeStore = (
+	boundary: Boundary,
+): Effect.Effect<Store, never, Scope.Scope> =>
 	Effect.gen(function* opened() {
 		const links = yield* FiberMap.make<HostKey>();
 		const run = yield* FiberMap.runtime(links)();
@@ -212,7 +221,9 @@ const makeStore = (boundary: Boundary): Effect.Effect<Store, never, Scope.Scope>
 			}
 			const joined = parseJoin(fragment);
 			boundary.replace(
-				fragmentOf(Result.isSuccess(joined) ? Route.Sessions() : Route.Pairing()),
+				fragmentOf(
+					Result.isSuccess(joined) ? Route.Sessions() : Route.Pairing(),
+				),
 			);
 			if (Result.isSuccess(joined)) {
 				adopt(joined.success, null);
@@ -256,8 +267,7 @@ const makeStore = (boundary: Boundary): Effect.Effect<Store, never, Scope.Scope>
 		): Effect.Effect<CommandResult, SendError> =>
 			Effect.suspend(
 				() =>
-					linked.get(key)?.send(body) ??
-					Effect.fail(SendError.NotConnected()),
+					linked.get(key)?.send(body) ?? Effect.fail(SendError.NotConnected()),
 			);
 
 		const reconnect = (): void => {

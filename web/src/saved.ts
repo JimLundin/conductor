@@ -44,7 +44,10 @@ const restored = (key: string, value: string | null): readonly Saved[] => {
 };
 
 const keys = (storage: Storage): readonly string[] =>
-	Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? "");
+	Array.from(
+		{ length: storage.length },
+		(_, index) => storage.key(index) ?? "",
+	);
 
 // The hosts paired in `storage`.
 const restore = (storage: Storage): readonly Saved[] =>
@@ -61,4 +64,4 @@ const unsave = (storage: Storage, host: HostKey): void => {
 	storage.removeItem(storageKey(host));
 };
 
-export { type HostKey, hostKey, restore, type Saved, save, unsave };
+export { type HostKey, hostKey, restore, save, unsave };

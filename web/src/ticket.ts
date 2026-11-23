@@ -53,9 +53,7 @@ const unbase64url = (text: string): Uint8Array | undefined => {
 	const groups = Array.from(
 		{ length: Math.ceil(digits.length / digitsPerGroup) },
 		(_, index) =>
-			group(
-				digits.slice(index * digitsPerGroup, (index + 1) * digitsPerGroup),
-			),
+			group(digits.slice(index * digitsPerGroup, (index + 1) * digitsPerGroup)),
 	);
 	if (groups.includes(undefined)) {
 		return undefined;

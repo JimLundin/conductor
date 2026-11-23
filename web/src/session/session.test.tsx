@@ -44,6 +44,7 @@ const unsent: Send = () =>
 const view = (host: Host): string =>
 	renderToStaticMarkup(
 		<SessionView
+			hostName="test-host"
 			id={session}
 			send={unsent}
 			session={sessionOf(host, session)}

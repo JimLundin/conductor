@@ -4,10 +4,10 @@ import { expect, test } from "vitest";
 import { fakeHost } from "../fake-pipe.ts";
 import { openRequests } from "../fold/offers.ts";
 import { scenario, scoped, serve } from "../link/replay.ts";
-import { memoryStorage } from "../memory-storage.ts";
 import { Root } from "../root.tsx";
 import { Route } from "../route.ts";
 import { makeStore, type Store, sessionOf } from "../store.ts";
+import { page, when } from "../test-page.ts";
 import { recordedSpan, session } from "./playback.ts";
 
 // crates/proto/src/ticket.rs's worked example, and the host it names.
@@ -19,24 +19,6 @@ const waiting = (store: Store): number => {
 	const found = sessionOf(store.view(), host, session);
 	return found === undefined ? -1 : openRequests(found).length;
 };
-
-// Resolves once `holds` is true of the store's view.
-const when = (
-	store: Store,
-	holds: (store: Store) => boolean,
-): Effect.Effect<void> =>
-	Effect.callback<void>((resume) => {
-		if (holds(store)) {
-			resume(Effect.void);
-			return;
-		}
-		const stop = store.subscribe(() => {
-			if (holds(store)) {
-				stop();
-				resume(Effect.void);
-			}
-		});
-	});
 
 test("the session route shows the store's session, and its approval follows the host's answer", async () => {
 	const { before, after } = await scoped(
@@ -51,18 +33,9 @@ test("the session route shows the store's session, and its approval follows the 
 				results: ["Accepted"],
 				answers: [recordedSpan(9, 13)],
 			});
-			let fragment = `#join=${ticket}`;
-			const move = (next: string): void => {
-				fragment = next;
-			};
-			const store = yield* makeStore({
-				pipe: fake.pipe,
-				client: "test-client",
-				storage: memoryStorage(),
-				fragment: (): string => fragment,
-				go: move,
-				replace: move,
-			});
+			const store = yield* makeStore(
+				page(`#join=${ticket}`, undefined, fake.pipe).boundary,
+			);
 			yield* when(store, (shown) => waiting(shown) === 1);
 			store.show(Route.Session({ host, session }));
 			const shown = renderToStaticMarkup(<Root store={store} />);
@@ -77,6 +50,7 @@ test("the session route shows the store's session, and its approval follows the 
 		}),
 	);
 	expect(before).toContain('<div class="shell" data-top="pane">');
+	expect(before).toContain('<p class="meta"><span>test-host</span>');
 	expect(before).toContain('type="button">Approve</button>');
 	expect(after).toContain("Approved by test-client");
 });
