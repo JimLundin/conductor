@@ -116,6 +116,7 @@ export {
 	directories,
 	emptyHost,
 	type Host,
+	isDelta,
 	recent,
 	resetHistory,
 };
