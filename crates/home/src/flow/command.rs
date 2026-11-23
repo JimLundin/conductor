@@ -38,7 +38,7 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
   home issue move <id> stage|status <to> [--signed-off] [<reason>...]
       Moves the stage or status, the only way to change either, and logs
       the move and its reason, marking a move off the stage's usual next
-      ones as unusual. Leaving a stage with a sign-off takes --signed-off.
+      ones as unusual. Entering a stage with a sign-off takes --signed-off.
   home issue set <id> <field>=<value>...
       Sets any other field or relation, title, parent and blocked_by among
       them. A list's value is comma-separated: blocked_by=<id>,<id>.
@@ -771,7 +771,7 @@ fn changed(
 ///
 /// # Errors
 ///
-/// No stage or status is called `to`, or the move leaves a stage with a
+/// No stage or status is called `to`, or the move enters a stage with a
 /// sign-off unsigned.
 fn shifted(
     flow: &Flow,
@@ -798,16 +798,12 @@ fn shifted(
     if !known {
         return Err(format!("no {key} is called {to}"));
     }
-    if let Some(left) = from
-        .as_deref()
-        .filter(|left| part == Part::Stage && *left != to)
-        .and_then(|left| flow.stage(left))
-        .filter(|stage| stage.sign_off && !signed_off)
+    if part == Part::Stage
+        && from.as_deref() != Some(to)
+        && !signed_off
+        && flow.stage(to).is_some_and(|stage| stage.sign_off)
     {
-        return Err(format!(
-            "leaving the stage {} needs its sign-off",
-            left.name
-        ));
+        return Err(format!("entering the stage {to} needs its sign-off"));
     }
     let (before, after) = (
         from.unwrap_or_else(|| String::from("none")),

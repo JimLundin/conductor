@@ -285,7 +285,7 @@ pub enum IssueChange {
         part: Part,
         to: String,
         reason: String,
-        /// The owner signed off, as leaving a stage with a sign-off needs.
+        /// The owner signed off, as entering a stage with a sign-off needs.
         signed_off: bool,
     },
     /// A declared field's or relation's value.
