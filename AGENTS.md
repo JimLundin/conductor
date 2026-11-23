@@ -26,13 +26,21 @@ Home Screen. The design is in
 - **Gate.** `tools/check.sh [commit|step|release]` runs the standard's
   `rust/check.sh`, which also runs Conductor's suites in `checks.toml`: the
   run-record IP scrub, the tooling tests, the e2e fixture check, clippy on
-  `crates/web-iroh` for `wasm32-unknown-unknown` (`wasm-clippy`) and the
-  shared TypeScript standard on `web/` (`web`) at `commit`, and that
-  standard's step with the web app's Vitest tests (`web-step`) at `step`.
+  `crates/web-iroh` for `wasm32-unknown-unknown` (`wasm-clippy`), the
+  generated schemas check (`schemas`) and the shared TypeScript standard
+  on `web/` (`web`) at `commit`, and at `step` the recorded feeds check
+  (`e2e-feeds`) and that standard's step with the web app's Vitest tests
+  (`web-step`).
   The web app builds with `npm run build` in `web/`, which Pages deploys;
   it first builds `crates/web-iroh`, the only crate built for wasm, into
   `web/web-iroh` with wasm-pack (`npm run pipe`), which needs wasm-pack and
   clang besides the toolchain. Nothing it generates is committed.
+- **Generated and recorded files.** `web/src/proto/` is generated from
+  `proto` (ADR 0002) and never edited by hand: after changing a type the
+  client link reaches, bump `proto::ALPN` and run `tools/schemas.sh`
+  (needs `npm ci` in `web/`), then commit both. `fixtures/feeds/` holds the
+  JSON frames daemon e2e scenarios record; rerun a changed scenario to
+  rewrite its feed and commit it (`tools/check-feeds.py` reruns them all).
   Use `commit` for local validation when the environment is available. If
   validation is unavailable or stalls, commit and push the task branch
   with the commands, results and outstanding checks recorded in the commit
@@ -100,7 +108,7 @@ Home Screen. The design is in
   `conductord login <provider> [--account <account>]`, which picks the
   instance of that account, or without one the provider's own; build it
   with `cargo build -p conductord`. Keep provider-specific code out of `daemon`, `host`,
-  `proto`, `client` and the web app.
+  `proto` and the web app.
 - **Instances.** A host runs instances, not providers: each one account
   of a provider, keyed by `InstanceId { provider, account }`, with its own
   credential, private home (`<data>/home/<dir>`), work dir

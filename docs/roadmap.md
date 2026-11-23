@@ -58,11 +58,11 @@ What is built and what comes next. Update it in the commit that changes it.
   issue notes are removed. Explicit notes and the summary turn remain.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
-  runs the standard's checks. The core crates are `proto`, `client`,
+  runs the standard's checks. The core crates are `proto`,
   `agents`, `claude`, `codex`, `host` and `home`; `net`, `daemon`,
-  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`
-  and `home-files` declare themselves the shell.
-  `client` holds the host link's state machine, and `host` holds
+  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`,
+  `home-files` and `web-iroh` declare themselves the shell.
+  `host` holds
   workspace decisions and checklists. The shell still makes about a
   quarter of the decisions (Next, item 1).
 
@@ -163,19 +163,39 @@ What is built and what comes next. Update it in the commit that changes it.
   (streaming deltas are live-only), a session actor per agent, one shared
   Codex app-server per Codex instance. Clients reach it over iroh through
   n0's public relays.
-- **Client.** `HostLink` per host: reconnect with backoff, a hedged dial,
-  catch-up from the cursor. `HostView` folds events into what the UI shows.
-- **App.** One Dioxus web app, installed as an app on the desktop and the
-  iPhone: session list, new session, session pane, phone layout. Removed,
-  with its browser e2e, for the TypeScript app (ADR 0001).
+- **The TypeScript app** (ADRs 0001 and 0002, architecture §7 to §9).
+  The Dioxus app, `crates/app`, `crates/ui`, `crates/client`, `net`'s
+  `HostLink`, the browser e2e and the `headless` example are gone; nothing
+  compiles to wasm but `crates/web-iroh`, iroh in the browser as a byte
+  pipe to one host through its relay. The client link is JSON (ALPN
+  `conductor/38`), each message type naming its codec, with postcard kept
+  between hosts (`conductor-fleet/3`); signed fleet payloads are signed
+  over their exact JSON bytes and verified before they are parsed. The
+  app's Effect Schemas are generated from `proto`'s JSON Schema into
+  `web/src/proto/` (`tools/schemas.sh`, the `schemas` suite). `web/` is
+  Vite, React and Effect: a link per paired host that walks to Live,
+  reconnects with a jittered backoff and resubscribes after its cursor;
+  the one fold of a host's events; and the thin app: pair hosts by join
+  link or ticket and forget one, a session list per host with its link
+  state, start a session on a host and instance in a project or directory,
+  and a session's live transcript with tool cards, where you send, approve
+  or deny, answer, stop, continue and finish. Pages builds `web/` with npm.
+  The daemon e2e speaks raw frames and records its JSON feeds in
+  `fixtures/feeds/` (`tools/check-feeds.py`, the `e2e-feeds` suite), which
+  the app's Vitest tests replay. The screens in this list that the thin app
+  lacks (turn diffs, *Projects*, issues, credentials and sign-ins, fleet
+  invites, *Remove*, checklists, Web Push) are Next, item 6; their *Try*
+  steps wait for it. *Try:* add the app from Pages to the iPhone's Home
+  Screen, pair two hosts and run a session on each
+  (`docs/manual-acceptance.md`).
 - **Several hosts in one app** (home step 2, architecture §8). The app keeps
-  every paired host in local storage, a `conductor.host.<endpoint>` record
-  and a `conductor.name.<endpoint>` name per host, and a live link to each
-  at once. The list groups sessions by host
-  under each one's name and link state, the credentials screen has a
-  section per host with *Forget this host*, and a new session picks a host,
-  then one of its instances. *Add host* takes a join link or ticket;
-  pairing a host again replaces its ticket. No protocol change.
+  every paired host in local storage, one `conductor.v2.host.<endpoint id
+  in hex>` record per host with its ticket and last name, and a live link
+  to each at once. Earlier records are set aside, and those hosts are
+  paired again. The list groups sessions by host under each one's name and
+  link state, *Hosts* pairs by a join link or ticket and forgets a host,
+  and a new session picks a host, then one of its instances. Pairing a
+  host again replaces its ticket.
 - **The home and its projects** (home steps 3 and 4, architecture §5.4).
   The home repository `JimLundin/home` lists each project in
   `projects/<id>/project.toml`, its folder named by the project's id
@@ -289,7 +309,8 @@ What is built and what comes next. Update it in the commit that changes it.
   second host from the phone and run a Claude session on it with the
   fleet's token, without signing in again.
 - **Push** (#15). Web Push from the host when an approval or question
-  opens ([smoke checklist](smoke.md#web-push-on-an-iphone)).
+  opens. The app's service worker went with the Dioxus app, so nothing
+  subscribes until Next, item 6.
 - **Subagents** (#31, home §6). Child session events record each
   subagent's lifecycle, type, result, transcript, requests and checklist;
   the phone shows the child beside the tool call that started it. *Try:*
@@ -327,6 +348,12 @@ Each item ends in something to try. The fleet design is
    Old logs are disposable, so refuse such a session at restore and make
    the workspace required. *Try:* the host tests build every session with
    its workspace, and that e2e test is gone.
+6. **The rest of the app.** The thin app lacks the Dioxus app's turn
+   diffs, *Projects* and issues, credentials and sign-ins, fleet invites
+   and browser device identity, *Remove*, checklists and Web Push; the host
+   serves them all already. Bring each back in `web/` as its own spec,
+   after T3 Code's designs, with its check in `docs/manual-acceptance.md`.
+   *Try:* sign an instance in from the iPhone's Home Screen app.
 
 ## Known bugs
 

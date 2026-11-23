@@ -5,9 +5,9 @@
 | Wire encoding and parsing in `claude`, `codex` and `proto` | Provider JSON lines and host/client messages decode to the expected types. Outbound requests and responses encode the fields the peer expects. |
 | Adapter replay in `claude-cli` and `codex-cli` | Recorded CLI exchanges exercise process and thread lifecycle, request correlation, interruption, EOF and resume through the adapter. |
 | Provider-event mapping in `claude` and `codex` | Provider messages become the intended common event or request, with the IDs, outcomes and details the host uses. |
-| Host tests and daemon E2E in `host` and `daemon` | Commands reach the correct session, receipts and events survive retry and restart, and real host links catch up. The daemon tests run with fake or recorded providers. |
+| Host tests and daemon E2E in `host` and `daemon` | Commands reach the correct session, receipts and events survive retry and restart, and raw-frame clients catch up. The daemon tests run with fake or recorded providers. |
 | Workspace Git tests and daemon E2E | Initial and turn snapshots record commits, unchanged turns can share a commit, and diffs compare consecutive recorded snapshots even when the agent made several commits. Capture failure and restart preserve pending work and branch commits; retained commits stay reachable. Ownership checks, diff limits, original-checkout isolation, finishing and safe removal remain covered. |
-| Client fold in `client` | Event streams, reconnects and snapshots reconstruct session state and the pending actions shown to a client. |
+| The web app's link and fold in `web/`, over the recorded host feeds | Event streams, reconnects and epoch changes reconstruct session state and the actions offered to a client. |
 | Real CLI compatibility | The compiled pins, version checks and recorded exchanges anchor replay to known CLI versions. Re-record provider behavior when changing a pin and document it in the provider's `PROTOCOL.md`. |
 
 Keep assertions at each boundary where they detect a wiring or behavior

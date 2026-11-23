@@ -27,8 +27,8 @@ several of your machines, with no server of ours in the path.
 - Handle approvals, questions, interrupts, resume and per-turn diffs from any
   device.
 - Catch up correctly after a disconnect, such as a phone waking up.
-- Rust everywhere. The only handwritten JavaScript is the service worker Web
-  Push requires.
+- Rust on the hosts. The browser app is TypeScript over a wasm iroh pipe
+  (ADR 0001).
 
 ### Not in v1
 
@@ -129,7 +129,7 @@ so one UI and one set of commands work for both agents.
   id. Its tool calls
   ask for approval as the agent's do, so a request names a sub-agent's call
   and gets a card of its own in the session, and a denied call that fails
-  is `Declined`. `HostView` keeps each session's sub-agents beside its
+  is `Declined`. The app's fold keeps each session's sub-agents beside its
   items, as running, ended with its outcome, or stopped when the session
   closed; the app shows each under the tool call that started it, folded to
   its description and status and opening to its transcript. Codex's collab
@@ -224,22 +224,23 @@ bytes these choices don't change.
 
 ### 4.2 iroh
 
-- `Endpoint::builder(presets::N0)` with a custom relay map: n0's relays named
-  without the root dot, because WebKit refuses the dotted name's certificate
+- A host binds with a custom relay map: n0's relays named without the root
+  dot, because WebKit refuses the dotted name's certificate
   (`net::without_root_dot`, `net::platform::n0_relays`).
 - The host waits for `Endpoint::online()` and prints a ticket with its node id,
   home relay and the auth token (`proto::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
+- The browser dials through `crates/web-iroh` (§7.1): a fresh endpoint per
+  dial whose only relay is the ticket's home relay.
 - A dial that stalls for 1.5 s is hedged with a second dial on a fresh
-  endpoint. The first to connect wins and the other is retired; when both
-  fail, the link keeps the endpoint of the last dial that had one.
-  `client::link` decides this per attempt; `net` binds, dials and closes.
-- The subsequent Hello exchange has a 10 s deadline covering stream open,
-  write and reply. A timeout closes that connection and retries with the
-  link's existing jittered backoff, preserving its cursor. Debug logs for
-  `client::link` and `daemon::serve` identify each local connection and peer,
-  with elapsed times at Hello/Welcome boundaries and the host's registry/log
-  waits. They do not record Hello contents or credentials.
+  endpoint. The first to connect wins and every other is closed once it
+  settles (`web/src/link/dial.ts`).
+- The subsequent Hello exchange has a 10 s deadline. A refusal or a timeout
+  closes that connection and retries with the link's jittered backoff,
+  keeping its cursor. Debug logs for `daemon::serve` identify each
+  connection and peer, with elapsed times at Hello/Welcome boundaries and
+  the host's registry/log waits. They do not record Hello contents or
+  credentials.
 - In the browser, iroh needs the `tls-ring` feature, so building the web app
   needs clang for wasm32.
 - Tests use `presets::Minimal` with relays disabled, on loopback.
@@ -1064,7 +1065,7 @@ empty, and a `Url` field is plain `http(s)://host/path`. The provider's
 core reads its values into its own type (`claude::ClaudeCredential`,
 `codex::CodexCredential`) and decides what they become: environment,
 config edits and the default model. Another kind is another form in the
-provider's core, and the daemon, `host`, `proto`, `client` and the app
+provider's core, and the daemon, `host`, `proto` and the app
 don't change.
 
 #### Built first: gateway credentials
@@ -1229,7 +1230,7 @@ Built: the per-host subscription sign-in of each provider, on one host.
    the CLI reads back on stdin (`paste`); and what a failure the CLI prints
    means (`Failure { says, means }`). It exits 0 when it succeeds. The host
    strips terminal colours and keeps the output only until the link is
-   there. The daemon, `host`, `proto`, `client` and the app read only
+   there. The daemon, `host`, `proto` and the app read only
    that description.
 3. **Claude, per-host.** `claude auth login --claudeai` on pipes prints
    "Opening browser to sign in…", then "If the browser didn't open, visit:
@@ -1643,58 +1644,231 @@ record scope changes.
 - Codex in CI, refresh and sharing `auth.json`: [codex-ci]
 - Codex app-server: [codex-app-server]
 
-## 7. The client (`crates/client`, `crates/net`)
+## 7. The client (`crates/web-iroh`, `web/`)
 
-- `HostLink` (in `net`) is one per host, and the app keeps one live for
-  every paired host at once. One task owns each connection and walks
-  `Disconnected → Connecting → Authenticating → CatchingUp → Live`,
-  reconnecting with jittered backoff, each host on its own. It keeps the
-  cursor, so every reconnect resubscribes after the last applied seq, with
-  no duplicate stored events and no gaps. A fresh cursor or an epoch change
-  emits a reset before the welcome and subscription updates. The link
-  forwards the welcome and feed frames from its current connection. Each
-  command returns its result directly to its caller.
-- `HostFold` (in `client`) keeps the connection status, the host's name,
-  catalog, instance roster, sign-ins, and home. Each welcome replaces the
-  advertised facts and starts a new set of sign-ins. The feed updates those
-  facts, while event frames go to `HostView`. A reset clears the event history
-  before the link replays the new epoch.
-- `HostView` (in `client`, the pure `no_std` core) folds a host's events
-  into what the UI renders: sessions,
-  transcripts, tool cards and open requests. Its `SessionView` decides
-  when to offer the composer, Interrupt, Continue and Finish. It also
-  supplies the status for the pane and list and the reason for a closed
-  footer. The UI maps these decisions to text and markup.
-- They build natively only, as the harness for the daemon's e2e tests,
-  until the TypeScript link and fold replace them (ADR 0001).
+The browser app is TypeScript, React and Effect in `web/`, over iroh
+compiled to wasm (ADR 0001). The link to a host and the fold of its events
+live only there. `crates/client`, `net`'s `HostLink` and the Rust fold
+(`HostFold`, `HostView`) are gone, and `net` builds natively only: the
+daemon keeps its `wire` I/O, ticket addressing (`net::address`,
+`net::Target`) and the relay helpers (`net::without_root_dot`,
+`net::platform::n0_relays`).
 
-## 8. The app
+### 7.1 The pipe (`crates/web-iroh`)
 
-The Dioxus app (`crates/app`, over the `ui` crate) is removed. The
-TypeScript app in `web/` replaces it (ADR 0001), and this section is
-rewritten with it.
+A wasm-bindgen crate (`layer = "shell"`), the only crate built for wasm.
+It is a byte pipe to one endpoint, and its whole surface as TypeScript
+sees it is:
+
+```ts
+connect(endpoint: Uint8Array, relay: string, alpn: Uint8Array): Promise<Connection>
+interface Connection { openBi(): Promise<Stream>; closed(): Promise<string>; close(): Promise<void> }
+interface Stream { send(frame: Uint8Array): Promise<void>; recv(): Promise<Uint8Array | undefined>; finish(): Promise<void> }
+```
+
+- `connect` takes the host's 32-byte endpoint id and its home relay, both
+  from its ticket, binds a fresh local endpoint (`presets::Minimal`) whose
+  only relay is that one, and dials. The connection owns its endpoint, and
+  `close` closes both; `closed` resolves with why the connection ended.
+- A frame is one body. `send` writes `proto::header` before it; `recv`
+  reads a header, refuses one announcing more than `proto::MAX_FRAME_LEN`
+  (`proto::body_len`), and returns the body, or `undefined` once the peer
+  finished the stream between frames. Sending and receiving on one stream
+  may run at once.
+- It reads no body and knows nothing of tickets, authentication or
+  reconnecting.
+- iroh needs its `tls-ring` feature here, so the build needs clang for
+  wasm32. `npm run pipe` in `web/` builds it with wasm-pack (`--target web`,
+  the `wasm` profile: `opt-level = "z"`, LTO, one codegen unit) into
+  `web/web-iroh`, which is not committed.
+- `web/src/pipe.ts` types the app's `Pipe` from the generated declarations,
+  and `web/src/fake-pipe.ts`, an in-memory pipe whose host side a test
+  plays, is typed against the same declarations, so a change to the pipe's
+  surface fails the type-check of both.
+
+Decision 0tws30ha looked for a way to reach a host without Rust in the
+browser. Every option needs a public relay of our own, so the pipe stays
+on n0's relays.
+
+### 7.2 Frames and their codecs
+
+A frame is a big-endian `u32` body length and its body
+(`crates/proto/src/frame.rs`). Each message type names its codec through
+`proto::Frame`, so `proto::encode` and `proto::decode` pick it from the
+type and a message can only travel in its link's:
+
+| Link | Codec | Messages |
+|---|---|---|
+| Client and host (`proto::ALPN`, `conductor/38`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Host and host (`proto::fleet::ALPN`, `conductor-fleet/3`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
+
+Callers own the I/O: `net::wire` on a host, `web-iroh` in the browser.
+JSON names every variant and field, so any change to a type reachable from
+the four client roots bumps `proto::ALPN`, and an older peer fails the
+handshake; a daemon e2e test offers the previous ALPN and is refused. The
+JSON forms of ids, epochs and maps keyed by a struct are in `proto::json`
+(§4.1). Host stores stay postcard.
+
+Signed fleet payloads are `proto::fleet::Signed<T>`: the exact JSON bytes
+the value was written as and a signature over `T::DOMAIN` followed by
+those bytes, each kind under its own domain (`conductor fleet certificate
+v2`, `conductor fleet snapshot v2`). A browser certificate is
+`Signed<Identity>` and a fleet snapshot `Signed<Snapshot>`;
+`SignedConfiguration` carries the public snapshot as one. The daemon's
+`fleet::crypto::open` checks the signature over the carried bytes and only
+then parses them, so nothing is re-encoded to be verified, and a payload
+that differs by one byte is refused.
+
+### 7.3 Generated schemas (`web/src/proto/`)
+
+Rust `proto` is the only definition of the client link's types (ADR 0002):
+
+1. Its types derive `schemars::JsonSchema`. The `proto` unit test
+   `schema::the_frames_schema_is_written_for_the_web_app` writes
+   `web/src/proto/proto.schema.json`: a draft 2020-12 document with the
+   four client roots and every type they reach under `$defs`, as serde
+   serializes them. It rewrites the file only when its content differs.
+2. `web/scripts/schemas.ts` reads that document with Effect's
+   `JsonSchema`, `SchemaRepresentation` (objects closed) and `Codegen`, and
+   writes `web/src/proto/index.ts`, one Effect Schema per definition.
+3. `tools/schemas.sh` runs both and formats the output with Biome.
+   `tools/schemas.sh --check`, the `schemas` suite, then fails when
+   `web/src/proto/` differs from what is committed or holds an untracked
+   file.
+
+Nothing there is edited by hand. Encoding is tested only in Rust, by
+`proto`'s frame tests; the app's tests check what it does with decoded
+values, and `web/src/proto.test.ts` decodes every recorded feed
+(§9) with the generated schemas. The schemas carry a ticket only in its
+JSON form, so `web/src/ticket.ts` is the app's one reader of a ticket's
+text (base64url of its version, host id, token and relay URL).
+
+### 7.4 The link (`web/src/link.ts`, `web/src/link/`)
+
+`link(pipe, ticket, client)` starts one host's link in an Effect scope;
+the app runs one per paired host, all at once. It reports a stream of
+updates (`Status`, `Reset`, `Welcome`, `Feed`) for one reader, takes
+commands, and runs until its scope closes, which closes its connection.
+
+- **States.** Each connection walks `Disconnected → Connecting →
+  Authenticating → CatchingUp → Live`. A status carries why the last
+  connection ended until the next one is live.
+- **Dial** (`link/dial.ts`). The link dials through the pipe with the
+  ticket's host and relay and the client link's ALPN. A dial that hasn't
+  connected in 1.5 s is hedged with a fresh one; the first to connect wins,
+  and every other is closed once it settles.
+- **Hello.** The first stream sends `Hello { client, token }`, where
+  `client` is the device's kind (`web/src/device.ts`). A `Welcome` must
+  arrive within 10 s; a refusal or a timeout ends the connection.
+- **Cursor** (`link/feed.ts`). The link keeps the epoch and last applied
+  seq. A welcome from another epoch, or a first one, sets the cursor to the
+  epoch's start and emits `Reset` before the `Welcome`, so the reader clears
+  the host's history before the replay. The subscription asks for events
+  after the cursor's seq. A stored event at or below the cursor is a replay
+  and dropped; one past the next is a gap and ends the connection. A live
+  delta (`AssistantDelta`, `ReasoningDelta`) repeats the last stored seq and
+  is forwarded without moving the cursor. Other feed frames are forwarded
+  as they come. The link is `Live` once it has applied the welcome's
+  `head_seq`.
+- **Reconnect.** When a connection ends, the link reports `Disconnected`
+  and dials again after a jittered exponential backoff, from 250 ms
+  doubling to 10 s, starting from 250 ms again after a connection that went
+  live. `reconnect` drops the connection and dials at once; the page calls
+  it when the browser comes back online or the page becomes visible.
+- **Commands** (`link/command.ts`). Each command opens its own stream,
+  sends `Command { id, body }` with a fresh random ULID, finishes the
+  stream and returns the one `CommandResult` to its caller. `send` waits
+  while the link connects and fails with `NotConnected` while it is down;
+  the caller decides whether to retry.
+
+### 7.5 The fold (`web/src/fold/`)
+
+Pure functions over the generated types, with Effect's `Data` and `Match`
+for tagged values. It is the only fold of a host's events.
+
+- `fold/host.ts`: a host's name, catalog, instances, the home's projects
+  and its sessions. A welcome replaces what the host advertises and keeps
+  the sessions, which the reconnect catches up; `resetHistory` clears them.
+  A feed's events go to their sessions, its `Instances` and `Home` replace
+  those; sign-ins and the home's issues and flow are not folded. An event
+  for a session never created is dropped, and a removed session is gone.
+- `fold/session.ts` and `fold/transcript.ts`: each session's transcript of
+  messages, streaming replies and reasoning, tool cards, approvals and
+  questions with how they were resolved, its status and where it stands
+  with finishing on its issue.
+- `fold/subagent.ts`: a session's sub-agents, each under the tool call that
+  started it, with its own transcript and requests.
+- `fold/offers.ts`: what a session offers, decided here so views only
+  render it: whether the composer is open, busy or closed, and whether to
+  offer Interrupt, Continue and Finish; its open requests, its own and its
+  sub-agents'; and the status the list shows.
+
+## 8. The app (`web/`)
+
+Vite, React and Effect, checked by the standards' `typescript/check.sh`
+and tested with Vitest. `npm run build` builds the pipe and then the app
+into `web/dist`, which Pages serves (`.github/workflows/pages.yml`).
+
+- **Store** (`web/src/store.ts`). One store over every paired host: its
+  ticket, link status and fold, and the screen shown. Each host's link runs
+  in its own fiber of a `FiberMap`, and forgetting a host closes its fiber.
+  Updates from a link since replaced or forgotten are dropped. React reads
+  it through the hooks in `web/src/use-store.ts`. What it needs from the
+  page (pipe, storage, fragment, history) is passed in, so tests play it
+  (`web/src/test-page.ts`).
+- **Pairing.** A host pairs by a join link (`#join=`) opened on the device
+  or by a join link or ticket pasted into the pairing screen. A join link's
+  fragment is replaced in history, so the ticket stays out of it. Pairing a
+  paired host again replaces its ticket.
+- **Storage** (`web/src/saved.ts`). One local storage record per host
+  under `conductor.v2.host.<endpoint id in hex>`, holding its ticket and
+  the name from its last welcome. A record in any other format, the Dioxus
+  app's included, is set aside unread, and those hosts are paired again.
+- **Routes** (`web/src/route.ts`). The screen is the URL fragment, so Pages
+  serves one path: `#/pair`, `#/` (the sessions), `#/host/<host>/new` and
+  `#/host/<host>/session/<id>`. With no host paired every fragment shows
+  pairing, and an unknown one shows the sessions.
+- **Screens** (`web/src/app.tsx`, `web/src/session/`):
+  - The sidebar: each host under its name and link state, with its last
+    error, its sessions most recently active first, each with its open
+    requests or its status, and *New session*.
+  - Pairing: the join link or ticket field and each paired host with its
+    link state and *Forget*.
+  - New session: a host, one of its instances, one of its projects or a
+    directory, a model and an effort.
+  - A session: its live transcript with tool cards and sub-agents under
+    their call, a dock of its open approvals and questions with one-tap
+    answers, and the composer with *Stop*, *Continue* and *Finish* where
+    the fold offers them. Each action sends one command on the host's link.
+  - On a phone the sidebar and the pane are a stack: the sessions route
+    shows the list, and any other route its pane.
+- **Installable.** `web/public/manifest.webmanifest` with the existing
+  icons, standalone, installable on the desktop and the iPhone Home
+  Screen. There is no service worker.
 
 We port T3 Code's designs, not its code (`apps/web/src/components/`):
 
-| Ours | T3 Code reference | v1 |
+| Ours | T3 Code reference | Thin app |
 |---|---|---|
-| Sidebar: hosts, projects, sessions with status | `AppSidebarLayout.tsx`, `ConnectionStatusDot.tsx` | yes |
-| Transcript, markdown, code | `ChatView.tsx`, `ChatMarkdown.tsx` | yes |
+| Sidebar: hosts and sessions with status | `AppSidebarLayout.tsx`, `ConnectionStatusDot.tsx` | yes |
+| Transcript, markdown, code | `ChatView.tsx`, `ChatMarkdown.tsx` | yes; paragraphs, fenced and inline code |
 | Tool-call cards | `CommandBlock.tsx` | yes |
 | Approval and question panel | `ComposerContextPermissions.tsx` | yes |
-| Diff panel per turn | `DiffPanel.tsx` | yes |
+| Diff panel per turn | `DiffPanel.tsx` | later |
 | Branch toolbar, command palette | `BranchToolbar*.tsx`, `CommandPalette*.tsx` | later |
 | Terminal | `ThreadTerminalDrawer.tsx` | no |
 
-The phone layout follows T3 Code's `docs/internals/mobile-layout.md`: the
-sidebar becomes a stack and approvals get one-tap actions.
+The phone layout follows T3 Code's `docs/internals/mobile-layout.md`.
+Turn diffs, the projects screen, issues, credentials and sign-ins, fleet
+invites and browser device identity, and Web Push are not in the thin
+app; later specs bring them back.
 
 **Web Push.** The host persists its VAPID signing key and browser
 subscriptions in private files. It sends encrypted routing metadata (host,
 session, event sequence and expiry) when a new approval or question opens,
 never the pairing credential, transcript, prompt, question text or tool
 arguments. It removes subscriptions that the browser's push service reports
-as expired. The app's side, its service worker, went with the Dioxus app.
+as expired. The app has no service worker, so nothing subscribes yet.
 
 ## 9. Testing
 
@@ -1706,15 +1880,47 @@ as expired. The app's side, its service worker, went with the Dioxus app.
   directory enter through the plugin and observe shared runtime events.
   Both use the fake CLIs and recorded fixtures.
 - **Daemon e2e** (`crates/daemon/tests/e2e.rs`) runs the real daemon with
-  fake CLIs and native `HostLink`s on loopback. It calls `daemon::start` with the
-  production plugins configured to run the fakes. Its scenarios include
-  approvals, interrupts, reconnects, epochs and two Codex sessions on one
-  server. It checks rendered session state through the client's `HostView`.
+  fake CLIs on loopback, through `daemon::start` with the production
+  plugins configured to run the fakes. Its clients are raw-frame clients
+  (`crates/daemon/tests/raw`) that speak the client link's frames
+  themselves, with no fold: they open with `Hello`, subscribe and send
+  commands, and each test sees every JSON frame as the host sent it and its
+  decoded `proto` value. Its scenarios include approvals, questions,
+  interrupts, reconnects and cursors, epochs and two Codex sessions on one
+  server, and assert on the event stream. One offers the previous ALPN and
+  fails the handshake. The daemon's `fleet::crypto` tests refuse a signed
+  payload whose bytes differ by one byte.
+- **Recorded host feeds** (`fixtures/feeds/<scenario>.json`). A scenario
+  with a `raw::Recorder` writes every frame its clients received as its
+  feed: an array in receive order of `{"connection", "stream", "frame"}`,
+  where `stream` is `hello`, `command` or `feed` and `frame` the
+  `HelloReply`, `CommandResult` or `Feed` body. Session ids, epochs, host
+  ids, commits and paths are normalised so a rerun writes the same bytes.
+  It writes to `fixtures/feeds`, or to `$CONDUCTOR_FEEDS` when set.
+  `tools/check-feeds.py`, the `e2e-feeds` suite, reruns the scenario of
+  each committed feed into an empty directory and fails when a feed is
+  missing, extra or differs by a byte.
+- **The app's tests** (Vitest, in `web/`) replay the recorded feeds
+  through the fake pipe (`web/src/recorded-feeds.ts`,
+  `web/src/link/replay.ts`, where a fake host serves a feed's welcome,
+  frames and the results and frames that answer each command). They cover
+  the link going live from a fresh cursor, resubscribing after a dropped
+  connection with no duplicated or missing event, and resetting and
+  replaying on an epoch change; the fold's transcripts, tool cards, open
+  requests and offers, and a request resolved on another device; pairing,
+  forgetting and the storage format; and each session action sending its
+  command, with the view following the feed that answers it.
 - **Fixtures and run records.** The commit gate checks generated
   recordings against their builders and checks retained run records for
   public IP addresses.
-- **Manual smoke** (`docs/smoke.md`): real CLIs, the desktop browser and
-  the iPhone on mobile data.
+- **Suites** (`checks.toml`, run by `tools/check.sh` beside the Rust
+  standard's checks). At `commit`: `ip-scrub`, `tooling`, `e2e-fixtures`,
+  `wasm-clippy` (clippy on `web-iroh` for `wasm32-unknown-unknown`),
+  `schemas` (§7.3) and `web` (the TypeScript standard's commit checks on
+  `web/`, after building it). At `step`: `e2e-feeds` and `web-step` (the
+  TypeScript standard's step, adding the Vitest run).
+- **Manual checks** (`docs/smoke.md`, `docs/manual-acceptance.md`): real
+  CLIs, the desktop browser and the iPhone on mobile data.
 
 ## 10. References
 
