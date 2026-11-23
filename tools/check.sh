@@ -3,7 +3,8 @@
 # checks.toml beside its own checks, then the shared TypeScript standard on
 # the browser suite in crates/app/tests-e2e. Each runs its units without a
 # recorded pass, and the gate fails if either fails. `tools/check.sh
-# [commit|step|release] [--no-cache]`.
+# [commit|step|release] [--no-cache|--verify]`; `--verify` runs nothing and
+# fails each unit without a recorded pass.
 #
 # The standards come from a clone of the standards project on the Linux
 # filesystem (`STANDARDS_CLONE`, default ~/projects/tools/standards), which

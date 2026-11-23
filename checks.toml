@@ -2,7 +2,8 @@
 # A suite runs at a tier, and every tier above it, when one of its `when`
 # entries matches what changed: a path glob, an affected workspace package
 # (changed, or depending on one that changed), or any change at all when the
-# entry names neither.
+# entry names neither. Its key reads those paths and packages, and the pins
+# in the standards' tools.env of the tools it names.
 
 [[suite]]
 name = "ip-scrub"
@@ -36,21 +37,20 @@ paths = ["fixtures/**", "tools/check-e2e-fixtures.py"]
 name = "browser"
 # At step for a change the web app runs. Its waits are on what the page and
 # the hosts show, under a generous ceiling, so a loaded machine slows it
-# rather than fails it; it reuses the web build of an unchanged app.
+# rather than fails it; it reuses the web build of an unchanged app. It reads
+# the web app with its scenarios (app), the host it drives (conductord, with
+# the fake CLIs of its dependencies), the files below, and Node and dx.
 command = "node --test tools/test-push.mjs && python3 -I tools/check-browser-harness.py && tools/e2e-browser.sh"
+tools = ["NODE", "DX"]
 [[suite.when]]
 tier = "release"
 [[suite.when]]
 tier = "step"
+packages = ["app", "conductord"]
 paths = [
-    "crates/app/**",
-    "crates/ui/**",
-    "crates/net/**",
-    "crates/proto/**",
-    "crates/client/**",
     "fixtures/e2e/**",
-    "crates/claude-cli/tests/fake-claude.sh",
-    "crates/codex-cli/tests/fake-codex.sh",
+    "tools/target-dir",
+    "tools/scrub-ips.py",
     "tools/e2e-browser.sh",
     "tools/test-push.mjs",
     "tools/test-fleet-key.mjs",

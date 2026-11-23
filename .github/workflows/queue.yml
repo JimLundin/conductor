@@ -1,7 +1,8 @@
 # The landing queue. Landing pushes a branch to refs/heads/queue/<name> and
 # returns; each push queues a run here, and the runs land one at a time in
 # the order they queued: rebase the queued commit onto main, run the units
-# without a recorded pass, fast-forward main to the rebased commit, and
+# without a recorded pass, verify that every unit key of the rebased commit
+# has one, fast-forward main to the rebased commit, and
 # start pages.yml on main, which a push by GITHUB_TOKEN doesn't start.
 # GITHUB_TOKEN can't push changes to workflows, so a branch that changes
 # .github/workflows or .github/actions is refused before checking; it lands
@@ -99,6 +100,25 @@ jobs:
         with:
           check-args: --no-cache
 
+      # Lands only a commit whose every unit key has a recorded pass, so a
+      # unit that was skipped, or whose pass wasn't recorded, keeps it off
+      # main. Runs no check.
+      - id: verify
+        name: Verify every unit of the rebased commit has a recorded pass
+        run: |
+          tools/check.sh step --verify 2>&1 | tee "$RUNNER_TEMP/verify.txt"
+          status=${PIPESTATUS[0]}
+          if [ "$status" != 0 ]; then
+            {
+              echo "## Units without a recorded pass"
+              echo
+              echo '```text'
+              sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/verify.txt" | awk '$2 == "FAIL"'
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
+
       # A plain push only fast-forwards, so a main that moved since the
       # rebase rejects it.
       - id: land
@@ -119,6 +139,7 @@ jobs:
           CI: ${{ steps.ci.outcome }}
           REBASE: ${{ steps.rebase.outcome }}
           UNITS: ${{ steps.units.outcome }}
+          VERIFY: ${{ steps.verify.outcome }}
         run: |
           state=failure
           if [ -n "$LANDED" ]; then
@@ -131,6 +152,8 @@ jobs:
             description="failed: $FAILING"
           elif [ "$UNITS" = failure ]; then
             description="the units failed"
+          elif [ "$VERIFY" = failure ]; then
+            description="a unit of the rebased commit has no recorded pass"
           elif [ "$UNITS" = success ]; then
             description="main moved or refused the push; queue again"
           else

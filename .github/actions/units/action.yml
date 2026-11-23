@@ -2,8 +2,10 @@
 # and queue.yml so the toolchain and tools are set up in one place:
 # tools/check.sh skips each unit whose key has a pass recorded on
 # refs/notes/checks and pushes the passes it records, which needs the
-# caller's checkout to persist a token with contents: write. On a failure
-# the job summary names the failing units with the tail of their logs.
+# caller's checkout to persist a token with contents: write. A unit that
+# can't run, such as one whose tool is missing, fails here, where CI is set.
+# On a failure the job summary names the failing units with the tail of
+# their logs.
 name: Run the units without a recorded pass
 description: Set up the toolchain and tools, then run tools/check.sh step
 
@@ -11,6 +13,9 @@ inputs:
   check-args:
     description: Extra arguments for tools/check.sh step.
     default: ""
+  standards-ref:
+    description: The ref of the standards to check with.
+    default: main
 
 outputs:
   failing:
@@ -51,7 +56,7 @@ runs:
     - uses: actions/checkout@v7
       with:
         repository: JimLundin/standards
-        ref: main
+        ref: ${{ inputs.standards-ref }}
         path: standards
         persist-credentials: false
 
