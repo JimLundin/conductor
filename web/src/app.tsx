@@ -3,10 +3,12 @@ import { type ReactElement, useId, useState } from "react";
 import { type ListStatus, listStatus } from "./fold/offers.ts";
 import type { Session } from "./fold/session.ts";
 import type { LinkState, Status } from "./link/host.ts";
-import type { SessionId } from "./proto/index.ts";
+import type { CommandBody, SessionId } from "./proto/index.ts";
 import { fragmentOf, Route } from "./route.ts";
+import { NewSession } from "./session/new-session.tsx";
+import { SessionView } from "./session/session-view.tsx";
 import type { HostKey } from "./saved.ts";
-import { nameOf, type PairedHost } from "./store.ts";
+import { nameOf, type PairedHost, type Store } from "./store.ts";
 import { describeTicketError } from "./ticket.ts";
 import {
 	useHost,
@@ -210,7 +212,6 @@ const Back = (): ReactElement => (
 	</a>
 );
 
-// The session screens are T13's; these hold their place in the shell.
 const SessionPane = ({
 	host,
 	session,
@@ -219,23 +220,45 @@ const SessionPane = ({
 	readonly session: SessionId;
 }): ReactElement => {
 	const paired = useHost(host);
-	const shown = useSession(host, session);
+	const found = useSession(host, session);
+	const { send } = useStore();
 	return (
 		<main className="pane" data-host={host} data-session={session}>
 			<Back />
-			<h1>{shown === undefined ? session : sessionTitle(shown)}</h1>
-			<p>{paired === undefined ? host : nameOf(paired)}</p>
+			{found === undefined ? (
+				<p className="empty">The host has no such session.</p>
+			) : (
+				<SessionView
+					hostName={paired === undefined ? host : nameOf(paired)}
+					id={session}
+					send={(body) => send(host, body)}
+					session={found}
+				/>
+			)}
 		</main>
 	);
 };
 
 const NewSessionPane = ({ host }: { readonly host: HostKey }): ReactElement => {
-	const paired = useHost(host);
+	const store = useStore();
+	const hosts = useHosts().map((paired) => ({
+		key: paired.key,
+		name: nameOf(paired),
+		host: paired.fold,
+		send: (body: CommandBody): ReturnType<Store["send"]> =>
+			store.send(paired.key, body),
+	}));
 	return (
 		<main className="pane" data-host={host}>
 			<Back />
-			<h1>New session</h1>
-			<p>{paired === undefined ? host : nameOf(paired)}</p>
+			<NewSession
+				hosts={hosts}
+				initial={host}
+				key={host}
+				started={(on, session): void =>
+					store.show(Route.Session({ host: on, session }))
+				}
+			/>
 		</main>
 	);
 };
