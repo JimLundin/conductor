@@ -236,7 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Session": { "Started": { "session": "00000000000000000000000001" } }
+			"Session": { "Started": { "session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } }
 		},
 		"stream": "command"
 	},
@@ -255,7 +255,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -267,16 +267,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/00000000000000000000000001",
-							"directory": "/conductor/target/tmp/conductor-test-0-codex-withdraw.jsonl/worktrees/00000000000000000000000001/",
+							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
+							"directory": "/conductor/target/tmp/conductor-test-0-codex-withdraw.jsonl/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
 							"original": "/conductor/target/tmp/conductor-test-0-codex-withdraw.jsonl/work/codex",
 							"repository": "/conductor/target/tmp/conductor-test-0-codex-withdraw.jsonl/work/codex",
-							"worktree": "/conductor/target/tmp/conductor-test-0-codex-withdraw.jsonl/worktrees/00000000000000000000000001"
+							"worktree": "/conductor/target/tmp/conductor-test-0-codex-withdraw.jsonl/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -294,7 +294,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -305,7 +305,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -318,7 +318,7 @@
 					"UserMessage": { "by": "test-client", "text": "create d.txt" }
 				},
 				"seq": 5,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -329,7 +329,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -355,7 +355,7 @@
 					}
 				},
 				"seq": 7,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -376,7 +376,7 @@
 					}
 				},
 				"seq": 8,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -395,7 +395,7 @@
 					}
 				},
 				"seq": 9,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -406,7 +406,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Interrupted" } },
 				"seq": 10,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -419,7 +419,7 @@
 					"RequestResolved": { "request": 1, "resolution": "Withdrawn" }
 				},
 				"seq": 11,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -436,7 +436,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "ping" } },
 				"seq": 12,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -447,7 +447,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 12 } },
 				"seq": 13,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -458,7 +458,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "pong" } } },
 				"seq": 13,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -469,7 +469,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "pong" } } },
 				"seq": 14,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -487,7 +487,7 @@
 					}
 				},
 				"seq": 15,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -498,7 +498,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 16,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"

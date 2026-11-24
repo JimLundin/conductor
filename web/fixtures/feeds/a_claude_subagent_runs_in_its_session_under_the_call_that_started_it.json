@@ -236,7 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Session": { "Started": { "session": "00000000000000000000000001" } }
+			"Session": { "Started": { "session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } }
 		},
 		"stream": "command"
 	},
@@ -255,7 +255,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -267,16 +267,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/00000000000000000000000001",
-							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
+							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
+							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
 							"original": "/conductor/target/tmp/conductor-e2e-0-subagent",
 							"repository": "/conductor/target/tmp/conductor-e2e-0-subagent",
-							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
+							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -294,7 +294,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -305,7 +305,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -316,7 +316,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "delegate" } },
 				"seq": 5,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -327,7 +327,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -354,7 +354,7 @@
 					}
 				},
 				"seq": 7,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -375,7 +375,7 @@
 					}
 				},
 				"seq": 8,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -391,7 +391,7 @@
 					}
 				},
 				"seq": 9,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -414,7 +414,7 @@
 					}
 				},
 				"seq": 10,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -437,7 +437,7 @@
 					}
 				},
 				"seq": 11,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -460,7 +460,7 @@
 					}
 				},
 				"seq": 12,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -483,7 +483,7 @@
 					}
 				},
 				"seq": 13,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -499,7 +499,7 @@
 					}
 				},
 				"seq": 14,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -517,7 +517,7 @@
 					}
 				},
 				"seq": 15,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -528,7 +528,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "done" } } },
 				"seq": 15,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -539,7 +539,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "done" } } },
 				"seq": 16,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -557,7 +557,7 @@
 					}
 				},
 				"seq": 17,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -568,7 +568,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 18,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"

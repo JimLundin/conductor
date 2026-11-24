@@ -2,7 +2,8 @@ import { Effect, Result } from "effect";
 import { expect, test } from "vitest";
 import { fakeHost } from "./fake-pipe.ts";
 import { scenario, scoped, serve } from "./link/replay.ts";
-import { makeStore, sessionsOf } from "./store.ts";
+import { Route } from "./route.ts";
+import { makeStore, sessionOf, sessionsOf } from "./store.ts";
 import { keysOf, memoryStorage, page, when } from "./test-page.ts";
 
 // crates/link/src/ticket.rs's worked example, and the host it names.
@@ -169,4 +170,34 @@ test("forgetting a host removes its record and its sessions", async () => {
 	expect(after.hosts.size).toBe(0);
 	expect(sessionsOf(after, exampleHost)).toEqual([]);
 	expect(keysOf(storage)).toEqual([]);
+});
+
+test("a session link in lower case opens the session the host wrote in upper case", async () => {
+	const session = "01JQ8ZK3VYN7M2WXR4TBHC5DE1";
+	const view = await scoped(
+		Effect.gen(function* opening() {
+			const host = yield* Effect.promise(fakeHost);
+			yield* serve(host, {
+				reply: { Welcome: yield* turn.welcome(1) },
+				feed: turn.feed(1),
+				results: [],
+			});
+			const shown = page(`#join=${exampleTicket}`, memoryStorage(), host.pipe);
+			const store = yield* makeStore(shown.boundary);
+			yield* when(
+				store,
+				(opened) => sessionsOf(opened.view(), exampleHost).length > 0,
+			);
+			shown.boundary.go(
+				`#/host/${exampleHost}/session/01jq8zk3vyn7m2wxr4tbhc5de1`,
+			);
+			store.follow();
+			return store.view();
+		}),
+	);
+	expect(view.route).toEqual(Route.Session({ host: exampleHost, session }));
+	expect(
+		view.route._tag === "Session" &&
+			sessionOf(view, exampleHost, view.route.session),
+	).toBeTruthy();
 });

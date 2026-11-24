@@ -202,7 +202,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -217,7 +217,7 @@
 					}
 				},
 				"seq": 2,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -274,7 +274,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 3,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -288,7 +288,7 @@
 					"UserMessage": { "by": "test-client", "text": "legacy directory" }
 				},
 				"seq": 4,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -301,7 +301,7 @@
 					"Agent": { "AssistantMessage": { "text": "Continued session." } }
 				},
 				"seq": 5,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -312,7 +312,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"

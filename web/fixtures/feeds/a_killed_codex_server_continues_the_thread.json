@@ -236,7 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Session": { "Started": { "session": "00000000000000000000000001" } }
+			"Session": { "Started": { "session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } }
 		},
 		"stream": "command"
 	},
@@ -255,7 +255,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -267,16 +267,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/00000000000000000000000001",
-							"directory": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/00000000000000000000000001/",
+							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
+							"directory": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
 							"original": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
 							"repository": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
-							"worktree": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/00000000000000000000000001"
+							"worktree": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -294,7 +294,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -305,7 +305,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -316,7 +316,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "prime?" } },
 				"seq": 5,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -327,7 +327,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -342,7 +342,7 @@
 					}
 				},
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -353,7 +353,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -364,7 +364,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -375,7 +375,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " determine" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -386,7 +386,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " if" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -397,7 +397,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -408,7 +408,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -419,7 +419,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -430,7 +430,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -441,7 +441,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -452,7 +452,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -463,7 +463,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -474,7 +474,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -485,7 +485,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " To" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -496,7 +496,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " do" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -507,7 +507,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " this" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -518,7 +518,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -529,7 +529,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -540,7 +540,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " should" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -551,7 +551,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " check" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -562,7 +562,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " its" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -573,7 +573,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " divis" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -584,7 +584,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "ors" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -595,7 +595,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " up" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -606,7 +606,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -617,7 +617,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -628,7 +628,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " square" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -639,7 +639,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " root" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -650,7 +650,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " of" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -661,7 +661,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " about" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -672,7 +672,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -683,7 +683,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -694,7 +694,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -705,7 +705,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -716,7 +716,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -727,7 +727,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " seems" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -738,7 +738,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -749,7 +749,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " recall" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -760,7 +760,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " that" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -771,7 +771,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -782,7 +782,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -793,7 +793,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -804,7 +804,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -815,7 +815,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -826,7 +826,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -837,7 +837,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " a" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -848,7 +848,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " known" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -859,7 +859,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -870,7 +870,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " number" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -881,7 +881,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -892,7 +892,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " often" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -903,7 +903,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " recognized" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -914,7 +914,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " as" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -925,7 +925,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -936,7 +936,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " first" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -947,7 +947,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -958,7 +958,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " above" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -969,7 +969,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " one" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -980,7 +980,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " million" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -991,7 +991,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1002,7 +1002,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1013,7 +1013,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " think" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1024,7 +1024,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1035,7 +1035,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " can" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1046,7 +1046,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " confidently" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1057,7 +1057,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " answer" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1068,7 +1068,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " \"" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1079,7 +1079,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "yes" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1090,7 +1090,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "\"" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1101,7 +1101,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1112,7 +1112,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1123,7 +1123,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " user's" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1134,7 +1134,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " question" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1145,7 +1145,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " without" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1156,7 +1156,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " needing" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1167,7 +1167,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " any" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1178,7 +1178,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " tools" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1189,7 +1189,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1200,7 +1200,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1211,7 +1211,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "\u2019s" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1222,7 +1222,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " important" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1233,7 +1233,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1244,7 +1244,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " verify" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1255,7 +1255,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " my" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1266,7 +1266,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " information" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1277,7 +1277,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " carefully" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1288,7 +1288,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1299,7 +1299,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " though" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1310,7 +1310,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "!" } } },
 				"seq": 6,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1327,7 +1327,7 @@
 					}
 				},
 				"seq": 7,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1338,7 +1338,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "Yes" } } },
 				"seq": 7,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1349,7 +1349,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "." } } },
 				"seq": 7,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1360,7 +1360,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "Yes." } } },
 				"seq": 8,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1378,7 +1378,7 @@
 					}
 				},
 				"seq": 9,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1389,7 +1389,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1406,7 +1406,7 @@
 					}
 				},
 				"seq": 11,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1423,7 +1423,7 @@
 					}
 				},
 				"seq": 12,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1438,7 +1438,7 @@
 					}
 				},
 				"seq": 13,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1450,7 +1450,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 14,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1462,7 +1462,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "codeword?" } },
 				"seq": 15,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1473,7 +1473,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 15 } },
 				"seq": 16,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1484,7 +1484,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "qu" } } },
 				"seq": 16,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1495,7 +1495,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "ince" } } },
 				"seq": 16,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1506,7 +1506,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "quince" } } },
 				"seq": 17,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1524,7 +1524,7 @@
 					}
 				},
 				"seq": 18,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"
@@ -1535,7 +1535,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 19,
-				"session": "00000000000000000000000001"
+				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
 			}
 		},
 		"stream": "feed"

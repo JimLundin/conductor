@@ -1,6 +1,7 @@
 import { Data } from "effect";
 import type { SessionId } from "./schemas/index.ts";
 import type { HostKey } from "./saved.ts";
+import { canonical } from "./ulid.ts";
 
 // The screen a URL fragment names. Pages serves one path, so every screen is a fragment.
 export type Route = Data.TaggedEnum<{
@@ -27,8 +28,9 @@ const screen = (parts: readonly string[]): Route => {
 		if (kind === "new" && parts.length === 3) {
 			return Route.NewSession({ host });
 		}
-		if (kind === "session" && session !== undefined && parts.length === 4) {
-			return Route.Session({ host, session });
+		const id = session === undefined ? undefined : canonical(session);
+		if (kind === "session" && id !== undefined && parts.length === 4) {
+			return Route.Session({ host, session: id });
 		}
 	}
 	return Route.Sessions();

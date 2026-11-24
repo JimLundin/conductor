@@ -51,7 +51,7 @@ test("the session list shows each host's name and link state, and its sessions w
 	expect(html).toContain(`<h2>${name}</h2>`);
 	expect(html).toContain('data-state="Live"');
 	expect(html).toContain(
-		`href="#/host/${host}/session/00000000000000000000000001"`,
+		`href="#/host/${host}/session/01JQ8ZK3VYN7M2WXR4TBHC5DE1"`,
 	);
 	expect(html).toMatch(
 		/class="session-status" data-status="(Idle|Running|Closed|Requests)"/v,

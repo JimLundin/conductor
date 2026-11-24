@@ -15,7 +15,7 @@ import { type Session, SessionStatus } from "./session.ts";
 import { Approval, Item, RequestState, ToolState } from "./transcript.ts";
 
 const scenario = "a_claude_turn_streams_asks_and_finishes";
-const session = "00000000000000000000000001";
+const session = "01JQ8ZK3VYN7M2WXR4TBHC5DE1";
 const call = "toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD";
 const reply =
 	"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.";

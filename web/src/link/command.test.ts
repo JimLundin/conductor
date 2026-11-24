@@ -18,10 +18,10 @@ import {
 const turn = scenario("a_claude_turn_streams_asks_and_finishes");
 
 const interrupt: Command = {
-	Session: { Interrupt: { session: "00000000000000000000000001" } },
+	Session: { Interrupt: { session: "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } },
 } as const;
 
-const ulid = /^[0-7][0-9a-hjkmnp-tv-z]{25}$/u;
+const ulid = /^[0-7][0-9A-HJKMNP-TV-Z]{25}$/u;
 
 test("each command gets its own stream and returns its own result to its caller", async () => {
 	const results = turn.results(0);
