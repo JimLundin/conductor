@@ -42,9 +42,10 @@ use home::{
     IssueId, ProjectId,
 };
 use home::{Found, Stored};
-use host::log::Completion;
 use issue_file::{read_issue, write_issue};
-use proto::{ClientName, CommandResult, HostPath, SessionRefusal, StartAt};
+use link::CommandResult;
+use link::log::Completion;
+use proto::{ClientName, HostPath, SessionRefusal, StartAt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};

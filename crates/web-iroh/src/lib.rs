@@ -1,7 +1,7 @@
 //! iroh in the browser as a byte pipe: a connection to one endpoint through
 //! its home relay, with bidirectional streams of frames. A frame is one body,
-//! which the pipe sends behind its header ([`proto::header`]); what a body
-//! means is the caller's.
+//! which the pipe sends behind its header ([`link::frame::header`]); what a
+//! body means is the caller's.
 
 use iroh::endpoint::{
     BindError, ClosedStream, ConnectError, ConnectionError, ReadExactError,
@@ -33,7 +33,7 @@ pub enum PipeError {
     #[error("could not finish the stream: {0}")]
     Finish(#[from] ClosedStream),
     #[error("{0}")]
-    Frame(#[from] proto::FrameError),
+    Frame(#[from] link::frame::FrameError),
 }
 
 impl From<PipeError> for JsValue {
@@ -140,7 +140,7 @@ impl Stream {
     ///
     /// When it exceeds the frame limit or the stream fails.
     pub async fn send(&self, frame: Vec<u8>) -> Result<(), PipeError> {
-        let header = proto::header(frame.len())?;
+        let header = link::frame::header(frame.len())?;
         let mut send = self.send.lock().await;
         send.write_all(&header).await?;
         Ok(send.write_all(&frame).await?)
@@ -170,11 +170,12 @@ impl Stream {
 async fn read_frame(
     recv: &mut RecvStream,
 ) -> Result<Option<Vec<u8>>, PipeError> {
-    let mut header = [0u8; proto::HEADER_LEN];
+    let mut header = [0u8; link::frame::HEADER_LEN];
     match recv.read_exact(&mut header).await {
         Ok(()) => {
-            let mut body = std::iter::repeat_n(0u8, proto::body_len(header)?)
-                .collect::<Vec<u8>>();
+            let mut body =
+                std::iter::repeat_n(0u8, link::frame::body_len(header)?)
+                    .collect::<Vec<u8>>();
             recv.read_exact(&mut body).await?;
             Ok(Some(body))
         }

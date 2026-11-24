@@ -1,5 +1,5 @@
-//! `proto` on iroh: frame I/O on streams, a ticket as an address to dial,
-//! and where a host is.
+//! The client link and the fleet protocol on iroh: frame I/O on streams,
+//! a ticket as an address to dial, and where a host is.
 
 pub mod platform;
 mod relay;

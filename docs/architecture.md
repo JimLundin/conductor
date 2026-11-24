@@ -1,9 +1,10 @@
 # Conductor architecture
 
 How Conductor is built today, and the designs for what comes next. What is
-built and the order of the next slices are in `docs/roadmap.md`. The wire
-types are documented in `crates/proto/src/lib.rs`, which is the source of
-truth for the protocol; this page explains the shape around them.
+built and the order of the next slices are in `docs/roadmap.md`. The
+client link's frames are documented in `crates/link/src/lib.rs`, which is
+the source of truth for the link, and the domains' types beside the code
+that owns them; this page explains the shape around them.
 
 ## 1. What it is
 
@@ -47,7 +48,7 @@ preview, cloud workers, multi-user use.
 | D5 | Trust comes from a fleet root key that signs device certificates (§6) | Hosts store only the root's public key, so pairing a device once gives it access to every host. |
 | D6 | Speak each agent's native protocol, with owned wire types for only the messages we use | Claude's stream-json control protocol and Codex's app-server JSON-RPC carry approvals, interrupts and resume. Lowest-common-denominator protocols (ACP) lose them. |
 | D7 | Shell out to the `git` CLI | Worktrees, hooks and the user's git config behave exactly as on the command line. |
-| D8 | Length-prefixed frames over bidirectional streams: JSON between a client and a host, postcard between hosts | The browser reads JSON with schemas generated from `proto` (ADR 0002); postcard stays where only Rust reads it. Every change to a client wire type bumps `ALPN`. |
+| D8 | Length-prefixed frames over bidirectional streams: JSON between a client and a host, postcard between hosts | The browser reads JSON with schemas generated from `link`'s root types (ADR 0002, ADR 0003); postcard stays where only Rust reads it. Every change to a client wire type bumps `link::ALPN`. |
 | D9 | Hosts on Linux/WSL, macOS and Windows; development in WSL | The developer works in WSL. |
 
 ## 3. The model: one session shape for both agents
@@ -433,8 +434,15 @@ probes and installs as `host::start` decides, and sends the plugins'
   stderr policy to the process runner, perform each agent's provider calls,
   and expose their plugin constructors (`claude_cli::plugin`,
   `codex_cli::plugin`).
+- `link`: the client link: its frames (`Open`, `HelloReply`,
+  `CommandResult`, `Feed`), `ALPN`, its JSON framing, and the rules of a
+  connection: admission, what each stream carries, which commands keep a
+  receipt and how retries share it, the `Welcome` and the catch-up from a
+  `Subscribe`. It depends on the domains and `host`; nothing below it
+  depends on it. Pure `no_std`.
 - `daemon`: the host behind `conductord`, a library that takes the
-  plugins and exposes its start, serve and login functions.
+  plugins and exposes its start, serve and login functions. It runs
+  `link` on each connection.
 - `conductord`: the binary, the one place that names the providers. It
   parses the command line, builds each provider's plugin with its
   settings and calls into `daemon`. Its flags are generic:
@@ -713,7 +721,7 @@ standards and issues, cloned on every host. Built so far are home steps
   `<host>·<client>`. A change rewrites only its own lines of the file, so
   comments, keys, tables and sections a person added stay as written
   (Windows line ends become Unix ones). Both commands use
-  `host::log::Kind::Receipt`, so a retry returns the saved response. A local
+  `link::log::Kind::Receipt`, so a retry returns the saved response. A local
   storage failure returns `IssueNotSaved` without keeping a receipt, so
   the same edit can retry when storage recovers. An edit is known by its
   `EditId`, which the app mints once per edit and sends again with each
@@ -1678,9 +1686,10 @@ interface Stream { send(frame: Uint8Array): Promise<void>; recv(): Promise<Uint8
   from its ticket, binds a fresh local endpoint (`presets::Minimal`) whose
   only relay is that one, and dials. The connection owns its endpoint, and
   `close` closes both; `closed` resolves with why the connection ended.
-- A frame is one body. `send` writes `proto::header` before it; `recv`
-  reads a header, refuses one announcing more than `proto::MAX_FRAME_LEN`
-  (`proto::body_len`), and returns the body, or `undefined` once the peer
+- A frame is one body. `send` writes `link::frame::header` before it;
+  `recv` reads a header, refuses one announcing more than
+  `link::frame::MAX_FRAME_LEN` (`link::frame::body_len`), and returns the
+  body, or `undefined` once the peer
   finished the stream between frames. Sending and receiving on one stream
   may run at once.
 - It reads no body and knows nothing of tickets, authentication or
@@ -1700,19 +1709,19 @@ on n0's relays.
 
 ### 7.2 Frames and their codecs
 
-A frame is a big-endian `u32` body length and its body
-(`crates/proto/src/frame.rs`). Each message type names its codec through
-`proto::Frame`, so `proto::encode` and `proto::decode` pick it from the
-type and a message can only travel in its link's:
+A frame is a big-endian `u32` body length and its body. Each link
+frames its own messages, each in its own codec, and a message can only
+travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
 
-| Link | Codec | Messages |
-|---|---|---|
-| Client and host (`proto::ALPN`, `conductor/41`) | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
-| Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
+| Link | Framing | Codec | Messages |
+|---|---|---|---|
+| Client and host (`link::ALPN`, `conductor/41`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
-Callers own the I/O: `net::wire` on a host, `web-iroh` in the browser.
+Callers own the I/O: `net::wire` (and `net::wire::fleet`) on a host,
+`web-iroh` in the browser.
 JSON names every variant and field, so any change to a type reachable from
-the four client roots bumps `proto::ALPN`, and an older peer fails the
+the four client roots bumps `link::ALPN`, and an older peer fails the
 handshake; a daemon e2e test offers the previous ALPN and is refused. The
 JSON forms of ids, epochs and maps keyed by a struct are in `proto::json`
 (§4.1). Host stores stay postcard.
@@ -1729,9 +1738,10 @@ that differs by one byte is refused.
 
 ### 7.3 Generated schemas (`web/src/proto/`)
 
-Rust `proto` is the only definition of the client link's types (ADR 0002):
+The Rust types are the only definition of the client link's types
+(ADR 0002, ADR 0003):
 
-1. Its types derive `schemars::JsonSchema`. The `proto` unit test
+1. They derive `schemars::JsonSchema`. The `link` unit test
    `schema::the_frames_schema_is_written_for_the_web_app` writes
    `web/src/proto/proto.schema.json`: a draft 2020-12 document with the
    four client roots and every type they reach under `$defs`, as serde
@@ -1745,7 +1755,7 @@ Rust `proto` is the only definition of the client link's types (ADR 0002):
    file.
 
 Nothing there is edited by hand. Encoding is tested only in Rust, by
-`proto`'s frame tests; the app's tests check what it does with decoded
+`link`'s frame tests; the app's tests check what it does with decoded
 values, and `web/src/proto.test.ts` decodes every recorded feed
 (§9) with the generated schemas. The schemas carry a ticket only in its
 JSON form, so `web/src/ticket.ts` is the app's one reader of a ticket's

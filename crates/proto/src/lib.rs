@@ -1,21 +1,11 @@
-//! The wire protocol between a client and `conductord` (architecture §5): the
-//! types and the frame codec. It is the pure core: `no_std`, with the stream
-//! I/O in the `net` crate.
+//! The domains' types that have yet to move to the crates that own them
+//! (ADR 0003): the client link, `link`, composes them into its frames. It
+//! is a pure core, `no_std`.
 //!
-//! Every bi-stream starts with one [`Open`] frame from the client. The first
-//! stream of a connection must be [`Open::Hello`], answered by one
-//! [`HelloReply`]. A [`Open::Command`] stream gets one [`CommandResult`] and
-//! closes; both name the domain the command acts on, whose own enum the
-//! link wraps. A [`Open::Subscribe`] stream then carries [`Feed`] frames, the
-//! events and the sign-ins, until either side closes it.
-//!
-//! Frame bodies on this link are JSON (`frame`), which names each variant
-//! and field: a renamed, added or removed one fails an older peer. So any
-//! change to a type reachable from [`Open`], [`HelloReply`],
-//! [`CommandResult`] or [`Feed`] bumps [`ALPN`], so that peer fails at the
-//! handshake instead of mid-stream. Host stores and traffic between hosts
-//! are postcard, where a variant is its index and a field its position, so
-//! there a reordered type decodes as the wrong value with no error.
+//! The client link is JSON, so a change to a type it reaches bumps
+//! `link::ALPN`. Host stores and traffic between hosts are postcard, where
+//! a variant is its index and a field its position, so there a reordered
+//! type decodes as the wrong value with no error.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -23,12 +13,9 @@ extern crate alloc;
 
 mod credential;
 pub mod fleet;
-mod frame;
 mod instance;
 mod json;
 mod push;
-#[cfg(test)]
-mod schema;
 mod sign_in;
 mod ticket;
 
@@ -37,15 +24,12 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use home::{Home, HomeCommand, HomeRefusal, HomeResult, IssueId, ProjectId};
+use home::{HomeRefusal, IssueId, ProjectId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use credential::{
     Catalog, Credential, CredentialForm, Field, FieldKind, ProviderInfo,
-};
-pub use frame::{
-    Codec, Frame, FrameError, HEADER_LEN, body_len, decode, encode, header,
 };
 pub use instance::{
     Account, Instance, InstanceCommand, InstanceId, InstanceRefusal,
@@ -56,21 +40,6 @@ pub use sign_in::{
     SignIn, SignInCode, SignInCommand, SignInRefusal, SignInResult, SignInStep,
 };
 pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
-
-/// The ALPN of the protocol. It changes with every change to the wire types
-/// (see the crate docs), so an old client fails at the handshake instead of
-/// mid-stream.
-pub const ALPN: &[u8] = b"conductor/41";
-
-/// A logged event or a live update to the host's sign-ins, home or offers.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum Feed {
-    Event(Event),
-    SignIn(SignIn),
-    Home(Home),
-    /// The current instance offers, replacing the previous snapshot.
-    Instances(Instances),
-}
 
 /// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
@@ -148,42 +117,6 @@ impl RequestId {
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
     }
-}
-
-/// The first frame on every client-opened bi-stream.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum Open {
-    Hello(Hello),
-    Subscribe(Subscribe),
-    Command { id: CommandId, body: Command },
-    FleetHello(fleet::DeviceHello),
-}
-
-/// S3 auth placeholder: the ticket's token stands in for the `DeviceCert`
-/// that §4 puts here.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Hello {
-    pub client: ClientName,
-    pub token: AuthToken,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum HelloReply {
-    Welcome(Welcome),
-    Refused { reason: String },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Welcome {
-    pub host: String,
-    pub epoch: Epoch,
-    pub head_seq: HostSeq,
-    pub instances: Instances,
-    /// How each provider presents itself and the credentials it takes.
-    /// Unlike `instances` it doesn't change while the host runs.
-    pub catalog: Catalog,
-    /// `None` on a host given no home. `Feed::Home` brings each change.
-    pub home: Option<Home>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -369,17 +302,6 @@ pub enum Auth {
     Unmanaged,
 }
 
-/// Replays every stored event after `after_seq`, then streams live ones,
-/// deltas included. A subscription from another epoch is refused by closing
-/// the stream.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
-)]
-pub struct Subscribe {
-    pub epoch: Epoch,
-    pub after_seq: HostSeq,
-}
-
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits.
 #[derive(
     Debug,
@@ -459,28 +381,6 @@ impl core::fmt::Display for Provider {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.name())
     }
-}
-
-/// A command, in the domain it acts on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum Command {
-    Session(SessionCommand),
-    Instance(InstanceCommand),
-    SignIn(SignInCommand),
-    Home(HomeCommand),
-    Push(PushCommand),
-    Fleet(fleet::FleetCommand),
-}
-
-/// A command's answer, in the domain of the command.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub enum CommandResult {
-    Session(SessionResult),
-    Instance(InstanceResult),
-    SignIn(SignInResult),
-    Home(HomeResult),
-    Push(PushResult),
-    Fleet(fleet::FleetResult),
 }
 
 /// Every command after `Start` names the session it acts on.
@@ -1211,7 +1111,7 @@ mod tests {
     }
 
     #[test]
-    fn stored_events_and_receipts_use_the_current_format()
+    fn stored_events_and_rosters_use_the_current_format()
     -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             postcard::from_bytes::<super::Event>(&[1, 1, 1])?,
@@ -1221,16 +1121,13 @@ mod tests {
                 kind: super::EventKind::SessionReady,
             }
         );
-        assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[0, 0])?,
-            super::CommandResult::Session(super::SessionResult::Accepted)
-        );
-        assert_eq!(
-            postcard::from_bytes::<super::CommandResult>(&[0, 2, 3])?,
-            super::CommandResult::Session(super::SessionResult::Refused(
-                super::SessionRefusal::SessionClosed
-            ))
-        );
+        let roster = super::Roster(alloc::collections::BTreeMap::from([(
+            super::InstanceId::own(super::Provider::new("codex")),
+            super::Instance::default(),
+        )]));
+        let bytes = postcard::to_allocvec(&roster)?;
+        assert_eq!(bytes, b"\x01\x05codex\x00\x00\x00\x00");
+        assert_eq!(postcard::from_bytes::<super::Roster>(&bytes)?, roster);
         assert_eq!(
             postcard::to_allocvec(&super::Event {
                 seq: super::HostSeq(1),

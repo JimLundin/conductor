@@ -148,7 +148,7 @@ impl Protocol {
                         other,
                     )
                     .await?;
-                wire::write(&mut send, &reply).await?;
+                wire::fleet::write(&mut send, &reply).await?;
             }
         }
         send.finish()?;
@@ -219,15 +219,15 @@ async fn respond_sync(
     if let Some(revocation) =
         fleet.revocation_for(remote, &peer.certificate).await
     {
-        return Ok(wire::write(send, &Reply::Revoked(revocation)).await?);
+        return Ok(wire::fleet::write(send, &Reply::Revoked(revocation)).await?);
     }
     if !allowed_peer(fleet, remote, &peer.certificate).await {
-        return Ok(wire::write(send, &Reply::Refused).await?);
+        return Ok(wire::fleet::write(send, &Reply::Refused).await?);
     }
     let local = fleet.peer().await;
     let before = local.version;
     let config = fleet.config_after(peer.version).await;
-    wire::write(
+    wire::fleet::write(
         send,
         &Reply::Sync(Sync {
             peer: local,
@@ -339,7 +339,7 @@ async fn exchange(
     tokio::time::timeout(RPC_DEADLINE, async {
         let conn = endpoint.connect(target, proto::fleet::ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await?;
-        wire::write(&mut send, request).await?;
+        wire::fleet::write(&mut send, request).await?;
         send.finish()?;
         read(&mut recv).await
     })
@@ -412,7 +412,7 @@ pub(super) async fn sync_with(
     let (mut send, mut recv) = conn.open_bi().await?;
     let local = membership.peer().await;
     let local_version = local.version;
-    wire::write(&mut send, &Request::Sync(local)).await?;
+    wire::fleet::write(&mut send, &Request::Sync(local)).await?;
     let (peer, config) = match read::<Reply>(&mut recv).await? {
         Reply::Sync(Sync { peer, config }) => (peer, config),
         Reply::Revoked(revoked) => {
@@ -456,7 +456,7 @@ async fn send_update(
     if local > remote
         && let Some(updated) = fleet.config_after(remote).await
     {
-        wire::write(send, &updated).await?;
+        wire::fleet::write(send, &updated).await?;
     }
     Ok(())
 }
@@ -479,8 +479,10 @@ fn validate_host(host: &HostEntry) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn read<T: proto::Frame>(recv: &mut RecvStream) -> anyhow::Result<T> {
-    wire::read_bounded(recv, MAX_FRAME)
+async fn read<T: host::fleet::frame::Frame>(
+    recv: &mut RecvStream,
+) -> anyhow::Result<T> {
+    wire::fleet::read_bounded(recv, MAX_FRAME)
         .await?
         .context("fleet stream closed before its reply")
 }

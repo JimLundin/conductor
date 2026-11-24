@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 data-encoding.workspace = true
-# Until the link crate composes the domains: the home model it carries.
+# Until host owns the session record: the home types its events and refusals name.
 home = { path = "../home" }
 serde.workspace = true
 serde_json.workspace = true

@@ -2,7 +2,7 @@
 
 use iroh::endpoint::{ConnectionError, presets};
 use iroh::{Endpoint, RelayMode};
-use proto::FrameError;
+use link::frame::FrameError;
 use web_iroh::{Connection, PipeError};
 
 const ALPN: &[u8] = b"pipe-test/0";

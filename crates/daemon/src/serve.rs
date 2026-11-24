@@ -1,26 +1,30 @@
-//! Serves the protocol (`proto::ALPN`) on accepted iroh connections. The
-//! protocol's rules are [`host::serve`]; this reads and writes the frames
-//! and calls the log and the registry.
+//! Serves the client link (`link::ALPN`) on accepted iroh connections.
+//! The link's rules are [`link::serve`], and what a session command asks
+//! of the host [`host::serve`]; this reads and writes the frames and calls
+//! the log and the registry.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use home::{Home, HomeResult};
-use host::log::Completion;
-use host::serve::{self, Admission, Relaunch, SessionRoute, Stream};
+use host::serve::{self, Relaunch, SessionRoute};
 use host::session::Order;
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
 use iroh::protocol::{AcceptError, ProtocolHandler};
+use link::log::Completion;
+use link::serve::{Admission, Stream};
+use link::{
+    Command, CommandResult, Feed as Frame, HelloReply, Open, Subscribe, Welcome,
+};
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
 use proto::fleet::FleetResult;
 use proto::{
-    AuthToken, ClientName, Command, CommandId, CommandResult, Event,
-    Feed as Frame, HelloReply, InstanceResult, Instances, Open, PushCommand,
-    PushResult, SessionId, SessionRefusal, SessionResult, SignIn, SignInResult,
-    Subscribe, Welcome,
+    AuthToken, ClientName, CommandId, Event, InstanceResult, Instances,
+    PushCommand, PushResult, SessionId, SessionRefusal, SessionResult, SignIn,
+    SignInResult,
 };
 use tokio::sync::{Semaphore, broadcast, watch};
 
@@ -181,32 +185,20 @@ async fn admit_fleet(
     peer: iroh::EndpointId,
     first: Option<Open>,
 ) -> (Admission, Option<proto::fleet::Certificate>) {
-    let admitted = match first {
-        Some(Open::FleetHello(hello)) => fleet
-            .admit_device(peer, &hello)
-            .await
-            .ok()
-            .map(|owner| (owner, hello.certificate)),
-        _ => None,
-    };
-    match admitted {
-        Some((owner, certificate)) => (
-            Admission::Admitted(ClientName(owner.name)),
-            Some(certificate),
-        ),
-        None => (
-            Admission::Refused {
-                reason: String::from(
-                    "a current fleet device certificate is required",
-                ),
-            },
-            None,
-        ),
+    match link::serve::device_hello(first) {
+        Ok(hello) => {
+            let owner = fleet.admit_device(peer, &hello).await.ok();
+            let admission = link::serve::device(owner);
+            let certificate = matches!(admission, Admission::Admitted(_))
+                .then_some(hello.certificate);
+            (admission, certificate)
+        }
+        Err(refused) => (refused, None),
     }
 }
 
 fn trace_command(id: CommandId, command: &Command) {
-    let operation = serve::operation(command);
+    let operation = link::serve::operation(command);
     tracing::info!(command = id.0, operation, "command received");
 }
 
@@ -270,7 +262,7 @@ impl Conductor {
         let membership = self.fleet.borrow().clone();
         match membership {
             Some(fleet) => admit_fleet(&fleet, peer, first).await,
-            None => (serve::admit(first, &self.token), None),
+            None => (link::serve::admit(first, &self.token), None),
         }
     }
 
@@ -359,7 +351,7 @@ impl Conductor {
         mut recv: RecvStream,
         client: ClientName,
     ) -> Result<(), StreamError> {
-        match serve::stream(wire::read::<Open>(&mut recv).await?) {
+        match link::serve::stream(wire::read::<Open>(&mut recv).await?) {
             Stream::Command(id, command) => {
                 trace_command(id, &command);
                 let result = self.run(id, command, client).await?;
@@ -386,7 +378,7 @@ impl Conductor {
         command: Command,
         client: ClientName,
     ) -> Result<CommandResult, Stopped> {
-        let begun = match serve::ledger(&command) {
+        let begun = match link::serve::ledger(&command) {
             None => {
                 return self
                     .command(command, client, id)
@@ -603,8 +595,9 @@ mod diagnostics_tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use link::Command;
     use proto::{
-        Answer, Command, CommandId, Kept, RequestId, SessionCommand, SessionId,
+        Answer, CommandId, Kept, RequestId, SessionCommand, SessionId,
     };
 
     #[test]
