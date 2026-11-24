@@ -2469,15 +2469,8 @@ checksum = "27b02d87554356db9e9a873add8782d4ea6e3e58ea071a9adb9a2e8ddb884a8b"
 name = "net"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "getrandom 0.4.3",
  "iroh",
- "iroh-base",
- "link",
- "n0-future",
  "thiserror 2.0.21",
- "tokio",
- "tracing",
  "url",
 ]
 
@@ -4804,7 +4797,7 @@ name = "web-iroh"
 version = "0.1.0"
 dependencies = [
  "iroh",
- "link",
+ "net",
  "thiserror 2.0.21",
  "tokio",
  "wasm-bindgen",

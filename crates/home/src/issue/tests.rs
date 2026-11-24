@@ -1215,6 +1215,11 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     assert!(commit.text.contains(
         super::Listing::creation_pattern(context.edit).trim_matches(['^', '$'])
     ));
+    assert!(
+        commit
+            .text
+            .contains("# conductor-edit: 00000000000000000000000001\n")
+    );
     let existing = context.open(ID, wanted(), "laptop")?;
     assert_eq!(
         among(&[], |home| existing.decide(

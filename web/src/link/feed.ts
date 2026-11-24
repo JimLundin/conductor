@@ -6,6 +6,7 @@ import {
 	type Event,
 	Feed,
 	type HostSeq,
+	Open,
 	type Welcome,
 } from "../schemas/index.ts";
 import { open, read, write } from "./frames.ts";
@@ -115,7 +116,7 @@ const subscribe = (
 	Effect.gen(function* subscription() {
 		const stream = yield* open(connection);
 		const after = yield* appliedSeq(host);
-		yield* write(stream, {
+		yield* write(Open, stream, {
 			Subscribe: { epoch: welcome.epoch, after_seq: after },
 		});
 		// The host always sends a first frame once it accepts the subscription.

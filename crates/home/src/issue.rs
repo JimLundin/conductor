@@ -360,7 +360,7 @@ fn apply(
 
 /// The front matter's comment that marks an edit as had.
 fn edit_marker(id: EditId) -> String {
-    format!("conductor-edit: {:032x}", id.0)
+    format!("conductor-edit: {id}")
 }
 
 /// The file as it is, marked as having had the edit.
