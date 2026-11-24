@@ -3,7 +3,7 @@ import type {
 	Catalog,
 	Event,
 	Feed,
-	HostPath,
+	SessionDirectory,
 	Instances,
 	Project,
 	SessionId,
@@ -103,7 +103,7 @@ const recent = (host: Host): readonly SessionId[] =>
 
 // Each directory a session ran in, once, the most recent first: the suggestions for a new
 // session.
-const directories = (host: Host): readonly HostPath[] => [
+const directories = (host: Host): readonly SessionDirectory[] => [
 	...new Set(
 		recent(host).flatMap((id) => {
 			const session = host.sessions.get(id);

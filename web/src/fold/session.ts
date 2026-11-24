@@ -6,7 +6,7 @@ import type {
 	CloseReason,
 	Effort,
 	EventKind,
-	HostPath,
+	SessionDirectory,
 	HostSeq,
 	InstanceId,
 	IssueId,
@@ -55,7 +55,7 @@ type FinishState = "Ready" | "Finishing" | "Retrying" | "Done";
 
 interface Session {
 	readonly instance: InstanceId;
-	readonly directory: HostPath;
+	readonly directory: SessionDirectory;
 	// What the agent runs with; null is the CLI's own default.
 	readonly model: ModelId | null;
 	readonly effort: Effort | null;

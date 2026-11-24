@@ -49,7 +49,7 @@ use crate::workspace::GitError;
 
 mod instance;
 pub use instance::{
-    Availability, Catalog, Instance, InstanceCommand, InstanceId,
+    Availability, Catalog, Cli, Instance, InstanceCommand, InstanceId,
     InstanceRefusal, InstanceResult, InstanceStatus, Instances, ProviderNote,
     Roster,
 };
@@ -1158,8 +1158,9 @@ fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {
 
 mod start;
 pub use start::{
-    Placement, StartDecision, StartEffect, StartEnd, StartOutcome, StartReport,
-    StartRequest, StartSession, StartStep, brief_sent, path_of, place,
+    InHome, Placement, StartDecision, StartEffect, StartEnd, StartOutcome,
+    StartReport, StartRequest, StartSession, StartStep, brief_sent, place,
+    place_in_home, place_without_home,
 };
 
 #[cfg(test)]

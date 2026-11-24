@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/42";
+export type Alpn = "conductor/43";
 
-export const Alpn = Schema.Literal("conductor/42").annotate({
+export const Alpn = Schema.Literal("conductor/43").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -423,12 +423,12 @@ export const CloseReason = Schema.Union(
 	{ mode: "oneOf" },
 ).annotate({ identifier: "CloseReason" });
 
-export type HostPath = string;
+export type SessionDirectory = string;
 
-export const HostPath = Schema.String.annotate({
+export const SessionDirectory = Schema.String.annotate({
 	description:
-		"A path on the host, as the host's OS spells it. The client never\ninterprets it: a browser on a phone can't know a Windows path's rules.",
-	identifier: "HostPath",
+		"The directory a session starts in and works in, as the host's OS\nspells it. The client never interprets it: a browser on a phone can't\nknow a Windows path's rules.",
+	identifier: "SessionDirectory",
 });
 
 export type ProjectId = string;
@@ -458,13 +458,13 @@ export const IssueId = Schema.String.check(
 );
 
 export type StartAt =
-	| { readonly Directory: HostPath }
+	| { readonly Directory: SessionDirectory }
 	| { readonly Project: ProjectId }
 	| { readonly Issue: IssueId };
 
 export const StartAt = Schema.Union(
 	[
-		Schema.Struct({ Directory: HostPath }),
+		Schema.Struct({ Directory: SessionDirectory }),
 		Schema.Struct({ Project: ProjectId }),
 		Schema.Struct({ Issue: IssueId }),
 	],
@@ -1881,20 +1881,49 @@ export const TurnOutcome = Schema.Union(
 	{ mode: "oneOf" },
 ).annotate({ identifier: "TurnOutcome" });
 
+export type WorkingCopy = string;
+
+export const WorkingCopy = Schema.String.annotate({
+	description:
+		"The directory of the owner's working copy a session was started in,\nwhich its workspace isolates it from, as the host's OS spells it.",
+	identifier: "WorkingCopy",
+});
+
+export type Repository = string;
+
+export const Repository = Schema.String.annotate({
+	description:
+		"The root of the repository a session's worktree is added to, as the\nhost's OS spells it.",
+	identifier: "Repository",
+});
+
+export type Worktree = string;
+
+export const Worktree = Schema.String.annotate({
+	description:
+		"The Git worktree that holds a session's workspace, as the host's OS\nspells it.",
+	identifier: "Worktree",
+});
+
 export type Workspace = {
 	readonly branch: string;
-	readonly directory: HostPath;
-	readonly original: HostPath;
-	readonly repository: HostPath;
-	readonly worktree: HostPath;
+	readonly directory: SessionDirectory;
+	readonly original: WorkingCopy;
+	readonly repository: Repository;
+	readonly worktree: Worktree;
 };
 
 export const Workspace = Schema.Struct({
 	branch: Schema.String,
-	directory: HostPath,
-	original: HostPath,
-	repository: HostPath,
-	worktree: HostPath,
+	directory: Schema.suspend(
+		(): Schema.Codec<SessionDirectory> => SessionDirectory,
+	).annotate({
+		description:
+			"The worktree's copy of the directory the session was started in.",
+	}),
+	original: WorkingCopy,
+	repository: Repository,
+	worktree: Worktree,
 }).annotate({ identifier: "Workspace" });
 
 export type Snapshot = {
@@ -2089,7 +2118,7 @@ export type EventKind =
 	| {
 			readonly SessionCreated: {
 				readonly by: ClientName;
-				readonly directory: HostPath;
+				readonly directory: SessionDirectory;
 				readonly effort: Effort | null;
 				readonly instance: InstanceId;
 				readonly model: ModelId | null;
@@ -2155,7 +2184,7 @@ export const EventKind = Schema.Union(
 		Schema.Struct({
 			SessionCreated: Schema.Struct({
 				by: ClientName,
-				directory: HostPath,
+				directory: SessionDirectory,
 				effort: Schema.Union([Effort, Schema.Null]),
 				instance: InstanceId,
 				model: Schema.Union([ModelId, Schema.Null]),

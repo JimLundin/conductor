@@ -25,7 +25,7 @@ What is built and what comes next. Update it in the commit that changes it.
   again when the home has it, so issues list in creation order; a project
   id is 6 random digits. `home::IssueId` and `home::ProjectId` mint,
   parse and print them, the `home` command and the daemon mint the same way,
-  and a 26-character id is a structural problem (ALPN `conductor/42`).
+  and a 26-character id is a structural problem (ALPN `conductor/43`).
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their
@@ -169,7 +169,7 @@ What is built and what comes next. Update it in the commit that changes it.
   `HostLink`, the browser e2e and the `headless` example are gone; nothing
   compiles to wasm but `crates/web-iroh`, iroh in the browser as a byte
   pipe to one host through its relay. The client link is JSON (ALPN
-  `conductor/42`), each message type naming its codec, with postcard kept
+  `conductor/43`), each message type naming its codec, with postcard kept
   between hosts (`conductor-fleet/3`); signed fleet payloads are signed
   over their exact JSON bytes and verified before they are parsed. The
   app's Effect Schemas are generated from `link`'s JSON Schema into

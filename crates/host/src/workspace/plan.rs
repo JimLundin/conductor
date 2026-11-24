@@ -6,10 +6,11 @@ use core::{
     task::{ContextBuilder, Poll, Waker},
 };
 
-use crate::HostPath;
 use crate::log::HostSeq;
-use crate::session::SessionId;
-use crate::workspace::{Kept, SnapshotDiff, Workspace};
+use crate::session::{SessionDirectory, SessionId};
+use crate::workspace::{
+    Kept, Repository, SnapshotDiff, WorkingCopy, Workspace, Worktree,
+};
 
 use crate::prelude::*;
 
@@ -165,7 +166,7 @@ impl Steps {
 
     async fn path(&self, step: Step) -> Result<String, GitError> {
         match self.perform(step).await? {
-            Answer::Path(path) => host_path(path.as_deref()).map(|host| host.0),
+            Answer::Path(path) => host_path(path.as_deref()),
             _ => Err(wrong_answer()),
         }
     }
@@ -263,7 +264,7 @@ fn wrong_answer() -> GitError {
 impl<'a> Plan<'a, Workspace> {
     #[must_use]
     pub fn create(
-        original: &'a HostPath,
+        original: &'a SessionDirectory,
         session: SessionId,
         base: Option<&'a str>,
     ) -> Self {
@@ -276,7 +277,7 @@ impl<'a> Plan<'a, Workspace> {
 impl Steps {
     async fn create(
         &self,
-        original: &HostPath,
+        original: &SessionDirectory,
         session: SessionId,
         base: Option<&str>,
     ) -> Result<Workspace, GitError> {
@@ -290,8 +291,7 @@ impl Steps {
         let relative = self
             .relative(&original_path, &repository, "selected subdirectory")
             .await?;
-        if let Some(object) = subtree(start.trim(), &HostPath(relative.clone()))
-        {
+        if let Some(object) = subtree(start.trim(), &relative) {
             let kind =
                 self.text(&repository, &["cat-file", "-t", &object]).await?;
             same(
@@ -303,10 +303,10 @@ impl Steps {
         let parent = self.path(Step::WorktreeParent).await?;
         let path = self.join(&parent, &worktree(session)).await?;
         let workspace = Workspace {
-            repository: HostPath(repository),
-            original: HostPath(original_path),
-            directory: HostPath(self.join(&path, &relative).await?),
-            worktree: HostPath(path),
+            repository: Repository(repository),
+            original: WorkingCopy(original_path),
+            directory: SessionDirectory(self.join(&path, &relative).await?),
+            worktree: Worktree(path),
             branch: branch(session),
         };
         let present = self

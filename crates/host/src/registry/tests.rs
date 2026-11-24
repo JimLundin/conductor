@@ -3,7 +3,8 @@ use agents::Configuration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow::{Break, Continue};
 
-use crate::HostPath;
+use crate::session::SessionDirectory;
+
 use crate::log::{Event, HostSeq};
 use crate::registry::{
     Availability, Catalog, Instance, InstanceId, InstanceRefusal,
@@ -12,6 +13,7 @@ use crate::registry::{
 use crate::session::{
     EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
 };
+use crate::workspace::{Repository, WorkingCopy, Worktree};
 use agents::{
     Account, Auth, ClientName, CloseReason, Credential, CredentialForm, Effort,
     Field, FieldKind, ModelChoice, ModelId, Models, Provider, ProviderInfo,
@@ -19,10 +21,10 @@ use agents::{
 use home::{CheckoutLocation, Home, HomeRefusal, HomeSync, ProjectId};
 
 use super::{
-    AccountAdoption, Change, Effect, Job, Launch, Launcher, OwnSignIn,
+    AccountAdoption, Change, Effect, InHome, Job, Launch, Launcher, OwnSignIn,
     Refreshed, Registry, StartDecision, StartEffect, StartEnd, StartReport,
     StartSession, StartStep, Started, Starting, Stored, defaults, dir, offered,
-    picked, place, running,
+    picked, place, place_without_home, running,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -799,7 +801,7 @@ fn continue_reopens_a_closed_session_for_instance_removal_checks() {
             1,
             EventKind::SessionCreated {
                 instance: own(Provider::new("claude")),
-                directory: HostPath(text("/work")),
+                directory: SessionDirectory(text("/work")),
                 by: ClientName(text("phone")),
                 model: None,
                 effort: None,
@@ -1209,7 +1211,7 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
             session,
             EventKind::SessionCreated {
                 instance,
-                directory: HostPath(String::from("/src")),
+                directory: SessionDirectory(String::from("/src")),
                 by: ClientName(String::from("phone")),
                 model: None,
                 effort: None,
@@ -1286,7 +1288,7 @@ fn start_request() -> super::StartRequest {
 
 fn placement(on_issue: bool) -> super::Placement {
     super::Placement {
-        directory: HostPath(text("/src")),
+        directory: SessionDirectory(text("/src")),
         on: on_issue.then(|| home::issue::Start {
             issue: home::IssueId::new(0, 5),
             checkout: CheckoutLocation(text("/src")),
@@ -1325,7 +1327,7 @@ fn home_with(checkouts: &[&str]) -> Home {
 
 #[test]
 fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
-    let directory = HostPath(text("/work"));
+    let directory = SessionDirectory(text("/work"));
     let shown = home_with(&["/a", "/b"]);
     let unchecked = home_with(&[]);
     let project = ProjectId::new(1);
@@ -1340,7 +1342,7 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
         .map(|placed| placed.map(|at| at.directory)),
         [
             Ok(directory),
-            Ok(HostPath(text("/a"))),
+            Ok(SessionDirectory(text("/a"))),
             Err(HomeRefusal::NoHome),
             Err(HomeRefusal::UnknownProject),
             Err(HomeRefusal::NotCheckedOut),
@@ -1348,12 +1350,34 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
     );
 }
 
+#[test]
+fn only_a_start_in_a_project_or_an_issue_waits_on_the_home() {
+    let directory = SessionDirectory(text("/work"));
+    let project = ProjectId::new(1);
+    let issue = home::IssueId::new(1, 5);
+    assert_eq!(
+        [
+            place_without_home(StartAt::Directory(directory.clone())),
+            place_without_home(StartAt::Project(project)),
+            place_without_home(StartAt::Issue(issue)),
+        ],
+        [
+            Ok(super::Placement {
+                directory,
+                on: None,
+            }),
+            Err(InHome::Project(project)),
+            Err(InHome::Issue(issue)),
+        ]
+    );
+}
+
 fn start_workspace() -> crate::workspace::Workspace {
     crate::workspace::Workspace {
-        repository: HostPath(text("/src")),
-        original: HostPath(text("/src")),
-        worktree: HostPath(text("/worktrees/1")),
-        directory: HostPath(text("/worktrees/1")),
+        repository: Repository(text("/src")),
+        original: WorkingCopy(text("/src")),
+        worktree: Worktree(text("/worktrees/1")),
+        directory: SessionDirectory(text("/worktrees/1")),
         branch: text("refs/heads/session/1"),
     }
 }
@@ -1399,7 +1423,7 @@ fn at_workspace(registry: &mut Test) -> Result<Workflow, &'static str> {
     else {
         return Err("expected workspace creation");
     };
-    assert_eq!(directory, HostPath(text("/src")));
+    assert_eq!(directory, SessionDirectory(text("/src")));
     assert_eq!(base.as_deref(), Some("refs/heads/issue/5"));
     Ok(next)
 }
@@ -1555,7 +1579,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
         [
             EventKind::SessionCreated {
                 instance: start_request().instance,
-                directory: HostPath(text("/src")),
+                directory: SessionDirectory(text("/src")),
                 by: ClientName(text("phone")),
                 model: Some(model("big")),
                 effort: None,

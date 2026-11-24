@@ -1718,7 +1718,7 @@ travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
 
 | Link | Framing | Codec | Messages |
 |---|---|---|---|
-| Client and host (`link::ALPN`, `conductor/42`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`link::ALPN`, `conductor/43`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` (and `net::wire::fleet`) on a host,
