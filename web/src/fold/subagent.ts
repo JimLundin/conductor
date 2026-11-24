@@ -8,7 +8,7 @@ import type {
 	SubagentOutcome,
 	ToolCallId,
 	ToolKind,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import {
 	Approval,
 	Change,

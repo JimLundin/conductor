@@ -20,7 +20,7 @@ import type {
 	CommandResult,
 	SessionId,
 	Ticket,
-} from "./proto/index.ts";
+} from "./schemas/index.ts";
 import { fragmentOf, isJoin, Route, route } from "./route.ts";
 import { type HostKey, hostKey, restore, save, unsave } from "./saved.ts";
 import { parseJoin, type TicketError } from "./ticket.ts";

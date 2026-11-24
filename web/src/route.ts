@@ -1,5 +1,5 @@
 import { Data } from "effect";
-import type { SessionId } from "./proto/index.ts";
+import type { SessionId } from "./schemas/index.ts";
 import type { HostKey } from "./saved.ts";
 
 // The screen a URL fragment names. Pages serves one path, so every screen is a fragment.

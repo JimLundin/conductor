@@ -2,7 +2,7 @@
 // effort.
 import { type ReactElement, useId, useState } from "react";
 import { directories, type Host } from "../fold/host.ts";
-import type { ModelId, SessionId } from "../proto/index.ts";
+import type { ModelId, SessionId } from "../schemas/index.ts";
 import type { Send } from "./commands.ts";
 import { useSending } from "./sending.ts";
 import {

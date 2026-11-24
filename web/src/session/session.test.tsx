@@ -21,7 +21,7 @@ import type {
 	CommandResult,
 	Decision,
 	EventKind,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import {
 	type Asked,
 	answer,

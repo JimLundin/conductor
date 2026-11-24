@@ -8,7 +8,7 @@ import type {
 	Project,
 	SessionId,
 	Welcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import { applyKind, createdSession, type Session } from "./session.ts";
 
 interface Host {

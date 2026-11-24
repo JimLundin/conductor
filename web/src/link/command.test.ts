@@ -3,7 +3,7 @@ import { expect, test } from "vitest";
 import { fakeHost } from "../fake-pipe.ts";
 import { link } from "../link.ts";
 import type { Connection } from "../pipe.ts";
-import type { Command } from "../proto/index.ts";
+import type { Command } from "../schemas/index.ts";
 import {
 	client,
 	dialing,

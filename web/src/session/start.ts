@@ -10,7 +10,7 @@ import type {
 	Models,
 	Project,
 	StartAt,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 
 interface Choosable {
 	readonly key: string;

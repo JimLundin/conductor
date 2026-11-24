@@ -1,7 +1,7 @@
 // The store as React reads it: each hook re-renders its component when the store changes.
 import { createContext, useContext, useSyncExternalStore } from "react";
 import type { Session } from "./fold/session.ts";
-import type { SessionId } from "./proto/index.ts";
+import type { SessionId } from "./schemas/index.ts";
 import type { Route } from "./route.ts";
 import type { HostKey } from "./saved.ts";
 import {

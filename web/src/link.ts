@@ -34,7 +34,7 @@ import {
 	HelloReply,
 	type Ticket,
 	type Welcome,
-} from "./proto/index.ts";
+} from "./schemas/index.ts";
 
 const helloWithin: Duration.Input = "10 seconds";
 const backoffFloor = Duration.fromInputUnsafe("250 millis");

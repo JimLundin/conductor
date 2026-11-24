@@ -13,7 +13,7 @@ import type {
 	RequestId,
 	SessionId,
 	SessionRefusal,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 
 type Send = HostLink["send"];
 

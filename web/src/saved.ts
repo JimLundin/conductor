@@ -2,7 +2,7 @@
 // format's version and the host's endpoint id in hex, so tabs pair and forget hosts each on
 // their own. Records in any other format, the Dioxus app's included, are set aside unread.
 import { Option, Schema } from "effect";
-import { Ticket } from "./proto/index.ts";
+import { Ticket } from "./schemas/index.ts";
 
 // A host's endpoint id in lower-case hex, which keys it in storage and in the page.
 type HostKey = string;

@@ -2,7 +2,7 @@
 // `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`. The
 // generated schemas carry only its JSON form, so this is the app's one reader of the text.
 import { Data, Result } from "effect";
-import type { Ticket } from "./proto/index.ts";
+import type { Ticket } from "./schemas/index.ts";
 
 type TicketError = Data.TaggedEnum<{
 	readonly Encoding: Record<never, never>;

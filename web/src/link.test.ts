@@ -20,7 +20,7 @@ import {
 	ticket,
 	until,
 } from "./link/replay.ts";
-import type { Welcome } from "./proto/index.ts";
+import type { Welcome } from "./schemas/index.ts";
 
 const turn = scenario("a_claude_turn_streams_asks_and_finishes");
 

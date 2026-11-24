@@ -8,7 +8,7 @@ import type {
 	Resolution,
 	ToolKind,
 	TurnOutcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 
 const toolName = (tool: ToolKind): string => {
 	if ("Command" in tool) {

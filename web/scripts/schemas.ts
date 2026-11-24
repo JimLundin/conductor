@@ -1,4 +1,4 @@
-// Writes src/proto/index.ts, the Effect Schemas of every definition in
+// Writes src/schemas/index.ts, the Effect Schemas of every definition in
 // the JSON Schema the `link` crate publishes, crates/link/link.schema.json.
 // The `schemas` suite runs both and fails on a difference from what is
 // committed.
@@ -43,6 +43,6 @@ const published = new URL(
 	import.meta.url,
 );
 await writeFile(
-	new URL("../src/proto/index.ts", import.meta.url),
+	new URL("../src/schemas/index.ts", import.meta.url),
 	print(JSON.parse(await readFile(published, "utf8"))),
 );

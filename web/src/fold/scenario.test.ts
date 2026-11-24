@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { Event, Feed, Welcome } from "../proto/index.ts";
+import type { Event, Feed, Welcome } from "../schemas/index.ts";
 import { type RecordedFeed, recordedFeed } from "../recorded-feeds.ts";
 import {
 	applyFeed,

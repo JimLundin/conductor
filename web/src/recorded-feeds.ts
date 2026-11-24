@@ -2,7 +2,7 @@
 // Recorded host feeds in web/fixtures/feeds/, for tests: each frame a host sent,
 // on which of the test client's connections and streams.
 import { Schema } from "effect";
-import { CommandResult, Feed, HelloReply } from "./proto/index.ts";
+import { CommandResult, Feed, HelloReply } from "./schemas/index.ts";
 
 const scenarioName = /^.*\/(?<name>[^/]+)\.json$/u;
 

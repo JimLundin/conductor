@@ -1,7 +1,7 @@
 // Runs a screen's commands on its host's link and keeps what the person should be told.
 import { Effect } from "effect";
 import { useState } from "react";
-import type { Command, CommandResult } from "../proto/index.ts";
+import type { Command, CommandResult } from "../schemas/index.ts";
 import { failed, notice, type Send } from "./commands.ts";
 
 interface Sending {

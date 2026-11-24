@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { EventKind, Resolution } from "../proto/index.ts";
+import type { EventKind, Resolution } from "../schemas/index.ts";
 import {
 	created,
 	delta,

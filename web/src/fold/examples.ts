@@ -4,7 +4,7 @@ import type {
 	SessionId,
 	SubagentEvent,
 	ToolPhase,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import { applyFeed, emptyHost, type Host, isDelta } from "./host.ts";
 import type { Session } from "./session.ts";
 import { Approval, Item, RequestState, type ToolState } from "./transcript.ts";

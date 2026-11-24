@@ -18,7 +18,7 @@ import type {
 	HostSeq,
 	Ticket,
 	Welcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import type { SendError } from "./command.ts";
 
 type LinkState =

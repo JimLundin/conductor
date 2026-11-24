@@ -3,7 +3,7 @@
 import type { ReactElement } from "react";
 import type { Subagent } from "../fold/subagent.ts";
 import { type Approval, Item } from "../fold/transcript.ts";
-import type { ToolKind } from "../proto/index.ts";
+import type { ToolKind } from "../schemas/index.ts";
 import { Markdown } from "./markdown.tsx";
 import {
 	closeText,

@@ -12,7 +12,7 @@ import {
 	type Subscribe,
 	type Ticket,
 	type Welcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import { type RecordedFeed, recordedFeed } from "../recorded-feeds.ts";
 
 type Entry = RecordedFeed[number];

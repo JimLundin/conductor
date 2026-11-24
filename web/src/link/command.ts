@@ -1,7 +1,11 @@
 // A command on its own stream, with its result for the caller.
 import { Data, Effect, Random } from "effect";
 import type { Connection } from "../pipe.ts";
-import { type Command, type CommandId, CommandResult } from "../proto/index.ts";
+import {
+	type Command,
+	type CommandId,
+	CommandResult,
+} from "../schemas/index.ts";
 import { closing, described, open, read, write } from "./frames.ts";
 
 type SendError = Data.TaggedEnum<{

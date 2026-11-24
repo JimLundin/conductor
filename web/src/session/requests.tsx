@@ -3,7 +3,7 @@ import { type ReactElement, useState } from "react";
 import { openRequests } from "../fold/offers.ts";
 import type { Session } from "../fold/session.ts";
 import type { Item } from "../fold/transcript.ts";
-import type { SessionId } from "../proto/index.ts";
+import type { SessionId } from "../schemas/index.ts";
 import {
 	type Asked,
 	answer,

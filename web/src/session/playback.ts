@@ -29,7 +29,7 @@ import type {
 	Feed,
 	SessionId,
 	Welcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 
 const recorded = scenario("a_claude_turn_streams_asks_and_finishes");
 

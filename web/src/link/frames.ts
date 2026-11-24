@@ -1,7 +1,7 @@
 // Frames on the pipe's streams, each one JSON body that the generated schemas encode and decode.
 import { Effect, Schema } from "effect";
 import type { Connection, Stream } from "../pipe.ts";
-import { Open } from "../proto/index.ts";
+import { Open } from "../schemas/index.ts";
 
 const described = (error: unknown): string => {
 	if (error instanceof Error) {

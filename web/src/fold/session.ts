@@ -17,7 +17,7 @@ import type {
 	ToolCallId,
 	ToolKind,
 	TurnOutcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import {
 	applySubagentEvent,
 	changeSubagents,

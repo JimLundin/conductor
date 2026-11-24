@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the client link's schemas: the JSON Schema link's test
 # publishes as crates/link/link.schema.json, then the Effect Schemas
-# web/scripts/schemas.ts prints from it into web/src/proto/, in Biome's
+# web/scripts/schemas.ts prints from it into web/src/schemas/, in Biome's
 # format. `tools/schemas.sh [--check]`; with --check, the
 # `schemas` suite, it fails when that changed what is committed.
 # Needs web/node_modules (`npm ci` in web/).
@@ -13,12 +13,12 @@ cargo test --quiet -p link --lib schema::
 (
 	cd web
 	node scripts/schemas.ts
-	npx -y "@biomejs/biome@$biome" format --write src/proto >/dev/null
+	npx -y "@biomejs/biome@$biome" format --write src/schemas >/dev/null
 )
 if [ "${1:-}" = --check ]; then
 	stale=$(
-		git diff --name-only -- crates/link/link.schema.json web/src/proto
-		git ls-files --others --exclude-standard -- crates/link/link.schema.json web/src/proto
+		git diff --name-only -- crates/link/link.schema.json web/src/schemas
+		git ls-files --others --exclude-standard -- crates/link/link.schema.json web/src/schemas
 	)
 	if [ -n "$stale" ]; then
 		printf '%s\n' "$stale"

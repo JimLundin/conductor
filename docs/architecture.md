@@ -1744,7 +1744,7 @@ v2`, `conductor fleet snapshot v2`). A browser certificate is
 then parses them, so nothing is re-encoded to be verified, and a payload
 that differs by one byte is refused.
 
-### 7.3 Generated schemas (`web/src/proto/`)
+### 7.3 Generated schemas (`web/src/schemas/`)
 
 The Rust types are the only definition of the client link's types
 (ADR 0002, ADR 0003):
@@ -1757,16 +1757,16 @@ The Rust types are the only definition of the client link's types
    serializes them. It rewrites the file only when its content differs.
 2. `web/scripts/schemas.ts` reads that document with Effect's
    `JsonSchema`, `SchemaRepresentation` (objects closed) and `Codegen`, and
-   writes `web/src/proto/index.ts`, one Effect Schema per definition.
+   writes `web/src/schemas/index.ts`, one Effect Schema per definition.
 3. `tools/schemas.sh` runs both and formats the output with Biome.
    `tools/schemas.sh --check`, the `schemas` suite, then fails when
-   `crates/link/link.schema.json` or `web/src/proto/` differs from what is
+   `crates/link/link.schema.json` or `web/src/schemas/` differs from what is
    committed or holds an untracked file. `link` names no path in `web/`;
    the web app pulls the schema.
 
 Nothing there is edited by hand. Encoding is tested only in Rust, by
 `link`'s frame tests; the app's tests check what it does with decoded
-values, and `web/src/proto.test.ts` decodes every recorded feed
+values, and `web/src/schemas.test.ts` decodes every recorded feed
 (§9) with the generated schemas. The schemas carry a ticket only in its
 JSON form, so `web/src/ticket.ts` is the app's one reader of a ticket's
 text (base64url of its version, host id, token and relay URL).

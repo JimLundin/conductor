@@ -30,35 +30,35 @@ path = "scripts/schemas.ts"
 rule = "lint/style/noRestrictedImports"
 reason = "the schema generator is a build step whose whole job is to read link's published link.schema.json and write index.ts"
 
-# src/proto/ is written by scripts/schemas.ts from link's JSON Schema, in
+# src/schemas/ is written by scripts/schemas.ts from link's JSON Schema, in
 # the shape Effect's Codegen prints, and is never edited by hand.
 
 [[exception]]
-path = "src/proto/**"
+path = "src/schemas/**"
 rule = "lint/performance/noNamespaceImport"
 reason = "generated: Codegen imports effect/Schema as a namespace"
 
 [[exception]]
-path = "src/proto/**"
+path = "src/schemas/**"
 rule = "lint/security/noSecrets"
 reason = "generated: the flagged strings are the Rust types' doc comments carried as descriptions, not secrets"
 
 [[exception]]
-path = "src/proto/**"
+path = "src/schemas/**"
 rule = "lint/style/noExcessiveLinesPerFile"
 reason = "generated: one module holds every type the client link reaches"
 
 [[exception]]
-path = "src/proto/**"
+path = "src/schemas/**"
 rule = "lint/style/noMagicNumbers"
 reason = "generated: the numbers are the bounds and lengths the Rust types declare"
 
 [[exception]]
-path = "src/proto/**"
+path = "src/schemas/**"
 rule = "lint/style/useConsistentObjectDefinitions"
 reason = "generated: Codegen prints object literals in its own form"
 
 [[exception]]
-path = "src/proto/**"
+path = "src/schemas/**"
 rule = "lint/style/useConsistentTypeDefinitions"
 reason = "generated: Codegen declares every type as a type alias"

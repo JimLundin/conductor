@@ -1,6 +1,6 @@
 // The name the app gives in `Hello`: the kind of device it runs on, so a resolved card can say
 // which device approved.
-import type { ClientName } from "./proto/index.ts";
+import type { ClientName } from "./schemas/index.ts";
 
 interface Device {
 	readonly marker: string;

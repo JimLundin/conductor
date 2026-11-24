@@ -2,7 +2,7 @@
 import { type ReactElement, useState } from "react";
 import { controls, emptyTranscript, isWorking } from "../fold/offers.ts";
 import type { Session } from "../fold/session.ts";
-import type { SessionId } from "../proto/index.ts";
+import type { SessionId } from "../schemas/index.ts";
 import { message, type Send, sessionOffers } from "./commands.ts";
 import { Offers, Requests } from "./requests.tsx";
 import { useSending } from "./sending.ts";

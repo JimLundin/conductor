@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import type { Resolution } from "../proto/index.ts";
+import type { Resolution } from "../schemas/index.ts";
 import {
 	asked,
 	created,

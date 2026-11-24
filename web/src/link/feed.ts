@@ -7,7 +7,7 @@ import {
 	Feed,
 	type HostSeq,
 	type Welcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 import { open, read, write } from "./frames.ts";
 import {
 	appliedSeq,

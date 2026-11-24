@@ -11,7 +11,7 @@ import type {
 	ToolKind,
 	ToolOutcome,
 	TurnOutcome,
-} from "../proto/index.ts";
+} from "../schemas/index.ts";
 
 type Unit = Record<never, never>;
 
