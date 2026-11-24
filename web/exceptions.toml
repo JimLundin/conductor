@@ -1,64 +1,474 @@
 # Where the web app departs from the shared TypeScript standard, and why.
 
 [[exception]]
-path = "src/**"
-rule = "lint/nursery/noDanglingUnderscore"
-reason = "Effect's tagged values, its Data enums and Schema unions, discriminate on `_tag`, which the app reads to tell them apart"
-
-[[exception]]
-path = "src/**"
-rule = "lint/style/useNamingConvention"
-reason = "an Effect tagged enum names its variants in PascalCase, as the variant types and the `$match` cases that handle them"
-
-[[exception]]
-path = "src/**"
-rule = "lint/nursery/useCapitalizedConstructors"
-reason = "an Effect tagged enum's variant constructors are PascalCase functions called without new, such as `Route.Pairing()`"
-
-[[exception]]
-path = "vite.config.ts"
-rule = "lint/style/noDefaultExport"
-reason = "Vite and Vitest read their config from the file's default export"
-
-[[exception]]
 path = "knip.json"
 rule = "drift:ignoreBinaries:wasm-pack"
 reason = "`npm run pipe` runs wasm-pack, a Rust tool installed beside the toolchain, not an npm package"
 
+# Rules the move from Biome to Oxlint brought in, each to be fixed by the
+# rewrite of spec 0tz0t8ce.
+
+[[exception]]
+path = "vitest.config.ts"
+rule = "drift:arbitrary.fast"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "vitest.config.ts"
+rule = "drift:arbitrary.full"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "vitest.config.ts"
+rule = "drift:arbitrary.mutation"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "knip.json"
+rule = "drift:ignoreFiles:profiles/mutation.ts"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
 [[exception]]
 path = "scripts/schemas.ts"
-rule = "lint/style/noRestrictedImports"
-reason = "the schema generator is a build step whose whole job is to read link's published link.schema.json and write index.ts"
-
-# src/schemas/ is written by scripts/schemas.ts from link's JSON Schema, in
-# the shape Effect's Codegen prints, and is never edited by hand.
+rule = "lint/eslint/capitalized-comments"
+reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/schemas/**"
-rule = "lint/performance/noNamespaceImport"
-reason = "generated: Codegen imports effect/Schema as a namespace"
+path = "src/**"
+rule = "lint/eslint/capitalized-comments"
+reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/schemas/**"
-rule = "lint/security/noSecrets"
-reason = "generated: the flagged strings are the Rust types' doc comments carried as descriptions, not secrets"
+path = "src/store.ts"
+rule = "lint/eslint/default-case"
+reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/schemas/**"
-rule = "lint/style/noExcessiveLinesPerFile"
-reason = "generated: one module holds every type the client link reaches"
+path = "src/**"
+rule = "lint/eslint/id-length"
+reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/schemas/**"
-rule = "lint/style/noMagicNumbers"
-reason = "generated: the numbers are the bounds and lengths the Rust types declare"
+path = "src/**"
+rule = "lint/eslint/max-lines"
+reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/schemas/**"
-rule = "lint/style/useConsistentObjectDefinitions"
-reason = "generated: Codegen prints object literals in its own form"
+path = "src/**"
+rule = "lint/eslint/max-lines-per-function"
+reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/schemas/**"
-rule = "lint/style/useConsistentTypeDefinitions"
-reason = "generated: Codegen declares every type as a type alias"
+path = "src/**"
+rule = "lint/eslint/max-params"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/max-statements"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/new-cap"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/ticket.ts"
+rule = "lint/eslint/no-bitwise"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/no-magic-numbers"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/words.ts"
+rule = "lint/eslint/no-nested-ternary"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/no-underscore-dangle"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/no-use-before-define"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/schemas/index.ts"
+rule = "lint/eslint/object-shorthand"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/app.tsx"
+rule = "lint/eslint/prefer-destructuring"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/app.test.tsx"
+rule = "lint/eslint/prefer-named-capture-group"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/eslint/sort-imports"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/sort-imports"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "vite.config.ts"
+rule = "lint/eslint/sort-imports"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "profiles/mutation.ts"
+rule = "lint/eslint/sort-keys"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/eslint/sort-keys"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/eslint/sort-keys"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/import/consistent-type-specifier-style"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/route.ts"
+rule = "lint/import/exports-last"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/import/group-exports"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/import/max-dependencies"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "profiles/**"
+rule = "lint/import/no-named-as-default-member"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/route.test.ts"
+rule = "lint/import/no-named-as-default-member"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/schemas/index.ts"
+rule = "lint/import/no-namespace"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/import/no-nodejs-modules"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/import/no-relative-parent-imports"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/new-session.tsx"
+rule = "lint/jsx-a11y/control-has-associated-label"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/link.ts"
+rule = "lint/promise/prefer-await-to-callbacks"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/link.ts"
+rule = "lint/promise/prefer-await-to-then"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/link/frames.ts"
+rule = "lint/quality/no-unknown-returns"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/react-perf/jsx-no-new-array-as-prop"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/react-perf/jsx-no-new-function-as-prop"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/app.tsx"
+rule = "lint/react/capitalized-calls"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/app.tsx"
+rule = "lint/react/jsx-boolean-value"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/**"
+rule = "lint/react/jsx-max-depth"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/react/jsx-no-literals"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/react/no-multi-comp"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/new-session.tsx"
+rule = "lint/react/no-unescaped-entities"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/typescript/array-type"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/schemas/index.ts"
+rule = "lint/typescript/consistent-indexed-object-style"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/store.ts"
+rule = "lint/typescript/consistent-return"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/schemas/index.ts"
+rule = "lint/typescript/consistent-type-definitions"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/store.ts"
+rule = "lint/typescript/consistent-type-imports"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/fold/**"
+rule = "lint/typescript/explicit-function-return-type"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/typescript/no-confusing-void-expression"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/typescript/no-generated-empty-object-type"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/typescript/no-invalid-void-type"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/ticket.ts"
+rule = "lint/typescript/no-misused-spread"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/start.ts"
+rule = "lint/typescript/no-unnecessary-type-parameters"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/typescript/no-unsafe-argument"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/fake-pipe.ts"
+rule = "lint/typescript/no-unsafe-class-instance-assignment"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/start.ts"
+rule = "lint/typescript/no-unsafe-type-assertion"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "vite.config.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/typescript/promise-function-async"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/link/**"
+rule = "lint/unicorn/consistent-function-scoping"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/unicorn/max-nested-calls"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/unicorn/max-nested-calls"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/unicorn/no-array-callback-reference"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/unicorn/no-array-method-this-argument"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/link/**"
+rule = "lint/unicorn/no-array-method-this-argument"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/unicorn/no-array-reduce"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/fake-pipe.test.ts"
+rule = "lint/unicorn/no-await-expression-member"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/session/words.ts"
+rule = "lint/unicorn/no-nested-ternary"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/unicorn/no-null"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/unicorn/no-useless-undefined"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/ticket.ts"
+rule = "lint/unicorn/number-literal-case"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/unicorn/prefer-spread"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/store.ts"
+rule = "lint/unicorn/switch-case-braces"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/fold/session.ts"
+rule = "lint/unicorn/throw-new-error"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/consistent-test-it"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/max-expects"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/no-conditional-in-test"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/prefer-expect-assertions"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/prefer-expect-resolves"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/fold/scenario.test.ts"
+rule = "lint/vitest/prefer-lowercase-title"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/prefer-strict-equal"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/prefer-to-be-falsy"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/prefer-to-be-truthy"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "profiles/**"
+rule = "lint/vitest/require-hook"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/**"
+rule = "lint/vitest/require-top-level-describe"
+reason = "migrating to Oxlint, spec 0tzedg8h"
+
+[[exception]]
+path = "src/schemas.test.ts"
+rule = "lint/vitest/valid-expect"
+reason = "migrating to Oxlint, spec 0tzedg8h"
