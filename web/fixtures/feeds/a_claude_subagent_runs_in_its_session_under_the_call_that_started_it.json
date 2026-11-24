@@ -1,576 +1,576 @@
 [
-	{
-		"connection": 0,
-		"frame": {
-			"Welcome": {
-				"catalog": {
-					"claude": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Gateway URL",
-										"placeholder": "https://gateway.example.com",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "gateway",
-								"label": "Gateway",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "Anthropic API key",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token from claude setup-token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "setup_token",
-								"label": "Claude setup token",
-								"setup_sign_in": "Sign in to create a token"
-							}
-						],
-						"label": "Claude Code",
-						"note": null
-					},
-					"codex": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "name",
-										"kind": "Text",
-										"label": "Provider name",
-										"placeholder": "Gateway",
-										"required": true
-									},
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Base URL",
-										"placeholder": "https://gateway.example.com/v1",
-										"required": true
-									},
-									{
-										"id": "model",
-										"kind": "Text",
-										"label": "Model",
-										"placeholder": "gpt-6",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "Key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "provider",
-								"label": "Model provider",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "OpenAI API key",
-								"setup_sign_in": null
-							}
-						],
-						"label": "Codex",
-						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-					}
-				},
-				"epoch": "1",
-				"head_seq": 0,
-				"home": null,
-				"host": "test-host",
-				"instances": [
-					[
-						{ "account": "Own", "provider": "claude" },
-						{
-							"availability": {
-								"Available": {
-									"auth": "Unmanaged",
-									"models": {
-										"choices": [
-											{
-												"description": "thinks",
-												"efforts": ["Low", "High"],
-												"id": "big",
-												"name": "Big"
-											},
-											{
-												"description": "quick",
-												"efforts": ["Low"],
-												"id": "small",
-												"name": "Small"
-											}
-										],
-										"default": "big"
-									}
-								}
-							}
-						}
-					],
-					[
-						{ "account": "Own", "provider": "codex" },
-						{
-							"availability": {
-								"Unavailable": {
-									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-								}
-							}
-						}
-					]
-				]
-			}
-		},
-		"stream": "hello"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Instances": [
-				[
-					{ "account": "Own", "provider": "claude" },
-					{
-						"availability": {
-							"Available": {
-								"auth": "Unmanaged",
-								"models": {
-									"choices": [
-										{
-											"description": "thinks",
-											"efforts": ["Low", "High"],
-											"id": "big",
-											"name": "Big"
-										},
-										{
-											"description": "quick",
-											"efforts": ["Low"],
-											"id": "small",
-											"name": "Small"
-										}
-									],
-									"default": "big"
-								}
-							}
-						}
-					}
-				],
-				[
-					{ "account": "Own", "provider": "codex" },
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				]
-			]
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Session": { "Started": { "session": "00000000000000000000000001" } }
-		},
-		"stream": "command"
-	},
-	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SessionCreated": {
-						"by": "test-client",
-						"directory": "/conductor/target/tmp/conductor-e2e-0-subagent",
-						"effort": null,
-						"instance": { "account": "Own", "provider": "claude" },
-						"model": "big"
-					}
-				},
-				"seq": 1,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"WorkspaceCreated": {
-						"workspace": {
-							"branch": "conductor/00000000000000000000000001",
-							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
-							"original": "/conductor/target/tmp/conductor-e2e-0-subagent",
-							"repository": "/conductor/target/tmp/conductor-e2e-0-subagent",
-							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
-						}
-					}
-				},
-				"seq": 2,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SnapshotRecorded": {
-						"snapshot": {
-							"commit": "0000000000000000000000000000000000000001",
-							"turn_start": null
-						}
-					}
-				},
-				"seq": 3,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": "SessionReady",
-				"seq": 4,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "UserMessage": { "by": "test-client", "text": "delegate" } },
-				"seq": 5,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Agent": {
-						"ToolCall": {
-							"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
-							"phase": {
-								"Started": {
-									"tool": {
-										"Other": {
-											"detail": "Run TodoWrite checklist task",
-											"name": "Agent"
-										}
-									}
-								}
-							}
-						}
-					}
-				},
-				"seq": 7,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": {
-							"Started": {
-								"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
-								"description": "Run TodoWrite checklist task"
-							}
-						}
-					}
-				},
-				"seq": 8,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": { "Kind": { "kind": "general-purpose" } }
-					}
-				},
-				"seq": 9,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": {
-							"ChecklistChanged": {
-								"checklist": [
-									{ "status": "Pending", "text": "alpha" },
-									{ "status": "Pending", "text": "beta" }
-								]
-							}
-						}
-					}
-				},
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": {
-							"Activity": {
-								"ToolCall": {
-									"call": "toolu_01WSCsnAQWyaEonxDVnmncap",
-									"phase": { "Finished": { "outcome": "Succeeded" } }
-								}
-							}
-						}
-					}
-				},
-				"seq": 11,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": {
-							"ChecklistChanged": {
-								"checklist": [
-									{ "status": "Completed", "text": "alpha" },
-									{ "status": "Completed", "text": "beta" }
-								]
-							}
-						}
-					}
-				},
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": {
-							"Activity": {
-								"ToolCall": {
-									"call": "toolu_01H4nEBx6jVuR4PwHBWBgvPw",
-									"phase": { "Finished": { "outcome": "Succeeded" } }
-								}
-							}
-						}
-					}
-				},
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Subagent": {
-						"agent": "af19920e77caaf1de",
-						"event": { "Ended": { "outcome": "Finished", "summary": "ok" } }
-					}
-				},
-				"seq": 14,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Agent": {
-						"ToolCall": {
-							"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
-							"phase": { "Finished": { "outcome": "Succeeded" } }
-						}
-					}
-				},
-				"seq": 15,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantDelta": { "text": "done" } } },
-				"seq": 15,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantMessage": { "text": "done" } } },
-				"seq": 16,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SnapshotRecorded": {
-						"snapshot": {
-							"commit": "0000000000000000000000000000000000000001",
-							"turn_start": 5
-						}
-					}
-				},
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "TurnCompleted": { "outcome": "Completed" } },
-				"seq": 18,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	}
+  {
+    "connection": 0,
+    "frame": {
+      "Welcome": {
+        "catalog": {
+          "claude": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Gateway URL",
+                    "placeholder": "https://gateway.example.com",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "gateway",
+                "label": "Gateway",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "Anthropic API key",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token from claude setup-token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "setup_token",
+                "label": "Claude setup token",
+                "setup_sign_in": "Sign in to create a token"
+              }
+            ],
+            "label": "Claude Code",
+            "note": null
+          },
+          "codex": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "name",
+                    "kind": "Text",
+                    "label": "Provider name",
+                    "placeholder": "Gateway",
+                    "required": true
+                  },
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Base URL",
+                    "placeholder": "https://gateway.example.com/v1",
+                    "required": true
+                  },
+                  {
+                    "id": "model",
+                    "kind": "Text",
+                    "label": "Model",
+                    "placeholder": "gpt-6",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "Key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "provider",
+                "label": "Model provider",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "OpenAI API key",
+                "setup_sign_in": null
+              }
+            ],
+            "label": "Codex",
+            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+          }
+        },
+        "epoch": "1",
+        "head_seq": 0,
+        "home": null,
+        "host": "test-host",
+        "instances": [
+          [
+            { "account": "Own", "provider": "claude" },
+            {
+              "availability": {
+                "Available": {
+                  "auth": "Unmanaged",
+                  "models": {
+                    "choices": [
+                      {
+                        "description": "thinks",
+                        "efforts": ["Low", "High"],
+                        "id": "big",
+                        "name": "Big"
+                      },
+                      {
+                        "description": "quick",
+                        "efforts": ["Low"],
+                        "id": "small",
+                        "name": "Small"
+                      }
+                    ],
+                    "default": "big"
+                  }
+                }
+              }
+            }
+          ],
+          [
+            { "account": "Own", "provider": "codex" },
+            {
+              "availability": {
+                "Unavailable": {
+                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+                }
+              }
+            }
+          ]
+        ]
+      }
+    },
+    "stream": "hello"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Instances": [
+        [
+          { "account": "Own", "provider": "claude" },
+          {
+            "availability": {
+              "Available": {
+                "auth": "Unmanaged",
+                "models": {
+                  "choices": [
+                    {
+                      "description": "thinks",
+                      "efforts": ["Low", "High"],
+                      "id": "big",
+                      "name": "Big"
+                    },
+                    {
+                      "description": "quick",
+                      "efforts": ["Low"],
+                      "id": "small",
+                      "name": "Small"
+                    }
+                  ],
+                  "default": "big"
+                }
+              }
+            }
+          }
+        ],
+        [
+          { "account": "Own", "provider": "codex" },
+          {
+            "availability": {
+              "Unavailable": {
+                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+              }
+            }
+          }
+        ]
+      ]
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Session": { "Started": { "session": "00000000000000000000000001" } }
+    },
+    "stream": "command"
+  },
+  { "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SessionCreated": {
+            "by": "test-client",
+            "directory": "/conductor/target/tmp/conductor-e2e-0-subagent",
+            "effort": null,
+            "instance": { "account": "Own", "provider": "claude" },
+            "model": "big"
+          }
+        },
+        "seq": 1,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "WorkspaceCreated": {
+            "workspace": {
+              "branch": "conductor/00000000000000000000000001",
+              "directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
+              "original": "/conductor/target/tmp/conductor-e2e-0-subagent",
+              "repository": "/conductor/target/tmp/conductor-e2e-0-subagent",
+              "worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
+            }
+          }
+        },
+        "seq": 2,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SnapshotRecorded": {
+            "snapshot": {
+              "commit": "0000000000000000000000000000000000000001",
+              "turn_start": null
+            }
+          }
+        },
+        "seq": 3,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": "SessionReady",
+        "seq": 4,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "UserMessage": { "by": "test-client", "text": "delegate" } },
+        "seq": 5,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "NativeTurnStarted": { "turn_start": 5 } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Agent": {
+            "ToolCall": {
+              "call": "toolu_015av4j2jHs5CwVCv76qxYf2",
+              "phase": {
+                "Started": {
+                  "tool": {
+                    "Other": {
+                      "detail": "Run TodoWrite checklist task",
+                      "name": "Agent"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "seq": 7,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": {
+              "Started": {
+                "call": "toolu_015av4j2jHs5CwVCv76qxYf2",
+                "description": "Run TodoWrite checklist task"
+              }
+            }
+          }
+        },
+        "seq": 8,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": { "Kind": { "kind": "general-purpose" } }
+          }
+        },
+        "seq": 9,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": {
+              "ChecklistChanged": {
+                "checklist": [
+                  { "status": "Pending", "text": "alpha" },
+                  { "status": "Pending", "text": "beta" }
+                ]
+              }
+            }
+          }
+        },
+        "seq": 10,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": {
+              "Activity": {
+                "ToolCall": {
+                  "call": "toolu_01WSCsnAQWyaEonxDVnmncap",
+                  "phase": { "Finished": { "outcome": "Succeeded" } }
+                }
+              }
+            }
+          }
+        },
+        "seq": 11,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": {
+              "ChecklistChanged": {
+                "checklist": [
+                  { "status": "Completed", "text": "alpha" },
+                  { "status": "Completed", "text": "beta" }
+                ]
+              }
+            }
+          }
+        },
+        "seq": 12,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": {
+              "Activity": {
+                "ToolCall": {
+                  "call": "toolu_01H4nEBx6jVuR4PwHBWBgvPw",
+                  "phase": { "Finished": { "outcome": "Succeeded" } }
+                }
+              }
+            }
+          }
+        },
+        "seq": 13,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Subagent": {
+            "agent": "af19920e77caaf1de",
+            "event": { "Ended": { "outcome": "Finished", "summary": "ok" } }
+          }
+        },
+        "seq": 14,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Agent": {
+            "ToolCall": {
+              "call": "toolu_015av4j2jHs5CwVCv76qxYf2",
+              "phase": { "Finished": { "outcome": "Succeeded" } }
+            }
+          }
+        },
+        "seq": 15,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantDelta": { "text": "done" } } },
+        "seq": 15,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantMessage": { "text": "done" } } },
+        "seq": 16,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SnapshotRecorded": {
+            "snapshot": {
+              "commit": "0000000000000000000000000000000000000001",
+              "turn_start": 5
+            }
+          }
+        },
+        "seq": 17,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "TurnCompleted": { "outcome": "Completed" } },
+        "seq": 18,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  }
 ]

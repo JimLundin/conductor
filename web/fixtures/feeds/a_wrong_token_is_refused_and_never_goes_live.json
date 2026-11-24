@@ -1,11 +1,11 @@
 [
-	{
-		"connection": 0,
-		"frame": {
-			"Refused": {
-				"reason": "wrong token"
-			}
-		},
-		"stream": "hello"
-	}
+  {
+    "connection": 0,
+    "frame": {
+      "Refused": {
+        "reason": "wrong token"
+      }
+    },
+    "stream": "hello"
+  }
 ]

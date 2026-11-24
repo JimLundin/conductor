@@ -1,1543 +1,1543 @@
 [
-	{
-		"connection": 0,
-		"frame": {
-			"Welcome": {
-				"catalog": {
-					"claude": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Gateway URL",
-										"placeholder": "https://gateway.example.com",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "gateway",
-								"label": "Gateway",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "Anthropic API key",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token from claude setup-token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "setup_token",
-								"label": "Claude setup token",
-								"setup_sign_in": "Sign in to create a token"
-							}
-						],
-						"label": "Claude Code",
-						"note": null
-					},
-					"codex": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "name",
-										"kind": "Text",
-										"label": "Provider name",
-										"placeholder": "Gateway",
-										"required": true
-									},
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Base URL",
-										"placeholder": "https://gateway.example.com/v1",
-										"required": true
-									},
-									{
-										"id": "model",
-										"kind": "Text",
-										"label": "Model",
-										"placeholder": "gpt-6",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "Key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "provider",
-								"label": "Model provider",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "OpenAI API key",
-								"setup_sign_in": null
-							}
-						],
-						"label": "Codex",
-						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-					}
-				},
-				"epoch": "1",
-				"head_seq": 0,
-				"home": null,
-				"host": "test-host",
-				"instances": [
-					[
-						{ "account": "Own", "provider": "claude" },
-						{
-							"availability": {
-								"Unavailable": {
-									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-								}
-							}
-						}
-					],
-					[
-						{ "account": "Own", "provider": "codex" },
-						{
-							"availability": {
-								"Available": {
-									"auth": "Unmanaged",
-									"models": {
-										"choices": [
-											{
-												"description": "thinks",
-												"efforts": ["Low", "High"],
-												"id": "big",
-												"name": "Big"
-											},
-											{
-												"description": "quick",
-												"efforts": ["Low"],
-												"id": "small",
-												"name": "Small"
-											}
-										],
-										"default": "big"
-									}
-								}
-							}
-						}
-					]
-				]
-			}
-		},
-		"stream": "hello"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Instances": [
-				[
-					{ "account": "Own", "provider": "claude" },
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				],
-				[
-					{ "account": "Own", "provider": "codex" },
-					{
-						"availability": {
-							"Available": {
-								"auth": "Unmanaged",
-								"models": {
-									"choices": [
-										{
-											"description": "thinks",
-											"efforts": ["Low", "High"],
-											"id": "big",
-											"name": "Big"
-										},
-										{
-											"description": "quick",
-											"efforts": ["Low"],
-											"id": "small",
-											"name": "Small"
-										}
-									],
-									"default": "big"
-								}
-							}
-						}
-					}
-				]
-			]
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Session": { "Started": { "session": "00000000000000000000000001" } }
-		},
-		"stream": "command"
-	},
-	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SessionCreated": {
-						"by": "test-client",
-						"directory": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
-						"effort": "Low",
-						"instance": { "account": "Own", "provider": "codex" },
-						"model": "small"
-					}
-				},
-				"seq": 1,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"WorkspaceCreated": {
-						"workspace": {
-							"branch": "conductor/00000000000000000000000001",
-							"directory": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/00000000000000000000000001/",
-							"original": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
-							"repository": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
-							"worktree": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/00000000000000000000000001"
-						}
-					}
-				},
-				"seq": 2,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SnapshotRecorded": {
-						"snapshot": {
-							"commit": "0000000000000000000000000000000000000001",
-							"turn_start": null
-						}
-					}
-				},
-				"seq": 3,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": "SessionReady",
-				"seq": 4,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "UserMessage": { "by": "test-client", "text": "prime?" } },
-				"seq": 5,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Agent": {
-						"ReasoningDelta": { "text": "**Assessing primality**\n\nI" }
-					}
-				},
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " determine" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " if" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " To" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " do" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " this" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " should" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " check" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " its" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " divis" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "ors" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " up" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " square" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " root" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " of" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " about" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " seems" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " recall" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " that" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " a" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " known" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " number" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " often" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " recognized" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " as" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " first" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " above" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " one" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " million" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " think" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " can" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " confidently" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " answer" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " \"" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "yes" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "\"" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " user's" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " question" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " without" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " needing" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " any" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " tools" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "\u2019s" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " important" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " verify" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " my" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " information" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " carefully" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": " though" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "ReasoningDelta": { "text": "!" } } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"Agent": {
-						"Reasoning": {
-							"text": "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It\u2019s important to verify my information carefully, though!"
-						}
-					}
-				},
-				"seq": 7,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantDelta": { "text": "Yes" } } },
-				"seq": 7,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantDelta": { "text": "." } } },
-				"seq": 7,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantMessage": { "text": "Yes." } } },
-				"seq": 8,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SnapshotRecorded": {
-						"snapshot": {
-							"commit": "0000000000000000000000000000000000000001",
-							"turn_start": 5
-						}
-					}
-				},
-				"seq": 9,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "TurnCompleted": { "outcome": "Completed" } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"UserMessage": {
-						"by": "test-client",
-						"text": "Count from 1 to 300, one number per line."
-					}
-				},
-				"seq": 11,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"TurnCompleted": {
-						"outcome": {
-							"Failed": { "message": "the codex app-server has exited" }
-						}
-					}
-				},
-				"seq": 12,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SessionClosed": {
-						"reason": { "Exited": { "status": "signal: 9 (SIGKILL)" } }
-					}
-				},
-				"seq": 13,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": "SessionReady",
-				"seq": 14,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{ "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "UserMessage": { "by": "test-client", "text": "codeword?" } },
-				"seq": 15,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "NativeTurnStarted": { "turn_start": 15 } },
-				"seq": 16,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantDelta": { "text": "qu" } } },
-				"seq": 16,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantDelta": { "text": "ince" } } },
-				"seq": 16,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "Agent": { "AssistantMessage": { "text": "quince" } } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SnapshotRecorded": {
-						"snapshot": {
-							"commit": "0000000000000000000000000000000000000001",
-							"turn_start": 15
-						}
-					}
-				},
-				"seq": 18,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "TurnCompleted": { "outcome": "Completed" } },
-				"seq": 19,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	}
+  {
+    "connection": 0,
+    "frame": {
+      "Welcome": {
+        "catalog": {
+          "claude": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Gateway URL",
+                    "placeholder": "https://gateway.example.com",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "gateway",
+                "label": "Gateway",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "Anthropic API key",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token from claude setup-token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "setup_token",
+                "label": "Claude setup token",
+                "setup_sign_in": "Sign in to create a token"
+              }
+            ],
+            "label": "Claude Code",
+            "note": null
+          },
+          "codex": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "name",
+                    "kind": "Text",
+                    "label": "Provider name",
+                    "placeholder": "Gateway",
+                    "required": true
+                  },
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Base URL",
+                    "placeholder": "https://gateway.example.com/v1",
+                    "required": true
+                  },
+                  {
+                    "id": "model",
+                    "kind": "Text",
+                    "label": "Model",
+                    "placeholder": "gpt-6",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "Key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "provider",
+                "label": "Model provider",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "OpenAI API key",
+                "setup_sign_in": null
+              }
+            ],
+            "label": "Codex",
+            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+          }
+        },
+        "epoch": "1",
+        "head_seq": 0,
+        "home": null,
+        "host": "test-host",
+        "instances": [
+          [
+            { "account": "Own", "provider": "claude" },
+            {
+              "availability": {
+                "Unavailable": {
+                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+                }
+              }
+            }
+          ],
+          [
+            { "account": "Own", "provider": "codex" },
+            {
+              "availability": {
+                "Available": {
+                  "auth": "Unmanaged",
+                  "models": {
+                    "choices": [
+                      {
+                        "description": "thinks",
+                        "efforts": ["Low", "High"],
+                        "id": "big",
+                        "name": "Big"
+                      },
+                      {
+                        "description": "quick",
+                        "efforts": ["Low"],
+                        "id": "small",
+                        "name": "Small"
+                      }
+                    ],
+                    "default": "big"
+                  }
+                }
+              }
+            }
+          ]
+        ]
+      }
+    },
+    "stream": "hello"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Instances": [
+        [
+          { "account": "Own", "provider": "claude" },
+          {
+            "availability": {
+              "Unavailable": {
+                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+              }
+            }
+          }
+        ],
+        [
+          { "account": "Own", "provider": "codex" },
+          {
+            "availability": {
+              "Available": {
+                "auth": "Unmanaged",
+                "models": {
+                  "choices": [
+                    {
+                      "description": "thinks",
+                      "efforts": ["Low", "High"],
+                      "id": "big",
+                      "name": "Big"
+                    },
+                    {
+                      "description": "quick",
+                      "efforts": ["Low"],
+                      "id": "small",
+                      "name": "Small"
+                    }
+                  ],
+                  "default": "big"
+                }
+              }
+            }
+          }
+        ]
+      ]
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Session": { "Started": { "session": "00000000000000000000000001" } }
+    },
+    "stream": "command"
+  },
+  { "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SessionCreated": {
+            "by": "test-client",
+            "directory": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
+            "effort": "Low",
+            "instance": { "account": "Own", "provider": "codex" },
+            "model": "small"
+          }
+        },
+        "seq": 1,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "WorkspaceCreated": {
+            "workspace": {
+              "branch": "conductor/00000000000000000000000001",
+              "directory": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/00000000000000000000000001/",
+              "original": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
+              "repository": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/work/codex",
+              "worktree": "/conductor/target/tmp/conductor-test-0-codex-killed.jsonl/worktrees/00000000000000000000000001"
+            }
+          }
+        },
+        "seq": 2,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SnapshotRecorded": {
+            "snapshot": {
+              "commit": "0000000000000000000000000000000000000001",
+              "turn_start": null
+            }
+          }
+        },
+        "seq": 3,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": "SessionReady",
+        "seq": 4,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "UserMessage": { "by": "test-client", "text": "prime?" } },
+        "seq": 5,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "NativeTurnStarted": { "turn_start": 5 } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Agent": {
+            "ReasoningDelta": { "text": "**Assessing primality**\n\nI" }
+          }
+        },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " need" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " determine" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " if" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " To" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " do" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " this" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " should" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " check" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " its" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " divis" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "ors" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " up" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " square" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " root" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " of" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " about" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " seems" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " recall" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " that" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " 1" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "000" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "003" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " is" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " a" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " known" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " number" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " often" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " recognized" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " as" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " first" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " prime" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " above" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " one" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " million" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " think" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " I" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " can" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " confidently" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " answer" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " \"" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "yes" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "\"" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " the" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " user's" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " question" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " without" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " needing" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " any" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " tools" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "." } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " It" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "\u2019s" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " important" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " to" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " verify" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " my" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " information" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " carefully" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "," } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": " though" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "ReasoningDelta": { "text": "!" } } },
+        "seq": 6,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "Agent": {
+            "Reasoning": {
+              "text": "**Assessing primality**\n\nI need to determine if 1,000,003 is prime. To do this, I should check its divisors up to the square root of about 1,000. It seems I recall that 1,000,003 is a known prime number, often recognized as the first prime above one million. I think I can confidently answer \"yes\" to the user's question without needing any tools. It\u2019s important to verify my information carefully, though!"
+            }
+          }
+        },
+        "seq": 7,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantDelta": { "text": "Yes" } } },
+        "seq": 7,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantDelta": { "text": "." } } },
+        "seq": 7,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantMessage": { "text": "Yes." } } },
+        "seq": 8,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SnapshotRecorded": {
+            "snapshot": {
+              "commit": "0000000000000000000000000000000000000001",
+              "turn_start": 5
+            }
+          }
+        },
+        "seq": 9,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "TurnCompleted": { "outcome": "Completed" } },
+        "seq": 10,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  { "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "UserMessage": {
+            "by": "test-client",
+            "text": "Count from 1 to 300, one number per line."
+          }
+        },
+        "seq": 11,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "TurnCompleted": {
+            "outcome": {
+              "Failed": { "message": "the codex app-server has exited" }
+            }
+          }
+        },
+        "seq": 12,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SessionClosed": {
+            "reason": { "Exited": { "status": "signal: 9 (SIGKILL)" } }
+          }
+        },
+        "seq": 13,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  { "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": "SessionReady",
+        "seq": 14,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  { "connection": 0, "frame": { "Session": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "UserMessage": { "by": "test-client", "text": "codeword?" } },
+        "seq": 15,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "NativeTurnStarted": { "turn_start": 15 } },
+        "seq": 16,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantDelta": { "text": "qu" } } },
+        "seq": 16,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantDelta": { "text": "ince" } } },
+        "seq": 16,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "Agent": { "AssistantMessage": { "text": "quince" } } },
+        "seq": 17,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SnapshotRecorded": {
+            "snapshot": {
+              "commit": "0000000000000000000000000000000000000001",
+              "turn_start": 15
+            }
+          }
+        },
+        "seq": 18,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": { "TurnCompleted": { "outcome": "Completed" } },
+        "seq": 19,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  }
 ]

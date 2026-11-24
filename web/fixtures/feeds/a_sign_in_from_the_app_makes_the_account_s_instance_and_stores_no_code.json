@@ -1,426 +1,426 @@
 [
-	{
-		"connection": 0,
-		"frame": {
-			"Welcome": {
-				"catalog": {
-					"claude": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Gateway URL",
-										"placeholder": "https://gateway.example.com",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "gateway",
-								"label": "Gateway",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "Anthropic API key",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token from claude setup-token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "setup_token",
-								"label": "Claude setup token",
-								"setup_sign_in": "Sign in to create a token"
-							}
-						],
-						"label": "Claude Code",
-						"note": null
-					},
-					"codex": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "name",
-										"kind": "Text",
-										"label": "Provider name",
-										"placeholder": "Gateway",
-										"required": true
-									},
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Base URL",
-										"placeholder": "https://gateway.example.com/v1",
-										"required": true
-									},
-									{
-										"id": "model",
-										"kind": "Text",
-										"label": "Model",
-										"placeholder": "gpt-6",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "Key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "provider",
-								"label": "Model provider",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "OpenAI API key",
-								"setup_sign_in": null
-							}
-						],
-						"label": "Codex",
-						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-					}
-				},
-				"epoch": "1",
-				"head_seq": 0,
-				"home": null,
-				"host": "test-host",
-				"instances": [
-					[
-						{ "account": "Own", "provider": "claude" },
-						{
-							"availability": {
-								"Available": {
-									"auth": "Unmanaged",
-									"models": {
-										"choices": [
-											{
-												"description": "by the gateway",
-												"efforts": ["High"],
-												"id": "served",
-												"name": "Served"
-											}
-										],
-										"default": null
-									}
-								}
-							}
-						}
-					],
-					[
-						{ "account": "Own", "provider": "codex" },
-						{
-							"availability": {
-								"Unavailable": {
-									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-								}
-							}
-						}
-					]
-				]
-			}
-		},
-		"stream": "hello"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Instances": [
-				[
-					{ "account": "Own", "provider": "claude" },
-					{
-						"availability": {
-							"Available": {
-								"auth": "Unmanaged",
-								"models": {
-									"choices": [
-										{
-											"description": "by the gateway",
-											"efforts": ["High"],
-											"id": "served",
-											"name": "Served"
-										}
-									],
-									"default": null
-								}
-							}
-						}
-					}
-				],
-				[
-					{ "account": "Own", "provider": "codex" },
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				]
-			]
-		},
-		"stream": "feed"
-	},
-	{ "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": "Starting"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": {
-					"Open": {
-						"code": null,
-						"paste": true,
-						"url": "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=CHALLENGE&code_challenge_method=S256&state=STATE"
-					}
-				}
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": { "SignIn": { "Refused": "SignInRunning" } },
-		"stream": "command"
-	},
-	{ "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": "Finishing"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": {
-					"Failed": {
-						"reason": "Claude didn't accept that code. Sign in again to get a new one."
-					}
-				}
-			}
-		},
-		"stream": "feed"
-	},
-	{ "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": "Starting"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": {
-					"Open": {
-						"code": null,
-						"paste": true,
-						"url": "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=CHALLENGE&code_challenge_method=S256&state=STATE"
-					}
-				}
-			}
-		},
-		"stream": "feed"
-	},
-	{ "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": "Finishing"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": "Finishing"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Instances": [
-				[
-					{ "account": "Own", "provider": "claude" },
-					{
-						"availability": {
-							"Unavailable": { "reason": "starting the instance's CLI" }
-						}
-					}
-				],
-				[
-					{
-						"account": { "Named": "conductor-test@example.invalid" },
-						"provider": "claude"
-					},
-					{
-						"availability": {
-							"Unavailable": { "reason": "starting the instance's CLI" }
-						}
-					}
-				],
-				[
-					{ "account": "Own", "provider": "codex" },
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				]
-			]
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Instances": [
-				[
-					{ "account": "Own", "provider": "claude" },
-					{
-						"availability": {
-							"Unavailable": { "reason": "starting the instance's CLI" }
-						}
-					}
-				],
-				[
-					{
-						"account": { "Named": "conductor-test@example.invalid" },
-						"provider": "claude"
-					},
-					{
-						"availability": {
-							"Available": {
-								"auth": "SignedIn",
-								"models": {
-									"choices": [
-										{
-											"description": "by the gateway",
-											"efforts": ["High"],
-											"id": "served",
-											"name": "Served"
-										}
-									],
-									"default": null
-								}
-							}
-						}
-					}
-				],
-				[
-					{ "account": "Own", "provider": "codex" },
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				]
-			]
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"SignIn": {
-				"instance": { "account": "Own", "provider": "claude" },
-				"step": "SignedIn"
-			}
-		},
-		"stream": "feed"
-	}
+  {
+    "connection": 0,
+    "frame": {
+      "Welcome": {
+        "catalog": {
+          "claude": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Gateway URL",
+                    "placeholder": "https://gateway.example.com",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "gateway",
+                "label": "Gateway",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "Anthropic API key",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token from claude setup-token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "setup_token",
+                "label": "Claude setup token",
+                "setup_sign_in": "Sign in to create a token"
+              }
+            ],
+            "label": "Claude Code",
+            "note": null
+          },
+          "codex": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "name",
+                    "kind": "Text",
+                    "label": "Provider name",
+                    "placeholder": "Gateway",
+                    "required": true
+                  },
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Base URL",
+                    "placeholder": "https://gateway.example.com/v1",
+                    "required": true
+                  },
+                  {
+                    "id": "model",
+                    "kind": "Text",
+                    "label": "Model",
+                    "placeholder": "gpt-6",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "Key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "provider",
+                "label": "Model provider",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "OpenAI API key",
+                "setup_sign_in": null
+              }
+            ],
+            "label": "Codex",
+            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+          }
+        },
+        "epoch": "1",
+        "head_seq": 0,
+        "home": null,
+        "host": "test-host",
+        "instances": [
+          [
+            { "account": "Own", "provider": "claude" },
+            {
+              "availability": {
+                "Available": {
+                  "auth": "Unmanaged",
+                  "models": {
+                    "choices": [
+                      {
+                        "description": "by the gateway",
+                        "efforts": ["High"],
+                        "id": "served",
+                        "name": "Served"
+                      }
+                    ],
+                    "default": null
+                  }
+                }
+              }
+            }
+          ],
+          [
+            { "account": "Own", "provider": "codex" },
+            {
+              "availability": {
+                "Unavailable": {
+                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+                }
+              }
+            }
+          ]
+        ]
+      }
+    },
+    "stream": "hello"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Instances": [
+        [
+          { "account": "Own", "provider": "claude" },
+          {
+            "availability": {
+              "Available": {
+                "auth": "Unmanaged",
+                "models": {
+                  "choices": [
+                    {
+                      "description": "by the gateway",
+                      "efforts": ["High"],
+                      "id": "served",
+                      "name": "Served"
+                    }
+                  ],
+                  "default": null
+                }
+              }
+            }
+          }
+        ],
+        [
+          { "account": "Own", "provider": "codex" },
+          {
+            "availability": {
+              "Unavailable": {
+                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+              }
+            }
+          }
+        ]
+      ]
+    },
+    "stream": "feed"
+  },
+  { "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": "Starting"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": {
+          "Open": {
+            "code": null,
+            "paste": true,
+            "url": "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=CHALLENGE&code_challenge_method=S256&state=STATE"
+          }
+        }
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": { "SignIn": { "Refused": "SignInRunning" } },
+    "stream": "command"
+  },
+  { "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": "Finishing"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": {
+          "Failed": {
+            "reason": "Claude didn't accept that code. Sign in again to get a new one."
+          }
+        }
+      }
+    },
+    "stream": "feed"
+  },
+  { "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": "Starting"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": {
+          "Open": {
+            "code": null,
+            "paste": true,
+            "url": "https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers+user%3Afile_upload+user%3Aplugins&code_challenge=CHALLENGE&code_challenge_method=S256&state=STATE"
+          }
+        }
+      }
+    },
+    "stream": "feed"
+  },
+  { "connection": 0, "frame": { "SignIn": "Accepted" }, "stream": "command" },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": "Finishing"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": "Finishing"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Instances": [
+        [
+          { "account": "Own", "provider": "claude" },
+          {
+            "availability": {
+              "Unavailable": { "reason": "starting the instance's CLI" }
+            }
+          }
+        ],
+        [
+          {
+            "account": { "Named": "conductor-test@example.invalid" },
+            "provider": "claude"
+          },
+          {
+            "availability": {
+              "Unavailable": { "reason": "starting the instance's CLI" }
+            }
+          }
+        ],
+        [
+          { "account": "Own", "provider": "codex" },
+          {
+            "availability": {
+              "Unavailable": {
+                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+              }
+            }
+          }
+        ]
+      ]
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Instances": [
+        [
+          { "account": "Own", "provider": "claude" },
+          {
+            "availability": {
+              "Unavailable": { "reason": "starting the instance's CLI" }
+            }
+          }
+        ],
+        [
+          {
+            "account": { "Named": "conductor-test@example.invalid" },
+            "provider": "claude"
+          },
+          {
+            "availability": {
+              "Available": {
+                "auth": "SignedIn",
+                "models": {
+                  "choices": [
+                    {
+                      "description": "by the gateway",
+                      "efforts": ["High"],
+                      "id": "served",
+                      "name": "Served"
+                    }
+                  ],
+                  "default": null
+                }
+              }
+            }
+          }
+        ],
+        [
+          { "account": "Own", "provider": "codex" },
+          {
+            "availability": {
+              "Unavailable": {
+                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+              }
+            }
+          }
+        ]
+      ]
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "SignIn": {
+        "instance": { "account": "Own", "provider": "claude" },
+        "step": "SignedIn"
+      }
+    },
+    "stream": "feed"
+  }
 ]

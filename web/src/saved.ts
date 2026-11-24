@@ -8,13 +8,13 @@ import { Ticket } from "./schemas/index.ts";
 type HostKey = string;
 
 interface Saved {
-	readonly ticket: Ticket;
-	// The name from its last welcome, kept across launches.
-	readonly name: string | null;
+  readonly ticket: Ticket;
+  // The name from its last welcome, kept across launches.
+  readonly name: string | null;
 }
 
 const SavedRecord = Schema.fromJsonString(
-	Schema.Struct({ ticket: Ticket, name: Schema.NullOr(Schema.String) }),
+  Schema.Struct({ ticket: Ticket, name: Schema.NullOr(Schema.String) }),
 );
 
 const prefix = "conductor.v2.host.";
@@ -22,46 +22,38 @@ const hexRadix = 16;
 const hexDigits = 2;
 
 const hostKey = (ticket: Ticket): HostKey =>
-	ticket.host
-		.map((byte) => byte.toString(hexRadix).padStart(hexDigits, "0"))
-		.join("");
+  ticket.host.map((byte) => byte.toString(hexRadix).padStart(hexDigits, "0")).join("");
 
 const storageKey = (host: HostKey): string => `${prefix}${host}`;
 
 // A record that doesn't decode, or whose ticket names another host than its key, is skipped
 // without discarding its neighbours.
 const restored = (key: string, value: string | null): readonly Saved[] => {
-	if (!key.startsWith(prefix) || value === null) {
-		return [];
-	}
-	return Schema.decodeUnknownOption(SavedRecord)(value).pipe(
-		Option.filter((saved) => storageKey(hostKey(saved.ticket)) === key),
-		Option.match({
-			onNone: (): readonly Saved[] => [],
-			onSome: (saved): readonly Saved[] => [saved],
-		}),
-	);
+  if (!key.startsWith(prefix) || value === null) {
+    return [];
+  }
+  return Schema.decodeUnknownOption(SavedRecord)(value).pipe(
+    Option.filter((saved) => storageKey(hostKey(saved.ticket)) === key),
+    Option.match({
+      onNone: (): readonly Saved[] => [],
+      onSome: (saved): readonly Saved[] => [saved],
+    }),
+  );
 };
 
 const keys = (storage: Storage): readonly string[] =>
-	Array.from(
-		{ length: storage.length },
-		(_, index) => storage.key(index) ?? "",
-	);
+  Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? "");
 
 // The hosts paired in `storage`.
 const restore = (storage: Storage): readonly Saved[] =>
-	keys(storage).flatMap((key) => restored(key, storage.getItem(key)));
+  keys(storage).flatMap((key) => restored(key, storage.getItem(key)));
 
 const save = (storage: Storage, saved: Saved): void => {
-	storage.setItem(
-		storageKey(hostKey(saved.ticket)),
-		Schema.encodeSync(SavedRecord)(saved),
-	);
+  storage.setItem(storageKey(hostKey(saved.ticket)), Schema.encodeSync(SavedRecord)(saved));
 };
 
 const unsave = (storage: Storage, host: HostKey): void => {
-	storage.removeItem(storageKey(host));
+  storage.removeItem(storageKey(host));
 };
 
 export { type HostKey, hostKey, restore, save, unsave };

@@ -4,3065 +4,2560 @@ import * as Schema from "effect/Schema";
 export type Account = "Own" | { readonly Named: string };
 
 export const Account = Schema.Union(
-	[
-		Schema.Literal("Own").annotate({
-			description:
-				"The provider's own sign-in before it has named an account: where a\nsign-in runs, and a CLI given on the host's command line, signed in\nhowever it is. Each provider has one.",
-		}),
-		Schema.Struct({ Named: Schema.String }).annotate({
-			description:
-				"As the provider names it: a subscription's email, or what the\ncredential's form names, such as a gateway's URL.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Own").annotate({
+      description:
+        "The provider's own sign-in before it has named an account: where a\nsign-in runs, and a CLI given on the host's command line, signed in\nhowever it is. Each provider has one.",
+    }),
+    Schema.Struct({ Named: Schema.String }).annotate({
+      description:
+        "As the provider names it: a subscription's email, or what the\ncredential's form names, such as a gateway's URL.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "Who the provider says an instance signs in as.",
-	identifier: "Account",
+  description: "Who the provider says an instance signs in as.",
+  identifier: "Account",
 });
 
 export type Alpn = "conductor/45";
 
 export const Alpn = Schema.Literal("conductor/45").annotate({
-	description: "The ALPN a client dials a host with.",
-	identifier: "Alpn",
+  description: "The ALPN a client dials a host with.",
+  identifier: "Alpn",
 });
 
 export type Answer = globalThis.ReadonlyArray<string>;
 
 export const Answer = Schema.Array(Schema.String).annotate({
-	description:
-		"The answer to one question: the labels of the options chosen, and any\ntext the user typed instead, in that order.",
-	identifier: "Answer",
+  description:
+    "The answer to one question: the labels of the options chosen, and any\ntext the user typed instead, in that order.",
+  identifier: "Answer",
 });
 
 export type Auth =
-	| { readonly Stored: { readonly kind: string; readonly url: string | null } }
-	| "SignedIn"
-	| "Unmanaged";
+  | { readonly Stored: { readonly kind: string; readonly url: string | null } }
+  | "SignedIn"
+  | "Unmanaged";
 
 export const Auth = Schema.Union(
-	[
-		Schema.Struct({
-			Stored: Schema.Struct({
-				kind: Schema.String,
-				url: Schema.Union([Schema.String, Schema.Null]),
-			}),
-		}).annotate({
-			description:
-				"A credential the host stores, of this kind, reaching this URL if\nits form has one ([`ProviderInfo::auth`]).",
-		}),
-		Schema.Literal("SignedIn").annotate({
-			description:
-				"The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`conductord login <instance>`).",
-		}),
-		Schema.Literal("Unmanaged").annotate({
-			description:
-				"A CLI the host was started with (`--cli <provider>=<path>`),\nwhich signs in however it does.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({
+      Stored: Schema.Struct({
+        kind: Schema.String,
+        url: Schema.Union([Schema.String, Schema.Null]),
+      }),
+    }).annotate({
+      description:
+        "A credential the host stores, of this kind, reaching this URL if\nits form has one ([`ProviderInfo::auth`]).",
+    }),
+    Schema.Literal("SignedIn").annotate({
+      description:
+        "The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`conductord login <instance>`).",
+    }),
+    Schema.Literal("Unmanaged").annotate({
+      description:
+        "A CLI the host was started with (`--cli <provider>=<path>`),\nwhich signs in however it does.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		"How an instance's CLI reaches its model. It names the kind and never\ncarries a secret: credentials are write-only (§6.3).",
-	identifier: "Auth",
+  description:
+    "How an instance's CLI reaches its model. It names the kind and never\ncarries a secret: credentials are write-only (§6.3).",
+  identifier: "Auth",
 });
 
 export type AuthToken = globalThis.ReadonlyArray<number>;
 
 export const AuthToken = Schema.Array(
-	Schema.Number.annotate({ format: "uint8" })
-		.check(Schema.isInt().annotate({ expected: "an integer" }))
-		.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		)
-		.check(
-			Schema.isLessThanOrEqualTo(255).annotate({
-				expected: "a value less than or equal to 255",
-			}),
-		),
+  Schema.Number.annotate({ format: "uint8" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+    ),
 )
-	.annotate({
-		description:
-			"S3 placeholder for the fleet certificates of §4: a random secret the host\nprints in its ticket and requires in every `Hello`.",
-	})
-	.check(
-		Schema.isMinLength(16).annotate({
-			expected: "a value with a length of at least 16",
-		}),
-	)
-	.check(
-		Schema.isMaxLength(16).annotate({
-			expected: "a value with a length of at most 16",
-			identifier: "AuthToken",
-		}),
-	);
+  .annotate({
+    description:
+      "S3 placeholder for the fleet certificates of §4: a random secret the host\nprints in its ticket and requires in every `Hello`.",
+  })
+  .check(Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }))
+  .check(
+    Schema.isMaxLength(16).annotate({
+      expected: "a value with a length of at most 16",
+      identifier: "AuthToken",
+    }),
+  );
 
 export type Effort = "Low" | "Medium" | "High" | "XHigh" | "Max" | "Ultra";
 
-export const Effort = Schema.Literals([
-	"Low",
-	"Medium",
-	"High",
-	"XHigh",
-	"Max",
-	"Ultra",
-]).annotate({
-	description:
-		"How hard the model reasons: Claude's `--effort`, Codex's\n`model_reasoning_effort`. Both CLIs spell the levels the same way.",
-	identifier: "Effort",
+export const Effort = Schema.Literals(["Low", "Medium", "High", "XHigh", "Max", "Ultra"]).annotate({
+  description:
+    "How hard the model reasons: Claude's `--effort`, Codex's\n`model_reasoning_effort`. Both CLIs spell the levels the same way.",
+  identifier: "Effort",
 });
 
 export type ModelId = string;
 
 export const ModelId = Schema.String.annotate({
-	description: "A model by the name its CLI takes (`haiku`, `gpt-6-luna`).",
-	identifier: "ModelId",
+  description: "A model by the name its CLI takes (`haiku`, `gpt-6-luna`).",
+  identifier: "ModelId",
 });
 
 export type ModelChoice = {
-	readonly description: string;
-	readonly efforts: globalThis.ReadonlyArray<Effort>;
-	readonly id: ModelId;
-	readonly name: string;
+  readonly description: string;
+  readonly efforts: globalThis.ReadonlyArray<Effort>;
+  readonly id: ModelId;
+  readonly name: string;
 };
 
 export const ModelChoice = Schema.Struct({
-	description: Schema.String,
-	efforts: Schema.Array(Effort).annotate({
-		description: "The efforts this model takes, lowest first.",
-	}),
-	id: ModelId,
-	name: Schema.String,
+  description: Schema.String,
+  efforts: Schema.Array(Effort).annotate({
+    description: "The efforts this model takes, lowest first.",
+  }),
+  id: ModelId,
+  name: Schema.String,
 }).annotate({ identifier: "ModelChoice" });
 
 export type Models = {
-	readonly choices: globalThis.ReadonlyArray<ModelChoice>;
-	readonly default: ModelId | null;
+  readonly choices: globalThis.ReadonlyArray<ModelChoice>;
+  readonly default: ModelId | null;
 };
 
 export const Models = Schema.Struct({
-	choices: Schema.Array(ModelChoice),
-	default: Schema.Union([ModelId, Schema.Null]),
+  choices: Schema.Array(ModelChoice),
+  default: Schema.Union([ModelId, Schema.Null]),
 }).annotate({
-	description:
-		"The models a provider's CLI offers on this host, as the CLI lists them\nwhen the host starts, and the one a session gets when it names none.",
-	identifier: "Models",
+  description:
+    "The models a provider's CLI offers on this host, as the CLI lists them\nwhen the host starts, and the one a session gets when it names none.",
+  identifier: "Models",
 });
 
 export type Availability =
-	| { readonly Available: { readonly auth: Auth; readonly models: Models } }
-	| { readonly Unavailable: { readonly reason: string } };
+  | { readonly Available: { readonly auth: Auth; readonly models: Models } }
+  | { readonly Unavailable: { readonly reason: string } };
 
 export const Availability = Schema.Union(
-	[
-		Schema.Struct({ Available: Schema.Struct({ auth: Auth, models: Models }) }),
-		Schema.Struct({
-			Unavailable: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host can't run this instance's sessions, for this reason.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Available: Schema.Struct({ auth: Auth, models: Models }) }),
+    Schema.Struct({ Unavailable: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host can't run this instance's sessions, for this reason.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Availability" });
 
 export type FieldKind = "Text" | "Url" | "Secret";
 
 export const FieldKind = Schema.Union(
-	[
-		Schema.Literal("Text"),
-		Schema.Literal("Url").annotate({
-			description:
-				"A plain `http(s)://host/path`. It is shown to every client and may\nbe written into a CLI's config, so it may not hide a secret in\nuserinfo, a query or a fragment.",
-		}),
-		Schema.Literal("Secret").annotate({
-			description:
-				"Write-only: the host never shows it again, and no `Debug` prints it.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Text"),
+    Schema.Literal("Url").annotate({
+      description:
+        "A plain `http(s)://host/path`. It is shown to every client and may\nbe written into a CLI's config, so it may not hide a secret in\nuserinfo, a query or a fragment.",
+    }),
+    Schema.Literal("Secret").annotate({
+      description: "Write-only: the host never shows it again, and no `Debug` prints it.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		"What a field holds, which says how the app shows it and how the host\nchecks it.",
-	identifier: "FieldKind",
+  description: "What a field holds, which says how the app shows it and how the host\nchecks it.",
+  identifier: "FieldKind",
 });
 
 export type Field = {
-	readonly id: string;
-	readonly kind: FieldKind;
-	readonly label: string;
-	readonly placeholder: string;
-	readonly required: boolean;
+  readonly id: string;
+  readonly kind: FieldKind;
+  readonly label: string;
+  readonly placeholder: string;
+  readonly required: boolean;
 };
 
 export const Field = Schema.Struct({
-	id: Schema.String.annotate({
-		description: "The key of its value in a [`Credential`].",
-	}),
-	kind: FieldKind,
-	label: Schema.String,
-	placeholder: Schema.String,
-	required: Schema.Boolean,
-}).annotate({
-	description: "One field of a credential form.",
-	identifier: "Field",
-});
+  id: Schema.String.annotate({ description: "The key of its value in a [`Credential`]." }),
+  kind: FieldKind,
+  label: Schema.String,
+  placeholder: Schema.String,
+  required: Schema.Boolean,
+}).annotate({ description: "One field of a credential form.", identifier: "Field" });
 
 export type CredentialForm = {
-	readonly account: string;
-	readonly fields: globalThis.ReadonlyArray<Field>;
-	readonly kind: string;
-	readonly label: string;
-	readonly setup_sign_in: string | null;
+  readonly account: string;
+  readonly fields: globalThis.ReadonlyArray<Field>;
+  readonly kind: string;
+  readonly label: string;
+  readonly setup_sign_in: string | null;
 };
 
 export const CredentialForm = Schema.Struct({
-	account: Schema.String.annotate({
-		description:
-			"The id of the field whose value is the account the credential signs\nin as, since the provider's CLI names none for it. It is shown to\nevery client, so it is never a secret.",
-	}),
-	fields: Schema.Array(Field),
-	kind: Schema.String.annotate({
-		description: "The [`Credential::kind`] of what the form makes.",
-	}),
-	label: Schema.String,
-	setup_sign_in: Schema.Union([Schema.String, Schema.Null]).annotate({
-		description:
-			"The action label when the host can obtain this credential via sign-in.",
-	}),
+  account: Schema.String.annotate({
+    description:
+      "The id of the field whose value is the account the credential signs\nin as, since the provider's CLI names none for it. It is shown to\nevery client, so it is never a secret.",
+  }),
+  fields: Schema.Array(Field),
+  kind: Schema.String.annotate({ description: "The [`Credential::kind`] of what the form makes." }),
+  label: Schema.String,
+  setup_sign_in: Schema.Union([Schema.String, Schema.Null]).annotate({
+    description: "The action label when the host can obtain this credential via sign-in.",
+  }),
 }).annotate({
-	description:
-		"One kind of credential a provider takes, as the form it is entered in.",
-	identifier: "CredentialForm",
+  description: "One kind of credential a provider takes, as the form it is entered in.",
+  identifier: "CredentialForm",
 });
 
 export type ProviderInfo = {
-	readonly credentials: globalThis.ReadonlyArray<CredentialForm>;
-	readonly label: string;
-	readonly note: string | null;
+  readonly credentials: globalThis.ReadonlyArray<CredentialForm>;
+  readonly label: string;
+  readonly note: string | null;
 };
 
 export const ProviderInfo = Schema.Struct({
-	credentials: Schema.Array(CredentialForm).annotate({
-		description: "The kinds of credential it takes.",
-	}),
-	label: Schema.String,
-	note: Schema.Union([Schema.String, Schema.Null]).annotate({
-		description:
-			"What a new session's form says under the provider when it is\npicked, such as what its agent does without asking.",
-	}),
+  credentials: Schema.Array(CredentialForm).annotate({
+    description: "The kinds of credential it takes.",
+  }),
+  label: Schema.String,
+  note: Schema.Union([Schema.String, Schema.Null]).annotate({
+    description:
+      "What a new session's form says under the provider when it is\npicked, such as what its agent does without asking.",
+  }),
 }).annotate({
-	description:
-		"How a provider the host runs presents itself, as its plugin describes\nit.",
-	identifier: "ProviderInfo",
+  description: "How a provider the host runs presents itself, as its plugin describes\nit.",
+  identifier: "ProviderInfo",
 });
 
 export type Catalog = { readonly [x: string]: ProviderInfo };
 
 export const Catalog = Schema.Record(Schema.String, ProviderInfo).annotate({
-	description: "What the host's plugins describe, by provider.",
-	identifier: "Catalog",
+  description: "What the host's plugins describe, by provider.",
+  identifier: "Catalog",
 });
 
 export type Change = "Delete" | "Write" | "Edit";
 
 export const Change = Schema.Union(
-	[
-		Schema.Literal("Delete"),
-		Schema.Literal("Write").annotate({
-			description: "The whole file written, new or replaced.",
-		}),
-		Schema.Literal("Edit").annotate({
-			description: "Part of an existing file changed.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Delete"),
+    Schema.Literal("Write").annotate({ description: "The whole file written, new or replaced." }),
+    Schema.Literal("Edit").annotate({ description: "Part of an existing file changed." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Change" });
 
 export type ChecklistItem = { readonly done: boolean; readonly text: string };
 
-export const ChecklistItem = Schema.Struct({
-	done: Schema.Boolean,
-	text: Schema.String,
-}).annotate({ identifier: "ChecklistItem" });
+export const ChecklistItem = Schema.Struct({ done: Schema.Boolean, text: Schema.String }).annotate({
+  identifier: "ChecklistItem",
+});
 
 export type Item = {
-	readonly index: number;
-	readonly seen: globalThis.ReadonlyArray<ChecklistItem> | null;
+  readonly index: number;
+  readonly seen: globalThis.ReadonlyArray<ChecklistItem> | null;
 };
 
 export const Item = Schema.Struct({
-	index: Schema.Number.annotate({ format: "uint" })
-		.check(Schema.isInt().annotate({ expected: "an integer" }))
-		.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		),
-	seen: Schema.Union([Schema.Array(ChecklistItem), Schema.Null]).annotate({
-		description:
-			"The checklist the place was picked from; when the file's has\nchanged since, the change is refused. `None` takes the place in\nthe file as it is.",
-	}),
-}).annotate({
-	description: "A checklist item by its place, from 0.",
-	identifier: "Item",
-});
+  index: Schema.Number.annotate({ format: "uint" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+  seen: Schema.Union([Schema.Array(ChecklistItem), Schema.Null]).annotate({
+    description:
+      "The checklist the place was picked from; when the file's has\nchanged since, the change is refused. `None` takes the place in\nthe file as it is.",
+  }),
+}).annotate({ description: "A checklist item by its place, from 0.", identifier: "Item" });
 
 export type ChecklistChange =
-	| { readonly Add: string }
-	| { readonly Check: { readonly done: boolean; readonly item: Item } }
-	| { readonly Remove: Item };
+  | { readonly Add: string }
+  | { readonly Check: { readonly done: boolean; readonly item: Item } }
+  | { readonly Remove: Item };
 
 export const ChecklistChange = Schema.Union(
-	[
-		Schema.Struct({ Add: Schema.String }),
-		Schema.Struct({
-			Check: Schema.Struct({ done: Schema.Boolean, item: Item }),
-		}),
-		Schema.Struct({ Remove: Item }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Add: Schema.String }),
+    Schema.Struct({ Check: Schema.Struct({ done: Schema.Boolean, item: Item }) }),
+    Schema.Struct({ Remove: Item }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "ChecklistChange" });
 
 export type ChecklistStatus = "Pending" | "InProgress" | "Completed";
 
-export const ChecklistStatus = Schema.Literals([
-	"Pending",
-	"InProgress",
-	"Completed",
-]).annotate({ identifier: "ChecklistStatus" });
+export const ChecklistStatus = Schema.Literals(["Pending", "InProgress", "Completed"]).annotate({
+  identifier: "ChecklistStatus",
+});
 
-export type ChecklistEntry = {
-	readonly status: ChecklistStatus;
-	readonly text: string;
-};
+export type ChecklistEntry = { readonly status: ChecklistStatus; readonly text: string };
 
 export const ChecklistEntry = Schema.Struct({
-	status: ChecklistStatus,
-	text: Schema.String,
+  status: ChecklistStatus,
+  text: Schema.String,
 }).annotate({ identifier: "ChecklistEntry" });
 
 export type Origin = "Found" | "Cloned";
 
 export const Origin = Schema.Union(
-	[
-		Schema.Literal("Found").annotate({
-			description: "Found in a directory the host searches.",
-		}),
-		Schema.Literal("Cloned").annotate({
-			description: "The host cloned it into its data dir.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Found").annotate({ description: "Found in a directory the host searches." }),
+    Schema.Literal("Cloned").annotate({ description: "The host cloned it into its data dir." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Origin" });
 
 export type CheckoutLocation = string;
 
 export const CheckoutLocation = Schema.String.annotate({
-	description:
-		"Where a project is checked out on a host, as the host's OS spells it.\nOnly the host reads it: a browser on a phone can't know a Windows\npath's rules.",
-	identifier: "CheckoutLocation",
+  description:
+    "Where a project is checked out on a host, as the host's OS spells it.\nOnly the host reads it: a browser on a phone can't know a Windows\npath's rules.",
+  identifier: "CheckoutLocation",
 });
 
-export type Checkout = {
-	readonly origin: Origin;
-	readonly path: CheckoutLocation;
-};
+export type Checkout = { readonly origin: Origin; readonly path: CheckoutLocation };
 
-export const Checkout = Schema.Struct({
-	origin: Origin,
-	path: CheckoutLocation,
-}).annotate({
-	description:
-		"A repository on this host whose root commit and remote are a project's.\nA session's project follows from its worktree's repository, which is\none of these.",
-	identifier: "Checkout",
+export const Checkout = Schema.Struct({ origin: Origin, path: CheckoutLocation }).annotate({
+  description:
+    "A repository on this host whose root commit and remote are a project's.\nA session's project follows from its worktree's repository, which is\none of these.",
+  identifier: "Checkout",
 });
 
 export type ClientName = string;
 
 export const ClientName = Schema.String.annotate({
-	description:
-		"The name a client gave when it connected: who answered a request, or\nsent a message.",
-	identifier: "ClientName",
+  description:
+    "The name a client gave when it connected: who answered a request, or\nsent a message.",
+  identifier: "ClientName",
 });
 
-export type Cloning =
-	| "Idle"
-	| "Running"
-	| { readonly Failed: { readonly reason: string } };
+export type Cloning = "Idle" | "Running" | { readonly Failed: { readonly reason: string } };
 
 export const Cloning = Schema.Union(
-	[
-		Schema.Literals(["Idle", "Running"]),
-		Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["Idle", "Running"]),
+    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		'Where the host\'s own clone of a project stands, after "Clone here".',
-	identifier: "Cloning",
+  description: 'Where the host\'s own clone of a project stands, after "Clone here".',
+  identifier: "Cloning",
 });
 
 export type CloseReason =
-	| { readonly FailedToStart: { readonly message: string } }
-	| { readonly Exited: { readonly status: string } }
-	| { readonly Stopped: { readonly reason: string } };
+  | { readonly FailedToStart: { readonly message: string } }
+  | { readonly Exited: { readonly status: string } }
+  | { readonly Stopped: { readonly reason: string } };
 
 export const CloseReason = Schema.Union(
-	[
-		Schema.Struct({ FailedToStart: Schema.Struct({ message: Schema.String }) }),
-		Schema.Struct({ Exited: Schema.Struct({ status: Schema.String }) }),
-		Schema.Struct({
-			Stopped: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "The host stopped the agent on purpose, for this reason.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ FailedToStart: Schema.Struct({ message: Schema.String }) }),
+    Schema.Struct({ Exited: Schema.Struct({ status: Schema.String }) }),
+    Schema.Struct({ Stopped: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host stopped the agent on purpose, for this reason.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "CloseReason" });
 
 export type SessionDirectory = string;
 
 export const SessionDirectory = Schema.String.annotate({
-	description:
-		"The directory a session starts in and works in, as the host's OS\nspells it. The client never interprets it: a browser on a phone can't\nknow a Windows path's rules.",
-	identifier: "SessionDirectory",
+  description:
+    "The directory a session starts in and works in, as the host's OS\nspells it. The client never interprets it: a browser on a phone can't\nknow a Windows path's rules.",
+  identifier: "SessionDirectory",
 });
 
 export type ProjectId = string;
 
 export const ProjectId = Schema.String.check(
-	Schema.isMinCodePoints(6).annotate({
-		expected: "a string with at least 6 code points",
-	}),
+  Schema.isMinCodePoints(6).annotate({ expected: "a string with at least 6 code points" }),
 ).check(
-	Schema.isMaxCodePoints(6).annotate({
-		expected: "a string with at most 6 code points",
-		identifier: "ProjectId",
-	}),
+  Schema.isMaxCodePoints(6).annotate({
+    expected: "a string with at most 6 code points",
+    identifier: "ProjectId",
+  }),
 );
 
 export type IssueId = string;
 
 export const IssueId = Schema.String.check(
-	Schema.isMinCodePoints(8).annotate({
-		expected: "a string with at least 8 code points",
-	}),
+  Schema.isMinCodePoints(8).annotate({ expected: "a string with at least 8 code points" }),
 ).check(
-	Schema.isMaxCodePoints(8).annotate({
-		expected: "a string with at most 8 code points",
-		identifier: "IssueId",
-	}),
+  Schema.isMaxCodePoints(8).annotate({
+    expected: "a string with at most 8 code points",
+    identifier: "IssueId",
+  }),
 );
 
 export type StartAt =
-	| { readonly Directory: SessionDirectory }
-	| { readonly Project: ProjectId }
-	| { readonly Issue: IssueId };
+  | { readonly Directory: SessionDirectory }
+  | { readonly Project: ProjectId }
+  | { readonly Issue: IssueId };
 
 export const StartAt = Schema.Union(
-	[
-		Schema.Struct({ Directory: SessionDirectory }),
-		Schema.Struct({ Project: ProjectId }),
-		Schema.Struct({ Issue: IssueId }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Directory: SessionDirectory }),
+    Schema.Struct({ Project: ProjectId }),
+    Schema.Struct({ Issue: IssueId }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		"Where a new session runs: a directory, a project's checkout, or an\nissue's project's checkout on a branch cut from the issue's.",
-	identifier: "StartAt",
+  description:
+    "Where a new session runs: a directory, a project's checkout, or an\nissue's project's checkout on a branch cut from the issue's.",
+  identifier: "StartAt",
 });
 
 export type Provider = string;
 
 export const Provider = Schema.String.annotate({
-	description:
-		"A provider, by the name its plugin declares: what the host's command\nline, its data dir and the client link call it. Which providers there are is up\nto the plugins a host is given.",
-	identifier: "Provider",
+  description:
+    "A provider, by the name its plugin declares: what the host's command\nline, its data dir and the client link call it. Which providers there are is up\nto the plugins a host is given.",
+  identifier: "Provider",
 });
 
-export type InstanceId = {
-	readonly account: Account;
-	readonly provider: Provider;
-};
+export type InstanceId = { readonly account: Account; readonly provider: Provider };
 
-export const InstanceId = Schema.Struct({
-	account: Account,
-	provider: Provider,
-}).annotate({
-	description:
-		"An instance by its key, the account of a provider on this host (the\nnode). The provider names the account, not the owner, so it never\nchanges and the instance is never renamed.",
-	identifier: "InstanceId",
+export const InstanceId = Schema.Struct({ account: Account, provider: Provider }).annotate({
+  description:
+    "An instance by its key, the account of a provider on this host (the\nnode). The provider names the account, not the owner, so it never\nchanges and the instance is never renamed.",
+  identifier: "InstanceId",
 });
 
 export type SessionId = string;
 
 export const SessionId = Schema.String.annotate({
-	description:
-		"A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the client link, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
-	identifier: "SessionId",
+  description:
+    "A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the client link, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
+  identifier: "SessionId",
 });
 
 export type Decision = "Approve" | "Deny" | "ApproveForSession";
 
 export const Decision = Schema.Union(
-	[
-		Schema.Literals(["Approve", "Deny"]),
-		Schema.Literal("ApproveForSession").annotate({
-			description:
-				"Approves this call and the calls the request's `for_session` names,\nuntil the session ends.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["Approve", "Deny"]),
+    Schema.Literal("ApproveForSession").annotate({
+      description:
+        "Approves this call and the calls the request's `for_session` names,\nuntil the session ends.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Decision" });
 
 export type RequestId = number;
 
 export const RequestId = Schema.Number.annotate({
-	description:
-		"An approval request or a question, assigned by the host per session, in\norder.",
-	format: "uint64",
+  description: "An approval request or a question, assigned by the host per session, in\norder.",
+  format: "uint64",
 })
-	.check(Schema.isInt().annotate({ expected: "an integer" }))
-	.check(
-		Schema.isGreaterThanOrEqualTo(0).annotate({
-			expected: "a value greater than or equal to 0",
-			identifier: "RequestId",
-		}),
-	);
+  .check(Schema.isInt().annotate({ expected: "an integer" }))
+  .check(
+    Schema.isGreaterThanOrEqualTo(0).annotate({
+      expected: "a value greater than or equal to 0",
+      identifier: "RequestId",
+    }),
+  );
 
 export type HostSeq = number;
 
 export const HostSeq = Schema.Number.annotate({
-	description:
-		"The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.",
-	format: "uint64",
+  description: "The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.",
+  format: "uint64",
 })
-	.check(Schema.isInt().annotate({ expected: "an integer" }))
-	.check(
-		Schema.isGreaterThanOrEqualTo(0).annotate({
-			expected: "a value greater than or equal to 0",
-			identifier: "HostSeq",
-		}),
-	);
+  .check(Schema.isInt().annotate({ expected: "an integer" }))
+  .check(
+    Schema.isGreaterThanOrEqualTo(0).annotate({
+      expected: "a value greater than or equal to 0",
+      identifier: "HostSeq",
+    }),
+  );
 
 export type SessionCommand =
-	| {
-			readonly Start: {
-				readonly at: StartAt;
-				readonly effort: Effort | null;
-				readonly instance: InstanceId;
-				readonly model: ModelId | null;
-			};
-	  }
-	| {
-			readonly SendMessage: {
-				readonly session: SessionId;
-				readonly text: string;
-			};
-	  }
-	| { readonly Interrupt: { readonly session: SessionId } }
-	| { readonly Continue: { readonly session: SessionId } }
-	| {
-			readonly Resolve: {
-				readonly decision: Decision;
-				readonly request: RequestId;
-				readonly session: SessionId;
-			};
-	  }
-	| {
-			readonly Answer: {
-				readonly answers: globalThis.ReadonlyArray<Answer>;
-				readonly request: RequestId;
-				readonly session: SessionId;
-			};
-	  }
-	| {
-			readonly GetDiff: {
-				readonly session: SessionId;
-				readonly snapshot: HostSeq;
-			};
-	  }
-	| {
-			readonly SetEffort: {
-				readonly effort: Effort;
-				readonly session: SessionId;
-			};
-	  }
-	| { readonly Remove: { readonly session: SessionId } }
-	| { readonly Finish: { readonly session: SessionId } };
+  | {
+      readonly Start: {
+        readonly at: StartAt;
+        readonly effort: Effort | null;
+        readonly instance: InstanceId;
+        readonly model: ModelId | null;
+      };
+    }
+  | { readonly SendMessage: { readonly session: SessionId; readonly text: string } }
+  | { readonly Interrupt: { readonly session: SessionId } }
+  | { readonly Continue: { readonly session: SessionId } }
+  | {
+      readonly Resolve: {
+        readonly decision: Decision;
+        readonly request: RequestId;
+        readonly session: SessionId;
+      };
+    }
+  | {
+      readonly Answer: {
+        readonly answers: globalThis.ReadonlyArray<Answer>;
+        readonly request: RequestId;
+        readonly session: SessionId;
+      };
+    }
+  | { readonly GetDiff: { readonly session: SessionId; readonly snapshot: HostSeq } }
+  | { readonly SetEffort: { readonly effort: Effort; readonly session: SessionId } }
+  | { readonly Remove: { readonly session: SessionId } }
+  | { readonly Finish: { readonly session: SessionId } };
 
 export const SessionCommand = Schema.Union(
-	[
-		Schema.Struct({
-			Start: Schema.Struct({
-				at: StartAt,
-				effort: Schema.Union([Effort, Schema.Null]),
-				instance: InstanceId,
-				model: Schema.Union([ModelId, Schema.Null]),
-			}),
-		}).annotate({
-			description:
-				"`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
-		}),
-		Schema.Struct({
-			SendMessage: Schema.Struct({ session: SessionId, text: Schema.String }),
-		}),
-		Schema.Struct({ Interrupt: Schema.Struct({ session: SessionId }) }),
-		Schema.Struct({ Continue: Schema.Struct({ session: SessionId }) }).annotate(
-			{
-				description:
-					"Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
-			},
-		),
-		Schema.Struct({
-			Resolve: Schema.Struct({
-				decision: Decision,
-				request: RequestId,
-				session: SessionId,
-			}),
-		}),
-		Schema.Struct({
-			Answer: Schema.Struct({
-				answers: Schema.Array(Answer),
-				request: RequestId,
-				session: SessionId,
-			}),
-		}).annotate({
-			description:
-				"Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
-		}),
-		Schema.Struct({
-			GetDiff: Schema.Struct({ session: SessionId, snapshot: HostSeq }),
-		}).annotate({
-			description: "A bounded diff between this snapshot and its predecessor.",
-		}),
-		Schema.Struct({
-			SetEffort: Schema.Struct({ effort: Effort, session: SessionId }),
-		}).annotate({
-			description:
-				"Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
-		}),
-		Schema.Struct({ Remove: Schema.Struct({ session: SessionId }) }).annotate({
-			description:
-				"Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
-		}),
-		Schema.Struct({ Finish: Schema.Struct({ session: SessionId }) }).annotate({
-			description:
-				"Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({
+      Start: Schema.Struct({
+        at: StartAt,
+        effort: Schema.Union([Effort, Schema.Null]),
+        instance: InstanceId,
+        model: Schema.Union([ModelId, Schema.Null]),
+      }),
+    }).annotate({
+      description:
+        "`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
+    }),
+    Schema.Struct({ SendMessage: Schema.Struct({ session: SessionId, text: Schema.String }) }),
+    Schema.Struct({ Interrupt: Schema.Struct({ session: SessionId }) }),
+    Schema.Struct({ Continue: Schema.Struct({ session: SessionId }) }).annotate({
+      description:
+        "Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
+    }),
+    Schema.Struct({
+      Resolve: Schema.Struct({ decision: Decision, request: RequestId, session: SessionId }),
+    }),
+    Schema.Struct({
+      Answer: Schema.Struct({
+        answers: Schema.Array(Answer),
+        request: RequestId,
+        session: SessionId,
+      }),
+    }).annotate({
+      description:
+        "Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
+    }),
+    Schema.Struct({ GetDiff: Schema.Struct({ session: SessionId, snapshot: HostSeq }) }).annotate({
+      description: "A bounded diff between this snapshot and its predecessor.",
+    }),
+    Schema.Struct({ SetEffort: Schema.Struct({ effort: Effort, session: SessionId }) }).annotate({
+      description:
+        "Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
+    }),
+    Schema.Struct({ Remove: Schema.Struct({ session: SessionId }) }).annotate({
+      description:
+        "Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
+    }),
+    Schema.Struct({ Finish: Schema.Struct({ session: SessionId }) }).annotate({
+      description:
+        "Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "Every command after `Start` names the session it acts on.",
-	identifier: "SessionCommand",
+  description: "Every command after `Start` names the session it acts on.",
+  identifier: "SessionCommand",
 });
 
 export type Credential = {
-	readonly kind: string;
-	readonly values: { readonly [x: string]: string };
+  readonly kind: string;
+  readonly values: { readonly [x: string]: string };
 };
 
 export const Credential = Schema.Struct({
-	kind: Schema.String,
-	values: Schema.Record(Schema.String, Schema.String),
+  kind: Schema.String,
+  values: Schema.Record(Schema.String, Schema.String),
 }).annotate({
-	description:
-		"One instance's credential: the values of its kind's form, by field id.\nAs `SetCredential` carries it and as the host stores it. The instance\nit belongs to names the provider.",
-	identifier: "Credential",
+  description:
+    "One instance's credential: the values of its kind's form, by field id.\nAs `SetCredential` carries it and as the host stores it. The instance\nit belongs to names the provider.",
+  identifier: "Credential",
 });
 
 export type InstanceCommand =
-	| {
-			readonly SetCredential: {
-				readonly credential: Credential;
-				readonly provider: Provider;
-			};
-	  }
-	| { readonly Remove: { readonly instance: InstanceId } };
+  | { readonly SetCredential: { readonly credential: Credential; readonly provider: Provider } }
+  | { readonly Remove: { readonly instance: InstanceId } };
 
 export const InstanceCommand = Schema.Union(
-	[
-		Schema.Struct({
-			SetCredential: Schema.Struct({
-				credential: Credential,
-				provider: Provider,
-			}),
-		}).annotate({
-			description:
-				"Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
-		}),
-		Schema.Struct({ Remove: Schema.Struct({ instance: InstanceId }) }).annotate(
-			{
-				description:
-					"Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
-			},
-		),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({
+      SetCredential: Schema.Struct({ credential: Credential, provider: Provider }),
+    }).annotate({
+      description:
+        "Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
+    }),
+    Schema.Struct({ Remove: Schema.Struct({ instance: InstanceId }) }).annotate({
+      description:
+        "Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "A command that changes the host's instances.",
-	identifier: "InstanceCommand",
+  description: "A command that changes the host's instances.",
+  identifier: "InstanceCommand",
 });
 
 export type SignInCode = string;
 
 export const SignInCode = Schema.String.annotate({
-	description:
-		"The code a person pastes from a sign-in page. It is a secret: its\n`Debug` doesn't print it, so no log line carries it.",
-	identifier: "SignInCode",
+  description:
+    "The code a person pastes from a sign-in page. It is a secret: its\n`Debug` doesn't print it, so no log line carries it.",
+  identifier: "SignInCode",
 });
 
 export type SignInCommand =
-	| { readonly Start: { readonly instance: InstanceId } }
-	| {
-			readonly SubmitCode: {
-				readonly code: SignInCode;
-				readonly instance: InstanceId;
-			};
-	  }
-	| { readonly Cancel: { readonly instance: InstanceId } }
-	| {
-			readonly StartCredential: {
-				readonly instance: InstanceId;
-				readonly kind: string;
-				readonly label: string;
-			};
-	  };
+  | { readonly Start: { readonly instance: InstanceId } }
+  | { readonly SubmitCode: { readonly code: SignInCode; readonly instance: InstanceId } }
+  | { readonly Cancel: { readonly instance: InstanceId } }
+  | {
+      readonly StartCredential: {
+        readonly instance: InstanceId;
+        readonly kind: string;
+        readonly label: string;
+      };
+    };
 
 export const SignInCommand = Schema.Union(
-	[
-		Schema.Struct({ Start: Schema.Struct({ instance: InstanceId }) }).annotate({
-			description:
-				"Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
-		}),
-		Schema.Struct({
-			SubmitCode: Schema.Struct({ code: SignInCode, instance: InstanceId }),
-		}).annotate({
-			description:
-				"The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
-		}),
-		Schema.Struct({ Cancel: Schema.Struct({ instance: InstanceId }) }).annotate(
-			{ description: "Stops the instance's sign-in, if one runs." },
-		),
-		Schema.Struct({
-			StartCredential: Schema.Struct({
-				instance: InstanceId,
-				kind: Schema.String,
-				label: Schema.String,
-			}),
-		}).annotate({
-			description:
-				"Runs the provider's live credential setup through its own instance.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Start: Schema.Struct({ instance: InstanceId }) }).annotate({
+      description:
+        "Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
+    }),
+    Schema.Struct({
+      SubmitCode: Schema.Struct({ code: SignInCode, instance: InstanceId }),
+    }).annotate({
+      description:
+        "The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
+    }),
+    Schema.Struct({ Cancel: Schema.Struct({ instance: InstanceId }) }).annotate({
+      description: "Stops the instance's sign-in, if one runs.",
+    }),
+    Schema.Struct({
+      StartCredential: Schema.Struct({
+        instance: InstanceId,
+        kind: Schema.String,
+        label: Schema.String,
+      }),
+    }).annotate({
+      description: "Runs the provider's live credential setup through its own instance.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "A command about an instance's sign-in from the app.",
-	identifier: "SignInCommand",
+  description: "A command about an instance's sign-in from the app.",
+  identifier: "SignInCommand",
 });
 
 export type EditId = string;
 
 export const EditId = Schema.String.annotate({
-	description:
-		"128 random bits, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
-	identifier: "EditId",
+  description:
+    "128 random bits, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
+  identifier: "EditId",
 });
 
 export type Datum = string | globalThis.ReadonlyArray<string> | boolean;
 
 export const Datum = Schema.Union([
-	Schema.String,
-	Schema.Array(Schema.String),
-	Schema.Boolean,
+  Schema.String,
+  Schema.Array(Schema.String),
+  Schema.Boolean,
 ]).annotate({ identifier: "Datum" });
 
 export type NewIssue = {
-	readonly fields: globalThis.ReadonlyArray<readonly [string, Datum]>;
-	readonly kind: string;
-	readonly project: ProjectId;
-	readonly title: string;
+  readonly fields: globalThis.ReadonlyArray<readonly [string, Datum]>;
+  readonly kind: string;
+  readonly project: ProjectId;
+  readonly title: string;
 };
 
 export const NewIssue = Schema.Struct({
-	fields: Schema.Array(Schema.Tuple([Schema.String, Datum])).annotate({
-		description:
-			"The fields and relations it starts with, each with its value, in\nthe order given.",
-	}),
-	kind: Schema.String,
-	project: ProjectId,
-	title: Schema.String,
-}).annotate({
-	description: "A new issue, as `home issue new` opens one.",
-	identifier: "NewIssue",
-});
+  fields: Schema.Array(Schema.Tuple([Schema.String, Datum])).annotate({
+    description:
+      "The fields and relations it starts with, each with its value, in\nthe order given.",
+  }),
+  kind: Schema.String,
+  project: ProjectId,
+  title: Schema.String,
+}).annotate({ description: "A new issue, as `home issue new` opens one.", identifier: "NewIssue" });
 
 export type Part = "Stage" | "Status";
 
 export const Part = Schema.Literals(["Stage", "Status"]).annotate({
-	description: "What a move changes.",
-	identifier: "Part",
+  description: "What a move changes.",
+  identifier: "Part",
 });
 
 export type IssueChange =
-	| {
-			readonly Move: {
-				readonly part: Part;
-				readonly reason: string;
-				readonly signed_off: boolean;
-				readonly to: string;
-			};
-	  }
-	| { readonly Set: { readonly field: string; readonly value: Datum } }
-	| { readonly Title: string }
-	| { readonly Note: string }
-	| { readonly Body: string }
-	| { readonly Checklist: ChecklistChange };
+  | {
+      readonly Move: {
+        readonly part: Part;
+        readonly reason: string;
+        readonly signed_off: boolean;
+        readonly to: string;
+      };
+    }
+  | { readonly Set: { readonly field: string; readonly value: Datum } }
+  | { readonly Title: string }
+  | { readonly Note: string }
+  | { readonly Body: string }
+  | { readonly Checklist: ChecklistChange };
 
 export const IssueChange = Schema.Union(
-	[
-		Schema.Struct({
-			Move: Schema.Struct({
-				part: Part,
-				reason: Schema.String,
-				signed_off: Schema.Boolean.annotate({
-					description:
-						"The owner signed off, as entering a stage with a sign-off needs.",
-				}),
-				to: Schema.String,
-			}),
-		}),
-		Schema.Struct({
-			Set: Schema.Struct({ field: Schema.String, value: Datum }),
-		}).annotate({ description: "A declared field's or relation's value." }),
-		Schema.Struct({ Title: Schema.String }),
-		Schema.Struct({ Note: Schema.String }).annotate({
-			description: "A note, which the writer signs and dates.",
-		}),
-		Schema.Struct({ Body: Schema.String }),
-		Schema.Struct({ Checklist: ChecklistChange }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({
+      Move: Schema.Struct({
+        part: Part,
+        reason: Schema.String,
+        signed_off: Schema.Boolean.annotate({
+          description: "The owner signed off, as entering a stage with a sign-off needs.",
+        }),
+        to: Schema.String,
+      }),
+    }),
+    Schema.Struct({ Set: Schema.Struct({ field: Schema.String, value: Datum }) }).annotate({
+      description: "A declared field's or relation's value.",
+    }),
+    Schema.Struct({ Title: Schema.String }),
+    Schema.Struct({ Note: Schema.String }).annotate({
+      description: "A note, which the writer signs and dates.",
+    }),
+    Schema.Struct({ Body: Schema.String }),
+    Schema.Struct({ Checklist: ChecklistChange }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		"One change to an issue, as the `home` command line and the app make\nit. The home reads the file it writes back against the flow before\nkeeping it.",
-	identifier: "IssueChange",
+  description:
+    "One change to an issue, as the `home` command line and the app make\nit. The home reads the file it writes back against the flow before\nkeeping it.",
+  identifier: "IssueChange",
 });
 
 export type HomeCommand =
-	| "Sync"
-	| { readonly Clone: { readonly project: ProjectId } }
-	| {
-			readonly CreateIssue: { readonly edit: EditId; readonly issue: NewIssue };
-	  }
-	| {
-			readonly ChangeIssue: {
-				readonly change: IssueChange;
-				readonly edit: EditId;
-				readonly issue: IssueId;
-			};
-	  };
+  | "Sync"
+  | { readonly Clone: { readonly project: ProjectId } }
+  | { readonly CreateIssue: { readonly edit: EditId; readonly issue: NewIssue } }
+  | {
+      readonly ChangeIssue: {
+        readonly change: IssueChange;
+        readonly edit: EditId;
+        readonly issue: IssueId;
+      };
+    };
 
 export const HomeCommand = Schema.Union(
-	[
-		Schema.Literal("Sync").annotate({
-			description:
-				"Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
-		}),
-		Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }).annotate({
-			description:
-				"Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
-		}),
-		Schema.Struct({
-			CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }),
-		}).annotate({
-			description:
-				"Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.\n\nThe app mints `edit` once per edit and sends it again with each\nretry, so the home writes the edit once.",
-		}),
-		Schema.Struct({
-			ChangeIssue: Schema.Struct({
-				change: IssueChange,
-				edit: EditId,
-				issue: IssueId,
-			}),
-		}).annotate({
-			description: "Answers `IssueWritten` once written, like `CreateIssue`.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Sync").annotate({
+      description:
+        "Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
+    }),
+    Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }).annotate({
+      description:
+        "Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
+    }),
+    Schema.Struct({ CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }) }).annotate({
+      description:
+        "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.\n\nThe app mints `edit` once per edit and sends it again with each\nretry, so the home writes the edit once.",
+    }),
+    Schema.Struct({
+      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueId }),
+    }).annotate({ description: "Answers `IssueWritten` once written, like `CreateIssue`." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "A command about the host's clone of the home.",
-	identifier: "HomeCommand",
+  description: "A command about the host's clone of the home.",
+  identifier: "HomeCommand",
 });
 
 export type PushSubscription = {
-	readonly auth: string;
-	readonly endpoint: string;
-	readonly p256dh: string;
+  readonly auth: string;
+  readonly endpoint: string;
+  readonly p256dh: string;
 };
 
 export const PushSubscription = Schema.Struct({
-	auth: Schema.String,
-	endpoint: Schema.String,
-	p256dh: Schema.String,
+  auth: Schema.String,
+  endpoint: Schema.String,
+  p256dh: Schema.String,
 }).annotate({ identifier: "PushSubscription" });
 
 export type PushCommand = "PublicKey" | { readonly Register: PushSubscription };
 
 export const PushCommand = Schema.Union(
-	[Schema.Literal("PublicKey"), Schema.Struct({ Register: PushSubscription })],
-	{ mode: "oneOf" },
+  [Schema.Literal("PublicKey"), Schema.Struct({ Register: PushSubscription })],
+  { mode: "oneOf" },
 ).annotate({ identifier: "PushCommand" });
 
 export type PairRequest = {
-	readonly device: globalThis.ReadonlyArray<number>;
-	readonly name: string;
+  readonly device: globalThis.ReadonlyArray<number>;
+  readonly name: string;
 };
 
 export const PairRequest = Schema.Struct({
-	device: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	)
-		.check(
-			Schema.isMinLength(32).annotate({
-				expected: "a value with a length of at least 32",
-			}),
-		)
-		.check(
-			Schema.isMaxLength(32).annotate({
-				expected: "a value with a length of at most 32",
-			}),
-		),
-	name: Schema.String,
+  device: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  )
+    .check(Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }))
+    .check(Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" })),
+  name: Schema.String,
 }).annotate({ identifier: "PairRequest" });
 
 export type EnrollmentToken = globalThis.ReadonlyArray<number>;
 
 export const EnrollmentToken = Schema.Array(
-	Schema.Number.annotate({ format: "uint8" })
-		.check(Schema.isInt().annotate({ expected: "an integer" }))
-		.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		)
-		.check(
-			Schema.isLessThanOrEqualTo(255).annotate({
-				expected: "a value less than or equal to 255",
-			}),
-		),
+  Schema.Number.annotate({ format: "uint8" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+    ),
 )
-	.annotate({
-		description:
-			"The secret a standalone host requires of the root host that enrolls it\nin a fleet.",
-	})
-	.check(
-		Schema.isMinLength(16).annotate({
-			expected: "a value with a length of at least 16",
-		}),
-	)
-	.check(
-		Schema.isMaxLength(16).annotate({
-			expected: "a value with a length of at most 16",
-			identifier: "EnrollmentToken",
-		}),
-	);
+  .annotate({
+    description:
+      "The secret a standalone host requires of the root host that enrolls it\nin a fleet.",
+  })
+  .check(Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }))
+  .check(
+    Schema.isMaxLength(16).annotate({
+      expected: "a value with a length of at most 16",
+      identifier: "EnrollmentToken",
+    }),
+  );
 
 export type FleetCommand =
-	| "Status"
-	| "Invite"
-	| { readonly Revoke: globalThis.ReadonlyArray<number> }
-	| { readonly Approve: PairRequest }
-	| {
-			readonly Admit: {
-				readonly name: string;
-				readonly node: globalThis.ReadonlyArray<number>;
-				readonly relay: string;
-				readonly token: EnrollmentToken;
-			};
-	  };
+  | "Status"
+  | "Invite"
+  | { readonly Revoke: globalThis.ReadonlyArray<number> }
+  | { readonly Approve: PairRequest }
+  | {
+      readonly Admit: {
+        readonly name: string;
+        readonly node: globalThis.ReadonlyArray<number>;
+        readonly relay: string;
+        readonly token: EnrollmentToken;
+      };
+    };
 
 export const FleetCommand = Schema.Union(
-	[
-		Schema.Literals(["Status", "Invite"]),
-		Schema.Struct({
-			Revoke: Schema.Array(
-				Schema.Number.annotate({ format: "uint8" })
-					.check(Schema.isInt().annotate({ expected: "an integer" }))
-					.check(
-						Schema.isGreaterThanOrEqualTo(0).annotate({
-							expected: "a value greater than or equal to 0",
-						}),
-					)
-					.check(
-						Schema.isLessThanOrEqualTo(255).annotate({
-							expected: "a value less than or equal to 255",
-						}),
-					),
-			)
-				.check(
-					Schema.isMinLength(32).annotate({
-						expected: "a value with a length of at least 32",
-					}),
-				)
-				.check(
-					Schema.isMaxLength(32).annotate({
-						expected: "a value with a length of at most 32",
-					}),
-				),
-		}),
-		Schema.Struct({ Approve: PairRequest }),
-		Schema.Struct({
-			Admit: Schema.Struct({
-				name: Schema.String,
-				node: Schema.Array(
-					Schema.Number.annotate({ format: "uint8" })
-						.check(Schema.isInt().annotate({ expected: "an integer" }))
-						.check(
-							Schema.isGreaterThanOrEqualTo(0).annotate({
-								expected: "a value greater than or equal to 0",
-							}),
-						)
-						.check(
-							Schema.isLessThanOrEqualTo(255).annotate({
-								expected: "a value less than or equal to 255",
-							}),
-						),
-				)
-					.check(
-						Schema.isMinLength(32).annotate({
-							expected: "a value with a length of at least 32",
-						}),
-					)
-					.check(
-						Schema.isMaxLength(32).annotate({
-							expected: "a value with a length of at most 32",
-						}),
-					),
-				relay: Schema.String,
-				token: EnrollmentToken,
-			}),
-		}).annotate({
-			description:
-				"Enrolls the standalone host `node`, reached through `relay`, which\nrequires `token`.",
-		}),
-	],
-	{ mode: "oneOf" },
-).annotate({
-	description: "A command about the fleet, from the app.",
-	identifier: "FleetCommand",
-});
+  [
+    Schema.Literals(["Status", "Invite"]),
+    Schema.Struct({
+      Revoke: Schema.Array(
+        Schema.Number.annotate({ format: "uint8" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          )
+          .check(
+            Schema.isLessThanOrEqualTo(255).annotate({
+              expected: "a value less than or equal to 255",
+            }),
+          ),
+      )
+        .check(
+          Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }),
+        )
+        .check(
+          Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" }),
+        ),
+    }),
+    Schema.Struct({ Approve: PairRequest }),
+    Schema.Struct({
+      Admit: Schema.Struct({
+        name: Schema.String,
+        node: Schema.Array(
+          Schema.Number.annotate({ format: "uint8" })
+            .check(Schema.isInt().annotate({ expected: "an integer" }))
+            .check(
+              Schema.isGreaterThanOrEqualTo(0).annotate({
+                expected: "a value greater than or equal to 0",
+              }),
+            )
+            .check(
+              Schema.isLessThanOrEqualTo(255).annotate({
+                expected: "a value less than or equal to 255",
+              }),
+            ),
+        )
+          .check(
+            Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }),
+          )
+          .check(
+            Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" }),
+          ),
+        relay: Schema.String,
+        token: EnrollmentToken,
+      }),
+    }).annotate({
+      description:
+        "Enrolls the standalone host `node`, reached through `relay`, which\nrequires `token`.",
+    }),
+  ],
+  { mode: "oneOf" },
+).annotate({ description: "A command about the fleet, from the app.", identifier: "FleetCommand" });
 
 export type Command =
-	| { readonly Session: SessionCommand }
-	| { readonly Instance: InstanceCommand }
-	| { readonly SignIn: SignInCommand }
-	| { readonly Home: HomeCommand }
-	| { readonly Push: PushCommand }
-	| { readonly Fleet: FleetCommand };
+  | { readonly Session: SessionCommand }
+  | { readonly Instance: InstanceCommand }
+  | { readonly SignIn: SignInCommand }
+  | { readonly Home: HomeCommand }
+  | { readonly Push: PushCommand }
+  | { readonly Fleet: FleetCommand };
 
 export const Command = Schema.Union(
-	[
-		Schema.Struct({ Session: SessionCommand }),
-		Schema.Struct({ Instance: InstanceCommand }),
-		Schema.Struct({ SignIn: SignInCommand }),
-		Schema.Struct({ Home: HomeCommand }),
-		Schema.Struct({ Push: PushCommand }),
-		Schema.Struct({ Fleet: FleetCommand }),
-	],
-	{ mode: "oneOf" },
-).annotate({
-	description: "A command, in the domain it acts on.",
-	identifier: "Command",
-});
+  [
+    Schema.Struct({ Session: SessionCommand }),
+    Schema.Struct({ Instance: InstanceCommand }),
+    Schema.Struct({ SignIn: SignInCommand }),
+    Schema.Struct({ Home: HomeCommand }),
+    Schema.Struct({ Push: PushCommand }),
+    Schema.Struct({ Fleet: FleetCommand }),
+  ],
+  { mode: "oneOf" },
+).annotate({ description: "A command, in the domain it acts on.", identifier: "Command" });
 
 export type CommandId = string;
 
 export const CommandId = Schema.String.annotate({
-	description:
-		"A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
-	identifier: "CommandId",
+  description:
+    "A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
+  identifier: "CommandId",
 });
 
 export type HomeRefusal =
-	| "UnknownProject"
-	| "UnknownIssue"
-	| "NoHome"
-	| "NotCheckedOut"
-	| "NoRemote"
-	| { readonly IssueNotSaved: { readonly reason: string } }
-	| { readonly IssueRefused: { readonly reason: string } };
+  | "UnknownProject"
+  | "UnknownIssue"
+  | "NoHome"
+  | "NotCheckedOut"
+  | "NoRemote"
+  | { readonly IssueNotSaved: { readonly reason: string } }
+  | { readonly IssueRefused: { readonly reason: string } };
 
 export const HomeRefusal = Schema.Union(
-	[
-		Schema.Literals(["UnknownProject", "UnknownIssue"]),
-		Schema.Literal("NoHome").annotate({
-			description: "The host was given no home.",
-		}),
-		Schema.Literal("NotCheckedOut").annotate({
-			description: "The project has no checkout on the host.",
-		}),
-		Schema.Literal("NoRemote").annotate({
-			description: "The project is local only: there is no remote to clone.",
-		}),
-		Schema.Struct({
-			IssueNotSaved: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "The home can't be written now, for this reason.",
-		}),
-		Schema.Struct({
-			IssueRefused: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The flow refuses the edit, for this reason, as the `home` command\nline would.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["UnknownProject", "UnknownIssue"]),
+    Schema.Literal("NoHome").annotate({ description: "The host was given no home." }),
+    Schema.Literal("NotCheckedOut").annotate({
+      description: "The project has no checkout on the host.",
+    }),
+    Schema.Literal("NoRemote").annotate({
+      description: "The project is local only: there is no remote to clone.",
+    }),
+    Schema.Struct({ IssueNotSaved: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The home can't be written now, for this reason.",
+    }),
+    Schema.Struct({ IssueRefused: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The flow refuses the edit, for this reason, as the `home` command\nline would.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "HomeRefusal" });
 
 export type SessionRefusal =
-	| "NoSuchDirectory"
-	| "UnknownSession"
-	| "SessionClosed"
-	| "TurnInProgress"
-	| "NoTurnRunning"
-	| "UnknownRequest"
-	| "NotGitRepository"
-	| "SnapshotUnavailable"
-	| "UnknownInstance"
-	| "SessionRemoved"
-	| { readonly InstanceUnavailable: { readonly reason: string } }
-	| { readonly NotOffered: { readonly reason: string } }
-	| { readonly AlreadyResolved: { readonly by: ClientName } }
-	| { readonly WrongReply: { readonly reason: string } }
-	| { readonly WorkspaceFailure: { readonly reason: string } }
-	| { readonly Home: HomeRefusal }
-	| { readonly IssueTaken: { readonly session: SessionId } }
-	| "NotOnIssue"
-	| "AlreadyFinished";
+  | "NoSuchDirectory"
+  | "UnknownSession"
+  | "SessionClosed"
+  | "TurnInProgress"
+  | "NoTurnRunning"
+  | "UnknownRequest"
+  | "NotGitRepository"
+  | "SnapshotUnavailable"
+  | "UnknownInstance"
+  | "SessionRemoved"
+  | { readonly InstanceUnavailable: { readonly reason: string } }
+  | { readonly NotOffered: { readonly reason: string } }
+  | { readonly AlreadyResolved: { readonly by: ClientName } }
+  | { readonly WrongReply: { readonly reason: string } }
+  | { readonly WorkspaceFailure: { readonly reason: string } }
+  | { readonly Home: HomeRefusal }
+  | { readonly IssueTaken: { readonly session: SessionId } }
+  | "NotOnIssue"
+  | "AlreadyFinished";
 
 export const SessionRefusal = Schema.Union(
-	[
-		Schema.Literals([
-			"NoSuchDirectory",
-			"UnknownSession",
-			"SessionClosed",
-			"TurnInProgress",
-			"NoTurnRunning",
-			"UnknownRequest",
-			"NotGitRepository",
-			"SnapshotUnavailable",
-			"UnknownInstance",
-			"SessionRemoved",
-		]),
-		Schema.Struct({
-			InstanceUnavailable: Schema.Struct({ reason: Schema.String }),
-		}),
-		Schema.Struct({
-			NotOffered: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host doesn't offer that model or effort, for this reason.",
-		}),
-		Schema.Struct({ AlreadyResolved: Schema.Struct({ by: ClientName }) }),
-		Schema.Struct({
-			WrongReply: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "The reply doesn't fit the request, for this reason.",
-		}),
-		Schema.Struct({
-			WorkspaceFailure: Schema.Struct({ reason: Schema.String }),
-		}),
-		Schema.Struct({ Home: HomeRefusal }).annotate({
-			description:
-				"The session can't start where it was asked to: the home refuses\nthe project or issue.",
-		}),
-		Schema.Struct({
-			IssueTaken: Schema.Struct({ session: SessionId }),
-		}).annotate({
-			description:
-				"The instance has this session on the issue already: one session\nper instance and issue.",
-		}),
-		Schema.Literal("NotOnIssue").annotate({
-			description:
-				"The session works on no issue, so there is nothing to finish it on.",
-		}),
-		Schema.Literal("AlreadyFinished").annotate({
-			description:
-				"The session is finishing, or has done nothing since it finished.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals([
+      "NoSuchDirectory",
+      "UnknownSession",
+      "SessionClosed",
+      "TurnInProgress",
+      "NoTurnRunning",
+      "UnknownRequest",
+      "NotGitRepository",
+      "SnapshotUnavailable",
+      "UnknownInstance",
+      "SessionRemoved",
+    ]),
+    Schema.Struct({ InstanceUnavailable: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Struct({ NotOffered: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host doesn't offer that model or effort, for this reason.",
+    }),
+    Schema.Struct({ AlreadyResolved: Schema.Struct({ by: ClientName }) }),
+    Schema.Struct({ WrongReply: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The reply doesn't fit the request, for this reason.",
+    }),
+    Schema.Struct({ WorkspaceFailure: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Struct({ Home: HomeRefusal }).annotate({
+      description:
+        "The session can't start where it was asked to: the home refuses\nthe project or issue.",
+    }),
+    Schema.Struct({ IssueTaken: Schema.Struct({ session: SessionId }) }).annotate({
+      description:
+        "The instance has this session on the issue already: one session\nper instance and issue.",
+    }),
+    Schema.Literal("NotOnIssue").annotate({
+      description: "The session works on no issue, so there is nothing to finish it on.",
+    }),
+    Schema.Literal("AlreadyFinished").annotate({
+      description: "The session is finishing, or has done nothing since it finished.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "SessionRefusal" });
 
 export type DiffExtent = "Complete" | "Truncated";
 
 export const DiffExtent = Schema.Literals(["Complete", "Truncated"]).annotate({
-	identifier: "DiffExtent",
+  identifier: "DiffExtent",
 });
 
 export type DiffChange = "Delete" | "Write" | "Edit";
 
 export const DiffChange = Schema.Union(
-	[
-		Schema.Literal("Delete"),
-		Schema.Literal("Write").annotate({
-			description: "Added: the whole file is new.",
-		}),
-		Schema.Literal("Edit").annotate({
-			description: "Modified, or any other status.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Delete"),
+    Schema.Literal("Write").annotate({ description: "Added: the whole file is new." }),
+    Schema.Literal("Edit").annotate({ description: "Modified, or any other status." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "What a snapshot did to a file, as Git's diff status says.",
-	identifier: "DiffChange",
+  description: "What a snapshot did to a file, as Git's diff status says.",
+  identifier: "DiffChange",
 });
 
 export type FilePatch =
-	| "Binary"
-	| "TooLarge"
-	| { readonly Text: string }
-	| { readonly Unsupported: { readonly reason: string } };
+  | "Binary"
+  | "TooLarge"
+  | { readonly Text: string }
+  | { readonly Unsupported: { readonly reason: string } };
 
 export const FilePatch = Schema.Union(
-	[
-		Schema.Literals(["Binary", "TooLarge"]),
-		Schema.Struct({ Text: Schema.String }),
-		Schema.Struct({ Unsupported: Schema.Struct({ reason: Schema.String }) }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["Binary", "TooLarge"]),
+    Schema.Struct({ Text: Schema.String }),
+    Schema.Struct({ Unsupported: Schema.Struct({ reason: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "FilePatch" });
 
 export type SnapshotFile = {
-	readonly change: DiffChange;
-	readonly patch: FilePatch;
-	readonly path: string;
+  readonly change: DiffChange;
+  readonly patch: FilePatch;
+  readonly path: string;
 };
 
 export const SnapshotFile = Schema.Struct({
-	change: DiffChange,
-	patch: FilePatch,
-	path: Schema.String,
+  change: DiffChange,
+  patch: FilePatch,
+  path: Schema.String,
 }).annotate({ identifier: "SnapshotFile" });
 
 export type SnapshotDiff = {
-	readonly extent: DiffExtent;
-	readonly files: globalThis.ReadonlyArray<SnapshotFile>;
-	readonly snapshot: HostSeq;
+  readonly extent: DiffExtent;
+  readonly files: globalThis.ReadonlyArray<SnapshotFile>;
+  readonly snapshot: HostSeq;
 };
 
 export const SnapshotDiff = Schema.Struct({
-	extent: DiffExtent,
-	files: Schema.Array(SnapshotFile),
-	snapshot: HostSeq,
+  extent: DiffExtent,
+  files: Schema.Array(SnapshotFile),
+  snapshot: HostSeq,
 }).annotate({ identifier: "SnapshotDiff" });
 
 export type SessionResult =
-	| "Accepted"
-	| { readonly Started: { readonly session: SessionId } }
-	| { readonly Refused: SessionRefusal }
-	| { readonly Diff: SnapshotDiff };
+  | "Accepted"
+  | { readonly Started: { readonly session: SessionId } }
+  | { readonly Refused: SessionRefusal }
+  | { readonly Diff: SnapshotDiff };
 
 export const SessionResult = Schema.Union(
-	[
-		Schema.Literal("Accepted"),
-		Schema.Struct({ Started: Schema.Struct({ session: SessionId }) }).annotate({
-			description:
-				"The answer to `Start`. `SessionCreated` follows in the log.",
-		}),
-		Schema.Struct({ Refused: SessionRefusal }),
-		Schema.Struct({ Diff: SnapshotDiff }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Accepted"),
+    Schema.Struct({ Started: Schema.Struct({ session: SessionId }) }).annotate({
+      description: "The answer to `Start`. `SessionCreated` follows in the log.",
+    }),
+    Schema.Struct({ Refused: SessionRefusal }),
+    Schema.Struct({ Diff: SnapshotDiff }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "SessionResult" });
 
 export type InstanceRefusal =
-	| "UnknownInstance"
-	| { readonly CredentialNotSaved: { readonly reason: string } }
-	| { readonly InvalidCredential: { readonly reason: string } }
-	| { readonly InstanceInUse: { readonly sessions: number } }
-	| "FleetUnavailable";
+  | "UnknownInstance"
+  | { readonly CredentialNotSaved: { readonly reason: string } }
+  | { readonly InvalidCredential: { readonly reason: string } }
+  | { readonly InstanceInUse: { readonly sessions: number } }
+  | "FleetUnavailable";
 
 export const InstanceRefusal = Schema.Union(
-	[
-		Schema.Literal("UnknownInstance"),
-		Schema.Struct({
-			CredentialNotSaved: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host could not store the credential, and kept the one it had.",
-		}),
-		Schema.Struct({
-			InvalidCredential: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The credential is malformed, for this reason, and was not stored.",
-		}),
-		Schema.Struct({
-			InstanceInUse: Schema.Struct({
-				sessions: Schema.Number.annotate({ format: "uint64" })
-					.check(Schema.isInt().annotate({ expected: "an integer" }))
-					.check(
-						Schema.isGreaterThanOrEqualTo(0).annotate({
-							expected: "a value greater than or equal to 0",
-						}),
-					),
-			}),
-		}).annotate({
-			description: "The instance can't be removed while sessions run on it.",
-		}),
-		Schema.Literal("FleetUnavailable").annotate({
-			description: "Only the fleet's root host changes a fleet's instances.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("UnknownInstance"),
+    Schema.Struct({ CredentialNotSaved: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host could not store the credential, and kept the one it had.",
+    }),
+    Schema.Struct({ InvalidCredential: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The credential is malformed, for this reason, and was not stored.",
+    }),
+    Schema.Struct({
+      InstanceInUse: Schema.Struct({
+        sessions: Schema.Number.annotate({ format: "uint64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+      }),
+    }).annotate({ description: "The instance can't be removed while sessions run on it." }),
+    Schema.Literal("FleetUnavailable").annotate({
+      description: "Only the fleet's root host changes a fleet's instances.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "InstanceRefusal" });
 
 export type InstanceResult = "Accepted" | { readonly Refused: InstanceRefusal };
 
 export const InstanceResult = Schema.Union(
-	[Schema.Literal("Accepted"), Schema.Struct({ Refused: InstanceRefusal })],
-	{ mode: "oneOf" },
+  [Schema.Literal("Accepted"), Schema.Struct({ Refused: InstanceRefusal })],
+  { mode: "oneOf" },
 ).annotate({ identifier: "InstanceResult" });
 
 export type SignInRefusal =
-	| "UnknownInstance"
-	| "SignInRunning"
-	| { readonly InstanceUnavailable: { readonly reason: string } }
-	| "NoCodeAsked"
-	| { readonly InvalidCredential: { readonly reason: string } }
-	| { readonly CredentialNotSaved: { readonly reason: string } }
-	| { readonly InstanceInUse: { readonly sessions: number } };
+  | "UnknownInstance"
+  | "SignInRunning"
+  | { readonly InstanceUnavailable: { readonly reason: string } }
+  | "NoCodeAsked"
+  | { readonly InvalidCredential: { readonly reason: string } }
+  | { readonly CredentialNotSaved: { readonly reason: string } }
+  | { readonly InstanceInUse: { readonly sessions: number } };
 
 export const SignInRefusal = Schema.Union(
-	[
-		Schema.Literals(["UnknownInstance", "SignInRunning"]),
-		Schema.Struct({
-			InstanceUnavailable: Schema.Struct({ reason: Schema.String }),
-		}),
-		Schema.Literal("NoCodeAsked").annotate({
-			description: "No sign-in runs on the instance, or it takes no code now.",
-		}),
-		Schema.Struct({
-			InvalidCredential: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "The sign-in can't make that credential, for this reason.",
-		}),
-		Schema.Struct({
-			CredentialNotSaved: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "The host could not store what the sign-in changed.",
-		}),
-		Schema.Struct({
-			InstanceInUse: Schema.Struct({
-				sessions: Schema.Number.annotate({ format: "uint64" })
-					.check(Schema.isInt().annotate({ expected: "an integer" }))
-					.check(
-						Schema.isGreaterThanOrEqualTo(0).annotate({
-							expected: "a value greater than or equal to 0",
-						}),
-					),
-			}),
-		}).annotate({
-			description: "The sign-in would change an instance sessions run on.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["UnknownInstance", "SignInRunning"]),
+    Schema.Struct({ InstanceUnavailable: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Literal("NoCodeAsked").annotate({
+      description: "No sign-in runs on the instance, or it takes no code now.",
+    }),
+    Schema.Struct({ InvalidCredential: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The sign-in can't make that credential, for this reason.",
+    }),
+    Schema.Struct({ CredentialNotSaved: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host could not store what the sign-in changed.",
+    }),
+    Schema.Struct({
+      InstanceInUse: Schema.Struct({
+        sessions: Schema.Number.annotate({ format: "uint64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+      }),
+    }).annotate({ description: "The sign-in would change an instance sessions run on." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "SignInRefusal" });
 
 export type SignInResult = "Accepted" | { readonly Refused: SignInRefusal };
 
 export const SignInResult = Schema.Union(
-	[Schema.Literal("Accepted"), Schema.Struct({ Refused: SignInRefusal })],
-	{ mode: "oneOf" },
+  [Schema.Literal("Accepted"), Schema.Struct({ Refused: SignInRefusal })],
+  { mode: "oneOf" },
 ).annotate({ identifier: "SignInResult" });
 
 export type HomeResult =
-	| "Accepted"
-	| {
-			readonly IssueWritten: {
-				readonly issue: IssueId;
-				readonly warnings: globalThis.ReadonlyArray<string>;
-			};
-	  }
-	| { readonly Refused: HomeRefusal };
+  | "Accepted"
+  | {
+      readonly IssueWritten: {
+        readonly issue: IssueId;
+        readonly warnings: globalThis.ReadonlyArray<string>;
+      };
+    }
+  | { readonly Refused: HomeRefusal };
 
 export const HomeResult = Schema.Union(
-	[
-		Schema.Literal("Accepted"),
-		Schema.Struct({
-			IssueWritten: Schema.Struct({
-				issue: IssueId,
-				warnings: Schema.Array(Schema.String),
-			}),
-		}).annotate({
-			description:
-				"The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
-		}),
-		Schema.Struct({ Refused: HomeRefusal }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Accepted"),
+    Schema.Struct({
+      IssueWritten: Schema.Struct({ issue: IssueId, warnings: Schema.Array(Schema.String) }),
+    }).annotate({
+      description:
+        "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
+    }),
+    Schema.Struct({ Refused: HomeRefusal }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "HomeResult" });
 
-export type PushResult =
-	| "Accepted"
-	| { readonly PublicKey: string }
-	| "Unavailable";
+export type PushResult = "Accepted" | { readonly PublicKey: string } | "Unavailable";
 
 export const PushResult = Schema.Union(
-	[
-		Schema.Literal("Accepted"),
-		Schema.Struct({ PublicKey: Schema.String }),
-		Schema.Literal("Unavailable").annotate({
-			description: "The host sends no push.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Accepted"),
+    Schema.Struct({ PublicKey: Schema.String }),
+    Schema.Literal("Unavailable").annotate({ description: "The host sends no push." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "PushResult" });
 
 export type Signed = {
-	readonly payload: globalThis.ReadonlyArray<number>;
-	readonly signature: globalThis.ReadonlyArray<number>;
+  readonly payload: globalThis.ReadonlyArray<number>;
+  readonly signature: globalThis.ReadonlyArray<number>;
 };
 
 export const Signed = Schema.Struct({
-	payload: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	),
-	signature: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	),
+  payload: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  ),
+  signature: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  ),
 }).annotate({
-	description:
-		"A value signed over the exact JSON bytes it was written as, and\ncarried as those bytes.\n\nJSON has no canonical form, so nothing re-encodes it to verify it: a\nverifier checks `signature` over [`Payload::DOMAIN`] then `payload`,\nand only then parses `payload`.",
-	identifier: "Signed",
+  description:
+    "A value signed over the exact JSON bytes it was written as, and\ncarried as those bytes.\n\nJSON has no canonical form, so nothing re-encodes it to verify it: a\nverifier checks `signature` over [`Payload::DOMAIN`] then `payload`,\nand only then parses `payload`.",
+  identifier: "Signed",
 });
 
 export type InviteSecret = globalThis.ReadonlyArray<number>;
 
 export const InviteSecret = Schema.Array(
-	Schema.Number.annotate({ format: "uint8" })
-		.check(Schema.isInt().annotate({ expected: "an integer" }))
-		.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		)
-		.check(
-			Schema.isLessThanOrEqualTo(255).annotate({
-				expected: "a value less than or equal to 255",
-			}),
-		),
+  Schema.Number.annotate({ format: "uint8" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+    ),
 )
-	.check(
-		Schema.isMinLength(32).annotate({
-			expected: "a value with a length of at least 32",
-		}),
-	)
-	.check(
-		Schema.isMaxLength(32).annotate({
-			expected: "a value with a length of at most 32",
-			identifier: "InviteSecret",
-		}),
-	);
+  .check(Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }))
+  .check(
+    Schema.isMaxLength(32).annotate({
+      expected: "a value with a length of at most 32",
+      identifier: "InviteSecret",
+    }),
+  );
 
 export type Invite = {
-	readonly fleet: globalThis.ReadonlyArray<number>;
-	readonly relay: string;
-	readonly root: globalThis.ReadonlyArray<number>;
-	readonly secret: InviteSecret;
+  readonly fleet: globalThis.ReadonlyArray<number>;
+  readonly relay: string;
+  readonly root: globalThis.ReadonlyArray<number>;
+  readonly secret: InviteSecret;
 };
 
 export const Invite = Schema.Struct({
-	fleet: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	)
-		.check(
-			Schema.isMinLength(32).annotate({
-				expected: "a value with a length of at least 32",
-			}),
-		)
-		.check(
-			Schema.isMaxLength(32).annotate({
-				expected: "a value with a length of at most 32",
-			}),
-		),
-	relay: Schema.String,
-	root: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	)
-		.check(
-			Schema.isMinLength(32).annotate({
-				expected: "a value with a length of at least 32",
-			}),
-		)
-		.check(
-			Schema.isMaxLength(32).annotate({
-				expected: "a value with a length of at most 32",
-			}),
-		),
-	secret: InviteSecret,
+  fleet: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  )
+    .check(Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }))
+    .check(Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" })),
+  relay: Schema.String,
+  root: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  )
+    .check(Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }))
+    .check(Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" })),
+  secret: InviteSecret,
 }).annotate({ identifier: "Invite" });
 
 export type HostEntry = {
-	readonly added_at: number;
-	readonly name: string;
-	readonly node: globalThis.ReadonlyArray<number>;
-	readonly relay: string;
+  readonly added_at: number;
+  readonly name: string;
+  readonly node: globalThis.ReadonlyArray<number>;
+  readonly relay: string;
 };
 
 export const HostEntry = Schema.Struct({
-	added_at: Schema.Number.annotate({ format: "uint64" })
-		.check(Schema.isInt().annotate({ expected: "an integer" }))
-		.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		),
-	name: Schema.String,
-	node: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	)
-		.check(
-			Schema.isMinLength(32).annotate({
-				expected: "a value with a length of at least 32",
-			}),
-		)
-		.check(
-			Schema.isMaxLength(32).annotate({
-				expected: "a value with a length of at most 32",
-			}),
-		),
-	relay: Schema.String,
+  added_at: Schema.Number.annotate({ format: "uint64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+  name: Schema.String,
+  node: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  )
+    .check(Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }))
+    .check(Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" })),
+  relay: Schema.String,
 }).annotate({ identifier: "HostEntry" });
 
 export type Pairing = {
-	readonly certificate: Signed;
-	readonly root: HostEntry;
-	readonly signed: Signed;
+  readonly certificate: Signed;
+  readonly root: HostEntry;
+  readonly signed: Signed;
 };
 
 export const Pairing = Schema.Struct({
-	certificate: Signed,
-	root: HostEntry,
-	signed: Signed,
+  certificate: Signed,
+  root: HostEntry,
+  signed: Signed,
 }).annotate({ identifier: "Pairing" });
 
 export type FleetResult =
-	| "Accepted"
-	| { readonly Status: Signed }
-	| { readonly Invite: Invite }
-	| { readonly Pairing: Pairing }
-	| "Unavailable";
+  | "Accepted"
+  | { readonly Status: Signed }
+  | { readonly Invite: Invite }
+  | { readonly Pairing: Pairing }
+  | "Unavailable";
 
 export const FleetResult = Schema.Union(
-	[
-		Schema.Literal("Accepted"),
-		Schema.Struct({ Status: Signed }),
-		Schema.Struct({ Invite: Invite }),
-		Schema.Struct({ Pairing: Pairing }),
-		Schema.Literal("Unavailable").annotate({
-			description: "Fleet changes need the root host.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Accepted"),
+    Schema.Struct({ Status: Signed }),
+    Schema.Struct({ Invite: Invite }),
+    Schema.Struct({ Pairing: Pairing }),
+    Schema.Literal("Unavailable").annotate({ description: "Fleet changes need the root host." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "FleetResult" });
 
 export type CommandResult =
-	| { readonly Session: SessionResult }
-	| { readonly Instance: InstanceResult }
-	| { readonly SignIn: SignInResult }
-	| { readonly Home: HomeResult }
-	| { readonly Push: PushResult }
-	| { readonly Fleet: FleetResult };
+  | { readonly Session: SessionResult }
+  | { readonly Instance: InstanceResult }
+  | { readonly SignIn: SignInResult }
+  | { readonly Home: HomeResult }
+  | { readonly Push: PushResult }
+  | { readonly Fleet: FleetResult };
 
 export const CommandResult = Schema.Union(
-	[
-		Schema.Struct({ Session: SessionResult }),
-		Schema.Struct({ Instance: InstanceResult }),
-		Schema.Struct({ SignIn: SignInResult }),
-		Schema.Struct({ Home: HomeResult }),
-		Schema.Struct({ Push: PushResult }),
-		Schema.Struct({ Fleet: FleetResult }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Session: SessionResult }),
+    Schema.Struct({ Instance: InstanceResult }),
+    Schema.Struct({ SignIn: SignInResult }),
+    Schema.Struct({ Home: HomeResult }),
+    Schema.Struct({ Push: PushResult }),
+    Schema.Struct({ Fleet: FleetResult }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "A command's answer, in the domain of the command.",
-	identifier: "CommandResult",
+  description: "A command's answer, in the domain of the command.",
+  identifier: "CommandResult",
 });
 
 export type DeviceHello = {
-	readonly certificate: Signed;
-	readonly proof: globalThis.ReadonlyArray<number>;
+  readonly certificate: Signed;
+  readonly proof: globalThis.ReadonlyArray<number>;
 };
 
 export const DeviceHello = Schema.Struct({
-	certificate: Signed,
-	proof: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	),
+  certificate: Signed,
+  proof: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  ),
 }).annotate({ identifier: "DeviceHello" });
 
 export type LogEvent =
-	| "Note"
-	| { readonly Stage: { readonly from: string; readonly to: string } }
-	| { readonly Status: { readonly from: string; readonly to: string } };
+  | "Note"
+  | { readonly Stage: { readonly from: string; readonly to: string } }
+  | { readonly Status: { readonly from: string; readonly to: string } };
 
 export const LogEvent = Schema.Union(
-	[
-		Schema.Literal("Note"),
-		Schema.Struct({
-			Stage: Schema.Struct({ from: Schema.String, to: Schema.String }),
-		}),
-		Schema.Struct({
-			Status: Schema.Struct({ from: Schema.String, to: Schema.String }),
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Note"),
+    Schema.Struct({ Stage: Schema.Struct({ from: Schema.String, to: Schema.String }) }),
+    Schema.Struct({ Status: Schema.Struct({ from: Schema.String, to: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "LogEvent" });
 
 export type Entry = {
-	readonly at: string | null;
-	readonly by: string | null;
-	readonly event: LogEvent;
-	readonly text: string;
+  readonly at: string | null;
+  readonly by: string | null;
+  readonly event: LogEvent;
+  readonly text: string;
 };
 
 export const Entry = Schema.Struct({
-	at: Schema.Union([Schema.String, Schema.Null]).annotate({
-		description: "When and by whom, when the line says so.",
-	}),
-	by: Schema.Union([Schema.String, Schema.Null]),
-	event: LogEvent,
-	text: Schema.String,
+  at: Schema.Union([Schema.String, Schema.Null]).annotate({
+    description: "When and by whom, when the line says so.",
+  }),
+  by: Schema.Union([Schema.String, Schema.Null]),
+  event: LogEvent,
+  text: Schema.String,
 }).annotate({ description: "A line of an issue's log.", identifier: "Entry" });
 
 export type Epoch = string;
 
 export const Epoch = Schema.String.annotate({
-	description:
-		"Identifies one incarnation of a host's event log. A cursor from another\nepoch is meaningless, so the client starts over from seq 0 (§8).",
-	identifier: "Epoch",
+  description:
+    "Identifies one incarnation of a host's event log. A cursor from another\nepoch is meaningless, so the client starts over from seq 0 (§8).",
+  identifier: "Epoch",
 });
 
 export type ToolCallId = string;
 
 export const ToolCallId = Schema.String.annotate({
-	description:
-		"A tool call's id as the provider gave it (`toolu_…` or a Codex item id).",
-	identifier: "ToolCallId",
+  description: "A tool call's id as the provider gave it (`toolu_…` or a Codex item id).",
+  identifier: "ToolCallId",
 });
 
 export type FileChange = { readonly change: Change; readonly path: string };
 
-export const FileChange = Schema.Struct({
-	change: Change,
-	path: Schema.String,
-}).annotate({
-	description: "One file a tool call changes, and how.",
-	identifier: "FileChange",
+export const FileChange = Schema.Struct({ change: Change, path: Schema.String }).annotate({
+  description: "One file a tool call changes, and how.",
+  identifier: "FileChange",
 });
 
 export type ToolKind =
-	| { readonly Command: { readonly command: string } }
-	| {
-			readonly FileChange: {
-				readonly files: globalThis.ReadonlyArray<FileChange>;
-			};
-	  }
-	| { readonly Other: { readonly detail: string; readonly name: string } };
+  | { readonly Command: { readonly command: string } }
+  | { readonly FileChange: { readonly files: globalThis.ReadonlyArray<FileChange> } }
+  | { readonly Other: { readonly detail: string; readonly name: string } };
 
 export const ToolKind = Schema.Union(
-	[
-		Schema.Struct({ Command: Schema.Struct({ command: Schema.String }) }),
-		Schema.Struct({
-			FileChange: Schema.Struct({ files: Schema.Array(FileChange) }),
-		}),
-		Schema.Struct({
-			Other: Schema.Struct({ detail: Schema.String, name: Schema.String }),
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Command: Schema.Struct({ command: Schema.String }) }),
+    Schema.Struct({ FileChange: Schema.Struct({ files: Schema.Array(FileChange) }) }),
+    Schema.Struct({ Other: Schema.Struct({ detail: Schema.String, name: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "ToolKind" });
 
 export type ToolOutcome = "Succeeded" | "Failed" | "Declined";
 
-export const ToolOutcome = Schema.Literals([
-	"Succeeded",
-	"Failed",
-	"Declined",
-]).annotate({ identifier: "ToolOutcome" });
+export const ToolOutcome = Schema.Literals(["Succeeded", "Failed", "Declined"]).annotate({
+  identifier: "ToolOutcome",
+});
 
 export type ToolPhase =
-	| { readonly Started: { readonly tool: ToolKind } }
-	| { readonly Finished: { readonly outcome: ToolOutcome } };
+  | { readonly Started: { readonly tool: ToolKind } }
+  | { readonly Finished: { readonly outcome: ToolOutcome } };
 
 export const ToolPhase = Schema.Union(
-	[
-		Schema.Struct({ Started: Schema.Struct({ tool: ToolKind }) }),
-		Schema.Struct({ Finished: Schema.Struct({ outcome: ToolOutcome }) }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Started: Schema.Struct({ tool: ToolKind }) }),
+    Schema.Struct({ Finished: Schema.Struct({ outcome: ToolOutcome }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "ToolPhase" });
 
 export type Output =
-	| { readonly AssistantDelta: { readonly text: string } }
-	| { readonly AssistantMessage: { readonly text: string } }
-	| { readonly ReasoningDelta: { readonly text: string } }
-	| { readonly Reasoning: { readonly text: string } }
-	| {
-			readonly ToolCall: {
-				readonly call: ToolCallId;
-				readonly phase: ToolPhase;
-			};
-	  }
-	| { readonly Error: { readonly message: string } };
+  | { readonly AssistantDelta: { readonly text: string } }
+  | { readonly AssistantMessage: { readonly text: string } }
+  | { readonly ReasoningDelta: { readonly text: string } }
+  | { readonly Reasoning: { readonly text: string } }
+  | { readonly ToolCall: { readonly call: ToolCallId; readonly phase: ToolPhase } }
+  | { readonly Error: { readonly message: string } };
 
 export const Output = Schema.Union(
-	[
-		Schema.Struct({
-			AssistantDelta: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"A fragment of the assistant message being streamed. The\n`AssistantMessage` that follows replaces them.",
-		}),
-		Schema.Struct({
-			AssistantMessage: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
-		}),
-		Schema.Struct({
-			ReasoningDelta: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"A fragment of the agent's reasoning as it streams. The `Reasoning`\nthat follows replaces them.",
-		}),
-		Schema.Struct({
-			Reasoning: Schema.Struct({ text: Schema.String }),
-		}).annotate({
-			description:
-				"The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
-		}),
-		Schema.Struct({
-			ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }),
-		}),
-		Schema.Struct({
-			Error: Schema.Struct({ message: Schema.String }),
-		}).annotate({
-			description: "Something went wrong that did not end the session.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ AssistantDelta: Schema.Struct({ text: Schema.String }) }).annotate({
+      description:
+        "A fragment of the assistant message being streamed. The\n`AssistantMessage` that follows replaces them.",
+    }),
+    Schema.Struct({ AssistantMessage: Schema.Struct({ text: Schema.String }) }).annotate({
+      description:
+        "The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
+    }),
+    Schema.Struct({ ReasoningDelta: Schema.Struct({ text: Schema.String }) }).annotate({
+      description:
+        "A fragment of the agent's reasoning as it streams. The `Reasoning`\nthat follows replaces them.",
+    }),
+    Schema.Struct({ Reasoning: Schema.Struct({ text: Schema.String }) }).annotate({
+      description:
+        "The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
+    }),
+    Schema.Struct({ ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }) }),
+    Schema.Struct({ Error: Schema.Struct({ message: Schema.String }) }).annotate({
+      description: "Something went wrong that did not end the session.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Output" });
 
-export type QuestionOption = {
-	readonly description: string;
-	readonly label: string;
-};
+export type QuestionOption = { readonly description: string; readonly label: string };
 
 export const QuestionOption = Schema.Struct({
-	description: Schema.String,
-	label: Schema.String,
+  description: Schema.String,
+  label: Schema.String,
 }).annotate({ identifier: "QuestionOption" });
 
 export type Selection = "One" | "Many";
 
 export const Selection = Schema.Literals(["One", "Many"]).annotate({
-	description: "How many options the user may choose.",
-	identifier: "Selection",
+  description: "How many options the user may choose.",
+  identifier: "Selection",
 });
 
 export type Question = {
-	readonly header: string;
-	readonly options: globalThis.ReadonlyArray<QuestionOption>;
-	readonly selection: Selection;
-	readonly text: string;
+  readonly header: string;
+  readonly options: globalThis.ReadonlyArray<QuestionOption>;
+  readonly selection: Selection;
+  readonly text: string;
 };
 
 export const Question = Schema.Struct({
-	header: Schema.String.annotate({
-		description: 'A short label for the question, such as "Color".',
-	}),
-	options: Schema.Array(QuestionOption),
-	selection: Selection,
-	text: Schema.String,
+  header: Schema.String.annotate({
+    description: 'A short label for the question, such as "Color".',
+  }),
+  options: Schema.Array(QuestionOption),
+  selection: Selection,
+  text: Schema.String,
 }).annotate({
-	description:
-		"One question. Both agents take any typed text as an answer, so every\nquestion also allows one besides its options.",
-	identifier: "Question",
+  description:
+    "One question. Both agents take any typed text as an answer, so every\nquestion also allows one besides its options.",
+  identifier: "Question",
 });
 
 export type Resolution =
-	| {
-			readonly Decided: {
-				readonly by: ClientName;
-				readonly decision: Decision;
-			};
-	  }
-	| {
-			readonly Answered: {
-				readonly answers: globalThis.ReadonlyArray<Answer>;
-				readonly by: ClientName;
-			};
-	  }
-	| "Withdrawn";
+  | { readonly Decided: { readonly by: ClientName; readonly decision: Decision } }
+  | {
+      readonly Answered: {
+        readonly answers: globalThis.ReadonlyArray<Answer>;
+        readonly by: ClientName;
+      };
+    }
+  | "Withdrawn";
 
 export const Resolution = Schema.Union(
-	[
-		Schema.Struct({
-			Decided: Schema.Struct({ by: ClientName, decision: Decision }),
-		}),
-		Schema.Struct({
-			Answered: Schema.Struct({
-				answers: Schema.Array(Answer),
-				by: ClientName,
-			}),
-		}).annotate({ description: "A question's answers, one per question." }),
-		Schema.Literal("Withdrawn").annotate({
-			description: "The agent withdrew the request before anyone answered.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Decided: Schema.Struct({ by: ClientName, decision: Decision }) }),
+    Schema.Struct({
+      Answered: Schema.Struct({ answers: Schema.Array(Answer), by: ClientName }),
+    }).annotate({ description: "A question's answers, one per question." }),
+    Schema.Literal("Withdrawn").annotate({
+      description: "The agent withdrew the request before anyone answered.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Resolution" });
 
 export type TurnOutcome =
-	| "Completed"
-	| "Interrupted"
-	| { readonly Failed: { readonly message: string } };
+  | "Completed"
+  | "Interrupted"
+  | { readonly Failed: { readonly message: string } };
 
 export const TurnOutcome = Schema.Union(
-	[
-		Schema.Literals(["Completed", "Interrupted"]),
-		Schema.Struct({ Failed: Schema.Struct({ message: Schema.String }) }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["Completed", "Interrupted"]),
+    Schema.Struct({ Failed: Schema.Struct({ message: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "TurnOutcome" });
 
 export type WorkingCopy = string;
 
 export const WorkingCopy = Schema.String.annotate({
-	description:
-		"The directory of the owner's working copy a session was started in,\nwhich its workspace isolates it from, as the host's OS spells it.",
-	identifier: "WorkingCopy",
+  description:
+    "The directory of the owner's working copy a session was started in,\nwhich its workspace isolates it from, as the host's OS spells it.",
+  identifier: "WorkingCopy",
 });
 
 export type Repository = string;
 
 export const Repository = Schema.String.annotate({
-	description:
-		"The root of the repository a session's worktree is added to, as the\nhost's OS spells it.",
-	identifier: "Repository",
+  description:
+    "The root of the repository a session's worktree is added to, as the\nhost's OS spells it.",
+  identifier: "Repository",
 });
 
 export type Worktree = string;
 
 export const Worktree = Schema.String.annotate({
-	description:
-		"The Git worktree that holds a session's workspace, as the host's OS\nspells it.",
-	identifier: "Worktree",
+  description: "The Git worktree that holds a session's workspace, as the host's OS\nspells it.",
+  identifier: "Worktree",
 });
 
 export type Workspace = {
-	readonly branch: string;
-	readonly directory: SessionDirectory;
-	readonly original: WorkingCopy;
-	readonly repository: Repository;
-	readonly worktree: Worktree;
+  readonly branch: string;
+  readonly directory: SessionDirectory;
+  readonly original: WorkingCopy;
+  readonly repository: Repository;
+  readonly worktree: Worktree;
 };
 
 export const Workspace = Schema.Struct({
-	branch: Schema.String,
-	directory: Schema.suspend(
-		(): Schema.Codec<SessionDirectory> => SessionDirectory,
-	).annotate({
-		description:
-			"The worktree's copy of the directory the session was started in.",
-	}),
-	original: WorkingCopy,
-	repository: Repository,
-	worktree: Worktree,
+  branch: Schema.String,
+  directory: Schema.suspend((): Schema.Codec<SessionDirectory> => SessionDirectory).annotate({
+    description: "The worktree's copy of the directory the session was started in.",
+  }),
+  original: WorkingCopy,
+  repository: Repository,
+  worktree: Worktree,
 }).annotate({ identifier: "Workspace" });
 
-export type Snapshot = {
-	readonly commit: string;
-	readonly turn_start: HostSeq | null;
-};
+export type Snapshot = { readonly commit: string; readonly turn_start: HostSeq | null };
 
 export const Snapshot = Schema.Struct({
-	commit: Schema.String,
-	turn_start: Schema.Union([HostSeq, Schema.Null]).annotate({
-		description:
-			"The existing `UserMessage` event for this turn; None for initial/autonomous turns.",
-	}),
+  commit: Schema.String,
+  turn_start: Schema.Union([HostSeq, Schema.Null]).annotate({
+    description:
+      "The existing `UserMessage` event for this turn; None for initial/autonomous turns.",
+  }),
 }).annotate({ identifier: "Snapshot" });
 
 export type SubagentId = string;
 
 export const SubagentId = Schema.String.annotate({
-	description: "A sub-agent's id as its provider gave it (Claude's `task_id`).",
-	identifier: "SubagentId",
+  description: "A sub-agent's id as its provider gave it (Claude's `task_id`).",
+  identifier: "SubagentId",
 });
 
 export type SubagentActivity =
-	| { readonly Message: { readonly text: string } }
-	| { readonly Reasoning: { readonly text: string } }
-	| {
-			readonly ToolCall: {
-				readonly call: ToolCallId;
-				readonly phase: ToolPhase;
-			};
-	  };
+  | { readonly Message: { readonly text: string } }
+  | { readonly Reasoning: { readonly text: string } }
+  | { readonly ToolCall: { readonly call: ToolCallId; readonly phase: ToolPhase } };
 
 export const SubagentActivity = Schema.Union(
-	[
-		Schema.Struct({ Message: Schema.Struct({ text: Schema.String }) }),
-		Schema.Struct({ Reasoning: Schema.Struct({ text: Schema.String }) }),
-		Schema.Struct({
-			ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }),
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Message: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ Reasoning: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "One entry of a sub-agent's own transcript.",
-	identifier: "SubagentActivity",
+  description: "One entry of a sub-agent's own transcript.",
+  identifier: "SubagentActivity",
 });
 
 export type SubagentOutcome = "Finished" | "Failed" | "Stopped";
 
-export const SubagentOutcome = Schema.Literals([
-	"Finished",
-	"Failed",
-	"Stopped",
-]).annotate({ identifier: "SubagentOutcome" });
+export const SubagentOutcome = Schema.Literals(["Finished", "Failed", "Stopped"]).annotate({
+  identifier: "SubagentOutcome",
+});
 
 export type SubagentEvent =
-	| {
-			readonly Started: {
-				readonly call: ToolCallId;
-				readonly description: string;
-			};
-	  }
-	| { readonly Activity: SubagentActivity }
-	| {
-			readonly Ended: {
-				readonly outcome: SubagentOutcome;
-				readonly summary: string | null;
-			};
-	  }
-	| { readonly Kind: { readonly kind: string } }
-	| {
-			readonly ChecklistChanged: {
-				readonly checklist: globalThis.ReadonlyArray<ChecklistEntry>;
-			};
-	  }
-	| {
-			readonly RequestOpened: {
-				readonly call: ToolCallId;
-				readonly for_session: string | null;
-				readonly reason: string | null;
-				readonly request: RequestId;
-				readonly tool: ToolKind;
-			};
-	  }
-	| {
-			readonly QuestionAsked: {
-				readonly questions: globalThis.ReadonlyArray<Question>;
-				readonly request: RequestId;
-			};
-	  };
+  | { readonly Started: { readonly call: ToolCallId; readonly description: string } }
+  | { readonly Activity: SubagentActivity }
+  | { readonly Ended: { readonly outcome: SubagentOutcome; readonly summary: string | null } }
+  | { readonly Kind: { readonly kind: string } }
+  | { readonly ChecklistChanged: { readonly checklist: globalThis.ReadonlyArray<ChecklistEntry> } }
+  | {
+      readonly RequestOpened: {
+        readonly call: ToolCallId;
+        readonly for_session: string | null;
+        readonly reason: string | null;
+        readonly request: RequestId;
+        readonly tool: ToolKind;
+      };
+    }
+  | {
+      readonly QuestionAsked: {
+        readonly questions: globalThis.ReadonlyArray<Question>;
+        readonly request: RequestId;
+      };
+    };
 
 export const SubagentEvent = Schema.Union(
-	[
-		Schema.Struct({
-			Started: Schema.Struct({ call: ToolCallId, description: Schema.String }),
-		}).annotate({
-			description:
-				"The agent's tool call `call` started it. A sub-agent the agent\nresumes starts again under the same id.",
-		}),
-		Schema.Struct({ Activity: SubagentActivity }),
-		Schema.Struct({
-			Ended: Schema.Struct({
-				outcome: SubagentOutcome,
-				summary: Schema.Union([Schema.String, Schema.Null]),
-			}),
-		}).annotate({
-			description:
-				"`summary` is its final report, when its provider gives one.",
-		}),
-		Schema.Struct({ Kind: Schema.Struct({ kind: Schema.String }) }),
-		Schema.Struct({
-			ChecklistChanged: Schema.Struct({
-				checklist: Schema.Array(ChecklistEntry),
-			}),
-		}),
-		Schema.Struct({
-			RequestOpened: Schema.Struct({
-				call: ToolCallId,
-				for_session: Schema.Union([Schema.String, Schema.Null]),
-				reason: Schema.Union([Schema.String, Schema.Null]),
-				request: RequestId,
-				tool: ToolKind,
-			}),
-		}),
-		Schema.Struct({
-			QuestionAsked: Schema.Struct({
-				questions: Schema.Array(Question),
-				request: RequestId,
-			}),
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({
+      Started: Schema.Struct({ call: ToolCallId, description: Schema.String }),
+    }).annotate({
+      description:
+        "The agent's tool call `call` started it. A sub-agent the agent\nresumes starts again under the same id.",
+    }),
+    Schema.Struct({ Activity: SubagentActivity }),
+    Schema.Struct({
+      Ended: Schema.Struct({
+        outcome: SubagentOutcome,
+        summary: Schema.Union([Schema.String, Schema.Null]),
+      }),
+    }).annotate({ description: "`summary` is its final report, when its provider gives one." }),
+    Schema.Struct({ Kind: Schema.Struct({ kind: Schema.String }) }),
+    Schema.Struct({ ChecklistChanged: Schema.Struct({ checklist: Schema.Array(ChecklistEntry) }) }),
+    Schema.Struct({
+      RequestOpened: Schema.Struct({
+        call: ToolCallId,
+        for_session: Schema.Union([Schema.String, Schema.Null]),
+        reason: Schema.Union([Schema.String, Schema.Null]),
+        request: RequestId,
+        tool: ToolKind,
+      }),
+    }),
+    Schema.Struct({
+      QuestionAsked: Schema.Struct({ questions: Schema.Array(Question), request: RequestId }),
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "SubagentEvent" });
 
 export type Kept =
-	| "Local"
-	| { readonly Pushed: { readonly remote: string } }
-	| { readonly PushFailed: { readonly reason: string } };
+  | "Local"
+  | { readonly Pushed: { readonly remote: string } }
+  | { readonly PushFailed: { readonly reason: string } };
 
 export const Kept = Schema.Union(
-	[
-		Schema.Literal("Local").annotate({
-			description: "In the checkout only: it has no `origin`.",
-		}),
-		Schema.Struct({ Pushed: Schema.Struct({ remote: Schema.String }) }),
-		Schema.Struct({
-			PushFailed: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description: "In the checkout only, since the push failed.",
-		}),
-	],
-	{ mode: "oneOf" },
-).annotate({
-	description: "Where a removed session's branch was kept.",
-	identifier: "Kept",
-});
+  [
+    Schema.Literal("Local").annotate({ description: "In the checkout only: it has no `origin`." }),
+    Schema.Struct({ Pushed: Schema.Struct({ remote: Schema.String }) }),
+    Schema.Struct({ PushFailed: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "In the checkout only, since the push failed.",
+    }),
+  ],
+  { mode: "oneOf" },
+).annotate({ description: "Where a removed session's branch was kept.", identifier: "Kept" });
 
 export type Finished =
-	| { readonly Landed: { readonly commits: number; readonly kept: Kept } }
-	| { readonly Failed: { readonly reason: string } };
+  | { readonly Landed: { readonly commits: number; readonly kept: Kept } }
+  | { readonly Failed: { readonly reason: string } };
 
 export const Finished = Schema.Union(
-	[
-		Schema.Struct({
-			Landed: Schema.Struct({
-				commits: Schema.Number.annotate({ format: "uint64" })
-					.check(Schema.isInt().annotate({ expected: "an integer" }))
-					.check(
-						Schema.isGreaterThanOrEqualTo(0).annotate({
-							expected: "a value greater than or equal to 0",
-						}),
-					),
-				kept: Kept,
-			}),
-		}).annotate({
-			description:
-				"The session's branch landed on the issue's with this many commits\nthe issue's lacked, and the issue's branch was kept as `kept` says.",
-		}),
-		Schema.Struct({
-			Failed: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"Nothing landed, for this reason; the session's branch stays.",
-		}),
-	],
-	{ mode: "oneOf" },
-).annotate({
-	description: "How finishing a session on an issue went.",
-	identifier: "Finished",
-});
+  [
+    Schema.Struct({
+      Landed: Schema.Struct({
+        commits: Schema.Number.annotate({ format: "uint64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        kept: Kept,
+      }),
+    }).annotate({
+      description:
+        "The session's branch landed on the issue's with this many commits\nthe issue's lacked, and the issue's branch was kept as `kept` says.",
+    }),
+    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "Nothing landed, for this reason; the session's branch stays.",
+    }),
+  ],
+  { mode: "oneOf" },
+).annotate({ description: "How finishing a session on an issue went.", identifier: "Finished" });
 
 export type EventKind =
-	| {
-			readonly SessionCreated: {
-				readonly by: ClientName;
-				readonly directory: SessionDirectory;
-				readonly effort: Effort | null;
-				readonly instance: InstanceId;
-				readonly model: ModelId | null;
-			};
-	  }
-	| "SessionReady"
-	| { readonly SessionClosed: { readonly reason: CloseReason } }
-	| { readonly UserMessage: { readonly by: ClientName; readonly text: string } }
-	| { readonly Agent: Output }
-	| {
-			readonly RequestOpened: {
-				readonly call: ToolCallId;
-				readonly for_session: string | null;
-				readonly reason: string | null;
-				readonly request: RequestId;
-				readonly tool: ToolKind;
-			};
-	  }
-	| {
-			readonly QuestionAsked: {
-				readonly questions: globalThis.ReadonlyArray<Question>;
-				readonly request: RequestId;
-			};
-	  }
-	| {
-			readonly RequestResolved: {
-				readonly request: RequestId;
-				readonly resolution: Resolution;
-			};
-	  }
-	| { readonly TurnCompleted: { readonly outcome: TurnOutcome } }
-	| { readonly Error: { readonly message: string } }
-	| {
-			readonly ModelChanged: {
-				readonly effort: Effort | null;
-				readonly model: ModelId | null;
-				readonly reason: string;
-			};
-	  }
-	| { readonly WorkspaceCreated: { readonly workspace: Workspace } }
-	| { readonly SnapshotRecorded: { readonly snapshot: Snapshot } }
-	| { readonly NativeTurnStarted: { readonly turn_start: HostSeq | null } }
-	| {
-			readonly ChecklistChanged: {
-				readonly checklist: globalThis.ReadonlyArray<ChecklistEntry>;
-			};
-	  }
-	| { readonly EffortChanged: { readonly effort: Effort } }
-	| {
-			readonly Subagent: {
-				readonly agent: SubagentId;
-				readonly event: SubagentEvent;
-			};
-	  }
-	| { readonly SessionRemoved: { readonly kept: Kept | null } }
-	| { readonly OnIssue: { readonly issue: IssueId } }
-	| { readonly SessionFinished: { readonly finished: Finished } }
-	| "FinishStarted"
-	| "FinishInterrupted";
+  | {
+      readonly SessionCreated: {
+        readonly by: ClientName;
+        readonly directory: SessionDirectory;
+        readonly effort: Effort | null;
+        readonly instance: InstanceId;
+        readonly model: ModelId | null;
+      };
+    }
+  | "SessionReady"
+  | { readonly SessionClosed: { readonly reason: CloseReason } }
+  | { readonly UserMessage: { readonly by: ClientName; readonly text: string } }
+  | { readonly Agent: Output }
+  | {
+      readonly RequestOpened: {
+        readonly call: ToolCallId;
+        readonly for_session: string | null;
+        readonly reason: string | null;
+        readonly request: RequestId;
+        readonly tool: ToolKind;
+      };
+    }
+  | {
+      readonly QuestionAsked: {
+        readonly questions: globalThis.ReadonlyArray<Question>;
+        readonly request: RequestId;
+      };
+    }
+  | { readonly RequestResolved: { readonly request: RequestId; readonly resolution: Resolution } }
+  | { readonly TurnCompleted: { readonly outcome: TurnOutcome } }
+  | { readonly Error: { readonly message: string } }
+  | {
+      readonly ModelChanged: {
+        readonly effort: Effort | null;
+        readonly model: ModelId | null;
+        readonly reason: string;
+      };
+    }
+  | { readonly WorkspaceCreated: { readonly workspace: Workspace } }
+  | { readonly SnapshotRecorded: { readonly snapshot: Snapshot } }
+  | { readonly NativeTurnStarted: { readonly turn_start: HostSeq | null } }
+  | { readonly ChecklistChanged: { readonly checklist: globalThis.ReadonlyArray<ChecklistEntry> } }
+  | { readonly EffortChanged: { readonly effort: Effort } }
+  | { readonly Subagent: { readonly agent: SubagentId; readonly event: SubagentEvent } }
+  | { readonly SessionRemoved: { readonly kept: Kept | null } }
+  | { readonly OnIssue: { readonly issue: IssueId } }
+  | { readonly SessionFinished: { readonly finished: Finished } }
+  | "FinishStarted"
+  | "FinishInterrupted";
 
 export const EventKind = Schema.Union(
-	[
-		Schema.Struct({
-			SessionCreated: Schema.Struct({
-				by: ClientName,
-				directory: SessionDirectory,
-				effort: Schema.Union([Effort, Schema.Null]),
-				instance: InstanceId,
-				model: Schema.Union([ModelId, Schema.Null]),
-			}),
-		}).annotate({
-			description:
-				"`model` and `effort` are what the agent runs with; `None` is the\nCLI's own default. A `Continue` runs on `instance` again.",
-		}),
-		Schema.Literal("SessionReady").annotate({
-			description:
-				"The agent process is up and takes messages: at the start, and again\nafter a `Continue`.",
-		}),
-		Schema.Struct({ SessionClosed: Schema.Struct({ reason: CloseReason }) }),
-		Schema.Struct({
-			UserMessage: Schema.Struct({ by: ClientName, text: Schema.String }),
-		}),
-		Schema.Struct({ Agent: Output }).annotate({
-			description:
-				"What the agent produced. An `AssistantDelta` or a `ReasoningDelta`\nis live only: the host stores none, so a subscription never replays\none, and the message or reasoning that follows replaces them. It\ncarries the seq of the stored event before it, which may be another\nsession's, so a client that has applied that seq takes it and one\nthat hasn't sees a gap.",
-		}),
-		Schema.Struct({
-			RequestOpened: Schema.Struct({
-				call: ToolCallId,
-				for_session: Schema.Union([Schema.String, Schema.Null]),
-				reason: Schema.Union([Schema.String, Schema.Null]),
-				request: RequestId,
-				tool: ToolKind,
-			}),
-		}).annotate({
-			description:
-				"An approval the tool call `call` waits on. `tool` repeats what the\ncall's `Started` said, so a client can show the request on its own.\n`reason` is the agent's own words for why it asks, when it gives any.\n`for_session` names what `ApproveForSession` would allow, in the\nagent's words (`Bash(git status)`, or the command), when it offers\nthat.",
-		}),
-		Schema.Struct({
-			QuestionAsked: Schema.Struct({
-				questions: Schema.Array(Question),
-				request: RequestId,
-			}),
-		}).annotate({
-			description:
-				"The agent asks the user one or more questions and waits for an\n`Answer`. `RequestResolved` closes it, as it does an approval.",
-		}),
-		Schema.Struct({
-			RequestResolved: Schema.Struct({
-				request: RequestId,
-				resolution: Resolution,
-			}),
-		}),
-		Schema.Struct({ TurnCompleted: Schema.Struct({ outcome: TurnOutcome }) }),
-		Schema.Struct({
-			Error: Schema.Struct({ message: Schema.String }),
-		}).annotate({
-			description:
-				"Something went wrong in the host, such as a snapshot or a removal,\nthat did not end the session. An error the agent reports is its\n`Output::Error`.",
-		}),
-		Schema.Struct({
-			ModelChanged: Schema.Struct({
-				effort: Schema.Union([Effort, Schema.Null]),
-				model: Schema.Union([ModelId, Schema.Null]),
-				reason: Schema.String,
-			}),
-		}).annotate({
-			description:
-				"A `Continue` runs the agent on another model, because the current\ncredential no longer offers the one it ran, as `reason` says.",
-		}),
-		Schema.Struct({
-			WorkspaceCreated: Schema.Struct({ workspace: Workspace }),
-		}).annotate({
-			description:
-				"The session's managed worktree, logged before its first snapshot.",
-		}),
-		Schema.Struct({ SnapshotRecorded: Schema.Struct({ snapshot: Snapshot }) }),
-		Schema.Struct({
-			NativeTurnStarted: Schema.Struct({
-				turn_start: Schema.Union([HostSeq, Schema.Null]),
-			}),
-		}),
-		Schema.Struct({
-			ChecklistChanged: Schema.Struct({
-				checklist: Schema.Array(ChecklistEntry),
-			}),
-		}),
-		Schema.Struct({
-			EffortChanged: Schema.Struct({ effort: Effort }),
-		}).annotate({
-			description:
-				"The effort of the session's later turns, after a `SetEffort`.",
-		}),
-		Schema.Struct({
-			Subagent: Schema.Struct({ agent: SubagentId, event: SubagentEvent }),
-		}).annotate({
-			description:
-				"A sub-agent belongs to its session: its events are the session's, in\nthe session's log, and it has no session of its own.",
-		}),
-		Schema.Struct({
-			SessionRemoved: Schema.Struct({
-				kept: Schema.Union([Kept, Schema.Null]),
-			}),
-		}).annotate({
-			description:
-				"The session's workspace is gone and its branch kept as `kept` says;\n`None` when it had no workspace. Nothing follows it.",
-		}),
-		Schema.Struct({ OnIssue: Schema.Struct({ issue: IssueId }) }).annotate({
-			description:
-				"The session works on this issue, on a branch cut from the issue's.\nIt follows `SessionCreated`.",
-		}),
-		Schema.Struct({
-			SessionFinished: Schema.Struct({ finished: Finished }),
-		}).annotate({ description: "What finishing the session did." }),
-		Schema.Literal("FinishStarted").annotate({
-			description:
-				"Finishing the session has begun; `SessionFinished` ends it.",
-		}),
-		Schema.Literal("FinishInterrupted").annotate({
-			description: "A restarted host can resume the interrupted landing.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({
+      SessionCreated: Schema.Struct({
+        by: ClientName,
+        directory: SessionDirectory,
+        effort: Schema.Union([Effort, Schema.Null]),
+        instance: InstanceId,
+        model: Schema.Union([ModelId, Schema.Null]),
+      }),
+    }).annotate({
+      description:
+        "`model` and `effort` are what the agent runs with; `None` is the\nCLI's own default. A `Continue` runs on `instance` again.",
+    }),
+    Schema.Literal("SessionReady").annotate({
+      description:
+        "The agent process is up and takes messages: at the start, and again\nafter a `Continue`.",
+    }),
+    Schema.Struct({ SessionClosed: Schema.Struct({ reason: CloseReason }) }),
+    Schema.Struct({ UserMessage: Schema.Struct({ by: ClientName, text: Schema.String }) }),
+    Schema.Struct({ Agent: Output }).annotate({
+      description:
+        "What the agent produced. An `AssistantDelta` or a `ReasoningDelta`\nis live only: the host stores none, so a subscription never replays\none, and the message or reasoning that follows replaces them. It\ncarries the seq of the stored event before it, which may be another\nsession's, so a client that has applied that seq takes it and one\nthat hasn't sees a gap.",
+    }),
+    Schema.Struct({
+      RequestOpened: Schema.Struct({
+        call: ToolCallId,
+        for_session: Schema.Union([Schema.String, Schema.Null]),
+        reason: Schema.Union([Schema.String, Schema.Null]),
+        request: RequestId,
+        tool: ToolKind,
+      }),
+    }).annotate({
+      description:
+        "An approval the tool call `call` waits on. `tool` repeats what the\ncall's `Started` said, so a client can show the request on its own.\n`reason` is the agent's own words for why it asks, when it gives any.\n`for_session` names what `ApproveForSession` would allow, in the\nagent's words (`Bash(git status)`, or the command), when it offers\nthat.",
+    }),
+    Schema.Struct({
+      QuestionAsked: Schema.Struct({ questions: Schema.Array(Question), request: RequestId }),
+    }).annotate({
+      description:
+        "The agent asks the user one or more questions and waits for an\n`Answer`. `RequestResolved` closes it, as it does an approval.",
+    }),
+    Schema.Struct({
+      RequestResolved: Schema.Struct({ request: RequestId, resolution: Resolution }),
+    }),
+    Schema.Struct({ TurnCompleted: Schema.Struct({ outcome: TurnOutcome }) }),
+    Schema.Struct({ Error: Schema.Struct({ message: Schema.String }) }).annotate({
+      description:
+        "Something went wrong in the host, such as a snapshot or a removal,\nthat did not end the session. An error the agent reports is its\n`Output::Error`.",
+    }),
+    Schema.Struct({
+      ModelChanged: Schema.Struct({
+        effort: Schema.Union([Effort, Schema.Null]),
+        model: Schema.Union([ModelId, Schema.Null]),
+        reason: Schema.String,
+      }),
+    }).annotate({
+      description:
+        "A `Continue` runs the agent on another model, because the current\ncredential no longer offers the one it ran, as `reason` says.",
+    }),
+    Schema.Struct({ WorkspaceCreated: Schema.Struct({ workspace: Workspace }) }).annotate({
+      description: "The session's managed worktree, logged before its first snapshot.",
+    }),
+    Schema.Struct({ SnapshotRecorded: Schema.Struct({ snapshot: Snapshot }) }),
+    Schema.Struct({
+      NativeTurnStarted: Schema.Struct({ turn_start: Schema.Union([HostSeq, Schema.Null]) }),
+    }),
+    Schema.Struct({ ChecklistChanged: Schema.Struct({ checklist: Schema.Array(ChecklistEntry) }) }),
+    Schema.Struct({ EffortChanged: Schema.Struct({ effort: Effort }) }).annotate({
+      description: "The effort of the session's later turns, after a `SetEffort`.",
+    }),
+    Schema.Struct({
+      Subagent: Schema.Struct({ agent: SubagentId, event: SubagentEvent }),
+    }).annotate({
+      description:
+        "A sub-agent belongs to its session: its events are the session's, in\nthe session's log, and it has no session of its own.",
+    }),
+    Schema.Struct({
+      SessionRemoved: Schema.Struct({ kept: Schema.Union([Kept, Schema.Null]) }),
+    }).annotate({
+      description:
+        "The session's workspace is gone and its branch kept as `kept` says;\n`None` when it had no workspace. Nothing follows it.",
+    }),
+    Schema.Struct({ OnIssue: Schema.Struct({ issue: IssueId }) }).annotate({
+      description:
+        "The session works on this issue, on a branch cut from the issue's.\nIt follows `SessionCreated`.",
+    }),
+    Schema.Struct({ SessionFinished: Schema.Struct({ finished: Finished }) }).annotate({
+      description: "What finishing the session did.",
+    }),
+    Schema.Literal("FinishStarted").annotate({
+      description: "Finishing the session has begun; `SessionFinished` ends it.",
+    }),
+    Schema.Literal("FinishInterrupted").annotate({
+      description: "A restarted host can resume the interrupted landing.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "EventKind" });
 
 export type Event = {
-	readonly kind: EventKind;
-	readonly seq: HostSeq;
-	readonly session: SessionId;
+  readonly kind: EventKind;
+  readonly seq: HostSeq;
+  readonly session: SessionId;
 };
 
-export const Event = Schema.Struct({
-	kind: EventKind,
-	seq: HostSeq,
-	session: SessionId,
-}).annotate({
-	description:
-		"Every event names its session. A stored event has a seq of its own; an\n`AssistantDelta` repeats the last one's.",
-	identifier: "Event",
+export const Event = Schema.Struct({ kind: EventKind, seq: HostSeq, session: SessionId }).annotate({
+  description:
+    "Every event names its session. A stored event has a seq of its own; an\n`AssistantDelta` repeats the last one's.",
+  identifier: "Event",
 });
 
 export type SignInStep =
-	| "SignedIn"
-	| "Starting"
-	| {
-			readonly Open: {
-				readonly code: string | null;
-				readonly paste: boolean;
-				readonly url: string;
-			};
-	  }
-	| "Finishing"
-	| { readonly Failed: { readonly reason: string } }
-	| "Cancelled";
+  | "SignedIn"
+  | "Starting"
+  | {
+      readonly Open: {
+        readonly code: string | null;
+        readonly paste: boolean;
+        readonly url: string;
+      };
+    }
+  | "Finishing"
+  | { readonly Failed: { readonly reason: string } }
+  | "Cancelled";
 
 export const SignInStep = Schema.Union(
-	[
-		Schema.Literal("SignedIn"),
-		Schema.Literal("Starting").annotate({
-			description:
-				"The host is starting the CLI's sign-in in the instance's home.",
-		}),
-		Schema.Struct({
-			Open: Schema.Struct({
-				code: Schema.Union([Schema.String, Schema.Null]),
-				paste: Schema.Boolean,
-				url: Schema.String,
-			}),
-		}).annotate({
-			description:
-				"The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitCode`.",
-		}),
-		Schema.Literal("Finishing").annotate({
-			description:
-				"The CLI has what it needs: it finishes, and the host checks the\nhome and lists the instance's models.",
-		}),
-		Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
-		Schema.Literal("Cancelled").annotate({
-			description: "Cancelled from a client: no sign-in runs on the instance.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("SignedIn"),
+    Schema.Literal("Starting").annotate({
+      description: "The host is starting the CLI's sign-in in the instance's home.",
+    }),
+    Schema.Struct({
+      Open: Schema.Struct({
+        code: Schema.Union([Schema.String, Schema.Null]),
+        paste: Schema.Boolean,
+        url: Schema.String,
+      }),
+    }).annotate({
+      description:
+        "The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitCode`.",
+    }),
+    Schema.Literal("Finishing").annotate({
+      description:
+        "The CLI has what it needs: it finishes, and the host checks the\nhome and lists the instance's models.",
+    }),
+    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Literal("Cancelled").annotate({
+      description: "Cancelled from a client: no sign-in runs on the instance.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "SignInStep" });
 
-export type SignIn = {
-	readonly instance: InstanceId;
-	readonly step: SignInStep;
-};
+export type SignIn = { readonly instance: InstanceId; readonly step: SignInStep };
 
-export const SignIn = Schema.Struct({
-	instance: InstanceId,
-	step: SignInStep,
-}).annotate({ identifier: "SignIn" });
+export const SignIn = Schema.Struct({ instance: InstanceId, step: SignInStep }).annotate({
+  identifier: "SignIn",
+});
 
 export type FieldRole = "labels" | "branch" | "created";
 
 export const FieldRole = Schema.Union(
-	[
-		Schema.Literal("labels").annotate({
-			description:
-				"The words the app shows on an issue and edits beside its title.",
-		}),
-		Schema.Literal("branch").annotate({
-			description: "The branch its sessions land on, in place of `issue/<id>`.",
-		}),
-		Schema.Literal("created").annotate({
-			description: "When it was opened, which opening it writes.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("labels").annotate({
+      description: "The words the app shows on an issue and edits beside its title.",
+    }),
+    Schema.Literal("branch").annotate({
+      description: "The branch its sessions land on, in place of `issue/<id>`.",
+    }),
+    Schema.Literal("created").annotate({
+      description: "When it was opened, which opening it writes.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		"What a field means to Conductor, whatever the flow calls it. At most\none field has each.",
-	identifier: "FieldRole",
+  description:
+    "What a field means to Conductor, whatever the flow calls it. At most\none field has each.",
+  identifier: "FieldRole",
 });
 
 export type FieldType =
-	| "Text"
-	| "Texts"
-	| "Time"
-	| "Bool"
-	| { readonly Enum: globalThis.ReadonlyArray<string> };
+  | "Text"
+  | "Texts"
+  | "Time"
+  | "Bool"
+  | { readonly Enum: globalThis.ReadonlyArray<string> };
 
 export const FieldType = Schema.Union(
-	[
-		Schema.Literals(["Text", "Texts", "Time", "Bool"]),
-		Schema.Struct({ Enum: Schema.Array(Schema.String) }).annotate({
-			description: "One of these words.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literals(["Text", "Texts", "Time", "Bool"]),
+    Schema.Struct({ Enum: Schema.Array(Schema.String) }).annotate({
+      description: "One of these words.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "FieldType" });
 
 export type FlowField = {
-	readonly default: Datum | null;
-	readonly name: string;
-	readonly role: FieldRole | null;
-	readonly value: FieldType;
+  readonly default: Datum | null;
+  readonly name: string;
+  readonly role: FieldRole | null;
+  readonly value: FieldType;
 };
 
 export const FlowField = Schema.Struct({
-	default: Schema.Union([Datum, Schema.Null]).annotate({
-		description: "What an issue that leaves it out has, of its type.",
-	}),
-	name: Schema.String,
-	role: Schema.Union([FieldRole, Schema.Null]),
-	value: FieldType,
+  default: Schema.Union([Datum, Schema.Null]).annotate({
+    description: "What an issue that leaves it out has, of its type.",
+  }),
+  name: Schema.String,
+  role: Schema.Union([FieldRole, Schema.Null]),
+  value: FieldType,
 }).annotate({ identifier: "FlowField" });
 
 export type Kind = {
-	readonly colour: string | null;
-	readonly fields: globalThis.ReadonlyArray<FlowField>;
-	readonly icon: string | null;
-	readonly label: string;
-	readonly name: string;
-	readonly order: globalThis.ReadonlyArray<string>;
-	readonly sections: globalThis.ReadonlyArray<string>;
+  readonly colour: string | null;
+  readonly fields: globalThis.ReadonlyArray<FlowField>;
+  readonly icon: string | null;
+  readonly label: string;
+  readonly name: string;
+  readonly order: globalThis.ReadonlyArray<string>;
+  readonly sections: globalThis.ReadonlyArray<string>;
 };
 
 export const Kind = Schema.Struct({
-	colour: Schema.Union([Schema.String, Schema.Null]),
-	fields: Schema.Array(FlowField).annotate({
-		description: "Its own fields, beyond those every kind has.",
-	}),
-	icon: Schema.Union([Schema.String, Schema.Null]),
-	label: Schema.String,
-	name: Schema.String,
-	order: Schema.Array(Schema.String).annotate({
-		description: "The fields and relations the app shows first, in this order.",
-	}),
-	sections: Schema.Array(Schema.String).annotate({
-		description: "The headings its body is expected to have.",
-	}),
+  colour: Schema.Union([Schema.String, Schema.Null]),
+  fields: Schema.Array(FlowField).annotate({
+    description: "Its own fields, beyond those every kind has.",
+  }),
+  icon: Schema.Union([Schema.String, Schema.Null]),
+  label: Schema.String,
+  name: Schema.String,
+  order: Schema.Array(Schema.String).annotate({
+    description: "The fields and relations the app shows first, in this order.",
+  }),
+  sections: Schema.Array(Schema.String).annotate({
+    description: "The headings its body is expected to have.",
+  }),
 }).annotate({ identifier: "Kind" });
 
 export type Shape = "hierarchy" | "dependency";
 
 export const Shape = Schema.Union(
-	[
-		Schema.Literal("hierarchy").annotate({ description: "Drawn as a tree." }),
-		Schema.Literal("dependency").annotate({ description: "Drawn as a graph." }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("hierarchy").annotate({ description: "Drawn as a tree." }),
+    Schema.Literal("dependency").annotate({ description: "Drawn as a graph." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Shape" });
 
 export type Relation = {
-	readonly cycles: boolean;
-	readonly from: globalThis.ReadonlyArray<string>;
-	readonly many: boolean;
-	readonly name: string;
-	readonly reverse: string;
-	readonly shape: Shape;
-	readonly to: globalThis.ReadonlyArray<string>;
+  readonly cycles: boolean;
+  readonly from: globalThis.ReadonlyArray<string>;
+  readonly many: boolean;
+  readonly name: string;
+  readonly reverse: string;
+  readonly shape: Shape;
+  readonly to: globalThis.ReadonlyArray<string>;
 };
 
 export const Relation = Schema.Struct({
-	cycles: Schema.Boolean.annotate({ default: false }),
-	from: Schema.Array(Schema.String).annotate({
-		description: "The kinds it may start from; any kind when empty.",
-		default: [],
-	}),
-	many: Schema.Boolean.annotate({ default: false }),
-	name: Schema.String,
-	reverse: Schema.String.annotate({
-		description: "Its name followed backwards, from the issue it points to.",
-	}),
-	shape: Shape,
-	to: Schema.Array(Schema.String).annotate({
-		description: "The kinds it may point to; any kind when empty.",
-		default: [],
-	}),
+  cycles: Schema.Boolean.annotate({ default: false }),
+  from: Schema.Array(Schema.String).annotate({
+    description: "The kinds it may start from; any kind when empty.",
+    default: [],
+  }),
+  many: Schema.Boolean.annotate({ default: false }),
+  name: Schema.String,
+  reverse: Schema.String.annotate({
+    description: "Its name followed backwards, from the issue it points to.",
+  }),
+  shape: Shape,
+  to: Schema.Array(Schema.String).annotate({
+    description: "The kinds it may point to; any kind when empty.",
+    default: [],
+  }),
 }).annotate({ identifier: "Relation" });
 
-export type Role =
-	| "idle"
-	| "startable"
-	| "active"
-	| "review"
-	| "terminal"
-	| "dropped";
+export type Role = "idle" | "startable" | "active" | "review" | "terminal" | "dropped";
 
 export const Role = Schema.Union(
-	[
-		Schema.Literal("idle").annotate({ description: "Waiting to be taken up." }),
-		Schema.Literal("startable").annotate({
-			description: "Ready for a session to start on.",
-		}),
-		Schema.Literal("active").annotate({ description: "Being worked on." }),
-		Schema.Literal("review").annotate({
-			description: "Waiting for someone to look at what was done.",
-		}),
-		Schema.Literal("terminal").annotate({ description: "Finished." }),
-		Schema.Literal("dropped").annotate({ description: "Given up." }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("idle").annotate({ description: "Waiting to be taken up." }),
+    Schema.Literal("startable").annotate({ description: "Ready for a session to start on." }),
+    Schema.Literal("active").annotate({ description: "Being worked on." }),
+    Schema.Literal("review").annotate({
+      description: "Waiting for someone to look at what was done.",
+    }),
+    Schema.Literal("terminal").annotate({ description: "Finished." }),
+    Schema.Literal("dropped").annotate({ description: "Given up." }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "What a status means to Conductor, whatever the flow calls it.",
-	identifier: "Role",
+  description: "What a status means to Conductor, whatever the flow calls it.",
+  identifier: "Role",
 });
 
 export type Literal = { readonly Text: string } | { readonly Bool: boolean };
 
 export const Literal = Schema.Union(
-	[
-		Schema.Struct({ Text: Schema.String }),
-		Schema.Struct({ Bool: Schema.Boolean }),
-	],
-	{ mode: "oneOf" },
+  [Schema.Struct({ Text: Schema.String }), Schema.Struct({ Bool: Schema.Boolean })],
+  { mode: "oneOf" },
 ).annotate({ identifier: "Literal" });
 
 export type Quantifier = "Any" | "All" | "None";
 
 export const Quantifier = Schema.Literals(["Any", "All", "None"]).annotate({
-	identifier: "Quantifier",
+  identifier: "Quantifier",
 });
 
 export type Predicate =
-	| { readonly Kind: string }
-	| { readonly Stage: string }
-	| { readonly StatusRole: Role }
-	| { readonly Field: { readonly name: string; readonly value: Literal } }
-	| { readonly Has: string }
-	| { readonly HasSection: string }
-	| { readonly From: Predicate }
-	| { readonly To: Predicate }
-	| { readonly All: globalThis.ReadonlyArray<Predicate> }
-	| { readonly Any: globalThis.ReadonlyArray<Predicate> }
-	| { readonly Not: Predicate }
-	| {
-			readonly Across: {
-				readonly condition: Predicate;
-				readonly quantifier: Quantifier;
-				readonly via: string;
-			};
-	  };
+  | { readonly Kind: string }
+  | { readonly Stage: string }
+  | { readonly StatusRole: Role }
+  | { readonly Field: { readonly name: string; readonly value: Literal } }
+  | { readonly Has: string }
+  | { readonly HasSection: string }
+  | { readonly From: Predicate }
+  | { readonly To: Predicate }
+  | { readonly All: globalThis.ReadonlyArray<Predicate> }
+  | { readonly Any: globalThis.ReadonlyArray<Predicate> }
+  | { readonly Not: Predicate }
+  | {
+      readonly Across: {
+        readonly condition: Predicate;
+        readonly quantifier: Quantifier;
+        readonly via: string;
+      };
+    };
 
 export const Predicate = Schema.Union(
-	[
-		Schema.Struct({ Kind: Schema.String }),
-		Schema.Struct({ Stage: Schema.String }),
-		Schema.Struct({ StatusRole: Role }),
-		Schema.Struct({
-			Field: Schema.Struct({ name: Schema.String, value: Literal }),
-		}),
-		Schema.Struct({ Has: Schema.String }).annotate({
-			description: "It has this field, this relation, or a stage.",
-		}),
-		Schema.Struct({ HasSection: Schema.String }),
-		Schema.Struct({
-			From: Schema.suspend((): Schema.Codec<Predicate> => Predicate),
-		}).annotate({
-			description:
-				"While a move is weighed: the issue as it was. Only a rule's\n`when` has it.",
-		}),
-		Schema.Struct({
-			To: Schema.suspend((): Schema.Codec<Predicate> => Predicate),
-		}).annotate({
-			description:
-				"While a move is weighed: the issue as it would be. Only a rule's\n`when` has it.",
-		}),
-		Schema.Struct({
-			All: Schema.Array(
-				Schema.suspend((): Schema.Codec<Predicate> => Predicate),
-			),
-		}),
-		Schema.Struct({
-			Any: Schema.Array(
-				Schema.suspend((): Schema.Codec<Predicate> => Predicate),
-			),
-		}),
-		Schema.Struct({
-			Not: Schema.suspend((): Schema.Codec<Predicate> => Predicate),
-		}),
-		Schema.Struct({
-			Across: Schema.Struct({
-				condition: Schema.suspend((): Schema.Codec<Predicate> => Predicate),
-				quantifier: Quantifier,
-				via: Schema.String,
-			}),
-		}).annotate({
-			description:
-				"The issues reached through a relation, or its reverse, meet the\ncondition: any, all or none of them.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Kind: Schema.String }),
+    Schema.Struct({ Stage: Schema.String }),
+    Schema.Struct({ StatusRole: Role }),
+    Schema.Struct({ Field: Schema.Struct({ name: Schema.String, value: Literal }) }),
+    Schema.Struct({ Has: Schema.String }).annotate({
+      description: "It has this field, this relation, or a stage.",
+    }),
+    Schema.Struct({ HasSection: Schema.String }),
+    Schema.Struct({ From: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }).annotate({
+      description: "While a move is weighed: the issue as it was. Only a rule's\n`when` has it.",
+    }),
+    Schema.Struct({ To: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }).annotate({
+      description:
+        "While a move is weighed: the issue as it would be. Only a rule's\n`when` has it.",
+    }),
+    Schema.Struct({ All: Schema.Array(Schema.suspend((): Schema.Codec<Predicate> => Predicate)) }),
+    Schema.Struct({ Any: Schema.Array(Schema.suspend((): Schema.Codec<Predicate> => Predicate)) }),
+    Schema.Struct({ Not: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }),
+    Schema.Struct({
+      Across: Schema.Struct({
+        condition: Schema.suspend((): Schema.Codec<Predicate> => Predicate),
+        quantifier: Quantifier,
+        via: Schema.String,
+      }),
+    }).annotate({
+      description:
+        "The issues reached through a relation, or its reverse, meet the\ncondition: any, all or none of them.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "A condition on an issue, among the issues it relates to.",
-	identifier: "Predicate",
+  description: "A condition on an issue, among the issues it relates to.",
+  identifier: "Predicate",
 });
 
 export type Severity = "warn" | "error";
 
-export const Severity = Schema.Literals(["warn", "error"]).annotate({
-	identifier: "Severity",
-});
+export const Severity = Schema.Literals(["warn", "error"]).annotate({ identifier: "Severity" });
 
 export type Rule = {
-	readonly message: string;
-	readonly require: Predicate;
-	readonly severity: Severity;
-	readonly when: Predicate;
+  readonly message: string;
+  readonly require: Predicate;
+  readonly severity: Severity;
+  readonly when: Predicate;
 };
 
 export const Rule = Schema.Struct({
-	message: Schema.String,
-	require: Schema.suspend((): Schema.Codec<Predicate> => Predicate).annotate({
-		description: "What those issues should meet.",
-	}),
-	severity: Severity,
-	when: Schema.suspend((): Schema.Codec<Predicate> => Predicate).annotate({
-		description: "The issues it applies to.",
-	}),
+  message: Schema.String,
+  require: Schema.suspend((): Schema.Codec<Predicate> => Predicate).annotate({
+    description: "What those issues should meet.",
+  }),
+  severity: Severity,
+  when: Schema.suspend((): Schema.Codec<Predicate> => Predicate).annotate({
+    description: "The issues it applies to.",
+  }),
 }).annotate({ identifier: "Rule" });
 
 export type Stage = {
-	readonly name: string;
-	readonly next: globalThis.ReadonlyArray<string>;
-	readonly sign_off: boolean;
-	readonly skills: globalThis.ReadonlyArray<string>;
+  readonly name: string;
+  readonly next: globalThis.ReadonlyArray<string>;
+  readonly sign_off: boolean;
+  readonly skills: globalThis.ReadonlyArray<string>;
 };
 
 export const Stage = Schema.Struct({
-	name: Schema.String,
-	next: Schema.Array(Schema.String).annotate({
-		description: "The stages it usually moves to; any other move is unusual.",
-		default: [],
-	}),
-	sign_off: Schema.Boolean.annotate({
-		description: "Whether the owner signs off before work moves on.",
-		default: false,
-	}),
-	skills: Schema.Array(Schema.String).annotate({
-		description: "The skills that serve it, the first one leading.",
-		default: [],
-	}),
+  name: Schema.String,
+  next: Schema.Array(Schema.String).annotate({
+    description: "The stages it usually moves to; any other move is unusual.",
+    default: [],
+  }),
+  sign_off: Schema.Boolean.annotate({
+    description: "Whether the owner signs off before work moves on.",
+    default: false,
+  }),
+  skills: Schema.Array(Schema.String).annotate({
+    description: "The skills that serve it, the first one leading.",
+    default: [],
+  }),
 }).annotate({ identifier: "Stage" });
 
-export type Status = {
-	readonly colour: string | null;
-	readonly name: string;
-	readonly role: Role;
-};
+export type Status = { readonly colour: string | null; readonly name: string; readonly role: Role };
 
 export const Status = Schema.Struct({
-	colour: Schema.Union([Schema.String, Schema.Null]),
-	name: Schema.String,
-	role: Role,
+  colour: Schema.Union([Schema.String, Schema.Null]),
+  name: Schema.String,
+  role: Role,
 }).annotate({ identifier: "Status" });
 
 export type Flow = {
-	readonly default_kind: string;
-	readonly fields: globalThis.ReadonlyArray<FlowField>;
-	readonly kinds: globalThis.ReadonlyArray<Kind>;
-	readonly relations: globalThis.ReadonlyArray<Relation>;
-	readonly rules: globalThis.ReadonlyArray<Rule>;
-	readonly stages: globalThis.ReadonlyArray<Stage>;
-	readonly statuses: globalThis.ReadonlyArray<Status>;
+  readonly default_kind: string;
+  readonly fields: globalThis.ReadonlyArray<FlowField>;
+  readonly kinds: globalThis.ReadonlyArray<Kind>;
+  readonly relations: globalThis.ReadonlyArray<Relation>;
+  readonly rules: globalThis.ReadonlyArray<Rule>;
+  readonly stages: globalThis.ReadonlyArray<Stage>;
+  readonly statuses: globalThis.ReadonlyArray<Status>;
 };
 
 export const Flow = Schema.Struct({
-	default_kind: Schema.String.annotate({
-		description: "The kind of an issue that names none.",
-	}),
-	fields: Schema.Array(FlowField).annotate({
-		description: "The fields every kind has.",
-	}),
-	kinds: Schema.Array(Kind),
-	relations: Schema.Array(Relation),
-	rules: Schema.Array(Rule),
-	stages: Schema.Array(Stage),
-	statuses: Schema.Array(Status),
+  default_kind: Schema.String.annotate({ description: "The kind of an issue that names none." }),
+  fields: Schema.Array(FlowField).annotate({ description: "The fields every kind has." }),
+  kinds: Schema.Array(Kind),
+  relations: Schema.Array(Relation),
+  rules: Schema.Array(Rule),
+  stages: Schema.Array(Stage),
+  statuses: Schema.Array(Status),
 }).annotate({ identifier: "Flow" });
 
 export type Section = { readonly heading: string; readonly text: string };
 
 export const Section = Schema.Struct({
-	heading: Schema.String.annotate({
-		description: "Empty for the text before the first heading.",
-	}),
-	text: Schema.String,
+  heading: Schema.String.annotate({ description: "Empty for the text before the first heading." }),
+  text: Schema.String,
 }).annotate({ identifier: "Section" });
 
 export type Issue = {
-	readonly body: string;
-	readonly branch: string;
-	readonly checklist: globalThis.ReadonlyArray<ChecklistItem>;
-	readonly fields: { readonly [x: string]: Datum };
-	readonly id: IssueId;
-	readonly kind: string;
-	readonly links: { readonly [x: string]: globalThis.ReadonlyArray<IssueId> };
-	readonly log: globalThis.ReadonlyArray<Entry>;
-	readonly project: ProjectId;
-	readonly sections: globalThis.ReadonlyArray<Section>;
-	readonly stage: string | null;
-	readonly status: string;
-	readonly title: string;
+  readonly body: string;
+  readonly branch: string;
+  readonly checklist: globalThis.ReadonlyArray<ChecklistItem>;
+  readonly fields: { readonly [x: string]: Datum };
+  readonly id: IssueId;
+  readonly kind: string;
+  readonly links: { readonly [x: string]: globalThis.ReadonlyArray<IssueId> };
+  readonly log: globalThis.ReadonlyArray<Entry>;
+  readonly project: ProjectId;
+  readonly sections: globalThis.ReadonlyArray<Section>;
+  readonly stage: string | null;
+  readonly status: string;
+  readonly title: string;
 };
 
 export const Issue = Schema.Struct({
-	body: Schema.String.annotate({
-		description:
-			"The body before the checklist and the log, as its file has it.",
-	}),
-	branch: Schema.String.annotate({
-		description: "The branch its sessions land on.",
-	}),
-	checklist: Schema.Array(ChecklistItem).annotate({
-		description: "The items of the `## Checklist` section.",
-	}),
-	fields: Schema.Record(Schema.String, Datum).annotate({
-		description: "The declared fields it gives, by name.",
-	}),
-	id: IssueId,
-	kind: Schema.String,
-	links: Schema.Record(Schema.String, Schema.Array(IssueId)).annotate({
-		description: "The issues each relation from it points to, by relation.",
-	}),
-	log: Schema.Array(Entry).annotate({
-		description: "The `## Notes` section, oldest first.",
-	}),
-	project: ProjectId,
-	sections: Schema.Array(Section).annotate({
-		description:
-			"The body's sections in order, the text before the first heading\nas one with no heading; the checklist and the log aren't among them.",
-	}),
-	stage: Schema.Union([Schema.String, Schema.Null]),
-	status: Schema.String,
-	title: Schema.String,
-}).annotate({
-	description: "An issue as the flow reads its file.",
-	identifier: "Issue",
-});
+  body: Schema.String.annotate({
+    description: "The body before the checklist and the log, as its file has it.",
+  }),
+  branch: Schema.String.annotate({ description: "The branch its sessions land on." }),
+  checklist: Schema.Array(ChecklistItem).annotate({
+    description: "The items of the `## Checklist` section.",
+  }),
+  fields: Schema.Record(Schema.String, Datum).annotate({
+    description: "The declared fields it gives, by name.",
+  }),
+  id: IssueId,
+  kind: Schema.String,
+  links: Schema.Record(Schema.String, Schema.Array(IssueId)).annotate({
+    description: "The issues each relation from it points to, by relation.",
+  }),
+  log: Schema.Array(Entry).annotate({ description: "The `## Notes` section, oldest first." }),
+  project: ProjectId,
+  sections: Schema.Array(Section).annotate({
+    description:
+      "The body's sections in order, the text before the first heading\nas one with no heading; the checklist and the log aren't among them.",
+  }),
+  stage: Schema.Union([Schema.String, Schema.Null]),
+  status: Schema.String,
+  title: Schema.String,
+}).annotate({ description: "An issue as the flow reads its file.", identifier: "Issue" });
 
 export type Project = {
-	readonly checkouts: globalThis.ReadonlyArray<Checkout>;
-	readonly cloning: Cloning;
-	readonly id: ProjectId;
-	readonly issues: globalThis.ReadonlyArray<Issue>;
-	readonly name: string;
-	readonly profiles: globalThis.ReadonlyArray<string>;
-	readonly provides: globalThis.ReadonlyArray<string>;
-	readonly remote: string | null;
-	readonly title: string;
+  readonly checkouts: globalThis.ReadonlyArray<Checkout>;
+  readonly cloning: Cloning;
+  readonly id: ProjectId;
+  readonly issues: globalThis.ReadonlyArray<Issue>;
+  readonly name: string;
+  readonly profiles: globalThis.ReadonlyArray<string>;
+  readonly provides: globalThis.ReadonlyArray<string>;
+  readonly remote: string | null;
+  readonly title: string;
 };
 
 export const Project = Schema.Struct({
-	checkouts: Schema.Array(Checkout).annotate({
-		description:
-			"Every checkout of it on this host, the one a session starts in\nfirst. None: it isn't checked out here.",
-	}),
-	cloning: Cloning,
-	id: ProjectId,
-	issues: Schema.Array(Issue).annotate({
-		description: "By id, which orders them by when they were opened.",
-	}),
-	name: Schema.String.annotate({
-		description: "Unique in the home: what a person types to name it.",
-	}),
-	profiles: Schema.Array(Schema.String),
-	provides: Schema.Array(Schema.String).annotate({
-		description:
-			"The profiles whose checks and configs it holds, for any project\nthat names them.",
-	}),
-	remote: Schema.Union([Schema.String, Schema.Null]).annotate({
-		description:
-			"`None` for a project that is local only, which can't be cloned.",
-	}),
-	title: Schema.String.annotate({ description: "What the app shows." }),
+  checkouts: Schema.Array(Checkout).annotate({
+    description:
+      "Every checkout of it on this host, the one a session starts in\nfirst. None: it isn't checked out here.",
+  }),
+  cloning: Cloning,
+  id: ProjectId,
+  issues: Schema.Array(Issue).annotate({
+    description: "By id, which orders them by when they were opened.",
+  }),
+  name: Schema.String.annotate({
+    description: "Unique in the home: what a person types to name it.",
+  }),
+  profiles: Schema.Array(Schema.String),
+  provides: Schema.Array(Schema.String).annotate({
+    description:
+      "The profiles whose checks and configs it holds, for any project\nthat names them.",
+  }),
+  remote: Schema.Union([Schema.String, Schema.Null]).annotate({
+    description: "`None` for a project that is local only, which can't be cloned.",
+  }),
+  title: Schema.String.annotate({ description: "What the app shows." }),
 }).annotate({
-	description:
-		"A project as the home describes it, and its checkouts on this host.",
-	identifier: "Project",
+  description: "A project as the home describes it, and its checkouts on this host.",
+  identifier: "Project",
 });
 
 export type HomeSync =
-	| "Syncing"
-	| "Synced"
-	| { readonly Behind: { readonly reason: string } }
-	| { readonly Failed: { readonly reason: string } };
+  | "Syncing"
+  | "Synced"
+  | { readonly Behind: { readonly reason: string } }
+  | { readonly Failed: { readonly reason: string } };
 
 export const HomeSync = Schema.Union(
-	[
-		Schema.Literal("Syncing").annotate({
-			description: "The first clone is under way.",
-		}),
-		Schema.Literal("Synced").annotate({
-			description: "The last clone or pull succeeded.",
-		}),
-		Schema.Struct({
-			Behind: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host has a clone, but the last pull failed, for this reason: the\nprojects are as of the last sync.",
-		}),
-		Schema.Struct({
-			Failed: Schema.Struct({ reason: Schema.String }),
-		}).annotate({
-			description:
-				"The host has no clone, for this reason, and so no projects.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Literal("Syncing").annotate({ description: "The first clone is under way." }),
+    Schema.Literal("Synced").annotate({ description: "The last clone or pull succeeded." }),
+    Schema.Struct({ Behind: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description:
+        "The host has a clone, but the last pull failed, for this reason: the\nprojects are as of the last sync.",
+    }),
+    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host has no clone, for this reason, and so no projects.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "HomeSync" });
 
 export type Home = {
-	readonly flow: Flow | null;
-	readonly projects: globalThis.ReadonlyArray<Project>;
-	readonly remote: string;
-	readonly sync: HomeSync;
-	readonly synced: number | null;
-	readonly unpushed: number;
+  readonly flow: Flow | null;
+  readonly projects: globalThis.ReadonlyArray<Project>;
+  readonly remote: string;
+  readonly sync: HomeSync;
+  readonly synced: number | null;
+  readonly unpushed: number;
 };
 
 export const Home = Schema.Struct({
-	flow: Schema.Union([Flow, Schema.Null]).annotate({
-		description:
-			"The clone's `docs/agents/flow.toml`, which its issues are read\nagainst; `None` while it has none that loads, and so no issues.",
-	}),
-	projects: Schema.Array(Project).annotate({
-		description: "As the clone lists them, by id.",
-	}),
-	remote: Schema.String.annotate({
-		description: "The home's remote, as the host was given it.",
-	}),
-	sync: HomeSync,
-	synced: Schema.Union([
-		Schema.Int.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		),
-		Schema.Null,
-	]).annotate({
-		description:
-			"When the clone last matched the remote, in seconds since the Unix\nepoch on the host's clock.",
-		format: "uint64",
-	}),
-	unpushed: Schema.Number.annotate({
-		description:
-			"Issue changes the host has made that the remote doesn't have yet.",
-		format: "uint64",
-	})
-		.check(Schema.isInt().annotate({ expected: "an integer" }))
-		.check(
-			Schema.isGreaterThanOrEqualTo(0).annotate({
-				expected: "a value greater than or equal to 0",
-			}),
-		),
+  flow: Schema.Union([Flow, Schema.Null]).annotate({
+    description:
+      "The clone's `docs/agents/flow.toml`, which its issues are read\nagainst; `None` while it has none that loads, and so no issues.",
+  }),
+  projects: Schema.Array(Project).annotate({ description: "As the clone lists them, by id." }),
+  remote: Schema.String.annotate({ description: "The home's remote, as the host was given it." }),
+  sync: HomeSync,
+  synced: Schema.Union([
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+    Schema.Null,
+  ]).annotate({
+    description:
+      "When the clone last matched the remote, in seconds since the Unix\nepoch on the host's clock.",
+    format: "uint64",
+  }),
+  unpushed: Schema.Number.annotate({
+    description: "Issue changes the host has made that the remote doesn't have yet.",
+    format: "uint64",
+  })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
 }).annotate({
-	description: "The host's clone of the home, and the projects it lists.",
-	identifier: "Home",
+  description: "The host's clone of the home, and the projects it lists.",
+  identifier: "Home",
 });
 
 export type InstanceStatus = { readonly availability: Availability };
 
-export const InstanceStatus = Schema.Struct({
-	availability: Availability,
-}).annotate({
-	description: "What a client learns of one instance.",
-	identifier: "InstanceStatus",
+export const InstanceStatus = Schema.Struct({ availability: Availability }).annotate({
+  description: "What a client learns of one instance.",
+  identifier: "InstanceStatus",
 });
 
-export type Instances = globalThis.ReadonlyArray<
-	readonly [InstanceId, InstanceStatus]
->;
+export type Instances = globalThis.ReadonlyArray<readonly [InstanceId, InstanceStatus]>;
 
-export const Instances = Schema.Array(
-	Schema.Tuple([InstanceId, InstanceStatus]),
-).annotate({
-	description:
-		"Whether the host can run each of its instances, and how each signs in.",
-	identifier: "Instances",
+export const Instances = Schema.Array(Schema.Tuple([InstanceId, InstanceStatus])).annotate({
+  description: "Whether the host can run each of its instances, and how each signs in.",
+  identifier: "Instances",
 });
 
 export type Feed =
-	| { readonly Event: Event }
-	| { readonly SignIn: SignIn }
-	| { readonly Home: Home }
-	| { readonly Instances: Instances };
+  | { readonly Event: Event }
+  | { readonly SignIn: SignIn }
+  | { readonly Home: Home }
+  | { readonly Instances: Instances };
 
 export const Feed = Schema.Union(
-	[
-		Schema.Struct({ Event: Event }),
-		Schema.Struct({ SignIn: SignIn }),
-		Schema.Struct({ Home: Home }),
-		Schema.Struct({ Instances: Instances }).annotate({
-			description:
-				"The current instance offers, replacing the previous snapshot.",
-		}),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Event: Event }),
+    Schema.Struct({ SignIn: SignIn }),
+    Schema.Struct({ Home: Home }),
+    Schema.Struct({ Instances: Instances }).annotate({
+      description: "The current instance offers, replacing the previous snapshot.",
+    }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description:
-		"A logged event or a live update to the host's sign-ins, home or offers.",
-	identifier: "Feed",
+  description: "A logged event or a live update to the host's sign-ins, home or offers.",
+  identifier: "Feed",
 });
 
 export type Hello = { readonly client: ClientName; readonly token: AuthToken };
 
-export const Hello = Schema.Struct({
-	client: ClientName,
-	token: AuthToken,
-}).annotate({
-	description:
-		"S3 auth placeholder: the ticket's token stands in for the `DeviceCert`\nthat §4 puts here.",
-	identifier: "Hello",
+export const Hello = Schema.Struct({ client: ClientName, token: AuthToken }).annotate({
+  description:
+    "S3 auth placeholder: the ticket's token stands in for the `DeviceCert`\nthat §4 puts here.",
+  identifier: "Hello",
 });
 
 export type Welcome = {
-	readonly catalog: Catalog;
-	readonly epoch: Epoch;
-	readonly head_seq: HostSeq;
-	readonly home: Home | null;
-	readonly host: string;
-	readonly instances: Instances;
+  readonly catalog: Catalog;
+  readonly epoch: Epoch;
+  readonly head_seq: HostSeq;
+  readonly home: Home | null;
+  readonly host: string;
+  readonly instances: Instances;
 };
 
 export const Welcome = Schema.Struct({
-	catalog: Schema.suspend((): Schema.Codec<Catalog> => Catalog).annotate({
-		description:
-			"How each provider presents itself and the credentials it takes.\nUnlike `instances` it doesn't change while the host runs.",
-	}),
-	epoch: Epoch,
-	head_seq: HostSeq,
-	home: Schema.Union([Home, Schema.Null]).annotate({
-		description:
-			"`None` on a host given no home. `Feed::Home` brings each change.",
-	}),
-	host: Schema.String,
-	instances: Instances,
+  catalog: Schema.suspend((): Schema.Codec<Catalog> => Catalog).annotate({
+    description:
+      "How each provider presents itself and the credentials it takes.\nUnlike `instances` it doesn't change while the host runs.",
+  }),
+  epoch: Epoch,
+  head_seq: HostSeq,
+  home: Schema.Union([Home, Schema.Null]).annotate({
+    description: "`None` on a host given no home. `Feed::Home` brings each change.",
+  }),
+  host: Schema.String,
+  instances: Instances,
 }).annotate({ identifier: "Welcome" });
 
 export type HelloReply =
-	| { readonly Welcome: Welcome }
-	| { readonly Refused: { readonly reason: string } };
+  | { readonly Welcome: Welcome }
+  | { readonly Refused: { readonly reason: string } };
 
 export const HelloReply = Schema.Union(
-	[
-		Schema.Struct({ Welcome: Welcome }),
-		Schema.Struct({ Refused: Schema.Struct({ reason: Schema.String }) }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Welcome: Welcome }),
+    Schema.Struct({ Refused: Schema.Struct({ reason: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
 ).annotate({ identifier: "HelloReply" });
 
 export type Subscribe = { readonly after_seq: HostSeq; readonly epoch: Epoch };
 
-export const Subscribe = Schema.Struct({
-	after_seq: HostSeq,
-	epoch: Epoch,
-}).annotate({
-	description:
-		"Replays every stored event after `after_seq`, then streams live ones,\ndeltas included. A subscription from another epoch is refused by closing\nthe stream.",
-	identifier: "Subscribe",
+export const Subscribe = Schema.Struct({ after_seq: HostSeq, epoch: Epoch }).annotate({
+  description:
+    "Replays every stored event after `after_seq`, then streams live ones,\ndeltas included. A subscription from another epoch is refused by closing\nthe stream.",
+  identifier: "Subscribe",
 });
 
 export type Open =
-	| { readonly Hello: Hello }
-	| { readonly Subscribe: Subscribe }
-	| { readonly Command: { readonly body: Command; readonly id: CommandId } }
-	| { readonly FleetHello: DeviceHello };
+  | { readonly Hello: Hello }
+  | { readonly Subscribe: Subscribe }
+  | { readonly Command: { readonly body: Command; readonly id: CommandId } }
+  | { readonly FleetHello: DeviceHello };
 
 export const Open = Schema.Union(
-	[
-		Schema.Struct({ Hello: Hello }),
-		Schema.Struct({ Subscribe: Subscribe }),
-		Schema.Struct({ Command: Schema.Struct({ body: Command, id: CommandId }) }),
-		Schema.Struct({ FleetHello: DeviceHello }),
-	],
-	{ mode: "oneOf" },
+  [
+    Schema.Struct({ Hello: Hello }),
+    Schema.Struct({ Subscribe: Subscribe }),
+    Schema.Struct({ Command: Schema.Struct({ body: Command, id: CommandId }) }),
+    Schema.Struct({ FleetHello: DeviceHello }),
+  ],
+  { mode: "oneOf" },
 ).annotate({
-	description: "The first frame on every client-opened bi-stream.",
-	identifier: "Open",
+  description: "The first frame on every client-opened bi-stream.",
+  identifier: "Open",
 });
 
 export type Ticket = {
-	readonly host: globalThis.ReadonlyArray<number>;
-	readonly relay: string;
-	readonly token: AuthToken;
+  readonly host: globalThis.ReadonlyArray<number>;
+  readonly relay: string;
+  readonly token: AuthToken;
 };
 
 export const Ticket = Schema.Struct({
-	host: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	)
-		.check(
-			Schema.isMinLength(32).annotate({
-				expected: "a value with a length of at least 32",
-			}),
-		)
-		.check(
-			Schema.isMaxLength(32).annotate({
-				expected: "a value with a length of at most 32",
-			}),
-		),
-	relay: Schema.String,
-	token: AuthToken,
+  host: Schema.Array(
+    Schema.Number.annotate({ format: "uint8" })
+      .check(Schema.isInt().annotate({ expected: "an integer" }))
+      .check(
+        Schema.isGreaterThanOrEqualTo(0).annotate({
+          expected: "a value greater than or equal to 0",
+        }),
+      )
+      .check(
+        Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+      ),
+  )
+    .check(Schema.isMinLength(32).annotate({ expected: "a value with a length of at least 32" }))
+    .check(Schema.isMaxLength(32).annotate({ expected: "a value with a length of at most 32" })),
+  relay: Schema.String,
+  token: AuthToken,
 }).annotate({ identifier: "Ticket" });

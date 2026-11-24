@@ -4,5 +4,5 @@ import type { connect } from "../web-iroh/web_iroh.js";
 export type { Connection, Stream } from "../web-iroh/web_iroh.js";
 
 export interface Pipe {
-	readonly connect: typeof connect;
+  readonly connect: typeof connect;
 }

@@ -2,279 +2,279 @@
 @import "./session/session.css" layer(screens);
 
 @layer base {
-	:root {
-		--canvas: oklch(96.5% 0.005 285);
-		--ink: oklch(21% 0.01 265);
-		--muted: oklch(53% 0.015 265);
-		--surface: oklch(99% 0.003 285);
-		--line: oklch(89% 0.008 265);
-		--selected: oklch(92% 0.012 265);
-		--live: oklch(66% 0.15 150);
-		--waiting: oklch(76% 0.14 80);
-		--alert: oklch(58% 0.19 30);
-		color-scheme: light dark;
-		font:
-			16px / 1.45 -apple-system,
-			BlinkMacSystemFont,
-			"Segoe UI",
-			system-ui,
-			sans-serif;
-	}
+  :root {
+    --canvas: oklch(96.5% 0.005 285);
+    --ink: oklch(21% 0.01 265);
+    --muted: oklch(53% 0.015 265);
+    --surface: oklch(99% 0.003 285);
+    --line: oklch(89% 0.008 265);
+    --selected: oklch(92% 0.012 265);
+    --live: oklch(66% 0.15 150);
+    --waiting: oklch(76% 0.14 80);
+    --alert: oklch(58% 0.19 30);
+    color-scheme: light dark;
+    font:
+      16px / 1.45 -apple-system,
+      BlinkMacSystemFont,
+      "Segoe UI",
+      system-ui,
+      sans-serif;
+  }
 
-	@media (prefers-color-scheme: dark) {
-		:root {
-			--canvas: oklch(0% 0 0);
-			--ink: oklch(95% 0.004 265);
-			--muted: oklch(70% 0.013 265);
-			--surface: oklch(17% 0.006 265);
-			--line: oklch(28% 0.01 265);
-			--selected: oklch(26% 0.014 265);
-		}
-	}
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --canvas: oklch(0% 0 0);
+      --ink: oklch(95% 0.004 265);
+      --muted: oklch(70% 0.013 265);
+      --surface: oklch(17% 0.006 265);
+      --line: oklch(28% 0.01 265);
+      --selected: oklch(26% 0.014 265);
+    }
+  }
 
-	html {
-		background: var(--canvas);
-		color: var(--ink);
-		-webkit-text-size-adjust: 100%;
-	}
+  html {
+    background: var(--canvas);
+    color: var(--ink);
+    -webkit-text-size-adjust: 100%;
+  }
 
-	body {
-		margin: 0;
-	}
+  body {
+    margin: 0;
+  }
 }
 
 @layer screens {
-	.pairing {
-		max-inline-size: 32rem;
-		margin-inline: auto;
-		padding-block: calc(env(safe-area-inset-top) + 3rem) 2rem;
-		padding-inline: 1.25rem;
-	}
+  .pairing {
+    max-inline-size: 32rem;
+    margin-inline: auto;
+    padding-block: calc(env(safe-area-inset-top) + 3rem) 2rem;
+    padding-inline: 1.25rem;
+  }
 
-	.pairing h1 {
-		margin-block: 0 0.5rem;
-		margin-inline: 0;
-		font-size: 1.75rem;
-	}
+  .pairing h1 {
+    margin-block: 0 0.5rem;
+    margin-inline: 0;
+    font-size: 1.75rem;
+  }
 
-	.pairing p {
-		margin: 0;
-		color: var(--muted);
-	}
+  .pairing p {
+    margin: 0;
+    color: var(--muted);
+  }
 
-	.pairing .back {
-		display: inline-block;
-		margin-block-end: 1rem;
-	}
+  .pairing .back {
+    display: inline-block;
+    margin-block-end: 1rem;
+  }
 
-	.pair-form {
-		display: grid;
-		gap: 0.5rem;
-		margin-block: 1.5rem;
-	}
+  .pair-form {
+    display: grid;
+    gap: 0.5rem;
+    margin-block: 1.5rem;
+  }
 
-	.pair-form textarea {
-		font:
-			0.85rem / 1.4 ui-monospace,
-			monospace;
-		padding: 0.6rem;
-		border: 1px solid var(--line);
-		border-radius: 0.5rem;
-		background: var(--surface);
-		color: inherit;
-		word-break: break-all;
-	}
+  .pair-form textarea {
+    font:
+      0.85rem / 1.4 ui-monospace,
+      monospace;
+    padding: 0.6rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--surface);
+    color: inherit;
+    word-break: break-all;
+  }
 
-	.pair-form button,
-	.paired .forget {
-		justify-self: start;
-		padding: 0.5rem 1rem;
-		border: 1px solid var(--line);
-		border-radius: 0.5rem;
-		background: var(--surface);
-		color: inherit;
-		font: inherit;
-	}
+  .pair-form button,
+  .paired .forget {
+    justify-self: start;
+    padding: 0.5rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+    background: var(--surface);
+    color: inherit;
+    font: inherit;
+  }
 
-	.pair-form .error {
-		color: var(--alert);
-	}
+  .pair-form .error {
+    color: var(--alert);
+  }
 
-	.paired-hosts {
-		display: grid;
-		gap: 0.25rem;
-		margin: 0;
-		padding: 0;
-		list-style: none;
-	}
+  .paired-hosts {
+    display: grid;
+    gap: 0.25rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
 
-	.paired {
-		display: flex;
-		gap: 0.75rem;
-		align-items: center;
-		padding-block: 0.5rem;
-		border-block-end: 1px solid var(--line);
-	}
+  .paired {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    padding-block: 0.5rem;
+    border-block-end: 1px solid var(--line);
+  }
 
-	.paired-name {
-		flex: 1;
-	}
+  .paired-name {
+    flex: 1;
+  }
 
-	.shell {
-		display: grid;
-		grid-template-columns: minmax(16rem, 20rem) 1fr;
-		min-block-size: 100dvh;
-	}
+  .shell {
+    display: grid;
+    grid-template-columns: minmax(16rem, 20rem) 1fr;
+    min-block-size: 100dvh;
+  }
 
-	.sidebar {
-		padding-block: env(safe-area-inset-top) 1rem;
-		padding-inline: max(env(safe-area-inset-left), 0.75rem) 0.75rem;
-		border-inline-end: 1px solid var(--line);
-		background: var(--surface);
-	}
+  .sidebar {
+    padding-block: env(safe-area-inset-top) 1rem;
+    padding-inline: max(env(safe-area-inset-left), 0.75rem) 0.75rem;
+    border-inline-end: 1px solid var(--line);
+    background: var(--surface);
+  }
 
-	.band {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		padding-block: 0.75rem;
-	}
+  .band {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding-block: 0.75rem;
+  }
 
-	.band-title {
-		font-weight: 600;
-	}
+  .band-title {
+    font-weight: 600;
+  }
 
-	.host-group {
-		margin-block-end: 1rem;
-	}
+  .host-group {
+    margin-block-end: 1rem;
+  }
 
-	.host-header {
-		display: flex;
-		gap: 0.5rem;
-		align-items: baseline;
-	}
+  .host-header {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+  }
 
-	.host-header h2 {
-		flex: 1;
-		margin: 0;
-		font-size: 0.8rem;
-		font-weight: 600;
-		letter-spacing: 0.04em;
-		text-transform: uppercase;
-		color: var(--muted);
-	}
+  .host-header h2 {
+    flex: 1;
+    margin: 0;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
 
-	.link-status {
-		font-size: 0.75rem;
-		color: var(--muted);
-	}
+  .link-status {
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
 
-	.link-status::before {
-		display: inline-block;
-		inline-size: 0.5rem;
-		block-size: 0.5rem;
-		margin-inline-end: 0.3rem;
-		border-radius: 50%;
-		background: var(--muted);
-		content: "";
-	}
+  .link-status::before {
+    display: inline-block;
+    inline-size: 0.5rem;
+    block-size: 0.5rem;
+    margin-inline-end: 0.3rem;
+    border-radius: 50%;
+    background: var(--muted);
+    content: "";
+  }
 
-	.link-status[data-state="Live"]::before {
-		background: var(--live);
-	}
+  .link-status[data-state="Live"]::before {
+    background: var(--live);
+  }
 
-	.link-status:is(
-		[data-state="Connecting"],
-		[data-state="Authenticating"],
-		[data-state="CatchingUp"]
-	)::before {
-		background: var(--waiting);
-	}
+  .link-status:is(
+      [data-state="Connecting"],
+      [data-state="Authenticating"],
+      [data-state="CatchingUp"]
+    )::before {
+    background: var(--waiting);
+  }
 
-	.new-session {
-		font-size: 0.75rem;
-	}
+  .new-session {
+    font-size: 0.75rem;
+  }
 
-	.link-error,
-	.host-group .empty {
-		margin: 0.25rem 0;
-		font-size: 0.8rem;
-		color: var(--muted);
-	}
+  .link-error,
+  .host-group .empty {
+    margin: 0.25rem 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
 
-	.sessions {
-		margin: 0.25rem 0 0;
-		padding: 0;
-		list-style: none;
-	}
+  .sessions {
+    margin: 0.25rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
 
-	.session-row {
-		display: flex;
-		gap: 0.5rem;
-		justify-content: space-between;
-		padding: 0.45rem 0.5rem;
-		border-radius: 0.4rem;
-		color: inherit;
-		text-decoration: none;
-	}
+  .session-row {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: space-between;
+    padding: 0.45rem 0.5rem;
+    border-radius: 0.4rem;
+    color: inherit;
+    text-decoration: none;
+  }
 
-	.session-row[aria-current="page"] {
-		background: var(--selected);
-	}
+  .session-row[aria-current="page"] {
+    background: var(--selected);
+  }
 
-	.session-title {
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
+  .session-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 
-	.session-status {
-		flex-shrink: 0;
-		font-size: 0.8rem;
-		color: var(--muted);
-	}
+  .session-status {
+    flex-shrink: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
 
-	.session-status[data-status="Requests"] {
-		color: var(--alert);
-	}
+  .session-status[data-status="Requests"] {
+    color: var(--alert);
+  }
 
-	.pane {
-		padding-block: calc(env(safe-area-inset-top) + 1rem) 1rem;
-		padding-inline: 1.25rem max(env(safe-area-inset-right), 1.25rem);
-	}
+  .pane {
+    padding-block: calc(env(safe-area-inset-top) + 1rem) 1rem;
+    padding-inline: 1.25rem max(env(safe-area-inset-right), 1.25rem);
+  }
 
-	.pane-empty {
-		display: grid;
-		place-items: center;
-		color: var(--muted);
-	}
+  .pane-empty {
+    display: grid;
+    place-items: center;
+    color: var(--muted);
+  }
 
-	.pane .back {
-		display: none;
-	}
+  .pane .back {
+    display: none;
+  }
 
-	/* A phone shows one screen of the stack at a time: the list, or the pane over it. */
-	@media (width < 48rem) {
-		.shell {
-			grid-template-columns: 1fr;
-		}
+  /* A phone shows one screen of the stack at a time: the list, or the pane over it. */
+  @media (width < 48rem) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
 
-		.shell[data-top="list"] > .pane,
-		.shell[data-top="pane"] > .sidebar {
-			display: none;
-		}
+    .shell[data-top="list"] > .pane,
+    .shell[data-top="pane"] > .sidebar {
+      display: none;
+    }
 
-		.sidebar {
-			border-inline-end: none;
-		}
+    .sidebar {
+      border-inline-end: none;
+    }
 
-		.session-row {
-			padding-block: 0.75rem;
-		}
+    .session-row {
+      padding-block: 0.75rem;
+    }
 
-		.pane .back {
-			display: inline-block;
-			margin-block-end: 0.75rem;
-		}
-	}
+    .pane .back {
+      display: inline-block;
+      margin-block-end: 0.75rem;
+    }
+  }
 }

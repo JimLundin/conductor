@@ -3,397 +3,396 @@
 
 .session,
 .start-session {
-	--line: color-mix(in oklch, var(--ink) 14%, transparent);
-	--card: color-mix(in oklch, var(--ink) 4%, var(--canvas));
-	--accent: oklch(62% 0.17 255);
-	--danger: oklch(60% 0.2 25);
-	--good: oklch(62% 0.14 150);
-	--mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-	--tap: 2.75rem;
+  --line: color-mix(in oklch, var(--ink) 14%, transparent);
+  --card: color-mix(in oklch, var(--ink) 4%, var(--canvas));
+  --accent: oklch(62% 0.17 255);
+  --danger: oklch(60% 0.2 25);
+  --good: oklch(62% 0.14 150);
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --tap: 2.75rem;
 }
 
 .session {
-	display: flex;
-	flex-direction: column;
-	min-block-size: 100dvh;
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
 }
 
 .session-bar {
-	position: sticky;
-	inset-block-start: 0;
-	z-index: 1;
-	padding-block: calc(env(safe-area-inset-top) + 0.5rem) 0.5rem;
-	padding-inline: 1rem;
-	border-block-end: 1px solid var(--line);
-	background: color-mix(in oklch, var(--canvas) 88%, transparent);
-	backdrop-filter: blur(12px);
+  position: sticky;
+  inset-block-start: 0;
+  z-index: 1;
+  padding-block: calc(env(safe-area-inset-top) + 0.5rem) 0.5rem;
+  padding-inline: 1rem;
+  border-block-end: 1px solid var(--line);
+  background: color-mix(in oklch, var(--canvas) 88%, transparent);
+  backdrop-filter: blur(12px);
 }
 
 .session-bar h1 {
-	overflow: hidden;
-	margin: 0;
-	font-size: 0.95rem;
-	font-family: var(--mono);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	direction: rtl;
-	text-align: start;
+  overflow: hidden;
+  margin: 0;
+  font-size: 0.95rem;
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: start;
 }
 
 .session-bar .meta {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
-	margin: 0.15rem 0 0;
-	color: var(--muted);
-	font-size: 0.8rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .session-bar .status.running {
-	color: var(--accent);
+  color: var(--accent);
 }
 
 .session-bar .status.closed {
-	color: var(--danger);
+  color: var(--danger);
 }
 
 .transcript {
-	flex: 1;
-	inline-size: 100%;
-	max-inline-size: 48rem;
-	margin-inline: auto;
-	padding: 1rem;
-	box-sizing: border-box;
+  flex: 1;
+  inline-size: 100%;
+  max-inline-size: 48rem;
+  margin-inline: auto;
+  padding: 1rem;
+  box-sizing: border-box;
 }
 
 .items {
-	display: flex;
-	flex-direction: column;
-	gap: 0.75rem;
-	margin: 0;
-	padding: 0;
-	list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .items .items {
-	gap: 0.5rem;
-	margin-block-start: 0.5rem;
+  gap: 0.5rem;
+  margin-block-start: 0.5rem;
 }
 
 .user {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
 .bubble {
-	max-inline-size: 85%;
-	margin: 0;
-	padding: 0.5rem 0.8rem;
-	border-radius: 1rem 1rem 0.25rem;
-	background: var(--accent);
-	color: white;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+  max-inline-size: 85%;
+  margin: 0;
+  padding: 0.5rem 0.8rem;
+  border-radius: 1rem 1rem 0.25rem;
+  background: var(--accent);
+  color: white;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .by {
-	color: var(--muted);
-	font-size: 0.7rem;
+  color: var(--muted);
+  font-size: 0.7rem;
 }
 
 .markdown p {
-	margin: 0 0 0.6em;
-	white-space: pre-wrap;
-	overflow-wrap: anywhere;
+  margin: 0 0 0.6em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .markdown p:last-child {
-	margin-block-end: 0;
+  margin-block-end: 0;
 }
 
 .markdown code,
 .command,
 .files code {
-	font-family: var(--mono);
-	font-size: 0.85em;
+  font-family: var(--mono);
+  font-size: 0.85em;
 }
 
 .markdown :not(pre) > code {
-	padding: 0.05em 0.3em;
-	border-radius: 0.3em;
-	background: var(--card);
+  padding: 0.05em 0.3em;
+  border-radius: 0.3em;
+  background: var(--card);
 }
 
 .markdown pre,
 .command {
-	overflow-x: auto;
-	margin: 0.4rem 0;
-	padding: 0.5rem 0.65rem;
-	border-radius: 0.5rem;
-	background: var(--card);
-	white-space: pre;
+  overflow-x: auto;
+  margin: 0.4rem 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 0.5rem;
+  background: var(--card);
+  white-space: pre;
 }
 
 .reply.streaming .markdown > :last-child::after {
-	content: "▍";
-	color: var(--muted);
-	animation: blink 1s steps(2) infinite;
+  content: "▍";
+  color: var(--muted);
+  animation: blink 1s steps(2) infinite;
 }
 
 @keyframes blink {
-	50% {
-		opacity: 0;
-	}
+  50% {
+    opacity: 0;
+  }
 }
 
 .reasoning,
 .subagent {
-	color: var(--muted);
-	font-size: 0.9rem;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .reasoning summary,
 .subagent summary {
-	cursor: pointer;
+  cursor: pointer;
 }
 
 .tool,
 .question {
-	padding: 0.5rem 0.75rem;
-	border: 1px solid var(--line);
-	border-radius: 0.75rem;
-	background: var(--card);
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--card);
 }
 
 .tool header {
-	display: flex;
-	justify-content: space-between;
-	font-size: 0.8rem;
-	font-weight: 600;
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .tool .status {
-	color: var(--muted);
-	font-weight: 400;
+  color: var(--muted);
+  font-weight: 400;
 }
 
 .tool[data-status="Failed"] .status,
 .tool[data-status="Declined"] .status {
-	color: var(--danger);
+  color: var(--danger);
 }
 
 .tool[data-status="Succeeded"] .status {
-	color: var(--good);
+  color: var(--good);
 }
 
 .files {
-	margin: 0.4rem 0 0;
-	padding: 0;
-	list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
 }
 
 .change {
-	display: inline-block;
-	min-inline-size: 3.5rem;
-	color: var(--muted);
-	font-size: 0.75rem;
+  display: inline-block;
+  min-inline-size: 3.5rem;
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .approval {
-	margin: 0.35rem 0 0;
-	color: var(--muted);
-	font-size: 0.8rem;
+  margin: 0.35rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
 }
 
 .approval.open {
-	color: var(--accent);
-	font-weight: 600;
+  color: var(--accent);
+  font-weight: 600;
 }
 
 .subagent {
-	margin-block-start: 0.5rem;
-	padding-inline-start: 0.75rem;
-	border-inline-start: 2px solid var(--line);
+  margin-block-start: 0.5rem;
+  padding-inline-start: 0.75rem;
+  border-inline-start: 2px solid var(--line);
 }
 
 .subagent summary {
-	display: flex;
-	gap: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
 }
 
 .subagent .title {
-	flex: 1;
-	color: var(--ink);
+  flex: 1;
+  color: var(--ink);
 }
 
 .marker {
-	margin: 0;
-	color: var(--muted);
-	font-size: 0.75rem;
-	text-align: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  text-align: center;
 }
 
 .marker.error,
 .notice {
-	color: var(--danger);
+  color: var(--danger);
 }
 
 .transcript .empty,
 .working {
-	color: var(--muted);
-	text-align: center;
+  color: var(--muted);
+  text-align: center;
 }
 
 .dock {
-	position: sticky;
-	inset-block-end: 0;
-	padding-block: 0.5rem calc(env(safe-area-inset-bottom) + 0.5rem);
-	padding-inline: 1rem;
-	border-block-start: 1px solid var(--line);
-	background: var(--canvas);
+  position: sticky;
+  inset-block-end: 0;
+  padding-block: 0.5rem calc(env(safe-area-inset-bottom) + 0.5rem);
+  padding-inline: 1rem;
+  border-block-start: 1px solid var(--line);
+  background: var(--canvas);
 }
 
 .dock > * {
-	max-inline-size: 48rem;
-	margin-inline: auto;
+  max-inline-size: 48rem;
+  margin-inline: auto;
 }
 
 .requests {
-	display: flex;
-	flex-direction: column;
-	gap: 0.5rem;
-	max-block-size: 50dvh;
-	overflow-y: auto;
-	margin-block-end: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-block-size: 50dvh;
+  overflow-y: auto;
+  margin-block-end: 0.5rem;
 }
 
 .request {
-	padding: 0.75rem;
-	border: 1px solid var(--accent);
-	border-radius: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.75rem;
 }
 
 .request h2 {
-	margin: 0;
-	font-size: 0.9rem;
+  margin: 0;
+  font-size: 0.9rem;
 }
 
 .request fieldset {
-	margin: 0 0 0.5rem;
-	padding: 0;
-	border: 0;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  border: 0;
 }
 
 .request legend {
-	font-weight: 600;
+  font-weight: 600;
 }
 
 .options {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
-	margin-block: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-block: 0.5rem;
 }
 
 .options button[aria-pressed="true"] {
-	border-color: var(--accent);
-	background: color-mix(in oklch, var(--accent) 18%, transparent);
+  border-color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
 }
 
 .offers {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 0.5rem;
-	justify-content: flex-end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .request .offers {
-	justify-content: stretch;
+  justify-content: stretch;
 }
 
 .request .offers button {
-	flex: 1;
+  flex: 1;
 }
 
 .session button,
 .start-session button {
-	min-block-size: var(--tap);
-	padding-inline: 1rem;
-	border: 1px solid var(--line);
-	border-radius: 0.6rem;
-	background: var(--card);
-	color: inherit;
-	font: inherit;
+  min-block-size: var(--tap);
+  padding-inline: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
 }
 
 .session button.primary,
 .start-session button.primary {
-	border-color: var(--accent);
-	background: var(--accent);
-	color: white;
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
 }
 
 .session button.danger {
-	border-color: var(--danger);
-	color: var(--danger);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .session button:disabled,
 .start-session button:disabled {
-	opacity: 0.45;
+  opacity: 0.45;
 }
 
 .composer textarea,
 .request input,
 .start-session select,
 .start-session input {
-	inline-size: 100%;
-	box-sizing: border-box;
-	padding: 0.6rem 0.75rem;
-	border: 1px solid var(--line);
-	border-radius: 0.6rem;
-	background: var(--card);
-	color: inherit;
-	font: inherit;
-	/* iOS zooms into a field whose text is smaller than 16px. */
-	font-size: max(1rem, 16px);
+  inline-size: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.6rem;
+  background: var(--card);
+  color: inherit;
+  font: inherit;
+  /* iOS zooms into a field whose text is smaller than 16px. */
+  font-size: max(1rem, 16px);
 }
 
 .composer textarea {
-	min-block-size: var(--tap);
-	max-block-size: 30dvh;
-	margin-block-end: 0.5rem;
-	field-sizing: content;
-	resize: none;
+  min-block-size: var(--tap);
+  max-block-size: 30dvh;
+  margin-block-end: 0.5rem;
+  field-sizing: content;
+  resize: none;
 }
 
 .start-session {
-	display: flex;
-	flex-direction: column;
-	gap: 0.9rem;
-	max-inline-size: 32rem;
-	margin-inline: auto;
-	padding-block: calc(env(safe-area-inset-top) + 2rem)
-		calc(env(safe-area-inset-bottom) + 2rem);
-	padding-inline: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  max-inline-size: 32rem;
+  margin-inline: auto;
+  padding-block: calc(env(safe-area-inset-top) + 2rem) calc(env(safe-area-inset-bottom) + 2rem);
+  padding-inline: 1.25rem;
 }
 
 .start-session h1 {
-	margin: 0;
-	font-size: 1.5rem;
+  margin: 0;
+  font-size: 1.5rem;
 }
 
 .start-session label {
-	display: flex;
-	flex-direction: column;
-	gap: 0.3rem;
-	color: var(--muted);
-	font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.reply.streaming .markdown > :last-child::after {
-		animation: none;
-	}
+  .reply.streaming .markdown > :last-child::after {
+    animation: none;
+  }
 }

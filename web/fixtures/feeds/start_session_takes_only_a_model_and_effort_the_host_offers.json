@@ -1,334 +1,334 @@
 [
-	{
-		"connection": 0,
-		"frame": {
-			"Welcome": {
-				"catalog": {
-					"claude": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Gateway URL",
-										"placeholder": "https://gateway.example.com",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "gateway",
-								"label": "Gateway",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "Anthropic API key",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "token",
-										"kind": "Secret",
-										"label": "Token from claude setup-token",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "setup_token",
-								"label": "Claude setup token",
-								"setup_sign_in": "Sign in to create a token"
-							}
-						],
-						"label": "Claude Code",
-						"note": null
-					},
-					"codex": {
-						"credentials": [
-							{
-								"account": "base_url",
-								"fields": [
-									{
-										"id": "name",
-										"kind": "Text",
-										"label": "Provider name",
-										"placeholder": "Gateway",
-										"required": true
-									},
-									{
-										"id": "base_url",
-										"kind": "Url",
-										"label": "Base URL",
-										"placeholder": "https://gateway.example.com/v1",
-										"required": true
-									},
-									{
-										"id": "model",
-										"kind": "Text",
-										"label": "Model",
-										"placeholder": "gpt-6",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "Key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "provider",
-								"label": "Model provider",
-								"setup_sign_in": null
-							},
-							{
-								"account": "account_label",
-								"fields": [
-									{
-										"id": "account_label",
-										"kind": "Text",
-										"label": "Public account label",
-										"placeholder": "Work",
-										"required": true
-									},
-									{
-										"id": "key",
-										"kind": "Secret",
-										"label": "API key",
-										"placeholder": "",
-										"required": true
-									}
-								],
-								"kind": "api_key",
-								"label": "OpenAI API key",
-								"setup_sign_in": null
-							}
-						],
-						"label": "Codex",
-						"note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
-					}
-				},
-				"epoch": "1",
-				"head_seq": 0,
-				"home": null,
-				"host": "test-host",
-				"instances": [
-					[
-						{ "account": "Own", "provider": "claude" },
-						{
-							"availability": {
-								"Available": {
-									"auth": "Unmanaged",
-									"models": {
-										"choices": [
-											{
-												"description": "thinks",
-												"efforts": ["Low", "High"],
-												"id": "big",
-												"name": "Big"
-											},
-											{
-												"description": "quick",
-												"efforts": ["Low"],
-												"id": "small",
-												"name": "Small"
-											}
-										],
-										"default": "big"
-									}
-								}
-							}
-						}
-					],
-					[
-						{ "account": "Own", "provider": "codex" },
-						{
-							"availability": {
-								"Unavailable": {
-									"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-								}
-							}
-						}
-					]
-				]
-			}
-		},
-		"stream": "hello"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Instances": [
-				[
-					{ "account": "Own", "provider": "claude" },
-					{
-						"availability": {
-							"Available": {
-								"auth": "Unmanaged",
-								"models": {
-									"choices": [
-										{
-											"description": "thinks",
-											"efforts": ["Low", "High"],
-											"id": "big",
-											"name": "Big"
-										},
-										{
-											"description": "quick",
-											"efforts": ["Low"],
-											"id": "small",
-											"name": "Small"
-										}
-									],
-									"default": "big"
-								}
-							}
-						}
-					}
-				],
-				[
-					{ "account": "Own", "provider": "codex" },
-					{
-						"availability": {
-							"Unavailable": {
-								"reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
-							}
-						}
-					}
-				]
-			]
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Session": {
-				"Refused": {
-					"NotOffered": { "reason": "this host doesn't offer the model huge" }
-				}
-			}
-		},
-		"stream": "command"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Session": {
-				"Refused": {
-					"NotOffered": { "reason": "Small doesn't take the effort high" }
-				}
-			}
-		},
-		"stream": "command"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Session": { "Started": { "session": "00000000000000000000000001" } }
-		},
-		"stream": "command"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SessionCreated": {
-						"by": "test-client",
-						"directory": "/conductor/target/tmp/conductor-e2e-0-chosen",
-						"effort": "Low",
-						"instance": { "account": "Own", "provider": "claude" },
-						"model": "small"
-					}
-				},
-				"seq": 1,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"WorkspaceCreated": {
-						"workspace": {
-							"branch": "conductor/00000000000000000000000001",
-							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
-							"original": "/conductor/target/tmp/conductor-e2e-0-chosen",
-							"repository": "/conductor/target/tmp/conductor-e2e-0-chosen",
-							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
-						}
-					}
-				},
-				"seq": 2,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": {
-					"SnapshotRecorded": {
-						"snapshot": {
-							"commit": "0000000000000000000000000000000000000001",
-							"turn_start": null
-						}
-					}
-				},
-				"seq": 3,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": "SessionReady",
-				"seq": 4,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	}
+  {
+    "connection": 0,
+    "frame": {
+      "Welcome": {
+        "catalog": {
+          "claude": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Gateway URL",
+                    "placeholder": "https://gateway.example.com",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "gateway",
+                "label": "Gateway",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "Anthropic API key",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "token",
+                    "kind": "Secret",
+                    "label": "Token from claude setup-token",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "setup_token",
+                "label": "Claude setup token",
+                "setup_sign_in": "Sign in to create a token"
+              }
+            ],
+            "label": "Claude Code",
+            "note": null
+          },
+          "codex": {
+            "credentials": [
+              {
+                "account": "base_url",
+                "fields": [
+                  {
+                    "id": "name",
+                    "kind": "Text",
+                    "label": "Provider name",
+                    "placeholder": "Gateway",
+                    "required": true
+                  },
+                  {
+                    "id": "base_url",
+                    "kind": "Url",
+                    "label": "Base URL",
+                    "placeholder": "https://gateway.example.com/v1",
+                    "required": true
+                  },
+                  {
+                    "id": "model",
+                    "kind": "Text",
+                    "label": "Model",
+                    "placeholder": "gpt-6",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "Key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "provider",
+                "label": "Model provider",
+                "setup_sign_in": null
+              },
+              {
+                "account": "account_label",
+                "fields": [
+                  {
+                    "id": "account_label",
+                    "kind": "Text",
+                    "label": "Public account label",
+                    "placeholder": "Work",
+                    "required": true
+                  },
+                  {
+                    "id": "key",
+                    "kind": "Secret",
+                    "label": "API key",
+                    "placeholder": "",
+                    "required": true
+                  }
+                ],
+                "kind": "api_key",
+                "label": "OpenAI API key",
+                "setup_sign_in": null
+              }
+            ],
+            "label": "Codex",
+            "note": "Codex runs commands and edits files in this folder and in /tmp without asking. It asks before writing anywhere else, changing .git, or using the network."
+          }
+        },
+        "epoch": "1",
+        "head_seq": 0,
+        "home": null,
+        "host": "test-host",
+        "instances": [
+          [
+            { "account": "Own", "provider": "claude" },
+            {
+              "availability": {
+                "Available": {
+                  "auth": "Unmanaged",
+                  "models": {
+                    "choices": [
+                      {
+                        "description": "thinks",
+                        "efforts": ["Low", "High"],
+                        "id": "big",
+                        "name": "Big"
+                      },
+                      {
+                        "description": "quick",
+                        "efforts": ["Low"],
+                        "id": "small",
+                        "name": "Small"
+                      }
+                    ],
+                    "default": "big"
+                  }
+                }
+              }
+            }
+          ],
+          [
+            { "account": "Own", "provider": "codex" },
+            {
+              "availability": {
+                "Unavailable": {
+                  "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+                }
+              }
+            }
+          ]
+        ]
+      }
+    },
+    "stream": "hello"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Instances": [
+        [
+          { "account": "Own", "provider": "claude" },
+          {
+            "availability": {
+              "Available": {
+                "auth": "Unmanaged",
+                "models": {
+                  "choices": [
+                    {
+                      "description": "thinks",
+                      "efforts": ["Low", "High"],
+                      "id": "big",
+                      "name": "Big"
+                    },
+                    {
+                      "description": "quick",
+                      "efforts": ["Low"],
+                      "id": "small",
+                      "name": "Small"
+                    }
+                  ],
+                  "default": "big"
+                }
+              }
+            }
+          }
+        ],
+        [
+          { "account": "Own", "provider": "codex" },
+          {
+            "availability": {
+              "Unavailable": {
+                "reason": "/conductor/crates/daemon/../../fixtures/e2e/refuse-version.sh --version exited with Some(44)"
+              }
+            }
+          }
+        ]
+      ]
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Session": {
+        "Refused": {
+          "NotOffered": { "reason": "this host doesn't offer the model huge" }
+        }
+      }
+    },
+    "stream": "command"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Session": {
+        "Refused": {
+          "NotOffered": { "reason": "Small doesn't take the effort high" }
+        }
+      }
+    },
+    "stream": "command"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Session": { "Started": { "session": "00000000000000000000000001" } }
+    },
+    "stream": "command"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SessionCreated": {
+            "by": "test-client",
+            "directory": "/conductor/target/tmp/conductor-e2e-0-chosen",
+            "effort": "Low",
+            "instance": { "account": "Own", "provider": "claude" },
+            "model": "small"
+          }
+        },
+        "seq": 1,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "WorkspaceCreated": {
+            "workspace": {
+              "branch": "conductor/00000000000000000000000001",
+              "directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
+              "original": "/conductor/target/tmp/conductor-e2e-0-chosen",
+              "repository": "/conductor/target/tmp/conductor-e2e-0-chosen",
+              "worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
+            }
+          }
+        },
+        "seq": 2,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": {
+          "SnapshotRecorded": {
+            "snapshot": {
+              "commit": "0000000000000000000000000000000000000001",
+              "turn_start": null
+            }
+          }
+        },
+        "seq": 3,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  },
+  {
+    "connection": 0,
+    "frame": {
+      "Event": {
+        "kind": "SessionReady",
+        "seq": 4,
+        "session": "00000000000000000000000001"
+      }
+    },
+    "stream": "feed"
+  }
 ]
