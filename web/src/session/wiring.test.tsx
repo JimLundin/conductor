@@ -8,12 +8,25 @@ import { Root } from "../root.tsx";
 import { Route } from "../route.ts";
 import { makeStore, type Store, sessionOf } from "../store.ts";
 import { page, when } from "../test-page.ts";
-import { recordedSpan, session } from "./playback.ts";
+import type { Feed } from "../schemas/index.ts";
 
 // crates/link/src/ticket.rs's worked example, and the host it names.
 const ticket =
 	"AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
 const host = `58${"66".repeat(31)}`;
+
+const turn = scenario("a_claude_turn_streams_asks_and_finishes");
+const session = "00000000000000000000000001";
+
+// The turn's first connection: its frames for the events from `from` through `through`, with
+// its frames that are not events when it starts from 0.
+const recordedSpan = (from: number, through: number): readonly Feed[] =>
+	turn.feed(0).filter((frame) => {
+		if (!("Event" in frame)) {
+			return from === 0;
+		}
+		return frame.Event.seq >= from && frame.Event.seq <= through;
+	});
 
 const waiting = (store: Store): number => {
 	const found = sessionOf(store.view(), host, session);
@@ -24,9 +37,7 @@ test("the session route shows the store's session, and its approval follows the 
 	const { before, after } = await scoped(
 		Effect.gen(function* wired() {
 			const fake = yield* Effect.promise(fakeHost);
-			const welcome = yield* scenario(
-				"a_claude_turn_streams_asks_and_finishes",
-			).welcome(0);
+			const welcome = yield* turn.welcome(0);
 			yield* serve(fake, {
 				reply: { Welcome: welcome },
 				feed: recordedSpan(0, 8),
