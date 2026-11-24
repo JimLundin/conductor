@@ -20,8 +20,7 @@ use crate::session::{EventKind, SessionId};
 
 use crate::prelude::*;
 
-/// Format 8 derives each session's provider from its instance. A database
-/// of another format does not open.
+/// The event log's format. A database of another format does not open.
 pub const FORMAT: u32 = 9;
 
 /// Whether a database opens, and whether its format is to be written: a

@@ -1762,7 +1762,7 @@ fn every_line_the_app_logs_or_briefs_is_the_one_log_line_of_its_entry()
         ID,
     )
     .map(|at| at.brief)
-    .map_err(|rejection| format!("{rejection:?}"))?;
+    .map_err(|refusal| format!("{refusal:?}"))?;
     for entry in &issue().log {
         assert!(brief.contains(&log_line(entry)), "{brief}");
     }

@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// A provider, by the name its plugin declares: what the host's command
-/// line, its data dir and the wire call it. Which providers there are is up
+/// line, its data dir and the client link call it. Which providers there are is up
 /// to the plugins a host is given.
 #[derive(
     Debug,

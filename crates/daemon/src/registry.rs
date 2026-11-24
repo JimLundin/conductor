@@ -1,4 +1,4 @@
-//! The registry's actor: the one place a `StartSession` and a `Continue`
+//! The registry's actor: the one place a session's start and a `Continue`
 //! are checked, a session is found by its id, the host's instances
 //! change, and an instance signs in from the app.
 //!
@@ -552,7 +552,7 @@ impl RegistryActor {
                     .share_credential(target.destination.clone(), &credential)
                     .await
             }
-            Err(rejection) => Err(rejection),
+            Err(refusal) => Err(refusal),
         };
         let effects = match result {
             Ok(()) => self.core.set_credential(

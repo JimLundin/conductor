@@ -18,7 +18,7 @@ use host::log::{Event, HostSeq};
 use host::registry::{Catalog, Instances};
 use host::session::{EventKind, SessionId};
 use link::CommandId;
-use link::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
+use link::log::{Begun, Completion, Effect, Kind, Lease, Log as Core};
 use link::{CommandResult, Subscribe, Welcome};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -149,8 +149,8 @@ struct LogActor {
     // Drop a pending transaction before its database: redb waits for transactions.
     transaction: Option<WriteTransaction>,
     storage: Option<Storage>,
-    begins: HashMap<Ticket, oneshot::Sender<BeginCommand>>,
-    finishes: HashMap<Ticket, oneshot::Sender<()>>,
+    begins: HashMap<Lease, oneshot::Sender<BeginCommand>>,
+    finishes: HashMap<Lease, oneshot::Sender<()>>,
     live: broadcast::Sender<Event>,
     requests: broadcast::Sender<FreshRequest>,
 }
@@ -397,8 +397,8 @@ impl LogActor {
             }
             LogMsg::Abort(key) => self.perform(self.core.abort(key))?,
             LogMsg::Begin(start) => {
-                let (ticket, effects) = self.core.begin(start.key, start.kind);
-                self.begins.insert(ticket, start.reply);
+                let (lease, effects) = self.core.begin(start.key, start.kind);
+                self.begins.insert(lease, start.reply);
                 self.perform(effects)?;
             }
             LogMsg::Finish {
@@ -406,8 +406,8 @@ impl LogActor {
                 completion,
                 reply,
             } => {
-                let (ticket, effects) = self.core.finish(key, completion);
-                self.finishes.insert(ticket, reply);
+                let (lease, effects) = self.core.finish(key, completion);
+                self.finishes.insert(lease, reply);
                 self.perform(effects)?;
             }
             LogMsg::History { reply } => {
@@ -512,10 +512,10 @@ impl LogActor {
                     pending.push_front(effect);
                 }
             }
-            Effect::Begun(ticket, begun) => self.answer(ticket, begun)?,
-            Effect::Finished(ticket) => {
+            Effect::Begun(lease, begun) => self.answer(lease, begun)?,
+            Effect::Finished(lease) => {
                 let _ =
-                    self.finishes.remove(&ticket).map(|reply| reply.send(()));
+                    self.finishes.remove(&lease).map(|reply| reply.send(()));
             }
             Effect::Stop => return Err(Stopped {}.into()),
         }
@@ -552,7 +552,7 @@ impl LogActor {
         Ok(())
     }
 
-    fn answer(&mut self, ticket: Ticket, begun: Begun) -> anyhow::Result<()> {
+    fn answer(&mut self, lease: Lease, begun: Begun) -> anyhow::Result<()> {
         let answer = match begun {
             Begun::Cached(result) => BeginCommand::Cached(result),
             Begun::Execute(key) => {
@@ -564,7 +564,7 @@ impl LogActor {
                 })
             }
         };
-        if let Some(reply) = self.begins.remove(&ticket) {
+        if let Some(reply) = self.begins.remove(&lease) {
             let _ = reply.send(answer);
         }
         Ok(())

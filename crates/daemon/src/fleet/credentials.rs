@@ -81,7 +81,7 @@ async fn share(
             )
             .await
         }
-        Err(rejection) => Err(rejection),
+        Err(refusal) => Err(refusal),
     };
     Ok(result)
 }

@@ -79,8 +79,8 @@ fn finishing(
             SessionRefusal::AlreadyFinished,
         ),
     ];
-    if let Some((_, rejection)) = refused.into_iter().find(|(is, _)| *is) {
-        return Err(rejection);
+    if let Some((_, refusal)) = refused.into_iter().find(|(is, _)| *is) {
+        return Err(refusal);
     }
     Ok(Finishing {
         retry: finish == FinishState::Retrying,
@@ -168,8 +168,8 @@ const IMPATIENT: &str =
 fn interrupted(what: &str, answer: Option<&SessionResult>) -> Option<String> {
     match answer {
         Some(SessionResult::Accepted) => None,
-        Some(SessionResult::Refused(rejection)) => {
-            Some(format!("{what}: {}", rejection.label()))
+        Some(SessionResult::Refused(refusal)) => {
+            Some(format!("{what}: {}", refusal.label()))
         }
         Some(other) => Some(format!("{what}: the session answered {other:?}")),
         None => Some(format!("{what}: the session stopped")),
@@ -361,9 +361,9 @@ impl Finish {
             running,
         } = match finishing(history, self.session) {
             Ok(finishing) => finishing,
-            Err(rejection) => {
+            Err(refusal) => {
                 return Vec::from([Effect::Reply(SessionResult::Refused(
-                    rejection,
+                    refusal,
                 ))]);
             }
         };

@@ -21,7 +21,7 @@ use crate::registry::InstanceId;
 use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
 
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits,
-/// whose text, on the wire, in its worktree's and branch's names and in
+/// whose text, on the client link, in its worktree's and branch's names and in
 /// logs, is the `ulid` crate's.
 ///
 /// A human-readable format writes the text, since JSON's numbers are exact

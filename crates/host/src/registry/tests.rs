@@ -217,7 +217,7 @@ fn availability(registry: &Test, id: &InstanceId) -> Option<Availability> {
     registry.instances().availability(id).cloned()
 }
 
-fn rejected(refusal: InstanceRefusal) -> InstanceResult {
+fn refuse(refusal: InstanceRefusal) -> InstanceResult {
     InstanceResult::Refused(refusal)
 }
 
@@ -643,7 +643,7 @@ fn a_credential_of_a_new_account_adds_its_instance_and_starts_its_cli() {
         ),
         Vec::from([Effect::Reply(
             "none",
-            rejected(InstanceRefusal::InvalidCredential {
+            refuse(InstanceRefusal::InvalidCredential {
                 reason: text("base_url is required")
             })
         )])
@@ -742,7 +742,7 @@ fn an_instance_is_removed_only_while_no_session_runs_on_it() {
         ),
         Vec::from([Effect::Reply(
             "busy",
-            rejected(InstanceRefusal::InstanceInUse { sessions: 1 })
+            refuse(InstanceRefusal::InstanceInUse { sessions: 1 })
         )])
     );
     let removed = registry.remove_instance(
@@ -944,7 +944,7 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
     let not_saved = |reply, reason: &str| {
         Vec::from([Effect::Reply(
             reply,
-            rejected(InstanceRefusal::CredentialNotSaved {
+            refuse(InstanceRefusal::CredentialNotSaved {
                 reason: text(reason),
             }),
         )])
@@ -971,14 +971,14 @@ fn credentials_are_checked_and_an_unreadable_store_is_only_moved_aside() {
         (
             Vec::from([Effect::Reply(
                 "bad",
-                rejected(InstanceRefusal::InvalidCredential {
+                refuse(InstanceRefusal::InvalidCredential {
                     reason: text("base_url must be http or https")
                 })
             )]),
             not_saved("set", "sealed"),
             Vec::from([Effect::Reply(
                 "unknown",
-                rejected(InstanceRefusal::UnknownInstance)
+                refuse(InstanceRefusal::UnknownInstance)
             )]),
             Vec::from([Effect::MoveAside {
                 instance: codex.clone(),
@@ -1505,7 +1505,7 @@ fn workspace_and_snapshot_failures_stop_before_opening_records()
     let reason = SessionRefusal::WorkspaceFailure {
         reason: text("git failed"),
     };
-    for (error, rejection) in [
+    for (error, refusal) in [
         (GitError::NotRepository, SessionRefusal::NotGitRepository),
         (GitError::Failed(text("git failed")), reason.clone()),
     ] {
@@ -1515,7 +1515,7 @@ fn workspace_and_snapshot_failures_stop_before_opening_records()
                 &mut registry,
                 StartReport::Workspace(session, Err(error)),
             ),
-            rejection,
+            refusal,
         );
     }
     let snapshot = at_snapshot(&mut registry, session)?;
@@ -1794,7 +1794,7 @@ fn adoption_protects_sessions_on_the_source_and_destination() {
             ),
             [Effect::Reply(
                 "sign in",
-                rejected(InstanceRefusal::InstanceInUse { sessions: 1 })
+                refuse(InstanceRefusal::InstanceInUse { sessions: 1 })
             )],
         );
     }

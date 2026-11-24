@@ -443,7 +443,7 @@ impl Session {
                         "the agent did not confirm shutdown: {reason}"
                     ),
                 })],
-                rejected(SessionRefusal::InstanceUnavailable { reason }),
+                refuse(SessionRefusal::InstanceUnavailable { reason }),
             ),
             (Flow::Removing, Input::Removed(Ok(kept))) => self.gone(Some(kept)),
             (Flow::Removing, Input::Removed(Err(reason))) => {
@@ -458,7 +458,7 @@ impl Session {
 
     fn order(&mut self, order: Order) -> Vec<Effect> {
         if self.removed {
-            return rejected(SessionRefusal::SessionRemoved);
+            return refuse(SessionRefusal::SessionRemoved);
         }
         match order {
             Order::Diff(snapshot) => self.diff(snapshot),
@@ -472,7 +472,7 @@ impl Session {
                 Order::Remove | Order::Stop(_),
                 Turn::Starting(_) | Turn::Running(_),
                 _,
-            ) => rejected(SessionRefusal::TurnInProgress),
+            ) => refuse(SessionRefusal::TurnInProgress),
             (Order::Stop(reason), Turn::Idle, Agent::Up { .. }) => {
                 self.flow = Flow::Halting(reason);
                 Vec::from([Effect::Call(Call::Agent(Command::Shutdown))])
@@ -496,15 +496,15 @@ impl Session {
             (Order::Effort(effort, offered), _, _) => {
                 self.set_effort(effort, &offered)
             }
-            (_, _, Agent::Down) => rejected(SessionRefusal::SessionClosed),
+            (_, _, Agent::Down) => refuse(SessionRefusal::SessionClosed),
             (Order::Send { text, by }, Turn::Idle, _) => {
                 self.save(Saved::Send(text, by))
             }
             (Order::Send { .. }, Turn::Starting(_) | Turn::Running(_), _) => {
-                rejected(SessionRefusal::TurnInProgress)
+                refuse(SessionRefusal::TurnInProgress)
             }
             (Order::Interrupt, Turn::Idle, _) => {
-                rejected(SessionRefusal::NoTurnRunning)
+                refuse(SessionRefusal::NoTurnRunning)
             }
             (Order::Interrupt, Turn::Starting(_), _) => {
                 self.turn = Turn::Starting(Held::Interrupt);
@@ -524,7 +524,7 @@ impl Session {
                 self.reply(request, reply, by)
             }
             (Order::Diff(_), _, _) => {
-                rejected(SessionRefusal::SnapshotUnavailable)
+                refuse(SessionRefusal::SnapshotUnavailable)
             }
         }
     }
@@ -567,7 +567,7 @@ impl Session {
             takes(offered, self.choice.model.as_ref(), effort),
             self.choice.effort,
         ) {
-            (Err(reason), _) => rejected(SessionRefusal::NotOffered { reason }),
+            (Err(reason), _) => refuse(SessionRefusal::NotOffered { reason }),
             (Ok(taken), Some(current)) if taken == current => {
                 answer(SessionResult::Accepted)
             }
@@ -637,15 +637,15 @@ impl Session {
     ) -> Vec<Effect> {
         match self.requests.get(&request).cloned() {
             None | Some(Pending::Resolved(Resolution::Withdrawn)) => {
-                rejected(SessionRefusal::UnknownRequest)
+                refuse(SessionRefusal::UnknownRequest)
             }
             Some(Pending::Resolved(
                 Resolution::Decided { by: first, .. }
                 | Resolution::Answered { by: first, .. },
-            )) => rejected(SessionRefusal::AlreadyResolved { by: first }),
+            )) => refuse(SessionRefusal::AlreadyResolved { by: first }),
             Some(Pending::Open { native, asked }) => match fits(&asked, &reply)
             {
-                Err(reason) => rejected(SessionRefusal::WrongReply { reason }),
+                Err(reason) => refuse(SessionRefusal::WrongReply { reason }),
                 Ok(()) => self.resolve(request, (native, asked), reply, by),
             },
         }
@@ -1053,7 +1053,7 @@ impl Session {
             (
                 Saved::Start(..) | Saved::Continue | Saved::Send(..),
                 Err(reason),
-            ) => rejected(SessionRefusal::WorkspaceFailure { reason }),
+            ) => refuse(SessionRefusal::WorkspaceFailure { reason }),
             (Saved::TurnEnded(outcome), taken) => {
                 join(snapshot_failed(taken), self.turn_ended(outcome))
             }
@@ -1103,7 +1103,7 @@ impl Session {
                 self.flow = Flow::Diffing;
                 Vec::from([Effect::Call(call)])
             }
-            None => rejected(SessionRefusal::SnapshotUnavailable),
+            None => refuse(SessionRefusal::SnapshotUnavailable),
         }
     }
 
@@ -1247,8 +1247,8 @@ fn answer(result: SessionResult) -> Vec<Effect> {
     Vec::from([Effect::Reply(result)])
 }
 
-fn rejected(rejection: SessionRefusal) -> Vec<Effect> {
-    answer(SessionResult::Refused(rejection))
+fn refuse(refusal: SessionRefusal) -> Vec<Effect> {
+    answer(SessionResult::Refused(refusal))
 }
 
 fn subagent(agent: SubagentId, event: SubagentEvent) -> Vec<Effect> {

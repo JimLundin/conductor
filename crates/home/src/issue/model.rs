@@ -69,7 +69,7 @@ pub struct Section {
 /// A field's value.
 ///
 /// A human-readable format, as TOML is, writes it as its value: text, a
-/// list of text or a boolean, and reads a time as its text. The wire's
+/// list of text or a boolean, and reads a time as its text. The client link's
 /// format is not self-describing, so there it is tagged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Datum {
@@ -89,7 +89,7 @@ impl Datum {
     }
 }
 
-/// [`Datum`] as the wire writes it.
+/// [`Datum`] as the client link writes it.
 #[derive(Serialize)]
 #[serde(rename = "Datum")]
 enum TaggedRef<'a> {
@@ -98,7 +98,7 @@ enum TaggedRef<'a> {
     Bool(bool),
 }
 
-/// [`Datum`] as the wire reads it.
+/// [`Datum`] as the client link reads it.
 #[derive(Deserialize)]
 #[serde(rename = "Datum")]
 enum Tagged {

@@ -1730,9 +1730,9 @@ body with `net::wire` and frames them with `host::fleet::frame`; in the
 browser, `web-iroh`.
 JSON names every variant and field, so any change to a type reachable from
 the four client roots bumps `link::ALPN`, and an older peer fails the
-handshake; a daemon e2e test offers the previous ALPN and is refused. The
-JSON forms of ids, epochs and maps keyed by a struct are in `host`'s `json` module
-(§4.1). Host stores stay postcard.
+handshake. Each id writes its own JSON form, the `ulid` crate's text; an
+epoch's decimal digits and maps keyed by a struct are in `host`'s `json`
+module (§4.1). Host stores stay postcard.
 
 Signed fleet payloads are `host::fleet::Signed<T>`: the exact JSON bytes
 the value was written as and a signature over `T::DOMAIN` followed by

@@ -1,6 +1,6 @@
 //! The registry's decisions about sessions and instances.
 //!
-//! They are whether a `StartSession` or a `Continue` may go ahead and why
+//! They are whether a session's start or a `Continue` may go ahead and why
 //! not, the model and effort a session starts with, which session an id
 //! names, whether each instance is available, how an instance comes to be
 //! and is removed, and how a credential change is stored and the instance
@@ -638,7 +638,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             if let Some(sessions) =
                 self.instance_in_use(&[&adoption.from, &adoption.to], running)
             {
-                return Vec::from([rejected(
+                return Vec::from([refuse(
                     reply,
                     InstanceRefusal::InstanceInUse { sessions },
                 )]);
@@ -672,7 +672,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let instance = match named {
             Ok(account) => InstanceId { provider, account },
             Err(reason) => {
-                return Vec::from([rejected(
+                return Vec::from([refuse(
                     reply,
                     InstanceRefusal::InvalidCredential { reason },
                 )]);
@@ -706,7 +706,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         reply: R,
     ) -> Vec<Effect<S, R>> {
         if self.roster.of(&instance).is_none() {
-            return Vec::from([rejected(
+            return Vec::from([refuse(
                 reply,
                 InstanceRefusal::UnknownInstance,
             )]);
@@ -718,7 +718,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             return Vec::from([Self::answer(reply)]);
         }
         if let Some(sessions) = self.instance_in_use(&[&instance], running) {
-            return Vec::from([rejected(
+            return Vec::from([refuse(
                 reply,
                 InstanceRefusal::InstanceInUse { sessions },
             )]);
@@ -1144,12 +1144,12 @@ const fn unavailable(reason: String) -> SessionRefusal {
     SessionRefusal::InstanceUnavailable { reason }
 }
 
-const fn rejected<S, R>(reply: R, refusal: InstanceRefusal) -> Effect<S, R> {
+const fn refuse<S, R>(reply: R, refusal: InstanceRefusal) -> Effect<S, R> {
     Effect::Reply(reply, InstanceResult::Refused(refusal))
 }
 
 const fn not_saved<S, R>(reply: R, reason: String) -> Effect<S, R> {
-    rejected(reply, InstanceRefusal::CredentialNotSaved { reason })
+    refuse(reply, InstanceRefusal::CredentialNotSaved { reason })
 }
 
 fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {

@@ -1,7 +1,7 @@
 //! The host's decisions, kept apart from its I/O: each session's state
 //! machine, what its events say about its commit snapshots, how its
-//! tasks follow the agent's checklist, the protocol's rules on a
-//! connection, the event log's, those of each session's Git worktree, the
+//! tasks follow the agent's checklist, how a session command is routed
+//! ([`serve`]), the event log's, those of each session's Git worktree, the
 //! registry of sessions and providers, how each provider's CLI starts and
 //! signs in from the app, what a restart recovers, and the secrets on
 //! disk. It is pure and `no_std`; `daemon` runs it.

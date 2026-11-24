@@ -48,7 +48,7 @@ use host::sign_in::{SignIn, SignInCommand, SignInResult};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The ALPN of the client link. It changes with every change to the wire
+/// The ALPN of the client link. It changes with every change to the client link's
 /// types (see the crate docs), so an old client fails at the handshake
 /// instead of mid-stream.
 pub const ALPN: &[u8] = b"conductor/45";

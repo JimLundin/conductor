@@ -454,10 +454,10 @@ fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure() {
         finish.step(Input::Events(Vec::from([reply(5, "summary"), closed]))),
         [Effect::Order(Order::Stop(text(super::FINISHED)))]
     );
-    let rejection = SessionRefusal::TurnInProgress;
-    let reason = format!("stopping the agent: {}", rejection.label());
+    let refusal = SessionRefusal::TurnInProgress;
+    let reason = format!("stopping the agent: {}", refusal.label());
     assert_eq!(
-        finish.step(Input::Ordered(Some(SessionResult::Refused(rejection)))),
+        finish.step(Input::Ordered(Some(SessionResult::Refused(refusal)))),
         [note(None, 0)]
     );
     failed(&mut finish, &reason);

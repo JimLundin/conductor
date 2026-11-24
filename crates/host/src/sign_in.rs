@@ -203,11 +203,11 @@ impl SignIns {
         known: Option<Instance>,
     ) -> (SignInResult, Vec<Effect>) {
         let Some(settings) = known else {
-            return (rejected(SignInRefusal::UnknownInstance), Vec::new());
+            return (refuse(SignInRefusal::UnknownInstance), Vec::new());
         };
         let Ok(key) = self.begin(instance.clone(), SignInStep::Starting, None)
         else {
-            return (rejected(SignInRefusal::SignInRunning), Vec::new());
+            return (refuse(SignInRefusal::SignInRunning), Vec::new());
         };
         (
             SignInResult::Accepted,
@@ -228,7 +228,7 @@ impl SignIns {
             SignInStep::Starting,
             Some(target.clone()),
         ) else {
-            return (rejected(SignInRefusal::SignInRunning), Vec::new());
+            return (refuse(SignInRefusal::SignInRunning), Vec::new());
         };
         (
             SignInResult::Accepted,
@@ -358,9 +358,7 @@ impl SignIns {
                     ]),
                 )
             }
-            Some(_) | None => {
-                (rejected(SignInRefusal::NoCodeAsked), Vec::new())
-            }
+            Some(_) | None => (refuse(SignInRefusal::NoCodeAsked), Vec::new()),
         }
     }
 
@@ -609,8 +607,8 @@ pub fn note(sign_in: &SignIn) -> Note {
     }
 }
 
-const fn rejected(rejection: SignInRefusal) -> SignInResult {
-    SignInResult::Refused(rejection)
+const fn refuse(refusal: SignInRefusal) -> SignInResult {
+    SignInResult::Refused(refusal)
 }
 
 const fn publish(instance: InstanceId, step: SignInStep) -> Effect {

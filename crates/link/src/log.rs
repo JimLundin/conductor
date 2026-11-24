@@ -24,7 +24,7 @@ use crate::{CommandResult, Subscribe, Welcome};
 
 /// Names a `begin` or a `finish` the shell answers later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Ticket(pub u64);
+pub struct Lease(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -73,8 +73,8 @@ pub enum Effect {
     Receipt(CommandId, CommandResult),
     /// Read the command's stored receipt and hand it to [`Log::receipt`].
     Lookup(CommandId),
-    Begun(Ticket, Begun),
-    Finished(Ticket),
+    Begun(Lease, Begun),
+    Finished(Lease),
     /// Stop the log: a command was dropped unfinished, so its effects may
     /// have happened without its receipt.
     Stop,
@@ -82,14 +82,14 @@ pub enum Effect {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Start {
-    ticket: Ticket,
+    lease: Lease,
     key: CommandId,
     kind: Kind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Finish {
-    ticket: Ticket,
+    lease: Lease,
     key: CommandId,
     keep_receipt: bool,
     result: CommandResult,
@@ -101,16 +101,16 @@ pub struct Log {
     epoch: Epoch,
     events: host::log::Log,
     active: Option<CommandId>,
-    active_waiters: Vec<Ticket>,
+    active_waiters: Vec<Lease>,
     waiting: VecDeque<Start>,
     /// The start whose receipt the shell is reading.
     starting: Option<Start>,
     /// Each running receipt command, and the retries waiting for it.
-    receipts: BTreeMap<CommandId, Vec<Ticket>>,
+    receipts: BTreeMap<CommandId, Vec<Lease>>,
     /// Credential finishes held until the active command commits, since
     /// only one transaction can be open.
     held: VecDeque<Finish>,
-    tickets: u64,
+    leases: u64,
 }
 
 impl Log {
@@ -127,7 +127,7 @@ impl Log {
             starting: None,
             receipts: BTreeMap::new(),
             held: VecDeque::new(),
-            tickets: 0,
+            leases: 0,
         }
     }
 
@@ -207,19 +207,19 @@ impl Log {
         &mut self,
         key: CommandId,
         kind: Kind,
-    ) -> (Ticket, Vec<Effect>) {
+    ) -> (Lease, Vec<Effect>) {
         let start = Start {
-            ticket: self.ticket(),
+            lease: self.lease(),
             key,
             kind,
         };
         let effects = match (self.active, self.receipts.get_mut(&key)) {
             (Some(active), _) if active == key => {
-                self.active_waiters.push(start.ticket);
+                self.active_waiters.push(start.lease);
                 Vec::new()
             }
             (Some(_), Some(waiters)) => {
-                waiters.push(start.ticket);
+                waiters.push(start.lease);
                 Vec::new()
             }
             (Some(_), None) => {
@@ -228,7 +228,7 @@ impl Log {
             }
             (None, _) => Vec::from([self.look_up(start)]),
         };
-        (start.ticket, effects)
+        (start.lease, effects)
     }
 
     /// The receipt the shell found for the start it looked up.
@@ -239,10 +239,9 @@ impl Log {
         let mut effects = Vec::new();
         match (found, self.receipts.get_mut(&start.key)) {
             (Some(result), _) => {
-                effects
-                    .push(Effect::Begun(start.ticket, Begun::Cached(result)));
+                effects.push(Effect::Begun(start.lease, Begun::Cached(result)));
             }
-            (None, Some(waiters)) => waiters.push(start.ticket),
+            (None, Some(waiters)) => waiters.push(start.lease),
             (None, None) => {
                 match start.kind {
                     Kind::Session => {
@@ -250,7 +249,7 @@ impl Log {
                         self.active = Some(start.key);
                         self.waiting.retain(|waiting| {
                             if waiting.key == start.key {
-                                self.active_waiters.push(waiting.ticket);
+                                self.active_waiters.push(waiting.lease);
                                 false
                             } else {
                                 true
@@ -262,7 +261,7 @@ impl Log {
                     }
                 }
                 effects.push(Effect::Begun(
-                    start.ticket,
+                    start.lease,
                     Begun::Execute(start.key),
                 ));
             }
@@ -277,15 +276,15 @@ impl Log {
         &mut self,
         key: CommandId,
         completion: impl Into<Completion>,
-    ) -> (Ticket, Vec<Effect>) {
+    ) -> (Lease, Vec<Effect>) {
         let outcome = completion.into();
         let finish = Finish {
-            ticket: self.ticket(),
+            lease: self.lease(),
             key,
             keep_receipt: matches!(outcome, Completion::Final(_)),
             result: outcome.into_result(),
         };
-        let ticket = finish.ticket;
+        let lease = finish.lease;
         let effects = match (self.receipts.contains_key(&key), self.active) {
             (true, Some(_)) => {
                 self.held.push_back(finish);
@@ -294,7 +293,7 @@ impl Log {
             (true, None) => self.settle(&finish),
             (false, _) => self.close(&finish),
         };
-        (ticket, effects)
+        (lease, effects)
     }
 
     /// A command's lease was dropped unfinished. A running one stops the
@@ -318,7 +317,7 @@ impl Log {
                 Effect::Begun(waiter, Begun::Cached(finish.result.clone()))
             },
         ));
-        effects.push(Effect::Finished(finish.ticket));
+        effects.push(Effect::Finished(finish.lease));
         for held in mem::take(&mut self.held) {
             effects.extend(self.settle(&held));
         }
@@ -339,7 +338,7 @@ impl Log {
         effects.extend(waiters.into_iter().map(|waiter| {
             Effect::Begun(waiter, Begun::Cached(finish.result.clone()))
         }));
-        effects.push(Effect::Finished(finish.ticket));
+        effects.push(Effect::Finished(finish.lease));
         effects
     }
 
@@ -356,9 +355,9 @@ impl Log {
         Effect::Lookup(start.key)
     }
 
-    const fn ticket(&mut self) -> Ticket {
-        self.tickets = self.tickets.wrapping_add(1);
-        Ticket(self.tickets)
+    const fn lease(&mut self) -> Lease {
+        self.leases = self.leases.wrapping_add(1);
+        Lease(self.leases)
     }
 }
 

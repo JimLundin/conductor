@@ -116,7 +116,6 @@ fn conversation(
     Ok(())
 }
 
-/// Stores the command's receipt in `write`.
 pub fn store_receipt(
     write: &WriteTransaction,
     key: CommandId,

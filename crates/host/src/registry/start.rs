@@ -188,14 +188,14 @@ impl StartRequest {
     ) -> StartDecision<S, H> {
         let placed = match result {
             Ok(placement) => placement,
-            Err(reason) => return rejected(SessionRefusal::Home(reason)),
+            Err(reason) => return refuse(SessionRefusal::Home(reason)),
         };
         let (phase, effect) = match &placed.on {
             Some(on) => {
                 if let Some(session) =
                     on_issue(history, on.issue, &self.instance)
                 {
-                    return rejected(SessionRefusal::IssueTaken { session });
+                    return refuse(SessionRefusal::IssueTaken { session });
                 }
                 (Phase::Branch, StartEffect::ReadyBranch(on.clone()))
             }
@@ -229,7 +229,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
         let (phase, effect) = match (previous, report) {
             (Phase::Branch, StartReport::Branch(readied)) => {
                 if let Err(reason) = readied {
-                    return rejected(reason);
+                    return refuse(reason);
                 }
                 (
                     Phase::Directory,
@@ -239,7 +239,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
             (Phase::Directory, StartReport::Directory(exists)) => {
                 match workspace_creation(registry, &request, &placed, exists) {
                     Ok(next) => next,
-                    Err(reason) => return rejected(reason),
+                    Err(reason) => return refuse(reason),
                 }
             }
             (
@@ -247,7 +247,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
                 StartReport::Workspace(session, created),
             ) => match created {
                 Ok(workspace) => snapshotting(session, launch, workspace),
-                Err(error) => return rejected(unprepared(error)),
+                Err(error) => return refuse(unprepared(error)),
             },
             (
                 Phase::Snapshot(session, launch, workspace),
@@ -260,7 +260,7 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
                     (Phase::Record(session, launch), effect)
                 }
                 Err(error) => {
-                    return rejected(SessionRefusal::WorkspaceFailure {
+                    return refuse(SessionRefusal::WorkspaceFailure {
                         reason: error.to_string(),
                     });
                 }
@@ -392,7 +392,7 @@ fn admitted<S: Clone, H: Clone, R>(
     }))
 }
 
-const fn rejected<S, H>(reason: SessionRefusal) -> StartDecision<S, H> {
+const fn refuse<S, H>(reason: SessionRefusal) -> StartDecision<S, H> {
     Break(StartEnd::Finished(StartOutcome {
         progress: None,
         result: SessionResult::Refused(reason),

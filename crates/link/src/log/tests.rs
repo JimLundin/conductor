@@ -7,7 +7,7 @@ use host::session::{EventKind, SessionId, SessionRefusal, SessionResult};
 
 use crate::{CommandResult, Subscribe, Welcome};
 
-use super::{Begun, Completion, Effect, Kind, Log, Ticket};
+use super::{Begun, Completion, Effect, Kind, Lease, Log};
 
 fn log() -> Log {
     Log::new(String::from("test"), Epoch(5), Vec::new())
@@ -39,16 +39,16 @@ fn published(event: Event) -> Effect {
 }
 
 /// Begins `key` on an idle log whose store has no receipt for it.
-fn execute(log: &mut Log, key: u128, kind: Kind) -> Ticket {
-    let (ticket, effects) = log.begin(CommandId(key), kind);
+fn execute(log: &mut Log, key: u128, kind: Kind) -> Lease {
+    let (lease, effects) = log.begin(CommandId(key), kind);
     assert_eq!(effects, [Effect::Lookup(CommandId(key))]);
-    let begun = Effect::Begun(ticket, Begun::Execute(CommandId(key)));
+    let begun = Effect::Begun(lease, Begun::Execute(CommandId(key)));
     let expected = match kind {
         Kind::Session => Vec::from([OPEN, begun]),
         Kind::Receipt => Vec::from([begun]),
     };
     assert_eq!(log.receipt(None), expected);
-    ticket
+    lease
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn the_welcome_names_the_head_and_a_subscription_needs_the_epoch() {
 #[test]
 fn a_commands_events_stage_until_its_receipt_commits_them() {
     let mut log = log();
-    let ticket = execute(&mut log, 1, Kind::Session);
+    let lease = execute(&mut log, 1, Kind::Session);
     let (_, effects) = log.append(SessionId(1), EventKind::SessionReady);
     assert_eq!(
         effects,
@@ -113,7 +113,7 @@ fn a_commands_events_stage_until_its_receipt_commits_them() {
     assert_eq!(effects, Vec::<Effect>::new());
     assert_eq!(log.history(), Vec::<Event>::new());
     let (finished, effects) = log.finish(CommandId(1), accepted());
-    assert_ne!(finished, ticket);
+    assert_ne!(finished, lease);
     assert_eq!(
         effects,
         [
