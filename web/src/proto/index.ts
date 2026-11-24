@@ -53,7 +53,7 @@ export const Auth = Schema.Union(
 		}),
 		Schema.Literal("SignedIn").annotate({
 			description:
-				"The CLI's own sign-in in the instance's private home, from the app\n(`StartSignIn`) or on the host (`conductord login <instance>`).",
+				"The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`conductord login <instance>`).",
 		}),
 		Schema.Literal("Unmanaged").annotate({
 			description:
@@ -479,7 +479,7 @@ export type Provider = string;
 
 export const Provider = Schema.String.annotate({
 	description:
-		"A provider, by the name its plugin declares: what the host's command\nline, its data dir and the wire call it. Which providers there are is up\nto the plugins a host is given.",
+		"A provider, by the name its plugin declares: what the host's command\nline, its data dir and the client link call it. Which providers there are is up\nto the plugins a host is given.",
 	identifier: "Provider",
 });
 
@@ -501,7 +501,7 @@ export type SessionId = string;
 
 export const SessionId = Schema.String.annotate({
 	description:
-		"A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the wire, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
+		"A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the client link, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
 	identifier: "SessionId",
 });
 
