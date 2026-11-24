@@ -1,4 +1,5 @@
 // A host's welcome and feed folded into what the views render: the only fold of its events.
+import type { Update } from "../link/host.ts";
 import type {
 	Catalog,
 	Event,
@@ -95,6 +96,20 @@ const applyFeed = (host: Host, feed: Feed): Host => {
 	return host;
 };
 
+// A link status is not part of the host's fold.
+const applyUpdate = (host: Host, update: Update): Host => {
+	switch (update._tag) {
+		case "Reset":
+			return resetHistory(host);
+		case "Welcome":
+			return applyWelcome(host, update.welcome);
+		case "Feed":
+			return applyFeed(host, update.frame);
+		case "Status":
+			return host;
+	}
+};
+
 // The sessions, the most recently active first.
 const recent = (host: Host): readonly SessionId[] =>
 	[...host.sessions]
@@ -112,13 +127,4 @@ const directories = (host: Host): readonly SessionDirectory[] => [
 	),
 ];
 
-export {
-	applyFeed,
-	applyWelcome,
-	directories,
-	emptyHost,
-	type Host,
-	isDelta,
-	recent,
-	resetHistory,
-};
+export { applyUpdate, directories, emptyHost, type Host, isDelta, recent };

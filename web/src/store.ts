@@ -1,14 +1,7 @@
 // The app's one store: every paired host with its link status and fold, and the screen shown.
 // Each host's link runs in its own fiber, whose scope closing is how forgetting works.
 import { Effect, FiberMap, Result, type Scope, Stream } from "effect";
-import {
-	applyFeed,
-	applyWelcome,
-	emptyHost,
-	type Host,
-	recent,
-	resetHistory,
-} from "./fold/host.ts";
+import { applyUpdate, emptyHost, type Host, recent } from "./fold/host.ts";
 import type { Session } from "./fold/session.ts";
 import { link } from "./link.ts";
 import { SendError } from "./link/command.ts";
@@ -102,21 +95,15 @@ const sessionOf = (
 	session: SessionId,
 ): Session | undefined => view.hosts.get(host)?.fold.sessions.get(session);
 
-const applyUpdate = (host: PairedHost, update: Update): PairedHost => {
-	switch (update._tag) {
-		case "Status":
-			return { ...host, status: { state: update.state, error: update.error } };
-		case "Reset":
-			return { ...host, fold: resetHistory(host.fold) };
-		case "Welcome":
-			return {
-				...host,
-				saved: update.welcome.host,
-				fold: applyWelcome(host.fold, update.welcome),
-			};
-		case "Feed":
-			return { ...host, fold: applyFeed(host.fold, update.frame) };
+const withUpdate = (host: PairedHost, update: Update): PairedHost => {
+	if (update._tag === "Status") {
+		return { ...host, status: { state: update.state, error: update.error } };
 	}
+	return {
+		...host,
+		saved: update._tag === "Welcome" ? update.welcome.host : host.saved,
+		fold: applyUpdate(host.fold, update),
+	};
 };
 
 // A screen of a host no longer paired shows the sessions instead.
@@ -163,7 +150,7 @@ const makeStore = (
 			if (host === undefined) {
 				return;
 			}
-			const next = applyUpdate(host, update);
+			const next = withUpdate(host, update);
 			if (next.saved !== host.saved) {
 				save(boundary.storage, { ticket: next.ticket, name: next.saved });
 			}
