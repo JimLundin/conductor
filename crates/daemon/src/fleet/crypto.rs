@@ -13,9 +13,9 @@ use iroh::{PublicKey, SecretKey, Signature};
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
 
-const CONFIGURATION: &[u8] = b"conductor fleet configuration v3";
-const STORE: &[u8] = b"conductor fleet local store v3";
-const BACKUP: &[u8] = b"conductor fleet root backup v3";
+const CONFIGURATION: &[u8] = b"conductor fleet configuration v4";
+const STORE: &[u8] = b"conductor fleet local store v4";
+const BACKUP: &[u8] = b"conductor fleet root backup v4";
 
 pub(super) fn sign_identity(
     key: &SecretKey,
@@ -311,10 +311,34 @@ mod tests {
     }
 
     #[test]
+    fn a_configuration_signed_in_the_previous_context_does_not_verify()
+    -> anyhow::Result<()> {
+        let config = host::fleet::Configuration {
+            snapshot: Snapshot {
+                fleet: [1; 32],
+                root: [2; 32],
+                version: 1,
+                hosts: Vec::new(),
+                revoked: Vec::new(),
+            },
+            instances: host::registry::Roster::default(),
+        };
+        let mut signed = super::sign_config(&key(), config)?;
+        super::verify_config(key().public(), &signed)?;
+        signed.signature = super::sign(
+            &key(),
+            b"conductor fleet configuration v3",
+            &signed.config,
+        )?;
+        assert!(super::verify_config(key().public(), &signed).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn previous_fleet_store_context_is_rejected() -> anyhow::Result<()> {
         let key = [17; 32];
         let old =
-            super::encrypt(&key, b"conductor fleet local store v2", &[7])?;
+            super::encrypt(&key, b"conductor fleet local store v3", &[7])?;
         assert!(super::unseal::<u8>(&key, &old).is_err());
         assert_eq!(super::unseal::<u8>(&key, &super::seal(&key, &7u8)?)?, 7);
         Ok(())
@@ -331,7 +355,7 @@ mod tests {
         let salt = [18; 16];
         let key = super::backup_key(phrase, &salt)?;
         let old =
-            super::encrypt(&key, b"conductor fleet root backup v2", &[7])?;
+            super::encrypt(&key, b"conductor fleet root backup v3", &[7])?;
         std::fs::write(&path, salt.into_iter().chain(old).collect::<Vec<_>>())?;
         assert!(super::recover::<u8>(&path, phrase).is_err());
         let current = directory.path().join("current-backup");
