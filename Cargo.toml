@@ -19,7 +19,7 @@ thiserror = { version = "2.0.21", default-features = false }
 tokio = { version = "1.54.1", features = ["process", "io-util", "sync", "macros", "rt-multi-thread", "time"] }
 tracing = { version = "0.1.44", default-features = false }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-uuid = { version = "1.29.2", features = ["v4"] }
+uuid = { version = "1.29.2", default-features = false }
 
 [workspace.lints.rust]
 warnings = "deny"

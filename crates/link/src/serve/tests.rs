@@ -77,7 +77,7 @@ fn a_first_stream_that_is_not_a_hello_is_refused() {
         None,
         Some(Open::Subscribe(subscribe())),
         Some(Open::Command {
-            id: CommandId(1),
+            id: CommandId(uuid::Uuid::from_u128(1)),
             body: interrupt(),
         }),
         Some(Open::FleetHello(a_device())),
@@ -117,10 +117,10 @@ fn a_fleet_host_asks_the_fleet_about_a_device_and_refuses_anything_else() {
 fn a_later_stream_carries_a_command_or_a_subscription() {
     assert_eq!(
         stream(Some(Open::Command {
-            id: CommandId(1),
+            id: CommandId(uuid::Uuid::from_u128(1)),
             body: interrupt(),
         })),
-        Stream::Command(CommandId(1), interrupt())
+        Stream::Command(CommandId(uuid::Uuid::from_u128(1)), interrupt())
     );
     assert_eq!(
         stream(Some(Open::Subscribe(subscribe()))),

@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/45",
+			"const": "conductor/46",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
@@ -381,7 +381,8 @@
 			]
 		},
 		"CommandId": {
-			"description": "A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
+			"description": "A client-generated, fleet-unique random UUID for idempotent retries.",
+			"format": "uuid",
 			"type": "string"
 		},
 		"CommandResult": {

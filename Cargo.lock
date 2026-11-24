@@ -2293,7 +2293,7 @@ dependencies = [
  "serde_json",
  "subtle",
  "thiserror 2.0.21",
- "ulid",
+ "uuid",
 ]
 
 [[package]]
@@ -3759,6 +3759,7 @@ dependencies = [
  "schemars_derive",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -4665,9 +4666,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bed99139f7dac9b5cfe5f17be4d66dc7079a34dee1d74bcc77217119240e267c"
 dependencies = [
  "getrandom 0.4.3",
- "js-sys",
+ "serde_core",
  "sha1_smol",
- "wasm-bindgen",
 ]
 
 [[package]]

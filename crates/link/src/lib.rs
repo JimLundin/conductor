@@ -51,7 +51,7 @@ use serde::{Deserialize, Serialize};
 /// The ALPN of the client link. It changes with every change to the client link's
 /// types (see the crate docs), so an old client fails at the handshake
 /// instead of mid-stream.
-pub const ALPN: &[u8] = b"conductor/45";
+pub const ALPN: &[u8] = b"conductor/46";
 
 /// The first frame on every client-opened bi-stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

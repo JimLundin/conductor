@@ -62,3 +62,8 @@ reason = "generated: Codegen prints object literals in its own form"
 path = "src/schemas/**"
 rule = "lint/style/useConsistentTypeDefinitions"
 reason = "generated: Codegen declares every type as a type alias"
+
+[[exception]]
+path = "src/link/command.ts"
+rule = "lint/plugin/noNondeterminism"
+reason = "a command id must differ from every other in the fleet so a retry answers from its own receipt; it is minted with crypto.randomUUID() where the command is sent, and no test reproduces it"

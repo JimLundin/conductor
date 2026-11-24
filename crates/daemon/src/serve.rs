@@ -202,7 +202,7 @@ async fn admit_fleet(
 
 fn trace_command(id: CommandId, command: &Command) {
     let operation = link::serve::operation(command);
-    tracing::info!(command = id.0, operation, "command received");
+    tracing::info!(command = %id.0, operation, "command received");
 }
 
 const fn command_outcome(result: &CommandResult) -> &'static str {
@@ -359,7 +359,7 @@ impl Conductor {
                 trace_command(id, &command);
                 let result = self.run(id, command, client).await?;
                 tracing::info!(
-                    command = id.0,
+                    command = %id.0,
                     outcome = command_outcome(&result),
                     "command finished"
                 );
@@ -619,14 +619,14 @@ mod diagnostics_tests {
                 .finish(),
             || {
                 super::trace_command(
-                    CommandId(1),
+                    CommandId(uuid::Uuid::from_u128(1)),
                     &Command::Session(SessionCommand::SendMessage {
                         session: SessionId(1),
                         text: String::from("synthetic-message-marker"),
                     }),
                 );
                 super::trace_command(
-                    CommandId(2),
+                    CommandId(uuid::Uuid::from_u128(2)),
                     &Command::Session(SessionCommand::Answer {
                         session: SessionId(1),
                         request: RequestId(1),
@@ -647,8 +647,12 @@ mod diagnostics_tests {
         );
         let logged = std::fs::read_to_string(&path)?;
         std::fs::remove_file(path)?;
-        assert!(logged.contains(r#"command=1 operation="send_message""#));
-        assert!(logged.contains(r#"command=2 operation="answer""#));
+        assert!(logged.contains(
+            r#"command=00000000-0000-0000-0000-000000000001 operation="send_message""#
+        ));
+        assert!(logged.contains(
+            r#"command=00000000-0000-0000-0000-000000000002 operation="answer""#
+        ));
         assert!(logged.contains("pushed"));
         assert!(!logged.contains("synthetic-"));
         Ok(())

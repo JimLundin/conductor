@@ -160,19 +160,19 @@ mod tests {
     }
 
     #[test]
-    /// `serde_json` writes an enum variant as its name, and a 128-bit id as
-    /// its 26-digit ULID.
+    /// `serde_json` writes an enum variant as its name, a command id as its
+    /// UUID and a session id as its 26-digit ULID.
     fn command_frame_is_length_then_json()
     -> Result<(), Box<dyn std::error::Error>> {
         let open = Open::Command {
-            id: CommandId(7),
+            id: CommandId(uuid::Uuid::from_u128(7)),
             body: Command::Session(SessionCommand::SendMessage {
                 session: SessionId(u128::MAX),
                 text: String::from("hi"),
             }),
         };
         let bytes = encode(&open)?;
-        let body = br#"{"Command":{"id":"00000000000000000000000007","body":{"Session":{"SendMessage":{"session":"7ZZZZZZZZZZZZZZZZZZZZZZZZZ","text":"hi"}}}}}"#;
+        let body = br#"{"Command":{"id":"00000000-0000-0000-0000-000000000007","body":{"Session":{"SendMessage":{"session":"7ZZZZZZZZZZZZZZZZZZZZZZZZZ","text":"hi"}}}}}"#;
         assert_eq!(bytes, frame(body));
         let (header, rest) = bytes
             .split_first_chunk::<HEADER_LEN>()
@@ -186,7 +186,7 @@ mod tests {
     fn a_credential_goes_out_whole_and_debugs_as_its_kind()
     -> Result<(), Box<dyn std::error::Error>> {
         let open = Open::Command {
-            id: CommandId(1),
+            id: CommandId(uuid::Uuid::from_u128(1)),
             body: Command::Instance(InstanceCommand::SetCredential {
                 provider: Provider::new("claude"),
                 credential: Credential {
@@ -201,12 +201,12 @@ mod tests {
         assert_eq!(
             encode(&open)?,
             frame(
-                br#"{"Command":{"id":"00000000000000000000000001","body":{"Instance":{"SetCredential":{"provider":"claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
+                br#"{"Command":{"id":"00000000-0000-0000-0000-000000000001","body":{"Instance":{"SetCredential":{"provider":"claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
             )
         );
         assert_eq!(
             format!("{open:?}"),
-            r#"Command { id: CommandId(1), body: Instance(SetCredential { provider: Provider("claude"), credential: Credential { kind: "gateway", .. } }) }"#
+            r#"Command { id: CommandId(00000000-0000-0000-0000-000000000001), body: Instance(SetCredential { provider: Provider("claude"), credential: Credential { kind: "gateway", .. } }) }"#
         );
         Ok(())
     }

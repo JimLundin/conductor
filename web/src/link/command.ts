@@ -1,11 +1,7 @@
 // A command on its own stream, with its result for the caller.
-import { Data, Effect, Random } from "effect";
+import { Data, Effect } from "effect";
 import type { Connection } from "../pipe.ts";
-import {
-	type Command,
-	type CommandId,
-	CommandResult,
-} from "../schemas/index.ts";
+import { type Command, CommandResult } from "../schemas/index.ts";
 import { closing, described, open, read, write } from "./frames.ts";
 
 type SendError = Data.TaggedEnum<{
@@ -16,38 +12,13 @@ type SendError = Data.TaggedEnum<{
 
 const SendError = Data.taggedEnum<SendError>();
 
-const radix = 36;
-const digits = 32;
-// A ULID is 128 bits in 26 digits, so its first digit carries only 3 of them.
-const firstDigits = 8;
-const restLength = 25;
-
-// Crockford's base 32: the base 36 digits without i, l, o and u.
-const crockford = Array.from({ length: radix }, (_, value) =>
-	value.toString(radix),
-)
-	.filter((character) => !"ilou".includes(character))
-	.join("");
-
-const digit = (below: number): Effect.Effect<string> =>
-	Random.nextIntBetween(0, below, { halfOpen: true }).pipe(
-		Effect.map((value) => crockford.charAt(value)),
-	);
-
-// A fleet-unique id: 128 random bits as a 26-digit lower-case ULID.
-const commandId: Effect.Effect<CommandId> = Effect.all([
-	digit(firstDigits),
-	...Array.from({ length: restLength }, () => digit(digits)),
-]).pipe(Effect.map((all) => all.join("")));
-
 const answer = (
 	connection: Connection,
 	body: Command,
 ): Effect.Effect<CommandResult | undefined, string> =>
 	Effect.gen(function* rpc() {
-		const id = yield* commandId;
 		const stream = yield* open(connection);
-		yield* write(stream, { Command: { id, body } });
+		yield* write(stream, { Command: { id: crypto.randomUUID(), body } });
 		yield* Effect.tryPromise({ try: () => stream.finish(), catch: described });
 		return yield* read(CommandResult, stream);
 	});

@@ -21,7 +21,8 @@ const interrupt: Command = {
 	Session: { Interrupt: { session: "00000000000000000000000001" } },
 } as const;
 
-const ulid = /^[0-7][0-9a-hjkmnp-tv-z]{25}$/u;
+const uuid =
+	/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 test("each command gets its own stream and returns its own result to its caller", async () => {
 	const results = turn.results(0);
@@ -45,7 +46,7 @@ test("each command gets its own stream and returns its own result to its caller"
 	expect(new Set(commands.map((command) => command.id)).size).toBe(
 		results.length,
 	);
-	expect(commands.filter((command) => ulid.test(command.id))).toEqual(commands);
+	expect(commands.filter((command) => uuid.test(command.id))).toEqual(commands);
 });
 
 test("a command while the link is down fails as not connected", async () => {

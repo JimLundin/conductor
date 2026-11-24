@@ -219,13 +219,12 @@ client:
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, a live-only `SignIn` step (§6.3), the current `Home`, or the current `Instances` offer. A cursor from another epoch is refused. |
 
 Each frame is a big-endian `u32` length and a JSON body written by serde.
-A 128-bit id (`SessionId`, `CommandId`, `EditId`) is its 26-character
+A 128-bit id (`SessionId`, `EditId`) is its 26-character
 ULID text as the `ulid` crate writes it, in upper case (it reads either
-case), an `IssueId` or `ProjectId` its short text (`home`), and an
+case), a `CommandId` its UUID text as the `uuid` crate writes it, an `IssueId` or `ProjectId` its short text (`home`), and an
 `Epoch` its decimal digits, since JavaScript's numbers are exact only to
 2^53; `Instances` and `Roster` are lists of `[InstanceId, value]` pairs,
-since a JSON key is only a string; bytes are arrays of integers. Stores and host-to-host frames stay postcard, whose
-bytes these choices don't change.
+since a JSON key is only a string; bytes are arrays of integers. Stores and host-to-host frames stay postcard.
 
 ### 4.2 iroh
 
@@ -544,7 +543,7 @@ until someone re-records them by hand (§6.2).
   persist, so an existing ticket remains valid after restart. Streaming
   deltas stay live-only.
 - **Idempotent commands (built):** receipts are keyed by fleet-unique
-  `CommandId`s (128 random bits), so a hedge onto a new transport identity
+  `CommandId`s (random UUIDs), so a hedge onto a new transport identity
   still finds the same receipt. One command at a time stages its durable
   events and conversation writes, then commits them with its receipt
   before replying. Ordinary commands use one transaction. Snapshot capture
@@ -1720,7 +1719,7 @@ travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
 
 | Link | Framing | Codec | Messages |
 |---|---|---|---|
-| Client and host (`link::ALPN`, `conductor/45`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`link::ALPN`, `conductor/46`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: on a host, `net::wire` for the client link and the
@@ -1808,7 +1807,7 @@ commands, and runs until its scope closes, which closes its connection.
   live. `reconnect` drops the connection and dials at once; the page calls
   it when the browser comes back online or the page becomes visible.
 - **Commands** (`link/command.ts`). Each command opens its own stream,
-  sends `Command { id, body }` with a fresh random ULID, finishes the
+  sends `Command { id, body }` with an id from `crypto.randomUUID()`, finishes the
   stream and returns the one `CommandResult` to its caller. `send` waits
   while the link connects and fails with `NotConnected` while it is down;
   the caller decides whether to retry.

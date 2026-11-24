@@ -252,7 +252,7 @@ async fn perform(registry: &Registry, command: InstanceCommand) -> bool {
         return false;
     }
     registry
-        .configure(command.clone(), CommandId(u128::from_le_bytes(bytes)))
+        .configure(command.clone(), CommandId(uuid::Uuid::from_bytes(bytes)))
         .await
         .is_ok_and(|result| fleet::applied(&command, &result))
 }

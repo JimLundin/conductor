@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/45";
+export type Alpn = "conductor/46";
 
-export const Alpn = Schema.Literal("conductor/45").annotate({
+export const Alpn = Schema.Literal("conductor/46").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -1094,7 +1094,8 @@ export type CommandId = string;
 
 export const CommandId = Schema.String.annotate({
 	description:
-		"A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
+		"A client-generated, fleet-unique random UUID for idempotent retries.",
+	format: "uuid",
 	identifier: "CommandId",
 });
 

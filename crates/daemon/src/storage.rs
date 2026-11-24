@@ -92,7 +92,7 @@ impl Storage {
         let read = self.database.begin_read()?;
         let table = read.open_table(RECEIPTS)?;
         table
-            .get(key.0)?
+            .get(key.0.as_u128())?
             .map(|value| decode(&value.value()))
             .transpose()
     }
@@ -122,7 +122,9 @@ pub fn store_receipt(
     result: &CommandResult,
 ) -> anyhow::Result<()> {
     let encoded = encode(result)?;
-    let _ = write.open_table(RECEIPTS)?.insert(key.0, &encoded)?;
+    let _ = write
+        .open_table(RECEIPTS)?
+        .insert(key.0.as_u128(), &encoded)?;
     Ok(())
 }
 
@@ -183,7 +185,7 @@ mod tests {
         conversation(&write, SessionId(7), "native-conversation")?;
         store_receipt(
             &write,
-            link::CommandId(1),
+            link::CommandId(uuid::Uuid::from_u128(1)),
             &CommandResult::Session(host::session::SessionResult::Accepted),
         )?;
         write.commit()?;
@@ -196,7 +198,7 @@ mod tests {
             Some(String::from("native-conversation"))
         );
         assert_eq!(
-            second.receipt(link::CommandId(1))?,
+            second.receipt(link::CommandId(uuid::Uuid::from_u128(1)))?,
             Some(CommandResult::Session(
                 host::session::SessionResult::Accepted
             ))
@@ -224,14 +226,17 @@ mod tests {
         )?;
         store_receipt(
             &write,
-            link::CommandId(1),
+            link::CommandId(uuid::Uuid::from_u128(1)),
             &CommandResult::Session(host::session::SessionResult::Accepted),
         )?;
         drop(write);
         drop(first);
         let second = Storage::open(&path)?;
         assert_eq!(second.events()?, Vec::new());
-        assert_eq!(second.receipt(link::CommandId(1))?, None);
+        assert_eq!(
+            second.receipt(link::CommandId(uuid::Uuid::from_u128(1)))?,
+            None
+        );
         drop(second);
         let _ = std::fs::remove_file(path);
         Ok(())
