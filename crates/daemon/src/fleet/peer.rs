@@ -9,13 +9,12 @@ use host::fleet::{
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
-use net::wire;
 use tokio::sync::{Mutex, Semaphore};
 
 use super::member::clock;
+use super::wire::{self, read};
 use super::{Membership, Slot};
 
-const MAX_FRAME: usize = 256 * 1024;
 const RPC_LIMIT: usize = 16;
 const RPC_DEADLINE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_secs(30);
@@ -31,7 +30,7 @@ pub struct Protocol {
 struct Enrollment {
     data: PathBuf,
     local: EndpointId,
-    token: host::fleet::AuthToken,
+    token: host::fleet::EnrollmentToken,
     admitting: Mutex<()>,
 }
 
@@ -40,7 +39,7 @@ impl Protocol {
         fleet: Slot,
         data: PathBuf,
         local: EndpointId,
-        token: host::fleet::AuthToken,
+        token: host::fleet::EnrollmentToken,
     ) -> Self {
         Self {
             fleet,
@@ -66,7 +65,7 @@ impl Protocol {
     async fn can_enroll(
         &self,
         remote: EndpointId,
-        token: &host::fleet::AuthToken,
+        token: &host::fleet::EnrollmentToken,
         membership: Option<&Membership>,
     ) -> bool {
         if !self.matches_token(token) {
@@ -80,7 +79,7 @@ impl Protocol {
         }
     }
 
-    fn matches_token(&self, token: &host::fleet::AuthToken) -> bool {
+    fn matches_token(&self, token: &host::fleet::EnrollmentToken) -> bool {
         self.enrollment
             .as_ref()
             .is_some_and(|enrollment| token.check(&enrollment.token).is_ok())
@@ -89,7 +88,7 @@ impl Protocol {
     async fn accept_enrollment(
         &self,
         remote: EndpointId,
-        token: &host::fleet::AuthToken,
+        token: &host::fleet::EnrollmentToken,
         certificate: host::fleet::Certificate,
         config: SignedConfiguration,
     ) -> anyhow::Result<()> {
@@ -148,7 +147,7 @@ impl Protocol {
                         other,
                     )
                     .await?;
-                wire::fleet::write(&mut send, &reply).await?;
+                wire::write(&mut send, &reply).await?;
             }
         }
         send.finish()?;
@@ -219,15 +218,15 @@ async fn respond_sync(
     if let Some(revocation) =
         fleet.revocation_for(remote, &peer.certificate).await
     {
-        return Ok(wire::fleet::write(send, &Reply::Revoked(revocation)).await?);
+        return wire::write(send, &Reply::Revoked(revocation)).await;
     }
     if !allowed_peer(fleet, remote, &peer.certificate).await {
-        return Ok(wire::fleet::write(send, &Reply::Refused).await?);
+        return wire::write(send, &Reply::Refused).await;
     }
     let local = fleet.peer().await;
     let before = local.version;
     let config = fleet.config_after(peer.version).await;
-    wire::fleet::write(
+    wire::write(
         send,
         &Reply::Sync(Sync {
             peer: local,
@@ -294,7 +293,7 @@ pub(super) async fn admit_existing(
     endpoint: &Endpoint,
     fleet: &Membership,
     target: EndpointAddr,
-    token: host::fleet::AuthToken,
+    token: host::fleet::EnrollmentToken,
     host: HostEntry,
 ) -> anyhow::Result<()> {
     validate_host(&host)?;
@@ -339,7 +338,7 @@ async fn exchange(
     tokio::time::timeout(RPC_DEADLINE, async {
         let conn = endpoint.connect(target, host::fleet::ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await?;
-        wire::fleet::write(&mut send, request).await?;
+        wire::write(&mut send, request).await?;
         send.finish()?;
         read(&mut recv).await
     })
@@ -412,7 +411,7 @@ pub(super) async fn sync_with(
     let (mut send, mut recv) = conn.open_bi().await?;
     let local = membership.peer().await;
     let local_version = local.version;
-    wire::fleet::write(&mut send, &Request::Sync(local)).await?;
+    wire::write(&mut send, &Request::Sync(local)).await?;
     let (peer, config) = match read::<Reply>(&mut recv).await? {
         Reply::Sync(Sync { peer, config }) => (peer, config),
         Reply::Revoked(revoked) => {
@@ -456,7 +455,7 @@ async fn send_update(
     if local > remote
         && let Some(updated) = fleet.config_after(remote).await
     {
-        wire::fleet::write(send, &updated).await?;
+        wire::write(send, &updated).await?;
     }
     Ok(())
 }
@@ -477,12 +476,4 @@ fn validate_host(host: &HostEntry) -> anyhow::Result<()> {
     );
     address(&host.node, &host.relay)?;
     Ok(())
-}
-
-async fn read<T: host::fleet::frame::Frame>(
-    recv: &mut RecvStream,
-) -> anyhow::Result<T> {
-    wire::fleet::read_bounded(recv, MAX_FRAME)
-        .await?
-        .context("fleet stream closed before its reply")
 }

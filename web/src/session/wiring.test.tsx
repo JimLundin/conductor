@@ -10,7 +10,7 @@ import { makeStore, type Store, sessionOf } from "../store.ts";
 import { page, when } from "../test-page.ts";
 import { recordedSpan, session } from "./playback.ts";
 
-// crates/host/src/fleet/ticket.rs's worked example, and the host it names.
+// crates/link/src/ticket.rs's worked example, and the host it names.
 const ticket =
 	"AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
 const host = `58${"66".repeat(31)}`;

@@ -1,8 +1,8 @@
+use crate::AuthToken;
 use crate::CommandId;
 use agents::{ClientName, Effort, Provider, SignInCode};
 use home::issue::{EditId, IssueChange, NewIssue};
 use home::{HomeCommand, IssueId};
-use host::fleet::AuthToken;
 use host::fleet::{DeviceHello, Identity, Role, Signed};
 use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};

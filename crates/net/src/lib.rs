@@ -5,8 +5,8 @@ pub mod platform;
 mod relay;
 pub mod wire;
 
-use host::fleet::{AuthToken, Ticket, TicketError};
 use iroh::{EndpointAddr, EndpointId, RelayUrl};
+use link::{AuthToken, Ticket, TicketError};
 
 pub use relay::without_root_dot;
 
@@ -57,7 +57,7 @@ impl Target {
 
 #[cfg(test)]
 mod tests {
-    use host::fleet::{AuthToken, Ticket, TicketError};
+    use link::{AuthToken, Ticket, TicketError};
 
     use super::{address, parse};
 

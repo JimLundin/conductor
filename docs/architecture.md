@@ -233,7 +233,7 @@ bytes these choices don't change.
   dot, because WebKit refuses the dotted name's certificate
   (`net::without_root_dot`, `net::platform::n0_relays`).
 - The host waits for `Endpoint::online()` and prints a ticket with its node id,
-  home relay and the auth token (`host::fleet::Ticket`), as a QR code and a
+  home relay and the auth token (`link::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
 - The browser dials through `crates/web-iroh` (§7.1): a fresh endpoint per
   dial whose only relay is the ticket's home relay.
@@ -1393,8 +1393,10 @@ A host joins with a one-time invite, from either side.
   on `conductor-fleet`, proves the secret, and receives a `Host` certificate
   for its node id and the current fleet config.
 - **From the host.** A `conductord` started with no fleet prints its own
-  ticket, as it does today. Scanning it in a paired app sends it to the root
-  host, which dials the new host and admits it the same way.
+  ticket, as it does today. Scanning it in a paired app sends its node id,
+  relay and token to the root host (`FleetCommand::Admit`), which dials the
+  new host and admits it the same way; the new host's ticket token is its
+  enrollment token (`host::fleet::EnrollmentToken`).
 
 Joining is idempotent. An invite already used by the same node id returns the
 same certificate, so a join that died after the reply can run again. The new
@@ -1722,8 +1724,10 @@ travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
 | Client and host (`link::ALPN`, `conductor/44`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
-Callers own the I/O: `net::wire` (and `net::wire::fleet`) on a host,
-`web-iroh` in the browser.
+Callers own the I/O: on a host, `net::wire` for the client link and the
+daemon's `fleet::wire` for the fleet, which reads a frame's header and
+body with `net::wire` and frames them with `host::fleet::frame`; in the
+browser, `web-iroh`.
 JSON names every variant and field, so any change to a type reachable from
 the four client roots bumps `link::ALPN`, and an older peer fails the
 handshake; a daemon e2e test offers the previous ALPN and is refused. The

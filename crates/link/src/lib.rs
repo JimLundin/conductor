@@ -30,14 +30,15 @@ pub mod log;
 #[cfg(test)]
 mod schema;
 pub mod serve;
+mod ticket;
 
 pub use command_id::CommandId;
+pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 use alloc::string::String;
 
 use agents::ClientName;
 use home::{Home, HomeCommand, HomeResult};
-use host::fleet::AuthToken;
 use host::fleet::{DeviceHello, FleetCommand, FleetResult};
 use host::log::{Epoch, Event, HostSeq};
 use host::push::{PushCommand, PushResult};

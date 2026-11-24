@@ -4,10 +4,10 @@
 
 use alloc::string::String;
 
+use crate::AuthToken;
 use crate::CommandId;
 use agents::ClientName;
 use home::HomeCommand;
-use host::fleet::AuthToken;
 use host::fleet::{DeviceHello, FleetCommand, Identity};
 use host::push::PushCommand;
 use host::registry::InstanceCommand;

@@ -2,6 +2,7 @@ mod credentials;
 mod crypto;
 mod member;
 mod peer;
+mod wire;
 
 pub(crate) use peer::{Protocol, follow_when_enrolled, refresh};
 
@@ -287,11 +288,14 @@ pub(crate) async fn command(
             .map_or(unavailable, |pairing| {
                 FleetResult::Pairing(Box::new(pairing))
             }),
-        FleetCommand::Admit { ticket, name } => {
-            admit_existing(membership, endpoint, ticket, name)
-                .await
-                .map_or(unavailable, |()| FleetResult::Accepted)
-        }
+        FleetCommand::Admit {
+            node,
+            relay,
+            name,
+            token,
+        } => admit_existing(membership, endpoint, node, relay, name, token)
+            .await
+            .map_or(unavailable, |()| FleetResult::Accepted),
         FleetCommand::Revoke(node) => membership
             .revoke(node)
             .await
@@ -309,19 +313,21 @@ mod tests;
 async fn admit_existing(
     fleet: &Membership,
     endpoint: &Endpoint,
-    ticket: host::fleet::Ticket,
+    node: host::fleet::NodeId,
+    relay: String,
     name: String,
+    token: host::fleet::EnrollmentToken,
 ) -> anyhow::Result<()> {
     ensure!(
-        ticket.host != *endpoint.id().as_bytes(),
+        node != *endpoint.id().as_bytes(),
         "cannot enroll the root as a member"
     );
-    let address = net::address(&ticket)?;
+    let address = peer::address(&node, &relay)?;
     let entry = HostEntry {
-        node: ticket.host,
+        node,
         name,
-        relay: ticket.relay,
+        relay,
         added_at: clock()?,
     };
-    peer::admit_existing(endpoint, fleet, address, ticket.token, entry).await
+    peer::admit_existing(endpoint, fleet, address, token, entry).await
 }

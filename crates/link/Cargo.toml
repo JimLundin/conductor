@@ -7,11 +7,14 @@ publish = false
 
 [dependencies]
 agents = { path = "../agents" }
+data-encoding.workspace = true
 home = { path = "../home" }
 host = { path = "../host" }
 schemars = { version = "1.2.3", default-features = false, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
+# The ticket token check, in constant time; iroh already builds it.
+subtle = { version = "2.6.1", default-features = false }
 thiserror.workspace = true
 ulid = { version = "1.2", default-features = false }
 

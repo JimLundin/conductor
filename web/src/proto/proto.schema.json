@@ -572,6 +572,18 @@
 			"enum": ["Low", "Medium", "High", "XHigh", "Max", "Ultra"],
 			"type": "string"
 		},
+		"EnrollmentToken": {
+			"description": "The secret a standalone host requires of the root host that enrolls it\nin a fleet.",
+			"items": {
+				"format": "uint8",
+				"maximum": 255,
+				"minimum": 0,
+				"type": "integer"
+			},
+			"maxItems": 16,
+			"minItems": 16,
+			"type": "array"
+		},
 		"Entry": {
 			"description": "A line of an issue's log.",
 			"properties": {
@@ -1289,17 +1301,32 @@
 				},
 				{
 					"additionalProperties": false,
+					"description": "Enrolls the standalone host `node`, reached through `relay`, which\nrequires `token`.",
 					"properties": {
 						"Admit": {
 							"properties": {
 								"name": {
 									"type": "string"
 								},
-								"ticket": {
-									"$ref": "#/$defs/Ticket"
+								"node": {
+									"items": {
+										"format": "uint8",
+										"maximum": 255,
+										"minimum": 0,
+										"type": "integer"
+									},
+									"maxItems": 32,
+									"minItems": 32,
+									"type": "array"
+								},
+								"relay": {
+									"type": "string"
+								},
+								"token": {
+									"$ref": "#/$defs/EnrollmentToken"
 								}
 							},
-							"required": ["ticket", "name"],
+							"required": ["node", "relay", "name", "token"],
 							"type": "object"
 						}
 					},
