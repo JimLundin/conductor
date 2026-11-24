@@ -2,15 +2,15 @@ use alloc::boxed::Box;
 use alloc::string::ToString;
 use core::ops::ControlFlow::{self, Break, Continue};
 
-use crate::HostPath;
 use crate::log::Event;
 use crate::registry::InstanceId;
 use crate::session::{
-    EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
+    EventKind, SessionDirectory, SessionId, SessionRefusal, SessionResult,
+    StartAt,
 };
 use crate::workspace::{Snapshot, Workspace};
 use agents::{ClientName, Effort, ModelId, Models, Provider};
-use home::{CheckoutLocation, Home, HomeRefusal, IssueId};
+use home::{Home, HomeRefusal, IssueId, ProjectId};
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;
@@ -20,8 +20,15 @@ use crate::workspace::GitError;
 /// Where a session starts, and the issue it works on, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
-    pub directory: HostPath,
+    pub directory: SessionDirectory,
     pub on: Option<home::issue::Start>,
+}
+
+/// A start that the home places: in a project or an issue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InHome {
+    Project(ProjectId),
+    Issue(IssueId),
 }
 
 /// The directory a session starts in: the one given, or the first
@@ -36,30 +43,47 @@ pub fn place(
     at: StartAt,
     home: Option<&Home>,
 ) -> Result<Placement, HomeRefusal> {
+    place_without_home(at).or_else(|start| place_in_home(start, home))
+}
+
+/// The placement of a start that names its directory; any other start
+/// waits on the home.
+///
+/// # Errors
+///
+/// The start is in a project or an issue.
+pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
     match at {
         StartAt::Directory(directory) => Ok(Placement {
             directory,
             on: None,
         }),
-        StartAt::Project(id) => {
-            home::first_checkout(home, id).map(|checkout| Placement {
-                directory: path_of(checkout),
-                on: None,
-            })
-        }
-        StartAt::Issue(id) => {
-            home::issue::start(home, id).map(|on| Placement {
-                directory: path_of(on.checkout.clone()),
-                on: Some(on),
-            })
-        }
+        StartAt::Project(id) => Err(InHome::Project(id)),
+        StartAt::Issue(id) => Err(InHome::Issue(id)),
     }
 }
 
-/// The host path a checkout is at.
-#[must_use]
-pub fn path_of(checkout: CheckoutLocation) -> HostPath {
-    HostPath(checkout.0)
+/// The first checkout of a project or an issue's project.
+///
+/// # Errors
+///
+/// As [`place`].
+pub fn place_in_home(
+    at: InHome,
+    home: Option<&Home>,
+) -> Result<Placement, HomeRefusal> {
+    match at {
+        InHome::Project(id) => {
+            home::first_checkout(home, id).map(|checkout| Placement {
+                directory: checkout.into(),
+                on: None,
+            })
+        }
+        InHome::Issue(id) => home::issue::start(home, id).map(|on| Placement {
+            directory: on.checkout.clone().into(),
+            on: Some(on),
+        }),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,9 +97,9 @@ pub struct StartRequest {
 #[derive(Debug)]
 pub enum StartEffect<S, H> {
     ReadyBranch(home::issue::Start),
-    CheckDirectory(HostPath),
+    CheckDirectory(SessionDirectory),
     CreateWorkspace {
-        directory: HostPath,
+        directory: SessionDirectory,
         base: Option<String>,
     },
     Snapshot {
@@ -89,7 +113,7 @@ pub enum StartEffect<S, H> {
     },
     Spawn {
         session: SessionId,
-        directory: HostPath,
+        directory: SessionDirectory,
         choice: Choice,
         provider: Provider,
         agent: (S, Models),

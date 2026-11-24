@@ -113,10 +113,11 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::Book;
-    use crate::HostPath;
     use crate::log::{Event, HostSeq};
-    use crate::session::{EventKind, SessionId};
-    use crate::workspace::{Snapshot, Workspace};
+    use crate::session::{EventKind, SessionDirectory, SessionId};
+    use crate::workspace::{
+        Repository, Snapshot, WorkingCopy, Workspace, Worktree,
+    };
     use agents::{ClientName, TurnOutcome};
 
     fn event(seq: u64, kind: EventKind) -> Event {
@@ -128,16 +129,16 @@ mod tests {
     }
 
     fn opening() -> Vec<Event> {
-        let path = HostPath(String::from("/work"));
+        let path = String::from("/work");
         Vec::from([
             event(
                 1,
                 EventKind::WorkspaceCreated {
                     workspace: Workspace {
-                        repository: path.clone(),
-                        original: path.clone(),
-                        worktree: path.clone(),
-                        directory: path,
+                        repository: Repository(path.clone()),
+                        original: WorkingCopy(path.clone()),
+                        worktree: Worktree(path.clone()),
+                        directory: SessionDirectory(path),
                         branch: String::from("conductor/session"),
                     },
                 },

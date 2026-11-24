@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use agents::runtime::{Command, Event as AgentEvent};
 use agents::{Account, Credential, Models, Provider};
-use host::HostPath;
 use host::log::Epoch;
 use host::registry::{
     Availability, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
@@ -145,7 +144,9 @@ impl Fixture {
             RegistryActor::new(log, store, core, providers, home, initialized);
         let session = super::Session::restore(
             SESSION,
-            HostPath(data.0.to_string_lossy().into_owned()),
+            host::session::SessionDirectory(
+                data.0.to_string_lossy().into_owned(),
+            ),
             host::session::Choice {
                 model: None,
                 effort: None,

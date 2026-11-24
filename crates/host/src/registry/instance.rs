@@ -16,8 +16,6 @@ use agents::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::HostPath;
-
 /// An instance by its key, the account of a provider on this host (the
 /// node). The provider names the account, not the owner, so it never
 /// changes and the instance is never renamed.
@@ -50,8 +48,13 @@ pub struct Instance {
     pub model: Option<ModelId>,
     /// A CLI to run instead of the pinned one; `None` takes the provider's
     /// (`--cli`).
-    pub cli: Option<HostPath>,
+    pub cli: Option<Cli>,
 }
+
+/// A CLI an instance runs instead of its provider's pinned one, where the
+/// host's OS finds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Cli(pub String);
 
 /// The instances a host has, with their credentials.
 ///

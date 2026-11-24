@@ -1,10 +1,11 @@
-use crate::HostPath;
 use crate::log::{Event, HostSeq};
+use crate::session::SessionDirectory;
 use crate::session::{
     EventKind, RequestId, Resolution, SessionId, SessionRefusal, SessionResult,
     SubagentEvent,
 };
 use crate::workspace::{Kept, Snapshot, Workspace};
+use crate::workspace::{Repository, WorkingCopy, Worktree};
 use agents::Output;
 use agents::runtime::{Command, Directory, Outcome, Start, Started};
 use agents::{
@@ -43,7 +44,7 @@ const fn no_choice() -> Choice {
 fn restored(history: &[Event], conversation: Option<&str>) -> Session {
     Session::restore(
         SessionId(1),
-        HostPath(text("/work")),
+        SessionDirectory(text("/work")),
         no_choice(),
         conversation.map(String::from),
         history,
@@ -681,10 +682,10 @@ fn a_start_resumes_the_saved_conversation_and_one_that_fails_closes() {
 
 fn workspace() -> Workspace {
     Workspace {
-        repository: HostPath(text("/repo")),
-        original: HostPath(text("/repo")),
-        worktree: HostPath(text("/worktree")),
-        directory: HostPath(text("/work")),
+        repository: Repository(text("/repo")),
+        original: WorkingCopy(text("/repo")),
+        worktree: Worktree(text("/worktree")),
+        directory: SessionDirectory(text("/work")),
         branch: text("conductor/1"),
     }
 }
@@ -973,7 +974,7 @@ fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
     let choosing = |id: &str| {
         Session::restore(
             SessionId(1),
-            HostPath(text("/work")),
+            SessionDirectory(text("/work")),
             Choice {
                 model: model(id),
                 effort: None,

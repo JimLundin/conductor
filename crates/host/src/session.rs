@@ -18,14 +18,13 @@
 
 use core::mem;
 
-use crate::HostPath;
 use crate::log::{Event, HostSeq};
 use crate::prelude::*;
 use crate::snapshots::Book;
 pub use crate::snapshots::{Compared, SnapshotPlan};
 use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
 use agents::Output;
-use agents::runtime::{Command, Directory, Outcome, Start, Started};
+use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{
     ChecklistEntry, ClientName, CloseReason, Decision, Effort, ModelId, Models,
     SubagentActivity, SubagentId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
@@ -38,8 +37,8 @@ use alloc::format;
 
 mod record;
 pub use record::{
-    EventKind, RequestId, Resolution, SessionCommand, SessionId,
-    SessionRefusal, SessionResult, StartAt, SubagentEvent,
+    EventKind, RequestId, Resolution, SessionCommand, SessionDirectory,
+    SessionId, SessionRefusal, SessionResult, StartAt, SubagentEvent,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a
@@ -321,7 +320,7 @@ enum Saved {
 
 pub struct Session {
     id: SessionId,
-    directory: HostPath,
+    directory: SessionDirectory,
     choice: Choice,
     agent: Agent,
     /// The conversation a start resumes, once a turn has started in it.
@@ -346,7 +345,7 @@ impl Session {
     #[must_use]
     pub fn restore(
         id: SessionId,
-        directory: HostPath,
+        directory: SessionDirectory,
         choice: Choice,
         conversation: Option<String>,
         history: &[Event],
@@ -1068,7 +1067,7 @@ impl Session {
         self.flow = Flow::Starting;
         Vec::from([Effect::Call(Call::Agent(Command::Start(Start {
             session: agents::runtime::Session(self.id.0),
-            directory: Directory(self.directory.0.clone()),
+            directory: self.directory.clone().into(),
             model: self.choice.model.clone(),
             effort: self.choice.effort,
             conversation: self.conversation.clone(),

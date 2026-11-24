@@ -15,7 +15,6 @@ use home::{HomeRefusal, IssueId, ProjectId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::HostPath;
 use crate::finish::Finished;
 use crate::log::HostSeq;
 use crate::registry::InstanceId;
@@ -73,11 +72,29 @@ impl RequestId {
     }
 }
 
+/// The directory a session starts in and works in, as the host's OS
+/// spells it. The client never interprets it: a browser on a phone can't
+/// know a Windows path's rules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SessionDirectory(pub String);
+
+impl From<home::CheckoutLocation> for SessionDirectory {
+    fn from(checkout: home::CheckoutLocation) -> Self {
+        Self(checkout.0)
+    }
+}
+
+impl From<SessionDirectory> for agents::runtime::Directory {
+    fn from(directory: SessionDirectory) -> Self {
+        Self(directory.0)
+    }
+}
+
 /// Where a new session runs: a directory, a project's checkout, or an
 /// issue's project's checkout on a branch cut from the issue's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum StartAt {
-    Directory(HostPath),
+    Directory(SessionDirectory),
     Project(ProjectId),
     Issue(IssueId),
 }
@@ -254,7 +271,7 @@ pub enum EventKind {
     /// CLI's own default. A `Continue` runs on `instance` again.
     SessionCreated {
         instance: InstanceId,
-        directory: HostPath,
+        directory: SessionDirectory,
         by: ClientName,
         model: Option<ModelId>,
         effort: Option<Effort>,

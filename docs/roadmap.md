@@ -25,7 +25,7 @@ What is built and what comes next. Update it in the commit that changes it.
   again when the home has it, so issues list in creation order; a project
   id is 6 random digits. `home::IssueId` and `home::ProjectId` mint,
   parse and print them, the `home` command and the daemon mint the same way,
-  and a 26-character id is a structural problem (ALPN `conductor/42`).
+  and a 26-character id is a structural problem (ALPN `conductor/43`).
 
 - **One provider identity and current storage only.** Pin selection and
   installation use `Provider`, and sessions derive their provider from their

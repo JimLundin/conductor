@@ -10,10 +10,9 @@ use alloc::string::ToString;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::HostPath;
 use crate::log::HostSeq;
 use crate::prelude::*;
-use crate::session::SessionId;
+use crate::session::{SessionDirectory, SessionId};
 
 /// The most of Git's output the host reads, and the largest patch it sends.
 const PATCH_LIMIT: usize = 65536;
@@ -130,7 +129,7 @@ fn probed(output: Output, context: &str) -> Result<String, GitError> {
 /// # Errors
 ///
 /// When the path is neither.
-fn host_path(path: Option<&str>) -> Result<HostPath, GitError> {
+fn host_path(path: Option<&str>) -> Result<String, GitError> {
     let text = path.ok_or_else(|| {
         failure("Git workspace path", "non-UTF-8 paths are unsupported")
     })?;
@@ -140,7 +139,7 @@ fn host_path(path: Option<&str>) -> Result<HostPath, GitError> {
             "newline paths are unsupported",
         ))
     } else {
-        Ok(HostPath(String::from(text)))
+        Ok(String::from(text))
     }
 }
 
@@ -203,8 +202,8 @@ pub fn snapshots(workspace: &Workspace) -> Result<String, GitError> {
 /// The object a selected subdirectory must be a tree in, at `head`; `None`
 /// for the repository's root.
 #[must_use]
-fn subtree(head: &str, relative: &HostPath) -> Option<String> {
-    (!relative.0.is_empty()).then(|| format!("{head}:{}", relative.0))
+fn subtree(head: &str, relative: &str) -> Option<String> {
+    (!relative.is_empty()).then(|| format!("{head}:{relative}"))
 }
 
 fn reference(workspace: &Workspace, commit: &str) -> Result<String, GitError> {
@@ -365,12 +364,28 @@ pub(crate) fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Workspace {
-    pub repository: HostPath,
-    pub original: HostPath,
-    pub worktree: HostPath,
-    pub directory: HostPath,
+    pub repository: Repository,
+    pub original: WorkingCopy,
+    pub worktree: Worktree,
+    /// The worktree's copy of the directory the session was started in.
+    pub directory: SessionDirectory,
     pub branch: String,
 }
+
+/// The root of the repository a session's worktree is added to, as the
+/// host's OS spells it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Repository(pub String);
+
+/// The directory of the owner's working copy a session was started in,
+/// which its workspace isolates it from, as the host's OS spells it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkingCopy(pub String);
+
+/// The Git worktree that holds a session's workspace, as the host's OS
+/// spells it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Worktree(pub String);
 
 /// Where a removed session's branch was kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -6,6 +6,10 @@ use anyhow::{Context, ensure};
 use host::registry::{AccountAdoption, dir};
 use serde::{Deserialize, Serialize};
 
+/// The journal's format, its first byte. A journal kept before it had one
+/// begins with its provider's index, 0 or 1, so the first format is 2.
+const FORMAT: u8 = 2;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Adoption {
     pub(super) account: AccountAdoption,
@@ -46,7 +50,8 @@ impl Adoption {
     fn save(&self, data: &Path) -> anyhow::Result<()> {
         let journal = data.join("adoption");
         let next = journal.with_extension("new");
-        crate::write_private(&next, &postcard::to_stdvec(self)?)?;
+        let file = postcard::to_extend(self, Vec::from([FORMAT]))?;
+        crate::write_private(&next, &file)?;
         rename(&next, &journal)?;
         Ok(crate::sync_dir(data)?)
     }
@@ -54,12 +59,21 @@ impl Adoption {
     pub(super) fn pending(data: &Path) -> anyhow::Result<Option<Self>> {
         let journal = data.join("adoption");
         match fs::read(&journal) {
-            Ok(bytes) => postcard::from_bytes(&bytes)
+            Ok(bytes) => Self::decode(&bytes)
                 .map(Some)
                 .with_context(|| format!("reading {}", journal.display())),
             Err(err) if err.kind() == ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err)
                 .with_context(|| format!("reading {}", journal.display())),
+        }
+    }
+
+    fn decode(file: &[u8]) -> anyhow::Result<Self> {
+        match file.split_first() {
+            Some((&FORMAT, adoption)) => Ok(postcard::from_bytes(adoption)?),
+            _ => anyhow::bail!(
+                "the journal is in an older format; finish or undo the adoption it records by hand, then remove it"
+            ),
         }
     }
 

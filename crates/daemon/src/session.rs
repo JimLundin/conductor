@@ -14,12 +14,11 @@ use std::time::Duration;
 use agents::Step;
 use agents::runtime::{Command, Event, Outcome, Start};
 use agents::{ClientName, Models};
-use host::HostPath;
 use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
 use host::log::HostSeq;
 pub use host::session::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
-use host::session::{EventKind, SessionId, SessionResult};
+use host::session::{EventKind, SessionDirectory, SessionId, SessionResult};
 use host::workspace::Workspace;
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -80,7 +79,7 @@ struct Actor {
     runtime: Option<Runtime>,
     told: Told,
     /// Where the session was created, which places it in its project.
-    created: HostPath,
+    created: SessionDirectory,
     /// The agent's steps that arrived while the actor waited on a call;
     /// it takes them once it has taken the call's outcome.
     held: VecDeque<Step>,
@@ -95,7 +94,7 @@ impl Session {
     #[must_use]
     pub fn spawn(
         id: SessionId,
-        directory: HostPath,
+        directory: SessionDirectory,
         choice: Choice,
         told: Told,
         agent: (Runtime, Models),
@@ -118,7 +117,7 @@ impl Session {
     /// bootstrap takes its runtime from its first accepted relaunch.
     pub(crate) fn restore(
         id: SessionId,
-        directory: HostPath,
+        directory: SessionDirectory,
         choice: Choice,
         told: Told,
         agent: (Option<Runtime>, Option<String>),
@@ -524,7 +523,7 @@ impl Actor {
                     |file| {
                         self.told.home.instructions(
                             &self.created,
-                            &HostPath(start.directory.0.clone()),
+                            Path::new(&start.directory.0),
                             file,
                         )
                     },

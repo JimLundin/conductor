@@ -43,8 +43,8 @@ use home::{
     IssueId, ProjectId,
 };
 use home::{Found, Stored};
-use host::HostPath;
-use host::session::{SessionRefusal, StartAt};
+use host::registry::InHome;
+use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
@@ -131,7 +131,7 @@ enum Msg {
         reply: oneshot::Sender<Completion>,
     },
     Place {
-        at: StartAt,
+        at: InHome,
         reply: oneshot::Sender<Placed>,
     },
     Ready {
@@ -177,8 +177,8 @@ impl HomeClone {
     #[must_use]
     pub fn instructions(
         &self,
-        created: &HostPath,
-        runs_in: &HostPath,
+        created: &SessionDirectory,
+        runs_in: &Path,
         file: &str,
     ) -> Option<String> {
         let projects = match self.shown() {
@@ -193,13 +193,12 @@ impl HomeClone {
             Some(_) => return None,
             None => Vec::new(),
         };
-        let directory = Path::new(&runs_in.0);
         let own =
             home::instructions::project_of(&projects, &canonical(created)).map(
                 |(project, _)| Own {
                     project,
-                    rules: read(&directory.join(home::instructions::RULES)),
-                    cli_reads_rules: directory.join(file).is_file(),
+                    rules: read(&runs_in.join(home::instructions::RULES)),
+                    cli_reads_rules: runs_in.join(file).is_file(),
                 },
             );
         home::instructions::compose(&Sources {
@@ -235,19 +234,18 @@ impl HomeClone {
         self.ask(|reply| Msg::Command { command, by, reply }).await
     }
 
-    /// Where a session starts: a directory as it is, or a project's or an
-    /// issue's checkout once the home is fresh.
+    /// Where a session starts, once the home is fresh if the placement
+    /// needs it.
     ///
     /// # Errors
     ///
     /// Fails if the task has stopped.
     pub async fn place(&self, at: StartAt) -> Result<Placed, Stopped> {
-        match at {
-            StartAt::Directory(directory) => Ok(Ok(Placement {
-                directory,
-                on: None,
-            })),
-            home => self.ask(|reply| Msg::Place { at: home, reply }).await,
+        match host::registry::place_without_home(at) {
+            Ok(placement) => Ok(Ok(placement)),
+            Err(start) => {
+                self.ask(|reply| Msg::Place { at: start, reply }).await
+            }
         }
     }
 
@@ -405,7 +403,8 @@ impl Actor {
             Msg::Place { at, reply } => {
                 self.fresh().await;
                 let shown = self.shown.borrow().clone();
-                let _ = reply.send(host::registry::place(at, shown.as_ref()));
+                let _ = reply
+                    .send(host::registry::place_in_home(at, shown.as_ref()));
             }
             Msg::Ready { start, reply } => {
                 let readied = ready_branch(&start).await.map_err(|reason| {
@@ -1336,7 +1335,7 @@ fn clone_of(data_dir: &Path) -> PathBuf {
 }
 
 /// `path` as checkouts are found, through any symlink.
-fn canonical(path: &HostPath) -> String {
+fn canonical(path: &SessionDirectory) -> String {
     std::fs::canonicalize(&path.0)
         .ok()
         .and_then(|resolved| resolved.to_str().map(str::to_owned))

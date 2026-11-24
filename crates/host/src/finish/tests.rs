@@ -1,9 +1,10 @@
-use crate::HostPath;
 use crate::finish::Finished;
 use crate::log::{Event, HostSeq};
 use crate::registry::InstanceId;
+use crate::session::SessionDirectory;
 use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
 use crate::workspace::{Kept, Workspace};
+use crate::workspace::{Repository, WorkingCopy, Worktree};
 use agents::Output;
 use agents::{ClientName, CloseReason, Provider, TurnOutcome};
 use home::IssueId;
@@ -32,10 +33,10 @@ fn event(seq: u64, kind: EventKind) -> Event {
 
 fn workspace() -> Workspace {
     Workspace {
-        repository: HostPath(text("/src")),
-        original: HostPath(text("/src")),
-        worktree: HostPath(text("/data/worktrees/1")),
-        directory: HostPath(text("/data/worktrees/1")),
+        repository: Repository(text("/src")),
+        original: WorkingCopy(text("/src")),
+        worktree: Worktree(text("/data/worktrees/1")),
+        directory: SessionDirectory(text("/data/worktrees/1")),
         branch: text("conductor/1"),
     }
 }
@@ -50,7 +51,7 @@ fn started() -> Vec<Event> {
             1,
             EventKind::SessionCreated {
                 instance: instance(),
-                directory: HostPath(text("/src")),
+                directory: SessionDirectory(text("/src")),
                 by: ClientName(text("phone")),
                 model: None,
                 effort: None,
