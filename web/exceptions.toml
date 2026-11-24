@@ -28,7 +28,7 @@ reason = "`npm run pipe` runs wasm-pack, a Rust tool installed beside the toolch
 [[exception]]
 path = "scripts/schemas.ts"
 rule = "lint/style/noRestrictedImports"
-reason = "the schema generator is a build step whose whole job is to read proto.schema.json and write index.ts"
+reason = "the schema generator is a build step whose whole job is to read link's published link.schema.json and write index.ts"
 
 # src/proto/ is written by scripts/schemas.ts from link's JSON Schema, in
 # the shape Effect's Codegen prints, and is never edited by hand.

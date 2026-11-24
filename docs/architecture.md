@@ -1750,8 +1750,9 @@ The Rust types are the only definition of the client link's types
 (ADR 0002, ADR 0003):
 
 1. They derive `schemars::JsonSchema`. The `link` unit test
-   `schema::the_frames_schema_is_written_for_the_web_app` writes
-   `web/src/proto/proto.schema.json`: a draft 2020-12 document with the
+   `schema::the_frames_schema_is_published_beside_link` writes
+   `crates/link/link.schema.json`, which `link` publishes and no Rust code
+   reads from elsewhere: a draft 2020-12 document with the
    four client roots and every type they reach under `$defs`, as serde
    serializes them. It rewrites the file only when its content differs.
 2. `web/scripts/schemas.ts` reads that document with Effect's
@@ -1759,8 +1760,9 @@ The Rust types are the only definition of the client link's types
    writes `web/src/proto/index.ts`, one Effect Schema per definition.
 3. `tools/schemas.sh` runs both and formats the output with Biome.
    `tools/schemas.sh --check`, the `schemas` suite, then fails when
-   `web/src/proto/` differs from what is committed or holds an untracked
-   file.
+   `crates/link/link.schema.json` or `web/src/proto/` differs from what is
+   committed or holds an untracked file. `link` names no path in `web/`;
+   the web app pulls the schema.
 
 Nothing there is edited by hand. Encoding is tested only in Rust, by
 `link`'s frame tests; the app's tests check what it does with decoded

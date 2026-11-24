@@ -1,7 +1,8 @@
-//! The JSON Schema of the client link's frames, written to `web/`, which
-//! generates its Effect Schemas from it (ADR 0002). The `schemas` suite
-//! runs this, regenerates the Effect Schemas and fails on any difference
-//! from what is committed.
+//! The JSON Schema of the client link's frames, which `link` publishes
+//! beside itself as `link.schema.json` for a client to generate its types
+//! from (ADR 0002); the web app's `scripts/schemas.ts` reads it. The
+//! `schemas` suite runs this, regenerates the client's types and fails on
+//! any difference from what is committed.
 
 use std::path::PathBuf;
 
@@ -11,17 +12,7 @@ use serde_json::{Value, json};
 use crate::{ALPN, CommandResult, Feed, HelloReply, Open, Ticket};
 
 fn path() -> PathBuf {
-    [
-        env!("CARGO_MANIFEST_DIR"),
-        "..",
-        "..",
-        "web",
-        "src",
-        "proto",
-    ]
-    .iter()
-    .collect::<PathBuf>()
-    .join("proto.schema.json")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("link.schema.json")
 }
 
 /// Every frame on the link, the ticket a client reaches a host by and every
@@ -54,7 +45,7 @@ fn document() -> Result<Value, std::str::Utf8Error> {
 /// Rewritten only when it no longer reads as the frames' document, so a
 /// formatter's layout of it stays.
 #[test]
-fn the_frames_schema_is_written_for_the_web_app()
+fn the_frames_schema_is_published_beside_link()
 -> Result<(), Box<dyn std::error::Error>> {
     let path = path();
     let document = document()?;

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Regenerates web/src/proto/ from link: the JSON Schema its test writes,
-# then the Effect Schemas web/scripts/schemas.ts prints from it, both in
-# Biome's format. `tools/schemas.sh [--check]`; with --check, the
+# Regenerates the client link's schemas: the JSON Schema link's test
+# publishes as crates/link/link.schema.json, then the Effect Schemas
+# web/scripts/schemas.ts prints from it into web/src/proto/, in Biome's
+# format. `tools/schemas.sh [--check]`; with --check, the
 # `schemas` suite, it fails when that changed what is committed.
 # Needs web/node_modules (`npm ci` in web/).
 set -euo pipefail
@@ -16,13 +17,13 @@ cargo test --quiet -p link --lib schema::
 )
 if [ "${1:-}" = --check ]; then
 	stale=$(
-		git diff --name-only -- web/src/proto
-		git ls-files --others --exclude-standard -- web/src/proto
+		git diff --name-only -- crates/link/link.schema.json web/src/proto
+		git ls-files --others --exclude-standard -- crates/link/link.schema.json web/src/proto
 	)
 	if [ -n "$stale" ]; then
 		printf '%s\n' "$stale"
-		echo "web/src/proto/ is stale: run tools/schemas.sh and commit it" >&2
+		echo "the client link's schemas are stale: run tools/schemas.sh and commit them" >&2
 		exit 1
 	fi
-	echo "web/src/proto/ matches link"
+	echo "the client link's schemas match link"
 fi
