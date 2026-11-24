@@ -1747,19 +1747,20 @@ that differs by one byte is refused.
 The Rust types are the only definition of the client link's types
 (ADR 0002, ADR 0003):
 
-1. They derive `schemars::JsonSchema`. The `link` unit test
-   `schema::the_frames_schema_is_published_beside_link` writes
-   `crates/link/link.schema.json`, which `link` publishes and no Rust code
-   reads from elsewhere: a draft 2020-12 document with the
-   four client roots and every type they reach under `$defs`, as serde
-   serializes them. It rewrites the file only when its content differs.
+1. They derive `schemars::JsonSchema`. `link`'s `schema` example prints
+   the document `tools/schemas.sh` writes as
+   `crates/link/link.schema.json`, which no Rust code reads: a draft
+   2020-12 document with the four client roots, the ticket and every type
+   they reach under `$defs`, as serde serializes them, and `link::ALPN` as
+   `Alpn`.
 2. `web/scripts/schemas.ts` reads that document with Effect's
    `JsonSchema`, `SchemaRepresentation` (objects closed) and `Codegen`, and
    writes `web/src/schemas/index.ts`, one Effect Schema per definition.
-3. `tools/schemas.sh` runs both and formats the output with Biome.
+3. `tools/schemas.sh` runs both and formats their output with Biome.
    `tools/schemas.sh --check`, the `schemas` suite, then fails when
    `crates/link/link.schema.json` or `web/src/schemas/` differs from what is
-   committed or holds an untracked file. `link` names no path in `web/`;
+   committed or holds an untracked file, and when the document differs
+   from main's while `link::ALPN` doesn't. `link` names no path in `web/`;
    the web app pulls the schema.
 
 Nothing there is edited by hand. Encoding is tested only in Rust, by

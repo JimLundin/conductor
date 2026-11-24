@@ -27,8 +27,6 @@ extern crate alloc;
 mod command_id;
 pub mod frame;
 pub mod log;
-#[cfg(test)]
-mod schema;
 pub mod serve;
 mod ticket;
 
