@@ -6,9 +6,17 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use agents::ClientName;
 use home::{Home, HomeResult};
+use host::fleet::AuthToken;
+use host::fleet::FleetResult;
+use host::log::Event;
+use host::push::{PushCommand, PushResult};
+use host::registry::{InstanceResult, Instances};
 use host::serve::{self, Relaunch, SessionRoute};
 use host::session::Order;
+use host::session::{SessionId, SessionRefusal, SessionResult};
+use host::sign_in::{SignIn, SignInResult};
 use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
@@ -20,12 +28,7 @@ use link::{
 };
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
-use proto::fleet::FleetResult;
-use proto::{
-    AuthToken, ClientName, CommandId, Event, InstanceResult, Instances,
-    PushCommand, PushResult, SessionId, SessionRefusal, SessionResult, SignIn,
-    SignInResult,
-};
+use proto::CommandId;
 use tokio::sync::{Semaphore, broadcast, watch};
 
 use crate::Stopped;
@@ -73,7 +76,7 @@ enum StreamError {
 
 struct Authenticated {
     name: ClientName,
-    certificate: Option<proto::fleet::Certificate>,
+    certificate: Option<host::fleet::Certificate>,
 }
 
 /// What a subscription does next.
@@ -163,7 +166,7 @@ impl Conductor {
 
 async fn wait_revoked(
     fleet: &crate::fleet::Membership,
-    certificate: &proto::fleet::Certificate,
+    certificate: &host::fleet::Certificate,
 ) {
     let mut versions = fleet.versions();
     while admitted_owner(fleet, certificate).await {
@@ -175,7 +178,7 @@ async fn wait_revoked(
 
 async fn admitted_owner(
     fleet: &crate::fleet::Membership,
-    certificate: &proto::fleet::Certificate,
+    certificate: &host::fleet::Certificate,
 ) -> bool {
     fleet.is_active().await && fleet.admit_owner(certificate).await.is_ok()
 }
@@ -184,7 +187,7 @@ async fn admit_fleet(
     fleet: &crate::fleet::Membership,
     peer: iroh::EndpointId,
     first: Option<Open>,
-) -> (Admission, Option<proto::fleet::Certificate>) {
+) -> (Admission, Option<host::fleet::Certificate>) {
     match link::serve::device_hello(first) {
         Ok(hello) => {
             let owner = fleet.admit_device(peer, &hello).await.ok();
@@ -258,7 +261,7 @@ impl Conductor {
         &self,
         peer: iroh::EndpointId,
         first: Option<Open>,
-    ) -> (Admission, Option<proto::fleet::Certificate>) {
+    ) -> (Admission, Option<host::fleet::Certificate>) {
         let membership = self.fleet.borrow().clone();
         match membership {
             Some(fleet) => admit_fleet(&fleet, peer, first).await,
@@ -595,10 +598,11 @@ mod diagnostics_tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use agents::Answer;
+    use host::session::{RequestId, SessionCommand, SessionId};
+    use host::workspace::Kept;
     use link::Command;
-    use proto::{
-        Answer, CommandId, Kept, RequestId, SessionCommand, SessionId,
-    };
+    use proto::CommandId;
 
     #[test]
     fn command_and_workspace_diagnostics_omit_payloads() -> anyhow::Result<()> {

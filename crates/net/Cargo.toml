@@ -15,7 +15,6 @@ iroh-base.workspace = true
 n0-future.workspace = true
 host = { path = "../host" }
 link = { path = "../link" }
-proto = { path = "../proto" }
 thiserror.workspace = true
 tokio = { version = "1.54.1", default-features = false, features = ["sync", "macros"] }
 tracing = { workspace = true, features = ["std"] }

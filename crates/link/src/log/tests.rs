@@ -1,9 +1,9 @@
+use agents::{Models, Output, Provider};
 use host::log::{Effect as Logged, Write};
-use proto::{
-    Availability, CommandId, Epoch, Event, EventKind, HostSeq, InstanceId,
-    InstanceStatus, Instances, Models, Output, Provider, SessionId,
-    SessionRefusal, SessionResult,
-};
+use host::log::{Epoch, Event, HostSeq};
+use host::registry::{Availability, InstanceId, InstanceStatus, Instances};
+use host::session::{EventKind, SessionId, SessionRefusal, SessionResult};
+use proto::CommandId;
 
 use crate::{CommandResult, Subscribe, Welcome};
 
@@ -75,13 +75,13 @@ fn the_welcome_names_the_head_and_a_subscription_needs_the_epoch() {
         reason: String::from("no claude"),
     });
     assert_eq!(
-        log.welcome(listed.clone(), proto::Catalog::default(), None),
+        log.welcome(listed.clone(), host::registry::Catalog::default(), None),
         Welcome {
             host: String::from("test"),
             epoch: Epoch(5),
             head_seq: HostSeq(1),
             instances: listed,
-            catalog: proto::Catalog::default(),
+            catalog: host::registry::Catalog::default(),
             home: None,
         }
     );
@@ -245,10 +245,10 @@ fn a_restored_log_welcomes_with_its_head() {
     assert_eq!(
         log.welcome(
             instances(Availability::Available {
-                auth: proto::Auth::SignedIn,
+                auth: agents::Auth::SignedIn,
                 models: Models::none(),
             }),
-            proto::Catalog::default(),
+            host::registry::Catalog::default(),
             None,
         )
         .head_seq,

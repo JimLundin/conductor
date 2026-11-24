@@ -1,8 +1,9 @@
+use crate::HostPath;
+use crate::log::{Event, HostSeq};
+use crate::registry::InstanceId;
+use crate::session::{EventKind, SessionId};
+use agents::{ClientName, Provider};
 use home::IssueId;
-use proto::{
-    ClientName, Event, EventKind, HostPath, HostSeq, InstanceId, Provider,
-    SessionId,
-};
 
 use super::{Assigned, Assignment, assigned};
 

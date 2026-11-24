@@ -6,7 +6,10 @@ use core::{
     task::{ContextBuilder, Poll, Waker},
 };
 
-use proto::{HostPath, HostSeq, Kept, SessionId, SnapshotDiff, Workspace};
+use crate::HostPath;
+use crate::log::HostSeq;
+use crate::session::SessionId;
+use crate::workspace::{Kept, SnapshotDiff, Workspace};
 
 use crate::prelude::*;
 

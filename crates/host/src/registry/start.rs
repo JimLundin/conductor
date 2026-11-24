@@ -2,12 +2,15 @@ use alloc::boxed::Box;
 use alloc::string::ToString;
 use core::ops::ControlFlow::{self, Break, Continue};
 
-use home::{CheckoutLocation, Home, HomeRefusal, IssueId};
-use proto::{
-    ClientName, Effort, Event, EventKind, HostPath, InstanceId, ModelId,
-    Models, Provider, SessionId, SessionRefusal, SessionResult, Snapshot,
-    StartAt, Workspace,
+use crate::HostPath;
+use crate::log::Event;
+use crate::registry::InstanceId;
+use crate::session::{
+    EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
 };
+use crate::workspace::{Snapshot, Workspace};
+use agents::{ClientName, Effort, ModelId, Models, Provider};
+use home::{CheckoutLocation, Home, HomeRefusal, IssueId};
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;

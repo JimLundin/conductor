@@ -4,12 +4,12 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, ensure};
-use iroh::{EndpointId, PublicKey, SecretKey};
-use proto::fleet::{
+use host::fleet::{
     Certificate, Configuration, DeviceHello, HostEntry, Identity, Invite,
     InviteSecret, NodeId, Peer, Role, SignedConfiguration, SignedSnapshot,
     Snapshot,
 };
+use iroh::{EndpointId, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::{RwLock, watch};
@@ -37,7 +37,7 @@ struct State {
     root_key: Option<[u8; 32]>,
     invites: Vec<Invitation>,
     revoked: Option<SignedSnapshot>,
-    applied: BTreeSet<proto::InstanceId>,
+    applied: BTreeSet<host::registry::InstanceId>,
 }
 
 impl State {
@@ -158,8 +158,7 @@ impl Membership {
         let owner = admit(snapshot, &hello.certificate, Role::Owner)?;
         let fleet = snapshot.fleet;
         drop(state);
-        let proof =
-            proto::fleet::device_proof(&fleet, &host, remote.as_bytes());
+        let proof = host::fleet::device_proof(&fleet, &host, remote.as_bytes());
         let signature = Signature::from_bytes(
             hello
                 .proof
@@ -483,13 +482,13 @@ impl Membership {
         Ok(())
     }
 
-    pub(super) async fn applied(&self) -> BTreeSet<proto::InstanceId> {
+    pub(super) async fn applied(&self) -> BTreeSet<host::registry::InstanceId> {
         self.state.read().await.applied.clone()
     }
 
     pub(super) async fn record_applied(
         &self,
-        applied: &BTreeSet<proto::InstanceId>,
+        applied: &BTreeSet<host::registry::InstanceId>,
     ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         if &state.applied != applied {
@@ -502,13 +501,13 @@ impl Membership {
         Ok(())
     }
 
-    pub(super) async fn credentials(&self) -> proto::Roster {
+    pub(super) async fn credentials(&self) -> host::registry::Roster {
         self.state.read().await.current.config.instances.clone()
     }
 
     pub(super) async fn change_credentials(
         &self,
-        change: impl FnOnce(&mut proto::Roster),
+        change: impl FnOnce(&mut host::registry::Roster),
     ) -> anyhow::Result<()> {
         let mut state = self.state.write().await;
         let key = root(&state)?;
@@ -591,7 +590,7 @@ impl Membership {
                 hosts: vec![host],
                 revoked: Vec::new(),
             },
-            instances: proto::Roster::default(),
+            instances: host::registry::Roster::default(),
         };
         let state = State {
             certificate: crypto::sign_identity(&root, &identity)?,

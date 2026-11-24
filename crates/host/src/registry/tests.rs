@@ -3,14 +3,20 @@ use agents::Configuration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::ControlFlow::{Break, Continue};
 
-use home::{CheckoutLocation, Home, HomeRefusal, HomeSync, ProjectId};
-use proto::{
-    Account, Auth, Availability, Catalog, ClientName, CloseReason, Credential,
-    CredentialForm, Effort, Event, EventKind, Field, FieldKind, HostPath,
-    HostSeq, Instance, InstanceId, InstanceRefusal, InstanceResult,
-    InstanceStatus, Instances, ModelChoice, ModelId, Models, Provider,
-    ProviderInfo, Roster, SessionId, SessionRefusal, SessionResult, StartAt,
+use crate::HostPath;
+use crate::log::{Event, HostSeq};
+use crate::registry::{
+    Availability, Catalog, Instance, InstanceId, InstanceRefusal,
+    InstanceResult, InstanceStatus, Instances, Roster,
 };
+use crate::session::{
+    EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
+};
+use agents::{
+    Account, Auth, ClientName, CloseReason, Credential, CredentialForm, Effort,
+    Field, FieldKind, ModelChoice, ModelId, Models, Provider, ProviderInfo,
+};
+use home::{CheckoutLocation, Home, HomeRefusal, HomeSync, ProjectId};
 
 use super::{
     AccountAdoption, Change, Effect, Job, Launch, Launcher, OwnSignIn,
@@ -1342,8 +1348,8 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
     );
 }
 
-fn start_workspace() -> proto::Workspace {
-    proto::Workspace {
+fn start_workspace() -> crate::workspace::Workspace {
+    crate::workspace::Workspace {
         repository: HostPath(text("/src")),
         original: HostPath(text("/src")),
         worktree: HostPath(text("/worktrees/1")),
@@ -1514,7 +1520,7 @@ fn initial_seed() -> [EventKind; 2] {
             workspace: start_workspace(),
         },
         EventKind::SnapshotRecorded {
-            snapshot: proto::Snapshot {
+            snapshot: crate::workspace::Snapshot {
                 turn_start: None,
                 commit: text("initial commit"),
             },

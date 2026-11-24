@@ -18,21 +18,28 @@
 
 use core::mem;
 
+use crate::HostPath;
+use crate::log::{Event, HostSeq};
 use crate::prelude::*;
 use crate::snapshots::Book;
 pub use crate::snapshots::{Compared, SnapshotPlan};
+use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
 use agents::Output;
 use agents::runtime::{Command, Directory, Outcome, Start, Started};
+use agents::{
+    ChecklistEntry, ClientName, CloseReason, Decision, Effort, ModelId, Models,
+    SubagentActivity, SubagentId, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
+    TurnOutcome,
+};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
-use proto::{
-    ChecklistEntry, ClientName, CloseReason, Decision, Effort, Event,
-    EventKind, HostPath, HostSeq, Kept, ModelId, Models, RequestId, Resolution,
-    SessionId, SessionRefusal, SessionResult, Snapshot, SnapshotDiff,
-    SubagentActivity, SubagentEvent, SubagentId, ToolCallId, ToolKind,
-    ToolOutcome, ToolPhase, TurnOutcome, Workspace,
+
+mod record;
+pub use record::{
+    EventKind, RequestId, Resolution, SessionCommand, SessionId,
+    SessionRefusal, SessionResult, StartAt, SubagentEvent,
 };
 
 /// The model and effort a session runs with, chosen when it starts; a

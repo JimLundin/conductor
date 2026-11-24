@@ -6,10 +6,10 @@ use chacha20poly1305::{
     Key, XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use iroh::{PublicKey, SecretKey, Signature};
-use proto::fleet::{
+use host::fleet::{
     Certificate, Configuration, Identity, Signed, SignedConfiguration,
 };
+use iroh::{PublicKey, SecretKey, Signature};
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
 
@@ -25,7 +25,7 @@ pub(super) fn sign_identity(
 }
 
 /// `value` as JSON, signed by `key` over its domain then those bytes.
-fn sign_payload<T: proto::fleet::Payload>(
+fn sign_payload<T: host::fleet::Payload>(
     key: &SecretKey,
     value: &T,
 ) -> anyhow::Result<Signed<T>> {
@@ -36,7 +36,7 @@ fn sign_payload<T: proto::fleet::Payload>(
 
 /// The value `signed` holds, parsed only once its signature by `key`
 /// verifies over the bytes it carries.
-pub(super) fn open<T: proto::fleet::Payload>(
+pub(super) fn open<T: host::fleet::Payload>(
     key: PublicKey,
     signed: &Signed<T>,
 ) -> anyhow::Result<T> {
@@ -52,7 +52,7 @@ pub(super) fn open<T: proto::fleet::Payload>(
     Ok(serde_json::from_slice(&signed.payload)?)
 }
 
-fn message<T: proto::fleet::Payload>(payload: &[u8]) -> Vec<u8> {
+fn message<T: host::fleet::Payload>(payload: &[u8]) -> Vec<u8> {
     T::DOMAIN.iter().chain(payload).copied().collect()
 }
 
@@ -217,8 +217,8 @@ pub(super) fn create_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
+    use host::fleet::{HostEntry, Identity, Role, Snapshot};
     use iroh::SecretKey;
-    use proto::fleet::{HostEntry, Identity, Role, Snapshot};
 
     use super::{open, sign_identity, sign_payload};
 

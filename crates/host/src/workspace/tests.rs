@@ -1,8 +1,9 @@
 use core::ops::ControlFlow;
 
-use proto::{
-    DiffExtent, FilePatch, HostPath, HostSeq, Kept, SessionId, Workspace,
-};
+use crate::HostPath;
+use crate::log::HostSeq;
+use crate::session::SessionId;
+use crate::workspace::{DiffExtent, FilePatch, Kept, Workspace};
 
 use super::{Answer, GitError, Output, Plan, Step, head, kept, snapshots};
 
@@ -565,10 +566,10 @@ fn landing_fast_forwards_or_merges_and_refuses_to_move_a_checked_out_branch() {
         ),
     ] {
         let mut writes = Vec::new();
-        let result =
-            run(Plan::land(&workspace, ISSUE, proto::HostSeq(42)), |step| {
-                landing_step(step, scenario, &mut writes)
-            });
+        let result = run(
+            Plan::land(&workspace, ISSUE, crate::log::HostSeq(42)),
+            |step| landing_step(step, scenario, &mut writes),
+        );
         assert_eq!(
             result,
             expected.map_err(|reason| GitError::Failed(String::from(reason)))

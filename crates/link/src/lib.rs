@@ -32,13 +32,16 @@ pub mod serve;
 
 use alloc::string::String;
 
+use agents::ClientName;
 use home::{Home, HomeCommand, HomeResult};
-use proto::fleet::{DeviceHello, FleetCommand, FleetResult};
-use proto::{
-    AuthToken, Catalog, ClientName, CommandId, Epoch, Event, HostSeq,
-    InstanceCommand, InstanceResult, Instances, PushCommand, PushResult,
-    SessionCommand, SessionResult, SignIn, SignInCommand, SignInResult,
-};
+use host::fleet::AuthToken;
+use host::fleet::{DeviceHello, FleetCommand, FleetResult};
+use host::log::{Epoch, Event, HostSeq};
+use host::push::{PushCommand, PushResult};
+use host::registry::{Catalog, InstanceCommand, InstanceResult, Instances};
+use host::session::{SessionCommand, SessionResult};
+use host::sign_in::{SignIn, SignInCommand, SignInResult};
+use proto::CommandId;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -128,7 +131,7 @@ pub enum CommandResult {
 
 #[cfg(test)]
 mod tests {
-    use proto::{SessionRefusal, SessionResult};
+    use host::session::{SessionRefusal, SessionResult};
 
     use super::CommandResult;
 

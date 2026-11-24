@@ -5,6 +5,13 @@
 //! registry of sessions and providers, how each provider's CLI starts and
 //! signs in from the app, what a restart recovers, and the secrets on
 //! disk. It is pure and `no_std`; `daemon` runs it.
+//!
+//! It owns the types of those domains (ADR 0003): the session record
+//! ([`log`], [`session`], [`workspace`], [`finish`]), instances and the
+//! roster ([`registry`]), sign-ins ([`sign_in`]), push ([`push`]) and the
+//! fleet ([`fleet`]). Host stores and traffic between hosts are postcard,
+//! where a variant is its index and a field its position, so there a
+//! reordered type decodes as the wrong value with no error.
 
 #![cfg_attr(not(test), no_std)]
 #![feature(context_ext, local_waker)]
@@ -14,6 +21,7 @@ extern crate alloc;
 pub mod assignment;
 pub mod finish;
 pub mod fleet;
+mod json;
 pub mod log;
 mod note;
 mod prelude;
@@ -28,4 +36,15 @@ mod snapshots;
 pub mod start;
 pub mod workspace;
 
+use alloc::string::String;
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+pub use json::Ulid;
 pub use note::Note;
+
+/// A path on the host, as the host's OS spells it. The client never
+/// interprets it: a browser on a phone can't know a Windows path's rules.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HostPath(pub String);

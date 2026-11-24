@@ -1,8 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use agents::{ModelId, Provider};
 use host::registry::{AccountAdoption, Change};
-use proto::{Catalog, Instance, InstanceId, ModelId, Provider, Roster};
+use host::registry::{Catalog, Instance, InstanceId, Roster};
 
 use super::{Store, Stored};
 

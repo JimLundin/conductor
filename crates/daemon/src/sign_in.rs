@@ -14,11 +14,12 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitStatus;
 
+use agents::{Account, Credential, SignInCode};
 use agents::{Invocation, Reported, SignIn as Flow};
+use host::registry::{Instance, InstanceResult};
 use host::sign_in::{CredentialTarget, Key, LIMIT, Login};
 use install::Home;
 use install::process::{SignInRun, command, sign_in, write_line};
-use proto::{Account, Credential, Instance, InstanceResult, SignInCode};
 use tokio::process::ChildStdin;
 
 use crate::credentials::SigningLease;

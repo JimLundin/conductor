@@ -1,7 +1,7 @@
-use proto::{
-    ClientName, Effort, HostSeq, InstanceId, Models, Provider, SessionCommand,
-    SessionId,
-};
+use crate::log::HostSeq;
+use crate::registry::InstanceId;
+use crate::session::{SessionCommand, SessionId};
+use agents::{ClientName, Effort, Models, Provider};
 
 use crate::session::Order;
 
@@ -48,7 +48,7 @@ fn a_session_may_start_in_a_project() {
         session(
             SessionCommand::Start {
                 instance: InstanceId::own(Provider::new("claude")),
-                at: proto::StartAt::Project(project()),
+                at: crate::session::StartAt::Project(project()),
                 model: None,
                 effort: Some(Effort::High),
             },
@@ -56,7 +56,7 @@ fn a_session_may_start_in_a_project() {
         ),
         SessionRoute::Start {
             instance: InstanceId::own(Provider::new("claude")),
-            at: proto::StartAt::Project(project()),
+            at: crate::session::StartAt::Project(project()),
             choice: (None, Some(Effort::High)),
             by: phone(),
         }

@@ -6,12 +6,15 @@
 
 use alloc::format;
 
+use crate::log::{Event, HostSeq};
+use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
+use agents::ClientName;
 use agents::Output;
 use home::{Home, IssueId};
-use proto::{
-    ClientName, Event, EventKind, FinishState, Finished, HostSeq, SessionId,
-    SessionRefusal, SessionResult, Workspace,
-};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::workspace::{Kept, Workspace};
 
 use crate::assignment::{Assigned, Assignment};
 use crate::prelude::*;
@@ -483,6 +486,42 @@ impl Finish {
 
 fn order(order: crate::session::Order) -> Vec<Effect> {
     Vec::from([Effect::Order(order)])
+}
+
+/// Where a session on an issue stands with finishing, as its events say:
+/// a message after a finish makes it ready again, while its own summary
+/// turn doesn't.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum FinishState {
+    #[default]
+    Ready,
+    Finishing,
+    Retrying,
+    Done,
+}
+
+impl FinishState {
+    /// The state after `kind`.
+    #[must_use]
+    pub const fn after(self, kind: &EventKind) -> Self {
+        match (self, kind) {
+            (_, EventKind::FinishStarted) => Self::Finishing,
+            (Self::Finishing, EventKind::FinishInterrupted) => Self::Retrying,
+            (_, EventKind::SessionFinished { .. }) => Self::Done,
+            (Self::Done, EventKind::UserMessage { .. }) => Self::Ready,
+            (state, _) => state,
+        }
+    }
+}
+
+/// How finishing a session on an issue went.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Finished {
+    /// The session's branch landed on the issue's with this many commits
+    /// the issue's lacked, and the issue's branch was kept as `kept` says.
+    Landed { commits: u64, kept: Kept },
+    /// Nothing landed, for this reason; the session's branch stays.
+    Failed { reason: String },
 }
 
 #[cfg(test)]

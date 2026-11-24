@@ -12,7 +12,6 @@ layer = "shell"
 uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
 argon2 = "0.5.3"
-blake3 = { version = "1.8", default-features = false }
 cap-fs-ext = "4.0.2"
 cap-std = "4.0.2"
 # The credential store's cipher (§6.3), XChaCha20-Poly1305.

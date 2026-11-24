@@ -1,10 +1,12 @@
+use crate::HostPath;
+use crate::finish::Finished;
+use crate::log::{Event, HostSeq};
+use crate::registry::InstanceId;
+use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
+use crate::workspace::{Kept, Workspace};
 use agents::Output;
+use agents::{ClientName, CloseReason, Provider, TurnOutcome};
 use home::IssueId;
-use proto::{
-    ClientName, CloseReason, Event, EventKind, Finished, HostPath, HostSeq,
-    InstanceId, Kept, Provider, SessionId, SessionRefusal, SessionResult,
-    TurnOutcome, Workspace,
-};
 
 use super::{
     Effect, Finish, Finishing, Input, finished, finishing, landed, summary,
@@ -266,14 +268,14 @@ fn rejected_summary_order_explains_what_was_interrupted() {
     assert_eq!(
         super::interrupted(
             "asking for a summary",
-            Some(&proto::SessionResult::Accepted)
+            Some(&crate::session::SessionResult::Accepted)
         ),
         None
     );
     assert!(
         super::interrupted(
             "asking for a summary",
-            Some(&proto::SessionResult::Refused(
+            Some(&crate::session::SessionResult::Refused(
                 SessionRefusal::TurnInProgress
             ))
         )

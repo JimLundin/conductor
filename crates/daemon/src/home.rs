@@ -25,6 +25,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use agents::ClientName;
 use home::checkout::{Probe, Root};
 use home::flow::command::fresh;
 use home::flow::graph::File;
@@ -42,10 +43,11 @@ use home::{
     IssueId, ProjectId,
 };
 use home::{Found, Stored};
+use host::HostPath;
+use host::session::{SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
-use proto::{ClientName, HostPath, SessionRefusal, StartAt};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};

@@ -1,6 +1,9 @@
 //! Turn records and pending captures reconstructed from session events.
+use crate::log::{Event, HostSeq};
 use crate::prelude::*;
-use proto::{Event, EventKind, HostSeq, Snapshot, TurnOutcome, Workspace};
+use crate::session::EventKind;
+use crate::workspace::{Snapshot, Workspace};
+use agents::TurnOutcome;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotPlan {
@@ -110,10 +113,11 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::Book;
-    use proto::{
-        ClientName, Event, EventKind, HostPath, HostSeq, SessionId, Snapshot,
-        TurnOutcome, Workspace,
-    };
+    use crate::HostPath;
+    use crate::log::{Event, HostSeq};
+    use crate::session::{EventKind, SessionId};
+    use crate::workspace::{Snapshot, Workspace};
+    use agents::{ClientName, TurnOutcome};
 
     fn event(seq: u64, kind: EventKind) -> Event {
         Event {

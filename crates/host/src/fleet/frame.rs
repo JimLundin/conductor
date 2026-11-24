@@ -7,7 +7,7 @@
 
 use alloc::vec::Vec;
 
-use proto::fleet::{Reply, Request, SignedConfiguration};
+use super::{Reply, Request, SignedConfiguration};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -79,7 +79,7 @@ pub fn decode<T: Frame>(body: &[u8]) -> Result<T, FrameError> {
 
 #[cfg(test)]
 mod tests {
-    use proto::fleet::Reply;
+    use crate::fleet::Reply;
 
     use super::{body_len, decode, encode};
 

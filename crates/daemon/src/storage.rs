@@ -2,8 +2,10 @@
 use anyhow::Context;
 use std::path::Path;
 
+use host::log::{Epoch, Event};
+use host::session::SessionId;
 use link::CommandResult;
-use proto::{CommandId, Epoch, Event, SessionId};
+use proto::CommandId;
 use redb::{
     Database, ReadableDatabase, ReadableTable, TableDefinition,
     WriteTransaction,
@@ -148,8 +150,10 @@ fn decode<T: DeserializeOwned>(value: &[u8]) -> anyhow::Result<T> {
 
 #[cfg(test)]
 mod tests {
+    use agents::ToolCallId;
+    use host::log::{Event, HostSeq};
+    use host::session::{EventKind, RequestId, SessionId};
     use link::CommandResult;
-    use proto::{Event, EventKind, HostSeq, RequestId, SessionId, ToolCallId};
 
     use super::{Storage, conversation, event, store_receipt};
 
@@ -167,7 +171,7 @@ mod tests {
             kind: EventKind::RequestOpened {
                 request: RequestId(1),
                 call: ToolCallId(String::from("tool")),
-                tool: proto::ToolKind::Other {
+                tool: agents::ToolKind::Other {
                     name: String::from("test"),
                     detail: String::new(),
                 },
@@ -181,7 +185,7 @@ mod tests {
         store_receipt(
             &write,
             proto::CommandId(1),
-            &CommandResult::Session(proto::SessionResult::Accepted),
+            &CommandResult::Session(host::session::SessionResult::Accepted),
         )?;
         write.commit()?;
         drop(first);
@@ -194,7 +198,9 @@ mod tests {
         );
         assert_eq!(
             second.receipt(proto::CommandId(1))?,
-            Some(CommandResult::Session(proto::SessionResult::Accepted))
+            Some(CommandResult::Session(
+                host::session::SessionResult::Accepted
+            ))
         );
         drop(second);
         let _ = std::fs::remove_file(path);
@@ -220,7 +226,7 @@ mod tests {
         store_receipt(
             &write,
             proto::CommandId(1),
-            &CommandResult::Session(proto::SessionResult::Accepted),
+            &CommandResult::Session(host::session::SessionResult::Accepted),
         )?;
         drop(write);
         drop(first);

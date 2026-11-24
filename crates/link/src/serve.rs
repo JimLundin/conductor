@@ -4,12 +4,15 @@
 
 use alloc::string::String;
 
+use agents::ClientName;
 use home::HomeCommand;
-use proto::fleet::{DeviceHello, FleetCommand, Identity};
-use proto::{
-    AuthToken, ClientName, CommandId, InstanceCommand, PushCommand,
-    SessionCommand, SignInCommand,
-};
+use host::fleet::AuthToken;
+use host::fleet::{DeviceHello, FleetCommand, Identity};
+use host::push::PushCommand;
+use host::registry::InstanceCommand;
+use host::session::SessionCommand;
+use host::sign_in::SignInCommand;
+use proto::CommandId;
 
 use crate::log::Kind;
 use crate::{Command, Open, Subscribe};

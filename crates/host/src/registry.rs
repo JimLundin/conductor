@@ -33,13 +33,10 @@ use agents::Configuration;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 
+use crate::log::Event;
+use crate::session::{SessionId, SessionRefusal, SessionResult};
+use agents::{Account, Auth, Credential, Effort, ModelId, Models, Provider};
 use home::IssueId;
-use proto::{
-    Account, Auth, Availability, Catalog, Credential, Effort, Event, Instance,
-    InstanceId, InstanceRefusal, InstanceResult, InstanceStatus, Instances,
-    ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
-    SessionResult,
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -49,6 +46,13 @@ use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::start::Mode;
 use crate::workspace::GitError;
+
+mod instance;
+pub use instance::{
+    Availability, Catalog, Instance, InstanceCommand, InstanceId,
+    InstanceRefusal, InstanceResult, InstanceStatus, Instances, ProviderNote,
+    Roster,
+};
 
 /// What a CLI signs in with when the host stores no credential for its
 /// instance.

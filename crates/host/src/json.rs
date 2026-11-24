@@ -1,6 +1,6 @@
 //! Where a type's JSON differs from its postcard. JavaScript's numbers are
 //! exact only to 2^53 and JSON keys are only strings, so a 128-bit id is
-//! its text and an [`crate::Epoch`] its decimal digits, each only where
+//! its text and an [`crate::log::Epoch`] its decimal digits, each only where
 //! [`Serializer::is_human_readable`], and a map keyed by a struct is a list
 //! of pairs. postcard's bytes stay as they were.
 
@@ -11,6 +11,23 @@ use core::fmt;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// A 128-bit id another crate owns, written as the host writes its own:
+/// in JSON its ULID text, in postcard its bits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ulid(pub u128);
+
+impl Serialize for Ulid {
+    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        ulid::serialize(&self.0, out)
+    }
+}
+
+impl<'de> Deserialize<'de> for Ulid {
+    fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        ulid::deserialize(input).map(Self)
+    }
+}
 
 /// A 128-bit id as a ULID is written: Crockford's base 32 in 26 lower-case
 /// digits, the first carrying the top 3 bits.

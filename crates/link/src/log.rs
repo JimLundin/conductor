@@ -15,9 +15,10 @@ use core::mem;
 
 use home::Home;
 use host::log::Effect as Logged;
-use proto::{
-    Catalog, CommandId, Epoch, Event, EventKind, HostSeq, Instances, SessionId,
-};
+use host::log::{Epoch, Event, HostSeq};
+use host::registry::{Catalog, Instances};
+use host::session::{EventKind, SessionId};
+use proto::CommandId;
 
 use crate::{CommandResult, Subscribe, Welcome};
 

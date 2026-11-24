@@ -1,14 +1,27 @@
-//! Fleet credential policy and configuration ordering, and the fleet
-//! protocol's framing between hosts ([`frame`]).
+//! The fleet: its signed membership and configuration, the tickets that
+//! admit a client, its credential policy and configuration ordering, and
+//! the fleet protocol's framing between hosts ([`frame`]).
 
 pub mod frame;
+mod protocol;
+mod ticket;
 
 use alloc::collections::BTreeSet;
 
-use proto::fleet::{NodeId, Snapshot};
-use proto::{
-    Credential, Instance, InstanceCommand, InstanceId, InstanceRefusal,
-    InstanceResult, Roster,
+use agents::Credential;
+
+pub use protocol::{
+    ALPN, Certificate, Configuration, DeviceHello, FleetCommand, FleetResult,
+    HostEntry, Identity, Invite, InviteSecret, NodeId, PairRequest, Pairing,
+    Payload, Peer, Reply, Request, Role, Signed, SignedConfiguration,
+    SignedSnapshot, Snapshot, Sync, TextError, decode_saved, device_proof,
+    encode_saved,
+};
+pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
+
+use crate::registry::{
+    Instance, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
+    Roster,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -13,7 +13,7 @@ use alloc::format;
 
 use agents::Configuration;
 
-use proto::{ModelId, Models, Provider};
+use agents::{ModelId, Models, Provider};
 
 use crate::Note;
 use crate::prelude::*;
@@ -282,7 +282,7 @@ fn unavailable<P, S>(reason: String) -> Next<P, S> {
 
 #[cfg(test)]
 mod tests {
-    use proto::{Effort, ModelChoice, ModelId, Models, Provider};
+    use agents::{Effort, ModelChoice, ModelId, Models, Provider};
 
     use super::{Mode, Next, Output, setting, start};
     use crate::Note;

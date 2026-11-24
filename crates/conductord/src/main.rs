@@ -5,9 +5,9 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use agents::Provider;
 use clap::{Parser, Subcommand};
 use daemon::{Hosting, Plugins};
-use proto::Provider;
 use runtime::Settings;
 
 /// The providers this host runs, by the names their plugins declare.
@@ -260,7 +260,7 @@ fn plugins(
 /// (which only Claude has) as the only one of its provider.
 fn fleet_sharing(
     _: &Provider,
-    credential: &proto::Credential,
+    credential: &agents::Credential,
 ) -> daemon::fleet::Sharing {
     use daemon::fleet::Sharing;
     match credential.kind.as_str() {

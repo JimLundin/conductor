@@ -1,14 +1,19 @@
+use crate::HostPath;
+use crate::log::{Event, HostSeq};
+use crate::session::{
+    EventKind, RequestId, Resolution, SessionId, SessionRefusal, SessionResult,
+    SubagentEvent,
+};
+use crate::workspace::{Kept, Snapshot, Workspace};
 use agents::Output;
 use agents::runtime::{Command, Directory, Outcome, Start, Started};
-use agents::{NativeRequest, NativeTurn, Reply, Step};
-use proto::{
+use agents::{
     Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason, Decision,
-    Effort, Event, EventKind, HostPath, HostSeq, Kept, ModelChoice, ModelId,
-    Models, Question, RequestId, Resolution, Selection, SessionId,
-    SessionRefusal, SessionResult, Snapshot, SubagentActivity, SubagentEvent,
-    SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
-    TurnOutcome, Workspace,
+    Effort, ModelChoice, ModelId, Models, Question, Selection,
+    SubagentActivity, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
+    ToolOutcome, ToolPhase, TurnOutcome,
 };
+use agents::{NativeRequest, NativeTurn, Reply, Step};
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
 
@@ -1309,5 +1314,13 @@ fn a_stop_closes_the_session_between_turns() {
             stop(),
             Vec::from([rejected(SessionRefusal::TurnInProgress)]),
         )]),
+    );
+}
+
+#[test]
+fn a_rejection_says_why_for_a_person() {
+    assert_eq!(
+        SessionRefusal::NoSuchDirectory.label(),
+        "no directory at that path on the host"
     );
 }

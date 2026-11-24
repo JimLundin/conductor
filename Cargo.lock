@@ -677,6 +677,7 @@ dependencies = [
 name = "conductord"
 version = "0.1.0"
 dependencies = [
+ "agents",
  "anyhow",
  "clap",
  "claude",
@@ -685,7 +686,6 @@ dependencies = [
  "codex-cli",
  "daemon",
  "host",
- "proto",
  "rpassword",
  "runtime",
  "tokio",
@@ -877,7 +877,6 @@ dependencies = [
  "agents",
  "anyhow",
  "argon2",
- "blake3",
  "cap-fs-ext",
  "cap-std",
  "chacha20poly1305",
@@ -1634,9 +1633,10 @@ dependencies = [
  "data-encoding",
  "home",
  "postcard",
- "proto",
+ "schemars",
  "serde",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.21",
  "ulid",
  "url",
@@ -2283,6 +2283,7 @@ dependencies = [
 name = "link"
 version = "0.1.0"
 dependencies = [
+ "agents",
  "home",
  "host",
  "postcard",
@@ -2473,7 +2474,6 @@ dependencies = [
  "iroh-base",
  "link",
  "n0-future",
- "proto",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
@@ -3306,15 +3306,9 @@ dependencies = [
 name = "proto"
 version = "0.1.0"
 dependencies = [
- "agents",
- "data-encoding",
- "home",
- "postcard",
+ "host",
  "schemars",
  "serde",
- "serde_json",
- "subtle",
- "thiserror 2.0.21",
 ]
 
 [[package]]

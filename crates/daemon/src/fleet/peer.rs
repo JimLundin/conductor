@@ -3,13 +3,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use host::fleet::{
+    HostEntry, Invite, Reply, Request, SignedConfiguration, Sync,
+};
 use iroh::endpoint::{Connection, RecvStream, SendStream};
 use iroh::protocol::{AcceptError, ProtocolHandler};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayUrl};
 use net::wire;
-use proto::fleet::{
-    HostEntry, Invite, Reply, Request, SignedConfiguration, Sync,
-};
 use tokio::sync::{Mutex, Semaphore};
 
 use super::member::clock;
@@ -31,7 +31,7 @@ pub struct Protocol {
 struct Enrollment {
     data: PathBuf,
     local: EndpointId,
-    token: proto::AuthToken,
+    token: host::fleet::AuthToken,
     admitting: Mutex<()>,
 }
 
@@ -40,7 +40,7 @@ impl Protocol {
         fleet: Slot,
         data: PathBuf,
         local: EndpointId,
-        token: proto::AuthToken,
+        token: host::fleet::AuthToken,
     ) -> Self {
         Self {
             fleet,
@@ -66,7 +66,7 @@ impl Protocol {
     async fn can_enroll(
         &self,
         remote: EndpointId,
-        token: &proto::AuthToken,
+        token: &host::fleet::AuthToken,
         membership: Option<&Membership>,
     ) -> bool {
         if !self.matches_token(token) {
@@ -80,7 +80,7 @@ impl Protocol {
         }
     }
 
-    fn matches_token(&self, token: &proto::AuthToken) -> bool {
+    fn matches_token(&self, token: &host::fleet::AuthToken) -> bool {
         self.enrollment
             .as_ref()
             .is_some_and(|enrollment| token.check(&enrollment.token).is_ok())
@@ -89,8 +89,8 @@ impl Protocol {
     async fn accept_enrollment(
         &self,
         remote: EndpointId,
-        token: &proto::AuthToken,
-        certificate: proto::fleet::Certificate,
+        token: &host::fleet::AuthToken,
+        certificate: host::fleet::Certificate,
         config: SignedConfiguration,
     ) -> anyhow::Result<()> {
         let enrollment = self
@@ -194,7 +194,7 @@ fn enrollment_reply(allowed: bool, success: Reply) -> Reply {
 async fn reply_join(
     fleet: Option<&Membership>,
     remote: EndpointId,
-    invite: &proto::fleet::InviteSecret,
+    invite: &host::fleet::InviteSecret,
     host: HostEntry,
 ) -> anyhow::Result<Reply> {
     validate_host(&host)?;
@@ -212,7 +212,7 @@ async fn reply_join(
 async fn respond_sync(
     fleet: &Membership,
     remote: EndpointId,
-    peer: proto::fleet::Peer,
+    peer: host::fleet::Peer,
     send: &mut SendStream,
     recv: &mut RecvStream,
 ) -> anyhow::Result<()> {
@@ -243,7 +243,7 @@ async fn respond_sync(
 async fn allowed_peer(
     fleet: &Membership,
     remote: EndpointId,
-    cert: &proto::fleet::Certificate,
+    cert: &host::fleet::Certificate,
 ) -> bool {
     fleet.admit_host(remote, cert).await.is_ok() && fleet.is_active().await
 }
@@ -294,7 +294,7 @@ pub(super) async fn admit_existing(
     endpoint: &Endpoint,
     fleet: &Membership,
     target: EndpointAddr,
-    token: proto::AuthToken,
+    token: host::fleet::AuthToken,
     host: HostEntry,
 ) -> anyhow::Result<()> {
     validate_host(&host)?;
@@ -337,7 +337,7 @@ async fn exchange(
     request: &Request,
 ) -> anyhow::Result<Reply> {
     tokio::time::timeout(RPC_DEADLINE, async {
-        let conn = endpoint.connect(target, proto::fleet::ALPN).await?;
+        let conn = endpoint.connect(target, host::fleet::ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await?;
         wire::fleet::write(&mut send, request).await?;
         send.finish()?;
@@ -408,7 +408,7 @@ pub(super) async fn sync_with(
     membership: &Membership,
     remote: EndpointAddr,
 ) -> anyhow::Result<()> {
-    let conn = endpoint.connect(remote, proto::fleet::ALPN).await?;
+    let conn = endpoint.connect(remote, host::fleet::ALPN).await?;
     let (mut send, mut recv) = conn.open_bi().await?;
     let local = membership.peer().await;
     let local_version = local.version;

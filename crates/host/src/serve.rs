@@ -1,10 +1,9 @@
 //! What a session command from the client link asks of the host.
 
+use crate::registry::InstanceId;
+use crate::session::{SessionCommand, SessionId, StartAt};
 use agents::Reply;
-use proto::{
-    ClientName, Effort, InstanceId, ModelId, Models, SessionCommand, SessionId,
-    StartAt,
-};
+use agents::{ClientName, Effort, ModelId, Models};
 
 use crate::session::Order;
 

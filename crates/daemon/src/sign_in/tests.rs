@@ -1,8 +1,10 @@
 use std::time::Duration;
 
+use agents::Provider;
 use anyhow::{Context, anyhow};
+use host::registry::{Instance, InstanceId, Instances};
+use host::sign_in::SignInStep;
 use host::sign_in::{Effect, Run, SignIns};
-use proto::{Instance, InstanceId, Instances, Provider, SignInStep};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream, duplex};
 use tokio::time::timeout;
 

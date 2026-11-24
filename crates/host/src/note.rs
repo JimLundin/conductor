@@ -1,7 +1,7 @@
 //! What the host's cores decide is worth logging, as data: `daemon` logs
 //! each kind with its fields.
 
-use proto::InstanceId;
+use crate::registry::InstanceId;
 
 use crate::prelude::*;
 use crate::registry::OwnSignIn;

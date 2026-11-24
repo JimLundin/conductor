@@ -1,5 +1,6 @@
+use crate::log::{Event, HostSeq};
+use crate::session::{EventKind, SessionId};
 use agents::Output;
-use proto::{Event, EventKind, HostSeq, SessionId};
 
 use super::{Effect, FORMAT, Log, Write, opens};
 
@@ -171,4 +172,23 @@ fn a_new_database_takes_the_format_and_another_format_does_not_open() {
             refused(7)
         ]
     );
+}
+
+#[test]
+fn constant_cursor_saturates_without_wrapping() {
+    const LAST: HostSeq = HostSeq(u64::MAX).next();
+    assert_eq!(LAST, HostSeq(u64::MAX));
+}
+
+#[test]
+fn stored_events_use_the_current_format()
+-> Result<(), Box<dyn std::error::Error>> {
+    let ready = Event {
+        seq: HostSeq(1),
+        session: SessionId(1),
+        kind: EventKind::SessionReady,
+    };
+    assert_eq!(postcard::from_bytes::<Event>(&[1, 1, 1])?, ready);
+    assert_eq!(postcard::to_allocvec(&ready)?, Vec::from([1, 1, 1]));
+    Ok(())
 }

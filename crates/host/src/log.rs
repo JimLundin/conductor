@@ -13,7 +13,10 @@ use alloc::format;
 use core::mem;
 
 use agents::Output;
-use proto::{Event, EventKind, HostSeq, SessionId};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::session::{EventKind, SessionId};
 
 use crate::prelude::*;
 
@@ -246,6 +249,49 @@ impl Log {
 /// A write in a transaction of its own.
 fn alone(write: Write) -> Vec<Effect> {
     Vec::from([Effect::Open, Effect::Store(write), Effect::Commit])
+}
+
+/// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+pub struct HostSeq(pub u64);
+
+impl HostSeq {
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+}
+
+/// Identifies one incarnation of a host's event log. A cursor from another
+/// epoch is meaningless, so the client starts over from seq 0 (§8).
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+)]
+pub struct Epoch(
+    #[serde(with = "crate::json::decimal")]
+    #[schemars(with = "String")]
+    pub u64,
+);
+
+/// Every event names its session. A stored event has a seq of its own; an
+/// `AssistantDelta` repeats the last one's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Event {
+    pub seq: HostSeq,
+    pub session: SessionId,
+    pub kind: EventKind,
 }
 
 #[cfg(test)]

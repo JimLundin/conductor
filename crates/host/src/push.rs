@@ -1,13 +1,44 @@
-//! Web Push subscription policy for a paired host.
+//! Web push: the subscriptions a paired host notifies, which of them it
+//! accepts, and the commands that register one or ask for the key it
+//! signs with.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use core::fmt;
 
 use data_encoding::BASE64URL_NOPAD;
-use proto::PushSubscription;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 const DEVICE_LIMIT: usize = 32;
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PushSubscription {
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+}
+
+impl fmt::Debug for PushSubscription {
+    fn fmt(&self, output: &mut fmt::Formatter<'_>) -> fmt::Result {
+        output.write_str("PushSubscription")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum PushCommand {
+    PublicKey,
+    Register(PushSubscription),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum PushResult {
+    Accepted,
+    PublicKey(String),
+    /// The host sends no push.
+    Unavailable,
+}
 
 pub type Devices = BTreeMap<String, PushSubscription>;
 

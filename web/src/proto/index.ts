@@ -1176,6 +1176,24 @@ export const DiffExtent = Schema.Literals(["Complete", "Truncated"]).annotate({
 	identifier: "DiffExtent",
 });
 
+export type DiffChange = "Delete" | "Write" | "Edit";
+
+export const DiffChange = Schema.Union(
+	[
+		Schema.Literal("Delete"),
+		Schema.Literal("Write").annotate({
+			description: "Added: the whole file is new.",
+		}),
+		Schema.Literal("Edit").annotate({
+			description: "Modified, or any other status.",
+		}),
+	],
+	{ mode: "oneOf" },
+).annotate({
+	description: "What a snapshot did to a file, as Git's diff status says.",
+	identifier: "DiffChange",
+});
+
 export type FilePatch =
 	| "Binary"
 	| "TooLarge"
@@ -1192,13 +1210,13 @@ export const FilePatch = Schema.Union(
 ).annotate({ identifier: "FilePatch" });
 
 export type SnapshotFile = {
-	readonly change: Change;
+	readonly change: DiffChange;
 	readonly patch: FilePatch;
 	readonly path: string;
 };
 
 export const SnapshotFile = Schema.Struct({
-	change: Change,
+	change: DiffChange,
 	patch: FilePatch,
 	path: Schema.String,
 }).annotate({ identifier: "SnapshotFile" });

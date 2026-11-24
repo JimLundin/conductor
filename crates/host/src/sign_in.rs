@@ -19,16 +19,21 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use core::time::Duration;
 
-use agents::{SignIn as Flow, plain};
-use proto::{
-    Account, Auth, Availability, Catalog, Credential, Instance, InstanceId,
-    InstanceRefusal, InstanceResult, Instances, SignIn, SignInCode,
-    SignInRefusal, SignInResult, SignInStep,
+use crate::registry::{
+    Availability, Catalog, Instance, InstanceId, InstanceRefusal,
+    InstanceResult, Instances,
 };
+use agents::{Account, Auth, Credential, SignInCode};
+use agents::{SignIn as Flow, plain};
 
 use crate::Note;
 use crate::prelude::*;
 use crate::registry::AccountAdoption;
+
+mod model;
+pub use model::{
+    SignIn, SignInCommand, SignInRefusal, SignInResult, SignInStep,
+};
 
 /// How long a sign-in may run before the host stops it: Codex's one-time
 /// code expires after 15 minutes.

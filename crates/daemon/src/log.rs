@@ -14,11 +14,12 @@ use std::path::Path;
 
 use home::Home;
 use host::log::{Effect as Logged, FreshRequest};
+use host::log::{Event, HostSeq};
+use host::registry::{Catalog, Instances};
+use host::session::{EventKind, SessionId};
 use link::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
 use link::{CommandResult, Subscribe, Welcome};
-use proto::{
-    Catalog, CommandId, Event, EventKind, HostSeq, Instances, SessionId,
-};
+use proto::CommandId;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::Stopped;
@@ -171,7 +172,7 @@ impl Log {
 
     #[cfg(test)]
     #[must_use]
-    pub fn spawn(name: String, epoch: proto::Epoch) -> Self {
+    pub fn spawn(name: String, epoch: host::log::Epoch) -> Self {
         Self::start(Core::new(name, epoch, Vec::new()), None)
     }
 
@@ -573,10 +574,12 @@ impl LogActor {
 #[cfg(test)]
 mod tests {
     use agents::Output;
-    use proto::{
-        Auth, Availability, Catalog, Epoch, EventKind, HostSeq, InstanceId,
-        InstanceStatus, Instances, Models, Provider, SessionId,
+    use agents::{Auth, Models, Provider};
+    use host::log::{Epoch, HostSeq};
+    use host::registry::{
+        Availability, Catalog, InstanceId, InstanceStatus, Instances,
     };
+    use host::session::{EventKind, SessionId};
 
     use super::{Log, Welcome};
 
@@ -615,7 +618,7 @@ mod tests {
     #[tokio::test]
     async fn deltas_go_live_with_the_last_seq_and_are_never_replayed()
     -> Result<(), Box<dyn std::error::Error>> {
-        let log = Log::spawn(String::from("test"), proto::Epoch(5));
+        let log = Log::spawn(String::from("test"), host::log::Epoch(5));
         let mut live = log.subscribe(HostSeq(0)).await?.live;
         log.append(SessionId(1), EventKind::SessionReady).await?;
         log.append(SessionId(1), delta("a")).await?;
@@ -677,7 +680,9 @@ mod durability_tests {
     use std::time::Duration;
 
     use agents::Output;
-    use proto::{CommandId, EventKind, HostSeq, SessionId};
+    use host::log::HostSeq;
+    use host::session::{EventKind, SessionId};
+    use proto::CommandId;
 
     use super::{
         BeginCommand, CommandLease, CommandResult, CommandStart, Kind, Log,
@@ -718,7 +723,7 @@ mod durability_tests {
             .send(LogMsg::Finish {
                 key: CommandId(23),
                 completion: CommandResult::Session(
-                    proto::SessionResult::Accepted,
+                    host::session::SessionResult::Accepted,
                 )
                 .into(),
                 reply: finished_reply,
@@ -741,7 +746,9 @@ mod durability_tests {
             Some("pending")
         );
         ordinary
-            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .finish(CommandResult::Session(
+                host::session::SessionResult::Accepted,
+            ))
             .await?;
         finished.await?;
         drop(receipt);
@@ -751,7 +758,9 @@ mod durability_tests {
         };
         assert_eq!(
             retried,
-            Some(CommandResult::Session(proto::SessionResult::Accepted))
+            Some(CommandResult::Session(
+                host::session::SessionResult::Accepted
+            ))
         );
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
@@ -761,7 +770,9 @@ mod durability_tests {
         };
         assert_eq!(
             cached,
-            Some(CommandResult::Session(proto::SessionResult::Accepted))
+            Some(CommandResult::Session(
+                host::session::SessionResult::Accepted
+            ))
         );
         reopened.shutdown().await?;
         Ok(())
@@ -803,7 +814,7 @@ mod durability_tests {
             super::storage::store_receipt(
                 &transaction,
                 CommandId(id),
-                &CommandResult::Session(proto::SessionResult::Accepted),
+                &CommandResult::Session(host::session::SessionResult::Accepted),
             )?;
         }
         transaction.commit()?;
@@ -831,7 +842,9 @@ mod durability_tests {
             }))
             .await?;
         running
-            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .finish(CommandResult::Session(
+                host::session::SessionResult::Accepted,
+            ))
             .await?;
         let BeginCommand::Execute(last) = cache_miss.await? else {
             return Err("expected the cache miss to execute".into());
@@ -840,12 +853,14 @@ mod durability_tests {
             assert!(matches!(
                 answer.try_recv()?,
                 BeginCommand::Cached(CommandResult::Session(
-                    proto::SessionResult::Accepted
+                    host::session::SessionResult::Accepted
                 ))
             ));
         }
-        last.finish(CommandResult::Session(proto::SessionResult::Accepted))
-            .await?;
+        last.finish(CommandResult::Session(
+            host::session::SessionResult::Accepted,
+        ))
+        .await?;
         log.shutdown().await?;
         std::fs::remove_file(path)?;
         Ok(())
@@ -854,7 +869,7 @@ mod durability_tests {
     #[tokio::test]
     async fn receipt_lease_drop_fails_closed()
     -> Result<(), Box<dyn std::error::Error>> {
-        let log = Log::spawn(String::from("test"), proto::Epoch(1));
+        let log = Log::spawn(String::from("test"), host::log::Epoch(1));
         let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
@@ -908,7 +923,9 @@ mod durability_tests {
             }))
             .await?;
         first
-            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .finish(CommandResult::Session(
+                host::session::SessionResult::Accepted,
+            ))
             .await?;
         assert_eq!(live.recv().await?.kind, EventKind::SessionReady);
         assert_eq!(live.recv().await?.seq, HostSeq(1));
@@ -918,7 +935,9 @@ mod durability_tests {
         };
         assert_eq!(
             cached,
-            Some(CommandResult::Session(proto::SessionResult::Accepted))
+            Some(CommandResult::Session(
+                host::session::SessionResult::Accepted
+            ))
         );
         let second = match next.await? {
             BeginCommand::Execute(lease) => Some(lease),
@@ -926,7 +945,9 @@ mod durability_tests {
         }
         .ok_or("expected a value")?;
         second
-            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .finish(CommandResult::Session(
+                host::session::SessionResult::Accepted,
+            ))
             .await?;
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
@@ -937,7 +958,9 @@ mod durability_tests {
         };
         assert_eq!(
             cached,
-            Some(CommandResult::Session(proto::SessionResult::Accepted))
+            Some(CommandResult::Session(
+                host::session::SessionResult::Accepted
+            ))
         );
         reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
@@ -971,7 +994,7 @@ mod durability_tests {
         log.append(
             SessionId(1),
             EventKind::SnapshotRecorded {
-                snapshot: proto::Snapshot {
+                snapshot: host::workspace::Snapshot {
                     turn_start: Some(HostSeq(4)),
                     commit: String::from("captured"),
                 },
@@ -993,7 +1016,9 @@ mod durability_tests {
         );
         let retried = lease(&reopened, 9).await?;
         retried
-            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .finish(CommandResult::Session(
+                host::session::SessionResult::Accepted,
+            ))
             .await?;
         reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);
@@ -1020,7 +1045,9 @@ mod durability_tests {
         assert_eq!(reopened.history().await?, Vec::new());
         let retried = lease(&reopened, 1).await?;
         retried
-            .finish(CommandResult::Session(proto::SessionResult::Accepted))
+            .finish(CommandResult::Session(
+                host::session::SessionResult::Accepted,
+            ))
             .await?;
         reopened.shutdown().await?;
         let _ = std::fs::remove_file(path);

@@ -2,12 +2,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use host::fleet::{
+    Certificate, DeviceHello, HostEntry, Reply, SignedConfiguration,
+};
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointId, RelayMode, SecretKey};
-use proto::fleet::{
-    Certificate, DeviceHello, HostEntry, Reply, SignedConfiguration,
-};
 
 use super::Membership;
 use super::crypto;
@@ -77,7 +77,7 @@ async fn loopback_join_replays_for_one_host_and_propagates_revocations()
     let restored = check_backup(&backup, phrase, &root_public)?;
 
     let router = Router::builder(root_endpoint.clone())
-        .accept(proto::fleet::ALPN, Protocol::for_member(root.clone()))
+        .accept(host::fleet::ALPN, Protocol::for_member(root.clone()))
         .spawn();
     let now = clock()?;
     let (member, certificate, config) = enroll_member(
@@ -153,7 +153,7 @@ async fn loopback_join_replays_for_one_host_and_propagates_revocations()
 fn check_backup(
     backup: &Path,
     phrase: &[u8],
-    root_public: &proto::fleet::NodeId,
+    root_public: &host::fleet::NodeId,
 ) -> anyhow::Result<super::member::Recovery> {
     let restored: super::member::Recovery = crypto::recover(backup, phrase)?;
     assert_eq!(
@@ -241,16 +241,16 @@ async fn enroll_member(
 async fn check_owner_proof(
     root: &Membership,
     member: &Membership,
-    root_public: &proto::fleet::NodeId,
+    root_public: &host::fleet::NodeId,
     root_id: EndpointId,
     member_id: EndpointId,
     outsider: EndpointId,
-) -> anyhow::Result<(DeviceHello, proto::fleet::NodeId)> {
+) -> anyhow::Result<(DeviceHello, host::fleet::NodeId)> {
     let owner = SecretKey::from_bytes(&[4; 32]);
     let owner_cert = root
         .sign_owner(*owner.public().as_bytes(), "phone".into())
         .await?;
-    let proof = proto::fleet::device_proof(
+    let proof = host::fleet::device_proof(
         root_public,
         member_id.as_bytes(),
         outsider.as_bytes(),
@@ -303,7 +303,7 @@ async fn start_witness(
         witness_config,
     )?;
     let witness_router = Router::builder(outsider.clone())
-        .accept(proto::fleet::ALPN, Protocol::for_member(witness.clone()))
+        .accept(host::fleet::ALPN, Protocol::for_member(witness.clone()))
         .spawn();
     Ok((witness, witness_router))
 }
@@ -315,21 +315,23 @@ async fn verify_replication(
     root_endpoint: &Endpoint,
     member_endpoint: &Endpoint,
     outsider: &Endpoint,
-    owner: proto::fleet::NodeId,
+    owner: host::fleet::NodeId,
 ) -> anyhow::Result<()> {
-    let instance =
-        proto::InstanceId::named(proto::Provider::new("claude"), "fixture");
+    let instance = host::registry::InstanceId::named(
+        agents::Provider::new("claude"),
+        "fixture",
+    );
     root.change_credentials(|roster| {
-        let key = proto::Credential {
+        let key = agents::Credential {
             kind: String::from("api_key"),
             values: [(String::from("key"), String::from("synthetic-value"))]
                 .into(),
         };
         roster.0.insert(
             instance.clone(),
-            proto::Instance {
+            host::registry::Instance {
                 credential: Some(key),
-                ..proto::Instance::default()
+                ..host::registry::Instance::default()
             },
         );
     })
@@ -392,16 +394,16 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
         b"fixture backup passphrase",
     )?;
     let target_path = path.join("standalone");
-    let legacy = proto::AuthToken::from_bytes([7; 16]);
+    let legacy = host::fleet::AuthToken::from_bytes([7; 16]);
     let (slot, _) = tokio::sync::watch::channel(None);
     let target_router = Router::builder(target.clone())
         .accept(
-            proto::fleet::ALPN,
+            host::fleet::ALPN,
             Protocol::new(slot.clone(), target_path, target.id(), legacy),
         )
         .spawn();
     let target_host = entry(&target, "standalone");
-    let wrong = proto::AuthToken::from_bytes([8; 16]);
+    let wrong = host::fleet::AuthToken::from_bytes([8; 16]);
     assert!(
         admit_existing(
             &root_endpoint,
@@ -432,20 +434,20 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
         .clone()
         .context("standalone host did not switch its membership")?;
 
-    let request = proto::fleet::PairRequest {
+    let request = host::fleet::PairRequest {
         device: *SecretKey::from_bytes(&[13; 32]).public().as_bytes(),
         name: String::from("new browser"),
     };
-    let action = proto::fleet::FleetCommand::Approve(request);
+    let action = host::fleet::FleetCommand::Approve(request);
     let reply =
         super::command(Some(&root), &root_endpoint, action.clone()).await;
-    let proto::fleet::FleetResult::Pairing(pairing) = reply else {
+    let host::fleet::FleetResult::Pairing(pairing) = reply else {
         anyhow::bail!("root refused browser approval");
     };
     member.admit_owner(&pairing.certificate).await?;
     assert!(matches!(
         super::command(Some(&member), &target, action).await,
-        proto::fleet::FleetResult::Unavailable
+        host::fleet::FleetResult::Unavailable
     ));
 
     target_router.shutdown().await?;

@@ -19,14 +19,19 @@ use host::registry::{
 };
 use host::restore::{Created, Recovery, Step, events_of};
 
+use agents::{ClientName, Credential, Effort, ModelId, Models, Provider};
 use home::HomeRefusal;
-use host::sign_in::{CredentialTarget, Effect as SignInEffect, Key, SignIns};
-use proto::{
-    Catalog, ClientName, CommandId, Credential, Effort, Event, EventKind,
-    InstanceCommand, InstanceId, InstanceRefusal, InstanceResult, Instances,
-    ModelId, Models, Provider, Roster, SessionId, SessionRefusal,
-    SessionResult, SignIn, SignInCommand, SignInRefusal, SignInResult, StartAt,
+use host::log::Event;
+use host::registry::{
+    Catalog, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
+    Instances, Roster,
 };
+use host::session::{
+    EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
+};
+use host::sign_in::{CredentialTarget, Effect as SignInEffect, Key, SignIns};
+use host::sign_in::{SignIn, SignInCommand, SignInRefusal, SignInResult};
+use proto::CommandId;
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::{Id, JoinSet};
@@ -461,7 +466,7 @@ impl RegistryActor {
         &mut self,
         instance: &InstanceId,
         running: &BTreeSet<SessionId>,
-    ) -> Result<Option<proto::Instance>, SignInRefusal> {
+    ) -> Result<Option<host::registry::Instance>, SignInRefusal> {
         if self.sign_ins.is_running(instance) {
             return Err(SignInRefusal::SignInRunning);
         }

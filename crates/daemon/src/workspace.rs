@@ -5,8 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use host::HostPath;
+use host::log::HostSeq;
+use host::session::SessionId;
 use host::workspace::{Answer, Output, Plan, Step};
-use proto::{HostPath, HostSeq, Kept, SessionId, SnapshotDiff, Workspace};
+use host::workspace::{Kept, SnapshotDiff, Workspace};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
 
@@ -477,7 +480,9 @@ mod tests {
     use super::{
         GitError, create, diff, host, landing_receipt, remove, snapshot, text,
     };
-    use proto::{DiffExtent, FilePatch, HostSeq, Kept, SessionId, Workspace};
+    use host::log::HostSeq;
+    use host::session::SessionId;
+    use host::workspace::{DiffExtent, FilePatch, Kept, Workspace};
     use std::path::{Path, PathBuf};
 
     struct Repository {
@@ -564,7 +569,7 @@ mod tests {
             diff(&workspace, HostSeq(15), &completed, &completed)
                 .await?
                 .files,
-            Vec::<proto::SnapshotFile>::new()
+            Vec::<host::workspace::SnapshotFile>::new()
         );
         let foreign_id = SessionId(ulid::Ulid::new().into());
         let foreign =

@@ -4,8 +4,11 @@
 use alloc::collections::BTreeMap;
 use alloc::format;
 
+use crate::log::Event;
+use crate::registry::InstanceId;
+use crate::session::{EventKind, SessionId};
+use agents::{Account, ClientName};
 use home::IssueId;
-use proto::{Account, ClientName, Event, EventKind, InstanceId, SessionId};
 
 use crate::prelude::*;
 

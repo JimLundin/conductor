@@ -14,9 +14,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
+use host::fleet::{HostEntry, Invite, PairRequest, Pairing, Reply};
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointId, RelayMode};
-use proto::fleet::{HostEntry, Invite, PairRequest, Pairing, Reply};
 
 use member::clock;
 
@@ -268,9 +268,9 @@ pub(crate) fn exclusive(data: &Path) -> anyhow::Result<std::fs::File> {
 pub(crate) async fn command(
     fleet: Option<&Membership>,
     endpoint: &Endpoint,
-    command: proto::fleet::FleetCommand,
-) -> proto::fleet::FleetResult {
-    use proto::fleet::{FleetCommand, FleetResult};
+    command: host::fleet::FleetCommand,
+) -> host::fleet::FleetResult {
+    use host::fleet::{FleetCommand, FleetResult};
     let unavailable = FleetResult::Unavailable;
     let Some(membership) = fleet else {
         return unavailable;
@@ -309,7 +309,7 @@ mod tests;
 async fn admit_existing(
     fleet: &Membership,
     endpoint: &Endpoint,
-    ticket: proto::Ticket,
+    ticket: host::fleet::Ticket,
     name: String,
 ) -> anyhow::Result<()> {
     ensure!(

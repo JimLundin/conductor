@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
 use host::log::FreshRequest;
 use host::push::{Devices, Registration};
-use proto::{PushCommand, PushResult, PushSubscription};
+use host::push::{PushCommand, PushResult, PushSubscription};
 use sad_web_push::{
     ContentEncoding, HyperWebPushClient, PartialVapidSignatureBuilder,
     SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushError,
@@ -230,7 +230,9 @@ fn push_message(
 #[cfg(test)]
 mod tests {
 
-    use proto::{EventKind, HostSeq, PushSubscription, RequestId, SessionId};
+    use host::log::HostSeq;
+    use host::push::PushSubscription;
+    use host::session::{EventKind, RequestId, SessionId};
     use sad_web_push::{
         ContentEncoding, SubscriptionInfo, VapidSignatureBuilder,
     };
@@ -289,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn replay_is_for_clients_and_only_new_requests_reach_push()
     -> anyhow::Result<()> {
-        let log = Log::spawn(String::from("push test"), proto::Epoch(1));
+        let log = Log::spawn(String::from("push test"), host::log::Epoch(1));
         let session = SessionId(42);
         let question = |request| EventKind::QuestionAsked {
             request: RequestId(request),

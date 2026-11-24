@@ -10,7 +10,8 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::Roster;
+use super::{AuthToken, Ticket};
+use crate::registry::Roster;
 
 pub const ALPN: &[u8] = b"conductor-fleet/4";
 
@@ -148,9 +149,9 @@ pub struct Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Request {
-    EnrollmentReady(crate::AuthToken),
+    EnrollmentReady(AuthToken),
     Enroll {
-        token: crate::AuthToken,
+        token: AuthToken,
         certificate: Certificate,
         config: Box<SignedConfiguration>,
     },
@@ -228,7 +229,7 @@ pub enum FleetCommand {
     Invite,
     Revoke(NodeId),
     Approve(PairRequest),
-    Admit { ticket: crate::Ticket, name: String },
+    Admit { ticket: Ticket, name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

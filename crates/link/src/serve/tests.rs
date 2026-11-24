@@ -1,10 +1,13 @@
+use agents::{ClientName, Effort, Provider, SignInCode};
 use home::issue::{EditId, IssueChange, NewIssue};
 use home::{HomeCommand, IssueId};
-use proto::fleet::{DeviceHello, Identity, Role, Signed};
-use proto::{
-    AuthToken, ClientName, CommandId, Effort, Epoch, HostSeq, InstanceCommand,
-    InstanceId, Provider, SessionCommand, SessionId, SignInCode, SignInCommand,
-};
+use host::fleet::AuthToken;
+use host::fleet::{DeviceHello, Identity, Role, Signed};
+use host::log::{Epoch, HostSeq};
+use host::registry::{InstanceCommand, InstanceId};
+use host::session::{SessionCommand, SessionId};
+use host::sign_in::SignInCommand;
+use proto::CommandId;
 
 use crate::log::Kind;
 use crate::{Command, Hello, Open, Subscribe};
@@ -137,7 +140,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
     let configured = [
         InstanceCommand::SetCredential {
             provider: Provider::new("codex"),
-            credential: proto::Credential {
+            credential: agents::Credential {
                 kind: String::from("provider"),
                 values: std::collections::BTreeMap::new(),
             },
@@ -189,7 +192,7 @@ fn home_commands_run_every_time_and_a_session_start_runs_alone() {
     assert_eq!(run, [None; 2]);
     let start = SessionCommand::Start {
         instance: InstanceId::own(Provider::new("claude")),
-        at: proto::StartAt::Project(project()),
+        at: host::session::StartAt::Project(project()),
         model: None,
         effort: Some(Effort::High),
     };

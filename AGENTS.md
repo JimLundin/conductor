@@ -115,7 +115,7 @@ Home Screen. The design is in
   of a provider, keyed by `InstanceId { provider, account }`, with its own
   credential, private home (`<data>/home/<dir>`), work dir
   (`<data>/work/<dir>`, `<dir>` from `host::registry::dir`) and agents,
-  kept in the store as `proto::Roster`. The provider names the account,
+  kept in the store as `host::registry::Roster`. The provider names the account,
   not the owner, so an instance is never renamed: a credential's form
   names it, and a sign-in in the provider's own instance (`Account::Own`,
   which every host has) names it once the CLI reports it. Whatever is per
@@ -125,7 +125,7 @@ Home Screen. The design is in
   `Provider`.
 - **Sign-ins are live only.** A sign-in from the app reaches clients as
   `Feed::SignIn` frames, never as events; its commands keep no receipt;
-  and a pasted code (`proto::SignInCode`, whose `Debug` hides it), a
+  and a pasted code (`agents::SignInCode`, whose `Debug` hides it), a
   CLI's sign-in output and its link go to no event, receipt, store or log
   line.
 - **Commits.** End each commit message with

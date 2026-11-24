@@ -3,14 +3,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agents::runtime::{Command, Event as AgentEvent};
+use agents::{Account, Credential, Models, Provider};
+use host::HostPath;
+use host::log::Epoch;
+use host::registry::{
+    Availability, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
+    Roster,
+};
 use host::registry::{OwnSignIn, Stored};
 use host::serve::Relaunch;
+use host::session::{SessionId, SessionRefusal, SessionResult};
+use host::sign_in::SignInStep;
 use host::sign_in::{Effect as SignInEffect, Key};
-use proto::{
-    Account, Availability, CommandId, Credential, Epoch, HostPath,
-    InstanceCommand, InstanceId, InstanceRefusal, InstanceResult, Models,
-    Provider, Roster, SessionId, SessionRefusal, SessionResult, SignInStep,
-};
+use proto::CommandId;
 use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
@@ -100,7 +105,7 @@ impl Fixture {
         for instance in [&source, &destination] {
             roster
                 .0
-                .insert(instance.clone(), proto::Instance::default());
+                .insert(instance.clone(), host::registry::Instance::default());
             store.save_change(
                 &roster,
                 &super::Change::Added(instance.clone()),

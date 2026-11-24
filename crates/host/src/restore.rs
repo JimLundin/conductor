@@ -10,10 +10,11 @@
 
 use alloc::format;
 
-use proto::{
-    CloseReason, Event, EventKind, HostPath, InstanceId, RequestId, Resolution,
-    SessionId, TurnOutcome,
-};
+use crate::HostPath;
+use crate::log::Event;
+use crate::registry::InstanceId;
+use crate::session::{EventKind, RequestId, Resolution, SessionId};
+use agents::{CloseReason, TurnOutcome};
 
 use crate::prelude::*;
 use crate::session::Choice;
@@ -172,10 +173,10 @@ impl Recovery {
 pub fn finish_interrupted(events: &[Event]) -> bool {
     events
         .iter()
-        .fold(proto::FinishState::Ready, |state, event| {
+        .fold(crate::finish::FinishState::Ready, |state, event| {
             state.after(&event.kind)
         })
-        == proto::FinishState::Finishing
+        == crate::finish::FinishState::Finishing
 }
 
 fn open_requests(events: &[Event]) -> Vec<RequestId> {
@@ -245,10 +246,14 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 
 #[cfg(test)]
 mod tests {
-    use proto::{
-        ClientName, Effort, Event, EventKind, HostPath, HostSeq, InstanceId,
-        ModelId, Provider, RequestId, Resolution, SessionId, Snapshot,
-        ToolCallId, ToolKind, TurnOutcome, Workspace,
+    use crate::HostPath;
+    use crate::log::{Event, HostSeq};
+    use crate::registry::InstanceId;
+    use crate::session::{EventKind, RequestId, Resolution, SessionId};
+    use crate::workspace::{Snapshot, Workspace};
+    use agents::{
+        ClientName, Effort, ModelId, Provider, ToolCallId, ToolKind,
+        TurnOutcome,
     };
 
     use super::{Created, Recovery, SnapshotPlan, Step, created, events_of};
@@ -317,7 +322,7 @@ mod tests {
                 8,
                 1,
                 EventKind::EffortChanged {
-                    effort: proto::Effort::High,
+                    effort: agents::Effort::High,
                 },
             ),
         ]);
@@ -349,7 +354,7 @@ mod tests {
             Recovery {
                 choice: Choice {
                     model: None,
-                    effort: Some(proto::Effort::High),
+                    effort: Some(agents::Effort::High),
                 },
                 talked: true,
                 withdrawn: Vec::from([RequestId(2)]),

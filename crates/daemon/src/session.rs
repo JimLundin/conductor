@@ -13,13 +13,14 @@ use std::time::Duration;
 
 use agents::Step;
 use agents::runtime::{Command, Event, Outcome, Start};
+use agents::{ClientName, Models};
+use host::HostPath;
 use host::finish::{Effect as FinishEffect, Finish, Input as FinishInput};
+use host::log::HostSeq;
 pub use host::session::Order;
 use host::session::{Call, Choice, Compared, Effect, Input, Session as Core};
-use proto::{
-    ClientName, EventKind, HostPath, HostSeq, Models, SessionId, SessionResult,
-    Workspace,
-};
+use host::session::{EventKind, SessionId, SessionResult};
+use host::workspace::Workspace;
 use runtime::{Instance, Runtime};
 use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::time::Instant;
@@ -99,7 +100,7 @@ impl Session {
         told: Told,
         agent: (Runtime, Models),
         log: Log,
-        history: &[proto::Event],
+        history: &[host::log::Event],
     ) -> Self {
         let (runtime, offered) = agent;
         let restored = (Some(runtime), None);
@@ -121,7 +122,7 @@ impl Session {
         choice: Choice,
         told: Told,
         agent: (Option<Runtime>, Option<String>),
-        history: &[proto::Event],
+        history: &[host::log::Event],
         log: Log,
     ) -> Self {
         let (runtime, conversation) = agent;
@@ -574,7 +575,7 @@ impl FinishRun {
 }
 
 fn watched(
-    next: Result<proto::Event, broadcast::error::RecvError>,
+    next: Result<host::log::Event, broadcast::error::RecvError>,
 ) -> Result<FinishInput, Stopped> {
     match next {
         Ok(event) => Ok(FinishInput::Events(Vec::from([event]))),

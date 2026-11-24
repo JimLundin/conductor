@@ -540,6 +540,25 @@
 			"required": ["certificate", "proof"],
 			"type": "object"
 		},
+		"DiffChange": {
+			"description": "What a snapshot did to a file, as Git's diff status says.",
+			"oneOf": [
+				{
+					"enum": ["Delete"],
+					"type": "string"
+				},
+				{
+					"const": "Write",
+					"description": "Added: the whole file is new.",
+					"type": "string"
+				},
+				{
+					"const": "Edit",
+					"description": "Modified, or any other status.",
+					"type": "string"
+				}
+			]
+		},
 		"DiffExtent": {
 			"enum": ["Complete", "Truncated"],
 			"type": "string"
@@ -3895,7 +3914,7 @@
 		"SnapshotFile": {
 			"properties": {
 				"change": {
-					"$ref": "#/$defs/Change"
+					"$ref": "#/$defs/DiffChange"
 				},
 				"patch": {
 					"$ref": "#/$defs/FilePatch"

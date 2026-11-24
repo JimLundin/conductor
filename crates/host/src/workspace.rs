@@ -7,12 +7,13 @@
 use alloc::format;
 use alloc::string::ToString;
 
-use proto::{
-    Change, DiffExtent, FilePatch, HostPath, Kept, SessionId, SnapshotFile,
-    Workspace,
-};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
+use crate::HostPath;
+use crate::log::HostSeq;
 use crate::prelude::*;
+use crate::session::SessionId;
 
 /// The most of Git's output the host reads, and the largest patch it sends.
 const PATCH_LIMIT: usize = 65536;
@@ -50,7 +51,7 @@ pub struct Output {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     path: String,
-    change: Change,
+    change: DiffChange,
 }
 
 #[must_use]
@@ -281,9 +282,9 @@ fn entry(parts: &[&str]) -> Result<Entry, GitError> {
         .get(1)
         .ok_or_else(|| failure("diff metadata", "missing path"))?;
     let change = match *status {
-        "A" => Change::Write,
-        "D" => Change::Delete,
-        _ => Change::Edit,
+        "A" => DiffChange::Write,
+        "D" => DiffChange::Delete,
+        _ => DiffChange::Edit,
     };
     Ok(Entry {
         path: String::from(*path),
@@ -360,6 +361,78 @@ pub(crate) fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
         Some((remote, Ok(()))) => Kept::Pushed { remote },
         Some((_, Err(reason))) => Kept::PushFailed { reason },
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Workspace {
+    pub repository: HostPath,
+    pub original: HostPath,
+    pub worktree: HostPath,
+    pub directory: HostPath,
+    pub branch: String,
+}
+
+/// Where a removed session's branch was kept.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Kept {
+    /// In the checkout only: it has no `origin`.
+    Local,
+    Pushed {
+        remote: String,
+    },
+    /// In the checkout only, since the push failed.
+    PushFailed {
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Snapshot {
+    /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
+    pub turn_start: Option<HostSeq>,
+    pub commit: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotDiff {
+    pub snapshot: HostSeq,
+    pub files: Vec<SnapshotFile>,
+    pub extent: DiffExtent,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SnapshotFile {
+    pub path: String,
+    pub change: DiffChange,
+    pub patch: FilePatch,
+}
+
+/// What a snapshot did to a file, as Git's diff status says.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub enum DiffChange {
+    /// Added: the whole file is new.
+    Write,
+    /// Modified, or any other status.
+    Edit,
+    Delete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum FilePatch {
+    Text(String),
+    Binary,
+    TooLarge,
+    Unsupported { reason: String },
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+)]
+pub enum DiffExtent {
+    Complete,
+    Truncated,
 }
 
 #[cfg(test)]

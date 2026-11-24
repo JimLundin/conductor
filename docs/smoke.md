@@ -13,7 +13,7 @@ once, and how the whole thing feels.
 ## Setup
 
 - [ ] Run from the checkout for the green Pages deployment. Check the
-      protocol in [the `ALPN` constant](../../crates/proto/src/lib.rs).
+      protocol in [the `ALPN` constant](../../crates/link/src/lib.rs).
 - [ ] From the checkout, create a fresh run directory and seed a commit.
       Keep the shell variables for restart and teardown.
 

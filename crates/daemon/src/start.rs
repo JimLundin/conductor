@@ -12,8 +12,11 @@ use crate::log::Log;
 use crate::registry::{Launcher, Registry};
 use crate::serve::Conductor;
 use crate::sign_in::Signing;
+use agents::Provider;
 use anyhow::Context;
+use host::fleet::Ticket;
 use host::registry::{AccountAdoption, sign_in_instance};
+use host::registry::{Catalog, Instance, InstanceId};
 use host::start::{Mode, Next, Output};
 use install::Home;
 use install::process::command;
@@ -21,7 +24,6 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
 use net::Target;
-use proto::{Catalog, Instance, InstanceId, Provider, Ticket};
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin, Settings};
@@ -31,7 +33,7 @@ use tracing::Instrument;
 #[derive(Debug, Clone, Default)]
 pub struct Plugins(
     Arc<BTreeMap<Provider, Plugin>>,
-    Option<fn(&Provider, &proto::Credential) -> crate::fleet::Sharing>,
+    Option<fn(&Provider, &agents::Credential) -> crate::fleet::Sharing>,
 );
 
 impl FromIterator<Plugin> for Plugins {
@@ -52,7 +54,7 @@ impl Plugins {
     #[must_use]
     pub fn with_fleet_credentials(
         mut self,
-        policy: fn(&Provider, &proto::Credential) -> crate::fleet::Sharing,
+        policy: fn(&Provider, &agents::Credential) -> crate::fleet::Sharing,
     ) -> Self {
         self.1 = Some(policy);
         self
@@ -61,7 +63,7 @@ impl Plugins {
     pub(crate) fn sharing(
         &self,
         provider: &Provider,
-        credential: &proto::Credential,
+        credential: &agents::Credential,
     ) -> crate::fleet::Sharing {
         self.1.map_or(crate::fleet::Sharing::Local, |policy| {
             policy(provider, credential)
@@ -133,8 +135,8 @@ impl Providers {
     pub(crate) async fn share_credential(
         &self,
         id: InstanceId,
-        credential: &proto::Credential,
-    ) -> Result<(), proto::InstanceRefusal> {
+        credential: &agents::Credential,
+    ) -> Result<(), host::registry::InstanceRefusal> {
         let membership = self.fleet.borrow().clone();
         if let Some(fleet) = membership {
             let sharing = self.plugins.sharing(&id.provider, credential);
@@ -150,9 +152,9 @@ impl Providers {
         target: &host::sign_in::CredentialTarget,
         instance: &Instance,
         link: tokio::sync::oneshot::Sender<String>,
-        code: tokio::sync::oneshot::Receiver<proto::SignInCode>,
-    ) -> Option<proto::Credential> {
-        let proto::Account::Named(label) = &target.destination.account else {
+        code: tokio::sync::oneshot::Receiver<agents::SignInCode>,
+    ) -> Option<agents::Credential> {
+        let agents::Account::Named(label) = &target.destination.account else {
             return None;
         };
         let isolated = credential_home(&self.data_dir).ok()?;
@@ -303,7 +305,7 @@ pub struct HostOptions {
 pub struct Hosted {
     router: Router,
     log: Log,
-    token: proto::AuthToken,
+    token: host::fleet::AuthToken,
     initialized: tokio::sync::watch::Receiver<bool>,
     fleet_lock: std::fs::File,
     has_fleet: bool,
@@ -380,7 +382,7 @@ pub async fn start(
             );
             let router = Router::builder(endpoint.clone())
                 .accept(link::ALPN, conductor)
-                .accept(proto::fleet::ALPN, protocol)
+                .accept(host::fleet::ALPN, protocol)
                 .spawn();
             tokio::spawn(crate::fleet::follow_when_enrolled(
                 endpoint, fleet_slot,
@@ -434,7 +436,7 @@ async fn assemble(
 ) -> anyhow::Result<(
     Conductor,
     Log,
-    proto::AuthToken,
+    host::fleet::AuthToken,
     tokio::sync::watch::Receiver<bool>,
 )> {
     let HostOptions {

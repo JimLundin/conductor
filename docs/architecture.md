@@ -110,7 +110,7 @@ so one UI and one set of commands work for both agents.
   new effort.
 - **Checklists:** each agent reports its latest ordered list of text and
   status (pending, in progress or completed). Both providers use
-  `proto::ChecklistEntry`; the host records the whole changed snapshot as
+  `agents::ChecklistEntry`; the host records the whole changed snapshot as
   `ChecklistChanged { checklist }`. Entries have no persistent identity or
   owner beyond their session or sub-agent. Reordering, renaming, duplicate
   text and removal are represented exactly as the provider reports them.
@@ -233,7 +233,7 @@ bytes these choices don't change.
   dot, because WebKit refuses the dotted name's certificate
   (`net::without_root_dot`, `net::platform::n0_relays`).
 - The host waits for `Endpoint::online()` and prints a ticket with its node id,
-  home relay and the auth token (`proto::Ticket`), as a QR code and a
+  home relay and the auth token (`host::fleet::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
 - The browser dials through `crates/web-iroh` (§7.1): a fresh endpoint per
   dial whose only relay is the ticket's home relay.
@@ -318,9 +318,9 @@ in a `daemon::Plugins` map keyed by `Provider`.
 
 - `profile: agents::Profile`, data from the provider's core
   (`claude::profile`, `codex::profile`): the `Provider`; its
-  `proto::ProviderInfo` (the label the app shows, a note for the
+  `agents::ProviderInfo` (the label the app shows, a note for the
   new-session form, and the credential forms of §6.3); the pinned build
-  (selected by `proto::Provider`); the config its private home starts with; and the
+  (selected by `agents::Provider`); the config its private home starts with; and the
   `--version`, sign-in check and `login` runs as `agents::Invocation`s.
 - `settings: runtime::Settings`: the CLI path and the model the command
   line gave it.
@@ -334,13 +334,13 @@ in a `daemon::Plugins` map keyed by `Provider`.
 
 **Instances.** The host doesn't run providers; it runs *instances*, each
 one account of one provider, such as Claude through a gateway beside
-Claude on a subscription. An instance is keyed by `proto::InstanceId {
+Claude on a subscription. An instance is keyed by `host::registry::InstanceId {
 provider, account }` on its host (the node, docs/home.md §2): the
 provider names the account, not the owner, so the key never changes and
-an instance is never renamed. `proto::Account` is `Named(String)` as the
+an instance is never renamed. `agents::Account` is `Named(String)` as the
 provider names it, or `Own`: the provider's own sign-in before it has
-named an account. The instance itself is `proto::Instance { credential,
-model, cli }`; the host keeps them as `proto::Roster`, in the credential
+named an account. The instance itself is `host::registry::Instance { credential,
+model, cli }`; the host keeps them as `host::registry::Roster`, in the credential
 store (§6.3). `--cli <provider>=<path>` and `--model <provider>=<model>`
 are the defaults of that provider's instances; an instance's own `cli` and
 `model` come first, though no command sets them yet.
@@ -784,7 +784,7 @@ standards and issues, cloned on every host. Built so far are home steps
 - **Finishing** (home step 7). `Session::Finish { session }`, for a session
   on an issue between turns (`NotOnIssue`, `TurnInProgress`) that has done
   something since it last finished (`AlreadyFinished`; its own summary
-  turn doesn't count, `proto::FinishState`), keeps a receipt, logs
+  turn doesn't count, `host::finish::FinishState`), keeps a receipt, logs
   `FinishStarted` and answers `Accepted`. The session actor drives
   `host::finish::Finish`. It asks a running agent for one summary turn
   and then stops it. A stopped agent's last reply stands in. If asking
@@ -1348,7 +1348,7 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
   entry, even if the keyring is temporarily unavailable. The separate
   `<data>/host.key` and `<data>/auth.key` still hold the iroh and pairing
   keys. See [credential store backup and recovery](credential-store.md).
-- The credentials are one value, `proto::Roster`, the host's instances
+- The credentials are one value, `host::registry::Roster`, the host's instances
   each with its optional `Credential`, in `<data>/credentials`: a format
   byte (4, since the store holds instances; an older store reads as one
   that doesn't open), a fresh
@@ -1454,7 +1454,7 @@ The fleet exchange uses `conductor-fleet/4`. Full configuration signatures,
 local sealed state and root backups use version 3 contexts. A certificate
 and the public snapshot are signed over their exact JSON bytes, under the
 version 2 certificate and snapshot domains, and carried as those bytes
-(`proto::fleet::Signed`): JSON has no canonical form, so every verifier,
+(`host::fleet::Signed`): JSON has no canonical form, so every verifier,
 hosts included, checks the signature over the bytes and only then parses
 them. An unreadable `fleet.sealed`
 stops startup rather than switching the host to ticket authentication.
@@ -1525,7 +1525,7 @@ first.
 
 ### 6.7 Fleet-unique session ids and branch names
 
-`SessionId` is a fleet-unique ULID (`crates/proto/src/lib.rs`). The app
+`SessionId` is a fleet-unique ULID (`crates/host/src/session/record.rs`). The app
 shows independent sessions from every host, grouped by host.
 
 - **Format.** A `SessionId` is a 128-bit ULID: 48 bits of Unix milliseconds
@@ -1719,17 +1719,17 @@ travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
 | Link | Framing | Codec | Messages |
 |---|---|---|---|
 | Client and host (`link::ALPN`, `conductor/42`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
-| Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
+| Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` (and `net::wire::fleet`) on a host,
 `web-iroh` in the browser.
 JSON names every variant and field, so any change to a type reachable from
 the four client roots bumps `link::ALPN`, and an older peer fails the
 handshake; a daemon e2e test offers the previous ALPN and is refused. The
-JSON forms of ids, epochs and maps keyed by a struct are in `proto::json`
+JSON forms of ids, epochs and maps keyed by a struct are in `host`'s `json` module
 (§4.1). Host stores stay postcard.
 
-Signed fleet payloads are `proto::fleet::Signed<T>`: the exact JSON bytes
+Signed fleet payloads are `host::fleet::Signed<T>`: the exact JSON bytes
 the value was written as and a signature over `T::DOMAIN` followed by
 those bytes, each kind under its own domain (`conductor fleet certificate
 v2`, `conductor fleet snapshot v2`). A browser certificate is

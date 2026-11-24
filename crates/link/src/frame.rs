@@ -89,13 +89,21 @@ mod tests {
     use alloc::collections::BTreeMap;
 
     use super::{HEADER_LEN, body_len, decode, encode, header};
-    use proto::{
-        Auth, AuthToken, Availability, Catalog, ClientName, CommandId,
-        Credential, Decision, Effort, Epoch, Event, EventKind, HostSeq,
-        InstanceCommand, InstanceId, InstanceStatus, Instances, ModelChoice,
-        ModelId, Models, Provider, RequestId, Resolution, SessionCommand,
-        SessionId, SessionRefusal, SessionResult, TurnOutcome,
+    use agents::{
+        Auth, ClientName, Credential, Decision, Effort, ModelChoice, ModelId,
+        Models, Provider, TurnOutcome,
     };
+    use host::fleet::AuthToken;
+    use host::log::{Epoch, Event, HostSeq};
+    use host::registry::{
+        Availability, Catalog, InstanceCommand, InstanceId, InstanceStatus,
+        Instances,
+    };
+    use host::session::{
+        EventKind, RequestId, Resolution, SessionCommand, SessionId,
+        SessionRefusal, SessionResult,
+    };
+    use proto::CommandId;
 
     use crate::{
         Command, CommandResult, Feed, Hello, HelloReply, Open, Subscribe,

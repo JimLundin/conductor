@@ -1,9 +1,10 @@
-use agents::{Failure, Invocation, Pick, SignIn as Flow, Word};
-use proto::{
-    Account, Auth, Availability, Credential, Instance, InstanceId,
-    InstanceResult, InstanceStatus, Instances, Models, Provider, SignIn,
-    SignInCode, SignInRefusal, SignInResult, SignInStep,
+use crate::registry::{
+    Availability, Instance, InstanceId, InstanceResult, InstanceStatus,
+    Instances,
 };
+use crate::sign_in::{SignIn, SignInRefusal, SignInResult, SignInStep};
+use agents::{Account, Auth, Credential, Models, Provider, SignInCode};
+use agents::{Failure, Invocation, Pick, SignIn as Flow, Word};
 
 use super::{CredentialTarget, Effect, Key, Login, Run, SignIns, release};
 use crate::registry::AccountAdoption;

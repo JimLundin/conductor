@@ -2,10 +2,11 @@ use std::collections::BTreeSet;
 
 use host::fleet;
 pub use host::fleet::Sharing;
-use proto::{
-    CommandId, Instance, InstanceCommand, InstanceId, InstanceRefusal,
-    InstanceResult, Roster,
+use host::registry::{
+    Instance, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
+    Roster,
 };
+use proto::CommandId;
 
 use super::Membership;
 use crate::Stopped;
@@ -51,8 +52,8 @@ async fn update_fleet(
 async fn share(
     registry: &Registry,
     fleet: &Membership,
-    provider: &proto::Provider,
-    credential: &proto::Credential,
+    provider: &agents::Provider,
+    credential: &agents::Credential,
     sharing: Sharing,
 ) -> Result<Result<(), InstanceRefusal>, Stopped> {
     if sharing == Sharing::Local {
@@ -88,7 +89,7 @@ async fn share(
 pub async fn share_credential(
     fleet: &Membership,
     id: InstanceId,
-    credential: &proto::Credential,
+    credential: &agents::Credential,
     sharing: Sharing,
 ) -> Result<(), InstanceRefusal> {
     if sharing == Sharing::Local {

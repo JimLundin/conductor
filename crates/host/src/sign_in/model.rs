@@ -8,7 +8,9 @@ use alloc::string::String;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{InstanceId, SignInCode};
+use agents::SignInCode;
+
+use crate::registry::InstanceId;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignIn {
