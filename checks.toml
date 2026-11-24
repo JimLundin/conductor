@@ -44,10 +44,10 @@ packages = ["web-iroh"]
 [[suite]]
 name = "schemas"
 command = "cd web && npm ci --no-fund --no-audit --silent && ../tools/schemas.sh --check"
-tools = ["NODE", "BIOME"]
+tools = ["NODE", "OXFMT"]
 [[suite.when]]
 tier = "commit"
-paths = ["crates/link/**", "web/src/schemas/**", "web/scripts/schemas.ts", "web/package-lock.json", "web/biome.json", "tools/schemas.sh"]
+paths = ["crates/link/**", "web/src/schemas/**", "web/scripts/schemas.ts", "web/package-lock.json", "tools/schemas.sh"]
 packages = ["link"]
 
 # The web app, under the shared TypeScript standard, which keys and records

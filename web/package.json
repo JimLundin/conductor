@@ -11,10 +11,11 @@
 		"build": "npm run pipe && vite build",
 		"preview": "vite preview",
 		"test": "vitest run",
-		"test:full": "vitest run --mode full"
+		"test:full": "vitest run --mode full",
+		"check": "tsc && oxlint && oxfmt --check"
 	},
 	"dependencies": {
-		"effect": "latest",
+		"effect": "4.1.5",
 		"react": "19.3.1",
 		"react-dom": "19.3.1"
 	},
@@ -25,6 +26,11 @@
 		"@vitejs/plugin-react": "6.3.0",
 		"fast-check": "4.11.0",
 		"vite": "8.3.8",
-		"vitest": "5.1.1"
+		"vitest": "5.1.1",
+		"typescript": "7.0.2",
+		"oxlint": "1.95.0",
+		"oxfmt": "0.80.0",
+		"oxlint-tsgolint": "7.0.2008",
+		"@cloudflare/oxlint-config": "0.2.0"
 	}
 }

@@ -1758,7 +1758,7 @@ The Rust types are the only definition of the client link's types
 2. `web/scripts/schemas.ts` reads that document with Effect's
    `JsonSchema`, `SchemaRepresentation` (objects closed) and `Codegen`, and
    writes `web/src/schemas/index.ts`, one Effect Schema per definition.
-3. `tools/schemas.sh` runs both and formats the output with Biome.
+3. `tools/schemas.sh` runs both and formats the output with oxfmt.
    `tools/schemas.sh --check`, the `schemas` suite, then fails when
    `crates/link/link.schema.json` or `web/src/schemas/` differs from what is
    committed or holds an untracked file. `link` names no path in `web/`;
