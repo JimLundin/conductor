@@ -4,6 +4,7 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::fmt;
 
 use agents::{
     Answer, ChecklistEntry, ClientName, CloseReason, Decision, Effort, ModelId,
@@ -20,7 +21,9 @@ use crate::log::HostSeq;
 use crate::registry::InstanceId;
 use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
 
-/// A fleet-unique ULID assigned by the host, represented as its 128 bits.
+/// A fleet-unique ULID assigned by the host, represented as its 128 bits,
+/// whose text, on the wire, in its worktree's and branch's names and in
+/// logs, is the `ulid` crate's.
 #[derive(
     Debug,
     Clone,
@@ -35,10 +38,16 @@ use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
     JsonSchema,
 )]
 pub struct SessionId(
-    #[serde(with = "crate::json::ulid")]
+    #[serde(with = "home::ulid_text")]
     #[schemars(with = "String")]
     pub u128,
 );
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ulid::Ulid(self.0).fmt(out)
+    }
+}
 
 /// An approval request or a question, assigned by the host per session, in
 /// order.

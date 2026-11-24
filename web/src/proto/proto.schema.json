@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/42",
+			"const": "conductor/43",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
@@ -381,7 +381,7 @@
 			]
 		},
 		"CommandId": {
-			"description": "A client-generated, fleet-unique 128-bit random id for idempotent retries.\n\nA human-readable format writes it as a ULID is written, Crockford's\nbase 32 in 26 lower-case digits, since JSON's numbers are exact only to\n2^53; others write the number. The `ulid` crate reads and writes the\ndigits.",
+			"description": "A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.",
 			"type": "string"
 		},
 		"CommandResult": {
@@ -564,6 +564,7 @@
 			"type": "string"
 		},
 		"EditId": {
+			"description": "128 random bits, whose text is a ULID's as the `ulid` crate writes it.",
 			"type": "string"
 		},
 		"Effort": {
@@ -3383,7 +3384,7 @@
 			]
 		},
 		"SessionId": {
-			"description": "A fleet-unique ULID assigned by the host, represented as its 128 bits.",
+			"description": "A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the wire, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.",
 			"type": "string"
 		},
 		"SessionRefusal": {

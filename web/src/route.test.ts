@@ -16,7 +16,7 @@ test("each screen's fragment names that screen", () => {
 		Route.Pairing(),
 		Route.Sessions(),
 		Route.NewSession({ host: "ab12" }),
-		Route.Session({ host: "ab12", session: "01jabcdefghjkmnpqrstvwxyz0" }),
+		Route.Session({ host: "ab12", session: "01JABCDEFGHJKMNPQRSTVWXYZ0" }),
 	];
 	for (const screen of screens) {
 		expect(route(fragmentOf(screen), true)).toEqual(screen);

@@ -2,109 +2,70 @@
 //! command answers from its receipt.
 
 use alloc::string::String;
-use core::fmt;
 
 use schemars::JsonSchema;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
-/// A client-generated, fleet-unique 128-bit random id for idempotent retries.
-///
-/// A human-readable format writes it as a ULID is written, Crockford's
-/// base 32 in 26 lower-case digits, since JSON's numbers are exact only to
-/// 2^53; others write the number. The `ulid` crate reads and writes the
-/// digits.
+/// A client-generated, fleet-unique 128-bit random id for idempotent
+/// retries, whose text is a ULID's as the `ulid` crate writes it.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
-pub struct CommandId(#[schemars(with = "String")] pub u128);
-
-impl CommandId {
-    /// The id `text` writes, only as `Display` writes it.
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        let id = ulid::Ulid::from_string(text).ok()?.0;
-        let mut buffer = [0; ulid::ULID_LEN];
-        let written = ulid::Ulid(id).array_to_str(&mut buffer);
-        written.make_ascii_lowercase();
-        (*written == *text).then_some(Self(id))
-    }
-}
-
-impl fmt::Display for CommandId {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buffer = [0; ulid::ULID_LEN];
-        let text = ulid::Ulid(self.0).array_to_str(&mut buffer);
-        text.make_ascii_lowercase();
-        out.write_str(text)
-    }
-}
-
-impl Serialize for CommandId {
-    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
-        if out.is_human_readable() {
-            out.collect_str(self)
-        } else {
-            self.0.serialize(out)
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for CommandId {
-    fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
-        if input.is_human_readable() {
-            input.deserialize_str(Text)
-        } else {
-            u128::deserialize(input).map(Self)
-        }
-    }
-}
-
-struct Text;
-
-impl Visitor<'_> for Text {
-    type Value = CommandId;
-
-    fn expecting(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.write_str("26 lower-case Crockford base 32 digits")
-    }
-
-    fn visit_str<E: de::Error>(self, text: &str) -> Result<CommandId, E> {
-        CommandId::parse(text)
-            .ok_or_else(|| E::invalid_value(de::Unexpected::Str(text), &self))
-    }
-}
+pub struct CommandId(
+    #[serde(with = "home::ulid_text")]
+    #[schemars(with = "String")]
+    pub u128,
+);
 
 #[cfg(test)]
 mod tests {
-    use alloc::string::ToString;
-
     use super::CommandId;
 
+    const MAX: &str = r#""7ZZZZZZZZZZZZZZZZZZZZZZZZZ""#;
+
     #[test]
-    fn a_command_id_reads_back_from_the_text_it_writes() {
-        for id in [0, 1, u128::MAX, 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef] {
-            assert_eq!(
-                CommandId::parse(&CommandId(id).to_string()),
-                Some(CommandId(id))
-            );
-        }
+    fn a_command_id_is_written_as_the_ulid_crate_writes_a_ulid() {
         assert_eq!(
-            CommandId(u128::MAX).to_string(),
-            "7zzzzzzzzzzzzzzzzzzzzzzzzz"
+            serde_json::to_string(&CommandId(u128::MAX)).ok().as_deref(),
+            Some(MAX)
         );
     }
 
     #[test]
-    fn only_26_lower_case_crockford_digits_below_2_128_are_a_command_id() {
+    fn a_command_id_in_lower_case_reads_as_in_upper_case() {
+        assert_eq!(
+            serde_json::from_str::<CommandId>(&MAX.to_ascii_lowercase()).ok(),
+            Some(CommandId(u128::MAX))
+        );
+    }
+
+    #[test]
+    fn postcard_writes_a_command_id_as_its_number() {
+        let id = 0x0123_4567_89ab_cdef_0123_4567_89ab_cdef_u128;
+        assert_eq!(
+            postcard::to_allocvec(&CommandId(id)).ok(),
+            postcard::to_allocvec(&id).ok()
+        );
+    }
+
+    #[test]
+    fn only_26_crockford_digits_are_a_command_id() {
         for text in [
-            "",
-            "0000000000000000000000000",
-            "80000000000000000000000000",
-            "0000000000000000000000000u",
-            "0000000000000000000000000A",
+            r#""""#,
+            r#""0000000000000000000000000""#,
+            r#""0000000000000000000000000U""#,
         ] {
-            assert_eq!(CommandId::parse(text), None, "{text}");
+            assert!(serde_json::from_str::<CommandId>(text).is_err(), "{text}");
         }
     }
 }

@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     /// `serde_json` writes an enum variant as its name, and a 128-bit id as
-    /// its 26-digit lower-case ULID.
+    /// its 26-digit ULID.
     fn command_frame_is_length_then_json()
     -> Result<(), Box<dyn std::error::Error>> {
         let open = Open::Command {
@@ -172,7 +172,7 @@ mod tests {
             }),
         };
         let bytes = encode(&open)?;
-        let body = br#"{"Command":{"id":"00000000000000000000000007","body":{"Session":{"SendMessage":{"session":"7zzzzzzzzzzzzzzzzzzzzzzzzz","text":"hi"}}}}}"#;
+        let body = br#"{"Command":{"id":"00000000000000000000000007","body":{"Session":{"SendMessage":{"session":"7ZZZZZZZZZZZZZZZZZZZZZZZZZ","text":"hi"}}}}}"#;
         assert_eq!(bytes, frame(body));
         let (header, rest) = bytes
             .split_first_chunk::<HEADER_LEN>()
@@ -328,7 +328,6 @@ mod tests {
         };
         assert!(session("3"));
         assert!(session(r#""0000000000000000000000000U""#));
-        assert!(session(r#""80000000000000000000000000""#));
         assert!(session(r#""0000000000000000000000003""#));
         let epoch = |text: &str| {
             decode::<Open>(

@@ -1,6 +1,6 @@
 //! Where a type's JSON differs from its postcard. JavaScript's numbers are
-//! exact only to 2^53 and JSON keys are only strings, so a 128-bit id is
-//! its text and an [`crate::log::Epoch`] its decimal digits, each only where
+//! exact only to 2^53 and JSON keys are only strings, so an
+//! [`crate::log::Epoch`] is its decimal digits, only where
 //! [`Serializer::is_human_readable`], and a map keyed by a struct is a list
 //! of pairs. postcard's bytes stay as they were.
 
@@ -11,79 +11,6 @@ use core::fmt;
 
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-/// A 128-bit id as a ULID is written, read and written by the `ulid`
-/// crate: Crockford's base 32 in 26 lower-case digits.
-pub mod ulid {
-    use super::{
-        Deserializer, Serialize, Serializer, String, Visitor, de, fmt,
-    };
-
-    pub fn write(id: u128, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut buffer = [0; ::ulid::ULID_LEN];
-        let text = ::ulid::Ulid(id).array_to_str(&mut buffer);
-        text.make_ascii_lowercase();
-        out.write_str(text)
-    }
-
-    /// The id `text` writes, only as [`write`] writes it.
-    pub fn parse(text: &str) -> Option<u128> {
-        let id = ::ulid::Ulid::from_string(text).ok()?.0;
-        let mut buffer = [0; ::ulid::ULID_LEN];
-        let written = ::ulid::Ulid(id).array_to_str(&mut buffer);
-        written.make_ascii_lowercase();
-        (*written == *text).then_some(id)
-    }
-
-    struct Text(u128);
-
-    impl fmt::Display for Text {
-        fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write(self.0, out)
-        }
-    }
-
-    pub fn serialize<S: Serializer>(
-        id: &u128,
-        out: S,
-    ) -> Result<S::Ok, S::Error> {
-        if out.is_human_readable() {
-            out.collect_str(&Text(*id))
-        } else {
-            id.serialize(out)
-        }
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(
-        input: D,
-    ) -> Result<u128, D::Error> {
-        if input.is_human_readable() {
-            input.deserialize_str(Ulid)
-        } else {
-            <u128 as serde::Deserialize>::deserialize(input)
-        }
-    }
-
-    struct Ulid;
-
-    impl Visitor<'_> for Ulid {
-        type Value = u128;
-
-        fn expecting(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-            out.write_str("26 lower-case Crockford base 32 digits")
-        }
-
-        fn visit_str<E: de::Error>(self, text: &str) -> Result<u128, E> {
-            parse(text).ok_or_else(|| {
-                E::invalid_value(de::Unexpected::Str(text), &self)
-            })
-        }
-
-        fn visit_string<E: de::Error>(self, text: String) -> Result<u128, E> {
-            self.visit_str(&text)
-        }
-    }
-}
 
 /// A `u64` as its decimal digits.
 pub mod decimal {

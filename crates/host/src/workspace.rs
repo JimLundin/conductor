@@ -147,7 +147,7 @@ fn host_path(path: Option<&str>) -> Result<HostPath, GitError> {
 /// The name of the session's worktree directory.
 #[must_use]
 fn worktree(session: SessionId) -> String {
-    ulid::Ulid::from(session.0).to_string()
+    session.to_string()
 }
 
 /// The branch Conductor owns for the session.

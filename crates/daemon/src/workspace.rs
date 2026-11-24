@@ -1180,10 +1180,7 @@ mod tests {
             Some(())
         );
         let id = SessionId(ulid::Ulid::new().into());
-        let occupied = repo
-            .data
-            .join("worktrees")
-            .join(ulid::Ulid::from(id.0).to_string());
+        let occupied = repo.data.join("worktrees").join(id.to_string());
         std::fs::create_dir_all(&occupied)?;
         std::fs::write(occupied.join("unrelated.txt"), "keep\n")?;
         assert_eq!(

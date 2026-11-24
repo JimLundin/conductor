@@ -50,7 +50,7 @@ use serde::{Deserialize, Serialize};
 /// The ALPN of the client link. It changes with every change to the wire
 /// types (see the crate docs), so an old client fails at the handshake
 /// instead of mid-stream.
-pub const ALPN: &[u8] = b"conductor/42";
+pub const ALPN: &[u8] = b"conductor/43";
 
 /// The first frame on every client-opened bi-stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -133,7 +133,7 @@ pub enum CommandResult {
 
 #[cfg(test)]
 mod tests {
-    use host::session::{SessionRefusal, SessionResult};
+    use host::session::{SessionId, SessionRefusal, SessionResult};
 
     use super::CommandResult;
 
@@ -150,6 +150,15 @@ mod tests {
                 SessionRefusal::SessionClosed
             ))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_session_id_is_written_on_the_link_as_in_its_branch_and_logs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let id = SessionId(u128::MAX);
+        assert_eq!(id.to_string(), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ");
+        assert_eq!(serde_json::to_string(&id)?, format!("\"{id}\""));
         Ok(())
     }
 }

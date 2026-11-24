@@ -477,8 +477,7 @@ impl Actor {
             }
             Effect::Barrier => self.log.barrier().await.map(|()| None),
             Effect::Trace(note) => {
-                let session = ulid::Ulid::from(self.id.0);
-                tracing::info!(%session, "{note}");
+                tracing::info!(session = %self.id, "{note}");
                 Ok(None)
             }
             Effect::Reply(result) => {

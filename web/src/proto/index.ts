@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/42";
+export type Alpn = "conductor/43";
 
-export const Alpn = Schema.Literal("conductor/42").annotate({
+export const Alpn = Schema.Literal("conductor/43").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -501,7 +501,7 @@ export type SessionId = string;
 
 export const SessionId = Schema.String.annotate({
 	description:
-		"A fleet-unique ULID assigned by the host, represented as its 128 bits.",
+		"A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the wire, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.",
 	identifier: "SessionId",
 });
 
@@ -766,7 +766,11 @@ export const SignInCommand = Schema.Union(
 
 export type EditId = string;
 
-export const EditId = Schema.String.annotate({ identifier: "EditId" });
+export const EditId = Schema.String.annotate({
+	description:
+		"128 random bits, whose text is a ULID's as the `ulid` crate writes it.",
+	identifier: "EditId",
+});
 
 export type Datum = string | globalThis.ReadonlyArray<string> | boolean;
 
@@ -1055,7 +1059,7 @@ export type CommandId = string;
 
 export const CommandId = Schema.String.annotate({
 	description:
-		"A client-generated, fleet-unique 128-bit random id for idempotent retries.\n\nA human-readable format writes it as a ULID is written, Crockford's\nbase 32 in 26 lower-case digits, since JSON's numbers are exact only to\n2^53; others write the number. The `ulid` crate reads and writes the\ndigits.",
+		"A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.",
 	identifier: "CommandId",
 });
 
