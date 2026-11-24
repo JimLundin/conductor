@@ -1,18 +1,10 @@
-//! A frame is a `u32` big-endian body length followed by its JSON body.
-//!
-//! Only the link's own frames ([`Frame`]) travel in it. Callers own the
-//! I/O: read [`HEADER_LEN`] bytes, pass them to [`body_len`], read that
-//! many bytes, pass them to [`decode`].
+//! A frame's body on the client link is its JSON, and only the link's own
+//! frames ([`Frame`]) travel in it. `net::wire` frames the body.
 
 use alloc::vec::Vec;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-
-pub const HEADER_LEN: usize = 4;
-
-/// Larger frames are refused before their body is read. 16 MiB.
-pub const MAX_FRAME_LEN: u32 = 16_777_216;
 
 /// A message that opens or answers a stream on the client link.
 pub trait Frame: Serialize + DeserializeOwned {}
@@ -25,70 +17,29 @@ impl Frame for crate::CommandResult {}
 
 impl Frame for crate::Feed {}
 
-#[derive(Debug, thiserror::Error)]
-pub enum FrameError {
-    #[error("frame of {0} bytes exceeds the {MAX_FRAME_LEN}-byte limit")]
-    TooLarge(u64),
-    #[error("malformed frame body: {0}")]
-    Json(#[from] serde_json::Error),
-}
-
-/// The frame of `msg`.
+/// The frame body of `msg`.
 ///
 /// # Errors
 ///
-/// [`FrameError::Json`] when `msg` doesn't serialize, and
-/// [`FrameError::TooLarge`] when its body exceeds the 16 MiB limit.
-pub fn encode<T: Frame>(msg: &T) -> Result<Vec<u8>, FrameError> {
-    let body = serde_json::to_vec(msg)?;
-    Ok(header(body.len())?
-        .into_iter()
-        .chain(body)
-        .collect::<Vec<u8>>())
-}
-
-/// The header that announces a body of `len` bytes.
-///
-/// # Errors
-///
-/// [`FrameError::TooLarge`] when `len` exceeds the 16 MiB limit.
-pub fn header(len: usize) -> Result<[u8; HEADER_LEN], FrameError> {
-    match u32::try_from(len) {
-        Ok(announced @ ..=MAX_FRAME_LEN) => Ok(announced.to_be_bytes()),
-        Ok(_) | Err(_) => {
-            Err(FrameError::TooLarge(u64::try_from(len).unwrap_or(u64::MAX)))
-        }
-    }
-}
-
-/// The body length a frame header announces.
-///
-/// # Errors
-///
-/// [`FrameError::TooLarge`] when it exceeds the 16 MiB limit.
-pub fn body_len(header: [u8; HEADER_LEN]) -> Result<usize, FrameError> {
-    let len = u32::from_be_bytes(header);
-    match len {
-        ..=MAX_FRAME_LEN => usize::try_from(len)
-            .map_err(|_| FrameError::TooLarge(u64::from(len))),
-        _ => Err(FrameError::TooLarge(u64::from(len))),
-    }
+/// When `msg` doesn't serialize.
+pub fn encode<T: Frame>(msg: &T) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(msg)
 }
 
 /// The value a frame body holds.
 ///
 /// # Errors
 ///
-/// [`FrameError::Json`] when the body is not a `T`.
-pub fn decode<T: Frame>(body: &[u8]) -> Result<T, FrameError> {
-    Ok(serde_json::from_slice(body)?)
+/// When the body is not a `T`.
+pub fn decode<T: Frame>(body: &[u8]) -> Result<T, serde_json::Error> {
+    serde_json::from_slice(body)
 }
 
 #[cfg(test)]
 mod tests {
     use alloc::collections::BTreeMap;
 
-    use super::{HEADER_LEN, body_len, decode, encode, header};
+    use super::{decode, encode};
     use crate::AuthToken;
     use crate::CommandId;
     use agents::{
@@ -109,15 +60,6 @@ mod tests {
         Command, CommandResult, Feed, Hello, HelloReply, Open, Subscribe,
         Welcome,
     };
-
-    fn frame(body: &[u8]) -> Vec<u8> {
-        u32::try_from(body.len())
-            .unwrap_or(u32::MAX)
-            .to_be_bytes()
-            .into_iter()
-            .chain(body.iter().copied())
-            .collect()
-    }
 
     fn welcome() -> Welcome {
         Welcome {
@@ -162,8 +104,7 @@ mod tests {
     #[test]
     /// `serde_json` writes an enum variant as its name, a command id as its
     /// UUID and a session id as its 26-digit ULID.
-    fn command_frame_is_length_then_json()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn command_frame_is_json() -> Result<(), Box<dyn std::error::Error>> {
         let open = Open::Command {
             id: CommandId(uuid::Uuid::from_u128(7)),
             body: Command::Session(SessionCommand::SendMessage {
@@ -171,14 +112,9 @@ mod tests {
                 text: String::from("hi"),
             }),
         };
-        let bytes = encode(&open)?;
         let body = br#"{"Command":{"id":"00000000-0000-0000-0000-000000000007","body":{"Session":{"SendMessage":{"session":"7ZZZZZZZZZZZZZZZZZZZZZZZZZ","text":"hi"}}}}}"#;
-        assert_eq!(bytes, frame(body));
-        let (header, rest) = bytes
-            .split_first_chunk::<HEADER_LEN>()
-            .ok_or("expected a value")?;
-        assert_eq!(body_len(header.to_owned())?, body.len());
-        assert_eq!(decode::<Open>(rest)?, open);
+        assert_eq!(encode(&open)?, body);
+        assert_eq!(decode::<Open>(body)?, open);
         Ok(())
     }
 
@@ -200,9 +136,7 @@ mod tests {
         };
         assert_eq!(
             encode(&open)?,
-            frame(
-                br#"{"Command":{"id":"00000000-0000-0000-0000-000000000001","body":{"Instance":{"SetCredential":{"provider":"claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
-            )
+            br#"{"Command":{"id":"00000000-0000-0000-0000-000000000001","body":{"Instance":{"SetCredential":{"provider":"claude","credential":{"kind":"gateway","values":{"key":"k"}}}}}}}"#
         );
         assert_eq!(
             format!("{open:?}"),
@@ -221,9 +155,7 @@ mod tests {
                 client: ClientName(String::from("phone")),
                 token
             }))?,
-            frame(
-                br#"{"Hello":{"client":"phone","token":[171,171,171,171,171,171,171,171,171,171,171,171,171,171,171,171]}}"#
-            )
+            br#"{"Hello":{"client":"phone","token":[171,171,171,171,171,171,171,171,171,171,171,171,171,171,171,171]}}"#
         );
         let subscribe = Open::Subscribe(Subscribe {
             epoch: Epoch(u64::MAX),
@@ -231,7 +163,7 @@ mod tests {
         });
         let body =
             br#"{"Subscribe":{"epoch":"18446744073709551615","after_seq":41}}"#;
-        assert_eq!(encode(&subscribe)?, frame(body));
+        assert_eq!(encode(&subscribe)?, body);
         assert_eq!(decode::<Open>(body)?, subscribe);
         Ok(())
     }
@@ -243,7 +175,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let reply = HelloReply::Welcome(welcome());
         let body = br#"{"Welcome":{"host":"desk","epoch":"1","head_seq":0,"instances":[[{"provider":"claude","account":"Own"},{"availability":{"Available":{"auth":{"Stored":{"kind":"g","url":"u"}},"models":{"choices":[{"id":"h","name":"H","description":"d","efforts":["High"]}],"default":"h"}}}}],[{"provider":"codex","account":{"Named":"a@b"}},{"availability":{"Unavailable":{"reason":"no"}}}]],"catalog":{},"home":null}}"#;
-        assert_eq!(encode(&reply)?, frame(body));
+        assert_eq!(encode(&reply)?, body);
         assert_eq!(decode::<HelloReply>(body)?, reply);
         Ok(())
     }
@@ -253,9 +185,7 @@ mod tests {
         let own = r#"[{"provider":"claude","account":"Own"},{"availability":{"Unavailable":{"reason":"no"}}}]"#;
         let body = format!(r#"{{"Instances":[{own},{own}]}}"#);
         assert!(decode::<Feed>(body.as_bytes()).is_err_and(|error| {
-            error
-                .to_string()
-                .starts_with("malformed frame body: a key is given twice")
+            error.to_string().starts_with("a key is given twice")
         }));
     }
 
@@ -274,9 +204,7 @@ mod tests {
                     },
                 },
             }))?,
-            frame(
-                br#"{"Event":{"seq":3,"session":"00000000000000000000000001","kind":{"RequestResolved":{"request":2,"resolution":{"Decided":{"decision":"Approve","by":"phone"}}}}}}"#
-            )
+            br#"{"Event":{"seq":3,"session":"00000000000000000000000001","kind":{"RequestResolved":{"request":2,"resolution":{"Decided":{"decision":"Approve","by":"phone"}}}}}}"#
         );
         assert_eq!(
             encode(&Feed::Event(Event {
@@ -288,9 +216,7 @@ mod tests {
                     },
                 },
             }))?,
-            frame(
-                br#"{"Event":{"seq":4,"session":"00000000000000000000000001","kind":{"TurnCompleted":{"outcome":{"Failed":{"message":"boom"}}}}}}"#
-            )
+            br#"{"Event":{"seq":4,"session":"00000000000000000000000001","kind":{"TurnCompleted":{"outcome":{"Failed":{"message":"boom"}}}}}}"#
         );
         assert_eq!(
             encode(&CommandResult::Session(SessionResult::Refused(
@@ -298,21 +224,17 @@ mod tests {
                     reason: String::from("no codex"),
                 }
             )))?,
-            frame(
-                br#"{"Session":{"Refused":{"InstanceUnavailable":{"reason":"no codex"}}}}"#
-            )
+            br#"{"Session":{"Refused":{"InstanceUnavailable":{"reason":"no codex"}}}}"#
         );
         assert_eq!(
             encode(&CommandResult::Session(SessionResult::Started {
                 session: SessionId(3),
             }))?,
-            frame(
-                br#"{"Session":{"Started":{"session":"00000000000000000000000003"}}}"#
-            )
+            br#"{"Session":{"Started":{"session":"00000000000000000000000003"}}}"#
         );
         assert_eq!(
             encode(&CommandResult::Session(SessionResult::Accepted))?,
-            frame(br#"{"Session":"Accepted"}"#)
+            br#"{"Session":"Accepted"}"#
         );
         Ok(())
     }
@@ -373,39 +295,9 @@ mod tests {
     }
 
     #[test]
-    fn oversized_header_is_refused_before_reading_the_body()
-    -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(
-            body_len([0x01, 0x00, 0x00, 0x01])
-                .map_err(|error| error.to_string()),
-            Err(String::from(
-                "frame of 16777217 bytes exceeds the 16777216-byte limit"
-            ))
-        );
-        assert_eq!(body_len([0x01, 0x00, 0x00, 0x00])?, 16_777_216);
-        Ok(())
-    }
-
-    #[test]
-    fn a_header_announces_its_body_length_big_endian()
-    -> Result<(), Box<dyn std::error::Error>> {
-        assert_eq!(header(0x0001_0203)?, [0x00, 0x01, 0x02, 0x03]);
-        assert_eq!(header(16_777_216)?, [0x01, 0x00, 0x00, 0x00]);
-        assert_eq!(
-            header(16_777_217).map_err(|error| error.to_string()),
-            Err(String::from(
-                "frame of 16777217 bytes exceeds the 16777216-byte limit"
-            ))
-        );
-        Ok(())
-    }
-
-    #[test]
     fn an_unknown_variant_is_a_body_error() {
         assert!(decode::<Open>(br#""Nope""#).is_err_and(|error| {
-            error
-                .to_string()
-                .starts_with("malformed frame body: unknown variant `Nope`")
+            error.to_string().starts_with("unknown variant `Nope`")
         }));
     }
 }

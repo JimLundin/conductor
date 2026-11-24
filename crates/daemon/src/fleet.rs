@@ -107,7 +107,7 @@ pub async fn join(
         return Ok(());
     }
     let endpoint = Endpoint::builder(presets::N0)
-        .relay_mode(RelayMode::Custom(net::platform::n0_relays()))
+        .relay_mode(RelayMode::Custom(net::n0_relays()))
         .secret_key(key)
         .bind()
         .await?;

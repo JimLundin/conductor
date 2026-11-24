@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 iroh = { workspace = true, features = ["tls-ring"] }
-link = { path = "../link" }
+net = { path = "../net" }
 thiserror.workspace = true
 tokio = { version = "1.54.1", default-features = false, features = ["sync"] }
 wasm-bindgen = "0.2.130"

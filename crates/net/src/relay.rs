@@ -1,5 +1,19 @@
-use iroh_base::RelayUrl;
+use iroh::RelayUrl;
 use url::Url;
+
+/// n0's public relays, named without the root dot ([`without_root_dot`]).
+///
+/// Every endpoint, host included, uses this map: a host advertises its home
+/// relay to peers, and a browser that dials the dotted name fails `WebKit`'s
+/// certificate check.
+#[must_use]
+pub fn n0_relays() -> iroh::RelayMap {
+    iroh::defaults::prod::default_relay_map()
+        .urls::<Vec<RelayUrl>>()
+        .iter()
+        .map(without_root_dot)
+        .collect()
+}
 
 /// The relay URL with its host named without the root dot.
 ///
@@ -23,7 +37,7 @@ pub fn without_root_dot(url: &RelayUrl) -> RelayUrl {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::RelayUrl;
+    use iroh::RelayUrl;
 
     use super::without_root_dot;
 

@@ -2,7 +2,7 @@
 
 use iroh::endpoint::{ConnectionError, presets};
 use iroh::{Endpoint, RelayMode};
-use link::frame::FrameError;
+use net::wire::WireError;
 use web_iroh::{Connection, PipeError};
 
 const ALPN: &[u8] = b"pipe-test/0";
@@ -77,30 +77,16 @@ async fn recv_gives_each_frame_body_then_none_at_the_end() -> TestResult<()> {
 }
 
 #[tokio::test]
-async fn a_frame_over_the_limit_is_refused() -> TestResult<()> {
-    let (_host, accepted, connection) = pair().await?;
-    let stream = connection.open_bi().await?;
-    let (mut send, _recv) = opened(&accepted, &stream).await?;
-    send.write_all(&[0x01, 0x00, 0x00, 0x01]).await?;
-    assert!(matches!(
-        stream.recv().await,
-        Err(PipeError::Frame(FrameError::TooLarge(16_777_217)))
-    ));
-    assert!(matches!(
-        stream.send(vec![0; 16_777_217]).await,
-        Err(PipeError::Frame(FrameError::TooLarge(16_777_217)))
-    ));
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_stream_ending_inside_a_frame_is_an_error() -> TestResult<()> {
     let (_host, accepted, connection) = pair().await?;
     let stream = connection.open_bi().await?;
     let (mut send, _recv) = opened(&accepted, &stream).await?;
     send.write_all(&[0, 0, 0, 5, b'h']).await?;
     send.finish()?;
-    assert!(matches!(stream.recv().await, Err(PipeError::Read(_))));
+    assert!(matches!(
+        stream.recv().await,
+        Err(PipeError::Wire(WireError::Read(_)))
+    ));
     Ok(())
 }
 

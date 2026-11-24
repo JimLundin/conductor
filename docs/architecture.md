@@ -230,7 +230,7 @@ since a JSON key is only a string; bytes are arrays of integers. Stores and host
 
 - A host binds with a custom relay map: n0's relays named without the root
   dot, because WebKit refuses the dotted name's certificate
-  (`net::without_root_dot`, `net::platform::n0_relays`).
+  (`net::without_root_dot`, `net::n0_relays`).
 - The host waits for `Endpoint::online()` and prints a ticket with its node id,
   home relay and the auth token (`link::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
@@ -1672,7 +1672,7 @@ compiled to wasm (ADR 0001). The link to a host and the fold of its events
 live only there. `crates/client`, `net`'s `HostLink` and the Rust fold
 (`HostFold`, `HostView`) are gone, and `net` builds natively only: the
 daemon keeps its `wire` I/O and the relay helpers
-(`net::without_root_dot`, `net::platform::n0_relays`).
+(`net::without_root_dot`, `net::n0_relays`).
 
 ### 7.1 The pipe (`crates/web-iroh`)
 
@@ -1690,10 +1690,8 @@ interface Stream { send(frame: Uint8Array): Promise<void>; recv(): Promise<Uint8
   from its ticket, binds a fresh local endpoint (`presets::Minimal`) whose
   only relay is that one, and dials. The connection owns its endpoint, and
   `close` closes both; `closed` resolves with why the connection ended.
-- A frame is one body. `send` writes `link::frame::header` before it;
-  `recv` reads a header, refuses one announcing more than
-  `link::frame::MAX_FRAME_LEN` (`link::frame::body_len`), and returns the
-  body, or `undefined` once the peer
+- A frame is one body, framed by `net::wire` (§7.2). `send` writes it;
+  `recv` returns the next body, or `undefined` once the peer
   finished the stream between frames. Sending and receiving on one stream
   may run at once.
 - It reads no body and knows nothing of tickets, authentication or
@@ -1713,19 +1711,20 @@ on n0's relays.
 
 ### 7.2 Frames and their codecs
 
-A frame is a big-endian `u32` body length and its body. Each link
-frames its own messages, each in its own codec, and a message can only
-travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
+A frame is a big-endian `u32` body length and its body, at most 16 MiB,
+and `net::wire` alone writes and reads it, refusing an oversized frame
+before its body. Each link encodes its own messages in its own codec, and
+a message can only travel in its link's (`link::frame::Frame`,
+`host::fleet::frame::Frame`):
 
-| Link | Framing | Codec | Messages |
+| Link | Codec | Encoding | Messages |
 |---|---|---|---|
 | Client and host (`link::ALPN`, `conductor/46`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
-Callers own the I/O: on a host, `net::wire` for the client link and the
-daemon's `fleet::wire` for the fleet, which reads a frame's header and
-body with `net::wire` and frames them with `host::fleet::frame`; in the
-browser, `web-iroh`.
+On a host, the daemon's `serve` and `fleet::wire` pair `net::wire` with
+their link's codec; in the browser, `web-iroh` carries bodies through
+`net::wire` and TypeScript encodes them.
 JSON names every variant and field, so any change to a type reachable from
 the four client roots bumps `link::ALPN`, and an older peer fails the
 handshake. Each id writes its own JSON form, the `ulid` crate's text; an
