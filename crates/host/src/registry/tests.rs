@@ -24,7 +24,7 @@ use super::{
     AccountAdoption, Change, Effect, InHome, Job, Launch, Launcher, OwnSignIn,
     Refreshed, Registry, StartDecision, StartEffect, StartEnd, StartReport,
     StartSession, StartStep, Started, Starting, Stored, defaults, dir, offered,
-    picked, place, place_without_home, running,
+    picked, place_in_home, place_without_home, running,
 };
 use crate::Note;
 use crate::session::Choice;
@@ -1323,6 +1323,15 @@ fn home_with(checkouts: &[&str]) -> Home {
             issues: Vec::new(),
         }]),
     }
+}
+
+/// The directory a session starts in: the one given, or the first
+/// checkout of a project or an issue's project, as the daemon places it.
+fn place(
+    at: StartAt,
+    home: Option<&Home>,
+) -> Result<super::Placement, HomeRefusal> {
+    place_without_home(at).or_else(|start| place_in_home(start, home))
 }
 
 #[test]

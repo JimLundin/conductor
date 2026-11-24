@@ -1,5 +1,6 @@
-//! The client link and the fleet protocol on iroh: frame I/O on streams,
-//! a ticket as an address to dial, and where a host is.
+//! The client link on iroh: its frame I/O on streams, the generic reads
+//! the fleet's framing also uses, a ticket as an address to dial, and
+//! where a host is.
 
 pub mod platform;
 mod relay;

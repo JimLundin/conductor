@@ -31,21 +31,6 @@ pub enum InHome {
     Issue(IssueId),
 }
 
-/// The directory a session starts in: the one given, or the first
-/// checkout of a project or an issue's project. The session's project
-/// follows from its worktree's repository, so it isn't kept apart.
-///
-/// # Errors
-///
-/// The host has no home, its home lists no such project or issue, or the
-/// project has no checkout on the host.
-pub fn place(
-    at: StartAt,
-    home: Option<&Home>,
-) -> Result<Placement, HomeRefusal> {
-    place_without_home(at).or_else(|start| place_in_home(start, home))
-}
-
 /// The placement of a start that names its directory; any other start
 /// waits on the home.
 ///

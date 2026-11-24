@@ -2,7 +2,7 @@
 
 | Layer | What it checks |
 | --- | --- |
-| Wire encoding and parsing in `claude`, `codex`, `agents`, `host`, `home` and `link` | Provider JSON lines and host/client messages decode to the expected types. Outbound requests and responses encode the fields the peer expects. |
+| Encoding and parsing in `claude`, `codex`, `agents`, `host`, `home` and `link` | Provider JSON lines and host/client messages decode to the expected types. Outbound requests and responses encode the fields the peer expects. |
 | Adapter replay in `claude-cli` and `codex-cli` | Recorded CLI exchanges exercise process and thread lifecycle, request correlation, interruption, EOF and resume through the adapter. |
 | Provider-event mapping in `claude` and `codex` | Provider messages become the intended common event or request, with the IDs, outcomes and details the host uses. |
 | Host tests in `host` and `daemon` | Commands reach the correct session, and receipts and events survive retry and restart. |

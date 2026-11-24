@@ -48,7 +48,7 @@ preview, cloud workers, multi-user use.
 | D5 | Trust comes from a fleet root key that signs device certificates (§6) | Hosts store only the root's public key, so pairing a device once gives it access to every host. |
 | D6 | Speak each agent's native protocol, with owned wire types for only the messages we use | Claude's stream-json control protocol and Codex's app-server JSON-RPC carry approvals, interrupts and resume. Lowest-common-denominator protocols (ACP) lose them. |
 | D7 | Shell out to the `git` CLI | Worktrees, hooks and the user's git config behave exactly as on the command line. |
-| D8 | Length-prefixed frames over bidirectional streams: JSON between a client and a host, postcard between hosts | The browser reads JSON with schemas generated from `link`'s root types (ADR 0002, ADR 0003); postcard stays where only Rust reads it. Every change to a client wire type bumps `link::ALPN`. |
+| D8 | Length-prefixed frames over bidirectional streams: JSON between a client and a host, postcard between hosts | The browser reads JSON with schemas generated from `link`'s root types (ADR 0002, ADR 0003); postcard stays where only Rust reads it. Every change to a type the client link carries bumps `link::ALPN`. |
 | D9 | Hosts on Linux/WSL, macOS and Windows; development in WSL | The developer works in WSL. |
 
 ## 3. The model: one session shape for both agents
@@ -595,7 +595,7 @@ until someone re-records them by hand (§6.2).
   history. The worktree's index follows the branch while its files stay
   in place; staging choices separate from the files are not retained.
   Opening events are `SessionCreated`, `OnIssue` for an issue start,
-  `WorkspaceCreated`, and `SnapshotRecorded`. The wire's `Snapshot`
+  `WorkspaceCreated`, and `SnapshotRecorded`. The client link's `Snapshot`
   is only a commit and an optional `turn_start`; the initial snapshot has
   no turn. Each recorded snapshot event has its existing `HostSeq`, so
   two unchanged turns remain separate records even when they share a
@@ -1068,7 +1068,7 @@ reach that, so it is not offered.
 
 #### Credentials are data
 
-No wire or store type names a provider's credential. Each provider's
+No client link or store type names a provider's credential. Each provider's
 plugin describes the kinds it takes in its `ProviderInfo`, which
 `Welcome.catalog` carries: a `CredentialForm { kind, label, fields,
 account }`, whose `account` names the field that is the account (§5.2), and

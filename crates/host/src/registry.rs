@@ -1159,7 +1159,7 @@ fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {
 mod start;
 pub use start::{
     InHome, Placement, StartDecision, StartEffect, StartEnd, StartOutcome,
-    StartReport, StartRequest, StartSession, StartStep, brief_sent, place,
+    StartReport, StartRequest, StartSession, StartStep, brief_sent,
     place_in_home, place_without_home,
 };
 
