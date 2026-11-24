@@ -1,10 +1,10 @@
-//! Frame I/O on iroh streams, each message in its link's codec
-//! ([`proto::Frame`]).
+//! Frame I/O on iroh streams: the client link's frames ([`link::frame`])
+//! and, in [`fleet`], the fleet protocol's ([`host::fleet::frame`]).
 
 use iroh::endpoint::{
     ClosedStream, ReadExactError, RecvStream, SendStream, WriteError,
 };
-use proto::Frame;
+use link::frame::Frame;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {
@@ -19,7 +19,9 @@ pub enum WireError {
     #[error("frame of {length} bytes exceeds the {limit}-byte stream limit")]
     Limit { length: usize, limit: usize },
     #[error("{0}")]
-    Frame(#[from] proto::FrameError),
+    Frame(#[from] link::frame::FrameError),
+    #[error("{0}")]
+    FleetFrame(#[from] host::fleet::frame::FrameError),
 }
 
 /// Writes `msg` as one frame.
@@ -32,7 +34,7 @@ pub async fn write<T: Frame + Sync>(
     send: &mut SendStream,
     msg: &T,
 ) -> Result<(), WireError> {
-    Ok(send.write_all(&proto::encode(msg)?).await?)
+    Ok(send.write_all(&link::frame::encode(msg)?).await?)
 }
 
 /// Reads one frame: `Ok(None)` when the peer finished the stream between
@@ -58,27 +60,63 @@ pub async fn read_bounded<T: Frame>(
     recv: &mut RecvStream,
     limit: usize,
 ) -> Result<Option<T>, WireError> {
-    match read_body(recv, limit).await? {
-        Some(body) => Ok(Some(proto::decode(&body)?)),
-        None => Ok(None),
+    let body =
+        read_body(recv, limit, |header| Ok(link::frame::body_len(header)?))
+            .await?;
+    Ok(body.map(|read| link::frame::decode(&read)).transpose()?)
+}
+
+/// Frame I/O between hosts.
+pub mod fleet {
+    use host::fleet::frame::{self, Frame};
+    use iroh::endpoint::{RecvStream, SendStream};
+
+    use super::WireError;
+
+    /// Writes `msg` as one frame.
+    ///
+    /// # Errors
+    ///
+    /// [`WireError::FleetFrame`] when `msg` doesn't encode, and
+    /// [`WireError::Write`] when the stream fails.
+    pub async fn write<T: Frame + Sync>(
+        send: &mut SendStream,
+        msg: &T,
+    ) -> Result<(), WireError> {
+        Ok(send.write_all(&frame::encode(msg)?).await?)
+    }
+
+    /// Reads a frame of at most `limit` bytes: `Ok(None)` when the peer
+    /// finished the stream between frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns the read or decoding error, or rejects an oversized frame
+    /// before allocating its body.
+    pub async fn read_bounded<T: Frame>(
+        recv: &mut RecvStream,
+        limit: usize,
+    ) -> Result<Option<T>, WireError> {
+        let body = super::read_body(recv, limit, |header| {
+            Ok(frame::body_len(header)?)
+        })
+        .await?;
+        Ok(body.map(|read| frame::decode(&read)).transpose()?)
     }
 }
 
-/// Reads one frame's body undecoded: `Ok(None)` when the peer finished the
-/// stream between frames.
-///
-/// # Errors
-///
-/// Returns the read error, or rejects a body over `limit` before
-/// allocating it.
-pub async fn read_body(
+/// Reads one frame's body undecoded, its length announced by a header
+/// `body_len` reads: `Ok(None)` when the peer finished the stream between
+/// frames.
+async fn read_body(
     recv: &mut RecvStream,
     limit: usize,
+    body_len: impl FnOnce([u8; link::frame::HEADER_LEN]) -> Result<usize, WireError>,
 ) -> Result<Option<Vec<u8>>, WireError> {
-    let mut header = [0u8; proto::HEADER_LEN];
+    let mut header = [0u8; link::frame::HEADER_LEN];
     match recv.read_exact(&mut header).await {
         Ok(()) => {
-            let length = proto::body_len(header)?;
+            let length = body_len(header)?;
             if length > limit {
                 return Err(WireError::Limit { length, limit });
             }

@@ -379,7 +379,7 @@ pub async fn start(
                 token,
             );
             let router = Router::builder(endpoint.clone())
-                .accept(proto::ALPN, conductor)
+                .accept(link::ALPN, conductor)
                 .accept(proto::fleet::ALPN, protocol)
                 .spawn();
             tokio::spawn(crate::fleet::follow_when_enrolled(

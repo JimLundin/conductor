@@ -1,7 +1,8 @@
 //! The host's event log.
 //!
 //! One task owns it; [`Log`] handles talk to it over a channel, so nothing
-//! is shared behind a lock. The log's rules are [`host::log`]; the task
+//! is shared behind a lock. The log's rules are [`link::log`] and
+//! [`host::log`]; the task
 //! keeps the database, the channels and the live feed, and performs what
 //! the rules decide.
 
@@ -11,12 +12,11 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::path::Path;
 
-use host::log::{
-    Begun, Completion, Effect, FreshRequest, Kind, Log as Core, Ticket,
-};
+use host::log::{Effect as Logged, FreshRequest};
+use link::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
+use link::{CommandResult, Subscribe, Welcome};
 use proto::{
-    Catalog, CommandId, CommandResult, Event, EventKind, Home, HostSeq,
-    Instances, SessionId, Subscribe, Welcome,
+    Catalog, CommandId, Event, EventKind, Home, HostSeq, Instances, SessionId,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -489,29 +489,15 @@ impl LogActor {
         pending: &mut VecDeque<Effect>,
     ) -> anyhow::Result<()> {
         match effect {
-            Effect::Open => {
-                self.transaction =
-                    self.storage.as_ref().map(Storage::begin).transpose()?;
-            }
-            Effect::Store(write) => {
+            Effect::Log(logged) => self.logged(logged)?,
+            Effect::Receipt(key, result) => {
                 let _ = self
                     .transaction
                     .as_ref()
-                    .map(|transaction| storage::write(transaction, &write))
+                    .map(|transaction| {
+                        storage::store_receipt(transaction, key, &result)
+                    })
                     .transpose()?;
-            }
-            Effect::Commit => {
-                let _ = self
-                    .transaction
-                    .take()
-                    .map(WriteTransaction::commit)
-                    .transpose()?;
-            }
-            Effect::Publish(event) => {
-                let _ = self.live.send(event);
-            }
-            Effect::RequestOpened(request) => {
-                let _ = self.requests.send(request);
             }
             Effect::Lookup(key) => {
                 let found = self
@@ -530,6 +516,36 @@ impl LogActor {
                     self.finishes.remove(&ticket).map(|reply| reply.send(()));
             }
             Effect::Stop => return Err(Stopped {}.into()),
+        }
+        Ok(())
+    }
+
+    fn logged(&mut self, effect: Logged) -> anyhow::Result<()> {
+        match effect {
+            Logged::Open => {
+                self.transaction =
+                    self.storage.as_ref().map(Storage::begin).transpose()?;
+            }
+            Logged::Store(write) => {
+                let _ = self
+                    .transaction
+                    .as_ref()
+                    .map(|transaction| storage::write(transaction, &write))
+                    .transpose()?;
+            }
+            Logged::Commit => {
+                let _ = self
+                    .transaction
+                    .take()
+                    .map(WriteTransaction::commit)
+                    .transpose()?;
+            }
+            Logged::Publish(event) => {
+                let _ = self.live.send(event);
+            }
+            Logged::RequestOpened(request) => {
+                let _ = self.requests.send(request);
+            }
         }
         Ok(())
     }
@@ -558,10 +574,10 @@ mod tests {
     use agents::Output;
     use proto::{
         Auth, Availability, Catalog, Epoch, EventKind, HostSeq, InstanceId,
-        InstanceStatus, Instances, Models, Provider, SessionId, Welcome,
+        InstanceStatus, Instances, Models, Provider, SessionId,
     };
 
-    use super::Log;
+    use super::{Log, Welcome};
 
     fn delta(text: &str) -> EventKind {
         EventKind::Agent(Output::AssistantDelta {
@@ -660,9 +676,12 @@ mod durability_tests {
     use std::time::Duration;
 
     use agents::Output;
-    use proto::{CommandId, CommandResult, EventKind, HostSeq, SessionId};
+    use proto::{CommandId, EventKind, HostSeq, SessionId};
 
-    use super::{BeginCommand, CommandLease, CommandStart, Kind, Log, LogMsg};
+    use super::{
+        BeginCommand, CommandLease, CommandResult, CommandStart, Kind, Log,
+        LogMsg,
+    };
     use tokio::sync::oneshot;
 
     async fn lease(
@@ -708,7 +727,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(23),
-                kind: host::log::Kind::Session,
+                kind: link::log::Kind::Session,
                 reply: retry_reply,
             }))
             .await?;
@@ -780,12 +799,10 @@ mod durability_tests {
         let storage = super::Storage::open(&path)?;
         let transaction = storage.begin()?;
         for id in 1..=64 {
-            super::storage::write(
+            super::storage::store_receipt(
                 &transaction,
-                &host::log::Write::Receipt(
-                    CommandId(id),
-                    CommandResult::Session(proto::SessionResult::Accepted),
-                ),
+                CommandId(id),
+                &CommandResult::Session(proto::SessionResult::Accepted),
             )?;
         }
         transaction.commit()?;
@@ -798,7 +815,7 @@ mod durability_tests {
             log.inbox
                 .send(LogMsg::Begin(CommandStart {
                     key: CommandId(id),
-                    kind: host::log::Kind::Session,
+                    kind: link::log::Kind::Session,
                     reply,
                 }))
                 .await?;
@@ -808,7 +825,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(65),
-                kind: host::log::Kind::Session,
+                kind: link::log::Kind::Session,
                 reply,
             }))
             .await?;
@@ -877,7 +894,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(1),
-                kind: host::log::Kind::Session,
+                kind: link::log::Kind::Session,
                 reply: duplicate_reply,
             }))
             .await?;
@@ -885,7 +902,7 @@ mod durability_tests {
         log.inbox
             .send(LogMsg::Begin(CommandStart {
                 key: CommandId(2),
-                kind: host::log::Kind::Session,
+                kind: link::log::Kind::Session,
                 reply: next_reply,
             }))
             .await?;
