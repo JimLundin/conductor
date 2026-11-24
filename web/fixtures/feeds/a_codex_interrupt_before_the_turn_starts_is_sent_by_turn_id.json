@@ -236,7 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Session": { "Started": { "session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } }
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -256,7 +256,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -268,16 +268,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
-							"directory": "/conductor/target/tmp/conductor-test-0-codex-held-interrupt.jsonl/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-codex-held-interrupt.jsonl/worktrees/00000000000000000000000001/",
 							"original": "/conductor/target/tmp/conductor-test-0-codex-held-interrupt.jsonl/work/codex",
 							"repository": "/conductor/target/tmp/conductor-test-0-codex-held-interrupt.jsonl/work/codex",
-							"worktree": "/conductor/target/tmp/conductor-test-0-codex-held-interrupt.jsonl/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+							"worktree": "/conductor/target/tmp/conductor-test-0-codex-held-interrupt.jsonl/worktrees/00000000000000000000000001"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -295,7 +295,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -306,7 +306,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -319,7 +319,7 @@
 					"UserMessage": { "by": "test-client", "text": "count to 300" }
 				},
 				"seq": 5,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -330,7 +330,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -348,7 +348,7 @@
 					}
 				},
 				"seq": 7,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -359,7 +359,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Interrupted" } },
 				"seq": 8,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"

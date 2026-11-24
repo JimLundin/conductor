@@ -236,7 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Session": { "Started": { "session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } }
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -255,7 +255,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -267,16 +267,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
-							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
 							"original": "/conductor/target/tmp/conductor-e2e-0-reasoning",
 							"repository": "/conductor/target/tmp/conductor-e2e-0-reasoning",
-							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -294,7 +294,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -305,7 +305,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -316,7 +316,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "sheep?" } },
 				"seq": 5,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -327,7 +327,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -338,7 +338,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "\"" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -349,7 +349,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "All" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -360,7 +360,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " but " } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -371,7 +371,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "9 " } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -382,7 +382,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "run" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -395,7 +395,7 @@
 					"Agent": { "ReasoningDelta": { "text": " away\" means 9" } }
 				},
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -406,7 +406,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " stay, so he" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -417,7 +417,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " buys double" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -428,7 +428,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " that," } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -439,7 +439,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " 18, b" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -452,7 +452,7 @@
 					"Agent": { "ReasoningDelta": { "text": "ringing the total to 27," } }
 				},
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -463,7 +463,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " then sells a" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -474,7 +474,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": " third (" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -487,7 +487,7 @@
 					"Agent": { "ReasoningDelta": { "text": "9), leaving 18 " } }
 				},
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -498,7 +498,7 @@
 			"Event": {
 				"kind": { "Agent": { "ReasoningDelta": { "text": "sheep.\n\n" } } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -515,7 +515,7 @@
 					}
 				},
 				"seq": 7,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -526,7 +526,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "18" } } },
 				"seq": 7,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -537,7 +537,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "18" } } },
 				"seq": 8,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -555,7 +555,7 @@
 					}
 				},
 				"seq": 9,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -566,7 +566,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -774,7 +774,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -786,16 +786,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
-							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
 							"original": "/conductor/target/tmp/conductor-e2e-0-reasoning",
 							"repository": "/conductor/target/tmp/conductor-e2e-0-reasoning",
-							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -813,7 +813,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -824,7 +824,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -835,7 +835,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "sheep?" } },
 				"seq": 5,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -846,7 +846,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -863,7 +863,7 @@
 					}
 				},
 				"seq": 7,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -874,7 +874,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "18" } } },
 				"seq": 8,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -892,7 +892,7 @@
 					}
 				},
 				"seq": 9,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -903,7 +903,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 10,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"

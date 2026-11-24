@@ -236,7 +236,7 @@
 	{
 		"connection": 0,
 		"frame": {
-			"Session": { "Started": { "session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1" } }
+			"Session": { "Started": { "session": "00000000000000000000000001" } }
 		},
 		"stream": "command"
 	},
@@ -254,7 +254,7 @@
 					}
 				},
 				"seq": 1,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -266,16 +266,16 @@
 				"kind": {
 					"WorkspaceCreated": {
 						"workspace": {
-							"branch": "conductor/01JQ8ZK3VYN7M2WXR4TBHC5DE1",
-							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1/",
+							"branch": "conductor/00000000000000000000000001",
+							"directory": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001/",
 							"original": "/conductor/target/tmp/conductor-e2e-0-checklist",
 							"repository": "/conductor/target/tmp/conductor-e2e-0-checklist",
-							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+							"worktree": "/conductor/target/tmp/conductor-test-0-0000000000000000000000000000000000000000000000000000000000000001/worktrees/00000000000000000000000001"
 						}
 					}
 				},
 				"seq": 2,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -293,7 +293,7 @@
 					}
 				},
 				"seq": 3,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -304,7 +304,7 @@
 			"Event": {
 				"kind": "SessionReady",
 				"seq": 4,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -329,7 +329,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "plan" } },
 				"seq": 5,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -340,7 +340,7 @@
 			"Event": {
 				"kind": { "EffortChanged": { "effort": "Low" } },
 				"seq": 6,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -351,7 +351,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 5 } },
 				"seq": 7,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -370,7 +370,7 @@
 					}
 				},
 				"seq": 8,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -388,7 +388,7 @@
 					}
 				},
 				"seq": 9,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -407,7 +407,7 @@
 					}
 				},
 				"seq": 10,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -425,7 +425,7 @@
 					}
 				},
 				"seq": 11,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -444,7 +444,7 @@
 					}
 				},
 				"seq": 12,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -462,7 +462,7 @@
 					}
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -473,7 +473,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "Done. I" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -484,7 +484,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": " made" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -495,7 +495,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": " the three" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -506,7 +506,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "-item" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -519,7 +519,7 @@
 					"Agent": { "AssistantDelta": { "text": " checklist, then" } }
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -530,7 +530,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": " marked \"" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -543,7 +543,7 @@
 					"Agent": { "AssistantDelta": { "text": "Write a.txt\" in" } }
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -556,7 +556,7 @@
 					"Agent": { "AssistantDelta": { "text": " progress and completed." } }
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -567,7 +567,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": " I sent the in" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -582,7 +582,7 @@
 					}
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -597,7 +597,7 @@
 					}
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -608,7 +608,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": " wa" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -619,7 +619,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "iting between" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -632,7 +632,7 @@
 					"Agent": { "AssistantDelta": { "text": " them, so the in-progress" } }
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -645,7 +645,7 @@
 					"Agent": { "AssistantDelta": { "text": " state was never sh" } }
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -656,7 +656,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "own on" } } },
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -671,7 +671,7 @@
 					}
 				},
 				"seq": 13,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -688,7 +688,7 @@
 					}
 				},
 				"seq": 14,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -706,7 +706,7 @@
 					}
 				},
 				"seq": 15,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -717,7 +717,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 16,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -729,7 +729,7 @@
 			"Event": {
 				"kind": { "UserMessage": { "by": "test-client", "text": "pong" } },
 				"seq": 17,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -740,7 +740,7 @@
 			"Event": {
 				"kind": { "NativeTurnStarted": { "turn_start": 17 } },
 				"seq": 18,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -751,7 +751,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantDelta": { "text": "pong" } } },
 				"seq": 18,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -762,7 +762,7 @@
 			"Event": {
 				"kind": { "Agent": { "AssistantMessage": { "text": "pong" } } },
 				"seq": 19,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -780,7 +780,7 @@
 					}
 				},
 				"seq": 20,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"
@@ -791,7 +791,7 @@
 			"Event": {
 				"kind": { "TurnCompleted": { "outcome": "Completed" } },
 				"seq": 21,
-				"session": "01JQ8ZK3VYN7M2WXR4TBHC5DE1"
+				"session": "00000000000000000000000001"
 			}
 		},
 		"stream": "feed"

@@ -12,7 +12,7 @@ import { Approval, Item, RequestState, type ToolState } from "./transcript.ts";
 type Numbered = readonly (readonly [number, EventKind])[];
 
 const id = (session: number): SessionId =>
-	`01JQ8ZK3VYN7M2WXR4TBHC5DE${session}`;
+	`0000000000000000000000000${session}`;
 
 // Numbers each session's events as the host does: a delta repeats the last seq.
 const foldEvents = (events: Numbered): Host =>

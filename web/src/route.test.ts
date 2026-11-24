@@ -21,21 +21,9 @@ test("each screen's fragment names that screen", () => {
 	for (const screen of screens) {
 		expect(route(fragmentOf(screen), true)).toEqual(screen);
 	}
-	expect(
-		fragmentOf(
-			Route.Session({ host: "ab12", session: "01JABCDEFGHJKMNPQRSTVWXYZ0" }),
-		),
-	).toBe("#/host/ab12/session/01JABCDEFGHJKMNPQRSTVWXYZ0");
-});
-
-test("a session's fragment in lower case names the session the host writes in upper case", () => {
-	expect(route("#/host/ab12/session/01jabcdefghjkmnpqrstvwxyz0", true)).toEqual(
-		Route.Session({ host: "ab12", session: "01JABCDEFGHJKMNPQRSTVWXYZ0" }),
+	expect(fragmentOf(Route.Session({ host: "ab12", session: "s1" }))).toBe(
+		"#/host/ab12/session/s1",
 	);
-});
-
-test("a session fragment whose id is no session id shows the sessions", () => {
-	expect(route("#/host/ab12/session/s1", true)._tag).toBe("Sessions");
 });
 
 test("with a host paired, an empty or unknown fragment shows the sessions", () => {

@@ -110,7 +110,7 @@ const recordedSpan = (from: number, through: number): readonly Feed[] =>
 		return frame.Event.seq >= from && frame.Event.seq <= through;
 	});
 
-const session: SessionId = "01JQ8ZK3VYN7M2WXR4TBHC5DE1";
+const session: SessionId = "00000000000000000000000001";
 
 // Frames for `kinds` on `session`, numbered from `first` as the host stores them.
 const framed = (first: number, kinds: readonly EventKind[]): readonly Feed[] =>
