@@ -314,7 +314,6 @@ export {
 	reach,
 	scenario,
 	scoped,
-	type Sent,
 	serve,
 	states,
 	stored,

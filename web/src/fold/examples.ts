@@ -1,11 +1,13 @@
 // Events for the fold's worked examples, ported from the Rust HostView's tests.
+import { Update } from "../link/host.ts";
+import type { RecordedFeed } from "../recorded-feeds.ts";
 import type {
 	EventKind,
 	SessionId,
 	SubagentEvent,
 	ToolPhase,
 } from "../schemas/index.ts";
-import { applyFeed, emptyHost, type Host, isDelta } from "./host.ts";
+import { applyUpdate, emptyHost, type Host, isDelta } from "./host.ts";
 import type { Session } from "./session.ts";
 import { Approval, Item, RequestState, type ToolState } from "./transcript.ts";
 
@@ -20,10 +22,28 @@ const foldEvents = (events: Numbered): Host =>
 		([host, last], [session, kind]) => {
 			const event = { seq: last + 1, session: id(session), kind };
 			const seq = isDelta(event) ? last : event.seq;
-			return [applyFeed(host, { Event: { ...event, seq } }), seq];
+			const frame = { Event: { ...event, seq } };
+			return [applyUpdate(host, Update.Feed({ frame })), seq];
 		},
 		[emptyHost(), 0],
 	)[0];
+
+// What one connection of a recorded scenario's test client received, as its link reports it:
+// its welcome, then its feed.
+const received = (feed: RecordedFeed, connection: number): readonly Update[] =>
+	feed
+		.filter((recorded) => recorded.connection === connection)
+		.flatMap((recorded): readonly Update[] => {
+			if (recorded.stream === "hello" && "Welcome" in recorded.frame) {
+				return [Update.Welcome({ welcome: recorded.frame.Welcome })];
+			}
+			return recorded.stream === "feed"
+				? [Update.Feed({ frame: recorded.frame })]
+				: [];
+		});
+
+const foldUpdates = (updates: readonly Update[]): Host =>
+	updates.reduce(applyUpdate, emptyHost());
 
 const sessionOf = (host: Host, session: SessionId): Session => {
 	const found = host.sessions.get(session);
@@ -134,12 +154,14 @@ export {
 	exited,
 	finished,
 	foldEvents,
+	foldUpdates,
 	id,
 	ls,
 	type Numbered,
 	opened,
 	question,
 	reasoned,
+	received,
 	sessionOf,
 	started,
 	subagent,

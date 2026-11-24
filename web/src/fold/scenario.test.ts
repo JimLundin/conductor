@@ -1,15 +1,9 @@
 import { expect, test } from "vitest";
-import type { Event, Feed, Welcome } from "../schemas/index.ts";
+import { Update } from "../link/host.ts";
+import type { Event } from "../schemas/index.ts";
 import { type RecordedFeed, recordedFeed } from "../recorded-feeds.ts";
-import {
-	applyFeed,
-	applyWelcome,
-	emptyHost,
-	type Host,
-	isDelta,
-	resetHistory,
-} from "./host.ts";
-import { sessionOf } from "./examples.ts";
+import { applyUpdate, type Host, isDelta } from "./host.ts";
+import { foldUpdates as folded, received, sessionOf } from "./examples.ts";
 import { controls, openRequests } from "./offers.ts";
 import { type Session, SessionStatus } from "./session.ts";
 import { Approval, Item, RequestState, ToolState } from "./transcript.ts";
@@ -28,38 +22,23 @@ const approved = {
 	Decided: { by: "test-client", decision: "Approve" },
 } as const;
 
-type Frame = Welcome | Feed;
+const stored = (update: Update): Event | undefined =>
+	update._tag === "Feed" &&
+	"Event" in update.frame &&
+	!isDelta(update.frame.Event)
+		? update.frame.Event
+		: undefined;
 
-// What one connection of the scenario's test client received: its welcome, then its feed.
-const received = (feed: RecordedFeed, connection: number): readonly Frame[] =>
-	feed
-		.filter((recorded) => recorded.connection === connection)
-		.flatMap((recorded): readonly Frame[] => {
-			if (recorded.stream === "hello" && "Welcome" in recorded.frame) {
-				return [recorded.frame.Welcome];
-			}
-			return recorded.stream === "feed" ? [recorded.frame] : [];
-		});
+const at = (updates: readonly Update[], seq: number): number =>
+	updates.findIndex((update) => stored(update)?.seq === seq);
 
-const fold = (host: Host, frame: Frame): Host =>
-	"host" in frame ? applyWelcome(host, frame) : applyFeed(host, frame);
+// The updates through the stored event at `seq`.
+const through = (updates: readonly Update[], seq: number): readonly Update[] =>
+	updates.slice(0, at(updates, seq) + 1);
 
-const folded = (frames: readonly Frame[]): Host =>
-	frames.reduce(fold, emptyHost());
-
-const stored = (frame: Frame): Event | undefined =>
-	"Event" in frame && !isDelta(frame.Event) ? frame.Event : undefined;
-
-const at = (frames: readonly Frame[], seq: number): number =>
-	frames.findIndex((frame) => stored(frame)?.seq === seq);
-
-// The frames through the stored event at `seq`.
-const through = (frames: readonly Frame[], seq: number): readonly Frame[] =>
-	frames.slice(0, at(frames, seq) + 1);
-
-// The frames before the stored event at `seq`.
-const before = (frames: readonly Frame[], seq: number): readonly Frame[] =>
-	frames.slice(0, at(frames, seq));
+// The updates before the stored event at `seq`.
+const before = (updates: readonly Update[], seq: number): readonly Update[] =>
+	updates.slice(0, at(updates, seq));
 
 const theSession = (host: Host): Session => sessionOf(host, session);
 
@@ -169,7 +148,7 @@ test("the composer opens and Interrupt is offered exactly while the scenario's s
 // The feed's sessions never close and aren't on an issue, so these cases extend its frames with
 // the events the host logs when the agent exits and when a session finishes on its issue.
 const then = (host: Host, seq: number, kind: Event["kind"]): Host =>
-	applyFeed(host, { Event: { seq, session, kind } });
+	applyUpdate(host, Update.Feed({ frame: { Event: { seq, session, kind } } }));
 
 test("Continue is offered once the scenario's session closes, and gone once it is ready again", () => {
 	const finished = folded(received(recordedFeed(scenario), 0));
@@ -190,17 +169,13 @@ test("Continue is offered once the scenario's session closes, and gone once it i
 });
 
 test("Finish is offered for a session on an issue when it is idle or closed, and not while it finishes", () => {
-	const frames = received(recordedFeed(scenario), 0);
-	const onIssue = then(folded(through(frames, 4)), 5, {
+	const updates = received(recordedFeed(scenario), 0);
+	const onIssue = then(folded(through(updates, 4)), 5, {
 		OnIssue: { issue: "0twr04e5" },
 	});
 	expect(controls(theSession(onIssue)).finish).toBe(true);
-	const working = applyFeed(onIssue, {
-		Event: {
-			seq: 6,
-			session,
-			kind: { UserMessage: { by: "test-client", text: "create a.txt" } },
-		},
+	const working = then(onIssue, 6, {
+		UserMessage: { by: "test-client", text: "create a.txt" },
 	});
 	expect(controls(theSession(working)).finish).toBe(false);
 	const idle = then(working, 7, { TurnCompleted: { outcome: "Completed" } });
@@ -220,19 +195,24 @@ test("Finish is offered for a session on an issue when it is idle or closed, and
 	]);
 });
 
+const welcomeOf = (feed: RecordedFeed): Update => {
+	const [welcome] = received(feed, 1);
+	if (welcome?._tag !== "Welcome") {
+		throw new Error("the connection opened without a welcome");
+	}
+	return welcome;
+};
+
 test("a request resolved on another device shows as resolved after catch-up", () => {
 	const feed = recordedFeed(scenario);
-	const elsewhere = folded(received(feed, 1));
-	expect(openRequests(theSession(elsewhere))).toHaveLength(1);
+	const elsewhere = received(feed, 1);
+	expect(openRequests(theSession(folded(elsewhere)))).toHaveLength(1);
 	// Connection 0 approves; connection 1 reconnects, and its subscription after seq 8 replays
 	// the stored events that followed, never the live deltas.
 	const replay = received(feed, 0).filter(
-		(frame) => (stored(frame)?.seq ?? 0) > 8,
+		(update) => (stored(update)?.seq ?? 0) > 8,
 	);
-	const caughtUp = replay.reduce(
-		fold,
-		applyWelcome(elsewhere, welcomeOf(feed)),
-	);
+	const caughtUp = folded([...elsewhere, welcomeOf(feed), ...replay]);
 	expect(openRequests(theSession(caughtUp))).toStrictEqual([]);
 	expect(theSession(caughtUp).items[1]).toStrictEqual(
 		Item.Tool({
@@ -249,18 +229,17 @@ test("a request resolved on another device shows as resolved after catch-up", ()
 	);
 });
 
-const welcomeOf = (feed: RecordedFeed): Welcome => {
-	const [welcome] = received(feed, 1);
-	if (welcome === undefined || !("host" in welcome)) {
-		throw new Error("the connection opened without a welcome");
-	}
-	return welcome;
-};
-
 test("a reconnect's welcome keeps the sessions, and a reset clears them before the replay", () => {
 	const feed = recordedFeed(scenario);
-	const host = applyWelcome(folded(received(feed, 0)), welcomeOf(feed));
+	const host = folded([...received(feed, 0), welcomeOf(feed)]);
 	expect(host.sessions.size).toBe(1);
-	expect(resetHistory(host).sessions.size).toBe(0);
-	expect(resetHistory(host).name).toBe("test-host");
+	const reset = applyUpdate(host, Update.Reset({ epoch: "reborn" }));
+	expect(reset.sessions.size).toBe(0);
+	expect(reset.name).toBe("test-host");
+});
+
+test("a link status leaves the fold as it was", () => {
+	const host = folded(received(recordedFeed(scenario), 0));
+	const down = Update.Status({ state: "Disconnected", error: "closed" });
+	expect(applyUpdate(host, down)).toStrictEqual(host);
 });
