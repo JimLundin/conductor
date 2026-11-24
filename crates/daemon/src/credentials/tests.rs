@@ -536,3 +536,69 @@ fn removal_result_survives_reopening_before_the_command_receipt()
     assert!(!store.removal(link::CommandId(18)));
     Ok(())
 }
+
+#[test]
+fn a_store_sealed_in_the_previous_format_is_unreadable_and_moves_aside()
+-> anyhow::Result<()> {
+    use chacha20poly1305::XNonce;
+    use chacha20poly1305::aead::{Aead, Payload};
+
+    let data = Data::new()?;
+    let (store, _) = Store::open(&data.0, Catalog::default())?;
+    let mut credentials = super::Credentials::default();
+    credentials.roster.0.insert(
+        InstanceId::named(Provider::new("codex"), "kept"),
+        Instance::default(),
+    );
+    let nonce = [5; super::NONCE_LEN];
+    let sealed = store
+        .cipher
+        .encrypt(
+            XNonce::from_slice(&nonce),
+            Payload {
+                msg: &postcard::to_stdvec(&credentials)?,
+                aad: super::PURPOSE,
+            },
+        )
+        .map_err(|_| anyhow::anyhow!("sealing"))?;
+    let previous = std::iter::once(7)
+        .chain(nonce)
+        .chain(sealed)
+        .collect::<Vec<u8>>();
+    fs::write(data.0.join("credentials"), &previous)?;
+    drop(store);
+
+    let (store, stored) = Store::open(&data.0, Catalog::default())?;
+    assert!(matches!(stored, Stored::Unreadable(_)));
+    let aside = store.move_aside()?;
+    assert_eq!(aside, data.0.join("credentials.unreadable"));
+    assert_eq!(fs::read(aside)?, previous);
+    drop(store);
+    let (_, stored) = Store::open(&data.0, Catalog::default())?;
+    assert!(matches!(stored, Stored::Fresh));
+    Ok(())
+}
+
+#[test]
+fn an_unversioned_adoption_journal_is_refused_and_kept() -> anyhow::Result<()> {
+    let data = Data::new()?;
+    let from = InstanceId::named(Provider::new("codex"), "source");
+    let to = InstanceId::named(Provider::new("codex"), "signed-in");
+    data.put("home", &from, "signed-in files")?;
+    let journal = data.0.join("adoption");
+    // The journal as it was kept before it had a format: the adoption, then
+    // home staged from its source and work absent.
+    let previous = postcard::to_stdvec(&(adoption(&from, &to), [1u8, 0]))?;
+    fs::write(&journal, &previous)?;
+
+    let refused = Store::open(&data.0, Catalog::default())
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("an unversioned journal opened"))?;
+    assert!(format!("{refused:#}").contains("is in an older format"));
+    assert_eq!(fs::read(&journal)?, previous);
+    assert_eq!(
+        fs::read_to_string(data.private("home", &from).join("marker"))?,
+        "signed-in files"
+    );
+    Ok(())
+}
