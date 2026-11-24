@@ -32,7 +32,7 @@ use adoption::Adoption;
 
 pub use host::registry::Stored;
 
-const FORMAT: u8 = 7;
+const FORMAT: u8 = 8;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Credentials {
