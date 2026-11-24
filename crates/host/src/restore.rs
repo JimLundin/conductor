@@ -10,9 +10,9 @@
 
 use alloc::format;
 
-use crate::HostPath;
 use crate::log::Event;
 use crate::registry::InstanceId;
+use crate::session::SessionDirectory;
 use crate::session::{EventKind, RequestId, Resolution, SessionId};
 use agents::{CloseReason, TurnOutcome};
 
@@ -26,7 +26,7 @@ pub use crate::snapshots::SnapshotPlan;
 pub struct Created {
     pub session: SessionId,
     pub instance: InstanceId,
-    pub directory: HostPath,
+    pub directory: SessionDirectory,
     pub choice: Choice,
 }
 
@@ -246,11 +246,13 @@ fn replay_choice(created: Choice, events: &[Event]) -> Choice {
 
 #[cfg(test)]
 mod tests {
-    use crate::HostPath;
     use crate::log::{Event, HostSeq};
     use crate::registry::InstanceId;
+    use crate::session::SessionDirectory;
     use crate::session::{EventKind, RequestId, Resolution, SessionId};
-    use crate::workspace::{Snapshot, Workspace};
+    use crate::workspace::{
+        Repository, Snapshot, WorkingCopy, Workspace, Worktree,
+    };
     use agents::{
         ClientName, Effort, ModelId, Provider, ToolCallId, ToolKind,
         TurnOutcome,
@@ -286,7 +288,7 @@ mod tests {
                 Provider::new("codex"),
                 "https://gw.example",
             ),
-            directory: HostPath(String::from("/work")),
+            directory: SessionDirectory(String::from("/work")),
             by: ClientName(String::from("phone")),
             model: None,
             effort: None,
@@ -345,7 +347,7 @@ mod tests {
                     Provider::new("codex"),
                     "https://gw.example"
                 ),
-                directory: HostPath(String::from("/work")),
+                directory: SessionDirectory(String::from("/work")),
                 choice: choice.clone(),
             })
         );
@@ -366,13 +368,13 @@ mod tests {
     }
 
     fn turn() -> SnapshotPlan {
-        let path = HostPath(String::from("/work"));
+        let path = String::from("/work");
         SnapshotPlan {
             workspace: Workspace {
-                repository: path.clone(),
-                original: path.clone(),
-                worktree: path.clone(),
-                directory: path,
+                repository: Repository(path.clone()),
+                original: WorkingCopy(path.clone()),
+                worktree: Worktree(path.clone()),
+                directory: SessionDirectory(path),
                 branch: String::from("conductor/1"),
             },
             turn_start: Some(HostSeq(9)),

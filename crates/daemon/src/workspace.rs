@@ -5,9 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
-use host::HostPath;
 use host::log::HostSeq;
-use host::session::SessionId;
+use host::session::{SessionDirectory, SessionId};
 use host::workspace::{Answer, Output, Plan, Step};
 use host::workspace::{Kept, SnapshotDiff, Workspace};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -136,9 +135,9 @@ fn canonical(path: &Path) -> Result<PathBuf, GitError> {
 }
 
 #[cfg(test)]
-fn host(path: &Path) -> Result<HostPath, GitError> {
+fn host(path: &Path) -> Result<SessionDirectory, GitError> {
     path.to_str()
-        .map(|value| HostPath(value.to_owned()))
+        .map(|value| SessionDirectory(value.to_owned()))
         .ok_or_else(|| {
             failure("Git workspace path", "non-UTF-8 paths are unsupported")
         })
@@ -153,7 +152,7 @@ async fn git_dir(path: &Path) -> Result<PathBuf, GitError> {
 
 pub async fn create(
     data_dir: &Path,
-    original: &HostPath,
+    original: &SessionDirectory,
     session: SessionId,
     base: Option<&str>,
 ) -> Result<Workspace, GitError> {
@@ -482,7 +481,7 @@ mod tests {
     };
     use host::log::HostSeq;
     use host::session::SessionId;
-    use host::workspace::{DiffExtent, FilePatch, Kept, Workspace};
+    use host::workspace::{DiffExtent, FilePatch, Kept, Workspace, Worktree};
     use std::path::{Path, PathBuf};
 
     struct Repository {
@@ -749,7 +748,8 @@ mod tests {
         }));
         assert_eq!(text(root, &["show", ":deleted.txt"]).await?, "staged only");
         let mut inaccessible = workspace;
-        inaccessible.worktree = super::host(&file.join("unreachable"))?;
+        inaccessible.worktree =
+            Worktree(super::host(&file.join("unreachable"))?.0);
         assert!(
             remove(&inaccessible).await.is_err_and(|reason| reason
                 .to_string()
@@ -999,13 +999,9 @@ mod tests {
         let repo = repository().await?;
         let (source_index, source_head) = dirty_source(&repo).await?;
         let id = SessionId(ulid::Ulid::new().into());
-        let workspace =
-            create(&repo.data, &host(&repo.source.join("sub dir"))?, id, None)
-                .await?;
-        assert_eq!(
-            create(&repo.data, &workspace.original, id, None).await?,
-            workspace
-        );
+        let started_in = host(&repo.source.join("sub dir"))?;
+        let workspace = create(&repo.data, &started_in, id, None).await?;
+        assert_eq!(create(&repo.data, &started_in, id, None).await?, workspace);
         let root = Path::new(&workspace.worktree.0);
         let initial = snapshot(&workspace, id).await?;
         assert_eq!(

@@ -1,9 +1,11 @@
 use core::ops::ControlFlow;
 
-use crate::HostPath;
+use crate::session::SessionDirectory;
+
 use crate::log::HostSeq;
 use crate::session::SessionId;
 use crate::workspace::{DiffExtent, FilePatch, Kept, Workspace};
+use crate::workspace::{Repository, WorkingCopy, Worktree};
 
 use super::{Answer, GitError, Output, Plan, Step, head, kept, snapshots};
 
@@ -17,14 +19,17 @@ const PREVIOUS: &str = "0000000000000000000000000000000000000000";
 const PREFIX: &str = "refs/conductor/00000000000000000000000001/";
 
 fn workspace() -> Workspace {
-    let path = |text: &str| HostPath(String::from(text));
     Workspace {
-        repository: path("/repo"),
-        original: path("/repo/sub"),
-        worktree: path(WORKTREE),
-        directory: path(&format!("{WORKTREE}/sub")),
+        repository: Repository(String::from("/repo")),
+        original: WorkingCopy(String::from("/repo/sub")),
+        worktree: Worktree(String::from(WORKTREE)),
+        directory: SessionDirectory(format!("{WORKTREE}/sub")),
         branch: String::from(BRANCH),
     }
+}
+
+fn started_in() -> SessionDirectory {
+    SessionDirectory(String::from("/repo/sub"))
 }
 
 fn output(bytes: impl AsRef<[u8]>) -> Answer {
@@ -134,7 +139,7 @@ fn create_probes_the_selected_base_and_writes_ownership_only_for_a_new_worktree(
     for exists in [false, true] {
         let mut created = Vec::new();
         let result = run(
-            Plan::create(&workspace.original, SESSION, Some("issue")),
+            Plan::create(&started_in(), SESSION, Some("issue")),
             |step| match step {
                 Step::WorktreeParent => path("/data/worktrees"),
                 Step::Exists(ref value) if value == WORKTREE => {
@@ -200,11 +205,11 @@ fn create_probes_the_selected_base_and_writes_ownership_only_for_a_new_worktree(
 
 #[test]
 fn an_unborn_head_and_a_missing_subdirectory_stop_create_before_any_write() {
-    let workspace = workspace();
     for unborn in [true, false] {
         let result =
-            run(Plan::create(&workspace.original, SESSION, None), |step| {
-                match step {
+            run(
+                Plan::create(&started_in(), SESSION, None),
+                |step| match step {
                     Step::Git { ref args, .. } => {
                         let words =
                             args.iter().map(String::as_str).collect::<Vec<_>>();
@@ -225,8 +230,8 @@ fn an_unborn_head_and_a_missing_subdirectory_stop_create_before_any_write() {
                         }
                     }
                     other => valid(other),
-                }
-            });
+                },
+            );
         assert_eq!(
             result,
             if unborn {

@@ -36,14 +36,4 @@ mod snapshots;
 pub mod start;
 pub mod workspace;
 
-use alloc::string::String;
-
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
 pub use note::Note;
-
-/// A path on the host, as the host's OS spells it. The client never
-/// interprets it: a browser on a phone can't know a Windows path's rules.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct HostPath(pub String);

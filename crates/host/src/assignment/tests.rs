@@ -1,6 +1,6 @@
-use crate::HostPath;
 use crate::log::{Event, HostSeq};
 use crate::registry::InstanceId;
+use crate::session::SessionDirectory;
 use crate::session::{EventKind, SessionId};
 use agents::{ClientName, Provider};
 use home::IssueId;
@@ -22,7 +22,7 @@ fn created(session: u128, instance: InstanceId) -> Event {
         session,
         EventKind::SessionCreated {
             instance,
-            directory: HostPath(String::from("/src")),
+            directory: SessionDirectory(String::from("/src")),
             by: ClientName(String::from("phone")),
             model: None,
             effort: None,

@@ -635,7 +635,7 @@
 									"$ref": "#/$defs/ClientName"
 								},
 								"directory": {
-									"$ref": "#/$defs/HostPath"
+									"$ref": "#/$defs/SessionDirectory"
 								},
 								"effort": {
 									"anyOf": [
@@ -1795,10 +1795,6 @@
 			},
 			"required": ["node", "name", "relay", "added_at"],
 			"type": "object"
-		},
-		"HostPath": {
-			"description": "A path on the host, as the host's OS spells it. The client never\ninterprets it: a browser on a phone can't know a Windows path's rules.",
-			"type": "string"
 		},
 		"HostSeq": {
 			"description": "The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.",
@@ -3060,6 +3056,10 @@
 			"required": ["name", "from", "to", "many", "cycles", "shape", "reverse"],
 			"type": "object"
 		},
+		"Repository": {
+			"description": "The root of the repository a session's worktree is added to, as the\nhost's OS spells it.",
+			"type": "string"
+		},
 		"RequestId": {
 			"description": "An approval request or a question, assigned by the host per session, in\norder.",
 			"format": "uint64",
@@ -3408,6 +3408,10 @@
 					"type": "object"
 				}
 			]
+		},
+		"SessionDirectory": {
+			"description": "The directory a session starts in and works in, as the host's OS\nspells it. The client never interprets it: a browser on a phone can't\nknow a Windows path's rules.",
+			"type": "string"
 		},
 		"SessionId": {
 			"description": "A fleet-unique ULID assigned by the host, represented as its 128 bits.",
@@ -3991,7 +3995,7 @@
 					"additionalProperties": false,
 					"properties": {
 						"Directory": {
-							"$ref": "#/$defs/HostPath"
+							"$ref": "#/$defs/SessionDirectory"
 						}
 					},
 					"required": ["Directory"],
@@ -4433,26 +4437,35 @@
 			"required": ["host", "epoch", "head_seq", "instances", "catalog", "home"],
 			"type": "object"
 		},
+		"WorkingCopy": {
+			"description": "The directory of the owner's working copy a session was started in,\nwhich its workspace isolates it from, as the host's OS spells it.",
+			"type": "string"
+		},
 		"Workspace": {
 			"properties": {
 				"branch": {
 					"type": "string"
 				},
 				"directory": {
-					"$ref": "#/$defs/HostPath"
+					"$ref": "#/$defs/SessionDirectory",
+					"description": "The worktree's copy of the directory the session was started in."
 				},
 				"original": {
-					"$ref": "#/$defs/HostPath"
+					"$ref": "#/$defs/WorkingCopy"
 				},
 				"repository": {
-					"$ref": "#/$defs/HostPath"
+					"$ref": "#/$defs/Repository"
 				},
 				"worktree": {
-					"$ref": "#/$defs/HostPath"
+					"$ref": "#/$defs/Worktree"
 				}
 			},
 			"required": ["repository", "original", "worktree", "directory", "branch"],
 			"type": "object"
+		},
+		"Worktree": {
+			"description": "The Git worktree that holds a session's workspace, as the host's OS\nspells it.",
+			"type": "string"
 		}
 	},
 	"$schema": "https://json-schema.org/draft/2020-12/schema"
