@@ -1055,7 +1055,7 @@ export type CommandId = string;
 
 export const CommandId = Schema.String.annotate({
 	description:
-		"A client-generated, fleet-unique 128-bit random id for idempotent retries.",
+		"A client-generated, fleet-unique 128-bit random id for idempotent retries.\n\nA human-readable format writes it as a ULID is written, Crockford's\nbase 32 in 26 lower-case digits, since JSON's numbers are exact only to\n2^53; others write the number. The `ulid` crate reads and writes the\ndigits.",
 	identifier: "CommandId",
 });
 

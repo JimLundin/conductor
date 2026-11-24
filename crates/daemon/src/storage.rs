@@ -4,8 +4,8 @@ use std::path::Path;
 
 use host::log::{Epoch, Event};
 use host::session::SessionId;
+use link::CommandId;
 use link::CommandResult;
-use proto::CommandId;
 use redb::{
     Database, ReadableDatabase, ReadableTable, TableDefinition,
     WriteTransaction,
@@ -184,7 +184,7 @@ mod tests {
         conversation(&write, SessionId(7), "native-conversation")?;
         store_receipt(
             &write,
-            proto::CommandId(1),
+            link::CommandId(1),
             &CommandResult::Session(host::session::SessionResult::Accepted),
         )?;
         write.commit()?;
@@ -197,7 +197,7 @@ mod tests {
             Some(String::from("native-conversation"))
         );
         assert_eq!(
-            second.receipt(proto::CommandId(1))?,
+            second.receipt(link::CommandId(1))?,
             Some(CommandResult::Session(
                 host::session::SessionResult::Accepted
             ))
@@ -225,14 +225,14 @@ mod tests {
         )?;
         store_receipt(
             &write,
-            proto::CommandId(1),
+            link::CommandId(1),
             &CommandResult::Session(host::session::SessionResult::Accepted),
         )?;
         drop(write);
         drop(first);
         let second = Storage::open(&path)?;
         assert_eq!(second.events()?, Vec::new());
-        assert_eq!(second.receipt(proto::CommandId(1))?, None);
+        assert_eq!(second.receipt(link::CommandId(1))?, None);
         drop(second);
         let _ = std::fs::remove_file(path);
         Ok(())

@@ -54,7 +54,7 @@ preview, cloud workers, multi-user use.
 ## 3. The model: one session shape for both agents
 
 The adapters translate provider tool calls, file changes and outcomes into
-the shared `proto` types. Each provider's wire crate maps its events into
+the provider-neutral `agents` types. Each provider's wire crate maps its events into
 the session steps of the provider-agnostic `crates/agents`; the daemon
 assigns request ids and applies session state and approval wording. The app only ever sees the provider-neutral model,
 so one UI and one set of commands work for both agents.
@@ -1084,7 +1084,7 @@ empty, and a `Url` field is plain `http(s)://host/path`. The provider's
 core reads its values into its own type (`claude::ClaudeCredential`,
 `codex::CodexCredential`) and decides what they become: environment,
 config edits and the default model. Another kind is another form in the
-provider's core, and the daemon, `host`, `proto` and the app
+provider's core, and the daemon, `host`, `link` and the app
 don't change.
 
 #### Built first: gateway credentials
@@ -1249,7 +1249,7 @@ Built: the per-host subscription sign-in of each provider, on one host.
    the CLI reads back on stdin (`paste`); and what a failure the CLI prints
    means (`Failure { says, means }`). It exits 0 when it succeeds. The host
    strips terminal colours and keeps the output only until the link is
-   there. The daemon, `host`, `proto` and the app read only
+   there. The daemon, `host`, `link` and the app read only
    that description.
 3. **Claude, per-host.** `claude auth login --claudeai` on pipes prints
    "Opening browser to sign in…", then "If the browser didn't open, visit:

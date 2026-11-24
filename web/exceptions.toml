@@ -30,7 +30,7 @@ path = "scripts/schemas.ts"
 rule = "lint/style/noRestrictedImports"
 reason = "the schema generator is a build step whose whole job is to read proto.schema.json and write index.ts"
 
-# src/proto/ is written by scripts/schemas.ts from proto's JSON Schema, in
+# src/proto/ is written by scripts/schemas.ts from link's JSON Schema, in
 # the shape Effect's Codegen prints, and is never edited by hand.
 
 [[exception]]
@@ -41,7 +41,7 @@ reason = "generated: Codegen imports effect/Schema as a namespace"
 [[exception]]
 path = "src/proto/**"
 rule = "lint/security/noSecrets"
-reason = "generated: the flagged strings are proto's doc comments carried as descriptions, not secrets"
+reason = "generated: the flagged strings are the Rust types' doc comments carried as descriptions, not secrets"
 
 [[exception]]
 path = "src/proto/**"
@@ -51,7 +51,7 @@ reason = "generated: one module holds every type the client link reaches"
 [[exception]]
 path = "src/proto/**"
 rule = "lint/style/noMagicNumbers"
-reason = "generated: the numbers are the bounds and lengths proto's types declare"
+reason = "generated: the numbers are the bounds and lengths the Rust types declare"
 
 [[exception]]
 path = "src/proto/**"

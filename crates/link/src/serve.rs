@@ -4,6 +4,7 @@
 
 use alloc::string::String;
 
+use crate::CommandId;
 use agents::ClientName;
 use home::HomeCommand;
 use host::fleet::AuthToken;
@@ -12,7 +13,6 @@ use host::push::PushCommand;
 use host::registry::InstanceCommand;
 use host::session::SessionCommand;
 use host::sign_in::SignInCommand;
-use proto::CommandId;
 
 use crate::log::Kind;
 use crate::{Command, Open, Subscribe};

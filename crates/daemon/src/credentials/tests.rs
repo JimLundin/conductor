@@ -516,7 +516,7 @@ fn removal_result_survives_reopening_before_the_command_receipt()
 -> anyhow::Result<()> {
     let data = Data::new()?;
     let catalog = Catalog::default();
-    let id = proto::CommandId(17);
+    let id = link::CommandId(17);
     let instance = InstanceId::named(Provider::new("codex"), "removed");
     let (store, _) = Store::open(&data.0, catalog.clone())?;
     let mut roster = Roster::default();
@@ -533,6 +533,6 @@ fn removal_result_survives_reopening_before_the_command_receipt()
     let (store, stored) = Store::open(&data.0, catalog)?;
     assert!(stored.roster(&Catalog::default()).of(&instance).is_none());
     assert!(store.removal(id));
-    assert!(!store.removal(proto::CommandId(18)));
+    assert!(!store.removal(link::CommandId(18)));
     Ok(())
 }

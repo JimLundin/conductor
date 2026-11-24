@@ -6,7 +6,7 @@ use host::registry::{
     Instance, InstanceCommand, InstanceId, InstanceRefusal, InstanceResult,
     Roster,
 };
-use proto::CommandId;
+use link::CommandId;
 
 use super::Membership;
 use crate::Stopped;

@@ -13,12 +13,12 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::mem;
 
+use crate::CommandId;
 use home::Home;
 use host::log::Effect as Logged;
 use host::log::{Epoch, Event, HostSeq};
 use host::registry::{Catalog, Instances};
 use host::session::{EventKind, SessionId};
-use proto::CommandId;
 
 use crate::{CommandResult, Subscribe, Welcome};
 

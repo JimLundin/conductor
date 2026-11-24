@@ -1,3 +1,4 @@
+use crate::CommandId;
 use agents::{ClientName, Effort, Provider, SignInCode};
 use home::issue::{EditId, IssueChange, NewIssue};
 use home::{HomeCommand, IssueId};
@@ -7,7 +8,6 @@ use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};
 use host::session::{SessionCommand, SessionId};
 use host::sign_in::SignInCommand;
-use proto::CommandId;
 
 use crate::log::Kind;
 use crate::{Command, Hello, Open, Subscribe};

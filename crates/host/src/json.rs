@@ -12,57 +12,27 @@ use core::fmt;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A 128-bit id another crate owns, written as the host writes its own:
-/// in JSON its ULID text, in postcard its bits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Ulid(pub u128);
-
-impl Serialize for Ulid {
-    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
-        ulid::serialize(&self.0, out)
-    }
-}
-
-impl<'de> Deserialize<'de> for Ulid {
-    fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
-        ulid::deserialize(input).map(Self)
-    }
-}
-
-/// A 128-bit id as a ULID is written: Crockford's base 32 in 26 lower-case
-/// digits, the first carrying the top 3 bits.
+/// A 128-bit id as a ULID is written, read and written by the `ulid`
+/// crate: Crockford's base 32 in 26 lower-case digits.
 pub mod ulid {
     use super::{
         Deserializer, Serialize, Serializer, String, Visitor, de, fmt,
     };
 
-    const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-    const LEN: u32 = 26;
-
     pub fn write(id: u128, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (0..LEN).rev().try_for_each(|place| {
-            let digit = (id >> (place * 5)) & 31;
-            let byte = usize::try_from(digit)
-                .ok()
-                .and_then(|at| DIGITS.get(at))
-                .copied()
-                .unwrap_or(b'0');
-            fmt::Write::write_char(out, char::from(byte))
-        })
+        let mut buffer = [0; ::ulid::ULID_LEN];
+        let text = ::ulid::Ulid(id).array_to_str(&mut buffer);
+        text.make_ascii_lowercase();
+        out.write_str(text)
     }
 
     /// The id `text` writes, only as [`write`] writes it.
     pub fn parse(text: &str) -> Option<u128> {
-        let bytes = text.as_bytes();
-        if u32::try_from(bytes.len()).ok() != Some(LEN)
-            || bytes.first().is_none_or(|first| *first > b'7')
-        {
-            return None;
-        }
-        bytes.iter().try_fold(0u128, |id, byte| {
-            let digit = DIGITS.iter().position(|known| known == byte)?;
-            Some((id << 5) | u128::try_from(digit).ok()?)
-        })
+        let id = ::ulid::Ulid::from_string(text).ok()?.0;
+        let mut buffer = [0; ::ulid::ULID_LEN];
+        let written = ::ulid::Ulid(id).array_to_str(&mut buffer);
+        written.make_ascii_lowercase();
+        (*written == *text).then_some(id)
     }
 
     struct Text(u128);

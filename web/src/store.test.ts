@@ -5,7 +5,7 @@ import { scenario, scoped, serve } from "./link/replay.ts";
 import { makeStore, sessionsOf } from "./store.ts";
 import { keysOf, memoryStorage, page, when } from "./test-page.ts";
 
-// crates/proto/src/ticket.rs's worked example, and the host it names.
+// crates/host/src/fleet/ticket.rs's worked example, and the host it names.
 const exampleTicket =
 	"AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
 const exampleHost = `58${"66".repeat(31)}`;

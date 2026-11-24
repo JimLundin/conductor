@@ -58,7 +58,7 @@ What is built and what comes next. Update it in the commit that changes it.
   issue notes are removed. Explicit notes and the summary turn remain.
 
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
-  runs the standard's checks. The core crates are `proto`,
+  runs the standard's checks. The core crates are `link`,
   `agents`, `claude`, `codex`, `host` and `home`; `net`, `daemon`,
   `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`,
   `home-files` and `web-iroh` declare themselves the shell.
@@ -150,7 +150,7 @@ What is built and what comes next. Update it in the commit that changes it.
 
 - **Codex start errors** (#19). Failed starts and Continue keep the
   app-server’s JSON-RPC error or last nonempty stderr line.
-- **Shared adapter types** (#25). Both adapters emit the `proto` tool kinds,
+- **Shared adapter types** (#25). Both adapters emit the `agents` tool kinds,
   file changes and outcomes. The daemon keeps request ids, session state and
   approval wording.
 - **Agents.** `claude-cli` drives the `claude` CLI (stream-json control
@@ -172,7 +172,7 @@ What is built and what comes next. Update it in the commit that changes it.
   `conductor/42`), each message type naming its codec, with postcard kept
   between hosts (`conductor-fleet/3`); signed fleet payloads are signed
   over their exact JSON bytes and verified before they are parsed. The
-  app's Effect Schemas are generated from `proto`'s JSON Schema into
+  app's Effect Schemas are generated from `link`'s JSON Schema into
   `web/src/proto/` (`tools/schemas.sh`, the `schemas` suite). `web/` is
   Vite, React and Effect: a link per paired host that walks to Live,
   reconnects with a jittered backoff and resubscribes after its cursor;

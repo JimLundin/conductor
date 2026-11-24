@@ -17,9 +17,9 @@ use host::log::{Effect as Logged, FreshRequest};
 use host::log::{Event, HostSeq};
 use host::registry::{Catalog, Instances};
 use host::session::{EventKind, SessionId};
+use link::CommandId;
 use link::log::{Begun, Completion, Effect, Kind, Log as Core, Ticket};
 use link::{CommandResult, Subscribe, Welcome};
-use proto::CommandId;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::Stopped;
@@ -682,7 +682,7 @@ mod durability_tests {
     use agents::Output;
     use host::log::HostSeq;
     use host::session::{EventKind, SessionId};
-    use proto::CommandId;
+    use link::CommandId;
 
     use super::{
         BeginCommand, CommandLease, CommandResult, CommandStart, Kind, Log,

@@ -15,7 +15,7 @@ use host::serve::Relaunch;
 use host::session::{SessionId, SessionRefusal, SessionResult};
 use host::sign_in::SignInStep;
 use host::sign_in::{Effect as SignInEffect, Key};
-use proto::CommandId;
+use link::CommandId;
 use runtime::{Configuring, ProviderInstance, Runtime};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;

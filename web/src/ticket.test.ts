@@ -2,7 +2,7 @@ import { Result } from "effect";
 import { expect, test } from "vitest";
 import { parseJoin, parseTicket, TicketError } from "./ticket.ts";
 
-// crates/proto/src/ticket.rs's worked example.
+// crates/host/src/fleet/ticket.rs's worked example.
 const text =
 	"AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
 const ticket = {
@@ -11,11 +11,11 @@ const ticket = {
 	token: Array.from({ length: 16 }, () => 1),
 } as const;
 
-test("a ticket's text reads as proto's worked example", () => {
+test("a ticket's text reads as host's worked example", () => {
 	expect(parseTicket(text)).toEqual(Result.succeed(ticket));
 });
 
-test("malformed tickets are refused as proto refuses them", () => {
+test("malformed tickets are refused as host refuses them", () => {
 	expect(parseTicket("not base64!")).toEqual(
 		Result.fail(TicketError.Encoding()),
 	);

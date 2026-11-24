@@ -1,4 +1,4 @@
-// A ticket's text form, as crates/proto/src/ticket.rs writes it: base64url without padding of
+// A ticket's text form, as crates/host/src/fleet/ticket.rs writes it: base64url without padding of
 // `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`. The
 // generated schemas carry only its JSON form, so this is the app's one reader of the text.
 import { Data, Result } from "effect";

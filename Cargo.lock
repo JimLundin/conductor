@@ -895,7 +895,6 @@ dependencies = [
  "n0-future",
  "net",
  "postcard",
- "proto",
  "qrcode",
  "redb",
  "runtime",
@@ -1607,6 +1606,7 @@ dependencies = [
  "serde_json",
  "toml",
  "toml_parser",
+ "ulid",
 ]
 
 [[package]]
@@ -2287,11 +2287,11 @@ dependencies = [
  "home",
  "host",
  "postcard",
- "proto",
  "schemars",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "ulid",
 ]
 
 [[package]]
@@ -3300,15 +3300,6 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
-]
-
-[[package]]
-name = "proto"
-version = "0.1.0"
-dependencies = [
- "host",
- "schemars",
- "serde",
 ]
 
 [[package]]

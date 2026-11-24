@@ -21,6 +21,7 @@ use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
 use iroh::protocol::{AcceptError, ProtocolHandler};
+use link::CommandId;
 use link::log::Completion;
 use link::serve::{Admission, Stream};
 use link::{
@@ -28,7 +29,6 @@ use link::{
 };
 use n0_future::time::Instant;
 use net::wire::{self, WireError};
-use proto::CommandId;
 use tokio::sync::{Semaphore, broadcast, watch};
 
 use crate::Stopped;
@@ -602,7 +602,7 @@ mod diagnostics_tests {
     use host::session::{RequestId, SessionCommand, SessionId};
     use host::workspace::Kept;
     use link::Command;
-    use proto::CommandId;
+    use link::CommandId;
 
     #[test]
     fn command_and_workspace_diagnostics_omit_payloads() -> anyhow::Result<()> {

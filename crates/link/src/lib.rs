@@ -24,11 +24,14 @@
 
 extern crate alloc;
 
+mod command_id;
 pub mod frame;
 pub mod log;
 #[cfg(test)]
 mod schema;
 pub mod serve;
+
+pub use command_id::CommandId;
 
 use alloc::string::String;
 
@@ -41,7 +44,6 @@ use host::push::{PushCommand, PushResult};
 use host::registry::{Catalog, InstanceCommand, InstanceResult, Instances};
 use host::session::{SessionCommand, SessionResult};
 use host::sign_in::{SignIn, SignInCommand, SignInResult};
-use proto::CommandId;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

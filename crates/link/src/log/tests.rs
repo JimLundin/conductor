@@ -1,9 +1,9 @@
+use crate::CommandId;
 use agents::{Models, Output, Provider};
 use host::log::{Effect as Logged, Write};
 use host::log::{Epoch, Event, HostSeq};
 use host::registry::{Availability, InstanceId, InstanceStatus, Instances};
 use host::session::{EventKind, SessionId, SessionRefusal, SessionResult};
-use proto::CommandId;
 
 use crate::{CommandResult, Subscribe, Welcome};
 

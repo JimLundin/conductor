@@ -41,7 +41,6 @@ use alloc::string::String;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub use json::Ulid;
 pub use note::Note;
 
 /// A path on the host, as the host's OS spells it. The client never

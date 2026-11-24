@@ -29,7 +29,6 @@ home-files = { path = "../home-files" }
 host = { path = "../host" }
 install = { path = "../install" }
 link = { path = "../link" }
-proto = { path = "../proto" }
 qrcode = { version = "0.14.1", default-features = false, features = ["svg"] }
 runtime = { path = "../runtime" }
 sad-web-push = "0.12.0"

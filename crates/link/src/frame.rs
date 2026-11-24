@@ -89,6 +89,7 @@ mod tests {
     use alloc::collections::BTreeMap;
 
     use super::{HEADER_LEN, body_len, decode, encode, header};
+    use crate::CommandId;
     use agents::{
         Auth, ClientName, Credential, Decision, Effort, ModelChoice, ModelId,
         Models, Provider, TurnOutcome,
@@ -103,7 +104,6 @@ mod tests {
         EventKind, RequestId, Resolution, SessionCommand, SessionId,
         SessionRefusal, SessionResult,
     };
-    use proto::CommandId;
 
     use crate::{
         Command, CommandResult, Feed, Hello, HelloReply, Open, Subscribe,

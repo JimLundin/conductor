@@ -11,14 +11,12 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
-const LEN: u32 = 26;
-
 /// 128 random bits.
 ///
 /// A human-readable format writes it as a ULID is written, Crockford's
-/// base 32 in 26 lower-case digits, the first carrying the top 3 bits,
-/// since JSON's numbers are exact only to 2^53; others write the number.
+/// base 32 in 26 lower-case digits, since JSON's numbers are exact only to
+/// 2^53; others write the number. The `ulid` crate reads and writes the
+/// digits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EditId(pub u128);
 
@@ -26,33 +24,20 @@ impl EditId {
     /// The id `text` writes, only as `Display` writes it.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
-        let bytes = text.as_bytes();
-        if u32::try_from(bytes.len()).ok() != Some(LEN)
-            || bytes.first().is_none_or(|first| *first > b'7')
-        {
-            return None;
-        }
-        bytes
-            .iter()
-            .try_fold(0u128, |id, byte| {
-                let digit = DIGITS.iter().position(|known| known == byte)?;
-                Some((id << 5) | u128::try_from(digit).ok()?)
-            })
-            .map(Self)
+        let id = ulid::Ulid::from_string(text).ok()?.0;
+        let mut buffer = [0; ulid::ULID_LEN];
+        let written = ulid::Ulid(id).array_to_str(&mut buffer);
+        written.make_ascii_lowercase();
+        (*written == *text).then_some(Self(id))
     }
 }
 
 impl fmt::Display for EditId {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        (0..LEN).rev().try_for_each(|place| {
-            let digit = (self.0 >> (place * 5)) & 31;
-            let byte = usize::try_from(digit)
-                .ok()
-                .and_then(|at| DIGITS.get(at))
-                .copied()
-                .unwrap_or(b'0');
-            fmt::Write::write_char(out, char::from(byte))
-        })
+        let mut buffer = [0; ulid::ULID_LEN];
+        let text = ulid::Ulid(self.0).array_to_str(&mut buffer);
+        text.make_ascii_lowercase();
+        out.write_str(text)
     }
 }
 

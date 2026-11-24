@@ -31,7 +31,7 @@ use host::session::{
 };
 use host::sign_in::{CredentialTarget, Effect as SignInEffect, Key, SignIns};
 use host::sign_in::{SignIn, SignInCommand, SignInRefusal, SignInResult};
-use proto::CommandId;
+use link::CommandId;
 use runtime::Instance;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::{Id, JoinSet};

@@ -25,7 +25,7 @@ use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use host::registry::{AccountAdoption, AdoptionReplay, Change};
 use host::registry::{Catalog, Instance, InstanceId, Roster};
-use proto::CommandId;
+use link::CommandId;
 use serde::{Deserialize, Serialize};
 
 use adoption::Adoption;
