@@ -5,28 +5,34 @@ path = "knip.json"
 rule = "drift:ignoreBinaries:wasm-pack"
 reason = "`npm run pipe` runs wasm-pack, a Rust tool installed beside the toolchain, not an npm package"
 
-# Rules the move from Biome to Oxlint brought in, each to be fixed by the
-# rewrite of spec 0tz0t8ce.
+# vite.config.ts is the web app's vitest config. It sets fast-check's runs
+# from profiles/*.ts by mode (10 fast, 1000 full, 10 with seed 42 for
+# mutation), which drift can't read, since it reads the modes of the
+# standard's vitest.config.ts. They go when the tests move to @effect/vitest
+# and the standard's config.
 
 [[exception]]
-path = "vitest.config.ts"
+path = "vite.config.ts"
 rule = "drift:arbitrary.fast"
-reason = "migrating to Oxlint, spec 0tzedg8h"
+reason = "fast-check profiles in profiles/*.ts until the tests move to @effect/vitest, spec 0tzedg8h"
 
 [[exception]]
-path = "vitest.config.ts"
+path = "vite.config.ts"
 rule = "drift:arbitrary.full"
-reason = "migrating to Oxlint, spec 0tzedg8h"
+reason = "fast-check profiles in profiles/*.ts until the tests move to @effect/vitest, spec 0tzedg8h"
 
 [[exception]]
-path = "vitest.config.ts"
+path = "vite.config.ts"
 rule = "drift:arbitrary.mutation"
-reason = "migrating to Oxlint, spec 0tzedg8h"
+reason = "fast-check profiles in profiles/*.ts until the tests move to @effect/vitest, spec 0tzedg8h"
 
 [[exception]]
 path = "knip.json"
 rule = "drift:ignoreFiles:profiles/mutation.ts"
-reason = "migrating to Oxlint, spec 0tzedg8h"
+reason = "the mutation profile of fast-check, which nothing loads yet, until the tests move to @effect/vitest, spec 0tzedg8h"
+
+# Rules the move from Biome to Oxlint brought in, each to be fixed by the
+# rewrite of spec 0tz0t8ce.
 
 [[exception]]
 path = "scripts/schemas.ts"
