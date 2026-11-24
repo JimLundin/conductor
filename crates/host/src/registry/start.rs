@@ -48,11 +48,13 @@ pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
     }
 }
 
-/// The first checkout of a project or an issue's project.
+/// The first checkout of a project or an issue's project. The session's
+/// project follows from its worktree's repository, so it isn't kept apart.
 ///
 /// # Errors
 ///
-/// As [`place`].
+/// The host has no home, its home lists no such project or issue, or the
+/// project has no checkout on the host.
 pub fn place_in_home(
     at: InHome,
     home: Option<&Home>,
