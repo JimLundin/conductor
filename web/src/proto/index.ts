@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/42";
+export type Alpn = "conductor/43";
 
-export const Alpn = Schema.Literal("conductor/42").annotate({
+export const Alpn = Schema.Literal("conductor/43").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -946,47 +946,51 @@ export const PairRequest = Schema.Struct({
 	name: Schema.String,
 }).annotate({ identifier: "PairRequest" });
 
-export type Ticket = {
-	readonly host: globalThis.ReadonlyArray<number>;
-	readonly relay: string;
-	readonly token: AuthToken;
-};
+export type EnrollmentToken = globalThis.ReadonlyArray<number>;
 
-export const Ticket = Schema.Struct({
-	host: Schema.Array(
-		Schema.Number.annotate({ format: "uint8" })
-			.check(Schema.isInt().annotate({ expected: "an integer" }))
-			.check(
-				Schema.isGreaterThanOrEqualTo(0).annotate({
-					expected: "a value greater than or equal to 0",
-				}),
-			)
-			.check(
-				Schema.isLessThanOrEqualTo(255).annotate({
-					expected: "a value less than or equal to 255",
-				}),
-			),
-	)
+export const EnrollmentToken = Schema.Array(
+	Schema.Number.annotate({ format: "uint8" })
+		.check(Schema.isInt().annotate({ expected: "an integer" }))
 		.check(
-			Schema.isMinLength(32).annotate({
-				expected: "a value with a length of at least 32",
+			Schema.isGreaterThanOrEqualTo(0).annotate({
+				expected: "a value greater than or equal to 0",
 			}),
 		)
 		.check(
-			Schema.isMaxLength(32).annotate({
-				expected: "a value with a length of at most 32",
+			Schema.isLessThanOrEqualTo(255).annotate({
+				expected: "a value less than or equal to 255",
 			}),
 		),
-	relay: Schema.String,
-	token: AuthToken,
-}).annotate({ identifier: "Ticket" });
+)
+	.annotate({
+		description:
+			"The secret a standalone host requires of the root host that enrolls it\nin a fleet.",
+	})
+	.check(
+		Schema.isMinLength(16).annotate({
+			expected: "a value with a length of at least 16",
+		}),
+	)
+	.check(
+		Schema.isMaxLength(16).annotate({
+			expected: "a value with a length of at most 16",
+			identifier: "EnrollmentToken",
+		}),
+	);
 
 export type FleetCommand =
 	| "Status"
 	| "Invite"
 	| { readonly Revoke: globalThis.ReadonlyArray<number> }
 	| { readonly Approve: PairRequest }
-	| { readonly Admit: { readonly name: string; readonly ticket: Ticket } };
+	| {
+			readonly Admit: {
+				readonly name: string;
+				readonly node: globalThis.ReadonlyArray<number>;
+				readonly relay: string;
+				readonly token: EnrollmentToken;
+			};
+	  };
 
 export const FleetCommand = Schema.Union(
 	[
@@ -1019,7 +1023,38 @@ export const FleetCommand = Schema.Union(
 		}),
 		Schema.Struct({ Approve: PairRequest }),
 		Schema.Struct({
-			Admit: Schema.Struct({ name: Schema.String, ticket: Ticket }),
+			Admit: Schema.Struct({
+				name: Schema.String,
+				node: Schema.Array(
+					Schema.Number.annotate({ format: "uint8" })
+						.check(Schema.isInt().annotate({ expected: "an integer" }))
+						.check(
+							Schema.isGreaterThanOrEqualTo(0).annotate({
+								expected: "a value greater than or equal to 0",
+							}),
+						)
+						.check(
+							Schema.isLessThanOrEqualTo(255).annotate({
+								expected: "a value less than or equal to 255",
+							}),
+						),
+				)
+					.check(
+						Schema.isMinLength(32).annotate({
+							expected: "a value with a length of at least 32",
+						}),
+					)
+					.check(
+						Schema.isMaxLength(32).annotate({
+							expected: "a value with a length of at most 32",
+						}),
+					),
+				relay: Schema.String,
+				token: EnrollmentToken,
+			}),
+		}).annotate({
+			description:
+				"Enrolls the standalone host `node`, reached through `relay`, which\nrequires `token`.",
 		}),
 	],
 	{ mode: "oneOf" },
@@ -2963,3 +2998,38 @@ export const Open = Schema.Union(
 	description: "The first frame on every client-opened bi-stream.",
 	identifier: "Open",
 });
+
+export type Ticket = {
+	readonly host: globalThis.ReadonlyArray<number>;
+	readonly relay: string;
+	readonly token: AuthToken;
+};
+
+export const Ticket = Schema.Struct({
+	host: Schema.Array(
+		Schema.Number.annotate({ format: "uint8" })
+			.check(Schema.isInt().annotate({ expected: "an integer" }))
+			.check(
+				Schema.isGreaterThanOrEqualTo(0).annotate({
+					expected: "a value greater than or equal to 0",
+				}),
+			)
+			.check(
+				Schema.isLessThanOrEqualTo(255).annotate({
+					expected: "a value less than or equal to 255",
+				}),
+			),
+	)
+		.check(
+			Schema.isMinLength(32).annotate({
+				expected: "a value with a length of at least 32",
+			}),
+		)
+		.check(
+			Schema.isMaxLength(32).annotate({
+				expected: "a value with a length of at most 32",
+			}),
+		),
+	relay: Schema.String,
+	token: AuthToken,
+}).annotate({ identifier: "Ticket" });

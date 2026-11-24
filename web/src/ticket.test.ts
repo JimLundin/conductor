@@ -2,7 +2,7 @@ import { Result } from "effect";
 import { expect, test } from "vitest";
 import { parseJoin, parseTicket, TicketError } from "./ticket.ts";
 
-// crates/host/src/fleet/ticket.rs's worked example.
+// crates/link/src/ticket.rs's worked example.
 const text =
 	"AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
 const ticket = {

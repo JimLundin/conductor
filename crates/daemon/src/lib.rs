@@ -22,10 +22,10 @@ use std::path::Path;
 
 use anyhow::Context;
 use host::Note;
-use host::fleet::AuthToken;
 use host::log::Epoch;
 use host::secret::Secret;
 use iroh::SecretKey;
+use link::AuthToken;
 use tokio::sync::{mpsc, oneshot};
 
 /// The actor stopped: nobody can reach it any more.

@@ -89,12 +89,12 @@ mod tests {
     use alloc::collections::BTreeMap;
 
     use super::{HEADER_LEN, body_len, decode, encode, header};
+    use crate::AuthToken;
     use crate::CommandId;
     use agents::{
         Auth, ClientName, Credential, Decision, Effort, ModelChoice, ModelId,
         Models, Provider, TurnOutcome,
     };
-    use host::fleet::AuthToken;
     use host::log::{Epoch, Event, HostSeq};
     use host::registry::{
         Availability, Catalog, InstanceCommand, InstanceId, InstanceStatus,

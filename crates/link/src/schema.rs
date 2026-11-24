@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use schemars::generate::SchemaSettings;
 use serde_json::{Value, json};
 
-use crate::{ALPN, CommandResult, Feed, HelloReply, Open};
+use crate::{ALPN, CommandResult, Feed, HelloReply, Open, Ticket};
 
 fn path() -> PathBuf {
     [
@@ -24,8 +24,9 @@ fn path() -> PathBuf {
     .join("proto.schema.json")
 }
 
-/// Every frame on the link and every type they reach, in `$defs`, as
-/// serde writes them, and the link's ALPN as `Alpn`.
+/// Every frame on the link, the ticket a client reaches a host by and every
+/// type they reach, in `$defs`, as serde writes them, and the link's ALPN
+/// as `Alpn`.
 fn document() -> Result<Value, std::str::Utf8Error> {
     let settings = SchemaSettings::draft2020_12().for_serialize();
     let meta = settings.meta_schema.clone();
@@ -34,6 +35,7 @@ fn document() -> Result<Value, std::str::Utf8Error> {
     generator.subschema_for::<HelloReply>();
     generator.subschema_for::<CommandResult>();
     generator.subschema_for::<Feed>();
+    generator.subschema_for::<Ticket>();
     let mut definitions = generator.take_definitions(true);
     definitions.insert(
         String::from("Alpn"),

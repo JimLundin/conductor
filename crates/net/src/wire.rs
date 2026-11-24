@@ -1,5 +1,6 @@
-//! Frame I/O on iroh streams: the client link's frames ([`link::frame`])
-//! and, in [`fleet`], the fleet protocol's ([`host::fleet::frame`]).
+//! Frame I/O on iroh streams: the client link's frames ([`link::frame`]),
+//! and the reads of a length-prefixed frame that another framing composes
+//! ([`read_header`], [`read_body`]).
 
 use iroh::endpoint::{
     ClosedStream, ReadExactError, RecvStream, SendStream, WriteError,
@@ -20,8 +21,6 @@ pub enum WireError {
     Limit { length: usize, limit: usize },
     #[error("{0}")]
     Frame(#[from] link::frame::FrameError),
-    #[error("{0}")]
-    FleetFrame(#[from] host::fleet::frame::FrameError),
 }
 
 /// Writes `msg` as one frame.
@@ -60,72 +59,47 @@ pub async fn read_bounded<T: Frame>(
     recv: &mut RecvStream,
     limit: usize,
 ) -> Result<Option<T>, WireError> {
-    let body =
-        read_body(recv, limit, |header| Ok(link::frame::body_len(header)?))
-            .await?;
-    Ok(body.map(|read| link::frame::decode(&read)).transpose()?)
+    let Some(header) = read_header::<{ link::frame::HEADER_LEN }>(recv).await?
+    else {
+        return Ok(None);
+    };
+    let body = read_body(recv, link::frame::body_len(header)?, limit).await?;
+    Ok(Some(link::frame::decode(&body)?))
 }
 
-/// Frame I/O between hosts.
-pub mod fleet {
-    use host::fleet::frame::{self, Frame};
-    use iroh::endpoint::{RecvStream, SendStream};
-
-    use super::WireError;
-
-    /// Writes `msg` as one frame.
-    ///
-    /// # Errors
-    ///
-    /// [`WireError::FleetFrame`] when `msg` doesn't encode, and
-    /// [`WireError::Write`] when the stream fails.
-    pub async fn write<T: Frame + Sync>(
-        send: &mut SendStream,
-        msg: &T,
-    ) -> Result<(), WireError> {
-        Ok(send.write_all(&frame::encode(msg)?).await?)
-    }
-
-    /// Reads a frame of at most `limit` bytes: `Ok(None)` when the peer
-    /// finished the stream between frames.
-    ///
-    /// # Errors
-    ///
-    /// Returns the read or decoding error, or rejects an oversized frame
-    /// before allocating its body.
-    pub async fn read_bounded<T: Frame>(
-        recv: &mut RecvStream,
-        limit: usize,
-    ) -> Result<Option<T>, WireError> {
-        let body = super::read_body(recv, limit, |header| {
-            Ok(frame::body_len(header)?)
-        })
-        .await?;
-        Ok(body.map(|read| frame::decode(&read)).transpose()?)
-    }
-}
-
-/// Reads one frame's body undecoded, its length announced by a header
-/// `body_len` reads: `Ok(None)` when the peer finished the stream between
-/// frames.
-async fn read_body(
+/// Reads a frame's header of `N` bytes: `Ok(None)` when the peer finished
+/// the stream between frames.
+///
+/// # Errors
+///
+/// [`WireError::Read`] when the stream fails or ends inside the header.
+pub async fn read_header<const N: usize>(
     recv: &mut RecvStream,
-    limit: usize,
-    body_len: impl FnOnce([u8; link::frame::HEADER_LEN]) -> Result<usize, WireError>,
-) -> Result<Option<Vec<u8>>, WireError> {
-    let mut header = [0u8; link::frame::HEADER_LEN];
+) -> Result<Option<[u8; N]>, WireError> {
+    let mut header = [0u8; N];
     match recv.read_exact(&mut header).await {
-        Ok(()) => {
-            let length = body_len(header)?;
-            if length > limit {
-                return Err(WireError::Limit { length, limit });
-            }
-            let mut body =
-                std::iter::repeat_n(0u8, length).collect::<Vec<u8>>();
-            recv.read_exact(&mut body).await?;
-            Ok(Some(body))
-        }
+        Ok(()) => Ok(Some(header)),
         Err(ReadExactError::FinishedEarly(0)) => Ok(None),
         Err(err) => Err(err.into()),
     }
+}
+
+/// Reads the `length` bytes of a body its header announced.
+///
+/// # Errors
+///
+/// [`WireError::Limit`] when `length` exceeds `limit`, before allocating
+/// the body, and [`WireError::Read`] when the stream fails or ends inside
+/// it.
+pub async fn read_body(
+    recv: &mut RecvStream,
+    length: usize,
+    limit: usize,
+) -> Result<Vec<u8>, WireError> {
+    if length > limit {
+        return Err(WireError::Limit { length, limit });
+    }
+    let mut body = std::iter::repeat_n(0u8, length).collect::<Vec<u8>>();
+    recv.read_exact(&mut body).await?;
+    Ok(body)
 }

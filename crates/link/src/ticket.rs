@@ -1,5 +1,5 @@
-//! What a client needs to reach and authenticate to a host, as text that fits
-//! a URL fragment (`#join=<ticket>`).
+//! What a client needs to reach and be admitted to a host, as text that
+//! fits a URL fragment (`#join=<ticket>`).
 //!
 //! Binary layout, then base64url without padding:
 //! `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`.
@@ -55,6 +55,11 @@ impl AuthToken {
     #[must_use]
     pub const fn from_bytes(bytes: [u8; TOKEN_LEN]) -> Self {
         Self(bytes)
+    }
+
+    #[must_use]
+    pub const fn to_bytes(self) -> [u8; TOKEN_LEN] {
+        self.0
     }
 
     /// Checks `self` against the host's token in constant time, so the

@@ -394,7 +394,7 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
         b"fixture backup passphrase",
     )?;
     let target_path = path.join("standalone");
-    let legacy = host::fleet::AuthToken::from_bytes([7; 16]);
+    let legacy = host::fleet::EnrollmentToken::from_bytes([7; 16]);
     let (slot, _) = tokio::sync::watch::channel(None);
     let target_router = Router::builder(target.clone())
         .accept(
@@ -403,7 +403,7 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
         )
         .spawn();
     let target_host = entry(&target, "standalone");
-    let wrong = host::fleet::AuthToken::from_bytes([8; 16]);
+    let wrong = host::fleet::EnrollmentToken::from_bytes([8; 16]);
     assert!(
         admit_existing(
             &root_endpoint,

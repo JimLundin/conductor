@@ -30,14 +30,15 @@ pub mod log;
 #[cfg(test)]
 mod schema;
 pub mod serve;
+mod ticket;
 
 pub use command_id::CommandId;
+pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
 
 use alloc::string::String;
 
 use agents::ClientName;
 use home::{Home, HomeCommand, HomeResult};
-use host::fleet::AuthToken;
 use host::fleet::{DeviceHello, FleetCommand, FleetResult};
 use host::log::{Epoch, Event, HostSeq};
 use host::push::{PushCommand, PushResult};
@@ -50,7 +51,7 @@ use serde::{Deserialize, Serialize};
 /// The ALPN of the client link. It changes with every change to the wire
 /// types (see the crate docs), so an old client fails at the handshake
 /// instead of mid-stream.
-pub const ALPN: &[u8] = b"conductor/42";
+pub const ALPN: &[u8] = b"conductor/43";
 
 /// The first frame on every client-opened bi-stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

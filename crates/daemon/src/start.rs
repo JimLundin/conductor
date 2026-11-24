@@ -14,7 +14,6 @@ use crate::serve::Conductor;
 use crate::sign_in::Signing;
 use agents::Provider;
 use anyhow::Context;
-use host::fleet::Ticket;
 use host::registry::{AccountAdoption, sign_in_instance};
 use host::registry::{Catalog, Instance, InstanceId};
 use host::start::{Mode, Next, Output};
@@ -23,6 +22,7 @@ use install::process::command;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode, RelayUrl};
+use link::Ticket;
 use net::Target;
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
@@ -305,7 +305,7 @@ pub struct HostOptions {
 pub struct Hosted {
     router: Router,
     log: Log,
-    token: host::fleet::AuthToken,
+    token: link::AuthToken,
     initialized: tokio::sync::watch::Receiver<bool>,
     fleet_lock: std::fs::File,
     has_fleet: bool,
@@ -374,11 +374,13 @@ pub async fn start(
         assemble(plugins, options, fleet_slot.clone(), endpoint.clone()).await;
     match started {
         Ok((conductor, log, token, initialized)) => {
+            // A standalone host enrolls with its ticket's token, so the
+            // owner admits it to a fleet by its ticket.
             let protocol = crate::fleet::Protocol::new(
                 fleet_slot.clone(),
                 data,
                 endpoint.id(),
-                token,
+                host::fleet::EnrollmentToken::from_bytes(token.to_bytes()),
             );
             let router = Router::builder(endpoint.clone())
                 .accept(link::ALPN, conductor)
@@ -436,7 +438,7 @@ async fn assemble(
 ) -> anyhow::Result<(
     Conductor,
     Log,
-    host::fleet::AuthToken,
+    link::AuthToken,
     tokio::sync::watch::Receiver<bool>,
 )> {
     let HostOptions {

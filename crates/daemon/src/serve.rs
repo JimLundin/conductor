@@ -8,7 +8,6 @@ use std::time::Duration;
 
 use agents::ClientName;
 use home::{Home, HomeResult};
-use host::fleet::AuthToken;
 use host::fleet::FleetResult;
 use host::log::Event;
 use host::push::{PushCommand, PushResult};
@@ -21,6 +20,7 @@ use iroh::endpoint::{
     ClosedStream, Connection, ConnectionError, RecvStream, SendStream,
 };
 use iroh::protocol::{AcceptError, ProtocolHandler};
+use link::AuthToken;
 use link::CommandId;
 use link::log::Completion;
 use link::serve::{Admission, Stream};
