@@ -33,7 +33,7 @@ pub mod serve;
 mod ticket;
 
 pub use command_id::CommandId;
-pub use ticket::{AuthToken, Ticket, TicketError, WrongToken};
+pub use ticket::{AuthToken, Ticket, WrongToken};
 
 use alloc::string::String;
 

@@ -1672,9 +1672,8 @@ The browser app is TypeScript, React and Effect in `web/`, over iroh
 compiled to wasm (ADR 0001). The link to a host and the fold of its events
 live only there. `crates/client`, `net`'s `HostLink` and the Rust fold
 (`HostFold`, `HostView`) are gone, and `net` builds natively only: the
-daemon keeps its `wire` I/O, ticket addressing (`net::address`,
-`net::Target`) and the relay helpers (`net::without_root_dot`,
-`net::platform::n0_relays`).
+daemon keeps its `wire` I/O and the relay helpers
+(`net::without_root_dot`, `net::platform::n0_relays`).
 
 ### 7.1 The pipe (`crates/web-iroh`)
 
@@ -1768,8 +1767,13 @@ Nothing there is edited by hand. Encoding is tested only in Rust, by
 `link`'s frame tests; the app's tests check what it does with decoded
 values, and `web/src/schemas.test.ts` decodes every recorded feed
 (§9) with the generated schemas. The schemas carry a ticket only in its
-JSON form, so `web/src/ticket.ts` is the app's one reader of a ticket's
-text (base64url of its version, host id, token and relay URL).
+JSON form, so `web/src/ticket.ts` is the one reader of a ticket's text
+(base64url of its version, host id, token and relay URL), and Rust has
+only its writer, `link::Ticket::to_text`. The reader is tested against
+the worked example `link` publishes as `crates/link/ticket.example.json`,
+whose writer test fails when the file no longer holds what it writes.
+`ticket.ts` also holds the app's one `#join=` marker, which the daemon
+writes in `start.rs`.
 
 ### 7.4 The link (`web/src/link.ts`, `web/src/link/`)
 

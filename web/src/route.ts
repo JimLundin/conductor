@@ -1,6 +1,7 @@
 import { Data } from "effect";
 import type { SessionId } from "./schemas/index.ts";
 import type { HostKey } from "./saved.ts";
+import { joinMarker } from "./ticket.ts";
 
 // The screen a URL fragment names. Pages serves one path, so every screen is a fragment.
 export type Route = Data.TaggedEnum<{
@@ -13,10 +14,9 @@ export type Route = Data.TaggedEnum<{
 
 export const Route = Data.taggedEnum<Route>();
 
-const join = "#join=";
-
 // Whether the fragment is a join link's, which pairs its ticket instead of naming a screen.
-export const isJoin = (fragment: string): boolean => fragment.startsWith(join);
+export const isJoin = (fragment: string): boolean =>
+	fragment.startsWith(joinMarker);
 
 const screen = (parts: readonly string[]): Route => {
 	const [first, host, kind, session] = parts;
