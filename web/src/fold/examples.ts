@@ -1,4 +1,5 @@
 // Events for the fold's worked examples, ported from the Rust HostView's tests.
+import { isDelta } from "../link/feed.ts";
 import { Update } from "../link/host.ts";
 import type { RecordedFeed } from "../recorded-feeds.ts";
 import type {
@@ -7,7 +8,7 @@ import type {
 	SubagentEvent,
 	ToolPhase,
 } from "../schemas/index.ts";
-import { applyUpdate, emptyHost, type Host, isDelta } from "./host.ts";
+import { applyUpdate, emptyHost, type Host } from "./host.ts";
 import type { Session } from "./session.ts";
 import { Approval, Item, RequestState, type ToolState } from "./transcript.ts";
 

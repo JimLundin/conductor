@@ -1,4 +1,5 @@
 // A host's welcome and feed folded into what the views render: the only fold of its events.
+import { isDelta } from "../link/feed.ts";
 import type { Update } from "../link/host.ts";
 import type {
 	Catalog,
@@ -23,13 +24,6 @@ interface Host {
 }
 
 type Sessions = Host["sessions"];
-
-// A live delta repeats the last stored seq, which may be another session's.
-const isDelta = (event: Event): boolean =>
-	typeof event.kind === "object" &&
-	"Agent" in event.kind &&
-	("AssistantDelta" in event.kind.Agent ||
-		"ReasoningDelta" in event.kind.Agent);
 
 const without = (sessions: Sessions, id: SessionId): Sessions =>
 	new Map([...sessions].filter(([known]) => known !== id));
@@ -127,4 +121,4 @@ const directories = (host: Host): readonly SessionDirectory[] => [
 	),
 ];
 
-export { applyUpdate, directories, emptyHost, type Host, isDelta, recent };
+export { applyUpdate, directories, emptyHost, type Host, recent };

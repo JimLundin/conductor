@@ -1,7 +1,7 @@
 // The recorded host feeds, and a fake host that replays one to a link over the fake pipe.
 import { Deferred, Effect, Ref, Schema, type Scope, Stream } from "effect";
 import type { FakeHost } from "../fake-pipe.ts";
-import { isDelta } from "../fold/host.ts";
+import { isDelta } from "./feed.ts";
 import type { HostLink, LinkState, Update } from "./host.ts";
 import type { Connection, Pipe } from "../pipe.ts";
 import {

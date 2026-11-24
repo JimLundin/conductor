@@ -1,9 +1,9 @@
 // A subscription's frames, applied once each and in order after the link's cursor.
 import { Effect, Option, Ref, SubscriptionRef } from "effect";
-import { isDelta } from "../fold/host.ts";
 import type { Connection } from "../pipe.ts";
 import {
 	type Epoch,
+	type Event,
 	Feed,
 	type HostSeq,
 	type Welcome,
@@ -17,6 +17,13 @@ import {
 	publish,
 	Update,
 } from "./host.ts";
+
+// A live delta repeats the last stored seq, which may be another session's.
+const isDelta = (event: Event): boolean =>
+	typeof event.kind === "object" &&
+	"Agent" in event.kind &&
+	("AssistantDelta" in event.kind.Agent ||
+		"ReasoningDelta" in event.kind.Agent);
 
 // Keeps the cursor if the host's log is the one it points into; otherwise starts over from the
 // beginning of the new epoch.
@@ -123,4 +130,4 @@ const subscribe = (
 		);
 	});
 
-export { adopt, subscribe };
+export { adopt, isDelta, subscribe };
