@@ -1,7 +1,7 @@
 //! The credentials Codex takes, as the forms the app shows, and what their
 //! values become.
 
-use proto::{
+use agents::{
     Credential, CredentialForm, Field, FieldKind, ModelId, ProviderInfo,
 };
 
@@ -171,7 +171,7 @@ pub fn default_model(credential: &CodexCredential) -> Option<ModelId> {
 
 #[cfg(test)]
 mod tests {
-    use proto::Credential;
+    use agents::Credential;
 
     use super::{CodexCredential, account, credential, info};
 
@@ -266,11 +266,11 @@ mod tests {
         );
         assert_eq!(
             info().account(&stored),
-            Ok(proto::Account::Named(String::from("Work")))
+            Ok(agents::Account::Named(String::from("Work")))
         );
         assert_eq!(
             info().auth(&stored),
-            proto::Auth::Stored {
+            agents::Auth::Stored {
                 kind: String::from("api_key"),
                 url: None
             }

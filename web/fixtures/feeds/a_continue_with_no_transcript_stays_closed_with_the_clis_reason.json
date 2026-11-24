@@ -336,7 +336,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "18" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "18" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -347,7 +347,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "18" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "18" } } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}

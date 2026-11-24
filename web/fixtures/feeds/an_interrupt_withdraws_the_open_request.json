@@ -339,15 +339,17 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq",
-						"phase": {
-							"Started": {
-								"tool": {
-									"FileChange": {
-										"files": [
-											{ "change": "Write", "path": "/tmp/s1-scratch/d.txt" }
-										]
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq",
+							"phase": {
+								"Started": {
+									"tool": {
+										"FileChange": {
+											"files": [
+												{ "change": "Write", "path": "/tmp/s1-scratch/d.txt" }
+											]
+										}
 									}
 								}
 							}
@@ -404,9 +406,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq",
-						"phase": { "Finished": { "outcome": "Failed" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq",
+							"phase": { "Finished": { "outcome": "Failed" } }
+						}
 					}
 				},
 				"seq": 10,

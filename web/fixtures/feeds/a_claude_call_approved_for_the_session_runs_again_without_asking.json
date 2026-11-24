@@ -339,11 +339,13 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
-						"phase": {
-							"Started": {
-								"tool": { "Command": { "command": "touch t1.txt" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
+							"phase": {
+								"Started": {
+									"tool": { "Command": { "command": "touch t1.txt" } }
+								}
 							}
 						}
 					}
@@ -400,9 +402,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_0194hqw8EXmFKbEqNMeNMkWf",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 10,
@@ -415,29 +419,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Ran `touch t1." } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "txt`. It completed with" } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " no output." } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Ran `touch t1." } } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -449,8 +431,34 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantMessage": {
-						"text": "Ran `touch t1.txt`. It completed with no output."
+					"Agent": { "AssistantDelta": { "text": "txt`. It completed with" } }
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " no output." } } },
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantMessage": {
+							"text": "Ran `touch t1.txt`. It completed with no output."
+						}
 					}
 				},
 				"seq": 11,
@@ -516,11 +524,13 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
-						"phase": {
-							"Started": {
-								"tool": { "Command": { "command": "touch t1.txt" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
+							"phase": {
+								"Started": {
+									"tool": { "Command": { "command": "touch t1.txt" } }
+								}
 							}
 						}
 					}
@@ -536,9 +546,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_015276Epur1cWgLdAb2EXFPF",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 17,
@@ -551,106 +563,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Ran `touch t1" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": ".txt` again. It complet" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "ed with no output." } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " Since `touch` only" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " updates the" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " timestamp on" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " an" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " existing file, the" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " file's" } },
-				"seq": 17,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " contents are unchanged." } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Ran `touch t1" } } },
 				"seq": 17,
 				"session": "00000000000000000000000001"
 			}
@@ -662,8 +575,119 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantMessage": {
-						"text": "Ran `touch t1.txt` again. It completed with no output. Since `touch` only updates the timestamp on an existing file, the file's contents are unchanged."
+					"Agent": { "AssistantDelta": { "text": ".txt` again. It complet" } }
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": "ed with no output." } }
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": " Since `touch` only" } }
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " updates the" } } },
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " timestamp on" } } },
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " an" } } },
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": " existing file, the" } }
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": " file's" } } },
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": " contents are unchanged." } }
+				},
+				"seq": 17,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantMessage": {
+							"text": "Ran `touch t1.txt` again. It completed with no output. Since `touch` only updates the timestamp on an existing file, the file's contents are unchanged."
+						}
 					}
 				},
 				"seq": 18,

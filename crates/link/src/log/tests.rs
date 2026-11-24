@@ -1,8 +1,8 @@
 use host::log::{Effect as Logged, Write};
 use proto::{
     Availability, CommandId, Epoch, Event, EventKind, HostSeq, InstanceId,
-    InstanceStatus, Instances, Models, Provider, SessionId, SessionRefusal,
-    SessionResult,
+    InstanceStatus, Instances, Models, Output, Provider, SessionId,
+    SessionRefusal, SessionResult,
 };
 
 use crate::{CommandResult, Subscribe, Welcome};
@@ -14,9 +14,9 @@ fn log() -> Log {
 }
 
 fn delta(text: &str) -> EventKind {
-    EventKind::AssistantDelta {
+    EventKind::Agent(Output::AssistantDelta {
         text: String::from(text),
-    }
+    })
 }
 
 fn event(seq: u64, kind: EventKind) -> Event {

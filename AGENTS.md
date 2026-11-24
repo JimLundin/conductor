@@ -101,7 +101,7 @@ Home Screen. The design is in
   and the host's options. `daemon::serve` uses the same entry point for
   `conductord host`. Instances in the stored roster and those added during
   a run use the same plugin launch path. Credentials are generic form values
-  (`proto::Credential`); each provider's core reads its own. Only the
+  (`agents::Credential`); each provider's core reads its own. Only the
   binary, `crates/conductord`, wires the providers in. Its flags are
   `conductord host --cli <provider>=<path> --model <provider>=<model>`
   (each repeatable, the defaults of that provider's instances), `--home

@@ -12,7 +12,43 @@ use alloc::vec::Vec;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{Account, Auth, Provider};
+/// Who the provider says an instance signs in as.
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+)]
+pub enum Account {
+    /// The provider's own sign-in before it has named an account: where a
+    /// sign-in runs, and a CLI given on the host's command line, signed in
+    /// however it is. Each provider has one.
+    Own,
+    /// As the provider names it: a subscription's email, or what the
+    /// credential's form names, such as a gateway's URL.
+    Named(String),
+}
+
+/// How an instance's CLI reaches its model. It names the kind and never
+/// carries a secret: credentials are write-only (§6.3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum Auth {
+    /// A credential the host stores, of this kind, reaching this URL if
+    /// its form has one ([`ProviderInfo::auth`]).
+    Stored { kind: String, url: Option<String> },
+    /// The CLI's own sign-in in the instance's private home, from the app
+    /// (`StartSignIn`) or on the host (`conductord login <instance>`).
+    SignedIn,
+    /// A CLI the host was started with (`--cli <provider>=<path>`),
+    /// which signs in however it does.
+    Unmanaged,
+}
 
 /// What a field holds, which says how the app shows it and how the host
 /// checks it.
@@ -67,12 +103,6 @@ pub struct ProviderInfo {
     pub credentials: Vec<CredentialForm>,
 }
 
-/// What the host's plugins describe, by provider.
-#[derive(
-    Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
-)]
-pub struct Catalog(pub BTreeMap<Provider, ProviderInfo>);
-
 /// One instance's credential: the values of its kind's form, by field id.
 /// As `SetCredential` carries it and as the host stores it. The instance
 /// it belongs to names the provider.
@@ -96,23 +126,6 @@ impl Credential {
     #[must_use]
     pub fn value(&self, id: &str) -> &str {
         self.values.get(id).map_or("", String::as_str)
-    }
-}
-
-impl Catalog {
-    /// `None` when the host runs no plugin for `provider`.
-    #[must_use]
-    pub fn of(&self, provider: &Provider) -> Option<&ProviderInfo> {
-        self.0.get(provider)
-    }
-
-    /// What the app calls `provider`: its plugin's label, else its name.
-    #[must_use]
-    pub fn label(&self, provider: &Provider) -> String {
-        self.of(provider).map_or_else(
-            || String::from(provider.name()),
-            |info| info.label.clone(),
-        )
     }
 }
 
@@ -265,8 +278,8 @@ mod tests {
     use alloc::string::String;
     use alloc::vec::Vec;
 
+    use super::{Account, Auth};
     use super::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
-    use crate::{Account, Auth};
 
     fn field(id: &str, kind: FieldKind, required: bool) -> Field {
         Field {

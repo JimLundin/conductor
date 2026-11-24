@@ -12,6 +12,7 @@ use alloc::collections::BTreeSet;
 use alloc::format;
 use core::mem;
 
+use agents::Output;
 use proto::{Event, EventKind, HostSeq, SessionId};
 
 use crate::prelude::*;
@@ -78,12 +79,14 @@ pub struct Log {
 }
 
 /// A streaming delta goes live with the last stored event's seq and is
-/// never stored (see `EventKind::AssistantDelta`).
+/// never stored (see `Output::AssistantDelta`).
 #[must_use]
 pub const fn live_only(kind: &EventKind) -> bool {
     matches!(
         kind,
-        EventKind::AssistantDelta { .. } | EventKind::ReasoningDelta { .. }
+        EventKind::Agent(
+            Output::AssistantDelta { .. } | Output::ReasoningDelta { .. }
+        )
     )
 }
 

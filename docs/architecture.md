@@ -307,7 +307,10 @@ A session asks one interface for its agent, whichever provider runs it:
 the runtime protocol `agents::runtime`. The session sends a `Command`
 (start or resume at a history anchor, send, interrupt, reply, list or
 revert turns, shut down) and waits for its
-`Outcome`; meanwhile the agent reports `Step`s. The handle is
+`Outcome`; meanwhile the agent reports `Step`s, among them `Step::Emit`
+of an `agents::Output` (the assistant and reasoning text, streamed and
+finished, a tool call, an error), which the host logs as
+`EventKind::Agent`. The handle is
 `runtime::Runtime`, a channel pair.
 
 The daemon knows each provider only by the `runtime::Plugin` it is handed,
@@ -1715,7 +1718,7 @@ travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
 
 | Link | Framing | Codec | Messages |
 |---|---|---|---|
-| Client and host (`link::ALPN`, `conductor/41`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`link::ALPN`, `conductor/42`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`proto::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 Callers own the I/O: `net::wire` (and `net::wire::fleet`) on a host,

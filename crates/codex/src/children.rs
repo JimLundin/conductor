@@ -1,8 +1,8 @@
 use alloc::collections::BTreeSet;
 
 use agents::{NativeRequest, Step};
-use proto::{
-    EventKind, SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome,
+use agents::{
+    Output, SubagentId, SubagentOutcome, ToolCallId, ToolKind, ToolOutcome,
     ToolPhase, TurnOutcome,
 };
 
@@ -160,7 +160,7 @@ impl Children {
             .calls
             .insert((child.root.clone(), child.call.0.clone()))
         {
-            let launch = Step::Emit(EventKind::ToolCall {
+            let launch = Step::Emit(Output::ToolCall {
                 call: child.call.clone(),
                 phase: ToolPhase::Started {
                     tool: ToolKind::Other {

@@ -1,3 +1,4 @@
+use agents::Output;
 use proto::{Event, EventKind, HostSeq, SessionId};
 
 use super::{Effect, FORMAT, Log, Write, opens};
@@ -7,9 +8,9 @@ fn log() -> Log {
 }
 
 fn delta(text: &str) -> EventKind {
-    EventKind::AssistantDelta {
+    EventKind::Agent(Output::AssistantDelta {
         text: String::from(text),
-    }
+    })
 }
 
 fn event(seq: u64, kind: EventKind) -> Event {

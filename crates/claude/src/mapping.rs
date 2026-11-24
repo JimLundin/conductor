@@ -2,11 +2,11 @@
 //! steps the session applies out.
 
 use agents::{
-    NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
-};
-use proto::{
-    ClientName, CloseReason, Decision, EventKind, SubagentId, ToolCallId,
+    ClientName, CloseReason, Decision, Output, SubagentId, ToolCallId,
     ToolPhase,
+};
+use agents::{
+    NativeRequest, NativeTurn, Reply, Step, reasoning, reasoning_delta,
 };
 
 use crate::prelude::*;
@@ -23,7 +23,7 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
             .filter_map(|block| claude_block(role, block))
             .collect(),
         ClaudeEvent::StreamDelta { text } => {
-            Vec::from([Step::Emit(EventKind::AssistantDelta { text })])
+            Vec::from([Step::Emit(Output::AssistantDelta { text })])
         }
         ClaudeEvent::ThinkingDelta { text } => {
             reasoning_delta(text).into_iter().collect()
@@ -105,7 +105,7 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
 fn claude_block(role: Role, block: Block) -> Option<Step> {
     match (role, block) {
         (Role::Assistant, Block::Text(text)) => {
-            Some(Step::Emit(EventKind::AssistantMessage { text }))
+            Some(Step::Emit(Output::AssistantMessage { text }))
         }
         (Role::Assistant, Block::Thinking(text)) => reasoning(text),
         (Role::Assistant, Block::Checklist(steps)) => {
@@ -114,7 +114,7 @@ fn claude_block(role: Role, block: Block) -> Option<Step> {
         (Role::Assistant, Block::ToolUse { id, name, tool }) => {
             match name.as_str() {
                 ASK_USER_QUESTION => None,
-                _ => Some(Step::Emit(EventKind::ToolCall {
+                _ => Some(Step::Emit(Output::ToolCall {
                     call: ToolCallId(id),
                     phase: ToolPhase::Started { tool },
                 })),
@@ -159,13 +159,13 @@ pub fn claude_answer(reply: Reply, by: &ClientName) -> PermissionDecision {
 
 #[cfg(test)]
 mod tests {
-    use agents::{Exit, NativeRequest, Reply, Step};
-    use proto::{
+    use agents::{
         Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason,
-        Decision, EventKind, Question, QuestionOption, Selection,
+        Decision, Output, Question, QuestionOption, Selection,
         SubagentActivity, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
         ToolOutcome, ToolPhase,
     };
+    use agents::{Exit, NativeRequest, Reply, Step};
 
     use super::{claude_answer, claude_steps};
     use crate::{
@@ -374,7 +374,7 @@ mod tests {
                 got: claude_steps(ClaudeEvent::ThinkingDelta {
                     text: String::from("hm"),
                 }),
-                want: Vec::from([Step::Emit(EventKind::ReasoningDelta {
+                want: Vec::from([Step::Emit(Output::ReasoningDelta {
                     text: String::from("hm"),
                 })]),
             },
@@ -392,7 +392,7 @@ mod tests {
                         Block::Thinking(String::new()),
                     ]),
                 }),
-                want: Vec::from([Step::Emit(EventKind::Reasoning {
+                want: Vec::from([Step::Emit(Output::Reasoning {
                     text: String::from("hmm"),
                 })]),
             },

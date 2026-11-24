@@ -524,7 +524,7 @@ impl Actor {
                     |file| {
                         self.told.home.instructions(
                             &self.created,
-                            &start.directory,
+                            &HostPath(start.directory.0.clone()),
                             file,
                         )
                     },

@@ -2,10 +2,10 @@
 //! steps the session applies out.
 
 use agents::{
-    NativeRequest, NativeTurn, Note, Reply, Step, reasoning, reasoning_delta,
+    CloseReason, Decision as Chosen, Output, ToolCallId, ToolKind, ToolPhase,
 };
-use proto::{
-    CloseReason, Decision as Chosen, EventKind, ToolCallId, ToolKind, ToolPhase,
+use agents::{
+    NativeRequest, NativeTurn, Note, Reply, Step, reasoning, reasoning_delta,
 };
 
 use crate::prelude::*;
@@ -66,10 +66,10 @@ pub fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             Vec::from([Step::TurnStarted(NativeTurn(turn.0))])
         }
         ThreadEvent::AgentDelta { text, .. } => {
-            Vec::from([Step::Emit(EventKind::AssistantDelta { text })])
+            Vec::from([Step::Emit(Output::AssistantDelta { text })])
         }
         ThreadEvent::AgentMessage { text, .. } => {
-            Vec::from([Step::Emit(EventKind::AssistantMessage { text })])
+            Vec::from([Step::Emit(Output::AssistantMessage { text })])
         }
         ThreadEvent::ReasoningDelta { text, .. } => {
             reasoning_delta(text).into_iter().collect()
@@ -81,7 +81,7 @@ pub fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             call,
             phase: ToolPhase::Started { tool },
             ..
-        } => Vec::from([Step::Emit(EventKind::ToolCall {
+        } => Vec::from([Step::Emit(Output::ToolCall {
             call,
             phase: ToolPhase::Started { tool },
         })]),
@@ -101,7 +101,7 @@ pub fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
             Vec::from([Step::Withdraw(NativeRequest(id.0))])
         }
         ThreadEvent::SecretQuestionDeclined { .. } => {
-            Vec::from([Step::Emit(EventKind::Error {
+            Vec::from([Step::Emit(Output::Error {
                 message: String::from(SECRET_DECLINED),
             })])
         }
@@ -201,11 +201,11 @@ pub fn codex_answer(reply: Reply) -> Decision {
 
 #[cfg(test)]
 mod tests {
-    use agents::{NativeRequest, Reply, Step};
-    use proto::{
-        Answer, ChecklistEntry, ChecklistStatus, Decision as Chosen, EventKind,
+    use agents::{
+        Answer, ChecklistEntry, ChecklistStatus, Decision as Chosen, Output,
         Question, QuestionOption, Selection, ToolCallId, ToolKind,
     };
+    use agents::{NativeRequest, Reply, Step};
 
     use super::{codex_answer, codex_steps};
     use crate::{
@@ -280,7 +280,7 @@ mod tests {
                     turn: turn(),
                     text: String::from("**Plan**"),
                 }),
-                want: Vec::from([Step::Emit(EventKind::ReasoningDelta {
+                want: Vec::from([Step::Emit(Output::ReasoningDelta {
                     text: String::from("**Plan**"),
                 })]),
             },
@@ -289,7 +289,7 @@ mod tests {
                     turn: turn(),
                     text: String::from("**Plan**\n\nList it."),
                 }),
-                want: Vec::from([Step::Emit(EventKind::Reasoning {
+                want: Vec::from([Step::Emit(Output::Reasoning {
                     text: String::from("**Plan**\n\nList it."),
                 })]),
             },
@@ -390,7 +390,7 @@ mod tests {
                 got: on_thread(ThreadEvent::SecretQuestionDeclined {
                     turn: turn(),
                 }),
-                want: Vec::from([Step::Emit(EventKind::Error {
+                want: Vec::from([Step::Emit(Output::Error {
                     message: String::from(
                         "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.",
                     ),

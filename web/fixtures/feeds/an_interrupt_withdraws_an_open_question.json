@@ -383,9 +383,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa",
-						"phase": { "Finished": { "outcome": "Failed" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_01Ctjtd63ZgJ5uKQpWhcgJUa",
+							"phase": { "Finished": { "outcome": "Failed" } }
+						}
 					}
 				},
 				"seq": 9,

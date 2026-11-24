@@ -6,6 +6,7 @@
 
 use alloc::format;
 
+use agents::Output;
 use home::{Home, IssueId};
 use proto::{
     ClientName, Event, EventKind, FinishState, Finished, HostSeq, SessionId,
@@ -106,7 +107,9 @@ fn summary(
         .iter()
         .filter(|event| event.session == session && event.seq > after)
         .filter_map(|event| match &event.kind {
-            EventKind::AssistantMessage { text } => Some(text.clone()),
+            EventKind::Agent(Output::AssistantMessage { text }) => {
+                Some(text.clone())
+            }
             _ => None,
         })
         .next_back()
@@ -432,7 +435,9 @@ impl Finish {
                     FINISHED,
                 )));
             }
-            if let EventKind::AssistantMessage { text } = &event.kind {
+            if let EventKind::Agent(Output::AssistantMessage { text }) =
+                &event.kind
+            {
                 last = (!text.trim().is_empty()).then(|| text.clone());
             }
         }

@@ -351,7 +351,9 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 1." } }
+				},
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -432,7 +434,9 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 2." } }
+				},
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -764,7 +768,9 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 1." } }
+				},
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -844,7 +850,9 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 2." } }
+				},
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -1243,7 +1251,9 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 1." } }
+				},
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -1323,7 +1333,9 @@
 		"connection": 2,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 2." } }
+				},
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -1702,7 +1714,9 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 1." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 1." } }
+				},
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -1782,7 +1796,9 @@
 		"connection": 3,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 2." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 2." } }
+				},
 				"seq": 14,
 				"session": "00000000000000000000000001"
 			}
@@ -1925,7 +1941,9 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Completed turn 3." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Completed turn 3." } }
+				},
 				"seq": 20,
 				"session": "00000000000000000000000001"
 			}

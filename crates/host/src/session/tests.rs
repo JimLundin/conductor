@@ -1,4 +1,5 @@
-use agents::runtime::{Command, Outcome, Start, Started};
+use agents::Output;
+use agents::runtime::{Command, Directory, Outcome, Start, Started};
 use agents::{NativeRequest, NativeTurn, Reply, Step};
 use proto::{
     Answer, ChecklistEntry, ChecklistStatus, ClientName, CloseReason, Decision,
@@ -61,8 +62,8 @@ fn agent(command: Command) -> Effect {
 fn launching(directory: &str, conversation: Option<&str>) -> Effect {
     agent(Command::Start(Start {
         instructions: None,
-        session: SessionId(1),
-        directory: HostPath(text(directory)),
+        session: agents::runtime::Session(1),
+        directory: Directory(text(directory)),
         model: None,
         effort: None,
         conversation: conversation.map(String::from),
@@ -418,12 +419,12 @@ fn a_request_is_opened_answered_once_and_withdrawn_when_the_turn_ends() {
                     call: ToolCallId(text("toolu_1")),
                     outcome: ToolOutcome::Failed,
                 }),
-                Vec::from([Effect::Emit(EventKind::ToolCall {
+                Vec::from([Effect::Emit(EventKind::Agent(Output::ToolCall {
                     call: ToolCallId(text("toolu_1")),
                     phase: ToolPhase::Finished {
                         outcome: ToolOutcome::Declined,
                     },
-                })]),
+                }))]),
             ),
             (
                 Input::Step(Step::Ask {
@@ -859,12 +860,12 @@ fn each_denied_call_is_declined_when_it_fails() {
                 call: ToolCallId(text(call)),
                 outcome: ToolOutcome::Failed,
             }),
-            Vec::from([Effect::Emit(EventKind::ToolCall {
+            Vec::from([Effect::Emit(EventKind::Agent(Output::ToolCall {
                 call: ToolCallId(text(call)),
                 phase: ToolPhase::Finished {
                     outcome: ToolOutcome::Declined,
                 },
-            })]),
+            }))]),
         )
     };
     let replied = || {
@@ -979,8 +980,8 @@ fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
     let starting = |id: &str| {
         agent(Command::Start(Start {
             instructions: None,
-            session: SessionId(1),
-            directory: HostPath(text("/work")),
+            session: agents::runtime::Session(1),
+            directory: Directory(text("/work")),
             model: model(id),
             effort: None,
             conversation: None,

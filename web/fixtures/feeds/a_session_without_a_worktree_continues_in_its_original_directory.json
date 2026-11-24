@@ -297,7 +297,9 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Continued session." } },
+				"kind": {
+					"Agent": { "AssistantMessage": { "text": "Continued session." } }
+				},
 				"seq": 5,
 				"session": "00000000000000000000000001"
 			}

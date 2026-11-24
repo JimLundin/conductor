@@ -772,9 +772,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_01CcDpZHC4vQ3AZi8neyebkS",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_01CcDpZHC4vQ3AZi8neyebkS",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 9,
@@ -787,7 +789,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "Blue" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "Blue" } } },
 				"seq": 9,
 				"session": "00000000000000000000000001"
 			}
@@ -798,7 +800,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "Blue" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "Blue" } } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}

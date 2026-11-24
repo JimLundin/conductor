@@ -7,10 +7,10 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 
+use agents::Models;
 use codex::CodexCredential;
 use codex::hub::{Ask, Command, EarlyEvents, Routed};
 use codex::{CodexEvent, ThreadId, ThreadOptions};
-use proto::Models;
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 

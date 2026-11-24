@@ -41,4 +41,4 @@ pub use protocol::{
 pub use sign_in::sign_in;
 
 /// Codex, as its plugin names it.
-pub const PROVIDER: proto::Provider = proto::Provider::new("codex");
+pub const PROVIDER: agents::Provider = agents::Provider::new("codex");

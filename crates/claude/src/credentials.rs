@@ -1,7 +1,7 @@
 //! The credentials Claude Code takes, as the forms the app shows, and what
 //! their values become.
 
-use proto::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
+use agents::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
 
 use crate::prelude::*;
 
@@ -164,7 +164,7 @@ pub fn credential(credential: &Credential) -> Result<ClaudeCredential, String> {
 
 #[cfg(test)]
 mod tests {
-    use proto::Credential;
+    use agents::Credential;
 
     use super::{ClaudeCredential, account, credential, info};
 
@@ -228,11 +228,11 @@ mod tests {
         );
         assert_eq!(
             info().account(&stored),
-            Ok(proto::Account::Named(String::from("Work")))
+            Ok(agents::Account::Named(String::from("Work")))
         );
         assert_eq!(
             info().auth(&stored),
-            proto::Auth::Stored {
+            agents::Auth::Stored {
                 kind: String::from("api_key"),
                 url: None
             }
@@ -259,7 +259,7 @@ mod tests {
         );
         assert_eq!(
             info().account(&stored),
-            Ok(proto::Account::Named(String::from("Work")))
+            Ok(agents::Account::Named(String::from("Work")))
         );
         assert_eq!(format!("{:?}", credential(&stored)), "Ok(SetupToken)");
     }

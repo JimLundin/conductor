@@ -5,19 +5,18 @@ mod support;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use agents::runtime::{Command, Event, Outcome, Start, Started};
+use agents::runtime::{
+    Command, Directory, Event, Outcome, Session, Start, Started,
+};
+use agents::{ClientName, Decision, Effort, ModelId, Output, TurnOutcome};
 use agents::{NativeRequest, Reply, Step};
 use install::Home;
-use proto::{
-    ClientName, Decision, Effort, EventKind, HostPath, ModelId, SessionId,
-    TurnOutcome,
-};
 use runtime::{Instance, Launch, Runtime, Settings};
 
 use support::{TestResult, fake_cli_path, fake_codex_dir, fixture};
 
-fn stored_gateway() -> proto::Credential {
-    proto::Credential {
+fn stored_gateway() -> agents::Credential {
+    agents::Credential {
         kind: String::from("provider"),
         values: [
             ("name", "gateway"),
@@ -46,11 +45,11 @@ async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_def
     let configured = instance.configure(Some(stored_gateway())).await?;
     assert_eq!(
         configured.named,
-        Some(proto::ModelId(String::from("gateway-model")))
+        Some(agents::ModelId(String::from("gateway-model")))
     );
     assert_eq!(
         configured.models?.default,
-        Some(proto::ModelId(String::from("gpt-6.1-sol")))
+        Some(agents::ModelId(String::from("gpt-6.1-sol")))
     );
     assert!(
         std::fs::read_to_string(work.join("env.txt"))?
@@ -64,7 +63,7 @@ async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_def
     assert_eq!(cleared.named, None);
     assert_eq!(
         cleared.models?.default,
-        Some(proto::ModelId(String::from("gpt-6.1-sol")))
+        Some(agents::ModelId(String::from("gpt-6.1-sol")))
     );
     assert!(
         !std::fs::read_to_string(work.join("env.txt"))?
@@ -141,8 +140,8 @@ async fn start(
     agent
         .commands
         .send(Command::Start(Start {
-            session: SessionId(session),
-            directory: HostPath(String::from("/tmp/s2-scratch")),
+            session: Session(session),
+            directory: Directory(String::from("/tmp/s2-scratch")),
             model: Some(ModelId(String::from("gpt-6-luna"))),
             effort: Some(Effort::Low),
             conversation: None,
@@ -200,7 +199,7 @@ async fn messages(agent: &mut Runtime) -> TestResult<Vec<String>> {
     let mut messages = Vec::new();
     loop {
         match next_event(agent).await? {
-            Event::Step(Step::Emit(EventKind::AssistantMessage { text })) => {
+            Event::Step(Step::Emit(Output::AssistantMessage { text })) => {
                 messages.push(text);
             }
             Event::Step(Step::TurnEnded(result)) => {

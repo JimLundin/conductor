@@ -8,8 +8,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use agents::{Configuration, Profile};
+use agents::{Credential, SignInCode};
 use install::{Home, InstallError};
-use proto::{Credential, SignInCode};
 use tokio::sync::oneshot;
 
 use crate::Runtime;

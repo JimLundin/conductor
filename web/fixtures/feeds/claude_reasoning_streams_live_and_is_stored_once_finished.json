@@ -336,7 +336,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "\"" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "\"" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -347,7 +347,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "All" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "All" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -358,7 +358,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": " but " } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": " but " } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -369,7 +369,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "9 " } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "9 " } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -380,117 +380,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "ReasoningDelta": { "text": "run" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " away\" means 9" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " stay, so he" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " buys double" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " that," } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " 18, b" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "ringing the total to 27," } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " then sells a" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": " third (" } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "9), leaving 18 " } },
-				"seq": 6,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "ReasoningDelta": { "text": "sheep.\n\n" } },
+				"kind": { "Agent": { "ReasoningDelta": { "text": "run" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -502,8 +392,126 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"Reasoning": {
-						"text": "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n"
+					"Agent": { "ReasoningDelta": { "text": " away\" means 9" } }
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " stay, so he" } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " buys double" } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " that," } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " 18, b" } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "ReasoningDelta": { "text": "ringing the total to 27," } }
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " then sells a" } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": " third (" } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "ReasoningDelta": { "text": "9), leaving 18 " } }
+				},
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "ReasoningDelta": { "text": "sheep.\n\n" } } },
+				"seq": 6,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"Reasoning": {
+							"text": "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n"
+						}
 					}
 				},
 				"seq": 7,
@@ -516,7 +524,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "18" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "18" } } },
 				"seq": 7,
 				"session": "00000000000000000000000001"
 			}
@@ -527,7 +535,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "18" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "18" } } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}
@@ -848,8 +856,10 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"Reasoning": {
-						"text": "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n"
+					"Agent": {
+						"Reasoning": {
+							"text": "\"All but 9 run away\" means 9 stay, so he buys double that, 18, bringing the total to 27, then sells a third (9), leaving 18 sheep.\n\n"
+						}
 					}
 				},
 				"seq": 7,
@@ -862,7 +872,7 @@
 		"connection": 1,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "18" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "18" } } },
 				"seq": 8,
 				"session": "00000000000000000000000001"
 			}

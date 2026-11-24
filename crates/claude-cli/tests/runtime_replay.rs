@@ -4,13 +4,10 @@
 use std::path::Path;
 use std::time::Duration;
 
-use agents::runtime::{Command, Event, Outcome, Start};
+use agents::runtime::{Command, Directory, Event, Outcome, Session, Start};
+use agents::{ClientName, Decision, Effort, ModelId, Output, TurnOutcome};
 use agents::{Reply, Step};
 use install::Home;
-use proto::{
-    ClientName, Decision, Effort, EventKind, HostPath, ModelId, SessionId,
-    TurnOutcome,
-};
 use runtime::{Instance, Launch, Runtime, Settings};
 
 mod support;
@@ -32,7 +29,7 @@ async fn configuring_a_claude_gateway_lists_its_models_and_efforts()
     let path = fixture("session4-chosen-killed.jsonl");
     let fake = fake_claude("models", &path)?;
     let instance = instance(&fake);
-    let credential = proto::Credential {
+    let credential = agents::Credential {
         kind: String::from("gateway"),
         values: [
             ("base_url", "https://gateway.example"),
@@ -92,8 +89,8 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
     runtime
         .commands
         .send(Command::Start(Start {
-            session: SessionId(1),
-            directory: HostPath(fake.to_string_lossy().into_owned()),
+            session: Session(1),
+            directory: Directory(fake.to_string_lossy().into_owned()),
             model: None,
             effort: None,
             conversation: None,
@@ -134,9 +131,8 @@ async fn a_session_approves_a_tool_and_observes_the_completed_turn()
         Event::Outcome(Outcome::Replied(Ok(())))
     );
     let text = loop {
-        if let Event::Step(Step::Emit(EventKind::AssistantMessage {
-            text,
-            ..
+        if let Event::Step(Step::Emit(Output::AssistantMessage {
+            text, ..
         })) = next_event(&mut runtime).await?
         {
             break text;

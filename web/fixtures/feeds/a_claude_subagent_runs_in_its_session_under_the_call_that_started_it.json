@@ -337,14 +337,16 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Other": {
-										"detail": "Run TodoWrite checklist task",
-										"name": "Agent"
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Other": {
+											"detail": "Run TodoWrite checklist task",
+											"name": "Agent"
+										}
 									}
 								}
 							}
@@ -507,9 +509,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_015av4j2jHs5CwVCv76qxYf2",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 15,
@@ -522,7 +526,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "done" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "done" } } },
 				"seq": 15,
 				"session": "00000000000000000000000001"
 			}
@@ -533,7 +537,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "done" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "done" } } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}

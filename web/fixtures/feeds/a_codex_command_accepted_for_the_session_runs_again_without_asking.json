@@ -338,7 +338,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "I" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "I" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -349,7 +349,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "\u2019ll" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "\u2019ll" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -360,7 +360,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " run" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " run" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -371,7 +371,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " the" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " the" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -382,7 +382,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " command" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " command" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -393,7 +393,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " exactly" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " exactly" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -404,7 +404,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " as" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " as" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -415,7 +415,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " given" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " given" } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -426,7 +426,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "." } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "." } } },
 				"seq": 6,
 				"session": "00000000000000000000000001"
 			}
@@ -438,8 +438,10 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantMessage": {
-						"text": "I\u2019ll run the command exactly as given."
+					"Agent": {
+						"AssistantMessage": {
+							"text": "I\u2019ll run the command exactly as given."
+						}
 					}
 				},
 				"seq": 7,
@@ -453,12 +455,14 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "exec-6a70037b-22b5-482b-955f-e442841e7e21",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Command": { "command": "/usr/bin/zsh -c 'touch t1.txt'" }
+					"Agent": {
+						"ToolCall": {
+							"call": "exec-6a70037b-22b5-482b-955f-e442841e7e21",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Command": { "command": "/usr/bin/zsh -c 'touch t1.txt'" }
+									}
 								}
 							}
 						}
@@ -518,9 +522,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "exec-6a70037b-22b5-482b-955f-e442841e7e21",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "exec-6a70037b-22b5-482b-955f-e442841e7e21",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 11,
@@ -533,7 +539,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "" } } },
 				"seq": 12,
 				"session": "00000000000000000000000001"
 			}
@@ -597,12 +603,14 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "exec-0e77cebc-6940-4892-b90c-558be7ccb2b4",
-						"phase": {
-							"Started": {
-								"tool": {
-									"Command": { "command": "/usr/bin/zsh -c 'touch t1.txt'" }
+					"Agent": {
+						"ToolCall": {
+							"call": "exec-0e77cebc-6940-4892-b90c-558be7ccb2b4",
+							"phase": {
+								"Started": {
+									"tool": {
+										"Command": { "command": "/usr/bin/zsh -c 'touch t1.txt'" }
+									}
 								}
 							}
 						}
@@ -619,9 +627,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "exec-0e77cebc-6940-4892-b90c-558be7ccb2b4",
-						"phase": { "Finished": { "outcome": "Succeeded" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "exec-0e77cebc-6940-4892-b90c-558be7ccb2b4",
+							"phase": { "Finished": { "outcome": "Succeeded" } }
+						}
 					}
 				},
 				"seq": 18,
@@ -634,7 +644,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "" } } },
 				"seq": 19,
 				"session": "00000000000000000000000001"
 			}

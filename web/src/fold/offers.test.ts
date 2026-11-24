@@ -26,8 +26,15 @@ const cases = [
 	[[], false],
 	[[user("hi")], true],
 	[[user("hi"), delta("Hel")], false],
-	[[user("hi"), delta("Hel"), { AssistantMessage: { text: "Hello" } }], true],
-	[[user("hi"), { ReasoningDelta: { text: "Hm" } }], false],
+	[
+		[
+			user("hi"),
+			delta("Hel"),
+			{ Agent: { AssistantMessage: { text: "Hello" } } },
+		],
+		true,
+	],
+	[[user("hi"), { Agent: { ReasoningDelta: { text: "Hm" } } }], false],
 	[[user("hi"), started("toolu_1")], false],
 	[[user("hi"), started("toolu_1"), finished("toolu_1")], true],
 	[[user("hi"), { TurnCompleted: { outcome: "Completed" } }], false],
@@ -46,7 +53,7 @@ const cases = [
 		[
 			user("hi"),
 			started("toolu_1"),
-			{ AssistantMessage: { text: "I need to write a file." } },
+			{ Agent: { AssistantMessage: { text: "I need to write a file." } } },
 			opened(1),
 		],
 		false,

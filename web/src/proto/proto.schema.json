@@ -22,7 +22,7 @@
 			]
 		},
 		"Alpn": {
-			"const": "conductor/41",
+			"const": "conductor/42",
 			"description": "The ALPN a client dials a host with.",
 			"type": "string"
 		},
@@ -234,7 +234,7 @@
 			"type": "string"
 		},
 		"ClientName": {
-			"description": "The name a client gave in `Hello`. Shown as \"by\" on a resolution and a\nuser message.",
+			"description": "The name a client gave when it connected: who answered a request, or\nsent a message.",
 			"type": "string"
 		},
 		"Cloning": {
@@ -679,89 +679,13 @@
 				},
 				{
 					"additionalProperties": false,
-					"description": "A fragment of the assistant message being streamed. Live only: the\nhost stores none, so a subscription never replays one, and the\n`AssistantMessage` that follows replaces them. It carries the seq of\nthe stored event before it, which may be another session's, so a\nclient that has applied that seq takes it and one that hasn't sees a\ngap.",
+					"description": "What the agent produced. An `AssistantDelta` or a `ReasoningDelta`\nis live only: the host stores none, so a subscription never replays\none, and the message or reasoning that follows replaces them. It\ncarries the seq of the stored event before it, which may be another\nsession's, so a client that has applied that seq takes it and one\nthat hasn't sees a gap.",
 					"properties": {
-						"AssistantDelta": {
-							"properties": {
-								"text": {
-									"type": "string"
-								}
-							},
-							"required": ["text"],
-							"type": "object"
+						"Agent": {
+							"$ref": "#/$defs/Output"
 						}
 					},
-					"required": ["AssistantDelta"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
-					"properties": {
-						"AssistantMessage": {
-							"properties": {
-								"text": {
-									"type": "string"
-								}
-							},
-							"required": ["text"],
-							"type": "object"
-						}
-					},
-					"required": ["AssistantMessage"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "A fragment of the agent's reasoning as it streams. Live only, like\n`AssistantDelta`; the `Reasoning` that follows replaces them.",
-					"properties": {
-						"ReasoningDelta": {
-							"properties": {
-								"text": {
-									"type": "string"
-								}
-							},
-							"required": ["text"],
-							"type": "object"
-						}
-					},
-					"required": ["ReasoningDelta"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"description": "The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
-					"properties": {
-						"Reasoning": {
-							"properties": {
-								"text": {
-									"type": "string"
-								}
-							},
-							"required": ["text"],
-							"type": "object"
-						}
-					},
-					"required": ["Reasoning"],
-					"type": "object"
-				},
-				{
-					"additionalProperties": false,
-					"properties": {
-						"ToolCall": {
-							"properties": {
-								"call": {
-									"$ref": "#/$defs/ToolCallId"
-								},
-								"phase": {
-									"$ref": "#/$defs/ToolPhase"
-								}
-							},
-							"required": ["call", "phase"],
-							"type": "object"
-						}
-					},
-					"required": ["ToolCall"],
+					"required": ["Agent"],
 					"type": "object"
 				},
 				{
@@ -853,7 +777,7 @@
 				},
 				{
 					"additionalProperties": false,
-					"description": "Something went wrong that did not end the session.",
+					"description": "Something went wrong in the host, such as a snapshot or a removal,\nthat did not end the session. An error the agent reports is its\n`Output::Error`.",
 					"properties": {
 						"Error": {
 							"properties": {
@@ -2555,6 +2479,114 @@
 					"const": "Cloned",
 					"description": "The host cloned it into its data dir.",
 					"type": "string"
+				}
+			]
+		},
+		"Output": {
+			"oneOf": [
+				{
+					"additionalProperties": false,
+					"description": "A fragment of the assistant message being streamed. The\n`AssistantMessage` that follows replaces them.",
+					"properties": {
+						"AssistantDelta": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["AssistantDelta"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
+					"properties": {
+						"AssistantMessage": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["AssistantMessage"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "A fragment of the agent's reasoning as it streams. The `Reasoning`\nthat follows replaces them.",
+					"properties": {
+						"ReasoningDelta": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["ReasoningDelta"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
+					"properties": {
+						"Reasoning": {
+							"properties": {
+								"text": {
+									"type": "string"
+								}
+							},
+							"required": ["text"],
+							"type": "object"
+						}
+					},
+					"required": ["Reasoning"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"properties": {
+						"ToolCall": {
+							"properties": {
+								"call": {
+									"$ref": "#/$defs/ToolCallId"
+								},
+								"phase": {
+									"$ref": "#/$defs/ToolPhase"
+								}
+							},
+							"required": ["call", "phase"],
+							"type": "object"
+						}
+					},
+					"required": ["ToolCall"],
+					"type": "object"
+				},
+				{
+					"additionalProperties": false,
+					"description": "Something went wrong that did not end the session.",
+					"properties": {
+						"Error": {
+							"properties": {
+								"message": {
+									"type": "string"
+								}
+							},
+							"required": ["message"],
+							"type": "object"
+						}
+					},
+					"required": ["Error"],
+					"type": "object"
 				}
 			]
 		},

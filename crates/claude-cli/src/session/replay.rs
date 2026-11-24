@@ -11,13 +11,13 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{ClaudeOptions, ClaudeSession, Error};
+use agents::{ChecklistStatus, Effort};
 use claude::{
     Block, ClaudeEvent, PermissionDecision, PermissionMode,
     PermissionRequestId, Role, SettingSource, VersionPolicy,
 };
 use install::Home;
 use n0_future::StreamExt;
-use proto::{ChecklistStatus, Effort};
 use serde_json::Value;
 use tokio::sync::mpsc;
 
@@ -1149,7 +1149,7 @@ async fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
 #[cfg(target_os = "linux")]
 async fn launch_gateway_fixture() -> TestResult<()> {
     let dir = std::env::current_dir()?;
-    let credential = proto::Credential {
+    let credential = agents::Credential {
         kind: String::from("gateway"),
         values: [
             ("base_url", "https://conductor-test.invalid/gateway"),

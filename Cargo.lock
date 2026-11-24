@@ -78,7 +78,9 @@ dependencies = [
 name = "agents"
 version = "0.1.0"
 dependencies = [
- "proto",
+ "postcard",
+ "schemars",
+ "serde",
  "serde_json",
  "url",
 ]
@@ -589,7 +591,6 @@ name = "claude"
 version = "0.1.0"
 dependencies = [
  "agents",
- "proto",
  "serde",
  "serde_json",
 ]
@@ -603,7 +604,6 @@ dependencies = [
  "install",
  "n0-future",
  "portable-pty",
- "proto",
  "runtime",
  "rustix",
  "serde_json",
@@ -635,7 +635,6 @@ version = "0.1.0"
 dependencies = [
  "agents",
  "data-encoding",
- "proto",
  "serde",
  "serde_json",
 ]
@@ -648,7 +647,6 @@ dependencies = [
  "codex",
  "install",
  "n0-future",
- "proto",
  "runtime",
  "serde_json",
  "tempfile",
@@ -3308,6 +3306,7 @@ dependencies = [
 name = "proto"
 version = "0.1.0"
 dependencies = [
+ "agents",
  "data-encoding",
  "home",
  "postcard",
@@ -3316,7 +3315,6 @@ dependencies = [
  "serde_json",
  "subtle",
  "thiserror 2.0.21",
- "url",
 ]
 
 [[package]]
@@ -3575,7 +3573,6 @@ version = "0.1.0"
 dependencies = [
  "agents",
  "install",
- "proto",
  "tokio",
  "tracing",
 ]

@@ -1,3 +1,4 @@
+use agents::Output;
 use home::IssueId;
 use proto::{
     ClientName, CloseReason, Event, EventKind, Finished, HostPath, HostSeq,
@@ -80,7 +81,10 @@ fn user(seq: u64) -> Event {
 }
 
 fn reply(seq: u64, words: &str) -> Event {
-    event(seq, EventKind::AssistantMessage { text: text(words) })
+    event(
+        seq,
+        EventKind::Agent(Output::AssistantMessage { text: text(words) }),
+    )
 }
 
 fn done(seq: u64) -> Event {

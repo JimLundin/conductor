@@ -344,15 +344,17 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx",
-						"phase": {
-							"Started": {
-								"tool": {
-									"FileChange": {
-										"files": [
-											{ "change": "Write", "path": "/tmp/s1-scratch/b.txt" }
-										]
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx",
+							"phase": {
+								"Started": {
+									"tool": {
+										"FileChange": {
+											"files": [
+												{ "change": "Write", "path": "/tmp/s1-scratch/b.txt" }
+											]
+										}
 									}
 								}
 							}
@@ -414,9 +416,11 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"ToolCall": {
-						"call": "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx",
-						"phase": { "Finished": { "outcome": "Declined" } }
+					"Agent": {
+						"ToolCall": {
+							"call": "toolu_bdrk_01WAz64VUtaiJZHcy71oavyx",
+							"phase": { "Finished": { "outcome": "Declined" } }
+						}
 					}
 				},
 				"seq": 10,
@@ -429,7 +433,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "The write to" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "The write to" } } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -440,29 +444,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": " `" } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "b.txt` was denied" } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " " } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " `" } } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -474,7 +456,7 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantDelta": { "text": "(\"The user does not want b." }
+					"Agent": { "AssistantDelta": { "text": "b.txt` was denied" } }
 				},
 				"seq": 10,
 				"session": "00000000000000000000000001"
@@ -486,29 +468,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "txt.\"" } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": "), so I did not retry and" } },
-				"seq": 10,
-				"session": "00000000000000000000000001"
-			}
-		},
-		"stream": "feed"
-	},
-	{
-		"connection": 0,
-		"frame": {
-			"Event": {
-				"kind": { "AssistantDelta": { "text": " no file was created." } },
+				"kind": { "Agent": { "AssistantDelta": { "text": " " } } },
 				"seq": 10,
 				"session": "00000000000000000000000001"
 			}
@@ -520,8 +480,62 @@
 		"frame": {
 			"Event": {
 				"kind": {
-					"AssistantMessage": {
-						"text": "The write to `b.txt` was denied (\"The user does not want b.txt.\"), so I did not retry and no file was created."
+					"Agent": {
+						"AssistantDelta": { "text": "(\"The user does not want b." }
+					}
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": { "Agent": { "AssistantDelta": { "text": "txt.\"" } } },
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": "), so I did not retry and" } }
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": { "AssistantDelta": { "text": " no file was created." } }
+				},
+				"seq": 10,
+				"session": "00000000000000000000000001"
+			}
+		},
+		"stream": "feed"
+	},
+	{
+		"connection": 0,
+		"frame": {
+			"Event": {
+				"kind": {
+					"Agent": {
+						"AssistantMessage": {
+							"text": "The write to `b.txt` was denied (\"The user does not want b.txt.\"), so I did not retry and no file was created."
+						}
 					}
 				},
 				"seq": 11,
@@ -588,7 +602,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "1" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "1" } } },
 				"seq": 15,
 				"session": "00000000000000000000000001"
 			}
@@ -600,7 +614,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "1" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "1" } } },
 				"seq": 16,
 				"session": "00000000000000000000000001"
 			}
@@ -663,7 +677,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantDelta": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantDelta": { "text": "pong" } } },
 				"seq": 20,
 				"session": "00000000000000000000000001"
 			}
@@ -674,7 +688,7 @@
 		"connection": 0,
 		"frame": {
 			"Event": {
-				"kind": { "AssistantMessage": { "text": "pong" } },
+				"kind": { "Agent": { "AssistantMessage": { "text": "pong" } } },
 				"seq": 21,
 				"session": "00000000000000000000000001"
 			}

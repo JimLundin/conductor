@@ -3,14 +3,12 @@
 //! None of it is an event: the host stores none of it, replays none, and a
 //! subscription starts with the sign-ins running then.
 
-use core::fmt;
-
 use alloc::string::String;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::InstanceId;
+use crate::{InstanceId, SignInCode};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignIn {
@@ -39,17 +37,6 @@ pub enum SignInStep {
     },
     /// Cancelled from a client: no sign-in runs on the instance.
     Cancelled,
-}
-
-/// The code a person pastes from a sign-in page. It is a secret: its
-/// `Debug` doesn't print it, so no log line carries it.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct SignInCode(pub String);
-
-impl fmt::Debug for SignInCode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("SignInCode(..)")
-    }
 }
 
 /// A command about an instance's sign-in from the app.
@@ -103,17 +90,4 @@ pub enum SignInRefusal {
     InstanceInUse {
         sessions: u64,
     },
-}
-
-#[cfg(test)]
-mod tests {
-    use super::SignInCode;
-
-    #[test]
-    fn a_code_never_prints() {
-        assert_eq!(
-            format!("{:?}", SignInCode(String::from("abc#def"))),
-            "SignInCode(..)"
-        );
-    }
 }

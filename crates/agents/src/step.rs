@@ -1,13 +1,12 @@
 //! What a session does with an agent's event, and how it answers one.
 //! Request ids and the turn belong to the session.
 
-use proto::{
-    Answer, ChecklistEntry, CloseReason, Decision, EventKind, Question,
+use crate::prelude::*;
+use crate::{
+    Answer, ChecklistEntry, CloseReason, Decision, Output, Question,
     SubagentActivity, SubagentId, SubagentOutcome, ToolCallId, ToolKind,
     ToolOutcome, ToolPhase, TurnOutcome,
 };
-
-use crate::prelude::*;
 
 /// An open request's id as the provider gave it. The type doesn't say which
 /// provider: a session's steps come only from its own agent's events, so its
@@ -22,7 +21,8 @@ pub struct NativeTurn(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
-    Emit(EventKind),
+    /// The session logs what the agent produced.
+    Emit(Output),
     /// The session assigns the `RequestId`, stores it open and logs
     /// `RequestOpened`.
     Open {
@@ -92,13 +92,13 @@ impl Step {
     #[must_use]
     pub fn for_subagent(self, agent: SubagentId) -> Option<Self> {
         let activity = match self {
-            Self::Emit(EventKind::AssistantMessage { text }) => {
+            Self::Emit(Output::AssistantMessage { text }) => {
                 SubagentActivity::Message { text }
             }
-            Self::Emit(EventKind::Reasoning { text }) => {
+            Self::Emit(Output::Reasoning { text }) => {
                 SubagentActivity::Reasoning { text }
             }
-            Self::Emit(EventKind::ToolCall { call, phase }) => {
+            Self::Emit(Output::ToolCall { call, phase }) => {
                 SubagentActivity::ToolCall { call, phase }
             }
             Self::ToolFinished { call, outcome } => {
@@ -157,7 +157,7 @@ pub enum Reply {
 pub fn reasoning(text: String) -> Option<Step> {
     Some(text)
         .filter(|piece| !piece.is_empty())
-        .map(|piece| Step::Emit(EventKind::Reasoning { text: piece }))
+        .map(|piece| Step::Emit(Output::Reasoning { text: piece }))
 }
 
 /// A piece of reasoning as it streams. Claude streams one empty piece for
@@ -166,29 +166,25 @@ pub fn reasoning(text: String) -> Option<Step> {
 pub fn reasoning_delta(text: String) -> Option<Step> {
     Some(text)
         .filter(|piece| !piece.is_empty())
-        .map(|piece| Step::Emit(EventKind::ReasoningDelta { text: piece }))
+        .map(|piece| Step::Emit(Output::ReasoningDelta { text: piece }))
 }
 
 #[cfg(test)]
 mod tests {
-    use proto::EventKind;
-
     use super::{Step, reasoning, reasoning_delta};
+    use crate::Output;
 
     #[test]
     fn reasoning_shows_only_when_it_has_text() {
         let text = || String::from("thinking");
         assert_eq!(
             [reasoning(text()), reasoning(String::new())],
-            [
-                Some(Step::Emit(EventKind::Reasoning { text: text() })),
-                None
-            ]
+            [Some(Step::Emit(Output::Reasoning { text: text() })), None]
         );
         assert_eq!(
             [reasoning_delta(text()), reasoning_delta(String::new())],
             [
-                Some(Step::Emit(EventKind::ReasoningDelta { text: text() })),
+                Some(Step::Emit(Output::ReasoningDelta { text: text() })),
                 None
             ]
         );
