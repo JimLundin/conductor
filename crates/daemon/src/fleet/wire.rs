@@ -1,4 +1,4 @@
-//! Frame I/O between hosts, in the fleet protocol's own framing
+//! Frame I/O between hosts, in the fleet protocol's own codec
 //! ([`host::fleet::frame`]).
 
 use anyhow::Context;
@@ -12,15 +12,13 @@ pub(super) async fn write<T: Frame + Sync>(
     send: &mut SendStream,
     msg: &T,
 ) -> anyhow::Result<()> {
-    Ok(send.write_all(&frame::encode(msg)?).await?)
+    Ok(net::wire::write(send, &frame::encode(msg)?).await?)
 }
 
 /// Reads one frame, which the peer must send before finishing the stream.
 pub(super) async fn read<T: Frame>(recv: &mut RecvStream) -> anyhow::Result<T> {
-    let header = net::wire::read_header::<{ frame::HEADER_LEN }>(recv)
+    let body = net::wire::read(recv, MAX_FRAME)
         .await?
         .context("fleet stream closed before its reply")?;
-    let body =
-        net::wire::read_body(recv, frame::body_len(header)?, MAX_FRAME).await?;
     Ok(frame::decode(&body)?)
 }

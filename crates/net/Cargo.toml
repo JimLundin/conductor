@@ -9,19 +9,9 @@ publish = false
 layer = "shell"
 
 [dependencies]
-getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
-iroh-base.workspace = true
-n0-future.workspace = true
-link = { path = "../link" }
 thiserror.workspace = true
-tokio = { version = "1.54.1", default-features = false, features = ["sync", "macros"] }
-tracing = { workspace = true, features = ["std"] }
 url = "2.5.8"
-
-[dev-dependencies]
-anyhow.workspace = true
-tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [lints]
 workspace = true
