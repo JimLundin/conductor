@@ -32,6 +32,7 @@ import {
 	type Command,
 	type CommandResult,
 	HelloReply,
+	Open,
 	type Ticket,
 	type Welcome,
 } from "./schemas/index.ts";
@@ -47,7 +48,7 @@ const hello = (
 ): Effect.Effect<HelloReply | undefined, string> =>
 	Effect.gen(function* greeting() {
 		const stream = yield* open(connection);
-		yield* write(stream, {
+		yield* write(Open, stream, {
 			Hello: { client: host.client, token: host.ticket.token },
 		});
 		return yield* read(HelloReply, stream);

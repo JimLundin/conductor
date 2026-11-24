@@ -19,9 +19,9 @@ export PATH="$HOME/.cargo/bin:$PATH"
 clone=${STANDARDS_CLONE:-$HOME/projects/tools/standards}
 if [ -z "${STANDARDS:-}" ]; then
 	[ -d "$clone/.git" ] ||
-		git clone -q https://github.com/JimLundin/standards.git "$clone"
+		env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE 			git clone -q https://github.com/JimLundin/standards.git "$clone"
 	[ -n "$(find "$clone/.git/FETCH_HEAD" -mmin -10 2>/dev/null)" ] ||
-		git -C "$clone" pull -q --ff-only || echo "warning: $clone not updated" >&2
+		env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE 			git -C "$clone" pull -q --ff-only || echo "warning: $clone not updated" >&2
 fi
 export STANDARDS=${STANDARDS:-$clone}
 exec "$STANDARDS/rust/check.sh" "$@"

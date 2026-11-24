@@ -27,7 +27,7 @@ test("frames the host sends reach the app, then the end", async () => {
 	const host = await fakeHost();
 	const stream = await (await dial(host)).openBi();
 	const accepted = await host.accept();
-	accepted.send(bytes("welcome"));
+	await accepted.send(bytes("welcome"));
 	accepted.finish();
 	expect(await stream.recv()).toEqual(bytes("welcome"));
 	expect(await stream.recv()).toBeUndefined();

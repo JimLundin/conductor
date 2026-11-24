@@ -1,7 +1,7 @@
 // A command on its own stream, with its result for the caller.
 import { Data, Effect } from "effect";
 import type { Connection } from "../pipe.ts";
-import { type Command, CommandResult } from "../schemas/index.ts";
+import { type Command, CommandResult, Open } from "../schemas/index.ts";
 import { closing, described, open, read, write } from "./frames.ts";
 
 type SendError = Data.TaggedEnum<{
@@ -18,7 +18,7 @@ const answer = (
 ): Effect.Effect<CommandResult | undefined, string> =>
 	Effect.gen(function* rpc() {
 		const stream = yield* open(connection);
-		yield* write(stream, { Command: { id: crypto.randomUUID(), body } });
+		yield* write(Open, stream, { Command: { id: crypto.randomUUID(), body } });
 		yield* Effect.tryPromise({ try: () => stream.finish(), catch: described });
 		return yield* read(CommandResult, stream);
 	});
