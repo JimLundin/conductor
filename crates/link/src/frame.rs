@@ -328,6 +328,7 @@ mod tests {
         };
         assert!(session("3"));
         assert!(session(r#""0000000000000000000000000U""#));
+        assert!(session(r#""80000000000000000000000000""#));
         assert!(session(r#""0000000000000000000000003""#));
         let epoch = |text: &str| {
             decode::<Open>(

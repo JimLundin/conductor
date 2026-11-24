@@ -15,11 +15,6 @@ path = "crates/host/src/fleet/frame.rs"
 rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
 
-[[exception]]
-path = "crates/home/src/ulid_text.rs"
-rule = "api"
-reason = "serialize and deserialize are the serde with-module host, home and link share for a ULID's text; they take serde's Serializer and Deserializer by its protocol and carry no effect"
-
 # Debt: shell code that still makes decisions. Each entry goes as its
 # decisions move into a core crate.
 

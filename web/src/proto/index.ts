@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/44";
+export type Alpn = "conductor/45";
 
-export const Alpn = Schema.Literal("conductor/44").annotate({
+export const Alpn = Schema.Literal("conductor/45").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
@@ -501,7 +501,7 @@ export type SessionId = string;
 
 export const SessionId = Schema.String.annotate({
 	description:
-		"A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the wire, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.",
+		"A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the wire, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
 	identifier: "SessionId",
 });
 
@@ -768,7 +768,7 @@ export type EditId = string;
 
 export const EditId = Schema.String.annotate({
 	description:
-		"128 random bits, whose text is a ULID's as the `ulid` crate writes it.",
+		"128 random bits, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
 	identifier: "EditId",
 });
 
@@ -1094,7 +1094,7 @@ export type CommandId = string;
 
 export const CommandId = Schema.String.annotate({
 	description:
-		"A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.",
+		"A client-generated, fleet-unique 128-bit random id for idempotent\nretries, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
 	identifier: "CommandId",
 });
 

@@ -13,7 +13,7 @@ use agents::{
 };
 use home::{HomeRefusal, IssueId, ProjectId};
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 use crate::finish::Finished;
 use crate::log::HostSeq;
@@ -23,28 +23,53 @@ use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits,
 /// whose text, on the wire, in its worktree's and branch's names and in
 /// logs, is the `ulid` crate's.
+///
+/// A human-readable format writes the text, since JSON's numbers are exact
+/// only to 2^53; others write the number.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema,
 )]
-pub struct SessionId(
-    #[serde(with = "home::ulid_text")]
-    #[schemars(with = "String")]
-    pub u128,
-);
+pub struct SessionId(#[schemars(with = "String")] pub u128);
+
+impl SessionId {
+    /// The id `text` writes, in either case. The crate drops the bits of a
+    /// first digit above 7, so text that doesn't write back is refused.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let id = ulid::Ulid::from_string(text).ok()?;
+        let mut buffer = [0; ulid::ULID_LEN];
+        id.array_to_str(&mut buffer)
+            .eq_ignore_ascii_case(text)
+            .then_some(Self(id.0))
+    }
+}
 
 impl fmt::Display for SessionId {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         ulid::Ulid(self.0).fmt(out)
+    }
+}
+
+impl Serialize for SessionId {
+    fn serialize<S: Serializer>(&self, out: S) -> Result<S::Ok, S::Error> {
+        if out.is_human_readable() {
+            out.collect_str(self)
+        } else {
+            self.0.serialize(out)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionId {
+    fn deserialize<D: Deserializer<'de>>(input: D) -> Result<Self, D::Error> {
+        if input.is_human_readable() {
+            let text = String::deserialize(input)?;
+            Self::parse(&text).ok_or_else(|| {
+                de::Error::invalid_value(de::Unexpected::Str(&text), &"a ULID")
+            })
+        } else {
+            u128::deserialize(input).map(Self)
+        }
     }
 }
 

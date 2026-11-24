@@ -23,7 +23,6 @@ pub mod project;
 pub mod repos;
 pub mod skills;
 pub mod sync;
-pub mod ulid_text;
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;

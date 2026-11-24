@@ -165,9 +165,8 @@ fn owner(workspace: &Workspace) -> Result<String, GitError> {
         .branch
         .strip_prefix(BRANCHES)
         .ok_or_else(|| failure("workspace branch", "not owned by Conductor"))?;
-    let _ = session
-        .parse::<ulid::Ulid>()
-        .map_err(|error| failure("workspace branch", &error.to_string()))?;
+    SessionId::parse(session)
+        .ok_or_else(|| failure("workspace branch", "not a session id"))?;
     Ok(String::from(session))
 }
 
