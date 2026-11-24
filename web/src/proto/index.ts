@@ -20,9 +20,9 @@ export const Account = Schema.Union(
 	identifier: "Account",
 });
 
-export type Alpn = "conductor/43";
+export type Alpn = "conductor/44";
 
-export const Alpn = Schema.Literal("conductor/43").annotate({
+export const Alpn = Schema.Literal("conductor/44").annotate({
 	description: "The ALPN a client dials a host with.",
 	identifier: "Alpn",
 });
