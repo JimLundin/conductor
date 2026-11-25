@@ -120,28 +120,20 @@ fn decoding_a_canvas_or_a_canvas_file_that_breaks_a_drawing_rule_refuses_it_by_a
     let file = format!(
         r#"{{"written": 5, "by": "devbox·claude", "canvas": {CROWDED}}}"#
     );
-    let decoded = serde_json::from_str::<Canvas>(CROWDED)
-        .map_err(|error| error.to_string());
-    assert!(
-        decoded.as_ref().is_err_and(|shown| shown.contains(said)),
-        "{decoded:?}"
-    );
-    let decoded = serde_json::from_str::<CanvasFile>(&file)
-        .map_err(|error| error.to_string());
-    assert!(
-        decoded.as_ref().is_err_and(|shown| shown.contains(said)),
-        "{decoded:?}"
-    );
-    let value = serde_json::from_str::<serde_json::Value>(&file)
-        .map_err(|error| error.to_string());
-    let decoded = value.and_then(|value| {
-        serde_json::from_value::<CanvasFile>(value)
-            .map_err(|error| error.to_string())
-    });
-    assert!(
-        decoded.as_ref().is_err_and(|shown| shown.contains(said)),
-        "{decoded:?}"
-    );
+    let decodes = [
+        serde_json::from_str::<Canvas>(CROWDED).map(|_| ()),
+        serde_json::from_str::<CanvasFile>(&file).map(|_| ()),
+        serde_json::from_str::<serde_json::Value>(&file)
+            .and_then(serde_json::from_value::<CanvasFile>)
+            .map(|_| ()),
+    ];
+    for decoded in decodes {
+        let shown = decoded.map_err(|error| error.to_string());
+        assert!(
+            shown.as_ref().is_err_and(|reason| reason.contains(said)),
+            "{shown:?}"
+        );
+    }
     assert_eq!(
         CanvasFile::parse(&file).map_err(|error| error.to_string()),
         Err(String::from(said))

@@ -176,9 +176,8 @@ struct Stamped {
 
 const MOST_WORDS: usize = 8;
 
-fn repeated<'a>(ids: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+fn repeated<'a>(mut ids: impl Iterator<Item = &'a str>) -> Option<&'a str> {
     let mut seen = BTreeSet::new();
-    let mut ids = ids;
     ids.find(|id| !seen.insert(*id))
 }
 
