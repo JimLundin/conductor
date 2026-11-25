@@ -4,7 +4,8 @@ use crate::AuthToken;
 use crate::CommandId;
 use agents::{ClientName, Effort, Provider, SignInCode};
 use home::canvas::{
-    Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
+    Block, Canvas, CanvasEntry, CanvasError, CanvasFile, CanvasKey, CanvasName,
+    Held,
 };
 use home::issue::{EditId, Issue, IssueChange, NewIssue};
 use home::{
@@ -338,7 +339,7 @@ fn two_canvases() -> Result<Memory, String> {
 struct Failing;
 
 impl CanvasStore for Failing {
-    fn all(&self) -> Result<Vec<CanvasKey>, StoreError> {
+    fn all(&self) -> Result<Held<CanvasKey>, StoreError> {
         Err(gone())
     }
 
@@ -346,7 +347,7 @@ impl CanvasStore for Failing {
         &self,
         _: &ProjectId,
         _: &IssueId,
-    ) -> Result<Vec<CanvasEntry>, StoreError> {
+    ) -> Result<Held<CanvasEntry>, StoreError> {
         Err(gone())
     }
 
@@ -382,11 +383,33 @@ fn asked(
 #[test]
 fn an_issue_with_two_canvases_is_served_with_both_entries() -> Result<(), String>
 {
-    let store = two_canvases()?;
+    served_entries(&two_canvases()?)
+}
+
+#[test]
+fn an_issue_s_valid_canvases_are_served_beside_a_broken_one()
+-> Result<(), String> {
+    let mut store = two_canvases()?;
+    store.spoil(
+        key(DESIGNED, "broken")?,
+        CanvasError::Json {
+            reason: String::from("missing field `title`"),
+        },
+    );
+    served_entries(&store)
+}
+
+fn served_entries(store: &Memory) -> Result<(), String> {
     let listed = [DESIGNED, BARE]
         .into_iter()
         .map(|id| {
-            Ok((id, store.list(&PROJECT, &id).map_err(|e| e.to_string())?))
+            Ok((
+                id,
+                store
+                    .list(&PROJECT, &id)
+                    .map_err(|e| e.to_string())?
+                    .canvases,
+            ))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
     let served = with_canvases(a_home(), &listed);

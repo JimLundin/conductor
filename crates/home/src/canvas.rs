@@ -17,6 +17,7 @@ mod diagram;
 mod options;
 mod progress;
 mod statechart;
+mod stray;
 
 pub use changes::{Change, ChangeGroup, ChangeKind, ChangesError, Tag};
 pub use code::CodeRef;
@@ -24,6 +25,7 @@ pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
 pub use options::{Choice, OptionsError};
 pub use progress::{Bar, ProgressError, Stretch};
 pub use statechart::{State, Statechart, StatechartError, Transition};
+pub use stray::{Held, Stray, StrayReason};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

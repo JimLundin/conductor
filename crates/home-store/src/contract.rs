@@ -1,16 +1,32 @@
 use std::fmt::{Debug, Display};
 
 use home::canvas::{
-    Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
+    Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName, Held, Stray,
+    StrayReason,
 };
 use home::{IssueId, ProjectId};
 
-use crate::CanvasStore;
+use crate::{CanvasStore, StoreError};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Plant {
+    Broken(CanvasKey),
+    Unnamed { project: ProjectId, issue: IssueId },
+    NotAnIssue(ProjectId),
+}
 
 /// # Errors
 ///
 /// The clause the store broke.
-pub fn contract(store: &mut dyn CanvasStore) -> Result<(), String> {
+pub fn contract<S: CanvasStore>(
+    store: &mut S,
+    plant: impl FnMut(&mut S, &Plant) -> String,
+) -> Result<(), String> {
+    keeps(store)?;
+    reports_strays(store, plant)
+}
+
+fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
     let (one, two) = (IssueId::new(1, 0), IssueId::new(2, 0));
     let design = key(alpha, one, "design")?;
@@ -43,11 +59,14 @@ pub fn contract(store: &mut dyn CanvasStore) -> Result<(), String> {
         .map_err(shown)?;
     same(
         "list gives each canvas of the issue by name, with its time and signer",
-        &store.list(&alpha, &one).map_err(shown)?,
-        &vec![
-            CanvasEntry::of(plan.name.clone(), &third),
-            CanvasEntry::of(design.name.clone(), &second),
-        ],
+        &seen(store.list(&alpha, &one).map_err(shown)?),
+        &(
+            vec![
+                CanvasEntry::of(plan.name.clone(), &third),
+                CanvasEntry::of(design.name.clone(), &second),
+            ],
+            Vec::new(),
+        ),
     )?;
     same(
         "get of a name the issue has no canvas of is none",
@@ -56,9 +75,87 @@ pub fn contract(store: &mut dyn CanvasStore) -> Result<(), String> {
     )?;
     same(
         "all gives every key in key order",
-        &store.all().map_err(shown)?,
-        &vec![plan, design, other, elsewhere],
+        &seen(store.all().map_err(shown)?),
+        &(vec![plan, design, other, elsewhere], Vec::new()),
     )
+}
+
+fn reports_strays<S: CanvasStore>(
+    store: &mut S,
+    mut plant: impl FnMut(&mut S, &Plant) -> String,
+) -> Result<(), String> {
+    let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
+    let (one, two) = (IssueId::new(1, 0), IssueId::new(2, 0));
+    let design = key(alpha, one, "design")?;
+    let plan = key(alpha, one, "a-plan")?;
+    let broken = key(alpha, one, "broken")?;
+    let spoiled = plant(store, &Plant::Broken(broken.clone()));
+    let unnamed = plant(
+        store,
+        &Plant::Unnamed {
+            project: alpha,
+            issue: one,
+        },
+    );
+    let unissued = plant(store, &Plant::NotAnIssue(alpha));
+    same(
+        "list gives an issue's canvases beside what isn't one, with where it is and why",
+        &seen(store.list(&alpha, &one).map_err(shown)?),
+        &want(
+            vec![
+                CanvasEntry::of(plan.name.clone(), &file(3, "third")),
+                CanvasEntry::of(design.name.clone(), &file(2, "second")),
+            ],
+            vec![(spoiled, "invalid"), (unnamed.clone(), "unnamed")],
+        ),
+    )?;
+    same(
+        "all gives every key, a broken canvas's too, beside what can't be a key",
+        &seen(store.all().map_err(shown)?),
+        &want(
+            vec![
+                plan,
+                broken.clone(),
+                design,
+                key(alpha, two, "design")?,
+                key(beta, one, "design")?,
+            ],
+            vec![(unnamed, "unnamed"), (unissued, "not an issue")],
+        ),
+    )?;
+    match store.get(&broken) {
+        Err(StoreError::Invalid { key, .. }) if key == broken => Ok(()),
+        got => Err(format!(
+            "get of a broken canvas is invalid under its key: got {got:?}"
+        )),
+    }
+}
+
+type Seen<T> = (Vec<T>, Vec<(String, &'static str)>);
+
+fn want<T>(
+    canvases: Vec<T>,
+    mut strays: Vec<(String, &'static str)>,
+) -> Seen<T> {
+    strays.sort();
+    (canvases, strays)
+}
+
+fn seen<T>(held: Held<T>) -> Seen<T> {
+    let mut strays: Vec<(String, &'static str)> = held
+        .strays
+        .into_iter()
+        .map(|Stray { place, reason }| {
+            let why = match reason {
+                StrayReason::Unnamed => "unnamed",
+                StrayReason::NotAnIssue => "not an issue",
+                StrayReason::Invalid(_) => "invalid",
+            };
+            (place, why)
+        })
+        .collect();
+    strays.sort();
+    (held.canvases, strays)
 }
 
 fn key(

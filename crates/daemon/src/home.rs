@@ -975,7 +975,12 @@ fn listed(
                     tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
                 })
                 .ok()
-                .map(|entries| (issue, entries))
+                .map(|held| {
+                    for stray in &held.strays {
+                        tracing::warn!(target: "home", %issue, place = %stray.place, reason = %stray.reason, "listed the issue without what isn't a canvas");
+                    }
+                    (issue, held.canvases)
+                })
         })
         .collect()
 }

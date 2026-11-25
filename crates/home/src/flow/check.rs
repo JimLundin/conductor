@@ -9,6 +9,7 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use crate::ProjectId;
+use crate::canvas::Held;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use crate::issue::Issue;
 
@@ -126,7 +127,7 @@ pub fn check(home: &Snapshot) -> Report {
 #[must_use]
 pub fn canvases(
     home: &Snapshot,
-    every: Result<Vec<Stored>, String>,
+    every: Result<Held<Stored>, String>,
 ) -> Vec<Finding> {
     let kept = match every {
         Ok(kept) => kept,
@@ -147,7 +148,13 @@ pub fn canvases(
                 && problem.stem == stored.key.issue.to_string()
         })
     };
-    kept.iter()
+    let strays = kept.strays.iter().map(|stray| Finding {
+        severity: Severity::Error,
+        subject: Some(stray.place.clone()),
+        message: stray.reason.to_string(),
+    });
+    kept.canvases
+        .iter()
         .filter_map(|stored| {
             let wrong = match &stored.got {
                 Err(reason) => Some(reason.clone()),
@@ -177,6 +184,7 @@ pub fn canvases(
                 message: format!("canvas {}: {reason}", stored.key.name),
             })
         })
+        .chain(strays)
         .collect()
 }
 

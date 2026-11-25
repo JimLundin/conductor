@@ -50,6 +50,9 @@ retry under a new command id, so the home applies it once.
 A structured explanation of an issue's work, written by an agent as typed blocks and stored in the home beside the issue.
 _Avoid_: report, visual, diagram
 
+**Stray**:
+Something a canvas store holds where a canvas belongs that isn't a canvas: a misnamed file, a folder that isn't an issue, or a file that doesn't parse. The store reports each by an opaque place and the reason, and `home check` reports it as an error.
+
 **Client link**:
 The contract between a host and the app: the frames each side sends on a
 connection, built from the commands, results, refusals and feeds of the
