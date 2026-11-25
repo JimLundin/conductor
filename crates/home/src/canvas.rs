@@ -11,8 +11,10 @@ use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
+mod diagram;
 mod statechart;
 
+pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
 pub use statechart::{State, Statechart, StatechartError, Transition};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -26,6 +28,7 @@ pub struct Canvas {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
     Prose { text: String },
+    Diagram(Diagram),
     Statechart(Statechart),
 }
 
@@ -53,6 +56,7 @@ impl Block {
     pub fn markdown(&self) -> String {
         match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
+            Self::Diagram(diagram) => diagram.mermaid(),
             Self::Statechart(chart) => chart.mermaid(),
         }
     }
@@ -60,6 +64,9 @@ impl Block {
     fn check(&self) -> Result<(), CanvasError> {
         match self {
             Self::Prose { .. } => Ok(()),
+            Self::Diagram(diagram) => {
+                diagram.check().map_err(CanvasError::Diagram)
+            }
             Self::Statechart(chart) => {
                 chart.check().map_err(CanvasError::Statechart)
             }
@@ -91,6 +98,12 @@ impl CanvasFile {
     }
 }
 
+const MOST_WORDS: usize = 8;
+
+fn wordy(label: &str) -> bool {
+    label.split_whitespace().count() > MOST_WORDS
+}
+
 fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
     serde_json::from_str(text).map_err(|error| CanvasError::Json {
         reason: error.to_string(),
@@ -100,6 +113,7 @@ fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanvasError {
     Json { reason: String },
+    Diagram(DiagramError),
     Statechart(StatechartError),
 }
 
@@ -107,6 +121,7 @@ impl fmt::Display for CanvasError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json { reason } => write!(out, "not a canvas: {reason}"),
+            Self::Diagram(error) => error.fmt(out),
             Self::Statechart(error) => error.fmt(out),
         }
     }
