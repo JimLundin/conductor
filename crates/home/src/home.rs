@@ -109,22 +109,29 @@ pub enum HomeCommand {
     /// Clones the project into the host's data dir, for a project with no
     /// checkout here. `Accepted` once it has; how it went is in the
     /// project's `cloning`.
-    Clone { project: ProjectId },
+    Clone {
+        project: ProjectId,
+    },
     /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
     /// once the host has written it to its clone of the home; pushing it
     /// follows, and how that went is in the home's `sync`.
     ///
     /// The app mints `edit` once per edit and sends it again with each
     /// retry, so the home writes the edit once.
-    CreateIssue { edit: EditId, issue: NewIssue },
+    CreateIssue {
+        edit: EditId,
+        issue: NewIssue,
+    },
     /// Answers `IssueWritten` once written, like `CreateIssue`.
     ChangeIssue {
         edit: EditId,
         issue: IssueId,
         change: IssueChange,
     },
-    /// Answers `Canvas` with the issue's canvas of that name.
-    Canvas { issue: IssueId, name: CanvasName },
+    Canvas {
+        issue: IssueId,
+        name: CanvasName,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -159,9 +166,7 @@ pub enum HomeRefusal {
     IssueRefused {
         reason: String,
     },
-    /// The issue has no canvas of that name.
     UnknownCanvas,
-    /// The host's store of canvases can't be read now, for this reason.
     CanvasUnavailable {
         reason: String,
     },

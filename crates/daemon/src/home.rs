@@ -51,6 +51,7 @@ use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
+use link::serve::CanvasLookup;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -504,14 +505,12 @@ impl Actor {
 
     fn canvas(&self, issue: IssueId, name: CanvasName) -> HomeResult {
         let shown = self.shown.borrow();
-        link::serve::canvas_key(shown.as_ref(), issue, name).map_or_else(
-            HomeResult::Refused,
-            |key| {
-                link::serve::kept_canvas(
-                    self.canvases.get(&key).map_err(|error| error.to_string()),
-                )
-            },
-        )
+        match link::serve::canvas_lookup(shown.as_ref(), issue, name) {
+            CanvasLookup::Fetch(key) => link::serve::kept_canvas(
+                self.canvases.get(&key).map_err(|error| error.to_string()),
+            ),
+            CanvasLookup::Refused(refusal) => HomeResult::Refused(refusal),
+        }
     }
 
     async fn pull_now(&mut self) -> HomeResult {

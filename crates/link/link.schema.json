@@ -1700,7 +1700,6 @@
         },
         {
           "additionalProperties": false,
-          "description": "Answers `Canvas` with the issue's canvas of that name.",
           "properties": {
             "Canvas": {
               "properties": {
@@ -1723,7 +1722,7 @@
     "HomeRefusal": {
       "oneOf": [
         {
-          "enum": ["UnknownProject", "UnknownIssue"],
+          "enum": ["UnknownProject", "UnknownIssue", "UnknownCanvas"],
           "type": "string"
         },
         {
@@ -1776,13 +1775,7 @@
           "type": "object"
         },
         {
-          "const": "UnknownCanvas",
-          "description": "The issue has no canvas of that name.",
-          "type": "string"
-        },
-        {
           "additionalProperties": false,
-          "description": "The host's store of canvases can't be read now, for this reason.",
           "properties": {
             "CanvasUnavailable": {
               "properties": {
@@ -2155,7 +2148,6 @@
           "type": "string"
         },
         "canvases": {
-          "description": "The canvases its store keeps, by name; none as its file reads.",
           "items": {
             "$ref": "#/$defs/CanvasEntry"
           },

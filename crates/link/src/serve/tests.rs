@@ -21,8 +21,8 @@ use crate::log::Kind;
 use crate::{Command, Hello, Open, Subscribe};
 
 use super::{
-    Admission, Stream, admit, canvas_key, device, device_hello, kept_canvas,
-    ledger, operation, stream, with_canvases,
+    Admission, CanvasLookup, Stream, admit, canvas_lookup, device,
+    device_hello, kept_canvas, ledger, operation, stream, with_canvases,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -371,10 +371,12 @@ fn asked(
     issue: IssueId,
     name: &str,
 ) -> Result<HomeResult, String> {
-    Ok(canvas_key(home, issue, named(name)?)
-        .map_or_else(HomeResult::Refused, |at| {
+    Ok(match canvas_lookup(home, issue, named(name)?) {
+        CanvasLookup::Fetch(at) => {
             kept_canvas(store.get(&at).map_err(|error| error.to_string()))
-        }))
+        }
+        CanvasLookup::Refused(refusal) => HomeResult::Refused(refusal),
+    })
 }
 
 #[test]

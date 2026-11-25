@@ -103,7 +103,7 @@ pub fn stream(open: Option<Open>) -> Stream {
 }
 
 /// Which log a command's receipt goes to, if it keeps one: sign-ins, push,
-/// the fleet, a diff, a canvas and the home's sync and clone run every time.
+/// the fleet, a diff and the home's sync and clone run every time.
 #[must_use]
 pub const fn ledger(command: &Command) -> Option<Kind> {
     match command {
@@ -173,8 +173,6 @@ pub const fn operation(command: &Command) -> &'static str {
     }
 }
 
-/// The home as the app is shown it: each issue with the canvases the
-/// host's store lists for it in `listed`.
 #[must_use]
 pub fn with_canvases(
     mut home: Home,
@@ -189,32 +187,36 @@ pub fn with_canvases(
     home
 }
 
-/// Where a `HomeCommand::Canvas` looks in the host's store: the issue's
-/// canvas `name`, when the host's home lists the issue.
-///
-/// # Errors
-///
-/// The refusal of an issue the host's home doesn't list, or of a host
-/// with no home.
-pub fn canvas_key(
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanvasLookup {
+    Fetch(CanvasKey),
+    Refused(HomeRefusal),
+}
+
+#[must_use]
+pub fn canvas_lookup(
     home: Option<&Home>,
     issue: IssueId,
     name: CanvasName,
-) -> Result<CanvasKey, HomeRefusal> {
-    let projects = &home.ok_or(HomeRefusal::NoHome)?.projects;
-    projects
-        .iter()
-        .find(|project| project.issues.iter().any(|known| known.id == issue))
-        .map(|project| CanvasKey {
-            project: project.id,
-            issue,
-            name,
-        })
-        .ok_or(HomeRefusal::UnknownIssue)
+) -> CanvasLookup {
+    home.map_or(CanvasLookup::Refused(HomeRefusal::NoHome), |known| {
+        known
+            .projects
+            .iter()
+            .find(|project| project.issues.iter().any(|at| at.id == issue))
+            .map_or(
+                CanvasLookup::Refused(HomeRefusal::UnknownIssue),
+                |project| {
+                    CanvasLookup::Fetch(CanvasKey {
+                        project: project.id,
+                        issue,
+                        name,
+                    })
+                },
+            )
+    })
 }
 
-/// What a `HomeCommand::Canvas` answers, given what the store keeps under
-/// its key, or why the store couldn't say.
 #[must_use]
 pub fn kept_canvas(kept: Result<Option<CanvasFile>, String>) -> HomeResult {
     match kept {

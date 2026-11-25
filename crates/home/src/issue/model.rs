@@ -41,7 +41,6 @@ pub struct Issue {
     pub log: Vec<Entry>,
     /// The branch its sessions land on.
     pub branch: String,
-    /// The canvases its store keeps, by name; none as its file reads.
     pub canvases: Vec<CanvasEntry>,
 }
 

@@ -821,9 +821,7 @@ const HomeCommand = Schema.Union(
     Schema.Struct({
       ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueId }),
     }).annotate({ description: "Answers `IssueWritten` once written, like `CreateIssue`." }),
-    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueId, name: CanvasName }) }).annotate({
-      description: "Answers `Canvas` with the issue's canvas of that name.",
-    }),
+    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueId, name: CanvasName }) }),
   ],
   { mode: "oneOf" },
 ).annotate({
@@ -999,17 +997,17 @@ const CommandId = Schema.String.annotate({
 type HomeRefusal =
   | "UnknownProject"
   | "UnknownIssue"
+  | "UnknownCanvas"
   | "NoHome"
   | "NotCheckedOut"
   | "NoRemote"
   | { readonly IssueNotSaved: { readonly reason: string } }
   | { readonly IssueRefused: { readonly reason: string } }
-  | "UnknownCanvas"
   | { readonly CanvasUnavailable: { readonly reason: string } };
 
 const HomeRefusal = Schema.Union(
   [
-    Schema.Literals(["UnknownProject", "UnknownIssue"]),
+    Schema.Literals(["UnknownProject", "UnknownIssue", "UnknownCanvas"]),
     Schema.Literal("NoHome").annotate({ description: "The host was given no home." }),
     Schema.Literal("NotCheckedOut").annotate({
       description: "The project has no checkout on the host.",
@@ -1023,12 +1021,7 @@ const HomeRefusal = Schema.Union(
     Schema.Struct({ IssueRefused: Schema.Struct({ reason: Schema.String }) }).annotate({
       description: "The flow refuses the edit, for this reason, as the `home` command\nline would.",
     }),
-    Schema.Literal("UnknownCanvas").annotate({
-      description: "The issue has no canvas of that name.",
-    }),
-    Schema.Struct({ CanvasUnavailable: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host's store of canvases can't be read now, for this reason.",
-    }),
+    Schema.Struct({ CanvasUnavailable: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeRefusal" });
@@ -2367,9 +2360,7 @@ const Issue = Schema.Struct({
     description: "The body before the checklist and the log, as its file has it.",
   }),
   branch: Schema.String.annotate({ description: "The branch its sessions land on." }),
-  canvases: Schema.Array(CanvasEntry).annotate({
-    description: "The canvases its store keeps, by name; none as its file reads.",
-  }),
+  canvases: Schema.Array(CanvasEntry),
   checklist: Schema.Array(ChecklistItem).annotate({
     description: "The items of the `## Checklist` section.",
   }),
