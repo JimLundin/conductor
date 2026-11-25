@@ -107,11 +107,18 @@ fn a_canvas_built_with_a_block_that_breaks_a_drawing_rule_is_refused_as_decoding
         String::from("t"),
         vec![Block::Options(Options {
             question: String::from("Where?"),
-            options: vec![Choice {
-                label: String::from("Here"),
-                gets: String::from("sync"),
-                costs: String::from("size"),
-            }],
+            options: vec![
+                Choice {
+                    label: String::from("Here"),
+                    gets: String::from("sync"),
+                    costs: String::from("size"),
+                },
+                Choice {
+                    label: String::from("There"),
+                    gets: String::from("room"),
+                    costs: String::from("a server"),
+                },
+            ],
             pick: 3,
             why: String::from("it syncs"),
         })],
@@ -120,7 +127,7 @@ fn a_canvas_built_with_a_block_that_breaks_a_drawing_rule_is_refused_as_decoding
         built,
         Err(CanvasError::Options(OptionsError::PastLast {
             pick: 3,
-            last: 0
+            last: 1
         }))
     );
 }
