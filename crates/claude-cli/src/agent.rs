@@ -87,7 +87,6 @@ impl ProviderInstance for ClaudeInstance {
     }
 }
 
-/// The running CLI and its events.
 type Session = (ClaudeSession, mpsc::Receiver<ClaudeEvent>);
 
 struct Task {
@@ -123,7 +122,6 @@ impl Agent<Input, Effect> for Task {
 }
 
 impl Task {
-    /// Starts the CLI in place of the one running, if it starts.
     async fn spawn(
         &mut self,
         spawn: Spawn,
@@ -153,9 +151,6 @@ impl Task {
     }
 }
 
-/// How a session's CLI starts. The user level of its settings is the
-/// host's private home (§6.2), and its transcripts go under the session's
-/// own project directory.
 fn options(shared: &ClaudeInstance, spawn: Spawn) -> ClaudeOptions {
     ClaudeOptions {
         claude_path: shared.launch.path.clone(),
@@ -178,7 +173,6 @@ fn options(shared: &ClaudeInstance, spawn: Spawn) -> ClaudeOptions {
     }
 }
 
-/// Why the CLI didn't start, and the session it found missing.
 fn refusal(error: &Error) -> Refusal {
     let missing = match error {
         Error::MissingSession(session) => Some(session.clone()),
@@ -201,8 +195,6 @@ async fn shutdown(agent: Option<Session>) -> Result<(), String> {
     }
 }
 
-/// What a Claude session offers, from its `initialize` response: the CLI
-/// is started in the probe directory and stopped again.
 async fn probe(
     launch: &Launch,
     credential: Option<ClaudeCredential>,

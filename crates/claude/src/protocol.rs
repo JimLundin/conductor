@@ -60,7 +60,6 @@ pub enum Role {
     User,
 }
 
-/// The part of each tool's `input` worth showing, as the shared tool kind.
 fn tool_kind(name: &str, input: &Value) -> ToolKind {
     let shown =
         match name {
@@ -149,10 +148,7 @@ pub enum ClaudeEvent {
         id: PermissionRequestId,
         tool_name: String,
         tool: ToolKind,
-        /// The `ToolUse` block this asks about.
         tool_use_id: String,
-        /// What `AllowForSession` adds, in the CLI's rule syntax
-        /// (`Bash(git status)`), when the CLI suggests a rule or a mode.
         for_session: Option<String>,
     },
     /// A `can_use_tool` request for `AskUserQuestion`. Answer it with
@@ -175,8 +171,6 @@ pub enum ClaudeEvent {
         outcome: TurnOutcome,
         terminal_reason: Option<String>,
         session_id: SessionId,
-        /// Why the CLI could not run the turn, as `No conversation found
-        /// with session ID: …` for a `--resume` with no transcript.
         errors: Vec<String>,
     },
     /// The `Agent` call `tool_use_id` started the sub-agent `agent`
@@ -238,8 +232,6 @@ pub enum Inbound {
     },
 }
 
-/// The stdout frames we read, by `type`. A frame of any other type, or one
-/// whose fields don't fit, is passed on as `Unknown`.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Frame {
@@ -270,16 +262,12 @@ enum Frame {
     },
 }
 
-/// The `system` frames we read, by `subtype`: `init`, which the CLI prints
-/// once per turn, and a task's start and end.
 #[derive(Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
 enum System {
     Init {
         session_id: String,
     },
-    /// A task the CLI runs: a sub-agent is a `local_agent` started by the
-    /// `Agent` call `tool_use_id`.
     TaskStarted {
         task_id: String,
         tool_use_id: Option<String>,
@@ -287,7 +275,6 @@ enum System {
         task_type: Option<String>,
         subagent_type: Option<String>,
     },
-    /// Any task's end, which doesn't say the task's type.
     TaskNotification {
         task_id: String,
         status: TaskEnd,
@@ -303,11 +290,8 @@ enum TaskEnd {
     Stopped,
 }
 
-/// The `task_type` of a sub-agent.
 const LOCAL_AGENT: &str = "local_agent";
 
-/// A transcript entry. One with a `parent_tool_use_id` is a sub-agent's,
-/// and its `agent_id` names the sub-agent.
 #[derive(Deserialize)]
 struct Entry {
     message: Message,
@@ -332,7 +316,6 @@ enum Delta {
     ThinkingDelta { thinking: String },
 }
 
-/// The one control request we serve, by `subtype`.
 #[derive(Deserialize)]
 #[serde(tag = "subtype", rename_all = "snake_case")]
 enum ControlRequest {
@@ -347,24 +330,16 @@ enum ControlRequest {
 /// What an answer to an open `can_use_tool` request needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Open {
-    /// The CLI's proposed input, which `allow` echoes as `updatedInput`.
     input: Value,
     grant: Option<Grant>,
 }
 
-/// The CLI's suggestion to allow calls like this one, made session-wide.
 #[derive(Debug, Clone, PartialEq)]
 struct Grant {
     label: String,
     update: Update,
 }
 
-/// An entry of `permission_suggestions` that allows calls by rule. Rules
-/// are suggested for `localSettings`, which would outlive the session, so a
-/// grant keeps only their rules and sends them for `session`.
-/// Any other entry fails this parse and is skipped: a `setMode`, which
-/// would allow every edit and change the mode behind the host's back, a
-/// rule that denies or asks, and `addDirectories`.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Suggestion {
@@ -389,7 +364,6 @@ struct Rule {
     rule_content: Option<String>,
 }
 
-/// One entry of `updatedPermissions`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum Update {
@@ -400,7 +374,6 @@ enum Update {
     },
 }
 
-/// `AskUserQuestion`'s input, as far as we read it.
 #[derive(Deserialize)]
 struct AskInput {
     questions: Vec<Asked>,
@@ -418,12 +391,8 @@ struct Asked {
 /// The tool Claude asks the user questions with.
 pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
 
-/// The tool Claude keeps its checklist with. 2.1.316 offers it to a 5.x
-/// model only with `CLAUDE_CODE_ENABLE_TODO_TOOLS` on and
-/// `CLAUDE_CODE_ENABLE_TASKS` off (PROTOCOL.md).
 const TODO_WRITE: &str = "TodoWrite";
 
-/// `TodoWrite`'s input, as far as we read it.
 #[derive(Deserialize)]
 struct TodoInput {
     todos: Vec<Todo>,
@@ -461,7 +430,6 @@ fn todos(input: &Value) -> serde_json::Result<Vec<ChecklistEntry>> {
 }
 
 impl Rule {
-    /// The rule as the CLI writes it in settings: `Bash(git status)`.
     fn label(&self) -> String {
         self.rule_content.as_ref().map_or_else(
             || self.tool_name.clone(),
@@ -470,8 +438,6 @@ impl Rule {
     }
 }
 
-/// The session grant the CLI's suggestions offer: their allow rules, if
-/// any.
 fn grant(raw: Option<Value>) -> Option<Grant> {
     let suggestions = serde_json::from_value::<Vec<Value>>(raw?).ok()?;
     let mut rules = Vec::new();
@@ -528,7 +494,6 @@ enum ControlResponse {
     },
 }
 
-/// The content blocks we map; any other block is passed on as `Block::Other`.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ContentBlock {
@@ -565,7 +530,6 @@ fn inbound(frame: Frame, raw: Value) -> Inbound {
         Frame::System(system) => Inbound::Event(system_event(system, raw)),
         Frame::Assistant(entry) => entry_event(Role::Assistant, entry),
         Frame::User(entry) => entry_event(Role::User, entry),
-        // A sub-agent's stream, whose finished message follows.
         Frame::StreamEvent {
             event: StreamEvent { delta: None },
             ..
@@ -649,8 +613,6 @@ fn tool_outcome(is_error: Option<bool>) -> ToolOutcome {
     }
 }
 
-/// A request we can't parse, unknown or malformed, still yields its
-/// `request_id`, so it gets an error reply.
 fn control_request(
     request_id: String,
     request: &Value,
@@ -721,8 +683,6 @@ fn control_request(
                 event,
             }
         }
-        // Conductor shows a request on its tool call, so a request that names
-        // none is refused like an unknown subtype.
         Ok(ControlRequest::CanUseTool {
             tool_use_id: None, ..
         }) => Inbound::UnsupportedControlRequest {
@@ -740,8 +700,6 @@ fn control_request(
     }
 }
 
-/// A task other than a sub-agent, and the start of a sub-agent with no
-/// `Agent` call, are passed on as `Unknown`.
 fn system_event(system: System, raw: Value) -> ClaudeEvent {
     match system {
         System::Init { session_id } => ClaudeEvent::TurnStarted {
@@ -776,7 +734,6 @@ fn system_event(system: System, raw: Value) -> ClaudeEvent {
     }
 }
 
-/// A sub-agent's entry that names no sub-agent is `Unknown`.
 fn entry_event(role: Role, entry: Entry) -> Inbound {
     match (entry.parent_tool_use_id, entry.agent_id) {
         (None, _) => message_event(role, entry.message),
@@ -831,9 +788,6 @@ fn block(raw: Value) -> Block {
     }
 }
 
-/// The CLI versions we have checked: from the version the fixtures were
-/// recorded at to the newest one these types were checked against. Widen it
-/// only after checking these types against the new CLI.
 const SUPPORTED_VERSIONS: [&str; 7] = [
     "2.1.316", "2.1.317", "2.1.318", "2.1.319", "2.1.320", "2.1.321", "2.1.322",
 ];
@@ -888,7 +842,6 @@ pub fn applied(settings: Value) -> serde_json::Result<Applied> {
     serde_json::from_value::<Settings>(settings).map(|parsed| parsed.applied)
 }
 
-/// The row of `models` that stands for whichever model is the default.
 const DEFAULT_ROW: &str = "default";
 
 /// The models an `initialize` response lists. The `default` row is not a
@@ -989,7 +942,6 @@ pub enum Outbound {
     },
 }
 
-/// A line we write to stdin. Field order is the order on the wire.
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum Line {
@@ -1041,7 +993,6 @@ enum Reply {
     Error { request_id: String, error: String },
 }
 
-/// The answer to `can_use_tool`. It goes out as a `Value`, so its keys are sorted.
 #[derive(Serialize)]
 #[serde(tag = "behavior", rename_all = "snake_case")]
 enum Verdict {
@@ -1131,9 +1082,6 @@ fn verdict(
     })
 }
 
-/// `AskUserQuestion`'s input with `answers` added: each question's text to
-/// its answer, the chosen labels joined with ", " as the CLI's own prompt
-/// joins them.
 fn answered(input: Value, given: Vec<Answer>) -> serde_json::Result<Value> {
     let prompts = questions(&input)?;
     if prompts.len() != given.len() {
@@ -1182,8 +1130,6 @@ mod tests {
         json(&encode(msg)?)
     }
 
-    /// A `can_use_tool` request as the CLI prints it, read: what the actor
-    /// emits, and what it keeps for the answer.
     fn asked(line: &str) -> TestResult<(ClaudeEvent, Open)> {
         match parse_line(line)? {
             Inbound::Permission { open, event, .. } => Ok((event, open)),
@@ -1195,7 +1141,6 @@ mod tests {
         }
     }
 
-    /// The `response` of our answer to the request on `line`.
     fn answered(
         line: &str,
         decision: PermissionDecision,
@@ -1214,7 +1159,6 @@ mod tests {
         Ok((event, response))
     }
 
-    /// Recorded from Claude Code 2.1.316 on 2026-11-12.
     const BASH: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Bash","display_name":"Bash","input":{"command":"touch t1.txt","description":"Create empty file t1.txt"},"description":"Create empty file t1.txt","permission_suggestions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"touch t1.txt"}],"behavior":"allow","destination":"localSettings"},{"type":"addDirectories","directories":["/tmp/s1-scratch"],"destination":"session"},{"type":"setMode","mode":"acceptEdits","destination":"session"}],"blocked_path":"/tmp/s1-scratch/t1.txt","tool_use_id":"toolu_1"}}"#;
 
     const WRITE: &str = r#"{"type":"control_request","request_id":"r1","request":{"subtype":"can_use_tool","tool_name":"Write","display_name":"Write","input":{"file_path":"/tmp/a.txt","content":"hi"},"description":"a.txt","permission_suggestions":[{"type":"setMode","mode":"acceptEdits","destination":"session"}],"tool_use_id":"toolu_2"}}"#;
@@ -1490,7 +1434,6 @@ mod tests {
                 "request": {"subtype": "set_permission_mode", "mode": "acceptEdits"}}"#
             )?
         );
-        // The SDK also sends `"hooks": null`; we omit it and the CLI accepts that.
         assert_eq!(
             control(ControlCall::Initialize)?,
             json(
