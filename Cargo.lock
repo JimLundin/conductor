@@ -450,6 +450,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155"
 dependencies = [
  "find-msvc-tools",
+ "jobserver",
+ "libc",
  "shlex",
 ]
 
@@ -631,6 +633,7 @@ dependencies = [
  "runtime",
  "tokio",
  "tracing-subscriber",
+ "vcs-git2",
  "zeroize",
 ]
 
@@ -895,6 +898,7 @@ dependencies = [
  "n0-future",
  "net",
  "postcard",
+ "project-runtime",
  "qrcode",
  "redb",
  "runtime",
@@ -911,6 +915,7 @@ dependencies = [
  "ulid",
  "uuid",
  "vcs",
+ "vcs-git2",
  "windows-native-keyring-store",
  "winx",
  "zeroize",
@@ -1504,6 +1509,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-workspace"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "git2"
+version = "0.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e"
+dependencies = [
+ "bitflags 2.13.2",
+ "libc",
+ "libgit2-sys",
+ "log",
+]
+
+[[package]]
 name = "github"
 version = "0.1.0"
 dependencies = [
@@ -1633,6 +1657,7 @@ dependencies = [
  "home-files",
  "project-runtime",
  "vcs",
+ "vcs-git2",
 ]
 
 [[package]]
@@ -2248,6 +2273,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jobserver"
+version = "0.1.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c00acbd29eabad4a2392fa0e921c874934dbbf4194312ad20f04a0ed67a3cb3"
+dependencies = [
+ "getrandom 0.4.3",
+ "libc",
+]
+
+[[package]]
 name = "js-sys"
 version = "0.3.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2290,12 +2325,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "libgit2-sys"
+version = "0.18.8+1.9.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f7c568b25d7489bc3fb2988ed69ab111d2944d2f5fec3d5c987fe545ea97b50"
+dependencies = [
+ "cc",
+ "libc",
+ "libz-sys",
+ "pkg-config",
+]
+
+[[package]]
 name = "libredox"
 version = "0.1.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61ff90caf6077a803a240f62fdbe88645a890bbca49ef8174c3cb0404362171d"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "libz-sys"
+version = "1.1.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fee3f59f4321dab0c78d828942e7aa09d0bd8ad6e78a501977e6bf3d02938045"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
+ "vcpkg",
 ]
 
 [[package]]
@@ -3299,6 +3358,7 @@ dependencies = [
 name = "project-runtime"
 version = "0.1.0"
 dependencies = [
+ "directories",
  "home",
  "tokio",
  "vcs",
@@ -4710,6 +4770,23 @@ dependencies = [
  "schemars",
  "serde",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "vcs-git2"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "git-workspace",
+ "git2",
+ "home",
+ "project-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "vcs",
 ]
 
 [[package]]
