@@ -1,6 +1,6 @@
 # Project operations use Git and repository hosting backends
 
-The owner chose library-backed local Git operations and GitHub issue storage in spec `0v265ymj`, so agents can invoke Conductor's project operations while its backends perform Git and repository hosting actions. The issue model and flow remain independent of GitHub, with provider types converted inside the adapters. This replaces architecture decision D7's subprocess choice for the proposed implementation; git2 is the preferred local candidate, subject to the landing recovery prototype, and Octocrab is the recommended GitHub client.
+The owner chose library-backed local Git operations and GitHub issue storage in spec `0v265ymj`, and agreed to the [crate structure](../project-backend-structure.md) on 2026-11-25. Project operations use separate version control, issue tracking and repository hosting interfaces, while the issue model and flow remain independent of GitHub. This replaces architecture decision D7's subprocess choice for the planned implementation; gix is the proposed adapter, subject to the library coverage and recovery decision, with git2 as the assessed alternative and Octocrab as the GitHub client.
 
 ## Consequences
 

@@ -1,10 +1,15 @@
 # Project backend structure
 
-Proposed structure for spec `0v265ymj`, using gix for version control and
-Octocrab for GitHub task tracking. This names the boundaries and ownership;
-it does not establish that gix supports every required operation. The
+Structure agreed by the owner for spec `0v265ymj` on 2026-11-25, using gix
+as the proposed version control implementation and Octocrab for GitHub task
+tracking. This agreement covers the boundaries and ownership; it does not
+establish that gix supports every required operation. The
 [library research](github-backends.md) records its incomplete push support
 and the git2 alternative.
+
+The owner also requested a more neutral name for `conductord`, tracked
+separately as task `0v28ftxj`. The tables below use the current name until
+the replacement is selected and implemented.
 
 ## Crates and responsibilities
 
