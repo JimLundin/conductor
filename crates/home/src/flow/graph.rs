@@ -47,7 +47,6 @@ pub struct Problem {
 }
 
 impl fmt::Display for Problem {
-    /// What is wrong, after the field that causes it.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.field {
             Some(field) => write!(out, "{field}: {}", self.message),
@@ -190,8 +189,6 @@ pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
     declared.map_or_else(|| format!("issue/{id}"), String::from)
 }
 
-/// The value an issue gives a field, read by serde from its TOML and
-/// then checked against the field's type.
 fn datum(field: &Field, value: Value) -> Result<Datum, String> {
     let read =
         Datum::deserialize(value).map_err(|err| String::from(err.message()))?;
@@ -217,10 +214,8 @@ fn targets(relation: &Relation, value: Value) -> Result<Vec<IssueId>, String> {
     }
 }
 
-/// Each issue whose id another file holds too, naming that file; `issues`
-/// are sorted by id, so those sharing one are side by side.
-fn shared(issues: &[Issue]) -> Vec<Problem> {
-    issues
+fn shared(issues_sorted_by_id: &[Issue]) -> Vec<Problem> {
+    issues_sorted_by_id
         .chunk_by(|one, other| one.id == other.id)
         .flat_map(|sharing| {
             sharing.iter().flat_map(move |issue| {
@@ -241,9 +236,6 @@ fn shared(issues: &[Issue]) -> Vec<Problem> {
         .collect()
 }
 
-/// Each reference to no issue, or to one of a kind its relation doesn't
-/// allow. An issue whose file has a problem of its own still exists, so a
-/// reference to it is left to that problem.
 fn references(
     flow: &Flow,
     issues: &[Issue],
@@ -286,9 +278,6 @@ fn references(
     problems
 }
 
-/// Each issue on a cycle through a relation that forbids cycles, each
-/// naming the whole cycle, so an edit to any issue on it sees the problem
-/// as its own.
 fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
     let projects: BTreeMap<IssueId, ProjectId> = issues
         .iter()
@@ -332,8 +321,6 @@ fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
     problems
 }
 
-/// A cycle reached from `id`, as the ids around it, unless every issue on
-/// the way was already walked.
 fn walk(
     edges: &BTreeMap<IssueId, &[IssueId]>,
     id: IssueId,

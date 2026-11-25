@@ -16,7 +16,6 @@ const ROOT: &str = "fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5";
 const OTHER: &str = "d2cef7849f3ce7cc16f17979e0acb8c21d9aed2a";
 const REMOTE: &str = "https://github.com/JimLundin/conductor.git";
 
-/// The id of the project the tests call `name`, or the id `name` is.
 fn id(name: &str) -> ProjectId {
     const IDS: [(&str, &str); 8] = [
         ("conductor", "cnd000"),
@@ -33,7 +32,6 @@ fn id(name: &str) -> ProjectId {
         .unwrap_or(ProjectId::new(0))
 }
 
-/// A folder that is a project id, for when its name isn't the point.
 const X: &str = "x00000";
 
 fn project(name: &str, remote: Option<&str>) -> Project {
@@ -163,8 +161,6 @@ fn a_listing_is_by_id_and_names_the_folders_that_arent_projects() {
     );
 }
 
-/// A rename is an edit of `project.toml`: the project keeps its id, so its
-/// checkouts, which are kept by id, stay its own.
 #[test]
 fn a_renamed_project_keeps_its_id_and_its_checkouts() {
     let folder = "7r5n23";

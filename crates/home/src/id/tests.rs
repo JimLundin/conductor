@@ -3,14 +3,12 @@ use alloc::vec::Vec;
 
 use super::{DRAWS, Draws, IssueId, ProjectId};
 
-/// 2026-11-22T12:00:00Z.
 const NOW: u64 = 1_795_348_800;
 
 fn minted(now: u64, random: u64) -> Option<IssueId> {
     IssueId::mint(now, &[random; DRAWS], &[])
 }
 
-/// The draws `given`, the last of them repeated to the end.
 fn draws(given: &[u64]) -> Draws {
     core::array::from_fn(|at| {
         given.get(at).or_else(|| given.last()).copied().unwrap_or(0)

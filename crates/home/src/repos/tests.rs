@@ -260,7 +260,6 @@ fn the_table_replaces_the_lines_between_its_markers_only() {
     assert_eq!(regenerated("no table\n", "table\n"), "no table\n");
 }
 
-/// The draws `given`, the last of them repeated to the end.
 fn draws(given: &[u64]) -> Draws {
     core::array::from_fn(|at| {
         given.get(at).or_else(|| given.last()).copied().unwrap_or(0)

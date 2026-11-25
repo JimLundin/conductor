@@ -179,8 +179,6 @@ fn parse_distance(ab: &str) -> Option<Distance> {
     })
 }
 
-/// Its branch and how far it is from its upstream, as
-/// `git status --short --branch` says them.
 impl fmt::Display for Checkout {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         out.write_str(self.branch.as_deref().unwrap_or("HEAD (no branch)"))?;
@@ -300,8 +298,7 @@ pub fn unmatched(projects: &[Project], probes: &[Probe]) -> Vec<Probe> {
         .collect()
 }
 
-/// The file at a repository's top that marks each standards profile.
-const PROFILES: [(&str, &str); 3] = [
+const PROFILE_MARKERS: [(&str, &str); 3] = [
     ("pyproject.toml", "python"),
     ("Cargo.toml", "rust"),
     ("package.json", "typescript"),
@@ -310,7 +307,7 @@ const PROFILES: [(&str, &str); 3] = [
 /// The standards profiles a repository follows, by the `names` at its top.
 #[must_use]
 pub fn profiles(names: &[String]) -> Vec<String> {
-    PROFILES
+    PROFILE_MARKERS
         .iter()
         .filter(|(marker, _)| names.iter().any(|name| name == marker))
         .map(|(_, profile)| String::from(*profile))
@@ -430,7 +427,6 @@ pub fn scan(scanning: Scanning) -> Result<Scan, String> {
     Ok(Scan { writes, said })
 }
 
-/// A `project.toml`'s fields as scan writes them.
 #[derive(Serialize)]
 struct Described<'a> {
     name: String,
@@ -441,8 +437,6 @@ struct Described<'a> {
     profiles: Vec<String>,
 }
 
-/// The project the repository `probe` is, as `id`, named after its folder,
-/// and its `project.toml`'s text.
 fn described(
     home: &str,
     probe: &Probe,

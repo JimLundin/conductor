@@ -13,8 +13,7 @@ use serde_json::{Map, Value};
 
 const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
-/// The bits one digit carries.
-const BITS: u32 = 5;
+const BITS_PER_DIGIT: u32 = 5;
 
 /// How many draws minting one id takes, each tried in turn while it gives
 /// an id the home already has.
@@ -38,8 +37,8 @@ impl IssueId {
     pub const EPOCH: u64 = 1_767_225_600;
 
     const DIGITS: u32 = 8;
-    const RANDOM_BITS: u32 = 2 * BITS;
-    const TIME_BITS: u32 = (Self::DIGITS - 2) * BITS;
+    const RANDOM_BITS: u32 = 2 * BITS_PER_DIGIT;
+    const TIME_BITS: u32 = (Self::DIGITS - 2) * BITS_PER_DIGIT;
 
     /// The id minted `seconds` after [`Self::EPOCH`] with the draw
     /// `random`, of which it keeps the bits it has room for.
@@ -92,7 +91,7 @@ impl ProjectId {
     /// room for.
     #[must_use]
     pub const fn new(random: u64) -> Self {
-        Self(random & mask(Self::DIGITS * BITS))
+        Self(random & mask(Self::DIGITS * BITS_PER_DIGIT))
     }
 
     /// The first id of `draws` not `held`, if any.
@@ -121,10 +120,9 @@ const fn mask(bits: u32) -> u64 {
     (1 << bits) - 1
 }
 
-/// `value`'s last `places` digits.
 fn write(out: &mut fmt::Formatter<'_>, value: u64, places: u32) -> fmt::Result {
     (0..places).rev().try_for_each(|place| {
-        let digit = (value >> (place * BITS)) & mask(BITS);
+        let digit = (value >> (place * BITS_PER_DIGIT)) & mask(BITS_PER_DIGIT);
         let byte = usize::try_from(digit)
             .ok()
             .and_then(|at| DIGITS.get(at))
@@ -134,18 +132,15 @@ fn write(out: &mut fmt::Formatter<'_>, value: u64, places: u32) -> fmt::Result {
     })
 }
 
-/// The value of `text`, if it is exactly `places` digits.
 fn read(text: &str, places: u32) -> Option<u64> {
     let length = usize::try_from(places).ok()?;
     (text.len() == length).then_some(())?;
     text.bytes().try_fold(0, |value, byte| {
         let digit = DIGITS.iter().position(|known| *known == byte)?;
-        Some((value << BITS) | u64::try_from(digit).ok()?)
+        Some((value << BITS_PER_DIGIT) | u64::try_from(digit).ok()?)
     })
 }
 
-/// Serde writes an id as its text, in every format, and its schema is that
-/// text's.
 macro_rules! textual {
     ($id:ident, $expecting:literal) => {
         impl JsonSchema for $id {

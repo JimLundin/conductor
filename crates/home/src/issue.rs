@@ -31,12 +31,6 @@ use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
 use crate::{CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId};
 
-/// Issue `id` of `project` in `text`, as the flow reads it, with the
-/// document it was read from.
-///
-/// # Errors
-///
-/// Why the flow can't read the file.
 fn read(
     flow: &Flow,
     project: ProjectId,
@@ -54,7 +48,6 @@ fn read(
     .map_err(|problem| problem.to_string())
 }
 
-/// The message of the commit an edit makes in the home.
 #[must_use]
 fn message(edit: &command::Edit) -> String {
     match edit {
@@ -98,8 +91,6 @@ fn change_message(id: IssueId, change: &IssueChange) -> String {
     }
 }
 
-/// Who signs what a client's change writes in the log, as one word: the
-/// host, and the client that sent it.
 #[must_use]
 fn signer(host: &str, client: &str) -> String {
     let word =
@@ -118,13 +109,9 @@ pub struct Edit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditData {
     project: ProjectId,
-    /// When the host took it, in seconds since the Unix epoch.
     at: u64,
-    /// Who signs the lines it adds to the log.
     by: String,
     edit: command::Edit,
-    /// The value each change sets had when it was made, as [`was`] gives
-    /// it, so a replay can tell whether someone else changed it since.
     was: Vec<Option<Vec<String>>>,
 }
 
@@ -134,37 +121,22 @@ impl EditData {
     }
 }
 
-/// How an edit meets the file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
-    /// The host makes the change now.
     Record,
-    /// Again, on top of the remote, whose last change to the file was at
-    /// `changed`, in seconds since the Unix epoch.
     Replay { changed: u64 },
 }
 
-/// What an edit does to the issue's file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Applied {
-    /// The file, and what the flow warns of it.
-    Write {
-        text: String,
-        warnings: Vec<String>,
-    },
+    Write { text: String, warnings: Vec<String> },
     AlreadyRecorded,
-    /// The file has it already.
     Unchanged,
-    /// The issue it changes is gone, so it is dropped.
     Gone,
-    /// The file isn't an issue any more, for this reason; the edit waits.
     Unreadable(String),
-    /// The flow refuses what it would write, for this reason.
     Refused(String),
 }
 
-/// The value each change of the edit sets has in its issue's file as it
-/// is now, under `flow`: what [`EditData::was`] keeps.
 #[must_use]
 fn was(
     flow: Option<&Flow>,
@@ -180,7 +152,6 @@ fn was(
     values(issue.as_ref(), &edit.edit)
 }
 
-/// What each change of `edit` sets has in `issue`, as words.
 fn values(
     issue: Option<&Issue>,
     edit: &command::Edit,
@@ -194,9 +165,8 @@ fn values(
     }
 }
 
-/// What the change sets has in `issue`, as words.
 fn field(issue: &Issue, change: &IssueChange) -> Option<Vec<String>> {
-    let one = |word: &str| words(&Datum::Text(String::from(word)));
+    let one = |word: &str| normalized_words(&Datum::Text(String::from(word)));
     match change {
         IssueChange::Move {
             part: Part::Status, ..
@@ -211,7 +181,6 @@ fn field(issue: &Issue, change: &IssueChange) -> Option<Vec<String>> {
     }
 }
 
-/// A field's or relation's value, as words.
 fn value_of(issue: &Issue, field: &str) -> Vec<String> {
     issue.fields.get(field).map_or_else(
         || {
@@ -223,13 +192,11 @@ fn value_of(issue: &Issue, field: &str) -> Vec<String> {
                 .map(ToString::to_string)
                 .collect()
         },
-        words,
+        normalized_words,
     )
 }
 
-/// A value's words, trimmed, without empty ones, so one value and a list
-/// of it compare alike.
-fn words(value: &Datum) -> Vec<String> {
+fn normalized_words(value: &Datum) -> Vec<String> {
     let kept = |text: &str| {
         let trimmed = text.trim();
         (!trimmed.is_empty()).then(|| String::from(trimmed))
@@ -243,8 +210,6 @@ fn words(value: &Datum) -> Vec<String> {
     }
 }
 
-/// Someone else changed what the edit sets since it was made: the value
-/// a change sets in `issue` isn't the one it had then.
 fn overtaken(edit: &EditData, issue: &Issue) -> bool {
     values(Some(issue), &edit.edit)
         .into_iter()
@@ -252,7 +217,6 @@ fn overtaken(edit: &EditData, issue: &Issue) -> bool {
         .any(|(at, now)| edit.was.get(at).cloned().flatten() != now)
 }
 
-/// The issue has what the change gives it already.
 fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
     match change {
         IssueChange::Move {
@@ -266,7 +230,7 @@ fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
             ..
         } => issue.stage.as_ref() == Some(to),
         IssueChange::Set { field, value } => {
-            value_of(issue, field) == words(value)
+            value_of(issue, field) == normalized_words(value)
         }
         IssueChange::Title(title) => issue.title.trim() == title.trim(),
         IssueChange::Body(body) => issue.body == body.trim(),
@@ -284,8 +248,6 @@ fn unchanged(issue: &Issue, change: &IssueChange) -> bool {
     }
 }
 
-/// A replay can let the change go: the issue has it already, or the item
-/// it picks is no longer where the person picked it.
 fn moot(issue: &Issue, change: &IssueChange) -> bool {
     unchanged(issue, change)
         || matches!(
@@ -297,7 +259,6 @@ fn moot(issue: &Issue, change: &IssueChange) -> bool {
         )
 }
 
-/// The item is no longer where the person picked it.
 fn stale(issue: &Issue, item: &Item) -> bool {
     item.seen
         .as_ref()
@@ -305,8 +266,6 @@ fn stale(issue: &Issue, item: &Item) -> bool {
         || item.index >= issue.checklist.len()
 }
 
-/// The edit on top of the issue's file as it is now, `None` when there is
-/// none, among the home's other issues.
 #[must_use]
 fn apply(
     home: &Snapshot,
@@ -358,12 +317,10 @@ fn apply(
     }
 }
 
-/// The front matter's comment that marks an edit as had.
 fn edit_marker(id: EditId) -> String {
     format!("conductor-edit: {id}")
 }
 
-/// The file as it is, marked as having had the edit.
 fn marked(mut document: Document, marker: &str) -> Applied {
     document.comment(marker);
     Applied::Write {
@@ -372,8 +329,6 @@ fn marked(mut document: Document, marker: &str) -> Applied {
     }
 }
 
-/// What `home::flow::command` writes for the edit, among the home's other
-/// issues and the issue's file as it is now, marked as having had it.
 fn written(
     home: &Snapshot,
     data: &EditData,
@@ -464,8 +419,6 @@ pub fn branch(home: Option<&Home>, id: IssueId) -> String {
     )
 }
 
-/// The agent's first message: the issue as its file has it, its stage and
-/// the skills that serve it, and what to do with it.
 fn brief(project: &str, flow: Option<&Flow>, issue: &Issue) -> String {
     let checklist = issue
         .checklist
@@ -496,8 +449,6 @@ fn brief(project: &str, flow: Option<&Flow>, issue: &Issue) -> String {
     )
 }
 
-/// The issue's stage, and the skills that serve it, the leading one to
-/// follow.
 fn staged(flow: Option<&Flow>, issue: &Issue) -> String {
     let Some(name) = &issue.stage else {
         return String::new();

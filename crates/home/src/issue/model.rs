@@ -89,7 +89,6 @@ impl Datum {
     }
 }
 
-/// [`Datum`] as the client link writes it.
 #[derive(Serialize)]
 #[serde(rename = "Datum")]
 enum TaggedRef<'a> {
@@ -98,7 +97,6 @@ enum TaggedRef<'a> {
     Bool(bool),
 }
 
-/// [`Datum`] as the client link reads it.
 #[derive(Deserialize)]
 #[serde(rename = "Datum")]
 enum Tagged {
@@ -126,7 +124,6 @@ impl Serialize for Datum {
     }
 }
 
-/// As JSON writes it: [`Datum`]'s schema is its human-readable form.
 impl JsonSchema for Datum {
     fn schema_name() -> Cow<'static, str> {
         Cow::Borrowed("Datum")
@@ -159,7 +156,6 @@ impl<'de> Deserialize<'de> for Datum {
     }
 }
 
-/// A [`Datum`] written as its value.
 struct Plain;
 
 impl<'de> Visitor<'de> for Plain {
@@ -211,8 +207,6 @@ pub enum LogEvent {
 }
 
 impl fmt::Display for Entry {
-    /// `<time> <who> <event>: <text>`, or the text alone when it names no
-    /// time and no one.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match (&self.at, &self.by) {
             (Some(at), Some(by)) => {
@@ -264,7 +258,6 @@ impl Entry {
 }
 
 impl fmt::Display for LogEvent {
-    /// `note`, `stage <from>→<to>` or `status <from>→<to>`.
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Note => out.write_str("note"),
@@ -309,7 +302,6 @@ pub enum IssueChange {
         part: Part,
         to: String,
         reason: String,
-        /// The owner signed off, as entering a stage with a sign-off needs.
         signed_off: bool,
     },
     /// A declared field's or relation's value.

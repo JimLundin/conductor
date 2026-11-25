@@ -22,8 +22,6 @@ fn flow() -> Flow {
     })
 }
 
-/// The names the tests give issues, each standing for the id after its
-/// place.
 const NAMES: [&str; 10] = [
     "spec", "review", "one", "two", "task", "i0", "i1", "i2", "i3", "i4",
 ];
@@ -73,7 +71,6 @@ fn linked(mut issue: Issue, relation: &str, ids: &[&str]) -> Issue {
     issue
 }
 
-/// The graph's issues, as `holds` takes them.
 fn among(graph: &Graph) -> Vec<&Issue> {
     graph.issues.iter().collect()
 }
@@ -247,7 +244,6 @@ fn a_bool_time_or_text_default_matches_on_its_typed_value() {
     }
 }
 
-/// The predicate's meaning, written directly: no explanations.
 fn meets(
     flow: &Flow,
     graph: &Graph,

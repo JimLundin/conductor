@@ -155,7 +155,6 @@ pub fn origin_default(symbolic: &str) -> Option<String> {
         .map(String::from)
 }
 
-/// Where a profile's check.sh runs from, or why it can't.
 enum Provider<'a> {
     At(&'a str),
     Not(Reason),
@@ -239,8 +238,6 @@ pub fn verifying(
         .collect()
 }
 
-/// A project's first checkout level with origin's default branch, and its
-/// commit.
 fn level<'a>(
     project: &'a Placed,
     states: &'a BTreeMap<String, Option<Checkout>>,
@@ -265,7 +262,6 @@ fn default_of(
         .cloned()
 }
 
-/// The checked-out projects providing a profile `verified` declare.
 fn providers<'a>(
     placed: &'a [Placed],
     verified: &[&Placed],
@@ -280,7 +276,6 @@ fn providers<'a>(
     })
 }
 
-/// The level checkout of the first checked-out project providing `profile`.
 fn provider<'a>(
     placed: &'a [Placed],
     project: &str,
@@ -314,7 +309,6 @@ fn provider<'a>(
         )
 }
 
-/// A path from the home at `home` as a path anywhere.
 fn joined(home: &str, path: &str) -> String {
     let top = home.trim_end_matches(['/', '\\']);
     let anywhere = path.starts_with(['/', '\\']) || path.get(1..2) == Some(":");
@@ -325,8 +319,6 @@ fn joined(home: &str, path: &str) -> String {
     }
 }
 
-/// The text after a summary line's unit and status, when its status is
-/// `FAIL`, with the unit.
 fn failing(line: &str) -> Option<(&str, &str)> {
     let mut words = line.split_whitespace();
     let unit = words.next()?;
@@ -334,9 +326,7 @@ fn failing(line: &str) -> Option<(&str, &str)> {
     Some((unit, rest.strip_prefix("FAIL")?.trim_start()))
 }
 
-/// How check.sh's `--verify` starts the line of a unit it fails for having
-/// no recorded pass of a scope.
-const MISSING: &str = "no recorded pass of ";
+const MISSING_PASS_PREFIX: &str = "no recorded pass of ";
 
 /// What `home repos --verify` says of `verify` from how it `ran`.
 ///
@@ -351,7 +341,9 @@ pub fn verdict(verify: &Verify, ran: &Ran) -> Option<Reason> {
     let failed: Vec<(&str, &str)> =
         ran.out.lines().filter_map(failing).collect();
     if !failed.is_empty()
-        && failed.iter().all(|(_, why)| why.starts_with(MISSING))
+        && failed
+            .iter()
+            .all(|(_, why)| why.starts_with(MISSING_PASS_PREFIX))
     {
         let units = failed.iter().fold(Vec::new(), |mut units, (unit, _)| {
             if !units.iter().any(|named: &String| named == unit) {
@@ -366,7 +358,8 @@ pub fn verdict(verify: &Verify, ran: &Ran) -> Option<Reason> {
     }
     let first_failing = || {
         ran.out.lines().find(|line| {
-            failing(line).is_some_and(|(_, why)| !why.starts_with(MISSING))
+            failing(line)
+                .is_some_and(|(_, why)| !why.starts_with(MISSING_PASS_PREFIX))
         })
     };
     let why = ran

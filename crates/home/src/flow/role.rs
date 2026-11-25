@@ -11,7 +11,6 @@ use super::eval::Move;
 use crate::flow::{Flow, Role};
 use crate::prelude::*;
 
-/// The status that holds `role`: the first with it the flow declares.
 fn holding(flow: &Flow, role: Role) -> Option<&str> {
     flow.statuses
         .iter()
