@@ -1,6 +1,3 @@
-//! How a provider CLI child process is started and stopped, and how its
-//! sign-in runs on pipes.
-
 use std::io;
 use std::path::Path;
 use std::process::{ExitStatus, Stdio};
@@ -15,7 +12,6 @@ use crate::Home;
 
 const EXIT_GRACE: Duration = Duration::from_secs(5);
 
-/// `program` run as `run` says, in `home`.
 #[must_use]
 pub fn command(program: &Path, home: &Home, run: Invocation) -> Command {
     let mut cmd = Command::new(program);
@@ -77,8 +73,6 @@ async fn killed(mut child: Child) -> std::io::Result<ExitStatus> {
     child.wait().await
 }
 
-/// A CLI's sign-in, running with its output on pipes. Dropping it kills
-/// the CLI.
 #[derive(Debug)]
 pub struct SignInRun {
     child: Child,
@@ -86,12 +80,6 @@ pub struct SignInRun {
     err: ChildStderr,
 }
 
-/// Starts `program` as `run` says, in `home`, for a sign-in, and returns
-/// it with its stdin.
-///
-/// # Errors
-///
-/// Why it could not start.
 pub fn sign_in(
     program: &Path,
     home: &Home,
@@ -121,12 +109,6 @@ fn unpiped(stream: &str) -> io::Error {
 }
 
 impl SignInRun {
-    /// Hands each line the CLI prints, on either stream, to `printed`, and
-    /// returns how it exited once both streams have closed.
-    ///
-    /// # Errors
-    ///
-    /// Why waiting for it failed.
     pub async fn finish(
         mut self,
         printed: impl Fn(String),
@@ -149,11 +131,6 @@ async fn lines(stream: impl AsyncRead + Unpin, printed: &impl Fn(String)) {
     }
 }
 
-/// Writes `line` to a sign-in's stdin, ended with a newline.
-///
-/// # Errors
-///
-/// Why the write failed, for instance because the CLI has exited.
 pub async fn write_line(stdin: &mut ChildStdin, line: &str) -> io::Result<()> {
     stdin.write_all(line.as_bytes()).await?;
     stdin.write_all(b"\n").await?;

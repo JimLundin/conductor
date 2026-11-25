@@ -1,16 +1,3 @@
-//! The host's store of its instances and their credentials (§6.3).
-//!
-//! `<data>/credentials` holds the
-//! postcard of [`Roster`], sealed with XChaCha20-Poly1305 under the
-//! 32-byte store key, kept in the OS user's keystore or, on a host without
-//! one, in the owner-only `<data>/store.key` (`key`, `docs/credential-store.md`).
-//! [`Roster`] is what the fleet config carries, so sharing it is a copy of
-//! this value.
-//!
-//! The file is a format byte, the nonce and the ciphertext, sealed with the
-//! format and the file's purpose as associated data, so no other sealed
-//! blob under the same key opens as credentials.
-
 mod adoption;
 mod key;
 
@@ -69,19 +56,11 @@ pub struct RecoveredAdoption {
 }
 
 impl Store {
-    /// The data dir the store is in.
     #[must_use]
     pub fn dir(&self) -> &Path {
         &self.dir
     }
 
-    /// Opens the store in `data_dir`, creating its key on first run, and
-    /// reads what it holds.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the key cannot be opened or an unfinished adoption cannot
-    /// be recovered.
     pub fn open(
         data_dir: &Path,
         catalog: Catalog,
@@ -345,12 +324,6 @@ impl Store {
             .with_context(|| format!("syncing {}", self.dir.display()))
     }
 
-    /// Moves a store that doesn't open to `credentials.unreadable`,
-    /// replacing an older one there, and returns where it went.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the rename fails.
     pub fn move_aside(&self) -> anyhow::Result<PathBuf> {
         let _lock = self.lock()?;
         self.ensure_idle()?;

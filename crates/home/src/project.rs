@@ -1,10 +1,3 @@
-//! A project's `projects/<project>/project.toml` in the home.
-//!
-//! It gives (docs/home.md §3) its name, its title, its remote, the root
-//! commit that identifies its checkouts, the standards profiles it follows
-//! and those it provides. Its
-//! default branch is Git's, not the home's.
-
 use crate::ProjectId;
 use alloc::string::ToString;
 use serde::Deserialize;
@@ -17,9 +10,7 @@ pub struct Project {
     pub id: ProjectId,
     pub name: String,
     pub title: String,
-    /// `None` for a project that is local only.
     pub remote: Option<String>,
-    /// The first commit of its first-parent history.
     pub root: String,
     pub profiles: Vec<String>,
     pub provides: Vec<String>,
@@ -37,17 +28,12 @@ struct File {
     provides: Vec<String>,
 }
 
-/// The projects a home lists, by id, and why any of its folders isn't one.
-/// A name is unique: a folder whose project another already has the name
-/// of is a problem, and so is the other.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Listing {
     pub projects: Vec<Project>,
     pub problems: Vec<String>,
 }
 
-/// Each folder of the home's `projects/` with its `project.toml`'s text, or
-/// why it couldn't be read.
 #[must_use]
 pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
     let (mut projects, mut problems) = folders.into_iter().fold(
@@ -87,11 +73,6 @@ pub fn listed(folders: Vec<(String, Result<String, String>)>) -> Listing {
     }
 }
 
-/// The project in `folder`, as its `project.toml`'s `text` describes it.
-///
-/// # Errors
-///
-/// Why the folder's name, the file or one of its values won't do.
 pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
     let id = slug(folder)?;
     let file = toml::from_str::<File>(text)

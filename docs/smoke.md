@@ -34,7 +34,7 @@ once, and how the whole thing feels.
       separate run directory and use a distinct host name and data directory.
 
   ```sh
-  cargo run -q -p conductord -- host \
+  cargo run -q -p cli --bin orchestrator -- host \
     --name smoke-primary --data-dir "$smoke_run/host-data" \
     --web-url https://jimlundin.github.io/conductor/ \
     --model claude=haiku 2>>"$smoke_run/host.log"

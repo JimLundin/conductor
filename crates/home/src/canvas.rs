@@ -64,17 +64,11 @@ pub enum Block {
 }
 
 impl Canvas {
-    /// # Errors
-    ///
-    /// A block breaks a drawing rule.
     pub fn new(title: String, blocks: Vec<Block>) -> Result<Self, CanvasError> {
         blocks.iter().try_for_each(Block::check)?;
         Ok(Self { title, blocks })
     }
 
-    /// # Errors
-    ///
-    /// The text is not a canvas.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
         decoded::<Drawn>(text).and_then(Self::try_from)
     }
@@ -123,9 +117,6 @@ pub struct CanvasFile {
 }
 
 impl CanvasFile {
-    /// # Errors
-    ///
-    /// The text is not a canvas file.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
         let file: Stamped = decoded(text)?;
         Ok(Self {
@@ -231,9 +222,6 @@ impl core::error::Error for CanvasError {}
 pub struct CanvasName(String);
 
 impl CanvasName {
-    /// # Errors
-    ///
-    /// The text is not lowercase words joined by `-`.
     pub fn parse(text: &str) -> Result<Self, BadName> {
         text.split('-')
             .all(|word| {

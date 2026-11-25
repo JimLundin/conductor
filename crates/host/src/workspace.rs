@@ -1,9 +1,3 @@
-//! The rules of a session's Git worktree and its snapshots.
-//!
-//! The names, branches and refs Conductor owns, what Git's output says, how
-//! a snapshot's diff is bounded, and the steps that remove a workspace
-//! while keeping its branch. The shell runs each requested step.
-
 use alloc::format;
 use alloc::string::ToString;
 
@@ -33,13 +27,10 @@ pub enum GitError {
     Failed(String),
 }
 
-/// What one `git` run gave back.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
-    /// Stdout, cut off just past the per-file patch limit.
     pub bytes: Vec<u8>,
     pub success: bool,
-    /// The start of stderr.
     pub error: String,
 }
 
@@ -142,12 +133,6 @@ fn marker(workspace: &Workspace) -> String {
     )
 }
 
-/// Where the workspace's snapshots are kept: one ref each, beside the
-/// branch, so no commit of the project holds them.
-///
-/// # Errors
-///
-/// When Conductor doesn't own the branch.
 pub fn snapshots(workspace: &Workspace) -> Result<String, GitError> {
     let session = workspace
         .branch
@@ -284,7 +269,6 @@ fn budget(
     (kept, extent)
 }
 
-/// The workspace's branch as a full ref.
 #[must_use]
 pub fn head(workspace: &Workspace) -> String {
     format!("refs/heads/{}", workspace.branch)
@@ -304,43 +288,28 @@ pub struct Workspace {
     pub repository: Repository,
     pub original: WorkingCopy,
     pub worktree: Worktree,
-    /// The worktree's copy of the directory the session was started in.
     pub directory: SessionDirectory,
     pub branch: String,
 }
 
-/// The root of the repository a session's worktree is added to, as the
-/// host's OS spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Repository(pub String);
 
-/// The directory of the owner's working copy a session was started in,
-/// which its workspace isolates it from, as the host's OS spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkingCopy(pub String);
 
-/// The Git worktree that holds a session's workspace, as the host's OS
-/// spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Worktree(pub String);
 
-/// Where a removed session's branch was kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Kept {
-    /// In the checkout only: it has no `origin`.
     Local,
-    Pushed {
-        remote: String,
-    },
-    /// In the checkout only, since the push failed.
-    PushFailed {
-        reason: String,
-    },
+    Pushed { remote: String },
+    PushFailed { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Snapshot {
-    /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
     pub turn_start: Option<HostSeq>,
     pub commit: String,
 }
@@ -359,14 +328,11 @@ pub struct SnapshotFile {
     pub patch: FilePatch,
 }
 
-/// What a snapshot did to a file, as Git's diff status says.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub enum DiffChange {
-    /// Added: the whole file is new.
     Write,
-    /// Modified, or any other status.
     Edit,
     Delete,
 }
@@ -405,8 +371,6 @@ fn merged(success: bool, output: &str, error: &str) -> Result<String, String> {
     }
 }
 
-/// Where `branch`, a full ref, is checked out, from `git worktree list
-/// --porcelain`.
 #[must_use]
 pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
     let wanted = format!("branch {branch}");

@@ -1,8 +1,3 @@
-//! Serves the client link (`link::ALPN`) on accepted iroh connections.
-//! The link's rules are [`link::serve`], and what a session command asks
-//! of the host [`host::serve`]; this reads and writes the frames and calls
-//! the log and the registry.
-
 use std::sync::Arc;
 use std::time::Duration;
 

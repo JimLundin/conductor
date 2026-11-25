@@ -1,8 +1,3 @@
-//! The handle a session holds on its agent, whichever provider runs it: a
-//! channel pair that speaks the `agents::runtime` protocol. Each provider's
-//! shell (`claude-cli`, `codex-cli`) runs a task on the other end, and
-//! hands the host a [`Plugin`] whose [`Instance`] configures an account and starts its agents.
-
 pub mod agent;
 mod plugin;
 
@@ -15,9 +10,6 @@ use agents::Note;
 use agents::runtime::{Command, Event};
 use tokio::sync::mpsc;
 
-/// One agent as its session sees it: where the session sends commands, and
-/// where the agent's steps and outcomes arrive. Dropping it ends the
-/// agent's task.
 #[derive(Debug)]
 pub struct Runtime {
     pub commands: mpsc::Sender<Command>,
@@ -43,7 +35,6 @@ fn pair() -> (Runtime, Plug) {
     )
 }
 
-/// Logs what an agent's core decided to report.
 pub fn log(note: &Note) {
     match note {
         Note::Unreadable { provider, error } => {

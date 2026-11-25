@@ -52,7 +52,7 @@ this file and re-check it when the CLI version changes.
 - `on-request` with `workspace-write` asked before `git add a.txt && git
   commit` in a fresh repository in the working directory, with the reason
   "May I rerun the exact command with permission to write Git metadata?":
-  the sandbox keeps `.git` read-only. (Live check through `conductord`,
+  the sandbox keeps `.git` read-only. (Live check through `orchestrator`,
   2026-11-12, `gpt-6-luna`.)
 - `untrusted` with `workspace-write` asks before every command, including
   `pwd && ls -la`, whatever the model thinks of the sandbox. The scripted

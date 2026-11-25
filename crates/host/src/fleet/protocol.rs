@@ -1,5 +1,3 @@
-//! Signed fleet membership and configuration shared by the app and hosts.
-
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -33,12 +31,6 @@ pub struct Identity {
     pub role: Role,
 }
 
-/// A value signed over the exact JSON bytes it was written as, and
-/// carried as those bytes.
-///
-/// JSON has no canonical form, so nothing re-encodes it to verify it: a
-/// verifier checks `signature` over [`Payload::DOMAIN`] then `payload`,
-/// and only then parses `payload`.
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(bound = "")]
 pub struct Signed<T> {
@@ -59,8 +51,6 @@ impl<T> Signed<T> {
     }
 }
 
-/// What a fleet signs, under a domain of its own so that a signature over
-/// one kind never verifies as another.
 pub trait Payload: Serialize + DeserializeOwned {
     const DOMAIN: &'static [u8];
 }
@@ -129,9 +119,7 @@ pub struct Configuration {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignedConfiguration {
     pub config: Configuration,
-    /// Over the configuration's postcard, which only hosts read.
     pub signature: Vec<u8>,
-    /// `config.snapshot` as clients get it.
     pub public: SignedSnapshot,
 }
 
@@ -222,15 +210,12 @@ pub struct PairRequest {
     pub name: String,
 }
 
-/// A command about the fleet, from the app.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum FleetCommand {
     Status,
     Invite,
     Revoke(NodeId),
     Approve(PairRequest),
-    /// Enrolls the standalone host `node`, reached through `relay`, which
-    /// requires `token`.
     Admit {
         node: NodeId,
         relay: String,
@@ -245,7 +230,6 @@ pub enum FleetResult {
     Status(SignedSnapshot),
     Invite(Invite),
     Pairing(Box<Pairing>),
-    /// Fleet changes need the root host.
     Unavailable,
 }
 
@@ -254,70 +238,35 @@ pub enum FleetResult {
 pub struct TextError;
 
 impl Invite {
-    /// Encodes the fleet artifact as fragment-safe text.
-    ///
-    /// # Errors
-    ///
-    /// If the artifact cannot be encoded or exceeds the exchange budget.
     pub fn to_text(&self) -> Result<String, TextError> {
         encode_text(self)
     }
 
-    /// Parses a fleet artifact from fragment-safe text.
-    ///
-    /// # Errors
-    ///
-    /// If the text is malformed or exceeds the exchange budget.
     pub fn parse_text(text: &str) -> Result<Self, TextError> {
         decode_text(text)
     }
 }
 
 impl PairRequest {
-    /// Encodes the fleet artifact as fragment-safe text.
-    ///
-    /// # Errors
-    ///
-    /// If the artifact cannot be encoded or exceeds the exchange budget.
     pub fn to_text(&self) -> Result<String, TextError> {
         encode_text(self)
     }
 
-    /// Parses a fleet artifact from fragment-safe text.
-    ///
-    /// # Errors
-    ///
-    /// If the text is malformed or exceeds the exchange budget.
     pub fn parse_text(text: &str) -> Result<Self, TextError> {
         decode_text(text)
     }
 }
 
 impl Pairing {
-    /// Encodes the fleet artifact as fragment-safe text.
-    ///
-    /// # Errors
-    ///
-    /// If the artifact cannot be encoded or exceeds the exchange budget.
     pub fn to_text(&self) -> Result<String, TextError> {
         encode_text(self)
     }
 
-    /// Parses a fleet artifact from fragment-safe text.
-    ///
-    /// # Errors
-    ///
-    /// If the text is malformed or exceeds the exchange budget.
     pub fn parse_text(text: &str) -> Result<Self, TextError> {
         decode_text(text)
     }
 }
 
-/// Encodes the app's saved pairing and latest known roster.
-///
-/// # Errors
-///
-/// If the state cannot be encoded or exceeds the storage budget.
 pub fn encode_saved(
     pairing: &Pairing,
     snapshot: Option<&Snapshot>,
@@ -325,11 +274,6 @@ pub fn encode_saved(
     encode_text(&(pairing, snapshot))
 }
 
-/// Decodes the app's saved pairing and latest known roster.
-///
-/// # Errors
-///
-/// If the state is malformed or exceeds the storage budget.
 pub fn decode_saved(
     text: &str,
 ) -> Result<(Pairing, Option<Snapshot>), TextError> {

@@ -1,9 +1,3 @@
-//! The home as one reading of its files.
-//!
-//! Its flow, its projects, every issue file and the graph the flow reads
-//! from them. The check, every write and every replay are made against one
-//! of these, so each sees the home the same way.
-
 use alloc::collections::BTreeMap;
 
 use crate::flow::Flow;
@@ -15,15 +9,11 @@ use super::{PATH, load};
 use crate::prelude::*;
 use crate::project::{Listing, Project, listed};
 
-/// What the shell found of the home's files.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
-    /// The text at [`PATH`], or why it couldn't be read.
     pub flow: Result<String, String>,
-    /// Each folder of `projects/` with its `project.toml`, or why not.
     pub projects: Vec<(String, Result<String, String>)>,
     pub issues: Vec<File>,
-    /// Why each issue file that couldn't be read wasn't, naming it.
     pub unread: Vec<String>,
 }
 
@@ -37,8 +27,6 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// The home `inputs` hold. Its issues are read only when its flow
-    /// loads.
     #[must_use]
     pub fn of(inputs: Inputs) -> Self {
         let flow = inputs
@@ -58,7 +46,6 @@ impl Snapshot {
         }
     }
 
-    /// A home with nothing in it, for this reason.
     #[must_use]
     pub fn empty(reason: String) -> Self {
         Self {
@@ -70,8 +57,6 @@ impl Snapshot {
         }
     }
 
-    /// The home with `file` written, in place of any file it had of the
-    /// same name.
     #[must_use]
     pub fn with(&self, file: File) -> Self {
         let mut files: Vec<File> = self
@@ -94,22 +79,15 @@ impl Snapshot {
         }
     }
 
-    /// The flow, or why it doesn't load.
-    ///
-    /// # Errors
-    ///
-    /// The flow couldn't be read or doesn't load.
     pub fn flow(&self) -> Result<&Flow, &str> {
         self.flow.as_ref().map_err(String::as_str)
     }
 
-    /// The projects it lists, by id.
     #[must_use]
     pub fn projects(&self) -> &[Project] {
         &self.listing.projects
     }
 
-    /// The project called `name`, or whose id it is.
     #[must_use]
     pub fn project(&self, name: &str) -> Option<&Project> {
         let id = ProjectId::parse(name);
@@ -118,7 +96,6 @@ impl Snapshot {
             .find(|project| project.name == name || Some(project.id) == id)
     }
 
-    /// Every issue file that could be read.
     #[must_use]
     pub fn files(&self) -> &[File] {
         &self.files
@@ -134,7 +111,6 @@ impl Snapshot {
         self.graph.issues.iter().find(|issue| issue.id == id)
     }
 
-    /// Its issues, by project and id.
     #[must_use]
     pub fn issues(&self) -> BTreeMap<ProjectId, Vec<Issue>> {
         let mut issues: BTreeMap<ProjectId, Vec<Issue>> = BTreeMap::new();
@@ -144,21 +120,16 @@ impl Snapshot {
         issues
     }
 
-    /// The project folders that aren't projects, and why.
     #[must_use]
     pub fn listing_problems(&self) -> &[String] {
         &self.listing.problems
     }
 
-    /// Why each issue file that couldn't be read wasn't.
     #[must_use]
     pub fn unread(&self) -> &[String] {
         &self.unread
     }
 
-    /// Everything that kept part of the home from being read: a flow that
-    /// doesn't load, a folder that isn't a project, a file that couldn't
-    /// be read or isn't an issue, each naming where.
     #[must_use]
     pub fn problems(&self) -> Vec<String> {
         self.flow

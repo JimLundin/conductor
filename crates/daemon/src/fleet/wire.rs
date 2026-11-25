@@ -1,6 +1,3 @@
-//! Frame I/O between hosts, in the fleet protocol's own codec
-//! ([`host::fleet::frame`]).
-
 use anyhow::Context;
 use host::fleet::frame::{self, Frame};
 use iroh::endpoint::{RecvStream, SendStream};

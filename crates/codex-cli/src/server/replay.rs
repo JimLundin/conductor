@@ -1,10 +1,3 @@
-//! Replays recorded `codex app-server` stdout (fixtures/codex) through a real
-//! `CodexServer`. A stand-in process prints the recording, holding each
-//! response until our request with that id arrives and each
-//! `serverRequest/resolved` until we answer that request, as Codex does. The
-//! actor, the boundary mapping and the exactly-once approval bookkeeping all
-//! run against Codex's real bytes, driven by the calls the recorded run made.
-
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::time::Duration;

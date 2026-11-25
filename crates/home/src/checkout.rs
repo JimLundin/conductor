@@ -1,9 +1,3 @@
-//! Which local repositories are a project's checkouts on this host.
-//!
-//! A repository is one when its history has the project's root commit and
-//! its `origin` is the project's remote, whatever its path; a local-only
-//! project's checkouts have no `origin`.
-
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
@@ -12,8 +6,6 @@ use crate::{Checkout, CheckoutLocation, Origin, ProjectId};
 use crate::prelude::*;
 use crate::project::Project;
 
-/// A directory the host searches for checkouts, and the directories in it
-/// and in those, each by its path relative to it (`apps/conductor`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Root {
     pub path: String,
@@ -22,9 +14,6 @@ pub struct Root {
 
 const SET_ASIDE: [&str; 2] = ["_old", "Archives"];
 
-/// The paths to look for checkouts at, each once: the `known` ones, then
-/// each directory in each root that isn't hidden, in a hidden one or in
-/// one set aside.
 #[must_use]
 pub fn candidates(roots: &[Root], known: &[String]) -> Vec<String> {
     let searched = roots.iter().flat_map(|root| {
@@ -48,7 +37,6 @@ pub fn candidates(roots: &[Root], known: &[String]) -> Vec<String> {
     )
 }
 
-/// Where the host clones each of `projects`, as [`clone_path`] says.
 #[must_use]
 pub fn clone_paths(clones: &str, projects: &[Project]) -> Vec<String> {
     projects
@@ -57,7 +45,6 @@ pub fn clone_paths(clones: &str, projects: &[Project]) -> Vec<String> {
         .collect()
 }
 
-/// Where the host clones `project`: `<clones>/<project>`.
 #[must_use]
 pub fn clone_path(clones: &str, project: &ProjectId) -> String {
     join(clones, &project.to_string())
@@ -67,29 +54,19 @@ fn join(directory: &str, name: &str) -> String {
     format!("{}/{name}", directory.trim_end_matches('/'))
 }
 
-/// What Git says of a repository at a path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Probe {
     pub path: String,
-    /// The root commit of its `HEAD`'s first-parent history.
     pub roots: Vec<String>,
     pub remote: Option<String>,
 }
 
-/// What a shell asks Git at a candidate path, in [`probed`]'s order: the
-/// top of the repository there, the root of its `HEAD`'s first-parent
-/// history, and its `origin`.
 pub const ASKED: [&[&str]; 3] = [
     &["rev-parse", "--show-toplevel"],
     &["rev-list", "--max-parents=0", "--first-parent", "HEAD"],
     &["remote", "get-url", "origin"],
 ];
 
-/// The repository at `path`, if it is the top of one.
-///
-/// `top`, `roots` and `remote` are what Git printed for each of [`ASKED`]
-/// there, each `None` if it failed. A directory inside another repository,
-/// or one with no commit, is none.
 #[must_use]
 pub fn probed(
     path: &str,
@@ -108,8 +85,6 @@ pub fn probed(
     })
 }
 
-/// Each project's checkouts among `probes`, in the probes' order. One at
-/// the project's place in `clones` is the host's own clone.
 #[must_use]
 pub fn matched(
     projects: &[Project],
@@ -142,7 +117,6 @@ pub fn matched(
         .collect()
 }
 
-/// Whether the repository `probe` is a checkout of `project`.
 #[must_use]
 pub fn is_checkout(project: &Project, probe: &Probe) -> bool {
     probe.roots.contains(&project.root)
@@ -150,7 +124,6 @@ pub fn is_checkout(project: &Project, probe: &Probe) -> bool {
             == probe.remote.as_deref().map(normal)
 }
 
-/// The repository address suitable for display.
 #[must_use]
 pub fn display(remote: &str) -> String {
     match remote.split_once("://") {
@@ -198,7 +171,6 @@ fn scp(remote: &str) -> Option<(&str, &str)> {
     Some((without_user(login), path))
 }
 
-/// Compares repository addresses with case-insensitive network hosts.
 #[must_use]
 pub fn normal(remote: &str) -> String {
     let network = match remote.split_once("://") {

@@ -417,8 +417,8 @@ fn a_sync_succeeds_falls_behind_or_fails_and_keeps_its_last_success() {
     assert_eq!(
         failed,
         Sync {
-            synced: None,
-            attempted: Some(10),
+            synced_secs: None,
+            attempted_secs: Some(10),
             status: HomeSync::Failed { reason: reason() },
         }
     );
@@ -426,16 +426,16 @@ fn a_sync_succeeds_falls_behind_or_fails_and_keeps_its_last_success() {
     assert_eq!(
         synced,
         Sync {
-            synced: Some(20),
-            attempted: Some(20),
+            synced_secs: Some(20),
+            attempted_secs: Some(20),
             status: HomeSync::Synced,
         }
     );
     assert_eq!(
         synced.after(Err(reason()), true, 30),
         Sync {
-            synced: Some(20),
-            attempted: Some(30),
+            synced_secs: Some(20),
+            attempted_secs: Some(30),
             status: HomeSync::Behind { reason: reason() },
         }
     );
@@ -488,7 +488,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
     assert_eq!(
         (
             shown.remote.as_str(),
-            shown.synced,
+            shown.synced_secs,
             &shown.sync,
             shown.unpushed
         ),

@@ -1,7 +1,3 @@
-//! Dates from the seconds since the Unix epoch that hosts report times in.
-
-/// The proleptic Gregorian date `days` after 1970-01-01 (Howard Hinnant's
-/// `civil_from_days`), as year, month and day.
 #[must_use]
 pub fn civil(days: u64) -> (u64, u64, u64) {
     let z = days + 719_468;

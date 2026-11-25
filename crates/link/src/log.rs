@@ -1,13 +1,3 @@
-//! The client link's rules on the host's log (architecture §8).
-//!
-//! Which commands run, wait or answer from their receipt, by command id;
-//! when a command's events commit with its receipt; the `Welcome` a
-//! connection starts with; and the catch-up a `Subscribe` asks for. The seq
-//! of each event, and which are stored, are the event log's (`host::log`).
-//!
-//! The shell owns the database and the channels. It hands [`Log`] what
-//! happened and performs each [`Effect`] in order.
-
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -22,15 +12,12 @@ use host::session::{EventKind, SessionId};
 
 use crate::{CommandResult, Subscribe, Welcome};
 
-/// Names a `begin` or a `finish` the shell answers later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Lease(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Runs alone; its events and receipt commit together.
     Session,
-    /// Runs beside session commands and commits its receipt on its own.
     Receipt,
 }
 
@@ -57,26 +44,17 @@ impl From<CommandResult> for Completion {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Begun {
-    /// The command already ran: answer its receipt.
     Cached(CommandResult),
-    /// Run the command, then finish it.
     Execute(CommandId),
 }
 
-/// What the shell does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// What the event log decided.
     Log(Logged),
-    /// Write the command's receipt into the open transaction, if there is
-    /// one.
     Receipt(CommandId, CommandResult),
-    /// Read the command's stored receipt and hand it to [`Log::receipt`].
     Lookup(CommandId),
     Begun(Lease, Begun),
     Finished(Lease),
-    /// Stop the log: a command was dropped unfinished, so its effects may
-    /// have happened without its receipt.
     Stop,
 }
 
@@ -110,7 +88,6 @@ pub struct Log {
 }
 
 impl Log {
-    /// The log of `name` in `epoch`, holding the stored `events`.
     #[must_use]
     pub const fn new(name: String, epoch: Epoch, events: Vec<Event>) -> Self {
         Self {
@@ -159,22 +136,17 @@ impl Log {
         }
     }
 
-    /// The stored events after `after`.
     #[must_use]
     pub fn replay(&self, after: HostSeq) -> Vec<Event> {
         self.events.replay(after)
     }
 
-    /// The replay a subscription catches up with, or `None` for a cursor
-    /// from another epoch, which the host refuses.
     #[must_use]
     pub fn resume(&self, subscribe: &Subscribe) -> Option<Vec<Event>> {
         (subscribe.epoch == self.epoch)
             .then(|| self.replay(subscribe.after_seq))
     }
 
-    /// Records an event, as the event log decides; the active command's
-    /// events wait for it to commit.
     pub fn append(
         &mut self,
         session: SessionId,
@@ -184,21 +156,15 @@ impl Log {
         (event, logged(effects))
     }
 
-    /// Saves the session's conversation id, in the active command's
-    /// transaction if there is one.
     #[must_use]
     pub fn conversation(&self, session: SessionId, id: String) -> Vec<Effect> {
         logged(self.events.conversation(session, id))
     }
 
-    /// Commits what the active command has staged before changing the
-    /// workspace, and keeps it active in a new transaction.
     pub fn barrier(&mut self) -> Vec<Effect> {
         logged(self.events.barrier())
     }
 
-    /// A command started: it waits behind the active command, or the shell
-    /// looks up its receipt.
     pub fn begin(
         &mut self,
         key: CommandId,
@@ -227,7 +193,6 @@ impl Log {
         (start.lease, effects)
     }
 
-    /// The receipt the shell found for the start it looked up.
     pub fn receipt(&mut self, found: Option<CommandResult>) -> Vec<Effect> {
         let Some(start) = self.receipt_lookup.take() else {
             return Vec::new();
@@ -266,8 +231,6 @@ impl Log {
         effects
     }
 
-    /// A command finished. A final result's receipt commits with its
-    /// events. A retryable result answers only the current callers.
     pub fn finish(
         &mut self,
         key: CommandId,
@@ -293,8 +256,6 @@ impl Log {
         (lease, effects)
     }
 
-    /// A command's lease was dropped unfinished. A running one stops the
-    /// log, which rolls back its open transaction.
     #[must_use]
     pub fn abort(&self, key: CommandId) -> Vec<Effect> {
         let running =

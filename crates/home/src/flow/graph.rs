@@ -1,13 +1,3 @@
-//! Every project's issues read as the flow declares them, in one graph.
-//!
-//! An issue's front matter holds its id, title, kind, status and stage,
-//! the fields its kind has, and the relations that start from its kind.
-//! Anything else is a structural problem, as is an id more than one file
-//! holds, a reference to no issue, a target of a kind the relation doesn't
-//! allow, and a cycle where the relation forbids one. Ids are global, so a
-//! relation may cross projects.
-//! The file's parts are as [`super::file`] reads them.
-
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use core::fmt;
@@ -21,7 +11,6 @@ use toml::Value;
 use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
 use crate::prelude::*;
 
-/// An issue file: the project it's in, its name without `.md`, its text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct File {
     pub project: ProjectId,
@@ -31,15 +20,12 @@ pub struct File {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Graph {
-    /// By id.
     pub issues: Vec<Issue>,
     pub problems: Vec<Problem>,
 }
 
-/// Something structurally wrong with an issue, where a field is the cause.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
-    /// The project and the stem of the issue's file.
     pub project: ProjectId,
     pub stem: String,
     pub field: Option<String>,
@@ -55,8 +41,6 @@ impl fmt::Display for Problem {
     }
 }
 
-/// The issues `files` hold, as `flow` declares them, and what's
-/// structurally wrong with any of them.
 #[must_use]
 pub fn read(flow: &Flow, files: &[File]) -> Graph {
     let mut issues = Vec::new();
@@ -78,22 +62,10 @@ pub fn read(flow: &Flow, files: &[File]) -> Graph {
     Graph { issues, problems }
 }
 
-/// The issue one file holds, as `flow` declares it, or its structural
-/// problem; references to other issues are left to [`read`].
-///
-/// # Errors
-///
-/// What is structurally wrong with it.
 pub fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
     parsed(flow, file).map(|(issue, _)| issue)
 }
 
-/// The issue one file holds, as [`one`] reads it, with the document it
-/// was read from.
-///
-/// # Errors
-///
-/// What is structurally wrong with it.
 pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
     let fail = |field: Option<&str>, message: String| Problem {
         project: file.project,
@@ -183,8 +155,6 @@ pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
     Ok((issue, document))
 }
 
-/// The branch an issue's sessions land on: the one its file declares, else
-/// `issue/<id>`.
 #[must_use]
 pub fn branch_of(id: IssueId, declared: Option<&str>) -> String {
     declared.map_or_else(|| format!("issue/{id}"), String::from)

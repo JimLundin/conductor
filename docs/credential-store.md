@@ -5,7 +5,7 @@ key. Conductor chooses where that key lives once, when it creates the
 store, and keeps it there:
 
 - **The OS keystore**, for the OS user that runs the daemon or
-  `conductord login` (use the same account for both). macOS uses that
+  `orchestrator login` (use the same account for both). macOS uses that
   user's default Keychain, Windows that user's Credential Manager with
   local-machine persistence, and Linux an unlocked default Secret Service
   collection on the user's session bus. The entry is labelled `Conductor

@@ -17,7 +17,7 @@ fn setting(text: &str) -> Result<(Provider, String), String> {
 }
 
 #[derive(Parser)]
-#[command(name = "conductord", about = "The Conductor host daemon")]
+#[command(name = "orchestrator", about = "Run agent sessions and manage hosts")]
 struct Args {
     #[command(subcommand)]
     command: Cmd,
@@ -101,7 +101,7 @@ struct LoginArgs {
     )]
     #[arg(long)]
     account: Option<String>,
-    #[arg(help = "The host's data dir, as given to `conductord host`")]
+    #[arg(help = "The host's data dir, as given to `orchestrator host`")]
     #[arg(long)]
     data_dir: Option<PathBuf>,
 }
@@ -276,9 +276,9 @@ mod tests {
     fn an_unknown_provider_is_refused_naming_the_ones_the_host_has() {
         let refusal = r#"no provider is called "gemini"; the providers are claude, codex"#;
         for given in [
-            ["conductord", "host", "--cli", "gemini=/opt/gemini"],
-            ["conductord", "host", "--model", "gemini=pro"],
-            ["conductord", "login", "gemini", "--account=me"],
+            ["orchestrator", "host", "--cli", "gemini=/opt/gemini"],
+            ["orchestrator", "host", "--model", "gemini=pro"],
+            ["orchestrator", "login", "gemini", "--account=me"],
         ] {
             assert!(
                 Args::try_parse_from(given)
@@ -287,7 +287,7 @@ mod tests {
             );
         }
         assert!(
-            Args::try_parse_from(["conductord", "host", "--cli", "codex=/x"])
+            Args::try_parse_from(["orchestrator", "host", "--cli", "codex=/x"])
                 .is_ok()
         );
     }
@@ -295,14 +295,15 @@ mod tests {
     #[test]
     fn fleet_commands_exclude_release_management() {
         assert!(
-            Args::try_parse_from(["conductord", "fleet", "status"]).is_ok()
+            Args::try_parse_from(["orchestrator", "fleet", "status"]).is_ok()
         );
         assert!(
-            Args::try_parse_from(["conductord", "fleet", "revision"]).is_err()
+            Args::try_parse_from(["orchestrator", "fleet", "revision"])
+                .is_err()
         );
         assert!(
             Args::try_parse_from([
-                "conductord",
+                "orchestrator",
                 "fleet",
                 "publish",
                 "release.json"

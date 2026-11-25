@@ -1,20 +1,3 @@
-//! The decisions of the hub that shares the host's one `codex app-server`
-//! among every Codex thread, as a state machine.
-//!
-//! The hub decides when the server starts, which thread each of its events
-//! belongs to, what every thread gets when the server exits, and stopping
-//! it for a new credential. The server starts with the first thread or model listing asked of it.
-//! Asks that arrive while it starts wait for it, and fail with why if it
-//! can't. When it exits, every thread gets the exit and the hub forgets the
-//! server, so the next ask starts a new one, on which a thread continued
-//! after resumes (`thread/resume`). A new credential stops the server the
-//! same way, since its key is in the server's environment, fixed at start.
-//!
-//! `codex-cli` runs the hub's task: it turns each command and server event
-//! into an [`Input`] and performs each [`Effect`]. A thread's ask is the
-//! opaque `T`, a model listing's `M`, a credential change's answer `C`, and
-//! a thread's route to its session `R`; `E` is why the server didn't start.
-
 use crate::CodexCredential;
 use agents::{Exit, Step};
 
@@ -23,20 +6,13 @@ use crate::children::Children;
 use crate::prelude::*;
 use crate::{CodexEvent, ThreadEvent, ThreadId};
 
-/// What a thread's session gets from the hub.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Routed {
-    /// One of the thread's events, or the server's exit.
     Codex(CodexEvent),
     Subagent(Vec<Step>),
-    /// The hub stopped the server on purpose, for this reason.
-    Stopped {
-        reason: String,
-    },
+    Stopped { reason: String },
 }
 
-/// Unrouted thread events received while open requests are pending. After a
-/// lost event, subsequent opens fail until the current batch has settled.
 #[derive(Debug, Default)]
 pub struct EarlyEvents {
     by_thread: BTreeMap<ThreadId, Vec<CodexEvent>>,
@@ -45,7 +21,6 @@ pub struct EarlyEvents {
 }
 
 impl EarlyEvents {
-    /// Buffers an opening thread's event, or returns an event for diagnostics.
     pub fn capture(
         &mut self,
         event: CodexEvent,
@@ -82,85 +57,60 @@ impl EarlyEvents {
     }
 }
 
-/// What a handle asks of the hub.
 #[derive(Debug)]
 pub enum Command<T, M, C> {
-    /// Starts or resumes a thread on the server.
     Thread(T),
-    /// Lists the server's models.
     Models(M),
-    /// Runs the next server with this credential, stopping the current one.
     Credential {
         credential: Option<CodexCredential>,
         reply: C,
     },
 }
 
-/// What happened, as the shell saw it.
 #[derive(Debug)]
 pub enum Input<T, M, C, R, E> {
     Command(Command<T, M, C>),
-    /// Whether applying the current provider to its private config succeeded.
     Applied(bool),
-    /// How the start [`Effect::Spawn`] asked for went.
     Spawned(Result<(), E>),
-    /// The thread an [`Effect::Open`] started, and its route.
     Opened {
         thread: ThreadId,
         route: R,
         generation: u64,
     },
-    /// The running server's next event, `None` once its events end.
     Event(Option<CodexEvent>),
-    /// The thread's session takes no more events.
     Gone {
         thread: ThreadId,
         generation: u64,
     },
-    /// Every handle is gone.
     Closed,
 }
 
-/// An ask that needs the server running.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Ask<T, M> {
     Thread(T),
     Models(M),
 }
 
-/// What the shell does next, in order.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect<T, M, C, R, E> {
-    /// Start the server with this credential, then report
-    /// [`Input::Spawned`].
     Spawn(Option<CodexCredential>),
-    /// Start a server whose private config already carries this provider.
     SpawnConfigured(Option<CodexCredential>),
-    /// Start the thread on the running server and answer it, then report
-    /// [`Input::Opened`] if it started.
     Open(T),
-    /// Answer with the running server's models.
     List(M),
-    /// Answer an ask: the server didn't start.
     Fail(Ask<T, M>, E),
-    /// Pass a thread its event, and report [`Input::Gone`] if its session
-    /// takes no more.
     Route {
         thread: ThreadId,
         route: R,
         routed: Routed,
     },
-    /// Pass a thread its last update, after which the hub forgets it.
-    Close { route: R, routed: Routed },
-    /// Shut the running server down and forget it.
+    Close {
+        route: R,
+        routed: Routed,
+    },
     Stop,
-    /// The running server exited like this; forget it.
     Lost(Exit),
-    /// No thread takes this event.
     Unrouted(CodexEvent),
-    /// Answer a credential change.
     Configured(C),
-    /// End the hub.
     End,
 }
 
@@ -174,8 +124,6 @@ enum State<T, M> {
     Up,
 }
 
-/// The hub's state: the credential the next server starts with, whether
-/// one runs, and the route of each of its threads.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Hub<T, M, R> {
     credential: Option<CodexCredential>,
@@ -186,7 +134,6 @@ pub struct Hub<T, M, R> {
 }
 
 impl<T, M, R: Clone> Hub<T, M, R> {
-    /// A hub with no server yet, whose first one starts with `credential`.
     #[must_use]
     pub const fn new(credential: Option<CodexCredential>) -> Self {
         Self {

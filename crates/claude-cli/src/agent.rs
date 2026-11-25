@@ -1,7 +1,3 @@
-//! Claude's runtime: one task per session's agent runs the
-//! [`claude::runtime`] machine on a [`Runtime`]'s far end, starting the CLI
-//! and making the calls it decides on.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 

@@ -1,12 +1,3 @@
-//! Installs the pinned CLIs (docs/architecture.md §6.2).
-//!
-//! Each one lands in `<data>/cli/<cli>/<version>/` by a download to a temporary
-//! file, a SHA-256 check of that file against the pin and a rename, so a
-//! crash leaves either nothing or a verified install. `<data>/cli/<cli>/lock`
-//! keeps two processes from installing into one data dir at once. Which
-//! build a platform takes is each provider's pin; whether a download is it
-//! is decided in `agents::pin`.
-
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
@@ -26,7 +17,6 @@ const READ_BUFFER: usize = 1_048_576;
 pub enum InstallError {
     #[error("no pinned build for {os} on {arch}")]
     Platform { os: String, arch: String },
-    /// The CLI pins no build for this platform, for the reason given.
     #[error("{0}")]
     Unsupported(String),
     #[error("starting or joining the archive extraction worker: {0}")]
@@ -45,12 +35,6 @@ pub enum InstallError {
     Unpack { archive: String, status: String },
 }
 
-/// The build `pin` pins for the platform this host runs on: its OS and
-/// architecture as Rust names them, its executables' suffix, and whether its
-/// libc is musl.
-///
-/// # Errors
-/// `pin` pins no build for this platform.
 pub fn here(
     pin: fn(&str, &str, &str, bool) -> Option<Pin>,
 ) -> Result<Pin, InstallError> {
@@ -66,13 +50,6 @@ pub fn here(
     })
 }
 
-/// Makes sure `pin`, the CLI called `cli`, is installed under `data_dir`.
-///
-/// It returns the binary's path, after removing every other version. It
-/// runs before any session, so no session can be using one.
-///
-/// # Errors
-/// Fails when the download, verification or install fails.
 pub async fn install(
     cli: &str,
     pin: Pin,

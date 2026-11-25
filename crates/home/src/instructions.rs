@@ -1,44 +1,24 @@
-//! What a session is told when it starts (docs/home.md §5).
-//!
-//! That is the home's shared rules, where the projects providing its
-//! project's profiles are checked out on this host, and the project's own rules when the session's
-//! CLI doesn't read them itself.
-
 use crate::{Checkout, Project};
 
 use crate::prelude::*;
 
-/// The file that holds rules: the home's shared ones at its top, and a
-/// project's own in its checkout.
 pub const RULES: &str = "AGENTS.md";
 
-/// What the host read for a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sources<'a> {
-    /// Where the host keeps its clone of the home.
     pub home: String,
-    /// The home's `AGENTS.md`.
     pub shared: Option<String>,
-    /// The project the session is in, if it is in one.
     pub own: Option<Own<'a>>,
-    /// Every project, for the checkouts that provide the session's
-    /// profiles.
     pub projects: &'a [Project],
 }
 
-/// The project a session is in, as its directory has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Own<'a> {
     pub project: &'a Project,
-    /// The project's [`RULES`].
     pub rules: Option<String>,
-    /// The directory holds the file the session's CLI reads by itself,
-    /// which then tells it the project's rules.
     pub cli_reads_rules: bool,
 }
 
-/// The project with a checkout at `directory` or around it, and that
-/// checkout.
 #[must_use]
 pub fn project_of<'a>(
     projects: &'a [Project],
@@ -63,7 +43,6 @@ fn holds(checkout: &str, directory: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
-/// The session's instructions, or `None` when there is nothing to tell.
 #[must_use]
 pub fn compose(sources: &Sources<'_>) -> Option<String> {
     let home = sources.home.trim_end_matches('/');

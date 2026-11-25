@@ -12,28 +12,16 @@ pub use contract::{Plant, contract};
 pub use memory::Memory;
 
 pub trait CanvasStore {
-    /// # Errors
-    ///
-    /// The store cannot be read.
     fn all(&self) -> Result<Held<CanvasKey>, StoreError>;
 
-    /// # Errors
-    ///
-    /// The store cannot be read.
     fn list(
         &self,
         project: &ProjectId,
         issue: &IssueId,
     ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError>;
 
-    /// # Errors
-    ///
-    /// The store cannot be read, or the file is not a canvas.
     fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError>;
 
-    /// # Errors
-    ///
-    /// The store cannot be written.
     fn put(
         &mut self,
         key: &CanvasKey,

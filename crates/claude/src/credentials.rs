@@ -1,6 +1,3 @@
-//! The credentials Claude Code takes, as the forms the app shows, and what
-//! their values become.
-
 use agents::{Credential, CredentialForm, Field, FieldKind, ProviderInfo};
 
 use crate::prelude::*;
@@ -14,21 +11,11 @@ pub const SETUP_TOKEN: &str = "setup_token";
 const ACCOUNT_LABEL: &str = "account_label";
 const KEY: &str = "key";
 
-/// Claude's credential, read from its form's values. Its `Debug` shows
-/// only the kind, so no value reaches a log.
 #[derive(Clone, PartialEq, Eq)]
 pub enum ClaudeCredential {
-    ApiKey {
-        key: String,
-    },
-    SetupToken {
-        token: String,
-    },
-    /// Claude Code's `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`.
-    Gateway {
-        base_url: String,
-        token: String,
-    },
+    ApiKey { key: String },
+    SetupToken { token: String },
+    Gateway { base_url: String, token: String },
 }
 
 impl core::fmt::Debug for ClaudeCredential {
@@ -56,7 +43,6 @@ pub fn setup_token_credential(
     }
 }
 
-/// How Claude presents itself and the credentials it takes.
 #[must_use]
 pub fn info() -> ProviderInfo {
     ProviderInfo {
@@ -127,9 +113,6 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
     }
 }
 
-/// The account a signed-in home is, as `claude auth status` prints it:
-/// the email of a Claude subscription. A gateway's or an API key's
-/// sign-in names none, so its credential's form does.
 #[must_use]
 pub fn account(status: &str) -> Option<String> {
     let printed = serde_json::from_str::<serde_json::Value>(status).ok()?;
@@ -140,10 +123,6 @@ pub fn account(status: &str) -> Option<String> {
         .map(String::from)
 }
 
-/// Reads a stored credential using this provider's form.
-///
-/// # Errors
-/// The form is unknown or its values are invalid.
 pub fn credential(credential: &Credential) -> Result<ClaudeCredential, String> {
     info().check(credential)?;
     if credential.kind == API_KEY {

@@ -15,9 +15,6 @@ pub enum Plant {
     NotAnIssue(ProjectId),
 }
 
-/// # Errors
-///
-/// The clause the store broke.
 pub fn contract<S: CanvasStore>(
     store: &mut S,
     spoil: impl FnOnce(&mut S, &CanvasKey),

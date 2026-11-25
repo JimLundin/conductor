@@ -1,34 +1,3 @@
-//! The registry's decisions about sessions and instances.
-//!
-//! They are whether a session's start or a `Continue` may go ahead and why
-//! not, the model and effort a session starts with, which session an id
-//! names, whether each instance is available, how an instance comes to be
-//! and is removed, and how a credential change is stored and the instance
-//! refreshed.
-//!
-//! An instance is one account of a provider, keyed by the provider and the
-//! account, which the provider names. A host may have several of one
-//! provider, each with its own credential, its own private home and its
-//! own CLI's agents. An instance comes to be when its account is known: a
-//! credential names it in its form, and a sign-in when the CLI reports who
-//! it signed in as. Until then a sign-in runs in its provider's own
-//! instance ([`Account::Own`]), which every provider has ([`defaults`]):
-//! once the CLI names the account, the own instance's home becomes that
-//! account's instance and the provider gets a new own one.
-//!
-//! `daemon` runs it: it owns the store, the sessions' tasks and the
-//! instances' agents. It asks the registry, performs each [`Effect`] in
-//! order, and reports how each went. The registry holds each provider
-//! instance `S`, each session's handle `H` and each answer's reply `R` as
-//! opaque values; it knows no provider by name.
-//!
-//! A credential change refreshes its instance, which applies the
-//! credential and discovers its models. Until that ends
-//! the instance is unavailable. One refresh per instance runs at a time;
-//! changes made meanwhile coalesce into one more, and every change waiting
-//! gets the answer of the last. An added instance is unavailable until its
-//! CLI has started.
-
 use agents::Configuration;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
@@ -54,16 +23,10 @@ pub use instance::{
     Roster,
 };
 
-/// What a CLI signs in with when the host stores no credential for its
-/// instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnSignIn {
-    /// The private home is signed in, from the app or with `conductord
-    /// login <instance>`.
     SignedIn,
-    /// A CLI given on the command line, signed in however it is.
     Unmanaged,
-    /// Nothing: the instance is unavailable until it gets a credential.
     Missing,
 }
 
@@ -93,36 +56,25 @@ pub(crate) fn offered(
     Ok(models)
 }
 
-/// How the host runs an instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Launcher<S> {
-    /// The CLI runs, `start` starts its agents, and it signs in as `own`
-    /// says when the host stores no credential for it.
     Running {
         start: S,
         own: OwnSignIn,
         chosen: Option<ModelId>,
         models: Result<Models, String>,
     },
-    /// The host can't run this instance's sessions, for this reason.
     Unavailable(String),
 }
 
-/// What the store holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stored {
     Opened(Roster),
-    /// There is no store yet: the host is fresh.
     Fresh,
-    /// The file exists and doesn't open, for this reason. The host runs
-    /// no instance until a Clear moves it aside.
     Unreadable(String),
 }
 
 impl Stored {
-    /// The instances the host has: the stored ones, with each provider's
-    /// own one. A store that doesn't open shows the own ones, unavailable,
-    /// so removing one of them can move it aside.
     #[must_use]
     pub fn roster(&self, catalog: &Catalog) -> Roster {
         let mut roster = defaults(catalog);
@@ -133,8 +85,6 @@ impl Stored {
     }
 }
 
-/// What a fresh host has: each provider's own instance, with no
-/// credential.
 #[must_use]
 pub fn defaults(catalog: &Catalog) -> Roster {
     Roster(
@@ -148,11 +98,6 @@ pub fn defaults(catalog: &Catalog) -> Roster {
     )
 }
 
-/// The name of an instance's private home and work dir.
-///
-/// That is its provider's for the own instance, and otherwise the
-/// provider's with the start of a hash of the account, which is safe in a
-/// path whatever the account is.
 #[must_use]
 pub fn dir(instance: &InstanceId) -> String {
     let provider = instance.provider.name();
@@ -166,12 +111,6 @@ pub fn dir(instance: &InstanceId) -> String {
     }
 }
 
-/// The instance of `provider` a person names on the host's command line:
-/// the one of `account`, or without one the provider's own.
-///
-/// # Errors
-///
-/// The roster has no such instance; the error lists the accounts it has.
 pub fn picked(
     roster: &Roster,
     provider: &Provider,
@@ -201,7 +140,6 @@ pub fn picked(
     })
 }
 
-/// Which instance a terminal sign-in requests.
 #[must_use]
 pub fn sign_in_instance(
     provider: Provider,
@@ -225,7 +163,6 @@ pub enum AdoptionReplay {
 }
 
 impl AccountAdoption {
-    /// A new account named by a confirmed sign-in.
     #[must_use]
     pub fn named(from: &InstanceId, reported: Option<Account>) -> Option<Self> {
         let account = reported.filter(|named| named != &from.account)?;
@@ -238,7 +175,6 @@ impl AccountAdoption {
         })
     }
 
-    /// The result of retrying the source instance's sign-in.
     #[must_use]
     pub fn destination_for(
         &self,
@@ -247,8 +183,6 @@ impl AccountAdoption {
         (&self.from == requested).then_some(&self.to)
     }
 
-    /// The adopted account takes the source's settings and signs in through
-    /// its private home. The provider's own instance remains available.
     #[must_use]
     pub fn plan(&self, roster: &Roster) -> Option<Roster> {
         if self.from.provider != self.to.provider || self.from == self.to {
@@ -269,9 +203,6 @@ impl AccountAdoption {
         Some(next)
     }
 
-    /// Resolves where to resume an adoption against the current roster.
-    /// # Errors
-    /// Neither a source nor a destination instance remains.
     pub fn replay(
         &self,
         roster: Roster,
@@ -286,7 +217,6 @@ impl AccountAdoption {
     }
 }
 
-/// The sessions whose agents run, or start, after `history`.
 #[must_use]
 pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
     let mut running = BTreeSet::new();
@@ -329,7 +259,6 @@ fn unbriefed(answer: Option<&SessionResult>) -> Option<String> {
     ))
 }
 
-/// A scheduled configuration of one provider instance.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Job<S> {
     pub id: u64,
@@ -338,7 +267,6 @@ pub struct Job<S> {
     pub credential: Option<Credential>,
 }
 
-/// How the refresh `id` of `instance` ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refreshed {
     pub id: u64,
@@ -346,7 +274,6 @@ pub struct Refreshed {
     pub configured: Result<Configuration, String>,
 }
 
-/// The settings and discovery policy for one instance launch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Starting {
     pub mode: Mode,
@@ -355,7 +282,6 @@ pub struct Starting {
     pub settings: Instance,
 }
 
-/// How starting `id` ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Started<S> {
     pub id: u64,
@@ -363,20 +289,15 @@ pub struct Started<S> {
     pub launcher: Launcher<S>,
 }
 
-/// What a store save changes, which says what follows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
     Credential(InstanceId),
     Added(InstanceId),
-    /// A sign-in of `from` named `to`'s account. The shell commits
-    /// ownership of the private directories with the roster change.
     SignedIn(AccountAdoption),
     Removed(InstanceId),
 }
 
 impl Change {
-    /// Applies a credential or removal to the current roster, using the
-    /// planned roster for the credential's form values.
     #[must_use]
     pub fn apply(&self, current: &mut Roster, planned: &Roster) -> bool {
         match self {
@@ -406,26 +327,19 @@ impl Change {
     }
 }
 
-/// What the shell does next, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect<S, R> {
     Reply(R, InstanceResult),
-    /// Move the store that doesn't open aside, and report
-    /// [`Registry::moved_aside`].
     MoveAside {
         instance: InstanceId,
         reply: R,
     },
-    /// Store `roster` in place of what the store holds, and report
-    /// [`Registry::saved`].
     Save {
         roster: Roster,
         change: Change,
         reply: R,
     },
-    /// Run the refresh, and report [`Registry::refreshed`].
     Refresh(Job<S>),
-    /// Start the instance's CLI, and report [`Registry::started`].
     Start(Starting),
     Log(Note),
 }
@@ -463,8 +377,6 @@ pub struct Registry<S, H, R> {
 }
 
 impl<S: Clone, H: Clone, R> Registry<S, H, R> {
-    /// A registry with no session yet. `stored` is what the store held
-    /// when it opened.
     #[must_use]
     pub fn new(stored: &Stored, catalog: Catalog) -> Self {
         let unreadable = match stored {
@@ -482,7 +394,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// Starts the instances already in the roster.
     pub fn boot(&mut self) -> Vec<Starting> {
         let roster = self.roster.0.clone();
         roster
@@ -498,13 +409,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.refreshes.is_empty()
     }
 
-    /// What `Welcome` tells a client of each provider that never changes.
     #[must_use]
     pub const fn catalog(&self) -> &Catalog {
         &self.catalog
     }
 
-    /// What `Welcome` tells a client the host can run.
     #[must_use]
     pub fn instances(&self) -> Instances {
         let roster = &self.roster;
@@ -552,7 +461,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         })
     }
 
-    /// Keeps a session that started or was restored.
     pub fn admit(
         &mut self,
         session: SessionId,
@@ -562,12 +470,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.sessions.insert(session, (instance, handle));
     }
 
-    /// The session and what its instance offers, for an order that may
-    /// start its agent.
-    ///
-    /// # Errors
-    ///
-    /// No such session, or its instance is unavailable or gone.
     pub fn relaunch(
         &self,
         session: SessionId,
@@ -588,19 +490,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
             .map(|(_, handle)| handle.clone())
     }
 
-    /// How the host runs `instance`, if it has it: its CLI, model and
-    /// credential.
     #[must_use]
     pub fn settings(&self, instance: &InstanceId) -> Option<Instance> {
         self.roster.of(instance).cloned()
     }
 
-    /// The instance's home passed its CLI's sign-in check after a sign-in
-    /// from the app, and the CLI says it is `account`'s. On the instance's
-    /// own account, or none, its CLI signs in on its own from now on, and
-    /// it lists what it offers then. On another, the home becomes that
-    /// account's instance, whose CLI then starts. `reply` gets what the
-    /// host runs once it has.
     pub fn signed_in(
         &mut self,
         instance: InstanceId,
@@ -631,11 +525,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.schedule(instance, Vec::from([reply]))
     }
 
-    /// Stores a credential of `provider`. The account its form names is
-    /// the instance's: one the host has takes it and refreshes, and
-    /// otherwise the instance is added and its CLI started. A store that
-    /// doesn't open is left alone, since saving would overwrite the other
-    /// instances.
     pub fn set_credential(
         &mut self,
         provider: Provider,
@@ -673,10 +562,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         self.save(roster, change, reply)
     }
 
-    /// Removes an instance on which none of the `running` sessions runs.
-    /// Its closed sessions stay, and can't continue. A provider's own
-    /// instance stays; a store that doesn't open is moved aside first,
-    /// which is how removing one recovers it.
     pub fn remove_instance(
         &mut self,
         instance: InstanceId,
@@ -722,7 +607,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         (busy > 0).then(|| u64::try_from(busy).unwrap_or(u64::MAX))
     }
 
-    /// How the [`Effect::MoveAside`] went.
     pub fn moved_aside(
         &mut self,
         instance: InstanceId,
@@ -738,7 +622,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// How the [`Effect::Save`] went.
     pub fn saved(
         &mut self,
         roster: Roster,
@@ -789,8 +672,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// How an [`Effect::Refresh`] went. A result for a job since
-    /// superseded is dropped, and the latest job runs.
     pub fn refreshed(&mut self, refreshed: Refreshed) -> Vec<Effect<S, R>> {
         let Refreshed {
             id,
@@ -830,10 +711,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// How an [`Effect::Start`] went. The instance runs as the launcher
-    /// says; if its credential changed while its CLI started, it
-    /// refreshes with the current one. A start for an instance since
-    /// removed is dropped.
     pub fn started(&mut self, started: Started<S>) -> Vec<Effect<S, R>> {
         let Started {
             id,

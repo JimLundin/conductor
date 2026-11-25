@@ -1,12 +1,3 @@
-//! The provider-agnostic agent API a session speaks: the runtime protocol
-//! of commands and events, the steps a provider's events map to and the
-//! output it produces, the replies it answers requests with, how its
-//! process starts and how it ended, and the profile of its CLI the host
-//! starts and signs it in by. It owns the agent vocabulary: tool calls,
-//! questions and answers, checklists, sub-agents, outcomes, models and
-//! effort, credential forms and the providers. Each provider's wire maps
-//! into it (`claude`, `codex`).
-
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -55,8 +46,6 @@ pub use tool::{
     Change, FileChange, ToolCallId, ToolKind, ToolOutcome, ToolPhase,
 };
 
-/// The credential took. Discovery may still fail, in which case the host
-/// decides whether the credential's named model can be offered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Configuration {
     pub named: Option<ModelId>,

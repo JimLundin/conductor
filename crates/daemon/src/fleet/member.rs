@@ -76,11 +76,6 @@ impl core::fmt::Debug for Membership {
 }
 
 impl Membership {
-    /// Opens this host's encrypted membership and verifies its saved signatures.
-    ///
-    /// # Errors
-    ///
-    /// If local state is corrupt, untrusted, or belongs to another host.
     pub fn open(
         data: &Path,
         local: EndpointId,
@@ -99,12 +94,6 @@ impl Membership {
         Ok(Some(Self::new(path, key, state)))
     }
 
-    /// Verifies a host certificate against the certificate issuer, current
-    /// roster, current revocations and the already authenticated iroh peer.
-    ///
-    /// # Errors
-    ///
-    /// If the peer is outside the local fleet, revoked, or cannot prove its identity.
     pub async fn admit_host(
         &self,
         remote: EndpointId,
@@ -127,11 +116,6 @@ impl Membership {
         fresh && self.is_active().await
     }
 
-    /// Verifies an owner's certificate against the latest configuration.
-    ///
-    /// # Errors
-    ///
-    /// If the certificate is invalid or revoked.
     pub async fn admit_owner(
         &self,
         certificate: &Certificate,
@@ -182,11 +166,6 @@ impl Membership {
             .clone()
     }
 
-    /// This host's identity in the fleet.
-    ///
-    /// # Errors
-    ///
-    /// If its stored certificate no longer verifies.
     pub async fn identity(&self) -> anyhow::Result<Identity> {
         let state = self.state.read().await;
         local(&state)

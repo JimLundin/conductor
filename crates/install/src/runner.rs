@@ -1,5 +1,3 @@
-//! Runs an effect and its feedback before the next effect in the batch.
-
 use std::future::Future;
 
 pub trait Runner<I, E> {

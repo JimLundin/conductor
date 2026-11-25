@@ -1,9 +1,3 @@
-//! Finishing a session on an issue (docs/home.md §4).
-//!
-//! Whether it can, the summary its agent gives, how its branch lands on
-//! the issue's, and what the log says of it. The shell asks the agent,
-//! runs `git` and writes the issue's note.
-
 use alloc::format;
 
 use crate::log::{Event, HostSeq};
@@ -153,7 +147,6 @@ fn interrupted(what: &str, answer: Option<&SessionResult>) -> Option<String> {
     }
 }
 
-/// One finish, advanced by the session actor.
 #[derive(Debug)]
 pub struct Finish {
     session: SessionId,
@@ -175,7 +168,6 @@ enum Stage {
     Done,
 }
 
-/// An outcome of an effect or an event from the summary's subscription.
 #[derive(Debug)]
 pub enum Input {
     History(Vec<Event>),
@@ -191,7 +183,6 @@ pub enum Input {
     Noted,
 }
 
-/// Work the session actor performs in order.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect {
     History,
@@ -350,14 +341,16 @@ impl Finish {
         }
         effects.push(Effect::Reply(SessionResult::Accepted));
         if running {
-            let after = history.last().map_or(HostSeq(0), |event| event.seq);
+            let after = history
+                .last()
+                .map_or(HostSeq::BEFORE_FIRST, |event| event.seq);
             self.stage = Stage::Asking(assignment, workspace, after);
             effects.extend(order(crate::session::Order::Send {
                 text: String::from(SUMMARY_PROMPT),
                 by,
             }));
         } else {
-            let last = summary(history, self.session, HostSeq(0));
+            let last = summary(history, self.session, HostSeq::BEFORE_FIRST);
             effects.extend(self.read_home(assignment, workspace, last));
         }
         effects
@@ -465,9 +458,6 @@ fn order(order: crate::session::Order) -> Vec<Effect> {
     Vec::from([Effect::Order(order)])
 }
 
-/// Where a session on an issue stands with finishing, as its events say:
-/// a message after a finish makes it ready again, while its own summary
-/// turn doesn't.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FinishState {
     #[default]
@@ -478,7 +468,6 @@ pub enum FinishState {
 }
 
 impl FinishState {
-    /// The state after `kind`.
     #[must_use]
     pub const fn after(self, kind: &EventKind) -> Self {
         match (self, kind) {
@@ -491,13 +480,9 @@ impl FinishState {
     }
 }
 
-/// How finishing a session on an issue went.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Finished {
-    /// The session's branch landed on the issue's with this many commits
-    /// the issue's lacked, and the issue's branch was kept as `kept` says.
     Landed { commits: u64, kept: Kept },
-    /// Nothing landed, for this reason; the session's branch stays.
     Failed { reason: String },
 }
 

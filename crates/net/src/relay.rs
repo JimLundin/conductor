@@ -1,11 +1,6 @@
 use iroh::RelayUrl;
 use url::Url;
 
-/// n0's public relays, named without the root dot ([`without_root_dot`]).
-///
-/// Every endpoint, host included, uses this map: a host advertises its home
-/// relay to peers, and a browser that dials the dotted name fails `WebKit`'s
-/// certificate check.
 #[must_use]
 pub fn n0_relays() -> iroh::RelayMap {
     iroh::defaults::prod::default_relay_map()
@@ -15,12 +10,6 @@ pub fn n0_relays() -> iroh::RelayMap {
         .collect()
 }
 
-/// The relay URL with its host named without the root dot.
-///
-/// iroh names its relays as fully qualified hosts ending in `.`. `WebKit`
-/// (Safari) checks the TLS certificate against that literal name and refuses
-/// it, so every relay URL we configure or dial goes through here. DNS treats
-/// both forms alike.
 #[must_use]
 pub fn without_root_dot(url: &RelayUrl) -> RelayUrl {
     let plain = Url::from(url.clone());

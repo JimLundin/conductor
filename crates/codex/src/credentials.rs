@@ -1,6 +1,3 @@
-//! The credentials Codex takes, as the forms the app shows, and what their
-//! values become.
-
 use agents::{
     Credential, CredentialForm, Field, FieldKind, ModelId, ProviderInfo,
 };
@@ -16,18 +13,11 @@ const KEY: &str = "key";
 const API_KEY: &str = "api_key";
 const ACCOUNT_LABEL: &str = "account_label";
 
-/// Codex's credential, read from its form's values. Its `Debug` shows
-/// only the kind, so no value reaches a log.
 #[derive(Clone, PartialEq, Eq)]
 pub enum CodexCredential {
     ApiKey {
         key: String,
     },
-    /// A custom model provider: Codex's `[model_providers.<id>]` with
-    /// `name` and `base_url`, selected with `model`. Its `wire_api` is
-    /// `responses`, the only one Codex 0.166 knows. The key reaches Codex in
-    /// the environment variable the section's `env_key` names, never in its
-    /// config.
     Provider {
         name: String,
         base_url: String,
@@ -45,11 +35,6 @@ impl core::fmt::Debug for CodexCredential {
     }
 }
 
-/// How Codex presents itself and the credentials it takes.
-///
-/// Its sandbox (`WorkspaceWrite`, asking `OnRequest`) lets it run commands
-/// and write in the session's directory and `/tmp` unasked, which a new
-/// session's form says.
 #[must_use]
 pub fn info() -> ProviderInfo {
     ProviderInfo {
@@ -104,9 +89,6 @@ fn field(id: &str, label: &str, kind: FieldKind, placeholder: &str) -> Field {
     }
 }
 
-/// The account a signed-in home is, as its `auth.json` keeps it: the
-/// email in the ID token of a `ChatGPT` sign-in, else its account id. An
-/// API key's sign-in names none, so a model provider's form does.
 #[must_use]
 pub fn account(auth: &str) -> Option<String> {
     let kept = serde_json::from_str::<serde_json::Value>(auth).ok()?;
@@ -140,10 +122,6 @@ pub fn account(auth: &str) -> Option<String> {
         .filter(|account| !account.is_empty())
 }
 
-/// Reads a stored credential using this provider's form.
-///
-/// # Errors
-/// The form is unknown or its values are invalid.
 pub fn credential(credential: &Credential) -> Result<CodexCredential, String> {
     info().check(credential)?;
     if credential.kind == API_KEY {
@@ -159,8 +137,6 @@ pub fn credential(credential: &Credential) -> Result<CodexCredential, String> {
     })
 }
 
-/// The model a credential makes the default: a model provider's gateway
-/// serves the one it names.
 #[must_use]
 pub fn default_model(credential: &CodexCredential) -> Option<ModelId> {
     match credential {

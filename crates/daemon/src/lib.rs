@@ -1,7 +1,3 @@
-//! The host daemon behind `conductord`. It serves the event log and the
-//! sessions over iroh, and runs each instance through its provider's
-//! [`runtime::Plugin`], knowing no provider by name.
-
 mod credentials;
 pub mod fleet;
 mod home;
@@ -267,7 +263,7 @@ mod tests {
     fn ticket_token_is_created_once_then_reloaded()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir()
-            .join(format!("conductord-token-{}", std::process::id()));
+            .join(format!("orchestrator-token-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = load_or_create_token(&dir)?;
         assert_eq!(load_or_create_token(&dir)?, first);
@@ -286,7 +282,7 @@ mod tests {
     fn key_is_created_once_then_reloaded()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = std::env::temp_dir()
-            .join(format!("conductord-key-{}", std::process::id()));
+            .join(format!("orchestrator-key-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let first = load_or_create_key(&dir)?;
         let second = load_or_create_key(&dir)?;

@@ -1,6 +1,3 @@
-//! Codex events to the agent API's steps. Pure: a provider event in, the
-//! steps the session applies out.
-
 use agents::{
     CloseReason, Decision as Chosen, Output, ToolCallId, ToolKind, ToolPhase,
 };
@@ -29,7 +26,6 @@ pub fn codex_steps(event: CodexEvent) -> Vec<Step> {
     }
 }
 
-/// What an event that maps to no step is logged as.
 #[must_use]
 pub fn codex_note(event: &CodexEvent) -> Option<Note> {
     match event {

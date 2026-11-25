@@ -1,10 +1,3 @@
-//! Codex's `codex app-server` JSON-RPC: the few messages we read and write,
-//! and their events mapped into the agent API (`agents`), how the server
-//! starts, what the server actor decides, what the hub that shares the
-//! server among threads decides, what a thread's agent decides with a
-//! session's runtime commands, and how its sign-in reads. `codex-cli`
-//! runs the server that speaks it.
-
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -40,5 +33,4 @@ pub use protocol::{
 };
 pub use sign_in::sign_in;
 
-/// Codex, as its plugin names it.
 pub const PROVIDER: agents::Provider = agents::Provider::new("codex");

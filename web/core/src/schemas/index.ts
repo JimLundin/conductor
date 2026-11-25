@@ -2,69 +2,38 @@ import { Schema } from "effect";
 
 type Account = "Own" | { readonly Named: string };
 
-const Account = Schema.Union(
-  [
-    Schema.Literal("Own").annotate({
-      description:
-        "The provider's own sign-in before it has named an account: where a\nsign-in runs, and a CLI given on the host's command line, signed in\nhowever it is. Each provider has one.",
-    }),
-    Schema.Struct({ Named: Schema.String }).annotate({
-      description:
-        "As the provider names it: a subscription's email, or what the\ncredential's form names, such as a gateway's URL.",
-    }),
-  ],
-  { mode: "oneOf" },
-).annotate({
-  description: "Who the provider says an instance signs in as.",
-  identifier: "Account",
-});
+const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Schema.String })], {
+  mode: "oneOf",
+}).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/48";
+type Alpn = "conductor/49";
 
-const Alpn = Schema.Literal("conductor/48").annotate({
+const Alpn = Schema.Literal("conductor/49").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
 
 type Answer = globalThis.ReadonlyArray<string>;
 
-const Answer = Schema.Array(Schema.String).annotate({
-  description:
-    "The answer to one question: the labels of the options chosen, and any\ntext the user typed instead, in that order.",
-  identifier: "Answer",
-});
+const Answer = Schema.Array(Schema.String).annotate({ identifier: "Answer" });
 
 type Auth =
-  | { readonly Stored: { readonly kind: string; readonly url: string | null } }
   | "SignedIn"
-  | "Unmanaged";
+  | "Unmanaged"
+  | { readonly Stored: { readonly kind: string; readonly url: string | null } };
 
 const Auth = Schema.Union(
   [
+    Schema.Literals(["SignedIn", "Unmanaged"]),
     Schema.Struct({
       Stored: Schema.Struct({
         kind: Schema.String,
         url: Schema.Union([Schema.String, Schema.Null]),
       }),
-    }).annotate({
-      description:
-        "A credential the host stores, of this kind, reaching this URL if\nits form has one ([`ProviderInfo::auth`]).",
-    }),
-    Schema.Literal("SignedIn").annotate({
-      description:
-        "The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`conductord login <instance>`).",
-    }),
-    Schema.Literal("Unmanaged").annotate({
-      description:
-        "A CLI the host was started with (`--cli <provider>=<path>`),\nwhich signs in however it does.",
     }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description:
-    "How an instance's CLI reaches its model. It names the kind and never\ncarries a secret: credentials are write-only (§6.3).",
-  identifier: "Auth",
-});
+).annotate({ identifier: "Auth" });
 
 type AuthToken = globalThis.ReadonlyArray<number>;
 
@@ -78,10 +47,6 @@ const AuthToken = Schema.Array(
       Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
     ),
 )
-  .annotate({
-    description:
-      "S3 placeholder for the fleet certificates of §4: a random secret the host\nprints in its ticket and requires in every `Hello`.",
-  })
   .check(Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }))
   .check(
     Schema.isMaxLength(16).annotate({
@@ -93,17 +58,12 @@ const AuthToken = Schema.Array(
 type Effort = "Low" | "Medium" | "High" | "XHigh" | "Max" | "Ultra";
 
 const Effort = Schema.Literals(["Low", "Medium", "High", "XHigh", "Max", "Ultra"]).annotate({
-  description:
-    "How hard the model reasons: Claude's `--effort`, Codex's\n`model_reasoning_effort`. Both CLIs spell the levels the same way.",
   identifier: "Effort",
 });
 
 type ModelId = string;
 
-const ModelId = Schema.String.annotate({
-  description: "A model by the name its CLI takes (`haiku`, `gpt-6-luna`).",
-  identifier: "ModelId",
-});
+const ModelId = Schema.String.annotate({ identifier: "ModelId" });
 
 type ModelChoice = {
   readonly description: string;
@@ -114,9 +74,7 @@ type ModelChoice = {
 
 const ModelChoice = Schema.Struct({
   description: Schema.String,
-  efforts: Schema.Array(Effort).annotate({
-    description: "The efforts this model takes, lowest first.",
-  }),
+  efforts: Schema.Array(Effort),
   id: ModelId,
   name: Schema.String,
 }).annotate({ identifier: "ModelChoice" });
@@ -129,11 +87,7 @@ type Models = {
 const Models = Schema.Struct({
   choices: Schema.Array(ModelChoice),
   default: Schema.Union([ModelId, Schema.Null]),
-}).annotate({
-  description:
-    "The models a provider's CLI offers on this host, as the CLI lists them\nwhen the host starts, and the one a session gets when it names none.",
-  identifier: "Models",
-});
+}).annotate({ identifier: "Models" });
 
 type Availability =
   | { readonly Available: { readonly auth: Auth; readonly models: Models } }
@@ -142,9 +96,7 @@ type Availability =
 const Availability = Schema.Union(
   [
     Schema.Struct({ Available: Schema.Struct({ auth: Auth, models: Models }) }),
-    Schema.Struct({ Unavailable: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host can't run this instance's sessions, for this reason.",
-    }),
+    Schema.Struct({ Unavailable: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "Availability" });
@@ -439,22 +391,7 @@ const CanvasFile = Schema.Struct({
 
 type FieldKind = "Text" | "Url" | "Secret";
 
-const FieldKind = Schema.Union(
-  [
-    Schema.Literal("Text"),
-    Schema.Literal("Url").annotate({
-      description:
-        "A plain `http(s)://host/path`. It is shown to every client and may\nbe written into a CLI's config, so it may not hide a secret in\nuserinfo, a query or a fragment.",
-    }),
-    Schema.Literal("Secret").annotate({
-      description: "Write-only: the host never shows it again, and no `Debug` prints it.",
-    }),
-  ],
-  { mode: "oneOf" },
-).annotate({
-  description: "What a field holds, which says how the app shows it and how the host\nchecks it.",
-  identifier: "FieldKind",
-});
+const FieldKind = Schema.Literals(["Text", "Url", "Secret"]).annotate({ identifier: "FieldKind" });
 
 type Field = {
   readonly id: string;
@@ -465,12 +402,12 @@ type Field = {
 };
 
 const Field = Schema.Struct({
-  id: Schema.String.annotate({ description: "The key of its value in a [`Credential`]." }),
+  id: Schema.String,
   kind: FieldKind,
   label: Schema.String,
   placeholder: Schema.String,
   required: Schema.Boolean,
-}).annotate({ description: "One field of a credential form.", identifier: "Field" });
+}).annotate({ identifier: "Field" });
 
 type CredentialForm = {
   readonly account: string;
@@ -481,20 +418,12 @@ type CredentialForm = {
 };
 
 const CredentialForm = Schema.Struct({
-  account: Schema.String.annotate({
-    description:
-      "The id of the field whose value is the account the credential signs\nin as, since the provider's CLI names none for it. It is shown to\nevery client, so it is never a secret.",
-  }),
+  account: Schema.String,
   fields: Schema.Array(Field),
-  kind: Schema.String.annotate({ description: "The [`Credential::kind`] of what the form makes." }),
+  kind: Schema.String,
   label: Schema.String,
-  setup_sign_in: Schema.Union([Schema.String, Schema.Null]).annotate({
-    description: "The action label when the host can obtain this credential via sign-in.",
-  }),
-}).annotate({
-  description: "One kind of credential a provider takes, as the form it is entered in.",
-  identifier: "CredentialForm",
-});
+  setup_sign_in: Schema.Union([Schema.String, Schema.Null]),
+}).annotate({ identifier: "CredentialForm" });
 
 type ProviderInfo = {
   readonly credentials: globalThis.ReadonlyArray<CredentialForm>;
@@ -503,36 +432,18 @@ type ProviderInfo = {
 };
 
 const ProviderInfo = Schema.Struct({
-  credentials: Schema.Array(CredentialForm).annotate({
-    description: "The kinds of credential it takes.",
-  }),
+  credentials: Schema.Array(CredentialForm),
   label: Schema.String,
-  note: Schema.Union([Schema.String, Schema.Null]).annotate({
-    description:
-      "What a new session's form says under the provider when it is\npicked, such as what its agent does without asking.",
-  }),
-}).annotate({
-  description: "How a provider the host runs presents itself, as its plugin describes\nit.",
-  identifier: "ProviderInfo",
-});
+  note: Schema.Union([Schema.String, Schema.Null]),
+}).annotate({ identifier: "ProviderInfo" });
 
 type Catalog = { readonly [x: string]: ProviderInfo };
 
-const Catalog = Schema.Record(Schema.String, ProviderInfo).annotate({
-  description: "What the host's plugins describe, by provider.",
-  identifier: "Catalog",
-});
+const Catalog = Schema.Record(Schema.String, ProviderInfo).annotate({ identifier: "Catalog" });
 
-type Change2 = "Delete" | "Write" | "Edit";
+type Change2 = "Write" | "Edit" | "Delete";
 
-const Change2 = Schema.Union(
-  [
-    Schema.Literal("Delete"),
-    Schema.Literal("Write").annotate({ description: "The whole file written, new or replaced." }),
-    Schema.Literal("Edit").annotate({ description: "Part of an existing file changed." }),
-  ],
-  { mode: "oneOf" },
-).annotate({ identifier: "Change2" });
+const Change2 = Schema.Literals(["Write", "Edit", "Delete"]).annotate({ identifier: "Change2" });
 
 type ChecklistItem = { readonly done: boolean; readonly text: string };
 
@@ -551,11 +462,8 @@ const Item = Schema.Struct({
     .check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
-  seen: Schema.Union([Schema.Array(ChecklistItem), Schema.Null]).annotate({
-    description:
-      "The checklist the place was picked from; when the file's has\nchanged since, the change is refused. `None` takes the place in\nthe file as it is.",
-  }),
-}).annotate({ description: "A checklist item by its place, from 0.", identifier: "Item" });
+  seen: Schema.Union([Schema.Array(ChecklistItem), Schema.Null]),
+}).annotate({ identifier: "Item" });
 
 type ChecklistChange =
   | { readonly Add: string }
@@ -585,37 +493,21 @@ const ChecklistEntry = Schema.Struct({ status: ChecklistStatus, text: Schema.Str
 
 type Origin = "Found" | "Cloned";
 
-const Origin = Schema.Union(
-  [
-    Schema.Literal("Found").annotate({ description: "Found in a directory the host searches." }),
-    Schema.Literal("Cloned").annotate({ description: "The host cloned it into its data dir." }),
-  ],
-  { mode: "oneOf" },
-).annotate({ identifier: "Origin" });
+const Origin = Schema.Literals(["Found", "Cloned"]).annotate({ identifier: "Origin" });
 
 type CheckoutLocation = string;
 
-const CheckoutLocation = Schema.String.annotate({
-  description:
-    "Where a project is checked out on a host, as the host's OS spells it.\nOnly the host reads it: a browser on a phone can't know a Windows\npath's rules.",
-  identifier: "CheckoutLocation",
-});
+const CheckoutLocation = Schema.String.annotate({ identifier: "CheckoutLocation" });
 
 type Checkout = { readonly origin: Origin; readonly path: CheckoutLocation };
 
 const Checkout = Schema.Struct({ origin: Origin, path: CheckoutLocation }).annotate({
-  description:
-    "A repository on this host whose root commit and remote are a project's.\nA session's project follows from its worktree's repository, which is\none of these.",
   identifier: "Checkout",
 });
 
 type ClientName = string;
 
-const ClientName = Schema.String.annotate({
-  description:
-    "The name a client gave when it connected: who answered a request, or\nsent a message.",
-  identifier: "ClientName",
-});
+const ClientName = Schema.String.annotate({ identifier: "ClientName" });
 
 type Cloning = "Idle" | "Running" | { readonly Failed: { readonly reason: string } };
 
@@ -625,10 +517,7 @@ const Cloning = Schema.Union(
     Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: 'Where the host\'s own clone of a project stands, after "Clone here".',
-  identifier: "Cloning",
-});
+).annotate({ identifier: "Cloning" });
 
 type CloseReason =
   | { readonly FailedToStart: { readonly message: string } }
@@ -639,20 +528,14 @@ const CloseReason = Schema.Union(
   [
     Schema.Struct({ FailedToStart: Schema.Struct({ message: Schema.String }) }),
     Schema.Struct({ Exited: Schema.Struct({ status: Schema.String }) }),
-    Schema.Struct({ Stopped: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host stopped the agent on purpose, for this reason.",
-    }),
+    Schema.Struct({ Stopped: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "CloseReason" });
 
 type SessionDirectory = string;
 
-const SessionDirectory = Schema.String.annotate({
-  description:
-    "The directory a session starts in and works in, as the host's OS\nspells it. The client never interprets it: a browser on a phone can't\nknow a Windows path's rules.",
-  identifier: "SessionDirectory",
-});
+const SessionDirectory = Schema.String.annotate({ identifier: "SessionDirectory" });
 
 type ProjectId = string;
 
@@ -688,55 +571,27 @@ const StartAt = Schema.Union(
     Schema.Struct({ Issue: IssueId }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description:
-    "Where a new session runs: a directory, a project's checkout, or an\nissue's project's checkout on a branch cut from the issue's.",
-  identifier: "StartAt",
-});
+).annotate({ identifier: "StartAt" });
 
-type Provider = string;
+type InstanceId = { readonly account: Account; readonly provider: string };
 
-const Provider = Schema.String.annotate({
-  description:
-    "A provider, by the name its plugin declares: what the host's command\nline, its data dir and the client link call it. Which providers there are is up\nto the plugins a host is given.",
-  identifier: "Provider",
-});
-
-type InstanceId = { readonly account: Account; readonly provider: Provider };
-
-const InstanceId = Schema.Struct({ account: Account, provider: Provider }).annotate({
-  description:
-    "An instance by its key, the account of a provider on this host (the\nnode). The provider names the account, not the owner, so it never\nchanges and the instance is never renamed.",
+const InstanceId = Schema.Struct({ account: Account, provider: Schema.String }).annotate({
   identifier: "InstanceId",
 });
 
 type SessionId = string;
 
-const SessionId = Schema.String.annotate({
-  description:
-    "A fleet-unique ULID assigned by the host, represented as its 128 bits,\nwhose text, on the client link, in its worktree's and branch's names and in\nlogs, is the `ulid` crate's.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
-  identifier: "SessionId",
+const SessionId = Schema.String.annotate({ identifier: "SessionId" });
+
+type Decision = "Approve" | "ApproveForSession" | "Deny";
+
+const Decision = Schema.Literals(["Approve", "ApproveForSession", "Deny"]).annotate({
+  identifier: "Decision",
 });
-
-type Decision = "Approve" | "Deny" | "ApproveForSession";
-
-const Decision = Schema.Union(
-  [
-    Schema.Literals(["Approve", "Deny"]),
-    Schema.Literal("ApproveForSession").annotate({
-      description:
-        "Approves this call and the calls the request's `for_session` names,\nuntil the session ends.",
-    }),
-  ],
-  { mode: "oneOf" },
-).annotate({ identifier: "Decision" });
 
 type RequestId = number;
 
-const RequestId = Schema.Number.annotate({
-  description: "An approval request or a question, assigned by the host per session, in\norder.",
-  format: "uint64",
-})
+const RequestId = Schema.Number.annotate({ format: "uint64" })
   .check(Schema.isInt().annotate({ expected: "an integer" }))
   .check(
     Schema.isGreaterThanOrEqualTo(0).annotate({
@@ -747,10 +602,7 @@ const RequestId = Schema.Number.annotate({
 
 type HostSeq = number;
 
-const HostSeq = Schema.Number.annotate({
-  description: "The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.",
-  format: "uint64",
-})
+const HostSeq = Schema.Number.annotate({ format: "uint64" })
   .check(Schema.isInt().annotate({ expected: "an integer" }))
   .check(
     Schema.isGreaterThanOrEqualTo(0).annotate({
@@ -799,16 +651,10 @@ const SessionCommand = Schema.Union(
         instance: InstanceId,
         model: Schema.Union([ModelId, Schema.Null]),
       }),
-    }).annotate({
-      description:
-        "`None` takes the instance's default model, or the CLI's default\neffort for the model.\nA session in a project starts in its first checkout on the host.",
     }),
     Schema.Struct({ SendMessage: Schema.Struct({ session: SessionId, text: Schema.String }) }),
     Schema.Struct({ Interrupt: Schema.Struct({ session: SessionId }) }),
-    Schema.Struct({ Continue: Schema.Struct({ session: SessionId }) }).annotate({
-      description:
-        "Starts a closed session's agent again, resuming its conversation\nwith the provider's own resume. `SessionReady` follows in the log.\nOn a session whose agent runs it is `Accepted` and does nothing.",
-    }),
+    Schema.Struct({ Continue: Schema.Struct({ session: SessionId }) }),
     Schema.Struct({
       Resolve: Schema.Struct({ decision: Decision, request: RequestId, session: SessionId }),
     }),
@@ -818,73 +664,39 @@ const SessionCommand = Schema.Union(
         request: RequestId,
         session: SessionId,
       }),
-    }).annotate({
-      description:
-        "Answers a question, one [`Answer`] per question in the order asked.\nLike `Resolve`, the first reply wins.",
     }),
-    Schema.Struct({ GetDiff: Schema.Struct({ session: SessionId, snapshot: HostSeq }) }).annotate({
-      description: "A bounded diff between this snapshot and its predecessor.",
-    }),
-    Schema.Struct({ SetEffort: Schema.Struct({ effort: Effort, session: SessionId }) }).annotate({
-      description:
-        "Sets the effort of the session's later turns, one its model lists.\nA running turn keeps its effort: the next turn the user starts, or\na `Continue`, takes the new one.",
-    }),
-    Schema.Struct({ Remove: Schema.Struct({ session: SessionId }) }).annotate({
-      description:
-        "Stops the session's agent between turns, commits what its workspace\nholds onto its branch, pushes that branch to the checkout's\n`origin`, and removes the workspace. `SessionRemoved` follows in the\nlog; the session takes no command after it.",
-    }),
-    Schema.Struct({ Finish: Schema.Struct({ session: SessionId }) }).annotate({
-      description:
-        "Finishes a session on an issue between turns. `Accepted` at once;\nthe host then asks a running agent for a summary and stops it, adds\nthe summary to the issue's notes, lands the session's branch on the\nissue's, pushes that, and moves the issue to `review` when it\ngained commits. `SessionFinished` says how it went.",
-    }),
+    Schema.Struct({ GetDiff: Schema.Struct({ session: SessionId, snapshot: HostSeq }) }),
+    Schema.Struct({ SetEffort: Schema.Struct({ effort: Effort, session: SessionId }) }),
+    Schema.Struct({ Remove: Schema.Struct({ session: SessionId }) }),
+    Schema.Struct({ Finish: Schema.Struct({ session: SessionId }) }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "Every command after `Start` names the session it acts on.",
-  identifier: "SessionCommand",
-});
+).annotate({ identifier: "SessionCommand" });
 
 type Credential = { readonly kind: string; readonly values: { readonly [x: string]: string } };
 
 const Credential = Schema.Struct({
   kind: Schema.String,
   values: Schema.Record(Schema.String, Schema.String),
-}).annotate({
-  description:
-    "One instance's credential: the values of its kind's form, by field id.\nAs `SetCredential` carries it and as the host stores it. The instance\nit belongs to names the provider.",
-  identifier: "Credential",
-});
+}).annotate({ identifier: "Credential" });
 
 type InstanceCommand =
-  | { readonly SetCredential: { readonly credential: Credential; readonly provider: Provider } }
+  | { readonly SetCredential: { readonly credential: Credential; readonly provider: string } }
   | { readonly Remove: { readonly instance: InstanceId } };
 
 const InstanceCommand = Schema.Union(
   [
     Schema.Struct({
-      SetCredential: Schema.Struct({ credential: Credential, provider: Provider }),
-    }).annotate({
-      description:
-        "Stores a credential of `provider` on the host. The account its form\nnames makes the instance: one that has it takes the credential in\nplace of its own, and otherwise the host adds the instance and\nstarts its CLI before it answers. The host never sends it back.\nLike every command it needs a client admitted by the ticket's\ntoken, which device certificates replace with the fleet (§6.1).",
+      SetCredential: Schema.Struct({ credential: Credential, provider: Schema.String }),
     }),
-    Schema.Struct({ Remove: Schema.Struct({ instance: InstanceId }) }).annotate({
-      description:
-        "Refused while a session runs on the instance. Its closed sessions\nstay, and can't continue. A provider's own sign-in stays; on a host\nwhose store doesn't open, removing it moves the store aside.",
-    }),
+    Schema.Struct({ Remove: Schema.Struct({ instance: InstanceId }) }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "A command that changes the host's instances.",
-  identifier: "InstanceCommand",
-});
+).annotate({ identifier: "InstanceCommand" });
 
 type SignInCode = string;
 
-const SignInCode = Schema.String.annotate({
-  description:
-    "The code a person pastes from a sign-in page. It is a secret: its\n`Debug` doesn't print it, so no log line carries it.",
-  identifier: "SignInCode",
-});
+const SignInCode = Schema.String.annotate({ identifier: "SignInCode" });
 
 type SignInCommand =
   | { readonly Start: { readonly instance: InstanceId } }
@@ -900,42 +712,23 @@ type SignInCommand =
 
 const SignInCommand = Schema.Union(
   [
-    Schema.Struct({ Start: Schema.Struct({ instance: InstanceId }) }).annotate({
-      description:
-        "Runs the CLI's own sign-in in the instance's home; every client\nfollows it as `Feed::SignIn`. Refused while one runs on it. Once\nthe CLI names the account it signed in as, the instance is that\naccount's, and its provider has a new own sign-in.",
-    }),
-    Schema.Struct({
-      SubmitCode: Schema.Struct({ code: SignInCode, instance: InstanceId }),
-    }).annotate({
-      description:
-        "The code the sign-in page gave, for a sign-in whose step asks for\none to be pasted.",
-    }),
-    Schema.Struct({ Cancel: Schema.Struct({ instance: InstanceId }) }).annotate({
-      description: "Stops the instance's sign-in, if one runs.",
-    }),
+    Schema.Struct({ Start: Schema.Struct({ instance: InstanceId }) }),
+    Schema.Struct({ SubmitCode: Schema.Struct({ code: SignInCode, instance: InstanceId }) }),
+    Schema.Struct({ Cancel: Schema.Struct({ instance: InstanceId }) }),
     Schema.Struct({
       StartCredential: Schema.Struct({
         instance: InstanceId,
         kind: Schema.String,
         label: Schema.String,
       }),
-    }).annotate({
-      description: "Runs the provider's live credential setup through its own instance.",
     }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "A command about an instance's sign-in from the app.",
-  identifier: "SignInCommand",
-});
+).annotate({ identifier: "SignInCommand" });
 
 type EditId = string;
 
-const EditId = Schema.String.annotate({
-  description:
-    "128 random bits, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
-  identifier: "EditId",
-});
+const EditId = Schema.String.annotate({ identifier: "EditId" });
 
 type Datum = string | globalThis.ReadonlyArray<string> | boolean;
 
@@ -951,21 +744,15 @@ type NewIssue = {
 };
 
 const NewIssue = Schema.Struct({
-  fields: Schema.Array(Schema.Tuple([Schema.String, Datum])).annotate({
-    description:
-      "The fields and relations it starts with, each with its value, in\nthe order given.",
-  }),
+  fields: Schema.Array(Schema.Tuple([Schema.String, Datum])),
   kind: Schema.String,
   project: ProjectId,
   title: Schema.String,
-}).annotate({ description: "A new issue, as `home issue new` opens one.", identifier: "NewIssue" });
+}).annotate({ identifier: "NewIssue" });
 
 type Part = "Stage" | "Status";
 
-const Part = Schema.Literals(["Stage", "Status"]).annotate({
-  description: "What a move changes.",
-  identifier: "Part",
-});
+const Part = Schema.Literals(["Stage", "Status"]).annotate({ identifier: "Part" });
 
 type IssueChange =
   | {
@@ -991,26 +778,15 @@ const IssueChange = Schema.Union(
         signed_off: Schema.Boolean,
         to: Schema.String,
       }),
-    }).annotate({
-      description:
-        "Changes the stage or status. `signed_off` records the owner's sign-off\nwhen the destination stage requires it.",
     }),
-    Schema.Struct({ Set: Schema.Struct({ field: Schema.String, value: Datum }) }).annotate({
-      description: "A declared field's or relation's value.",
-    }),
+    Schema.Struct({ Set: Schema.Struct({ field: Schema.String, value: Datum }) }),
     Schema.Struct({ Title: Schema.String }),
-    Schema.Struct({ Note: Schema.String }).annotate({
-      description: "A note, which the writer signs and dates.",
-    }),
+    Schema.Struct({ Note: Schema.String }),
     Schema.Struct({ Body: Schema.String }),
     Schema.Struct({ Checklist: ChecklistChange }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description:
-    "One change to an issue, as the `home` command line and the app make\nit. The home reads the file it writes back against the flow before\nkeeping it.",
-  identifier: "IssueChange",
-});
+).annotate({ identifier: "IssueChange" });
 
 type HomeCommand =
   | "Sync"
@@ -1027,28 +803,16 @@ type HomeCommand =
 
 const HomeCommand = Schema.Union(
   [
-    Schema.Literal("Sync").annotate({
-      description:
-        "Pulls the home now. `Accepted` once it has; how it went is in the\nhome's `sync`.",
-    }),
-    Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }).annotate({
-      description:
-        "Clones the project into the host's data dir, for a project with no\ncheckout here. `Accepted` once it has; how it went is in the\nproject's `cloning`.",
-    }),
-    Schema.Struct({ CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }) }).annotate({
-      description:
-        "Opens an issue, as `home issue new` does. Answers `IssueWritten`\nonce the host has written it to its clone of the home; pushing it\nfollows, and how that went is in the home's `sync`.\n\nThe app mints `edit` once per edit and sends it again with each\nretry, so the home writes the edit once.",
-    }),
+    Schema.Literal("Sync"),
+    Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }),
+    Schema.Struct({ CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }) }),
     Schema.Struct({
       ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueId }),
-    }).annotate({ description: "Answers `IssueWritten` once written, like `CreateIssue`." }),
+    }),
     Schema.Struct({ Canvas: Schema.Struct({ issue: IssueId, name: CanvasName }) }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "A command about the host's clone of the home.",
-  identifier: "HomeCommand",
-});
+).annotate({ identifier: "HomeCommand" });
 
 type PushSubscription = {
   readonly auth: string;
@@ -1101,10 +865,6 @@ const EnrollmentToken = Schema.Array(
       Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
     ),
 )
-  .annotate({
-    description:
-      "The secret a standalone host requires of the root host that enrolls it\nin a fleet.",
-  })
   .check(Schema.isMinLength(16).annotate({ expected: "a value with a length of at least 16" }))
   .check(
     Schema.isMaxLength(16).annotate({
@@ -1179,13 +939,10 @@ const FleetCommand = Schema.Union(
         relay: Schema.String,
         token: EnrollmentToken,
       }),
-    }).annotate({
-      description:
-        "Enrolls the standalone host `node`, reached through `relay`, which\nrequires `token`.",
     }),
   ],
   { mode: "oneOf" },
-).annotate({ description: "A command about the fleet, from the app.", identifier: "FleetCommand" });
+).annotate({ identifier: "FleetCommand" });
 
 type Command =
   | { readonly Session: SessionCommand }
@@ -1205,43 +962,35 @@ const Command = Schema.Union(
     Schema.Struct({ Fleet: FleetCommand }),
   ],
   { mode: "oneOf" },
-).annotate({ description: "A command, in the domain it acts on.", identifier: "Command" });
+).annotate({ identifier: "Command" });
 
 type CommandId = string;
 
-const CommandId = Schema.String.annotate({
-  description: "A client-generated, fleet-unique random UUID for idempotent retries.",
-  format: "uuid",
-  identifier: "CommandId",
-});
+const CommandId = Schema.String.annotate({ format: "uuid", identifier: "CommandId" });
 
 type HomeRefusal =
-  | "UnknownProject"
-  | "UnknownIssue"
-  | "UnknownCanvas"
   | "NoHome"
+  | "UnknownProject"
   | "NotCheckedOut"
   | "NoRemote"
+  | "UnknownIssue"
+  | "UnknownCanvas"
   | { readonly IssueNotSaved: { readonly reason: string } }
   | { readonly IssueRefused: { readonly reason: string } }
   | { readonly CanvasUnavailable: { readonly reason: string } };
 
 const HomeRefusal = Schema.Union(
   [
-    Schema.Literals(["UnknownProject", "UnknownIssue", "UnknownCanvas"]),
-    Schema.Literal("NoHome").annotate({ description: "The host was given no home." }),
-    Schema.Literal("NotCheckedOut").annotate({
-      description: "The project has no checkout on the host.",
-    }),
-    Schema.Literal("NoRemote").annotate({
-      description: "The project is local only: there is no remote to clone.",
-    }),
-    Schema.Struct({ IssueNotSaved: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The home can't be written now, for this reason.",
-    }),
-    Schema.Struct({ IssueRefused: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The flow refuses the edit, for this reason, as the `home` command\nline would.",
-    }),
+    Schema.Literals([
+      "NoHome",
+      "UnknownProject",
+      "NotCheckedOut",
+      "NoRemote",
+      "UnknownIssue",
+      "UnknownCanvas",
+    ]),
+    Schema.Struct({ IssueNotSaved: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Struct({ IssueRefused: Schema.Struct({ reason: Schema.String }) }),
     Schema.Struct({ CanvasUnavailable: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
@@ -1258,15 +1007,15 @@ type SessionRefusal =
   | "SnapshotUnavailable"
   | "UnknownInstance"
   | "SessionRemoved"
+  | "NotOnIssue"
+  | "AlreadyFinished"
   | { readonly InstanceUnavailable: { readonly reason: string } }
   | { readonly NotOffered: { readonly reason: string } }
   | { readonly AlreadyResolved: { readonly by: ClientName } }
   | { readonly WrongReply: { readonly reason: string } }
   | { readonly WorkspaceFailure: { readonly reason: string } }
   | { readonly Home: HomeRefusal }
-  | { readonly IssueTaken: { readonly session: SessionId } }
-  | "NotOnIssue"
-  | "AlreadyFinished";
+  | { readonly IssueTaken: { readonly session: SessionId } };
 
 const SessionRefusal = Schema.Union(
   [
@@ -1281,30 +1030,16 @@ const SessionRefusal = Schema.Union(
       "SnapshotUnavailable",
       "UnknownInstance",
       "SessionRemoved",
+      "NotOnIssue",
+      "AlreadyFinished",
     ]),
     Schema.Struct({ InstanceUnavailable: Schema.Struct({ reason: Schema.String }) }),
-    Schema.Struct({ NotOffered: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host doesn't offer that model or effort, for this reason.",
-    }),
+    Schema.Struct({ NotOffered: Schema.Struct({ reason: Schema.String }) }),
     Schema.Struct({ AlreadyResolved: Schema.Struct({ by: ClientName }) }),
-    Schema.Struct({ WrongReply: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The reply doesn't fit the request, for this reason.",
-    }),
+    Schema.Struct({ WrongReply: Schema.Struct({ reason: Schema.String }) }),
     Schema.Struct({ WorkspaceFailure: Schema.Struct({ reason: Schema.String }) }),
-    Schema.Struct({ Home: HomeRefusal }).annotate({
-      description:
-        "The session can't start where it was asked to: the home refuses\nthe project or issue.",
-    }),
-    Schema.Struct({ IssueTaken: Schema.Struct({ session: SessionId }) }).annotate({
-      description:
-        "The instance has this session on the issue already: one session\nper instance and issue.",
-    }),
-    Schema.Literal("NotOnIssue").annotate({
-      description: "The session works on no issue, so there is nothing to finish it on.",
-    }),
-    Schema.Literal("AlreadyFinished").annotate({
-      description: "The session is finishing, or has done nothing since it finished.",
-    }),
+    Schema.Struct({ Home: HomeRefusal }),
+    Schema.Struct({ IssueTaken: Schema.Struct({ session: SessionId }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "SessionRefusal" });
@@ -1315,17 +1050,9 @@ const DiffExtent = Schema.Literals(["Complete", "Truncated"]).annotate({
   identifier: "DiffExtent",
 });
 
-type DiffChange = "Delete" | "Write" | "Edit";
+type DiffChange = "Write" | "Edit" | "Delete";
 
-const DiffChange = Schema.Union(
-  [
-    Schema.Literal("Delete"),
-    Schema.Literal("Write").annotate({ description: "Added: the whole file is new." }),
-    Schema.Literal("Edit").annotate({ description: "Modified, or any other status." }),
-  ],
-  { mode: "oneOf" },
-).annotate({
-  description: "What a snapshot did to a file, as Git's diff status says.",
+const DiffChange = Schema.Literals(["Write", "Edit", "Delete"]).annotate({
   identifier: "DiffChange",
 });
 
@@ -1377,9 +1104,7 @@ type SessionResult =
 const SessionResult = Schema.Union(
   [
     Schema.Literal("Accepted"),
-    Schema.Struct({ Started: Schema.Struct({ session: SessionId }) }).annotate({
-      description: "The answer to `Start`. `SessionCreated` follows in the log.",
-    }),
+    Schema.Struct({ Started: Schema.Struct({ session: SessionId }) }),
     Schema.Struct({ Refused: SessionRefusal }),
     Schema.Struct({ Diff: SnapshotDiff }),
   ],
@@ -1388,20 +1113,16 @@ const SessionResult = Schema.Union(
 
 type InstanceRefusal =
   | "UnknownInstance"
+  | "FleetUnavailable"
   | { readonly CredentialNotSaved: { readonly reason: string } }
   | { readonly InvalidCredential: { readonly reason: string } }
-  | { readonly InstanceInUse: { readonly sessions: number } }
-  | "FleetUnavailable";
+  | { readonly InstanceInUse: { readonly sessions: number } };
 
 const InstanceRefusal = Schema.Union(
   [
-    Schema.Literal("UnknownInstance"),
-    Schema.Struct({ CredentialNotSaved: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host could not store the credential, and kept the one it had.",
-    }),
-    Schema.Struct({ InvalidCredential: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The credential is malformed, for this reason, and was not stored.",
-    }),
+    Schema.Literals(["UnknownInstance", "FleetUnavailable"]),
+    Schema.Struct({ CredentialNotSaved: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Struct({ InvalidCredential: Schema.Struct({ reason: Schema.String }) }),
     Schema.Struct({
       InstanceInUse: Schema.Struct({
         sessions: Schema.Number.annotate({ format: "uint64" })
@@ -1412,9 +1133,6 @@ const InstanceRefusal = Schema.Union(
             }),
           ),
       }),
-    }).annotate({ description: "The instance can't be removed while sessions run on it." }),
-    Schema.Literal("FleetUnavailable").annotate({
-      description: "Only the fleet's root host changes a fleet's instances.",
     }),
   ],
   { mode: "oneOf" },
@@ -1430,25 +1148,18 @@ const InstanceResult = Schema.Union(
 type SignInRefusal =
   | "UnknownInstance"
   | "SignInRunning"
-  | { readonly InstanceUnavailable: { readonly reason: string } }
   | "NoCodeAsked"
+  | { readonly InstanceUnavailable: { readonly reason: string } }
   | { readonly InvalidCredential: { readonly reason: string } }
   | { readonly CredentialNotSaved: { readonly reason: string } }
   | { readonly InstanceInUse: { readonly sessions: number } };
 
 const SignInRefusal = Schema.Union(
   [
-    Schema.Literals(["UnknownInstance", "SignInRunning"]),
+    Schema.Literals(["UnknownInstance", "SignInRunning", "NoCodeAsked"]),
     Schema.Struct({ InstanceUnavailable: Schema.Struct({ reason: Schema.String }) }),
-    Schema.Literal("NoCodeAsked").annotate({
-      description: "No sign-in runs on the instance, or it takes no code now.",
-    }),
-    Schema.Struct({ InvalidCredential: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The sign-in can't make that credential, for this reason.",
-    }),
-    Schema.Struct({ CredentialNotSaved: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host could not store what the sign-in changed.",
-    }),
+    Schema.Struct({ InvalidCredential: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Struct({ CredentialNotSaved: Schema.Struct({ reason: Schema.String }) }),
     Schema.Struct({
       InstanceInUse: Schema.Struct({
         sessions: Schema.Number.annotate({ format: "uint64" })
@@ -1459,7 +1170,7 @@ const SignInRefusal = Schema.Union(
             }),
           ),
       }),
-    }).annotate({ description: "The sign-in would change an instance sessions run on." }),
+    }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "SignInRefusal" });
@@ -1487,9 +1198,6 @@ const HomeResult = Schema.Union(
     Schema.Literal("Accepted"),
     Schema.Struct({
       IssueWritten: Schema.Struct({ issue: IssueId, warnings: Schema.Array(Schema.String) }),
-    }).annotate({
-      description:
-        "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
     }),
     Schema.Struct({ Canvas: CanvasFile }),
     Schema.Struct({ Refused: HomeRefusal }),
@@ -1497,14 +1205,10 @@ const HomeResult = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeResult" });
 
-type PushResult = "Accepted" | { readonly PublicKey: string } | "Unavailable";
+type PushResult = "Accepted" | "Unavailable" | { readonly PublicKey: string };
 
 const PushResult = Schema.Union(
-  [
-    Schema.Literal("Accepted"),
-    Schema.Struct({ PublicKey: Schema.String }),
-    Schema.Literal("Unavailable").annotate({ description: "The host sends no push." }),
-  ],
+  [Schema.Literals(["Accepted", "Unavailable"]), Schema.Struct({ PublicKey: Schema.String })],
   { mode: "oneOf" },
 ).annotate({ identifier: "PushResult" });
 
@@ -1538,11 +1242,7 @@ const Signed = Schema.Struct({
         Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
       ),
   ),
-}).annotate({
-  description:
-    "A value signed over the exact JSON bytes it was written as, and\ncarried as those bytes.\n\nJSON has no canonical form, so nothing re-encodes it to verify it: a\nverifier checks `signature` over [`Payload::DOMAIN`] then `payload`,\nand only then parses `payload`.",
-  identifier: "Signed",
-});
+}).annotate({ identifier: "Signed" });
 
 type InviteSecret = globalThis.ReadonlyArray<number>;
 
@@ -1643,18 +1343,17 @@ const Pairing = Schema.Struct({ certificate: Signed, root: HostEntry, signed: Si
 
 type FleetResult =
   | "Accepted"
+  | "Unavailable"
   | { readonly Status: Signed }
   | { readonly Invite: Invite }
-  | { readonly Pairing: Pairing }
-  | "Unavailable";
+  | { readonly Pairing: Pairing };
 
 const FleetResult = Schema.Union(
   [
-    Schema.Literal("Accepted"),
+    Schema.Literals(["Accepted", "Unavailable"]),
     Schema.Struct({ Status: Signed }),
     Schema.Struct({ Invite: Invite }),
     Schema.Struct({ Pairing: Pairing }),
-    Schema.Literal("Unavailable").annotate({ description: "Fleet changes need the root host." }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "FleetResult" });
@@ -1677,10 +1376,7 @@ const CommandResult = Schema.Union(
     Schema.Struct({ Fleet: FleetResult }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "A command's answer, in the domain of the command.",
-  identifier: "CommandResult",
-});
+).annotate({ identifier: "CommandResult" });
 
 type DeviceHello = {
   readonly certificate: Signed;
@@ -1725,33 +1421,23 @@ type Entry = {
 };
 
 const Entry = Schema.Struct({
-  at: Schema.Union([Schema.String, Schema.Null]).annotate({
-    description: "When and by whom, when the line says so.",
-  }),
+  at: Schema.Union([Schema.String, Schema.Null]),
   by: Schema.Union([Schema.String, Schema.Null]),
   event: LogEvent,
   text: Schema.String,
-}).annotate({ description: "A line of an issue's log.", identifier: "Entry" });
+}).annotate({ identifier: "Entry" });
 
 type Epoch = string;
 
-const Epoch = Schema.String.annotate({
-  description:
-    "Identifies one incarnation of a host's event log. A cursor from another\nepoch is meaningless, so the client starts over from seq 0 (§8).",
-  identifier: "Epoch",
-});
+const Epoch = Schema.String.annotate({ identifier: "Epoch" });
 
 type ToolCallId = string;
 
-const ToolCallId = Schema.String.annotate({
-  description: "A tool call's id as the provider gave it (`toolu_…` or a Codex item id).",
-  identifier: "ToolCallId",
-});
+const ToolCallId = Schema.String.annotate({ identifier: "ToolCallId" });
 
 type FileChange = { readonly change: Change2; readonly path: string };
 
 const FileChange = Schema.Struct({ change: Change2, path: Schema.String }).annotate({
-  description: "One file a tool call changes, and how.",
   identifier: "FileChange",
 });
 
@@ -1797,26 +1483,12 @@ type Output =
 
 const Output = Schema.Union(
   [
-    Schema.Struct({ AssistantDelta: Schema.Struct({ text: Schema.String }) }).annotate({
-      description:
-        "A fragment of the assistant message being streamed. The\n`AssistantMessage` that follows replaces them.",
-    }),
-    Schema.Struct({ AssistantMessage: Schema.Struct({ text: Schema.String }) }).annotate({
-      description:
-        "The finished text of one assistant message. It replaces the deltas\nsince the previous message.",
-    }),
-    Schema.Struct({ ReasoningDelta: Schema.Struct({ text: Schema.String }) }).annotate({
-      description:
-        "A fragment of the agent's reasoning as it streams. The `Reasoning`\nthat follows replaces them.",
-    }),
-    Schema.Struct({ Reasoning: Schema.Struct({ text: Schema.String }) }).annotate({
-      description:
-        "The finished text of one stretch of reasoning: the summary the\nprovider gives, not the model's raw thoughts.",
-    }),
+    Schema.Struct({ AssistantDelta: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ AssistantMessage: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ ReasoningDelta: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ Reasoning: Schema.Struct({ text: Schema.String }) }),
     Schema.Struct({ ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }) }),
-    Schema.Struct({ Error: Schema.Struct({ message: Schema.String }) }).annotate({
-      description: "Something went wrong that did not end the session.",
-    }),
+    Schema.Struct({ Error: Schema.Struct({ message: Schema.String }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "Output" });
@@ -1829,10 +1501,7 @@ const QuestionOption = Schema.Struct({ description: Schema.String, label: Schema
 
 type Selection = "One" | "Many";
 
-const Selection = Schema.Literals(["One", "Many"]).annotate({
-  description: "How many options the user may choose.",
-  identifier: "Selection",
-});
+const Selection = Schema.Literals(["One", "Many"]).annotate({ identifier: "Selection" });
 
 type Question = {
   readonly header: string;
@@ -1842,37 +1511,27 @@ type Question = {
 };
 
 const Question = Schema.Struct({
-  header: Schema.String.annotate({
-    description: 'A short label for the question, such as "Color".',
-  }),
+  header: Schema.String,
   options: Schema.Array(QuestionOption),
   selection: Selection,
   text: Schema.String,
-}).annotate({
-  description:
-    "One question. Both agents take any typed text as an answer, so every\nquestion also allows one besides its options.",
-  identifier: "Question",
-});
+}).annotate({ identifier: "Question" });
 
 type Resolution =
+  | "Withdrawn"
   | { readonly Decided: { readonly by: ClientName; readonly decision: Decision } }
   | {
       readonly Answered: {
         readonly answers: globalThis.ReadonlyArray<Answer>;
         readonly by: ClientName;
       };
-    }
-  | "Withdrawn";
+    };
 
 const Resolution = Schema.Union(
   [
+    Schema.Literal("Withdrawn"),
     Schema.Struct({ Decided: Schema.Struct({ by: ClientName, decision: Decision }) }),
-    Schema.Struct({
-      Answered: Schema.Struct({ answers: Schema.Array(Answer), by: ClientName }),
-    }).annotate({ description: "A question's answers, one per question." }),
-    Schema.Literal("Withdrawn").annotate({
-      description: "The agent withdrew the request before anyone answered.",
-    }),
+    Schema.Struct({ Answered: Schema.Struct({ answers: Schema.Array(Answer), by: ClientName }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "Resolution" });
@@ -1889,26 +1548,15 @@ const TurnOutcome = Schema.Union(
 
 type WorkingCopy = string;
 
-const WorkingCopy = Schema.String.annotate({
-  description:
-    "The directory of the owner's working copy a session was started in,\nwhich its workspace isolates it from, as the host's OS spells it.",
-  identifier: "WorkingCopy",
-});
+const WorkingCopy = Schema.String.annotate({ identifier: "WorkingCopy" });
 
 type Repository = string;
 
-const Repository = Schema.String.annotate({
-  description:
-    "The root of the repository a session's worktree is added to, as the\nhost's OS spells it.",
-  identifier: "Repository",
-});
+const Repository = Schema.String.annotate({ identifier: "Repository" });
 
 type Worktree = string;
 
-const Worktree = Schema.String.annotate({
-  description: "The Git worktree that holds a session's workspace, as the host's OS\nspells it.",
-  identifier: "Worktree",
-});
+const Worktree = Schema.String.annotate({ identifier: "Worktree" });
 
 type Workspace = {
   readonly branch: string;
@@ -1920,9 +1568,7 @@ type Workspace = {
 
 const Workspace = Schema.Struct({
   branch: Schema.String,
-  directory: Schema.suspend((): Schema.Codec<SessionDirectory> => SessionDirectory).annotate({
-    description: "The worktree's copy of the directory the session was started in.",
-  }),
+  directory: SessionDirectory,
   original: WorkingCopy,
   repository: Repository,
   worktree: Worktree,
@@ -1932,18 +1578,12 @@ type Snapshot = { readonly commit: string; readonly turn_start: HostSeq | null }
 
 const Snapshot = Schema.Struct({
   commit: Schema.String,
-  turn_start: Schema.Union([HostSeq, Schema.Null]).annotate({
-    description:
-      "The existing `UserMessage` event for this turn; None for initial/autonomous turns.",
-  }),
+  turn_start: Schema.Union([HostSeq, Schema.Null]),
 }).annotate({ identifier: "Snapshot" });
 
 type SubagentId = string;
 
-const SubagentId = Schema.String.annotate({
-  description: "A sub-agent's id as its provider gave it (Claude's `task_id`).",
-  identifier: "SubagentId",
-});
+const SubagentId = Schema.String.annotate({ identifier: "SubagentId" });
 
 type SubagentActivity =
   | { readonly Message: { readonly text: string } }
@@ -1957,10 +1597,7 @@ const SubagentActivity = Schema.Union(
     Schema.Struct({ ToolCall: Schema.Struct({ call: ToolCallId, phase: ToolPhase }) }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "One entry of a sub-agent's own transcript.",
-  identifier: "SubagentActivity",
-});
+).annotate({ identifier: "SubagentActivity" });
 
 type SubagentOutcome = "Finished" | "Failed" | "Stopped";
 
@@ -1992,19 +1629,14 @@ type SubagentEvent =
 
 const SubagentEvent = Schema.Union(
   [
-    Schema.Struct({
-      Started: Schema.Struct({ call: ToolCallId, description: Schema.String }),
-    }).annotate({
-      description:
-        "The agent's tool call `call` started it. A sub-agent the agent\nresumes starts again under the same id.",
-    }),
+    Schema.Struct({ Started: Schema.Struct({ call: ToolCallId, description: Schema.String }) }),
     Schema.Struct({ Activity: SubagentActivity }),
     Schema.Struct({
       Ended: Schema.Struct({
         outcome: SubagentOutcome,
         summary: Schema.Union([Schema.String, Schema.Null]),
       }),
-    }).annotate({ description: "`summary` is its final report, when its provider gives one." }),
+    }),
     Schema.Struct({ Kind: Schema.Struct({ kind: Schema.String }) }),
     Schema.Struct({ ChecklistChanged: Schema.Struct({ checklist: Schema.Array(ChecklistEntry) }) }),
     Schema.Struct({
@@ -2030,14 +1662,12 @@ type Kept =
 
 const Kept = Schema.Union(
   [
-    Schema.Literal("Local").annotate({ description: "In the checkout only: it has no `origin`." }),
+    Schema.Literal("Local"),
     Schema.Struct({ Pushed: Schema.Struct({ remote: Schema.String }) }),
-    Schema.Struct({ PushFailed: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "In the checkout only, since the push failed.",
-    }),
+    Schema.Struct({ PushFailed: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
-).annotate({ description: "Where a removed session's branch was kept.", identifier: "Kept" });
+).annotate({ identifier: "Kept" });
 
 type Finished =
   | { readonly Landed: { readonly commits: number; readonly kept: Kept } }
@@ -2056,18 +1686,16 @@ const Finished = Schema.Union(
           ),
         kept: Kept,
       }),
-    }).annotate({
-      description:
-        "The session's branch landed on the issue's with this many commits\nthe issue's lacked, and the issue's branch was kept as `kept` says.",
     }),
-    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "Nothing landed, for this reason; the session's branch stays.",
-    }),
+    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
-).annotate({ description: "How finishing a session on an issue went.", identifier: "Finished" });
+).annotate({ identifier: "Finished" });
 
 type EventKind =
+  | "SessionReady"
+  | "FinishStarted"
+  | "FinishInterrupted"
   | {
       readonly SessionCreated: {
         readonly by: ClientName;
@@ -2077,7 +1705,6 @@ type EventKind =
         readonly model: ModelId | null;
       };
     }
-  | "SessionReady"
   | { readonly SessionClosed: { readonly reason: CloseReason } }
   | { readonly UserMessage: { readonly by: ClientName; readonly text: string } }
   | { readonly Agent: Output }
@@ -2114,12 +1741,11 @@ type EventKind =
   | { readonly Subagent: { readonly agent: SubagentId; readonly event: SubagentEvent } }
   | { readonly SessionRemoved: { readonly kept: Kept | null } }
   | { readonly OnIssue: { readonly issue: IssueId } }
-  | { readonly SessionFinished: { readonly finished: Finished } }
-  | "FinishStarted"
-  | "FinishInterrupted";
+  | { readonly SessionFinished: { readonly finished: Finished } };
 
 const EventKind = Schema.Union(
   [
+    Schema.Literals(["SessionReady", "FinishStarted", "FinishInterrupted"]),
     Schema.Struct({
       SessionCreated: Schema.Struct({
         by: ClientName,
@@ -2128,20 +1754,10 @@ const EventKind = Schema.Union(
         instance: InstanceId,
         model: Schema.Union([ModelId, Schema.Null]),
       }),
-    }).annotate({
-      description:
-        "`model` and `effort` are what the agent runs with; `None` is the\nCLI's own default. A `Continue` runs on `instance` again.",
-    }),
-    Schema.Literal("SessionReady").annotate({
-      description:
-        "The agent process is up and takes messages: at the start, and again\nafter a `Continue`.",
     }),
     Schema.Struct({ SessionClosed: Schema.Struct({ reason: CloseReason }) }),
     Schema.Struct({ UserMessage: Schema.Struct({ by: ClientName, text: Schema.String }) }),
-    Schema.Struct({ Agent: Output }).annotate({
-      description:
-        "What the agent produced. An `AssistantDelta` or a `ReasoningDelta`\nis live only: the host stores none, so a subscription never replays\none, and the message or reasoning that follows replaces them. It\ncarries the seq of the stored event before it, which may be another\nsession's, so a client that has applied that seq takes it and one\nthat hasn't sees a gap.",
-    }),
+    Schema.Struct({ Agent: Output }),
     Schema.Struct({
       RequestOpened: Schema.Struct({
         call: ToolCallId,
@@ -2150,70 +1766,33 @@ const EventKind = Schema.Union(
         request: RequestId,
         tool: ToolKind,
       }),
-    }).annotate({
-      description:
-        "An approval the tool call `call` waits on. `tool` repeats what the\ncall's `Started` said, so a client can show the request on its own.\n`reason` is the agent's own words for why it asks, when it gives any.\n`for_session` names what `ApproveForSession` would allow, in the\nagent's words (`Bash(git status)`, or the command), when it offers\nthat.",
     }),
     Schema.Struct({
       QuestionAsked: Schema.Struct({ questions: Schema.Array(Question), request: RequestId }),
-    }).annotate({
-      description:
-        "The agent asks the user one or more questions and waits for an\n`Answer`. `RequestResolved` closes it, as it does an approval.",
     }),
     Schema.Struct({
       RequestResolved: Schema.Struct({ request: RequestId, resolution: Resolution }),
     }),
     Schema.Struct({ TurnCompleted: Schema.Struct({ outcome: TurnOutcome }) }),
-    Schema.Struct({ Error: Schema.Struct({ message: Schema.String }) }).annotate({
-      description:
-        "Something went wrong in the host, such as a snapshot or a removal,\nthat did not end the session. An error the agent reports is its\n`Output::Error`.",
-    }),
+    Schema.Struct({ Error: Schema.Struct({ message: Schema.String }) }),
     Schema.Struct({
       ModelChanged: Schema.Struct({
         effort: Schema.Union([Effort, Schema.Null]),
         model: Schema.Union([ModelId, Schema.Null]),
         reason: Schema.String,
       }),
-    }).annotate({
-      description:
-        "A `Continue` runs the agent on another model, because the current\ncredential no longer offers the one it ran, as `reason` says.",
     }),
-    Schema.Struct({ WorkspaceCreated: Schema.Struct({ workspace: Workspace }) }).annotate({
-      description: "The session's managed worktree, logged before its first snapshot.",
-    }),
+    Schema.Struct({ WorkspaceCreated: Schema.Struct({ workspace: Workspace }) }),
     Schema.Struct({ SnapshotRecorded: Schema.Struct({ snapshot: Snapshot }) }),
     Schema.Struct({
       NativeTurnStarted: Schema.Struct({ turn_start: Schema.Union([HostSeq, Schema.Null]) }),
     }),
     Schema.Struct({ ChecklistChanged: Schema.Struct({ checklist: Schema.Array(ChecklistEntry) }) }),
-    Schema.Struct({ EffortChanged: Schema.Struct({ effort: Effort }) }).annotate({
-      description: "The effort of the session's later turns, after a `SetEffort`.",
-    }),
-    Schema.Struct({
-      Subagent: Schema.Struct({ agent: SubagentId, event: SubagentEvent }),
-    }).annotate({
-      description:
-        "A sub-agent belongs to its session: its events are the session's, in\nthe session's log, and it has no session of its own.",
-    }),
-    Schema.Struct({
-      SessionRemoved: Schema.Struct({ kept: Schema.Union([Kept, Schema.Null]) }),
-    }).annotate({
-      description:
-        "The session's workspace is gone and its branch kept as `kept` says;\n`None` when it had no workspace. Nothing follows it.",
-    }),
-    Schema.Struct({ OnIssue: Schema.Struct({ issue: IssueId }) }).annotate({
-      description:
-        "The session works on this issue, on a branch cut from the issue's.\nIt follows `SessionCreated`.",
-    }),
-    Schema.Struct({ SessionFinished: Schema.Struct({ finished: Finished }) }).annotate({
-      description: "What finishing the session did.",
-    }),
-    Schema.Literal("FinishStarted").annotate({
-      description: "Finishing the session has begun; `SessionFinished` ends it.",
-    }),
-    Schema.Literal("FinishInterrupted").annotate({
-      description: "A restarted host can resume the interrupted landing.",
-    }),
+    Schema.Struct({ EffortChanged: Schema.Struct({ effort: Effort }) }),
+    Schema.Struct({ Subagent: Schema.Struct({ agent: SubagentId, event: SubagentEvent }) }),
+    Schema.Struct({ SessionRemoved: Schema.Struct({ kept: Schema.Union([Kept, Schema.Null]) }) }),
+    Schema.Struct({ OnIssue: Schema.Struct({ issue: IssueId }) }),
+    Schema.Struct({ SessionFinished: Schema.Struct({ finished: Finished }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "EventKind" });
@@ -2221,14 +1800,14 @@ const EventKind = Schema.Union(
 type Event = { readonly kind: EventKind; readonly seq: HostSeq; readonly session: SessionId };
 
 const Event = Schema.Struct({ kind: EventKind, seq: HostSeq, session: SessionId }).annotate({
-  description:
-    "Every event names its session. A stored event has a seq of its own; an\n`AssistantDelta` repeats the last one's.",
   identifier: "Event",
 });
 
 type SignInStep =
-  | "SignedIn"
   | "Starting"
+  | "Finishing"
+  | "SignedIn"
+  | "Cancelled"
   | {
       readonly Open: {
         readonly code: string | null;
@@ -2236,34 +1815,19 @@ type SignInStep =
         readonly url: string;
       };
     }
-  | "Finishing"
-  | { readonly Failed: { readonly reason: string } }
-  | "Cancelled";
+  | { readonly Failed: { readonly reason: string } };
 
 const SignInStep = Schema.Union(
   [
-    Schema.Literal("SignedIn"),
-    Schema.Literal("Starting").annotate({
-      description: "The host is starting the CLI's sign-in in the instance's home.",
-    }),
+    Schema.Literals(["Starting", "Finishing", "SignedIn", "Cancelled"]),
     Schema.Struct({
       Open: Schema.Struct({
         code: Schema.Union([Schema.String, Schema.Null]),
         paste: Schema.Boolean,
         url: Schema.String,
       }),
-    }).annotate({
-      description:
-        "The person signs in at `url`, entering `code` there if there is\none. With `paste` the page then gives them a code to send back with\n`SubmitCode`.",
-    }),
-    Schema.Literal("Finishing").annotate({
-      description:
-        "The CLI has what it needs: it finishes, and the host checks the\nhome and lists the instance's models.",
     }),
     Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
-    Schema.Literal("Cancelled").annotate({
-      description: "Cancelled from a client: no sign-in runs on the instance.",
-    }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "SignInStep" });
@@ -2276,22 +1840,7 @@ const SignIn = Schema.Struct({ instance: InstanceId, step: SignInStep }).annotat
 
 type FieldRole = "labels" | "branch" | "created";
 
-const FieldRole = Schema.Union(
-  [
-    Schema.Literal("labels").annotate({
-      description: "The words the app shows on an issue and edits beside its title.",
-    }),
-    Schema.Literal("branch").annotate({
-      description: "The branch its sessions land on, in place of `issue/<id>`.",
-    }),
-    Schema.Literal("created").annotate({
-      description: "When it was opened, which opening it writes.",
-    }),
-  ],
-  { mode: "oneOf" },
-).annotate({
-  description:
-    "What a field means to Conductor, whatever the flow calls it. At most\none field has each.",
+const FieldRole = Schema.Literals(["labels", "branch", "created"]).annotate({
   identifier: "FieldRole",
 });
 
@@ -2305,9 +1854,7 @@ type FieldType =
 const FieldType = Schema.Union(
   [
     Schema.Literals(["Text", "Texts", "Time", "Bool"]),
-    Schema.Struct({ Enum: Schema.Array(Schema.String) }).annotate({
-      description: "One of these words.",
-    }),
+    Schema.Struct({ Enum: Schema.Array(Schema.String) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "FieldType" });
@@ -2320,9 +1867,7 @@ type FlowField = {
 };
 
 const FlowField = Schema.Struct({
-  default: Schema.Union([Datum, Schema.Null]).annotate({
-    description: "What an issue that leaves it out has, of its type.",
-  }),
+  default: Schema.Union([Datum, Schema.Null]),
   name: Schema.String,
   role: Schema.Union([FieldRole, Schema.Null]),
   value: FieldType,
@@ -2340,29 +1885,17 @@ type Kind = {
 
 const Kind = Schema.Struct({
   colour: Schema.Union([Schema.String, Schema.Null]),
-  fields: Schema.Array(FlowField).annotate({
-    description: "Its own fields, beyond those every kind has.",
-  }),
+  fields: Schema.Array(FlowField),
   icon: Schema.Union([Schema.String, Schema.Null]),
   label: Schema.String,
   name: Schema.String,
-  order: Schema.Array(Schema.String).annotate({
-    description: "The fields and relations the app shows first, in this order.",
-  }),
-  sections: Schema.Array(Schema.String).annotate({
-    description: "The headings its body is expected to have.",
-  }),
+  order: Schema.Array(Schema.String),
+  sections: Schema.Array(Schema.String),
 }).annotate({ identifier: "Kind" });
 
 type Shape = "hierarchy" | "dependency";
 
-const Shape = Schema.Union(
-  [
-    Schema.Literal("hierarchy").annotate({ description: "Drawn as a tree." }),
-    Schema.Literal("dependency").annotate({ description: "Drawn as a graph." }),
-  ],
-  { mode: "oneOf" },
-).annotate({ identifier: "Shape" });
+const Shape = Schema.Literals(["hierarchy", "dependency"]).annotate({ identifier: "Shape" });
 
 type Relation = {
   readonly cycles: boolean;
@@ -2376,40 +1909,24 @@ type Relation = {
 
 const Relation = Schema.Struct({
   cycles: Schema.Boolean.annotate({ default: false }),
-  from: Schema.Array(Schema.String).annotate({
-    description: "The kinds it may start from; any kind when empty.",
-    default: [],
-  }),
+  from: Schema.Array(Schema.String).annotate({ default: [] }),
   many: Schema.Boolean.annotate({ default: false }),
   name: Schema.String,
-  reverse: Schema.String.annotate({
-    description: "Its name followed backwards, from the issue it points to.",
-  }),
+  reverse: Schema.String,
   shape: Shape,
-  to: Schema.Array(Schema.String).annotate({
-    description: "The kinds it may point to; any kind when empty.",
-    default: [],
-  }),
+  to: Schema.Array(Schema.String).annotate({ default: [] }),
 }).annotate({ identifier: "Relation" });
 
 type Role = "idle" | "startable" | "active" | "review" | "terminal" | "dropped";
 
-const Role = Schema.Union(
-  [
-    Schema.Literal("idle").annotate({ description: "Waiting to be taken up." }),
-    Schema.Literal("startable").annotate({ description: "Ready for a session to start on." }),
-    Schema.Literal("active").annotate({ description: "Being worked on." }),
-    Schema.Literal("review").annotate({
-      description: "Waiting for someone to look at what was done.",
-    }),
-    Schema.Literal("terminal").annotate({ description: "Finished." }),
-    Schema.Literal("dropped").annotate({ description: "Given up." }),
-  ],
-  { mode: "oneOf" },
-).annotate({
-  description: "What a status means to Conductor, whatever the flow calls it.",
-  identifier: "Role",
-});
+const Role = Schema.Literals([
+  "idle",
+  "startable",
+  "active",
+  "review",
+  "terminal",
+  "dropped",
+]).annotate({ identifier: "Role" });
 
 type Literal = { readonly Text: string } | { readonly Bool: boolean };
 
@@ -2448,17 +1965,10 @@ const Predicate = Schema.Union(
     Schema.Struct({ Stage: Schema.String }),
     Schema.Struct({ StatusRole: Role }),
     Schema.Struct({ Field: Schema.Struct({ name: Schema.String, value: Literal }) }),
-    Schema.Struct({ Has: Schema.String }).annotate({
-      description: "It has this field, this relation, or a stage.",
-    }),
+    Schema.Struct({ Has: Schema.String }),
     Schema.Struct({ HasSection: Schema.String }),
-    Schema.Struct({ From: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }).annotate({
-      description: "While a move is weighed: the issue as it was. Only a rule's\n`when` has it.",
-    }),
-    Schema.Struct({ To: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }).annotate({
-      description:
-        "While a move is weighed: the issue as it would be. Only a rule's\n`when` has it.",
-    }),
+    Schema.Struct({ From: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }),
+    Schema.Struct({ To: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }),
     Schema.Struct({ All: Schema.Array(Schema.suspend((): Schema.Codec<Predicate> => Predicate)) }),
     Schema.Struct({ Any: Schema.Array(Schema.suspend((): Schema.Codec<Predicate> => Predicate)) }),
     Schema.Struct({ Not: Schema.suspend((): Schema.Codec<Predicate> => Predicate) }),
@@ -2468,16 +1978,10 @@ const Predicate = Schema.Union(
         quantifier: Quantifier,
         via: Schema.String,
       }),
-    }).annotate({
-      description:
-        "The issues reached through a relation, or its reverse, meet the\ncondition: any, all or none of them.",
     }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "A condition on an issue, among the issues it relates to.",
-  identifier: "Predicate",
-});
+).annotate({ identifier: "Predicate" });
 
 type Severity = "warn" | "error";
 
@@ -2492,13 +1996,9 @@ type Rule = {
 
 const Rule = Schema.Struct({
   message: Schema.String,
-  require: Schema.suspend((): Schema.Codec<Predicate> => Predicate).annotate({
-    description: "What those issues should meet.",
-  }),
+  require: Predicate,
   severity: Severity,
-  when: Schema.suspend((): Schema.Codec<Predicate> => Predicate).annotate({
-    description: "The issues it applies to.",
-  }),
+  when: Predicate,
 }).annotate({ identifier: "Rule" });
 
 type Stage = {
@@ -2510,18 +2010,9 @@ type Stage = {
 
 const Stage = Schema.Struct({
   name: Schema.String,
-  next: Schema.Array(Schema.String).annotate({
-    description: "The stages it usually moves to; any other move is unusual.",
-    default: [],
-  }),
-  sign_off: Schema.Boolean.annotate({
-    description: "Whether the owner signs off before work moves on.",
-    default: false,
-  }),
-  skills: Schema.Array(Schema.String).annotate({
-    description: "The skills that serve it, the first one leading.",
-    default: [],
-  }),
+  next: Schema.Array(Schema.String).annotate({ default: [] }),
+  sign_off: Schema.Boolean.annotate({ default: false }),
+  skills: Schema.Array(Schema.String).annotate({ default: [] }),
 }).annotate({ identifier: "Stage" });
 
 type Status = { readonly colour: string | null; readonly name: string; readonly role: Role };
@@ -2543,8 +2034,8 @@ type Flow = {
 };
 
 const Flow = Schema.Struct({
-  default_kind: Schema.String.annotate({ description: "The kind of an issue that names none." }),
-  fields: Schema.Array(FlowField).annotate({ description: "The fields every kind has." }),
+  default_kind: Schema.String,
+  fields: Schema.Array(FlowField),
   kinds: Schema.Array(Kind),
   relations: Schema.Array(Relation),
   rules: Schema.Array(Rule),
@@ -2554,10 +2045,9 @@ const Flow = Schema.Struct({
 
 type Section = { readonly heading: string; readonly text: string };
 
-const Section = Schema.Struct({
-  heading: Schema.String.annotate({ description: "Empty for the text before the first heading." }),
-  text: Schema.String,
-}).annotate({ identifier: "Section" });
+const Section = Schema.Struct({ heading: Schema.String, text: Schema.String }).annotate({
+  identifier: "Section",
+});
 
 type Issue = {
   readonly body: string;
@@ -2577,32 +2067,21 @@ type Issue = {
 };
 
 const Issue = Schema.Struct({
-  body: Schema.String.annotate({
-    description: "The body before the checklist and the log, as its file has it.",
-  }),
-  branch: Schema.String.annotate({ description: "The branch its sessions land on." }),
+  body: Schema.String,
+  branch: Schema.String,
   canvases: Schema.Array(CanvasEntry),
-  checklist: Schema.Array(ChecklistItem).annotate({
-    description: "The items of the `## Checklist` section.",
-  }),
-  fields: Schema.Record(Schema.String, Datum).annotate({
-    description: "The declared fields it gives, by name.",
-  }),
+  checklist: Schema.Array(ChecklistItem),
+  fields: Schema.Record(Schema.String, Datum),
   id: IssueId,
   kind: Schema.String,
-  links: Schema.Record(Schema.String, Schema.Array(IssueId)).annotate({
-    description: "The issues each relation from it points to, by relation.",
-  }),
-  log: Schema.Array(Entry).annotate({ description: "The `## Notes` section, oldest first." }),
+  links: Schema.Record(Schema.String, Schema.Array(IssueId)),
+  log: Schema.Array(Entry),
   project: ProjectId,
-  sections: Schema.Array(Section).annotate({
-    description:
-      "The body's sections in order, the text before the first heading\nas one with no heading; the checklist and the log aren't among them.",
-  }),
+  sections: Schema.Array(Section),
   stage: Schema.Union([Schema.String, Schema.Null]),
   status: Schema.String,
   title: Schema.String,
-}).annotate({ description: "An issue as the flow reads its file.", identifier: "Issue" });
+}).annotate({ identifier: "Issue" });
 
 type Project = {
   readonly checkouts: globalThis.ReadonlyArray<Checkout>;
@@ -2617,31 +2096,16 @@ type Project = {
 };
 
 const Project = Schema.Struct({
-  checkouts: Schema.Array(Checkout).annotate({
-    description:
-      "Every checkout of it on this host, the one a session starts in\nfirst. None: it isn't checked out here.",
-  }),
+  checkouts: Schema.Array(Checkout),
   cloning: Cloning,
   id: ProjectId,
-  issues: Schema.Array(Issue).annotate({
-    description: "By id, which orders them by when they were opened.",
-  }),
-  name: Schema.String.annotate({
-    description: "Unique in the home: what a person types to name it.",
-  }),
+  issues: Schema.Array(Issue),
+  name: Schema.String,
   profiles: Schema.Array(Schema.String),
-  provides: Schema.Array(Schema.String).annotate({
-    description:
-      "The profiles whose checks and configs it holds, for any project\nthat names them.",
-  }),
-  remote: Schema.Union([Schema.String, Schema.Null]).annotate({
-    description: "`None` for a project that is local only, which can't be cloned.",
-  }),
-  title: Schema.String.annotate({ description: "What the app shows." }),
-}).annotate({
-  description: "A project as the home describes it, and its checkouts on this host.",
-  identifier: "Project",
-});
+  provides: Schema.Array(Schema.String),
+  remote: Schema.Union([Schema.String, Schema.Null]),
+  title: Schema.String,
+}).annotate({ identifier: "Project" });
 
 type HomeSync =
   | "Syncing"
@@ -2651,15 +2115,9 @@ type HomeSync =
 
 const HomeSync = Schema.Union(
   [
-    Schema.Literal("Syncing").annotate({ description: "The first clone is under way." }),
-    Schema.Literal("Synced").annotate({ description: "The last clone or pull succeeded." }),
-    Schema.Struct({ Behind: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description:
-        "The host has a clone, but the last pull failed, for this reason: the\nprojects are as of the last sync.",
-    }),
-    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }).annotate({
-      description: "The host has no clone, for this reason, and so no projects.",
-    }),
+    Schema.Literals(["Syncing", "Synced"]),
+    Schema.Struct({ Behind: Schema.Struct({ reason: Schema.String }) }),
+    Schema.Struct({ Failed: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeSync" });
@@ -2674,47 +2132,32 @@ type Home = {
 };
 
 const Home = Schema.Struct({
-  flow: Schema.Union([Flow, Schema.Null]).annotate({
-    description:
-      "The clone's `docs/agents/flow.toml`, which its issues are read\nagainst; `None` while it has none that loads, and so no issues.",
-  }),
-  projects: Schema.Array(Project).annotate({ description: "As the clone lists them, by id." }),
-  remote: Schema.String.annotate({ description: "The home's remote, as the host was given it." }),
+  flow: Schema.Union([Flow, Schema.Null]),
+  projects: Schema.Array(Project),
+  remote: Schema.String,
   sync: HomeSync,
   synced: Schema.Union([
     Schema.Int.check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
     Schema.Null,
-  ]).annotate({
-    description:
-      "When the clone last matched the remote, in seconds since the Unix\nepoch on the host's clock.",
-    format: "uint64",
-  }),
-  unpushed: Schema.Number.annotate({
-    description: "Issue changes the host has made that the remote doesn't have yet.",
-    format: "uint64",
-  })
+  ]).annotate({ format: "uint64" }),
+  unpushed: Schema.Number.annotate({ format: "uint64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
-}).annotate({
-  description: "The host's clone of the home, and the projects it lists.",
-  identifier: "Home",
-});
+}).annotate({ identifier: "Home" });
 
 type InstanceStatus = { readonly availability: Availability };
 
 const InstanceStatus = Schema.Struct({ availability: Availability }).annotate({
-  description: "What a client learns of one instance.",
   identifier: "InstanceStatus",
 });
 
 type Instances = globalThis.ReadonlyArray<readonly [InstanceId, InstanceStatus]>;
 
 const Instances = Schema.Array(Schema.Tuple([InstanceId, InstanceStatus])).annotate({
-  description: "Whether the host can run each of its instances, and how each signs in.",
   identifier: "Instances",
 });
 
@@ -2729,21 +2172,14 @@ const Feed = Schema.Union(
     Schema.Struct({ Event: Event }),
     Schema.Struct({ SignIn: SignIn }),
     Schema.Struct({ Home: Home }),
-    Schema.Struct({ Instances: Instances }).annotate({
-      description: "The current instance offers, replacing the previous snapshot.",
-    }),
+    Schema.Struct({ Instances: Instances }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "A logged event or a live update to the host's sign-ins, home or offers.",
-  identifier: "Feed",
-});
+).annotate({ identifier: "Feed" });
 
 type Hello = { readonly client: ClientName; readonly token: AuthToken };
 
 const Hello = Schema.Struct({ client: ClientName, token: AuthToken }).annotate({
-  description:
-    "S3 auth placeholder: the ticket's token stands in for the `DeviceCert`\nthat §4 puts here.",
   identifier: "Hello",
 });
 
@@ -2757,15 +2193,10 @@ type Welcome = {
 };
 
 const Welcome = Schema.Struct({
-  catalog: Schema.suspend((): Schema.Codec<Catalog> => Catalog).annotate({
-    description:
-      "How each provider presents itself and the credentials it takes.\nUnlike `instances` it doesn't change while the host runs.",
-  }),
+  catalog: Catalog,
   epoch: Epoch,
   head_seq: HostSeq,
-  home: Schema.Union([Home, Schema.Null]).annotate({
-    description: "`None` on a host given no home. `Feed::Home` brings each change.",
-  }),
+  home: Schema.Union([Home, Schema.Null]),
   host: Schema.String,
   instances: Instances,
 }).annotate({ identifier: "Welcome" });
@@ -2783,8 +2214,6 @@ const HelloReply = Schema.Union(
 type Subscribe = { readonly after_seq: HostSeq; readonly epoch: Epoch };
 
 const Subscribe = Schema.Struct({ after_seq: HostSeq, epoch: Epoch }).annotate({
-  description:
-    "Replays every stored event after `after_seq`, then streams live ones,\ndeltas included. A subscription from another epoch is refused by closing\nthe stream.",
   identifier: "Subscribe",
 });
 
@@ -2802,10 +2231,7 @@ const Open = Schema.Union(
     Schema.Struct({ FleetHello: DeviceHello }),
   ],
   { mode: "oneOf" },
-).annotate({
-  description: "The first frame on every client-opened bi-stream.",
-  identifier: "Open",
-});
+).annotate({ identifier: "Open" });
 
 type Ticket = {
   readonly host: globalThis.ReadonlyArray<number>;
@@ -2935,7 +2361,6 @@ export {
   Progress,
   Project,
   ProjectId,
-  Provider,
   ProviderInfo,
   PushCommand,
   PushResult,

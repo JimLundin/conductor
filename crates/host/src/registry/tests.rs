@@ -1287,7 +1287,7 @@ fn placement(on_issue: bool) -> super::Placement {
 fn home_with(checkouts: &[&str]) -> Home {
     Home {
         remote: text("origin"),
-        synced: None,
+        synced_secs: None,
         sync: HomeSync::Synced,
         unpushed: 0,
         flow: None,

@@ -1,14 +1,3 @@
-//! How the host starts each provider's CLI, one step at a time.
-//!
-//! It runs the CLI it was given, or else the pinned one it installs; it
-//! offers the CLI only if `--version` succeeds; a pinned CLI signs in on its
-//! own only if its private home passes the CLI's sign-in check; and it
-//! offers what the CLI lists, with the model a session gets when it names
-//! none.
-//!
-//! `daemon` performs each [`Next`]: it installs, runs the probes and builds
-//! the provider instance `S`. The CLI's path `P` is opaque here.
-
 use alloc::format;
 
 use agents::Configuration;
@@ -19,11 +8,6 @@ use crate::Note;
 use crate::prelude::*;
 use crate::registry::{Launcher, OwnSignIn, offered};
 
-/// The provider of `providers`, the host's, that its command line calls
-/// `name`.
-///
-/// # Errors
-/// No provider has that name.
 pub fn provider(
     name: &str,
     providers: &[Provider],
@@ -42,11 +26,6 @@ pub fn provider(
         })
 }
 
-/// A setting on the host's command line for one of `providers`,
-/// `<provider>=<value>`.
-///
-/// # Errors
-/// The text has no `=`, or no provider has the name before it.
 pub fn setting(
     text: &str,
     providers: &[Provider],
@@ -57,33 +36,21 @@ pub fn setting(
     Ok((provider(name, providers)?, String::from(value)))
 }
 
-/// What the shell does next, and the step that takes its outcome.
 #[derive(Debug)]
 pub enum Next<P, S> {
-    /// Install the pinned CLI, and hand its path to [`Installing::installed`].
     Install(Installing),
-    /// Build the instance for the CLI at `P`, run `P --version`, and hand
-    /// both to [`Probing::probed`].
     Probe(P, Probing),
-    /// Run the sign-in check of the CLI at `P`, and hand how it exited to
-    /// [`Checking::checked`].
     CheckSignIn(P, Checking<S>),
-    /// Apply the instance's stored credential and discover its models.
     Configure(Configuring<S>),
-    /// Run the provider as the launcher says, after logging the notes.
     Done(Launcher<S>, Vec<Note>),
 }
 
-/// How a probe of the CLI exited.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Output {
     pub code: Option<i32>,
     pub stdout: String,
 }
 
-/// Starts the CLI called `name`: the `given` one, or else the pinned one.
-/// A session that names no model gets the one the stored credential names,
-/// else `chosen`, the one the host was started with.
 #[must_use]
 pub fn start<P, S>(
     name: &str,
@@ -109,7 +76,6 @@ fn succeeded(code: Option<i32>) -> bool {
     code == Some(0)
 }
 
-/// The pinned CLI is being installed.
 #[derive(Debug)]
 pub struct Installing {
     name: String,
@@ -135,7 +101,6 @@ impl Installing {
     }
 }
 
-/// The CLI's `--version` is running.
 #[derive(Debug)]
 pub struct Probing {
     pinned: bool,
@@ -190,15 +155,12 @@ struct Cli<S> {
     chosen: Option<String>,
 }
 
-/// The pinned CLI's sign-in check is running against its private home.
 #[derive(Debug)]
 pub struct Checking<S> {
     cli: Cli<S>,
 }
 
 impl<S> Checking<S> {
-    /// The check exited with `code`, or did not finish, for instance in
-    /// time.
     #[must_use]
     pub fn checked<P>(self, code: &Result<Option<i32>, String>) -> Next<P, S> {
         let own = match code {

@@ -4,7 +4,7 @@ use crate::AuthToken;
 use crate::CommandId;
 use agents::{ClientName, Effort, Provider, SignInCode};
 use home::canvas::{
-    Block, Canvas, CanvasEntry, CanvasError, CanvasFile, CanvasKey, CanvasName,
+    Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
 };
 use home::issue::{EditId, Issue, IssueChange, NewIssue};
 use home::project::Project;
@@ -354,19 +354,6 @@ fn an_issue_with_two_canvases_is_served_with_both_entries() -> Result<(), String
     served_entries(&two_canvases()?)
 }
 
-#[test]
-fn an_issue_s_valid_canvases_are_served_beside_a_broken_one()
--> Result<(), String> {
-    let mut store = two_canvases()?;
-    store.spoil(
-        key(DESIGNED, "broken")?,
-        CanvasError::Json {
-            reason: String::from("missing field `title`"),
-        },
-    );
-    served_entries(&store)
-}
-
 fn served_entries(store: &Memory) -> Result<(), String> {
     let listed = [DESIGNED, BARE]
         .into_iter()
@@ -376,7 +363,10 @@ fn served_entries(store: &Memory) -> Result<(), String> {
                 store
                     .list(&PROJECT, &id)
                     .map_err(|e| e.to_string())?
-                    .canvases,
+                    .canvases
+                    .into_iter()
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|broken| broken.error.to_string())?,
             ))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;

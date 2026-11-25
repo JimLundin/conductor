@@ -1,5 +1,3 @@
-//! Executes a driver's ordered effects against one child process.
-
 use std::fs::{File, OpenOptions};
 use std::future::pending;
 use std::io::{self, Write};
@@ -27,9 +25,7 @@ type Action<V, E, T, A, P> =
 
 #[derive(Clone, Copy)]
 pub enum StderrPolicy {
-    /// A handshake can wait for the last line, including a blank line.
     Last,
-    /// Wait for the last nonempty line on stop and feed it into the driver.
     LastNonempty(Duration),
 }
 
@@ -88,8 +84,6 @@ impl<C> Clone for Handle<C> {
 pub struct Unavailable;
 
 impl<C> Handle<C> {
-    /// # Errors
-    /// Returns a receive error if the runner disappears before answering.
     pub async fn ask<T>(
         &self,
         call: impl FnOnce(oneshot::Sender<T>) -> C,
@@ -119,8 +113,6 @@ impl<C> Handle<C> {
         }
     }
 
-    /// # Errors
-    /// Returns a receive error if the runner disappears before answering.
     pub async fn shutdown(&self) -> Result<Exit, oneshot::error::RecvError> {
         let (waiter, exit) = oneshot::channel();
         if self
@@ -135,15 +127,11 @@ impl<C> Handle<C> {
     }
 }
 
-/// # Errors
-/// Returns an error if the log cannot be opened for appending.
 pub fn stdout_log(path: Option<&Path>) -> io::Result<Option<File>> {
     path.map(|file| OpenOptions::new().create(true).append(true).open(file))
         .transpose()
 }
 
-/// # Errors
-/// Returns an error if the child or one of its stdio pipes cannot be started.
 pub fn start<C, V, E, T, A, P>(
     command: Command,
     options: Options,

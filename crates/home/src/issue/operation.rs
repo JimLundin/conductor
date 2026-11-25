@@ -12,7 +12,6 @@ use crate::layout;
 use crate::prelude::*;
 use crate::{HomeRefusal, IssueId, ProjectId};
 
-/// The issue and file an operation reads before deciding what to write.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
     pub project: ProjectId,
@@ -20,14 +19,12 @@ pub struct Read {
     pub path: String,
 }
 
-/// A local edit ready to read its file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     id: EditId,
     data: EditData,
 }
 
-/// The files and commit a home mutation requires.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
     pub target: Read,
@@ -37,7 +34,6 @@ pub struct Commit {
     pub email: &'static str,
 }
 
-/// What the decision needs from the clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
     Commit(Commit),
@@ -46,7 +42,6 @@ pub enum Write {
     Waiting(String),
 }
 
-/// The actions that record an edit locally and attempt to deliver it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordEffect {
     Persist(Edit),
@@ -58,8 +53,6 @@ pub enum RecordEffect {
     Scan,
 }
 
-/// An edit ready to record in the clone, and what the flow warns of
-/// what it writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recorded(Recording, Vec<String>);
 
@@ -78,13 +71,6 @@ impl Recorded {
         &self.1
     }
 
-    /// The queue must be saved before writing the clone. A failed commit
-    /// can be retried from the saved edit, so only persistence can reject
-    /// the operation at this point.
-    ///
-    /// # Errors
-    ///
-    /// The edit could not be saved to the queue.
     pub fn next(
         &mut self,
         outcome: Result<(), String>,
@@ -124,7 +110,6 @@ impl Recorded {
     }
 }
 
-/// Kept edits and whether the current branch covers each of them.
 #[derive(Debug, Default)]
 pub struct PendingEdits(Vec<Pending>);
 
@@ -211,7 +196,6 @@ impl PendingEdits {
         self.0[index].covered = covered;
     }
 
-    /// Save this queue before replacing the current one.
     #[must_use]
     pub fn after_push(&self) -> Option<Self> {
         if self.0.iter().all(|pending| !pending.covered) {
@@ -227,7 +211,6 @@ impl PendingEdits {
     }
 }
 
-/// A step in delivering the pending edits to the home remote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Push { retry: bool },
@@ -239,14 +222,11 @@ pub enum Delivery {
 }
 
 impl Delivery {
-    /// Starts delivery against the fetched upstream.
     #[must_use]
     pub const fn replay(has_edits: bool) -> Self {
         if has_edits { Self::Reset } else { Self::Done }
     }
 
-    /// The next effect, if any. An initial failed push tries the remote
-    /// once more. A failed reset or replay push ends the attempt.
     #[must_use]
     pub const fn after(self, succeeded: bool) -> Self {
         match (self, succeeded) {
@@ -260,7 +240,6 @@ impl Delivery {
     }
 }
 
-/// The facts shared by requests from the host.
 pub struct Context<'a> {
     pub remote: Option<&'a str>,
     pub home: &'a Snapshot,
@@ -270,11 +249,6 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
-    /// Opens issue `issue` as `new` asks, in one of the home's projects.
-    ///
-    /// # Errors
-    ///
-    /// The host has no home, or its home lists no such project.
     pub fn open(
         &self,
         issue: IssueId,
@@ -299,11 +273,6 @@ impl Context<'_> {
         ))
     }
 
-    /// Changes an issue as `home::flow::command` does.
-    ///
-    /// # Errors
-    ///
-    /// The host has no home, or its home lists no such issue.
     pub fn edit(
         &self,
         issue: IssueId,
@@ -356,13 +325,6 @@ impl Record {
         self.data.project
     }
 
-    /// Decides the commit and what to keep and deliver, among the home's
-    /// issues, the one it is to being `current`.
-    ///
-    /// # Errors
-    ///
-    /// The file is gone or cannot be read as an issue, or the flow refuses
-    /// what the edit writes.
     pub fn decide(
         mut self,
         current: Option<&str>,
@@ -426,8 +388,6 @@ impl Edit {
         self.data.read()
     }
 
-    /// Decides whether the edit still applies to the upstream file, among
-    /// the home's issues.
     #[must_use]
     pub fn replay(
         &self,
@@ -464,7 +424,6 @@ impl Edit {
     }
 }
 
-/// A session's updates to its issue, in the order they are attempted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionUpdate {
     Started,
@@ -476,7 +435,6 @@ pub enum SessionUpdate {
 }
 
 impl SessionUpdate {
-    /// A resumed finish uses the original edit id for its note.
     #[must_use]
     pub const fn edit_for(
         change: &IssueChange,
@@ -488,8 +446,6 @@ impl SessionUpdate {
         }
     }
 
-    /// Issues the next change against the current listing. A finish
-    /// consults the listing again after the note has been delivered.
     #[must_use]
     pub fn next(
         &mut self,
@@ -537,7 +493,6 @@ impl SessionUpdate {
     }
 }
 
-/// A Git observation needed to decide how to ready an issue branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteProbe {
     Origin {
@@ -564,8 +519,6 @@ impl RemoteProbe {
         }
     }
 
-    /// Interprets an observation and returns the next one, or the
-    /// remote branch as seen by this checkout.
     #[must_use]
     pub fn after(self, outcome: Result<String, String>) -> Self {
         use super::Remote;
@@ -610,7 +563,6 @@ impl RemoteProbe {
     }
 }
 
-/// Where a project's issue files are, and how a new one is found.
 pub struct Listing {
     pub path: String,
 }

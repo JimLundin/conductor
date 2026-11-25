@@ -1,21 +1,3 @@
-//! One session's decisions, as a state machine: its turn, its open
-//! requests, its effort, its checklist and its commit snapshots.
-//!
-//! `daemon` owns the agent, the log and the workspace. It turns what they do
-//! into an [`Input`], steps the session, and performs each [`Effect`] in
-//! order. A [`Call`] comes last among the effects of a step, and its outcome
-//! is the next input, so the session finishes one order or agent step before
-//! it takes the next.
-//!
-//! The session speaks to its agent only in the runtime protocol
-//! (`agents::runtime`): each agent call is a [`Command`], and its
-//! [`Outcome`] is the next input. Which provider runs the agent is the
-//! runtime's business.
-//!
-//! The session outlives its agent. When the agent's process exits, the
-//! session is closed and keeps its conversation's id, and a `Start` order
-//! starts the agent again on it.
-
 use core::mem;
 
 use crate::log::{Event, HostSeq};
@@ -41,25 +23,12 @@ pub use record::{
     SessionId, SessionRefusal, SessionResult, StartAt, SubagentEvent,
 };
 
-/// The model and effort a session runs with, chosen when it starts; a
-/// `SetEffort` changes the effort. `None` leaves the CLI's default.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
     pub model: Option<ModelId>,
     pub effort: Option<Effort>,
 }
 
-/// The model and effort a session asked for, checked against what the
-/// provider offers.
-///
-/// No model is the default. An effort must be one the
-/// model lists, unless the host knows nothing of the model (a default the
-/// host was given, or one a credential names, that the CLI didn't list).
-///
-/// # Errors
-///
-/// Says why when the host doesn't offer the model or the model doesn't
-/// take the effort.
 pub fn choose(
     models: &Models,
     model: Option<ModelId>,
@@ -114,7 +83,6 @@ fn takes(
         })
 }
 
-/// A command for one session, already routed to it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Order {
     Send {
@@ -128,67 +96,43 @@ pub enum Order {
         reply: Reply,
         by: ClientName,
     },
-    /// Starts the agent, resuming the conversation if the session has one:
-    /// when the session starts, and on `Continue`. `offered` is what the
-    /// provider offers now.
     Start {
         offered: Models,
     },
-    /// Sets the effort of later turns, if the session's model in these
-    /// models takes it. The agent gets it when the next turn starts.
     Effort(Effort, Models),
-    /// Stops the agent between turns and removes the session's workspace,
-    /// keeping its branch. The session takes no order after it.
     Remove,
-    /// Stops the agent between turns, closing the session for this reason.
     Stop(String),
 }
 
 const REMOVED: &str = "the session was removed";
 
-/// What happened, as the shell saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     Order(Order),
     Step(Step),
-    /// The outcome of the [`Call::Agent`] command.
     Agent(Outcome),
-    /// The outcome of [`Call::Record`].
     Recorded(HostSeq),
-    /// The commit [`Call::Snapshot`] made.
     Snapshotted(Result<String, String>),
     Diffed(Result<SnapshotDiff, String>),
-    /// Where [`Call::Remove`] kept the branch.
     Removed(Result<Kept, String>),
 }
 
-/// What the shell does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Append the event to the log.
     Emit(EventKind),
-    /// Save the conversation the session resumes after the host restarts.
     Conversation(String),
-    /// Commit what the log staged, before the workspace or the agent
-    /// changes.
     Barrier,
     Trace(&'static str),
-    /// Answer the order.
     Reply(SessionResult),
     Call(Call),
 }
 
-/// An effect whose outcome is the next [`Input`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
-    /// Append the event to the log and answer its seq.
     Record(EventKind),
     Snapshot(Workspace),
     Diff(Box<Compared>),
-    /// Remove the workspace by [`crate::workspace::Plan::remove`], keeping its
-    /// branch.
     Remove(Workspace),
-    /// Send the agent this command; its outcome is [`Input::Agent`].
     Agent(Command),
 }
 
@@ -314,8 +258,6 @@ pub struct Session {
 }
 
 impl Session {
-    /// The session `history` logged, with no agent running. A request
-    /// still open in it was the gone agent's, so it counts as withdrawn.
     #[must_use]
     pub fn restore(
         id: SessionId,

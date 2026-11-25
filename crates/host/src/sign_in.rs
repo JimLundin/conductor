@@ -1,20 +1,3 @@
-//! The app's sign-ins (architecture §6.3).
-//!
-//! One runs per instance at a time, and a second is refused until the
-//! first ends. Each runs the CLI's own sign-in in the instance's home,
-//! reads what to show the person from its output as the provider's plugin
-//! describes, sends a pasted code to its stdin, and once it exits 0 checks
-//! the home, reads the account the CLI says it signed in as, and refreshes
-//! the instance, which becomes that account's (`registry`). Credential
-//! sign-ins create a credential in an isolated CLI process and wait for
-//! the named instance to refresh after saving it.
-//!
-//! Every step goes to the clients live and is stored nowhere: the code,
-//! the output and the link are in no event, receipt or log line.
-//!
-//! `daemon` runs the CLI and performs each [`Effect`]; it reports what the
-//! run did, by its [`Key`], and a report of a run since ended is dropped.
-
 use alloc::collections::BTreeMap;
 use alloc::format;
 use core::time::Duration;
@@ -35,8 +18,6 @@ pub use model::{
     SignIn, SignInCommand, SignInRefusal, SignInResult, SignInStep,
 };
 
-/// How long a sign-in may run before the host stops it: Codex's one-time
-/// code expires after 15 minutes.
 pub const LIMIT: Duration = Duration::from_mins(15);
 
 const OUTPUT_LINE_LIMIT: usize = 200;
@@ -44,21 +25,16 @@ const OUTPUT_LINE_LIMIT: usize = 200;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Run(pub u64);
 
-/// One run of an instance's sign-in.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Key {
     pub instance: InstanceId,
     pub run: Run,
 }
 
-/// A login process that completed successfully.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Login(());
 
 impl Login {
-    /// # Errors
-    ///
-    /// The sign-in process did not exit successfully.
     pub fn exited(code: Option<i32>, status: &str) -> Result<Self, String> {
         if code == Some(0) {
             Ok(Self(()))
@@ -67,11 +43,6 @@ impl Login {
         }
     }
 
-    /// Releases the probe's output for account discovery.
-    ///
-    /// # Errors
-    ///
-    /// The probe did not exit successfully.
     pub fn checked(
         self,
         probe: Result<(Option<i32>, String), String>,
@@ -92,9 +63,6 @@ pub struct CredentialTarget {
 }
 
 impl CredentialTarget {
-    /// # Errors
-    ///
-    /// The request does not name an advertised sign-in form or public account.
     pub fn requested(
         catalog: &Catalog,
         source: &InstanceId,
@@ -143,28 +111,13 @@ impl CredentialTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Start the CLI's sign-in in the instance's home, as its `settings`
-    /// say, with its output and stdin on pipes. Report [`SignIns::spawned`],
-    /// each line it prints to [`SignIns::printed`] and its exit to
-    /// [`SignIns::exited`], or [`SignIns::expired`] once it has run for
-    /// [`LIMIT`].
-    Spawn {
-        key: Key,
-        settings: Instance,
-    },
+    Spawn { key: Key, settings: Instance },
     SpawnCredential(Key, CredentialTarget),
     StoreCredential(Key, CredentialTarget, Credential),
-    /// Write the code to the run's stdin, as one line.
     Write(Key, SignInCode),
     Kill(Key),
-    /// Run the CLI's sign-in check against the home, read the account the
-    /// CLI names, and report both to [`SignIns::checked`].
     Check(Key, Login),
-    /// Take the instance as signed in as the account, if the CLI named
-    /// one, and refresh it, and report what the host runs then to
-    /// [`SignIns::listed`].
     Refresh(Key, Option<Account>),
-    /// Send this to every subscribed client.
     Publish(SignIn),
 }
 
@@ -191,8 +144,6 @@ impl SignIns {
         self.running.contains_key(instance)
     }
 
-    /// Starts a sign-in on `instance`, whose settings are `known` if the
-    /// host has it.
     pub fn start(
         &mut self,
         instance: InstanceId,
@@ -279,11 +230,6 @@ impl SignIns {
         }
     }
 
-    /// Waits for the refresh after recovering a confirmed sign-in.
-    ///
-    /// # Errors
-    ///
-    /// The instance already has a sign-in running.
     pub fn resume(
         &mut self,
         requested: &InstanceId,
@@ -328,7 +274,6 @@ impl SignIns {
         Ok(Key { instance, run })
     }
 
-    /// Sends the pasted code to a sign-in that waits for one.
     pub fn submit(
         &mut self,
         instance: InstanceId,
@@ -358,7 +303,6 @@ impl SignIns {
         }
     }
 
-    /// Stops the instance's sign-in, if one runs.
     pub fn cancel(
         &mut self,
         instance: InstanceId,
@@ -396,7 +340,6 @@ impl SignIns {
         }
     }
 
-    /// The run started, reading its output as `flow` says, or why not.
     pub fn spawned(
         &mut self,
         key: &Key,
@@ -414,7 +357,6 @@ impl SignIns {
         }
     }
 
-    /// The run printed `line`, on its stdout or its stderr.
     pub fn printed(&mut self, key: &Key, line: &str) -> Vec<Effect> {
         self.current(key)
             .and_then(|running| running.read(plain(line)))
@@ -423,7 +365,6 @@ impl SignIns {
             .collect()
     }
 
-    /// The run exited with `code`, which the OS describes as `status`.
     pub fn exited(
         &mut self,
         key: &Key,
@@ -448,7 +389,6 @@ impl SignIns {
         }
     }
 
-    /// The run has had its [`LIMIT`].
     pub fn expired(&mut self, key: &Key) -> Vec<Effect> {
         if self.current(key).is_none() {
             return Vec::new();
@@ -462,7 +402,6 @@ impl SignIns {
         effects
     }
 
-    /// The completed login confirmed an account, if the CLI named one.
     pub fn checked(
         &mut self,
         key: &Key,
@@ -480,7 +419,6 @@ impl SignIns {
         }
     }
 
-    /// The instance refresh completed, or stopped without an answer.
     pub fn listed(
         &mut self,
         key: &Key,
@@ -516,8 +454,6 @@ impl SignIns {
         Vec::from([publish(key.instance.clone(), step)])
     }
 
-    /// Where each running sign-in stands, which a new subscription starts
-    /// with.
     #[must_use]
     pub fn running(&self) -> Vec<SignIn> {
         self.running
@@ -568,7 +504,6 @@ impl Running {
     }
 }
 
-/// Releases the private home when a sign-in reaches a terminal step.
 #[must_use]
 pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
     match sign_in.step {
@@ -581,8 +516,6 @@ pub const fn release(sign_in: &SignIn) -> Option<&InstanceId> {
     }
 }
 
-/// What the host logs of a step: its name, and why a failed one failed,
-/// but never its link or code.
 #[must_use]
 pub fn note(sign_in: &SignIn) -> Note {
     let step = match &sign_in.step {

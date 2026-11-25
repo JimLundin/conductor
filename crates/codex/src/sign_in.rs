@@ -1,8 +1,3 @@
-//! Codex's `ChatGPT` sign-in from the app, `codex login --device-auth`, as
-//! data. It prints a link and a one-time code, coloured even on a pipe,
-//! and exits once the person has entered the code on that page
-//! (`PROTOCOL.md`, observed with 0.166.0). Nothing goes back on stdin.
-
 use agents::{Failure, HomeKind, Pick, SignIn, Word};
 
 use crate::login;

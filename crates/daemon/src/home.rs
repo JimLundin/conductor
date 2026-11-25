@@ -1,24 +1,3 @@
-//! The host's clone of the home (docs/home.md §3), its projects' checkouts
-//! on this host, and the issues it writes.
-//!
-//! What the files say, which repositories are checkouts, where the clone
-//! stands and what an issue change does to its file are the `home` core's
-//! decisions; this task runs `git`, reads and writes the files and keeps
-//! what the host stores of its home, and nothing else touches the clone.
-//! In a checkout it found it writes only an issue's branch, `issue/<id>`,
-//! before a session on the issue starts, and fetches the remote's; it
-//! clones into its own data dir.
-//!
-//! An issue change is written and committed in the clone at once, and
-//! kept in `<data>/home-edits.state` until the remote has it. When a push
-//! is refused, or the host syncs with changes still kept, it resets the
-//! clone to the remote and applies them again on top, so it never merges
-//! its own commits.
-//!
-//! One task owns it; [`HomeClone`] handles talk to it over a channel. What
-//! the home looks like now is on a watch channel, so a `Welcome` and a
-//! subscription read it without waiting on a pull or a clone.
-
 mod issue_file;
 
 use std::collections::BTreeMap;
@@ -60,18 +39,11 @@ use crate::workspace::{blob, text};
 const PULL_INTERVAL: Duration = Duration::from_secs(300);
 const PULL_RETRY_SECONDS: u64 = 30;
 
-/// Where the host keeps its home, and where it looks for checkouts.
 pub struct Homing {
-    /// The host's name, which signs the notes it writes.
     pub host: String,
     pub data_dir: PathBuf,
-    /// The home's remote from the command line; `None` keeps the one the
-    /// host stored, if any.
     pub remote: Option<String>,
-    /// The directories to look for checkouts in.
     pub roots: Vec<PathBuf>,
-    /// The user's home, whose harness folders take the home's skills each
-    /// time the clone moves; `None` installs none.
     pub user: Option<PathBuf>,
     pub canvases: Box<dyn CanvasStore + Send + core::marker::Sync>,
 }
@@ -153,7 +125,6 @@ enum Msg {
 }
 
 impl HomeClone {
-    /// Starts the task, which syncs the home at once and every few minutes.
     #[must_use]
     pub fn spawn(homing: Homing) -> Self {
         let (inbox, messages) = mpsc::channel(16);
@@ -169,10 +140,6 @@ impl HomeClone {
         }
     }
 
-    /// What a session created in `created`, whose agent runs in
-    /// `runs_in`, is told by a CLI that reads `file` by itself: the files
-    /// as the clone and the directory it runs in have them now, read
-    /// without waiting on the task once the checkout is verified.
     #[must_use]
     pub fn instructions(
         &self,
@@ -208,13 +175,11 @@ impl HomeClone {
         })
     }
 
-    /// The home as it is now: what `Welcome` carries.
     #[must_use]
     pub fn shown(&self) -> Option<Home> {
         self.shown.borrow().clone()
     }
 
-    /// Each change of the home, from now on.
     #[must_use]
     pub fn watch(&self) -> watch::Receiver<Option<Home>> {
         self.shown.clone()
@@ -228,12 +193,6 @@ impl HomeClone {
         self.ask(|reply| Msg::Command { command, by, reply }).await
     }
 
-    /// Where a session starts, once the home is fresh if the placement
-    /// needs it.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the task has stopped.
     pub async fn place(&self, at: StartAt) -> Result<Placed, Stopped> {
         match host::registry::place_without_home(at) {
             Ok(placement) => Ok(Ok(placement)),
@@ -243,12 +202,6 @@ impl HomeClone {
         }
     }
 
-    /// Readies the issue's branch in its checkout for a session to start
-    /// from: the remote's, when it has one.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the task has stopped.
     pub async fn ready(
         &self,
         start: home::issue::Start,
@@ -256,12 +209,6 @@ impl HomeClone {
         self.ask(|reply| Msg::Ready { start, reply }).await
     }
 
-    /// A session on the issue started: work on it is in progress, if it
-    /// wasn't already.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the task has stopped.
     pub async fn started(
         &self,
         issue: IssueId,
@@ -275,13 +222,6 @@ impl HomeClone {
         .await
     }
 
-    /// A session on the issue finished: its summary goes to the issue's
-    /// notes, signed by `client`, and the issue is up for review when its
-    /// branch gained commits.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the task has stopped.
     pub async fn finished(
         &self,
         issue: IssueId,
@@ -518,7 +458,7 @@ impl Actor {
     }
 
     async fn fresh(&mut self) {
-        if self.sync.due(now(), PULL_RETRY_SECONDS) {
+        if self.sync.due(now_secs(), PULL_RETRY_SECONDS) {
             self.refresh().await;
         }
     }
@@ -528,10 +468,11 @@ impl Actor {
             return;
         };
         let outcome = self.bring_up(&remote).await;
-        self.sync =
-            self.sync
-                .clone()
-                .after(outcome, self.destination.is_some(), now());
+        self.sync = self.sync.clone().after(
+            outcome,
+            self.destination.is_some(),
+            now_secs(),
+        );
         if self.destination.is_some() {
             self.install().await;
             self.scan().await;
@@ -653,11 +594,12 @@ impl Actor {
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
-        let issue = fresh(&self.home, now(), &draws()).ok_or_else(|| {
-            IssueError::Retryable(String::from(
-                "no issue id is free this second",
-            ))
-        })?;
+        let issue =
+            fresh(&self.home, now_secs(), &draws()).ok_or_else(|| {
+                IssueError::Retryable(String::from(
+                    "no issue id is free this second",
+                ))
+            })?;
         let request = self.issue_context(edit).open(issue, new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
         if let Some(opened) = self.created(&issue_dir, edit).await? {
@@ -730,7 +672,7 @@ impl Actor {
             remote: self.remote.as_deref(),
             home: &self.home,
             host: &self.host,
-            at: now(),
+            at: now_secs(),
             edit,
         }
     }
@@ -1151,13 +1093,6 @@ async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
     ready_issue_branch(Path::new(&start.checkout.0), &start.branch).await
 }
 
-/// Makes the checkout's issue branch `branch`, a full ref, what
-/// `home::issue::Branch` says: the remote's, when the checkout's has
-/// nothing the remote's lacks.
-///
-/// # Errors
-///
-/// When the remote can't be read for a new branch, or both have moved on.
 pub async fn ready_issue_branch(
     checkout: &Path,
     branch: &str,
@@ -1467,7 +1402,7 @@ async fn committed_blob_at(
         .map_err(|err| err.to_string())
 }
 
-fn now() -> u64 {
+fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())

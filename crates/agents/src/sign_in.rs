@@ -1,9 +1,3 @@
-//! How a CLI signs its private home in when the app asks, as data the
-//! provider's core describes: the run, where its output shows the link to
-//! open and any code to enter there, whether the page gives a code to paste
-//! back on the CLI's stdin, and what its failures mean. The host reads the
-//! output line by line against the description; it never keeps or logs it.
-
 use core::fmt;
 
 use schemars::JsonSchema;
@@ -12,8 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::Invocation;
 use crate::prelude::*;
 
-/// The code a person pastes from a sign-in page. It is a secret: its
-/// `Debug` doesn't print it, so no log line carries it.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct SignInCode(pub String);
 
@@ -25,20 +17,13 @@ impl fmt::Debug for SignInCode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignIn {
-    /// The run, with its stdin, stdout and stderr on pipes. It succeeds by
-    /// exiting 0, after which the profile's sign-in check must pass.
     pub run: Invocation,
     pub link: Pick,
-    /// A code the person enters on the page the link opens.
     pub code: Option<Pick>,
-    /// The page gives the person a code that the CLI reads as one line on
-    /// its stdin.
     pub paste: bool,
     pub failures: Vec<Failure>,
 }
 
-/// The first word of its shape after the text `after` in the output, on
-/// the same line or a later one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pick {
     pub after: String,
@@ -47,23 +32,16 @@ pub struct Pick {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Word {
-    /// An `https://` URL.
     Link,
-    /// At least six capital letters, digits and dashes, as device codes
-    /// are written.
     Code,
 }
 
-/// A run that printed `says` and then failed failed for the reason
-/// `means`, in words for the person.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
     pub says: String,
     pub means: String,
 }
 
-/// What the person is shown: the link, and the code if the description has
-/// one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shown {
     pub link: String,
@@ -71,7 +49,6 @@ pub struct Shown {
 }
 
 impl SignIn {
-    /// What the output so far shows, once it shows everything described.
     #[must_use]
     pub fn shown(&self, lines: &[String]) -> Option<Shown> {
         let link = self.link.find(lines)?;
@@ -82,7 +59,6 @@ impl SignIn {
         Some(Shown { link, code })
     }
 
-    /// What it means that the run printed `line`, if a failure says so.
     #[must_use]
     pub fn failure(&self, line: &str) -> Option<&str> {
         self.failures
@@ -133,8 +109,6 @@ impl Word {
     }
 }
 
-/// `line` without its terminal escape sequences (`ESC [ … final`), which
-/// some CLIs colour their output with even on a pipe.
 #[must_use]
 pub fn plain(line: &str) -> String {
     let mut text = String::new();

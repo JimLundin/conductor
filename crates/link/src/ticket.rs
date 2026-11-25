@@ -1,11 +1,3 @@
-//! What a client needs to reach and be admitted to a host, as text that
-//! fits a URL fragment (`#join=<ticket>`).
-//!
-//! Binary layout, then base64url without padding:
-//! `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`.
-//!
-//! Only the web app reads it, in `web/src/ticket.ts`.
-
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -26,12 +18,9 @@ pub struct Ticket {
     pub token: AuthToken,
 }
 
-/// S3 placeholder for the fleet certificates of §4: a random secret the host
-/// prints in its ticket and requires in every `Hello`.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthToken([u8; TOKEN_LEN]);
 
-/// A `Hello` whose token is not the host's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("wrong token")]
 pub struct WrongToken {}
@@ -47,12 +36,6 @@ impl AuthToken {
         self.0
     }
 
-    /// Checks `self` against the host's token in constant time, so the
-    /// time a refusal takes says nothing about the token.
-    ///
-    /// # Errors
-    ///
-    /// [`WrongToken`] when the tokens differ.
     pub fn check(&self, expected: &Self) -> Result<(), WrongToken> {
         match self.0.as_slice().ct_eq(expected.0.as_slice()).unwrap_u8() {
             1 => Ok(()),
@@ -68,7 +51,6 @@ impl fmt::Debug for AuthToken {
 }
 
 impl Ticket {
-    /// The ticket as fragment-safe text.
     #[must_use]
     pub fn to_text(&self) -> String {
         let bytes = core::iter::once(VERSION)

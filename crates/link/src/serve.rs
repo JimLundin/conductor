@@ -1,7 +1,3 @@
-//! The client link's rules on one connection (architecture §8): who is
-//! admitted, what each later stream may carry, which commands keep a
-//! receipt, and what each command is called in the host's log lines.
-
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
@@ -19,19 +15,12 @@ use host::sign_in::SignInCommand;
 use crate::log::Kind;
 use crate::{Command, Open, Subscribe};
 
-/// What the connection's first stream decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Admission {
     Admitted(ClientName),
-    /// The host answers `HelloReply::Refused` with the reason, then closes
-    /// the connection.
-    Refused {
-        reason: String,
-    },
+    Refused { reason: String },
 }
 
-/// On a host alone, the first stream must be a `Hello` that carries the
-/// host's `token`.
 #[must_use]
 pub fn admit(first: Option<Open>, token: &AuthToken) -> Admission {
     match first {
@@ -46,12 +35,6 @@ pub fn admit(first: Option<Open>, token: &AuthToken) -> Admission {
     }
 }
 
-/// On a host in a fleet, the first stream must be a device's hello, whose
-/// certificate and proof the fleet checks; anything else is refused.
-///
-/// # Errors
-///
-/// The refusal of a first stream that is not a device's hello.
 pub fn device_hello(first: Option<Open>) -> Result<DeviceHello, Admission> {
     match first {
         Some(Open::FleetHello(hello)) => Ok(hello),
@@ -60,8 +43,6 @@ pub fn device_hello(first: Option<Open>) -> Result<DeviceHello, Admission> {
     }
 }
 
-/// A device's hello is admitted as the owner the fleet found for its
-/// certificate, if it found one.
 #[must_use]
 pub fn device(owner: Option<Identity>) -> Admission {
     owner.map_or_else(device_required, |found| {
@@ -79,15 +60,10 @@ fn refused(reason: &str) -> Admission {
     }
 }
 
-/// What a stream after the `Hello` carries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stream {
-    /// Answered with one `CommandResult`, then finished.
     Command(CommandId, Command),
-    /// Answered with events until the client falls behind or the
-    /// connection goes.
     Subscribe(Subscribe),
-    /// A second `Hello`, or no frame at all: finished unanswered.
     Finish,
 }
 
@@ -100,8 +76,6 @@ pub fn stream(open: Option<Open>) -> Stream {
     }
 }
 
-/// Which log a command's receipt goes to, if it keeps one: sign-ins, push,
-/// the fleet, a diff and the home's sync and clone run every time.
 #[must_use]
 pub const fn ledger(command: &Command) -> Option<Kind> {
     match command {
@@ -123,8 +97,6 @@ pub const fn ledger(command: &Command) -> Option<Kind> {
     }
 }
 
-/// What a command is called in the host's log lines, which name no
-/// payload.
 #[must_use]
 pub const fn operation(command: &Command) -> &'static str {
     match command {
@@ -171,9 +143,6 @@ pub const fn operation(command: &Command) -> &'static str {
     }
 }
 
-/// # Errors
-///
-/// The host has no home, or the home has no such issue.
 pub fn canvas_key(
     home: Option<&Home>,
     issue: IssueId,

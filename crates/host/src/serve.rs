@@ -1,5 +1,3 @@
-//! What a session command from the client link asks of the host.
-
 use crate::registry::InstanceId;
 use crate::session::{SessionCommand, SessionId, StartAt};
 use agents::Reply;
@@ -7,8 +5,6 @@ use agents::{ClientName, Effort, ModelId, Models};
 
 use crate::session::Order;
 
-/// An order that relaunches the session's agent first, and takes the
-/// models its provider offers now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Relaunch {
     Continue,
@@ -25,11 +21,8 @@ impl Relaunch {
     }
 }
 
-/// What a session command asks of the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionRoute {
-    /// Hand the running session an order; a session the host doesn't have
-    /// answers `UnknownSession`, and one that stopped `SessionClosed`.
     Order(SessionId, Order),
     Relaunch(SessionId, Relaunch),
     Start {
@@ -38,11 +31,9 @@ pub enum SessionRoute {
         choice: (Option<ModelId>, Option<Effort>),
         by: ClientName,
     },
-    /// Finishes the session on its issue, in the background.
     Finish(SessionId, ClientName),
 }
 
-/// What `command`, from the client `by`, asks of the host.
 #[must_use]
 pub fn session(command: SessionCommand, by: ClientName) -> SessionRoute {
     match command {

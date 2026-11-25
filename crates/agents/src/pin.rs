@@ -1,49 +1,31 @@
-//! What installing any provider's pinned CLI decides.
-//!
-//! Whether a download is the pinned one, and what an install leaves behind.
-//! Each provider pins its own CLI and says which build a platform takes.
-
 use crate::prelude::*;
 
-/// How a download becomes the install.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Package {
-    /// The download is the binary.
     Binary,
-    /// A `.tar.gz` of the whole install directory.
     Archive,
 }
 
-/// One CLI's pinned download for a platform.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pin {
     pub version: String,
     pub url: String,
     pub sha256: String,
     pub package: Package,
-    /// The binary's path in the install directory.
     pub binary: String,
 }
 
-/// Whether the entry `name` of a CLI's directory stays when `keep` is the
-/// pinned version: the lock and that version do, while older versions and
-/// the downloads and unpacks a crash left behind go.
 #[must_use]
 pub fn kept(name: &str, keep: &str) -> bool {
     name == keep || name == "lock"
 }
 
-/// A download whose SHA-256 is not its pin's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mismatch {
     pub found: String,
     pub expected: String,
 }
 
-/// Whether a download with SHA-256 `found` is the pinned build.
-///
-/// # Errors
-/// The download is not the pinned build.
 pub fn verify(found: String, expected: &str) -> Result<(), Mismatch> {
     if found == expected {
         Ok(())
