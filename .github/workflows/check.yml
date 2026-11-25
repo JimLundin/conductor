@@ -16,6 +16,9 @@ on:
       check-args:
         description: Extra arguments for tools/check.sh step, such as --verify
         default: ""
+      standards-ref:
+        description: The standards branch or commit to check against.
+        default: main
 
 permissions: {}
 
@@ -41,3 +44,4 @@ jobs:
       - uses: ./conductor/.github/actions/units
         with:
           check-args: ${{ inputs.check-args }}
+          standards-ref: ${{ inputs.standards-ref || 'main' }}

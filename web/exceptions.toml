@@ -4,3 +4,38 @@
 path = "knip.json"
 rule = "drift:ignoreBinaries:wasm-pack"
 reason = "npm run pipe invokes the Rust wasm-pack tool, which is installed outside npm"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/unicorn/max-nested-calls"
+reason = "Effect Codegen nests schema constructors to express the published Rust contract; it has no option to flatten those expressions"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/eslint/no-magic-numbers"
+reason = "The generated numbers are bounds and lengths from the Rust wire contract"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/typescript/consistent-type-definitions"
+reason = "Effect Codegen emits object type aliases for the mutually referential schema types"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/eslint/object-shorthand"
+reason = "Effect Codegen emits explicit schema and annotation properties and provides no shorthand option"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/eslint/sort-keys"
+reason = "Effect Codegen orders schema properties and annotations from the published contract and provides no key-sorting option"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/typescript/consistent-indexed-object-style"
+reason = "Effect Codegen emits index signatures for the wire contract maps"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "lint/eslint/max-lines"
+reason = "Effect Codegen emits the mutually referential wire types in one generated module"

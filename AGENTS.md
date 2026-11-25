@@ -34,7 +34,7 @@ Home Screen. The design is in
   it first builds `crates/web-iroh`, the only crate built for wasm, into
   `web/web-iroh` with wasm-pack (`npm run pipe`), which needs wasm-pack and
   clang besides the toolchain. Nothing it generates is committed.
-- **Generated and recorded files.** `web/src/schemas/` is generated from
+- **Generated and recorded files.** `web/core/src/schemas/` is generated from
   `link`'s root types (ADR 0002, ADR 0003) and never edited by hand: after
   changing a type the client link reaches, run `tools/schemas.sh` (needs
   `npm ci` in `web/`) and commit what it writes, with `link::ALPN` bumped
