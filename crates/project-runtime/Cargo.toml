@@ -9,6 +9,7 @@ publish = false
 layer = "shell"
 
 [dependencies]
+directories = "6.0.0"
 home = { path = "../home" }
 vcs = { path = "../vcs" }
 

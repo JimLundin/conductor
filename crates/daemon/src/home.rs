@@ -243,6 +243,23 @@ impl HomeClone {
         }
     }
 
+    pub fn check_workspaces(
+        &self,
+        placement: &Placement,
+        workspaces: &crate::Workspaces,
+    ) -> Result<(), String> {
+        let Some(id) = placement.project else {
+            return Ok(());
+        };
+        let catalog = home_files::configuration(&self.clone);
+        let project = catalog
+            .project(&id.to_string())
+            .ok_or_else(|| HomeRefusal::UnknownProject.label())?;
+        workspaces
+            .preflight(&project.backends, &placement.directory)
+            .map_err(|reason| reason.label())
+    }
+
     /// Readies the issue's branch in its checkout for a session to start
     /// from: the remote's, when it has one.
     ///

@@ -789,13 +789,13 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
     assert_eq!(
         started
             .as_ref()
-            .map(|at| (at.checkout.clone(), at.branch.clone())),
+            .map(|(_, at)| (at.checkout.clone(), at.branch.clone())),
         Ok((
             CheckoutLocation(text("/src/conductor")),
             String::from("refs/heads/issue/local~00000001"),
         ))
     );
-    let brief = started.map_or_else(|_| String::new(), |at| at.brief);
+    let brief = started.map_or_else(|_| String::new(), |(_, at)| at.brief);
     for part in [
         "Sign in to a subscription from the app",
         "Conductor",
@@ -831,7 +831,7 @@ fn a_brief_names_the_issue_s_stage_and_the_skills_that_serve_it() {
             Some(&home(Vec::from([checkout()]), Vec::from([at]))),
             id_id(),
         )
-        .map_or_else(|_| String::new(), |started| started.brief)
+        .map_or_else(|_| String::new(), |(_, started)| started.brief)
     };
     let build = brief_at(Some("build"));
     assert!(
@@ -1968,7 +1968,7 @@ fn every_line_the_app_logs_or_briefs_is_the_one_log_line_of_its_entry()
         Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
         id_id(),
     )
-    .map(|at| at.brief)
+    .map(|(_, at)| at.brief)
     .map_err(|refusal| format!("{refusal:?}"))?;
     for entry in &issue().log {
         assert!(brief.contains(&log_line(entry)), "{brief}");

@@ -67,6 +67,7 @@ pub enum Backend {
 pub enum Capability {
     PrepareWorkspace,
     CaptureSnapshot,
+    InstallSnapshot,
     CompareSnapshots,
     IntegrateSession,
     PreserveWorkspace,
@@ -77,9 +78,10 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::PrepareWorkspace,
         Self::CaptureSnapshot,
+        Self::InstallSnapshot,
         Self::CompareSnapshots,
         Self::IntegrateSession,
         Self::PreserveWorkspace,
@@ -94,6 +96,7 @@ impl Capability {
         match self {
             Self::PrepareWorkspace => "prepare workspace",
             Self::CaptureSnapshot => "capture snapshot",
+            Self::InstallSnapshot => "install snapshot",
             Self::CompareSnapshots => "compare snapshots",
             Self::IntegrateSession => "integrate session",
             Self::PreserveWorkspace => "preserve workspace",
@@ -108,6 +111,7 @@ impl Capability {
     pub const fn backend(self) -> Backend {
         match self {
             Self::PrepareWorkspace
+            | Self::InstallSnapshot
             | Self::CaptureSnapshot
             | Self::CompareSnapshots
             | Self::IntegrateSession
@@ -250,7 +254,17 @@ pub fn preflight<'a>(
             backend,
             adapter: selection.adapter.clone(),
         })?;
-    credential(binding)?;
+    if !matches!(
+        capability,
+        Capability::PrepareWorkspace
+            | Capability::CaptureSnapshot
+            | Capability::InstallSnapshot
+            | Capability::CompareSnapshots
+            | Capability::PreserveWorkspace
+            | Capability::IntegrateSession
+    ) {
+        credential(binding)?;
+    }
     if !binding.capabilities.contains(&capability) {
         return Err(Refusal::CapabilityUnavailable { capability });
     }

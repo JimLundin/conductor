@@ -74,6 +74,7 @@ struct BranchReady {
 
 #[derive(Debug, Clone)]
 pub struct Registry {
+    workspaces: crate::Workspaces,
     inbox: mpsc::Sender<RegistryMsg>,
     home: HomeClone,
 }
@@ -114,6 +115,7 @@ enum RegistryMsg {
 }
 
 struct RegistryActor {
+    workspaces: crate::Workspaces,
     log: Log,
     store: Store,
     core: Core,
@@ -140,12 +142,14 @@ impl Registry {
         stored: &Stored,
         providers: Providers,
         home: HomeClone,
+        workspaces: crate::Workspaces,
     ) -> Result<(Self, watch::Receiver<bool>), Stopped> {
         let mut core = Core::new(stored, providers.catalog());
         let starts = core.boot();
         let (ready, initialized) = watch::channel(false);
-        let mut actor =
-            RegistryActor::new(log, store, core, providers, home, ready);
+        let mut actor = RegistryActor::new(
+            log, store, core, providers, home, ready, workspaces,
+        );
         actor.perform_depth_first(
             starts.into_iter().map(Effect::Start).collect(),
         );
@@ -168,6 +172,13 @@ impl Registry {
         by: ClientName,
     ) -> Result<SessionResult, Stopped> {
         let placed = self.home.place(at).await?;
+        if let Err(reason) = placed.as_ref().map_or(Ok(()), |placement| {
+            self.home.check_workspaces(placement, &self.workspaces)
+        }) {
+            return Ok(SessionResult::Refused(
+                SessionRefusal::WorkspaceFailure { reason },
+            ));
+        }
         let (model, effort) = choice;
         let request = StartRequest {
             instance,
@@ -284,8 +295,10 @@ impl RegistryActor {
         providers: Providers,
         home: HomeClone,
         initialized: watch::Sender<bool>,
+        workspaces: crate::Workspaces,
     ) -> Self {
         Self {
+            workspaces,
             log,
             store,
             offers: watch::channel(core.instances()).0,
@@ -309,8 +322,13 @@ impl RegistryActor {
     fn spawn(self) -> Registry {
         let (inbox, messages) = mpsc::channel(16);
         let home = self.home.clone();
+        let workspaces = self.workspaces.clone();
         tokio::spawn(self.run(messages));
-        Registry { inbox, home }
+        Registry {
+            inbox,
+            home,
+            workspaces,
+        }
     }
 
     async fn run(
@@ -881,7 +899,7 @@ impl RegistryActor {
         let events = events_of(id, history);
         let recovery = Recovery::of(choice, &events);
         let conversation = self.conversation(id, recovery.talked).await?;
-        recover(&self.log, id, recovery.steps()).await?;
+        recover(&self.workspaces, &self.log, id, recovery.steps()).await?;
         if host::restore::finish_interrupted(&events) {
             self.log.append(id, EventKind::FinishInterrupted).await?;
         }
@@ -902,6 +920,7 @@ impl RegistryActor {
 
     fn told(&self, provider: &Provider) -> Told {
         Told {
+            workspaces: self.workspaces.clone(),
             home: self.home.clone(),
             instructions_file: self.providers.instructions_file(provider),
         }
@@ -978,18 +997,23 @@ impl RegistryActor {
                 }
                 StartEffect::CreateWorkspace { directory, base } => {
                     let id = SessionId(u128::from(ulid::Ulid::new()));
-                    let workspace = crate::workspace::create(
-                        self.store.dir(),
-                        &directory,
-                        id,
-                        base.as_deref(),
-                    )
-                    .await;
+                    let workspace = self
+                        .workspaces
+                        .create(&directory, id, base.as_deref())
+                        .await;
                     StartReport::Workspace(id, workspace)
                 }
                 StartEffect::Snapshot { session, workspace } => {
                     StartReport::Snapshot(
-                        crate::workspace::snapshot(&workspace, session).await,
+                        self.workspaces
+                            .snapshot(
+                                &workspace,
+                                session,
+                                vcs::command::SnapshotAttempt(String::from(
+                                    "initial",
+                                )),
+                            )
+                            .await,
                     )
                 }
                 StartEffect::Record {
@@ -1111,6 +1135,7 @@ fn brief_issue(
 }
 
 async fn recover(
+    workspaces: &crate::Workspaces,
     log: &Log,
     id: SessionId,
     steps: Vec<Step>,
@@ -1120,7 +1145,8 @@ async fn recover(
             Step::Append(kind) => log.append(id, kind).await?,
             Step::Barrier => log.barrier().await?,
             Step::Snapshot(turn) => {
-                let snapshot = crate::workspace::snapshot(&turn.workspace, id)
+                let snapshot = workspaces
+                    .snapshot(&turn.workspace, id, turn.attempt.clone())
                     .await
                     .map_err(|err| err.to_string());
                 log.append(id, turn.snapshotted(snapshot)).await?;

@@ -45,6 +45,7 @@ use crate::assignment::assigned;
 use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::start::Mode;
+use alloc::string::ToString;
 use vcs::Error as GitError;
 
 mod instance;
@@ -1098,7 +1099,9 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
 fn unprepared(error: GitError) -> SessionRefusal {
     match error {
         GitError::NotRepository => SessionRefusal::NotGitRepository,
-        GitError::Failed(reason) => SessionRefusal::WorkspaceFailure { reason },
+        other => SessionRefusal::WorkspaceFailure {
+            reason: other.to_string(),
+        },
     }
 }
 

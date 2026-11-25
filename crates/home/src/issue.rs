@@ -325,7 +325,10 @@ pub struct Start {
 ///
 /// The host has no home, its home lists no such issue, or the issue's
 /// project has no checkout on the host.
-pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
+pub fn start(
+    home: Option<&Home>,
+    id: IssueId,
+) -> Result<(ProjectId, Start), HomeRefusal> {
     let known = home.ok_or(HomeRefusal::NoHome)?;
     let (project, observation) = known
         .projects
@@ -345,12 +348,15 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
         .checkouts
         .first()
         .ok_or(HomeRefusal::NotCheckedOut)?;
-    Ok(Start {
-        issue: id,
-        checkout: checkout.path.clone(),
-        branch: format!("refs/heads/{}", issue.branch),
-        brief: brief(&project.title, known.flow.as_deref(), issue),
-    })
+    Ok((
+        project.id,
+        Start {
+            issue: id,
+            checkout: checkout.path.clone(),
+            branch: format!("refs/heads/{}", issue.branch),
+            brief: brief(&project.title, known.flow.as_deref(), issue),
+        },
+    ))
 }
 
 /// Issue `id`'s branch, as a full ref, as the home has it.

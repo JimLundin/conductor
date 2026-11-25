@@ -9,9 +9,9 @@ use home::backend::{
 use home::hosting;
 use home::issue::{Observation, Read};
 use vcs::command::{
-    Capture, Compare, Comparison, Integrate, Prepare, PreserveAndRemove,
+    Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
+    PreserveAndRemove, Revision,
 };
-use vcs::plan::Ownership;
 
 pub type Completion<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, Failure>> + Send + 'a>>;
@@ -19,6 +19,7 @@ pub type Completion<'a, T> =
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Failure {
     Refused(Refusal),
+    Workspace(vcs::Error),
     Unavailable,
 }
 
@@ -29,8 +30,9 @@ impl From<Refusal> for Failure {
 }
 
 pub trait VersionControl: Send + Sync {
-    fn prepare(&self, request: Prepare) -> Completion<'_, Ownership>;
-    fn capture(&self, request: Capture) -> Completion<'_, String>;
+    fn prepare(&self, request: Prepare) -> Completion<'_, Prepared>;
+    fn capture(&self, request: Capture) -> Completion<'_, Revision>;
+    fn install(&self, request: Install) -> Completion<'_, ()>;
     fn compare(&self, request: Compare) -> Completion<'_, Comparison>;
     fn integrate(&self, request: Integrate) -> Completion<'_, u64>;
     fn preserve_and_remove(
@@ -171,10 +173,7 @@ pub struct Project<'a> {
 impl Project<'_> {
     /// # Errors
     /// Preflight refused the operation or its selected adapter could not complete it.
-    pub async fn prepare(
-        &self,
-        request: Prepare,
-    ) -> Result<Ownership, Failure> {
+    pub async fn prepare(&self, request: Prepare) -> Result<Prepared, Failure> {
         self.version_control(Capability::PrepareWorkspace)?
             .prepare(request)
             .await
@@ -182,9 +181,17 @@ impl Project<'_> {
 
     /// # Errors
     /// Preflight refused the operation or its selected adapter could not complete it.
-    pub async fn capture(&self, request: Capture) -> Result<String, Failure> {
+    pub async fn capture(&self, request: Capture) -> Result<Revision, Failure> {
         self.version_control(Capability::CaptureSnapshot)?
             .capture(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn install(&self, request: Install) -> Result<(), Failure> {
+        self.version_control(Capability::InstallSnapshot)?
+            .install(request)
             .await
     }
 
@@ -269,3 +276,24 @@ fn selected<'a, T: ?Sized>(
 
 #[cfg(test)]
 mod tests;
+
+/// Resolves the host data directory used by the daemon and project CLI.
+///
+/// # Errors
+/// The platform has no default data directory.
+pub fn data_dir_or_default(
+    data: Option<std::path::PathBuf>,
+) -> std::io::Result<std::path::PathBuf> {
+    data.map_or_else(
+        || {
+            directories::ProjectDirs::from("", "", "conductor")
+                .map(|dirs| dirs.data_dir().to_owned())
+                .ok_or_else(|| {
+                    std::io::Error::other(
+                        "no home directory to put the data dir in",
+                    )
+                })
+        },
+        Ok,
+    )
+}

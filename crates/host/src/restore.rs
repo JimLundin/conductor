@@ -377,6 +377,7 @@ mod tests {
                 branch: String::from("conductor/1"),
             },
             turn_start: Some(HostSeq(9)),
+            attempt: vcs::command::SnapshotAttempt(String::from("turn-9")),
         }
     }
 
@@ -518,6 +519,9 @@ mod tests {
             [
                 recovery(Some(SnapshotPlan {
                     turn_start: Some(HostSeq(6)),
+                    attempt: vcs::command::SnapshotAttempt(String::from(
+                        "turn-6"
+                    )),
                     ..turn()
                 })),
                 recovery(None),

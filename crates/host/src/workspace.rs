@@ -1,6 +1,3 @@
-use alloc::format;
-use alloc::string::ToString;
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use vcs::{
@@ -16,16 +13,6 @@ const BRANCHES: &str = "conductor/";
 
 fn failure(context: &str, error: &str) -> GitError {
     GitError::failed(context, error)
-}
-
-#[must_use]
-pub fn worktree(session: SessionId) -> String {
-    session.to_string()
-}
-
-#[must_use]
-pub fn branch(session: SessionId) -> String {
-    format!("{BRANCHES}{}", worktree(session))
 }
 
 /// # Errors

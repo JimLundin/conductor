@@ -140,8 +140,19 @@ impl Fixture {
             user: None,
         });
         let (initialized, _) = watch::channel(false);
-        let mut actor =
-            RegistryActor::new(log, store, core, providers, home, initialized);
+        let mut actor = RegistryActor::new(
+            log,
+            store,
+            core,
+            providers,
+            home,
+            initialized,
+            crate::Workspaces::new(
+                data.0.join("worktrees"),
+                vcs_git2::registration::local(&data.0),
+                vcs_git2::registration::register,
+            ),
+        );
         let session = super::Session::restore(
             SESSION,
             host::session::SessionDirectory(

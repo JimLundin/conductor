@@ -7,10 +7,35 @@ use project_runtime::Registry;
 
 pub fn capabilities(root: &Path, name: &str) -> (String, u8) {
     let configuration = home_files::configuration(root);
-    describe(&configuration, name, &Registry::default()).map_or_else(
+    let mut registry = Registry::default();
+    let report = local_workspace(&configuration, name, &mut registry)
+        .and_then(|()| describe(&configuration, name, &registry));
+    report.map_or_else(
         |problem| (format!("home: {problem}\n"), 1),
         |report| (report, 0),
     )
+}
+
+fn local_workspace(
+    configuration: &Snapshot,
+    name: &str,
+    registry: &mut Registry,
+) -> Result<(), String> {
+    let Some(selection) = configuration
+        .project(name)
+        .and_then(|project| project.backends.version_control.as_ref())
+    else {
+        return Ok(());
+    };
+    let data = project_runtime::data_dir_or_default(None)
+        .map_err(|error| error.to_string())?;
+    vcs_git2::registration::register(
+        registry,
+        vcs_git2::registration::local(&data),
+        selection,
+        Path::new(&selection.resource),
+    )
+    .map_err(|reason| reason.label())
 }
 
 fn describe(

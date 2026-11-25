@@ -34,6 +34,7 @@ type Performed = Result<Option<Input>, Stopped>;
 /// The home and the instruction file already read by this session's CLI.
 #[derive(Debug, Clone)]
 pub struct Told {
+    pub workspaces: crate::Workspaces,
     pub home: HomeClone,
     pub instructions_file: Option<String>,
 }
@@ -485,10 +486,20 @@ impl Actor {
             Call::Record(kind) => {
                 Input::Recorded(self.log.record(self.id, kind).await?.seq)
             }
-            Call::Snapshot(workspace) => snapshot(workspace, self.id).await,
-            Call::Diff(compared) => diff(*compared).await,
+            Call::Snapshot(workspace, attempt) => Input::Snapshotted(
+                self.told
+                    .workspaces
+                    .snapshot(&workspace, self.id, attempt)
+                    .await
+                    .map_err(|err| err.to_string()),
+            ),
+            Call::Diff(compared) => {
+                diff(&self.told.workspaces, self.id, *compared).await
+            }
             Call::Remove(workspace) => Input::Removed(
-                workspace::remove(&workspace)
+                self.told
+                    .workspaces
+                    .remove(&workspace, self.id)
                     .await
                     .map_err(|err| err.to_string()),
             ),
@@ -571,18 +582,19 @@ fn watched(
     }
 }
 
-async fn snapshot(workspace: Workspace, session: SessionId) -> Input {
-    let taken = workspace::snapshot(&workspace, session).await;
-    Input::Snapshotted(taken.map_err(|err| err.to_string()))
-}
-
-async fn diff(compared: Compared) -> Input {
-    let listed = workspace::diff(
-        &compared.workspace,
-        compared.snapshot,
-        &compared.commit,
-        &compared.previous,
-    )
-    .await;
+async fn diff(
+    workspaces: &crate::Workspaces,
+    session: SessionId,
+    compared: Compared,
+) -> Input {
+    let listed = workspaces
+        .diff(
+            &compared.workspace,
+            session,
+            compared.snapshot,
+            &compared.commit,
+            &compared.previous,
+        )
+        .await;
     Input::Diffed(listed.map_err(|err| err.to_string()))
 }

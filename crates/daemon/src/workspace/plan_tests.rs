@@ -2,24 +2,17 @@ use core::ops::ControlFlow;
 
 use host::session::SessionDirectory;
 
-use host::session::SessionId;
 use host::workspace::Workspace;
-use vcs::{DiffExtent, FilePatch, Kept};
 use vcs::{Repository, WorkingCopy, Worktree};
 
-use super::super::snapshots;
-use super::{Answer, GitError, Plan, Step, head};
+use super::{Answer, GitError, Plan, Step};
 use home_files::git::{Instruction, Reply, Revision};
-use vcs::plan::kept;
+use vcs::{Kept, plan::kept};
 
-const SESSION: SessionId = SessionId(1);
 const WORKTREE: &str = "/data/worktrees/00000000000000000000000001";
 const BRANCH: &str = "conductor/00000000000000000000000001";
 const HEAD: &str = "refs/heads/conductor/00000000000000000000000001";
 const DIRECTORY: &str = "/repo/.git/worktrees/00000000000000000000000001";
-const CURRENT: &str = "1111111111111111111111111111111111111111";
-const PREVIOUS: &str = "0000000000000000000000000000000000000000";
-const PREFIX: &str = "refs/conductor/00000000000000000000000001/";
 
 fn workspace() -> Workspace {
     Workspace {
@@ -28,15 +21,6 @@ fn workspace() -> Workspace {
         worktree: Worktree(String::from(WORKTREE)),
         directory: SessionDirectory(format!("{WORKTREE}/sub")),
         branch: String::from(BRANCH),
-    }
-}
-
-fn prepare(base: Option<&str>) -> vcs::command::Prepare {
-    vcs::command::Prepare {
-        directory: String::from("/repo/sub"),
-        name: SESSION.to_string(),
-        branch: String::from(BRANCH),
-        base: base.map(str::to_owned),
     }
 }
 
@@ -125,169 +109,6 @@ fn valid(step: Step) -> Answer {
 }
 
 #[test]
-fn create_probes_the_selected_base_and_writes_ownership_only_for_a_new_worktree()
- {
-    let workspace = workspace();
-    assert_eq!(head(&workspace), HEAD);
-    assert_eq!(snapshots(&workspace).as_deref(), Ok(PREFIX));
-    for exists in [false, true] {
-        let mut created = Vec::new();
-        let result =
-            run(Plan::create(prepare(Some("issue"))), |step| match step {
-                Step::WorktreeParent => path("/data/worktrees"),
-                Step::Exists(ref value) if value == WORKTREE => {
-                    Answer::Found(exists)
-                }
-                Step::WriteOwner { directory, marker } => {
-                    assert_eq!(directory, DIRECTORY);
-                    assert_eq!(marker, ownership());
-                    created.push("marker");
-                    Answer::Done
-                }
-                Step::Repository { path, request } if path != WORKTREE => {
-                    match request {
-                        Instruction::ProbeRoot if path == "/repo/sub" => {
-                            output("/repo")
-                        }
-                        Instruction::Resolve(Revision::Commit(reference))
-                            if reference == "issue" =>
-                        {
-                            output("start")
-                        }
-                        Instruction::Subtree { commit, path } => {
-                            assert_eq!(
-                                (commit.as_str(), path.as_str()),
-                                ("start", "sub")
-                            );
-                            reply(Reply::Found(true))
-                        }
-                        Instruction::AddWorktree {
-                            branch,
-                            path,
-                            start,
-                        } => {
-                            assert_eq!(
-                                (
-                                    branch.as_str(),
-                                    path.as_str(),
-                                    start.as_str()
-                                ),
-                                (BRANCH, WORKTREE, "start")
-                            );
-                            created.push("worktree");
-                            output("")
-                        }
-                        other => valid(Step::Repository {
-                            path,
-                            request: other,
-                        }),
-                    }
-                }
-                other => valid(other),
-            });
-        assert_eq!(result, Ok(workspace.clone()));
-        assert_eq!(
-            created.as_slice(),
-            if exists {
-                &[][..]
-            } else {
-                &["worktree", "marker"][..]
-            }
-        );
-    }
-}
-
-#[test]
-fn an_unborn_head_and_a_missing_subdirectory_stop_create_before_any_write() {
-    for unborn in [true, false] {
-        let result = run(Plan::create(prepare(None)), |step| match step {
-            Step::Repository { ref request, .. } => match request {
-                Instruction::ProbeRoot => output("/repo"),
-                Instruction::CommittedHead if unborn => {
-                    Answer::Repository(Err(GitError::NotRepository))
-                }
-                Instruction::CommittedHead => output("tip"),
-                Instruction::Subtree { commit, path } => {
-                    assert_eq!(
-                        (commit.as_str(), path.as_str()),
-                        ("tip", "sub")
-                    );
-                    reply(Reply::Found(false))
-                }
-                _ => valid(step),
-            },
-            other => valid(other),
-        });
-        assert_eq!(
-            result,
-            if unborn {
-                Err(GitError::NotRepository)
-            } else {
-                Err(GitError::Failed(String::from(
-                    "selected subdirectory must exist in committed HEAD: metadata differs",
-                )))
-            }
-        );
-    }
-}
-
-#[test]
-fn removal_prunes_a_missing_worktree_even_when_the_push_fails() {
-    let workspace = workspace();
-    let mut writes = Vec::new();
-    let result = run(
-        Plan::remove(vcs::command::PreserveAndRemove {
-            workspace: host::workspace::ownership(&workspace),
-        }),
-        |step| {
-            if let Step::Repository { ref request, .. } = step {
-                return match request {
-                    Instruction::Resolve(Revision::Tree(reference))
-                        if reference == HEAD =>
-                    {
-                        output("tree")
-                    }
-                    Instruction::Origin { push: true } => output(
-                        "https://user:secret@push.example/repo?token=secret",
-                    ),
-                    Instruction::Push { branch } if branch == HEAD => {
-                        writes.push("push");
-                        failed(
-                            "rejected https://user:secret@push.example/repo?token=secret",
-                        )
-                    }
-                    Instruction::PruneWorktrees => {
-                        writes.push("prune");
-                        output("")
-                    }
-                    Instruction::References { prefix, limit: 500 }
-                        if prefix.starts_with("refs/conductor-landed/") =>
-                    {
-                        reply(Reply::References(Vec::new()))
-                    }
-                    _ => valid(step),
-                };
-            }
-            match step {
-                Step::IsDirectory(ref path) if path == WORKTREE => {
-                    Answer::Found(false)
-                }
-                other => valid(other),
-            }
-        },
-    );
-    assert_eq!(writes, ["push", "prune"]);
-    assert_eq!(
-        result,
-        Ok(Kept::PushFailed {
-            reason: String::from(
-                "Git could not push to origin; the branch remains local"
-            )
-        })
-    );
-}
-
-#[test]
 fn a_successful_push_reports_only_the_sanitized_push_destination() {
     let workspace = workspace();
     let pushed = run(Plan::push(&workspace, HEAD), |step| {
@@ -308,83 +129,6 @@ fn a_successful_push_reports_only_the_sanitized_push_destination() {
             remote: String::from("https://push.example/repo")
         })
     );
-}
-
-#[test]
-fn diff_checks_immutable_refs_and_applies_the_patch_budget()
--> Result<(), GitError> {
-    let workspace = workspace();
-    let patch = "a".repeat(vcs::plan::PATCH_LIMIT);
-    let result = run(
-        Plan::diff(vcs::command::Compare {
-            workspace: host::workspace::ownership(&workspace),
-            revision: String::from(CURRENT),
-            baseline: String::from(PREVIOUS),
-        }),
-        |step| {
-            if let Step::Repository { ref request, .. } = step {
-                match request {
-                    Instruction::Resolve(Revision::Named(reference))
-                        if *reference == format!("{PREFIX}{CURRENT}") =>
-                    {
-                        return output(CURRENT);
-                    }
-                    Instruction::Resolve(Revision::Named(reference))
-                        if *reference == format!("{PREFIX}{PREVIOUS}") =>
-                    {
-                        return output(PREVIOUS);
-                    }
-                    Instruction::DiffNames { previous, commit } => {
-                        assert_eq!(
-                            (previous.as_str(), commit.as_str()),
-                            (PREVIOUS, CURRENT)
-                        );
-                        return reply(Reply::Names {
-                            entries: [
-                                ('a', vcs::DiffChange::Edit),
-                                ('b', vcs::DiffChange::Write),
-                                ('c', vcs::DiffChange::Delete),
-                                ('d', vcs::DiffChange::Edit),
-                                ('e', vcs::DiffChange::Edit),
-                                ('f', vcs::DiffChange::Edit),
-                            ]
-                            .into_iter()
-                            .map(|(path, change)| vcs::Entry {
-                                path: path.to_string(),
-                                change,
-                            })
-                            .collect(),
-                            extent: DiffExtent::Complete,
-                        });
-                    }
-                    Instruction::DiffPatch {
-                        previous,
-                        commit,
-                        path,
-                    } => {
-                        assert_eq!(
-                            (previous.as_str(), commit.as_str()),
-                            (PREVIOUS, CURRENT)
-                        );
-                        return reply(Reply::Patch(if path == "f" {
-                            FilePatch::Binary
-                        } else {
-                            FilePatch::Text(patch.clone())
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-            valid(step)
-        },
-    );
-    let diff = result?;
-    assert_eq!(diff.extent, DiffExtent::Truncated);
-    assert_eq!(diff.files.len(), 6);
-    assert_eq!(diff.files[3].patch, FilePatch::Text(patch));
-    assert_eq!(diff.files[4].patch, FilePatch::TooLarge);
-    assert_eq!(diff.files[5].patch, FilePatch::Binary);
-    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -577,11 +321,11 @@ fn landing_fast_forwards_or_merges_and_refuses_to_move_a_checked_out_branch() {
     ] {
         let mut writes = Vec::new();
         let result = run(
-            Plan::land(vcs::command::Integrate {
-                workspace: host::workspace::ownership(&workspace),
-                target: String::from(ISSUE),
-                attempt: vcs::command::IntegrationId(String::from("42")),
-            }),
+            Plan::land(
+                &workspace,
+                ISSUE,
+                vcs::command::IntegrationId(String::from("42")),
+            ),
             |step| landing_step(step, scenario, &mut writes),
         );
         assert_eq!(

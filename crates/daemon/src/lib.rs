@@ -17,7 +17,11 @@ mod start;
 mod storage;
 mod workspace;
 
-pub use start::{HostOptions, Hosted, Hosting, Plugins, login, serve, start};
+pub use start::{
+    HostOptions, Hosted, Hosting, Plugins, data_dir_or_default, login, serve,
+    start,
+};
+pub use workspace::Workspaces;
 
 use std::io::{ErrorKind, Write};
 use std::path::Path;

@@ -8,9 +8,9 @@ use home::backend::{
 use home::hosting;
 use home::issue::{Observation, Read, Unreadable};
 use vcs::command::{
-    Capture, Compare, Comparison, Integrate, Prepare, PreserveAndRemove,
+    Capture, Compare, Comparison, Install, Integrate, OwnedWorkspace, Prepare,
+    Prepared, PreserveAndRemove, Revision, SnapshotAttempt, WorkspaceId,
 };
-use vcs::plan::Ownership;
 
 use super::{
     Completion, Failure, IssueTracker, Registration, Registry,
@@ -37,11 +37,11 @@ fn registration(
     }
 }
 
-fn workspace() -> Ownership {
-    Ownership {
-        repository: String::from("/repos/local"),
-        original: String::from("/repos/local/src"),
-        worktree: String::from("/owned/session"),
+fn workspace() -> Prepared {
+    Prepared {
+        repository: vcs::Repository(String::from("/repos/local")),
+        original: vcs::WorkingCopy(String::from("/repos/local/src")),
+        root: String::from("/owned/session"),
         directory: String::from("/owned/session/src"),
         branch: String::from("session/work"),
     }
@@ -73,12 +73,16 @@ impl Scripted {
 }
 
 impl VersionControl for Scripted {
-    fn prepare(&self, _request: Prepare) -> Completion<'_, Ownership> {
+    fn prepare(&self, _request: Prepare) -> Completion<'_, Prepared> {
         self.reply(workspace())
     }
 
-    fn capture(&self, _request: Capture) -> Completion<'_, String> {
-        self.reply(String::from(self.name))
+    fn capture(&self, _request: Capture) -> Completion<'_, Revision> {
+        self.reply(Revision(String::from(self.name)))
+    }
+
+    fn install(&self, _request: Install) -> Completion<'_, ()> {
+        self.reply(())
     }
 
     fn compare(&self, _request: Compare) -> Completion<'_, Comparison> {
@@ -233,6 +237,7 @@ async fn local_workspaces_snapshots_and_diffs_need_no_tracker_or_hosting()
                 &[
                     Capability::PrepareWorkspace,
                     Capability::CaptureSnapshot,
+                    Capability::InstallSnapshot,
                     Capability::CompareSnapshots,
                     Capability::IntegrateSession,
                     Capability::PreserveWorkspace,
@@ -249,27 +254,41 @@ async fn local_workspaces_snapshots_and_diffs_need_no_tracker_or_hosting()
     let prepared = project
         .prepare(Prepare {
             directory: String::from("/repos/local/src"),
-            name: String::from("session"),
-            branch: String::from("session/work"),
+            name: WorkspaceId(String::from("session")),
             base: None,
         })
         .await
         .map_err(|error| format!("{error:?}"))?;
     assert_eq!(prepared, workspace());
+    let owned = OwnedWorkspace {
+        id: WorkspaceId(String::from("session")),
+        directory: prepared.directory,
+    };
+    let attempt = SnapshotAttempt(String::from("turn-2"));
     assert_eq!(
         project
             .capture(Capture {
-                workspace: prepared.clone(),
-                expected_branch: String::from("session/work")
+                workspace: owned.clone(),
+                attempt: attempt.clone()
             })
             .await,
-        Ok(String::from("snapshot-revision"))
+        Ok(Revision(String::from("snapshot-revision")))
+    );
+    assert_eq!(
+        project
+            .install(Install {
+                workspace: owned.clone(),
+                revision: Revision(String::from("snapshot-revision")),
+                attempt
+            })
+            .await,
+        Ok(())
     );
     let diff = project
         .compare(Compare {
-            workspace: prepared.clone(),
-            revision: String::from("snapshot-revision"),
-            baseline: String::from("initial-revision"),
+            workspace: owned.clone(),
+            revision: Revision(String::from("snapshot-revision")),
+            baseline: Revision(String::from("initial-revision")),
         })
         .await
         .map_err(|error| format!("{error:?}"))?;
@@ -280,7 +299,7 @@ async fn local_workspaces_snapshots_and_diffs_need_no_tracker_or_hosting()
     assert_eq!(
         project
             .integrate(Integrate {
-                workspace: prepared.clone(),
+                workspace: owned.clone(),
                 target: String::from("issue/target"),
                 attempt: vcs::command::IntegrationId(String::from("attempt-1"))
             })
@@ -289,13 +308,11 @@ async fn local_workspaces_snapshots_and_diffs_need_no_tracker_or_hosting()
     );
     assert_eq!(
         project
-            .preserve_and_remove(PreserveAndRemove {
-                workspace: prepared
-            })
+            .preserve_and_remove(PreserveAndRemove { workspace: owned })
             .await,
         Ok(vcs::Kept::Local)
     );
-    assert_eq!(calls.try_iter().count(), 5);
+    assert_eq!(calls.try_iter().count(), 6);
     Ok(())
 }
 
