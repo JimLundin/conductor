@@ -3,11 +3,12 @@ use crate::log::{Event, HostSeq};
 use crate::registry::InstanceId;
 use crate::session::SessionDirectory;
 use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
-use crate::workspace::{Kept, Workspace};
-use crate::workspace::{Repository, WorkingCopy, Worktree};
+use crate::workspace::Workspace;
 use agents::Output;
 use agents::{ClientName, CloseReason, Provider, TurnOutcome};
 use home::IssueId;
+use vcs::Kept;
+use vcs::{Repository, WorkingCopy, Worktree};
 
 use super::{
     Effect, Finish, Finishing, Input, finished, finishing, landed, summary,

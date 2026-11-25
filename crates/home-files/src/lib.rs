@@ -9,11 +9,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use home::ProjectId;
-use home::checkout::{self, Probe, Root};
+use home::checkout::Root;
+use vcs::discovery::Probe;
+
 use home::flow::PATH;
 use home::flow::snapshot::Snapshot;
 use home::layout::{self, IssueLocation};
 use home::skills;
+
+pub mod git;
 
 /// The home whose root is `root`.
 #[must_use]
@@ -62,7 +66,7 @@ pub fn root(path: &Path) -> Root {
 }
 
 /// The repository at each of `paths` that is the top of one, as
-/// [`checkout::probed`] reads it, Git run with std's processes.
+/// [`vcs::discovery::observed`] reads it, Git run with std's processes.
 #[must_use]
 pub fn probes(paths: &[String]) -> Vec<Probe> {
     paths
@@ -73,13 +77,17 @@ pub fn probes(paths: &[String]) -> Vec<Probe> {
 
 fn probe(path: &Path) -> Option<Probe> {
     let at = fs::canonicalize(path).ok()?;
-    let [top, roots, remote] = checkout::ASKED.map(|args| git(&at, args));
-    checkout::probed(
-        at.to_str()?,
-        top.as_deref(),
-        roots.as_deref(),
-        remote.as_deref(),
-    )
+    let top = repository_text(&at, &git::Instruction::Root)?;
+    let roots = repository_text(&at, &git::Instruction::RootCommits)?;
+    let remote =
+        repository_text(&at, &git::Instruction::Origin { push: false });
+    git::probed(at.to_str()?, Some(&top), Some(&roots), remote.as_deref())
+}
+
+fn repository_text(at: &Path, request: &git::Instruction) -> Option<String> {
+    let command = git::command(request);
+    let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+    git(at, &args)
 }
 
 /// What Git printed in `at`, if it succeeded, with no `GIT_` variable of

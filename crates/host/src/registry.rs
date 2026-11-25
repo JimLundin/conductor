@@ -45,7 +45,7 @@ use crate::assignment::assigned;
 use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::start::Mode;
-use crate::workspace::GitError;
+use vcs::Error as GitError;
 
 mod instance;
 pub use instance::{

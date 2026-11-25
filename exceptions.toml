@@ -73,11 +73,6 @@ rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"
 
 [[exception]]
-path = "crates/host/src/workspace/plan.rs"
-rule = "box"
-reason = "boxes recursive or large values, which predates the plain-values rule"
-
-[[exception]]
 path = "crates/host/src/fleet/protocol.rs"
 rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"

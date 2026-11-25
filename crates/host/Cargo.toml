@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+vcs = { path = "../vcs" }
 agents = { path = "../agents" }
 data-encoding.workspace = true
 home = { path = "../home" }

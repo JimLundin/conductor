@@ -14,11 +14,12 @@ use home::{Home, IssueId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::workspace::{Kept, Workspace};
+use crate::workspace::Workspace;
+use vcs::Kept;
 
 use crate::assignment::{Assigned, Assignment};
 use crate::prelude::*;
-use crate::workspace::kept;
+use vcs::plan::kept;
 
 const SUMMARY_PROMPT: &str = "Conductor is finishing this session. In a few sentences, sum up what you did on the issue and what is left, as a note for whoever picks it up next. Make no more changes.";
 

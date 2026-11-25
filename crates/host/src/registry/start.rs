@@ -15,7 +15,7 @@ use home::{Home, HomeRefusal, IssueId, ProjectId};
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;
 use crate::session::Choice;
-use crate::workspace::GitError;
+use vcs::Error as GitError;
 
 /// Where a session starts, and the issue it works on, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]

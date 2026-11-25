@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
-use home::checkout::{Probe, Root};
+use home::checkout::Root;
 use home::flow::command::fresh;
 use home::flow::graph::File;
 use home::flow::snapshot::Snapshot;
@@ -51,6 +51,7 @@ use link::log::Completion;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
+use vcs::discovery::Probe;
 
 use crate::Stopped;
 use crate::workspace::{blob, text};
@@ -980,7 +981,7 @@ fn remote_address(data_dir: &Path, remote: &str) -> Result<String, String> {
 }
 
 fn remote_failure(remote: &str, reason: &str) -> String {
-    let display = home::checkout::display(remote);
+    let display = vcs::remote::display(remote);
     if display == remote {
         reason.to_owned()
     } else {
@@ -1020,7 +1021,10 @@ impl Destination {
         let head = text(clone, &["symbolic-ref", "--quiet", "HEAD"])
             .await
             .map_err(|_| String::from("the home checkout is detached"))?;
-        let branch = sync::publishing_branch(&tracking, &head)?;
+        let branch = sync::publishing_branch(
+            home_files::git::tracking_branch(&tracking).as_deref(),
+            &head,
+        )?;
         Ok(Self {
             remote,
             branch,
@@ -1116,7 +1120,10 @@ pub async fn ready_issue_branch(
                 text(checkout, &["worktree", "list", "--porcelain", "-z"])
                     .await
                     .map_err(|error| error.to_string())?;
-            if let Some(path) = host::workspace::checked_out(&listed, branch) {
+            if let Some(path) = vcs::plan::checked_out(
+                &home_files::git::worktrees(&listed),
+                branch,
+            ) {
                 return Err(format!(
                     "the issue branch is checked out at {path}; switch that worktree to another branch before synchronizing"
                 ));
@@ -1282,16 +1289,25 @@ async fn probes(paths: Vec<String>) -> Vec<Probe> {
 async fn probe(path: &str) -> Option<Probe> {
     let canonical = std::fs::canonicalize(path).ok()?;
     let shown = canonical.to_str()?.to_owned();
-    let [asked_top, asked_roots, asked_remote] = home::checkout::ASKED;
-    let top = text(&canonical, asked_top).await.ok();
-    let roots = text(&canonical, asked_roots).await.ok();
-    let remote = text(&canonical, asked_remote).await.ok();
-    home::checkout::probed(
-        &shown,
-        top.as_deref(),
-        roots.as_deref(),
-        remote.as_deref(),
+    let top = crate::workspace::repository_text(
+        &canonical,
+        home_files::git::Instruction::Root,
     )
+    .await
+    .ok()?;
+    let roots = crate::workspace::repository_text(
+        &canonical,
+        home_files::git::Instruction::RootCommits,
+    )
+    .await
+    .ok()?;
+    let remote = crate::workspace::repository_text(
+        &canonical,
+        home_files::git::Instruction::Origin { push: false },
+    )
+    .await
+    .ok();
+    home_files::git::probed(&shown, Some(&top), Some(&roots), remote.as_deref())
 }
 
 fn clone_of(data_dir: &Path) -> PathBuf {

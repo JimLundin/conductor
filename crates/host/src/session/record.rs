@@ -18,7 +18,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use crate::finish::Finished;
 use crate::log::HostSeq;
 use crate::registry::InstanceId;
-use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
+use crate::workspace::{Snapshot, SnapshotDiff, Workspace};
+use vcs::Kept;
 
 /// A fleet-unique ULID assigned by the host, represented as its 128 bits,
 /// whose text, on the client link, in its worktree's and branch's names and in

@@ -22,7 +22,7 @@ use crate::log::{Event, HostSeq};
 use crate::prelude::*;
 use crate::snapshots::Book;
 pub use crate::snapshots::{Compared, SnapshotPlan};
-use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
+use crate::workspace::{Snapshot, SnapshotDiff, Workspace};
 use agents::Output;
 use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{
@@ -34,6 +34,7 @@ use agents::{NativeRequest, NativeTurn, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
+use vcs::Kept;
 
 mod record;
 pub use record::{
@@ -185,8 +186,7 @@ pub enum Call {
     Record(EventKind),
     Snapshot(Workspace),
     Diff(Box<Compared>),
-    /// Remove the workspace by [`crate::workspace::Plan::remove`], keeping its
-    /// branch.
+    /// Remove the workspace, keeping its branch.
     Remove(Workspace),
     /// Send the agent this command; its outcome is [`Input::Agent`].
     Agent(Command),

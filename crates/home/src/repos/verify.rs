@@ -7,8 +7,9 @@
 use alloc::collections::BTreeMap;
 use core::fmt;
 
-use super::{Checkout, Placed};
+use super::Placed;
 use crate::prelude::*;
+use vcs::status::Checkout;
 
 /// One `--verify` to run: a profile's, on a project's checkout.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,17 +143,6 @@ pub fn asks(placed: &[Placed]) -> Vec<String> {
         })
         .flat_map(|project| project.checkouts.iter().cloned())
         .collect()
-}
-
-/// Origin's default branch, from what
-/// `git symbolic-ref --short refs/remotes/origin/HEAD` printed.
-#[must_use]
-pub fn origin_default(symbolic: &str) -> Option<String> {
-    symbolic
-        .trim_end()
-        .strip_prefix("origin/")
-        .filter(|branch| !branch.is_empty())
-        .map(String::from)
 }
 
 enum Provider<'a> {

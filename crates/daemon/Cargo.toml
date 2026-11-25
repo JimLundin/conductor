@@ -9,6 +9,7 @@ publish = false
 layer = "shell"
 
 [dependencies]
+vcs = { path = "../vcs" }
 uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
 argon2 = "0.5.3"

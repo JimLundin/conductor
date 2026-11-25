@@ -115,10 +115,9 @@ mod tests {
     use super::Book;
     use crate::log::{Event, HostSeq};
     use crate::session::{EventKind, SessionDirectory, SessionId};
-    use crate::workspace::{
-        Repository, Snapshot, WorkingCopy, Workspace, Worktree,
-    };
+    use crate::workspace::{Snapshot, Workspace};
     use agents::{ClientName, TurnOutcome};
+    use vcs::{Repository, WorkingCopy, Worktree};
 
     fn event(seq: u64, kind: EventKind) -> Event {
         Event {

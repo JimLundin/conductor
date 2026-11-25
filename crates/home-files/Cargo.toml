@@ -9,6 +9,7 @@ publish = false
 layer = "shell"
 
 [dependencies]
+vcs = { path = "../vcs" }
 home = { path = "../home" }
 
 [lints]

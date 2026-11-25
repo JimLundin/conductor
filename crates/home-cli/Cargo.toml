@@ -13,6 +13,7 @@ name = "home"
 path = "src/main.rs"
 
 [dependencies]
+vcs = { path = "../vcs" }
 home = { path = "../home" }
 home-files = { path = "../home-files" }
 getrandom.workspace = true

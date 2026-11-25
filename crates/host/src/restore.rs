@@ -250,13 +250,12 @@ mod tests {
     use crate::registry::InstanceId;
     use crate::session::SessionDirectory;
     use crate::session::{EventKind, RequestId, Resolution, SessionId};
-    use crate::workspace::{
-        Repository, Snapshot, WorkingCopy, Workspace, Worktree,
-    };
+    use crate::workspace::{Snapshot, Workspace};
     use agents::{
         ClientName, Effort, ModelId, Provider, ToolCallId, ToolKind,
         TurnOutcome,
     };
+    use vcs::{Repository, WorkingCopy, Worktree};
 
     use super::{Created, Recovery, SnapshotPlan, Step, created, events_of};
     use crate::session::Choice;

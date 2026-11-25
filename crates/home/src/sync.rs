@@ -102,7 +102,7 @@ pub fn queue_needs_check(previous: Option<&str>, address: &str) -> bool {
 /// Home identity excludes transient Git user information.
 #[must_use]
 pub fn same_remote(left: &str, right: &str) -> bool {
-    crate::checkout::display(left) == crate::checkout::display(right)
+    vcs::remote::display(left) == vcs::remote::display(right)
 }
 
 /// The branch to publish, derived from origin's default branch and
@@ -110,13 +110,14 @@ pub fn same_remote(left: &str, right: &str) -> bool {
 ///
 /// # Errors
 /// The tracking ref is invalid or the checkout is on a different branch.
-pub fn publishing_branch(tracking: &str, head: &str) -> Result<String, String> {
-    let name = tracking
-        .strip_prefix("refs/remotes/origin/")
+pub fn publishing_branch(
+    default: Option<&str>,
+    head: &str,
+) -> Result<String, String> {
+    let branch = default
         .ok_or_else(|| String::from("invalid home origin default branch"))?;
-    let branch = format!("refs/heads/{name}");
     if head == branch {
-        Ok(branch)
+        Ok(String::from(branch))
     } else {
         Err(String::from("the home checkout is on a different branch"))
     }

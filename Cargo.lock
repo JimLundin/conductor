@@ -910,6 +910,7 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "uuid",
+ "vcs",
  "windows-native-keyring-store",
  "winx",
  "zeroize",
@@ -1607,6 +1608,7 @@ dependencies = [
  "toml",
  "toml_parser",
  "ulid",
+ "vcs",
 ]
 
 [[package]]
@@ -1616,6 +1618,7 @@ dependencies = [
  "getrandom 0.4.3",
  "home",
  "home-files",
+ "vcs",
 ]
 
 [[package]]
@@ -1623,6 +1626,7 @@ name = "home-files"
 version = "0.1.0"
 dependencies = [
  "home",
+ "vcs",
 ]
 
 [[package]]
@@ -1640,6 +1644,7 @@ dependencies = [
  "thiserror 2.0.21",
  "ulid",
  "url",
+ "vcs",
 ]
 
 [[package]]
@@ -4674,6 +4679,15 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "vcs"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "version_check"

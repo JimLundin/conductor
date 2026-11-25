@@ -606,9 +606,9 @@ mod diagnostics_tests {
 
     use agents::Answer;
     use host::session::{RequestId, SessionCommand, SessionId};
-    use host::workspace::Kept;
     use link::Command;
     use link::CommandId;
+    use vcs::Kept;
 
     #[test]
     fn command_and_workspace_diagnostics_omit_payloads() -> anyhow::Result<()> {

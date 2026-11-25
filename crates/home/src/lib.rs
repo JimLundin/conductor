@@ -108,7 +108,7 @@ pub fn view(
         unpushed,
     } = found;
     Home {
-        remote: checkout::display(remote),
+        remote: vcs::remote::display(remote),
         synced: sync.synced,
         sync: sync.status.clone(),
         unpushed,
@@ -119,7 +119,7 @@ pub fn view(
                 id: project.id,
                 name: project.name.clone(),
                 title: project.title.clone(),
-                remote: project.remote.as_deref().map(checkout::display),
+                remote: project.remote.as_deref().map(vcs::remote::display),
                 profiles: project.profiles.clone(),
                 provides: project.provides.clone(),
                 checkouts: checkouts

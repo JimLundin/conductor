@@ -14,7 +14,6 @@
 //! reordered type decodes as the wrong value with no error.
 
 #![cfg_attr(not(test), no_std)]
-#![feature(context_ext, local_waker)]
 
 extern crate alloc;
 

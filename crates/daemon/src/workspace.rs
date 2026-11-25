@@ -5,14 +5,18 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use home_files::git::{self as executable, Output};
 use host::log::HostSeq;
 use host::session::{SessionDirectory, SessionId};
-use host::workspace::{Answer, Output, Plan, Step};
-use host::workspace::{Kept, SnapshotDiff, Workspace};
+mod plan;
+use home_files::git::{Index, Instruction};
+use host::workspace::{SnapshotDiff, Workspace};
+use plan::{Answer, Plan, Step};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Child;
+use vcs::Kept;
 
-pub use host::workspace::GitError;
+pub use vcs::Error as GitError;
 
 fn failure(context: &str, error: &str) -> GitError {
     GitError::failed(context, error)
@@ -107,7 +111,19 @@ async fn execute(
 }
 
 pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
-    run(Plan::git_text("", args), Some(path)).await
+    executable::text(
+        execute(&mut git(path, args), Output::CAPTURE).await?,
+        args.first().copied().unwrap_or("git"),
+    )
+}
+
+pub async fn repository_text(
+    path: &Path,
+    request: Instruction,
+) -> Result<String, GitError> {
+    let command = executable::command(&request);
+    let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+    text(path, &args).await
 }
 
 pub async fn blob(path: &Path, object: &str) -> Result<Vec<u8>, GitError> {
@@ -150,20 +166,54 @@ async fn git_dir(path: &Path) -> Result<PathBuf, GitError> {
     ))
 }
 
+fn head(workspace: &Workspace) -> String {
+    executable::head(&workspace.branch)
+}
+
+fn snapshots(workspace: &Workspace) -> Result<String, GitError> {
+    Ok(format!(
+        "refs/conductor/{}/",
+        host::workspace::owner(workspace)?
+    ))
+}
+
+fn reference(
+    workspace: &Workspace,
+    revision: &str,
+) -> Result<String, GitError> {
+    if !executable::full_commit(revision) {
+        return Err(failure("snapshot", "expected a full commit object ID"));
+    }
+    Ok(format!("{}{revision}", snapshots(workspace)?))
+}
+
 pub async fn create(
     data_dir: &Path,
     original: &SessionDirectory,
     session: SessionId,
     base: Option<&str>,
 ) -> Result<Workspace, GitError> {
-    run(Plan::create(original, session, base), Some(data_dir)).await
+    let request = vcs::command::Prepare {
+        directory: original.0.clone(),
+        name: host::workspace::worktree(session),
+        branch: host::workspace::branch(session),
+        base: base.map(str::to_owned),
+    };
+    run(Plan::create(request), Some(data_dir)).await
 }
 
 pub async fn snapshot(
     workspace: &Workspace,
     session: SessionId,
 ) -> Result<String, GitError> {
-    run(Plan::snapshot(workspace, session), None).await
+    run(
+        Plan::snapshot(vcs::command::Capture {
+            workspace: host::workspace::ownership(workspace),
+            expected_branch: host::workspace::branch(session),
+        }),
+        None,
+    )
+    .await
 }
 
 pub async fn diff(
@@ -172,11 +222,30 @@ pub async fn diff(
     commit: &str,
     previous: &str,
 ) -> Result<SnapshotDiff, GitError> {
-    run(Plan::diff(workspace, snapshot, commit, previous), None).await
+    let compared = run(
+        Plan::diff(vcs::command::Compare {
+            workspace: host::workspace::ownership(workspace),
+            revision: String::from(commit),
+            baseline: String::from(previous),
+        }),
+        None,
+    )
+    .await?;
+    Ok(SnapshotDiff {
+        snapshot,
+        files: compared.files,
+        extent: compared.extent,
+    })
 }
 
 pub async fn remove(workspace: &Workspace) -> Result<Kept, GitError> {
-    let kept = run(Plan::remove(workspace), None).await?;
+    let kept = run(
+        Plan::remove(vcs::command::PreserveAndRemove {
+            workspace: host::workspace::ownership(workspace),
+        }),
+        None,
+    )
+    .await?;
     trace_removed(&workspace.branch, &kept);
     Ok(kept)
 }
@@ -195,9 +264,12 @@ pub async fn landing_receipt(
     issue: &str,
     attempt: HostSeq,
 ) -> Result<Option<u64>, String> {
-    run(Plan::landing_receipt(workspace, issue, attempt), None)
-        .await
-        .map_err(|error| error.to_string())
+    run(
+        Plan::landing_receipt(integration(workspace, issue, attempt)),
+        None,
+    )
+    .await
+    .map_err(|error| error.to_string())
 }
 
 pub async fn land(
@@ -205,9 +277,21 @@ pub async fn land(
     issue: &str,
     attempt: HostSeq,
 ) -> Result<u64, String> {
-    run(Plan::land(workspace, issue, attempt), None)
+    run(Plan::land(integration(workspace, issue, attempt)), None)
         .await
         .map_err(|error| error.to_string())
+}
+
+fn integration(
+    workspace: &Workspace,
+    issue: &str,
+    attempt: HostSeq,
+) -> vcs::command::Integrate {
+    vcs::command::Integrate {
+        workspace: host::workspace::ownership(workspace),
+        target: String::from(issue),
+        attempt: vcs::command::IntegrationId(attempt.0.to_string()),
+    }
 }
 
 pub async fn push_branch(
@@ -248,12 +332,9 @@ struct Runner<'a> {
 impl Runner<'_> {
     async fn step(&mut self, step: Step) -> Result<Answer, GitError> {
         match step {
-            Step::Git {
-                path,
-                args,
-                index,
-                identity,
-            } => self.git(&path, &args, index, identity).await,
+            Step::Repository { path, request } => {
+                self.repository(&path, request).await
+            }
             Step::OpenIndex(directory) => {
                 self.scratch = Some(Scratch::create(Path::new(&directory))?);
                 Ok(Answer::Done)
@@ -262,18 +343,36 @@ impl Runner<'_> {
                 self.scratch = None;
                 Ok(Answer::Done)
             }
-            Step::LandRefs {
-                repository,
-                issue,
-                commit,
-                old,
-                receipt,
-            } => {
-                Self::land_refs(&repository, &issue, &commit, &old, &receipt)
-                    .await
-            }
             filesystem => self.filesystem(filesystem),
         }
+    }
+
+    async fn repository(
+        &self,
+        path: &str,
+        request: Instruction,
+    ) -> Result<Answer, GitError> {
+        let output = match &request {
+            Instruction::Integrate {
+                branch,
+                commit,
+                expected,
+                receipt,
+            } => {
+                Self::land_refs(path, branch, commit, expected, receipt).await?
+            }
+            _ => {
+                let command = executable::command(&request);
+                self.git(
+                    path,
+                    &command.args,
+                    command.index == Index::Scratch,
+                    command.identity,
+                )
+                .await?
+            }
+        };
+        Ok(Answer::Repository(executable::reply(&request, output)))
     }
 
     async fn land_refs(
@@ -282,7 +381,7 @@ impl Runner<'_> {
         commit: &str,
         old: &str,
         receipt: &str,
-    ) -> Result<Answer, GitError> {
+    ) -> Result<Output, GitError> {
         let updates = format!(
             "update {issue}\0{commit}\0{old}\0create {receipt}\0{commit}\0"
         );
@@ -308,7 +407,7 @@ impl Runner<'_> {
         .map_err(|error| {
             failure("git update-ref timeout", &error.to_string())
         })??;
-        Ok(Answer::Git(output))
+        Ok(output)
     }
 
     async fn git(
@@ -317,7 +416,7 @@ impl Runner<'_> {
         args: &[String],
         index: bool,
         identity: bool,
-    ) -> Result<Answer, GitError> {
+    ) -> Result<Output, GitError> {
         let cwd = self.command_path(path)?;
         let words = args.iter().map(String::as_str).collect::<Vec<_>>();
         let mut command = git(cwd, &words);
@@ -335,9 +434,7 @@ impl Runner<'_> {
                 .env("GIT_COMMITTER_NAME", "Conductor")
                 .env("GIT_COMMITTER_EMAIL", "conductor@localhost");
         }
-        execute(&mut command, Output::CAPTURE)
-            .await
-            .map(Answer::Git)
+        execute(&mut command, Output::CAPTURE).await
     }
 
     fn command_path<'a>(&'a self, path: &'a str) -> Result<&'a Path, GitError> {
@@ -398,10 +495,7 @@ impl Runner<'_> {
                 write_owner(Path::new(&directory), &marker)
                     .map(|()| Answer::Done)
             }
-            Step::Git { .. }
-            | Step::LandRefs { .. }
-            | Step::OpenIndex(_)
-            | Step::CloseIndex => {
+            Step::Repository { .. } | Step::OpenIndex(_) | Step::CloseIndex => {
                 Err(failure("workspace", "unexpected filesystem step"))
             }
         }
@@ -478,8 +572,9 @@ mod tests {
     };
     use host::log::HostSeq;
     use host::session::SessionId;
-    use host::workspace::{DiffExtent, FilePatch, Kept, Workspace, Worktree};
+    use host::workspace::Workspace;
     use std::path::{Path, PathBuf};
+    use vcs::{DiffExtent, FilePatch, Kept, Worktree};
 
     struct Repository {
         root: PathBuf,
@@ -569,7 +664,7 @@ mod tests {
             diff(&workspace, HostSeq(15), &completed, &completed)
                 .await?
                 .files,
-            Vec::<host::workspace::SnapshotFile>::new()
+            Vec::<vcs::SnapshotFile>::new()
         );
         let foreign_id = SessionId(ulid::Ulid::new().into());
         let foreign =
@@ -586,8 +681,7 @@ mod tests {
                 .is_err()
         );
         let _ = text(root, &["reset", "--hard", &initial]).await?;
-        let reference =
-            format!("{}{completed}", host::workspace::snapshots(&workspace)?);
+        let reference = format!("{}{completed}", super::snapshots(&workspace)?);
         assert_eq!(
             text(root, &["rev-parse", "--verify", &reference]).await?,
             completed
@@ -648,14 +742,14 @@ mod tests {
         std::fs::write(root.join("new.txt"), "left uncommitted\n")?;
         assert_eq!(remove(&workspace).await?, Kept::Pushed { remote: url });
         assert!(!root.exists());
-        let branch = host::workspace::head(&workspace);
+        let branch = super::head(&workspace);
         let pushed = text(&remote, &["rev-parse", &branch]).await?;
         assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, pushed);
         assert_eq!(
             text(&remote, &["show", &format!("{pushed}:new.txt")]).await?,
             "left uncommitted"
         );
-        let refs = host::workspace::snapshots(&workspace)?;
+        let refs = super::snapshots(&workspace)?;
         assert_eq!(
             text(
                 &repo.source,
@@ -681,7 +775,7 @@ mod tests {
         let workspace = create(&repo.data, &original, id, None).await?;
         let head = text(&repo.source, &["rev-parse", "HEAD"]).await?;
         assert_eq!(remove(&workspace).await?, Kept::Local);
-        let branch = host::workspace::head(&workspace);
+        let branch = super::head(&workspace);
         assert_eq!(text(&repo.source, &["rev-parse", &branch]).await?, head);
         assert!(!Path::new(&workspace.worktree.0).exists());
         Ok(())
@@ -739,7 +833,7 @@ mod tests {
         std::fs::write(&file, "staged only\n")?;
         let _ = text(root, &["add", "deleted.txt"]).await?;
         std::fs::write(&file, "keep\n")?;
-        let refs = host::workspace::snapshots(&workspace)?;
+        let refs = super::snapshots(&workspace)?;
         let list_refs =
             ["for-each-ref", "--format=%(objectname) %(refname)", &refs];
         let before = text(&repo.source, &list_refs).await?;

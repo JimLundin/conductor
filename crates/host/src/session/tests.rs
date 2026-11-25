@@ -4,8 +4,7 @@ use crate::session::{
     EventKind, RequestId, Resolution, SessionId, SessionRefusal, SessionResult,
     SubagentEvent,
 };
-use crate::workspace::{Kept, Snapshot, Workspace};
-use crate::workspace::{Repository, WorkingCopy, Worktree};
+use crate::workspace::{Snapshot, Workspace};
 use agents::Output;
 use agents::runtime::{Command, Directory, Outcome, Start, Started};
 use agents::{
@@ -15,6 +14,8 @@ use agents::{
     ToolOutcome, ToolPhase, TurnOutcome,
 };
 use agents::{NativeRequest, NativeTurn, Reply, Step};
+use vcs::Kept;
+use vcs::{Repository, WorkingCopy, Worktree};
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
 

@@ -13,12 +13,12 @@ use crate::registry::{
 use crate::session::{
     EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
 };
-use crate::workspace::{Repository, WorkingCopy, Worktree};
 use agents::{
     Account, Auth, ClientName, CloseReason, Credential, CredentialForm, Effort,
     Field, FieldKind, ModelChoice, ModelId, Models, Provider, ProviderInfo,
 };
 use home::{CheckoutLocation, Home, HomeRefusal, HomeSync, ProjectId};
+use vcs::{Repository, WorkingCopy, Worktree};
 
 use super::{
     AccountAdoption, Change, Effect, InHome, Job, Launch, Launcher, OwnSignIn,
@@ -28,7 +28,7 @@ use super::{
 };
 use crate::Note;
 use crate::session::Choice;
-use crate::workspace::GitError;
+use vcs::Error as GitError;
 
 type Test = Registry<&'static str, u8, &'static str>;
 type Seen = Vec<Effect<&'static str, &'static str>>;
