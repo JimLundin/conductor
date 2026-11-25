@@ -5,8 +5,12 @@ use crate::issue::{
 use crate::{DRAWS, Draws, IssueId, ProjectId};
 
 use super::{
-    Asked, Command, Context, Edit, Local, Outcome, asked as dispatched,
-    command, fresh, homeless, run, stamp, write,
+    Asked, CanvasWrite, Command, Context, Edit, Given, Local, Need, Outcome,
+    Source, Wanted, asked as dispatched, command, fresh, homeless, run, stamp,
+    write,
+};
+use crate::canvas::{
+    BadName, Block, Canvas, CanvasFile, CanvasKey, CanvasName,
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
@@ -298,7 +302,10 @@ fn a_project_is_named_by_its_name_or_its_id() {
 fn a_body_from_a_file_asks_the_shell_for_the_file() {
     let inputs = home();
     let from_file = asked(&inputs, &format!("issue body {TASK} --file why.md"));
-    assert_eq!(from_file.file(), Some("why.md"));
+    assert_eq!(
+        from_file.needs(),
+        Some(Need::Read(Source::File(String::from("why.md"))))
+    );
     assert_eq!(
         from_file,
         Command::BodyFrom {
@@ -306,7 +313,7 @@ fn a_body_from_a_file_asks_the_shell_for_the_file() {
             path: String::from("why.md"),
         }
     );
-    assert_eq!(asked(&inputs, "check").file(), None);
+    assert_eq!(asked(&inputs, "check").needs(), None);
 }
 
 #[test]
@@ -354,7 +361,7 @@ fn a_body_from_a_file_is_the_text_the_shell_read() {
         || asked(&inputs, &format!("issue body {TASK} --file why.md"));
     let written = run(
         from_file(),
-        Some(Ok(String::from("Read from a file.\n"))),
+        Some(Given::Text(Ok(String::from("Read from a file.\n")))),
         &home,
         &context(),
     );
@@ -365,7 +372,7 @@ fn a_body_from_a_file_is_the_text_the_shell_read() {
     );
     let unread = run(
         from_file(),
-        Some(Err(String::from("why.md: not found"))),
+        Some(Given::Text(Err(String::from("why.md: not found")))),
         &home,
         &context(),
     );
@@ -844,4 +851,241 @@ fn repos_and_skills_are_done_in_the_home_s_folder_and_the_rest_on_its_issues() {
     assert_eq!(local("repos wipe"), Asked::Flow(Command::Usage));
     assert_eq!(local("repos sync --verify"), Asked::Flow(Command::Usage));
     assert_eq!(local("check"), Asked::Flow(Command::Check));
+}
+
+const PROSE: &str = r#"{"title": "Why a store", "blocks": [{"prose": {"text": "The core decides; the store **keeps**."}}]}"#;
+
+fn canvas_key(name: &str) -> Result<CanvasKey, BadName> {
+    Ok(CanvasKey {
+        project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
+        issue: id(TASK),
+        name: CanvasName::parse(name)?,
+    })
+}
+
+fn why_a_store() -> Canvas {
+    Canvas {
+        title: String::from("Why a store"),
+        blocks: Vec::from([Block::Prose {
+            text: String::from("The core decides; the store **keeps**."),
+        }]),
+    }
+}
+
+fn given(line: &str, supplied: Given) -> Outcome {
+    let inputs = home();
+    run(
+        asked(&inputs, line),
+        Some(supplied),
+        &Snapshot::of(inputs.clone()),
+        &context(),
+    )
+}
+
+#[test]
+fn a_canvas_put_reads_its_json_from_the_file_or_else_from_stdin()
+-> Result<(), BadName> {
+    let inputs = home();
+    assert_eq!(
+        asked(
+            &inputs,
+            &format!("canvas put {TASK} why-a-store --file why.json")
+        ),
+        Command::CanvasPut {
+            key: canvas_key("why-a-store")?,
+            from: Source::File(String::from("why.json")),
+        }
+    );
+    assert_eq!(
+        asked(&inputs, &format!("canvas put {TASK} why-a-store")).needs(),
+        Some(Need::Read(Source::Stdin))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_put_on_an_issue_writes_the_canvas_under_its_key_stamped_with_when_and_by_whom()
+-> Result<(), BadName> {
+    let outcome = given(
+        &format!("canvas put {TASK} why-a-store"),
+        Given::Text(Ok(String::from(PROSE))),
+    );
+    assert_eq!(
+        (outcome.failed, outcome.writes, outcome.canvases),
+        (
+            false,
+            Vec::new(),
+            Vec::from([CanvasWrite {
+                key: canvas_key("why-a-store")?,
+                file: CanvasFile {
+                    written: NOW,
+                    by: String::from("laptop·claude"),
+                    canvas: why_a_store(),
+                },
+            }])
+        )
+    );
+    assert_eq!(
+        outcome.output,
+        format!("wrote canvas why-a-store of home/{TASK}\n")
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_put_on_an_unknown_issue_with_a_bad_name_or_json_that_isnt_a_canvas_writes_nothing_and_says_why()
+ {
+    let home = Snapshot::of(home());
+    let put = |words: &[&str], text: &str| {
+        let args: Vec<String> =
+            words.iter().copied().map(String::from).collect();
+        run(
+            command(&args, &home, None),
+            Some(Given::Text(Ok(String::from(text)))),
+            &home,
+            &context(),
+        )
+    };
+    let cases = [
+        (
+            put(&["canvas", "put", "0tm7zzzz", "why"], PROSE),
+            String::from("home: no issue is called 0tm7zzzz\n"),
+        ),
+        (
+            put(&["canvas", "put", TASK, "Design Tree"], PROSE),
+            String::from(
+                "home: `Design Tree` isn't a canvas name: name it with lowercase words joined by `-`, such as `design-tree`\n",
+            ),
+        ),
+        (
+            put(&["canvas", "put", TASK, "why"], r#"{"title": "t"}"#),
+            format!(
+                "home: canvas why of home/{TASK}: not a canvas: missing field `blocks` at line 1 column 14\n"
+            ),
+        ),
+    ];
+    for (outcome, said) in cases {
+        assert_eq!(
+            (
+                outcome.failed,
+                outcome.output,
+                outcome.writes,
+                outcome.canvases
+            ),
+            (true, said, Vec::new(), Vec::new())
+        );
+    }
+    let unread = given(
+        &format!("canvas put {TASK} why --file why.json"),
+        Given::Text(Err(String::from("why.json: not found"))),
+    );
+    assert_eq!(
+        (unread.failed, unread.output, unread.canvases),
+        (
+            true,
+            String::from("home: why.json: not found\n"),
+            Vec::new()
+        )
+    );
+}
+
+#[test]
+fn a_canvas_show_asks_the_store_for_the_named_canvas_or_every_canvas_of_the_issue()
+-> Result<(), BadName> {
+    let inputs = home();
+    let wanted = |name| Wanted {
+        project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
+        issue: id(TASK),
+        name,
+    };
+    assert_eq!(
+        asked(&inputs, &format!("canvas show {TASK} why-a-store")).needs(),
+        Some(Need::Canvases(wanted(Some(CanvasName::parse(
+            "why-a-store"
+        )?))))
+    );
+    assert_eq!(
+        asked(&inputs, &format!("canvas show {TASK}")).needs(),
+        Some(Need::Canvases(wanted(None)))
+    );
+    assert_eq!(
+        asked(&inputs, "canvas show 0tm7zzzz"),
+        Command::Wrong(String::from("no issue is called 0tm7zzzz"))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
+-> Result<(), BadName> {
+    let kept = |name: &str, title: &str| {
+        Ok::<_, BadName>((
+            CanvasName::parse(name)?,
+            CanvasFile {
+                written: NOW,
+                by: String::from("laptop·claude"),
+                canvas: Canvas {
+                    title: String::from(title),
+                    ..why_a_store()
+                },
+            },
+        ))
+    };
+    let one = given(
+        &format!("canvas show {TASK} why-a-store"),
+        Given::Canvases(Ok(Vec::from([kept("why-a-store", "Why a store")?]))),
+    );
+    assert_eq!(
+        (one.failed, one.output),
+        (
+            false,
+            String::from(
+                "# Why a store\n\nThe core decides; the store **keeps**.\n"
+            )
+        )
+    );
+    let every = given(
+        &format!("canvas show {TASK}"),
+        Given::Canvases(Ok(Vec::from([
+            kept("first", "First")?,
+            kept("second", "Second")?,
+        ]))),
+    );
+    assert_eq!(
+        every.output,
+        "# First\n\nThe core decides; the store **keeps**.\n\n\
+         # Second\n\nThe core decides; the store **keeps**.\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
+    let missing = given(
+        &format!("canvas show {TASK} gone"),
+        Given::Canvases(Ok(Vec::new())),
+    );
+    assert_eq!(
+        (missing.failed, missing.output),
+        (
+            true,
+            format!("home: no canvas is called gone on home/{TASK}\n")
+        )
+    );
+    let none = given(
+        &format!("canvas show {TASK}"),
+        Given::Canvases(Ok(Vec::new())),
+    );
+    assert_eq!(
+        (none.failed, none.output),
+        (false, format!("home/{TASK} has no canvases\n"))
+    );
+    let failing = given(
+        &format!("canvas show {TASK}"),
+        Given::Canvases(Err(String::from("projects: denied"))),
+    );
+    assert_eq!(
+        (failing.failed, failing.output),
+        (true, String::from("home: projects: denied\n"))
+    );
 }

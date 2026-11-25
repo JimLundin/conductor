@@ -6,6 +6,7 @@
 //! [`CanvasKey`].
 
 use alloc::borrow::Cow;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
@@ -42,6 +43,23 @@ impl Canvas {
     /// The text isn't a canvas's JSON.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
         decoded(text)
+    }
+
+    #[must_use]
+    pub fn markdown(&self) -> String {
+        core::iter::once(format!("# {}\n", self.title.trim()))
+            .chain(self.blocks.iter().map(Block::markdown))
+            .collect::<Vec<String>>()
+            .join("\n")
+    }
+}
+
+impl Block {
+    #[must_use]
+    pub fn markdown(&self) -> String {
+        match self {
+            Self::Prose { text } => format!("{}\n", text.trim()),
+        }
     }
 }
 
