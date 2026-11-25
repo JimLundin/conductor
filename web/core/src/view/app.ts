@@ -50,8 +50,10 @@ const sessionRow = (session: Session, route: Route, address: Address): Row => {
   };
 };
 
-const pairingError = (paired: Result.Result<HostKey, TicketError>): string | undefined =>
-  Result.isFailure(paired) ? describeTicketError(paired.failure) : undefined;
+const pairingError = Result.match({
+  onFailure: describeTicketError,
+  onSuccess: (): undefined => undefined,
+});
 const pairingNotice = (
   error: string | undefined,
   notice: TicketError | undefined,
