@@ -1,0 +1,43 @@
+[package]
+name = "github-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[package.metadata.standards]
+layer = "shell"
+
+[dependencies]
+home-files = { path = "../home-files" }
+github = { path = "../github" }
+home = { path = "../home" }
+project-runtime = { path = "../project-runtime" }
+octocrab = { version = "=0.54.9", default-features = false, features = ["default-client", "rustls", "rustls-ring", "jwt-rust-crypto", "retry", "timeout"] }
+secrecy = { version = "0.10", features = ["serde"] }
+serde.workspace = true
+toml = { version = "1.1.2", default-features = false, features = ["parse", "serde"] }
+data-encoding.workspace = true
+percent-encoding = "2"
+zeroize = "1.8.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+rustix = { version = "1", features = ["process"] }
+
+[target.'cfg(windows)'.dependencies]
+keyring-core = "1"
+windows-native-keyring-store = { version = "1.1", default-features = false }
+
+[dev-dependencies]
+serde_json.workspace = true
+anyhow.workspace = true
+tokio = { workspace = true, features = ["net"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+tempfile = "3.27.0"
+openssl = "0.10"
+
+[lints]
+workspace = true

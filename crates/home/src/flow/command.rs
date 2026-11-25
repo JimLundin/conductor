@@ -21,6 +21,8 @@ use crate::prelude::*;
 /// What `home` says alone: every command and what it means.
 pub const USAGE: &str = "usage: home <command>, from anywhere in the home
 
+  home project access <project> [host-data-dir]
+      Checks the configured credential's access to the project repository.
   home project capabilities <project>
       Validates backend configuration and shows available project operations.
   home project operation-status <handle> [--data-dir <dir>]

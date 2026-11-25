@@ -1,8 +1,10 @@
+use alloc::format;
 use alloc::{
     collections::BTreeMap,
     string::{String, ToString},
     vec::Vec,
 };
+use home::backend::{Backend, Selection};
 use home::flow::Flow;
 use serde::{Deserialize, Serialize};
 
@@ -75,3 +77,53 @@ pub fn load(text: &str, flow: &Flow) -> Result<Configuration, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// Finds a selected project and validates its configuration before contacting GitHub.
+///
+/// # Errors
+/// The project is unknown or its configuration cannot map the issue flow.
+pub fn selected<'a>(
+    configuration: &'a home::flow::snapshot::Snapshot,
+    name: &str,
+) -> Result<&'a home::project::Project, String> {
+    let project = configuration.project(name).ok_or_else(|| {
+        configuration
+            .listing_problems()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("unknown project {name:?}"))
+    })?;
+    project
+        .backends
+        .validate()
+        .map_err(|refusal| refusal.label())?;
+    [
+        Backend::VersionControl,
+        Backend::IssueTracker,
+        Backend::RepositoryHosting,
+    ]
+    .into_iter()
+    .filter_map(|backend| {
+        project
+            .backends
+            .selected(backend)
+            .map(|selection| (backend, selection))
+    })
+    .try_for_each(|(backend, selection)| {
+        validate(backend, selection, configuration.flow())
+    })?;
+    Ok(project)
+}
+
+fn validate(
+    backend: Backend,
+    selection: &Selection,
+    flow: Result<&Flow, &str>,
+) -> Result<(), String> {
+    match (backend, selection.adapter.as_str()) {
+        (Backend::IssueTracker, crate::ADAPTER) => {
+            load(&selection.options, flow?).map(drop)
+        }
+        _ => Ok(()),
+    }
+}

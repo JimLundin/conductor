@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+thiserror.workspace = true
 home = { path = "../home" }
 serde.workspace = true
 toml = { version = "1.1.2", default-features = false, features = ["parse", "serde"] }

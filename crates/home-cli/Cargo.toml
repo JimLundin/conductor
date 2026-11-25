@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json.workspace = true
+github-api = { path = "../github-api" }
+tokio.workspace = true
 github = { path = "../github" }
 project-runtime = { path = "../project-runtime" }
 vcs = { path = "../vcs" }

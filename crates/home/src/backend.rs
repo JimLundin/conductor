@@ -378,3 +378,23 @@ impl Refusal {
         }
     }
 }
+
+#[must_use]
+pub fn access_requested(args: &[String]) -> Option<(&str, Option<&str>)> {
+    let [group, command, project, extra @ ..] = args else {
+        return None;
+    };
+    if group != "project" || command != "access" {
+        return None;
+    }
+    match extra {
+        [] => Some((project, None)),
+        [dir] => Some((project, Some(dir))),
+        _ => None,
+    }
+}
+
+#[must_use]
+pub fn configuration_query(args: &[String]) -> bool {
+    requested(args).is_some() || access_requested(args).is_some()
+}

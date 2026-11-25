@@ -29,6 +29,11 @@ enum Cmd {
         about = "Serve this host's sessions over iroh and print a join ticket"
     )]
     Host(HostArgs),
+    #[command(about = "Inspect a project in this host's home checkout")]
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
     #[command(about = "Manage the local fleet root and its membership")]
     Fleet(FleetArgs),
     #[command(about = "Sign the public pairing request shown by a browser")]
@@ -49,6 +54,18 @@ enum Cmd {
         about = "Sign an instance's CLI in on this terminal, into the instance's private home: `claude auth login --claudeai` for a Claude subscription, `codex login --device-auth` for `ChatGPT` by device code. Until the app can sign in (docs/roadmap.md)"
     )]
     Login(LoginArgs),
+}
+
+#[derive(Subcommand)]
+enum ProjectCommand {
+    #[command(
+        about = "Check GitHub repository access with this host's configured credential"
+    )]
+    Access {
+        project: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Parser)]
@@ -164,6 +181,24 @@ async fn main() -> anyhow::Result<()> {
                 projects: args.projects,
             };
             daemon::serve(hosting, plugins(args.clis, args.models)).await
+        }
+        Cmd::Project {
+            command: ProjectCommand::Access { project, data_dir },
+        } => {
+            let data = project_runtime::data_dir_or_default(data_dir)?;
+            let (report, code) = github_api::project_access(
+                &daemon::home_checkout(&data),
+                &project,
+                &data,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            std::io::Write::write_all(
+                &mut std::io::stdout().lock(),
+                report.as_bytes(),
+            )?;
+            anyhow::ensure!(code == 0, "some repository reads are unavailable");
+            Ok(())
         }
         Cmd::Fleet(args) => fleet(args).await,
         Cmd::Pair { request, data_dir } => {

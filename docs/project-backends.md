@@ -60,3 +60,38 @@ Access to statuses does not imply access to required checks. Hosted-result
 requests retain their exact revision. Workspace methods use `vcs` values
 for preparation, capture, comparison, integration and preservation; Git
 commands, indexes and object operations do not cross this interface.
+
+Run `home project access <project> [host-data-dir]` to check which
+GitHub endpoints the configured credentials can read. It looks up the
+repository and reads one page of issues, statuses, checks or workflow
+runs according to the selected backends. The corresponding host command,
+`orchestrator project access <project> [--data-dir <dir>]`, uses the
+home checkout synchronized by that host. It reports each access failure
+and exits unsuccessfully if any probe fails. The capability query above
+reports which project operations the installed adapters can execute.
+
+On Unix the host reads `project-credentials.toml` in its data directory.
+The process user must own this regular file and restrict its permissions
+to that user. Each key names a project credential reference and binds
+its credential to a single GitHub repository. For example, this
+host-only file declares a fine-grained token.
+
+```toml
+["host/github-issues"]
+repository = "team/issues"
+
+["host/github-issues".source]
+kind = "fine_grained"
+token = "<token>"
+```
+
+An optional `expires_unix` on the entry declares its expiry in Unix
+seconds. A classic token uses `kind = "classic"`. An installation uses
+`kind = "installation"` with numeric `app_id` and `installation_id` and
+an RSA PEM `private_key`. Git over HTTPS acquires its token from the
+same credential. A Git SSH credential uses `kind = "ssh_agent"` with
+the pinned server key blob in base64 as `host_key`. It uses the agent
+with the `git` user on `github.com`. On Windows, the same entry lives in
+Windows Credential Manager under the service `Conductor project credential`.
+The account is the canonical host data directory, a vertical bar and the
+credential reference. Its secret is the entry's TOML with a `[source]` table.

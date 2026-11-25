@@ -27,8 +27,8 @@ fn main() -> ExitCode {
 }
 
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
-    if let Some(project) = home::backend::requested(args) {
-        return project::capabilities(home, project);
+    if let Some(answer) = project::answer(home, args) {
+        return answer;
     }
     let loaded = home_files::read(home);
     let snapshot = &loaded.snapshot;
@@ -57,7 +57,7 @@ fn issues(
 fn root(args: &[String]) -> Option<PathBuf> {
     root_from(
         &env::current_dir().ok()?,
-        home::backend::requested(args).is_some(),
+        home::backend::configuration_query(args),
     )
 }
 

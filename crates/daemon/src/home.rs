@@ -1372,7 +1372,9 @@ async fn probe(path: &str) -> Option<Probe> {
     home_files::git::probed(&shown, Some(&top), Some(&roots), remote.as_deref())
 }
 
-fn clone_of(data_dir: &Path) -> PathBuf {
+/// The host's synchronized home checkout within its data directory.
+#[must_use]
+pub fn clone_of(data_dir: &Path) -> PathBuf {
     data_dir.join("home-repo")
 }
 

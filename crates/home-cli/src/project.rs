@@ -1,7 +1,6 @@
 use std::path::Path;
 
-use home::backend::{Backend, Selection};
-use home::flow::Flow;
+use github::configuration::selected;
 use home::flow::snapshot::Snapshot;
 use project_runtime::Registry;
 
@@ -18,49 +17,40 @@ fn describe(
     name: &str,
     registry: &Registry,
 ) -> Result<String, String> {
-    let project = configuration.project(name).ok_or_else(|| {
-        configuration
-            .listing_problems()
-            .first()
-            .cloned()
-            .unwrap_or_else(|| format!("unknown project {name:?}"))
-    })?;
-    project
-        .backends
-        .validate()
-        .map_err(|refusal| refusal.label())?;
-    [
-        Backend::VersionControl,
-        Backend::IssueTracker,
-        Backend::RepositoryHosting,
-    ]
-    .into_iter()
-    .filter_map(|backend| {
-        project
-            .backends
-            .selected(backend)
-            .map(|selection| (backend, selection))
-    })
-    .try_for_each(|(backend, selection)| {
-        validate(backend, selection, configuration.flow())
-    })?;
+    let project = selected(configuration, name)?;
     Ok(home::backend::report(
         &project.name,
         &registry.capabilities(&project.backends),
     ))
 }
 
-fn validate(
-    backend: Backend,
-    selection: &Selection,
-    flow: Result<&Flow, &str>,
-) -> Result<(), String> {
-    match (backend, selection.adapter.as_str()) {
-        (Backend::IssueTracker, github::ADAPTER) => {
-            github::configuration::load(&selection.options, flow?).map(drop)
-        }
-        _ => Ok(()),
+pub fn access(root: &Path, project: &str, data: Option<&str>) -> (String, u8) {
+    access_report(root, project, data)
+        .unwrap_or_else(|problem| (format!("home: {problem}\n"), 1))
+}
+
+fn access_report(
+    root: &Path,
+    project: &str,
+    data: Option<&str>,
+) -> Result<(String, u8), String> {
+    let host_data = project_runtime::data_dir_or_default(
+        data.map(std::path::PathBuf::from),
+    )
+    .map_err(|err| err.to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| err.to_string())?;
+    runtime.block_on(github_api::project_access(root, project, &host_data))
+}
+
+pub fn answer(root: &Path, args: &[String]) -> Option<(String, u8)> {
+    if let Some(project) = home::backend::requested(args) {
+        return Some(capabilities(root, project));
     }
+    home::backend::access_requested(args)
+        .map(|(project, data)| access(root, project, data))
 }
 
 #[cfg(test)]

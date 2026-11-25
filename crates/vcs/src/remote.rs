@@ -67,3 +67,30 @@ pub fn normal(remote: &str) -> String {
         },
     )
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Challenge {
+    Username,
+    Agent,
+    Token,
+    Refuse,
+}
+
+#[must_use]
+pub fn challenge(
+    expected: &str,
+    requested: &str,
+    ssh: bool,
+    types: (bool, bool, bool),
+    attempt: u8,
+) -> Challenge {
+    if expected != requested || attempt > 2 {
+        return Challenge::Refuse;
+    }
+    match (ssh, types) {
+        (true, (true, _, _)) => Challenge::Username,
+        (true, (_, true, _)) => Challenge::Agent,
+        (false, (_, _, true)) => Challenge::Token,
+        _ => Challenge::Refuse,
+    }
+}
