@@ -1290,11 +1290,11 @@ pub fn models(result: Value) -> serde_json::Result<Models> {
                 id: ModelId(m.id),
                 name: m.display_name,
                 description: m.description,
-                efforts: m
-                    .supported_reasoning_efforts
-                    .iter()
-                    .filter_map(|e| Effort::parse(&e.reasoning_effort))
-                    .collect(),
+                efforts: Effort::listed(
+                    m.supported_reasoning_efforts
+                        .iter()
+                        .map(|e| e.reasoning_effort.as_str()),
+                ),
             })
             .collect(),
     })

@@ -870,12 +870,12 @@ pub fn models(initialize: &Value) -> Models {
                 id: ModelId(row.value),
                 name: row.display_name,
                 description: row.description,
-                efforts: row
-                    .supported_effort_levels
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|level| Effort::parse(level))
-                    .collect(),
+                efforts: Effort::listed(
+                    row.supported_effort_levels
+                        .iter()
+                        .flatten()
+                        .map(String::as_str),
+                ),
             })
             .collect(),
         default,
