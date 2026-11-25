@@ -72,11 +72,8 @@ pub enum Effect {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Log {
-    /// The stored events, in seq order.
     events: Vec<Event>,
-    /// The open command's events, published when it commits.
     staged: Vec<Event>,
-    /// Whether a command's transaction is open, so its events wait for it.
     open: bool,
 }
 
@@ -245,7 +242,6 @@ impl Log {
     }
 }
 
-/// A write in a transaction of its own.
 fn alone(write: Write) -> Vec<Effect> {
     Vec::from([Effect::Open, Effect::Store(write), Effect::Commit])
 }

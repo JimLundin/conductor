@@ -103,8 +103,6 @@ impl InstanceId {
     }
 }
 
-/// The provider and the account, as a person reads it: `claude
-/// me@example.com`, or `claude` for its own sign-in.
 impl fmt::Display for InstanceId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.account {

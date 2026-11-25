@@ -122,8 +122,6 @@ pub fn check(home: &Snapshot) -> Report {
     Report { findings }
 }
 
-/// What the flow's sections and rules say of `issue` among `issues`,
-/// weighing `moving` when a move is being made.
 pub(crate) fn of_issue(
     flow: &Flow,
     issues: &[&Issue],
@@ -156,8 +154,6 @@ pub(crate) fn of_issue(
     findings
 }
 
-/// Each of the flow's rules that `issue` among `issues` breaks, weighing
-/// `moving`, with why.
 pub(crate) fn broken<'a>(
     flow: &'a Flow,
     issues: &'a [&'a Issue],
@@ -172,7 +168,6 @@ pub(crate) fn broken<'a>(
     })
 }
 
-/// A profile that more than one project provides, once each.
 fn providers(projects: &[crate::project::Project]) -> Vec<String> {
     let mut by_profile: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for project in projects {
@@ -213,7 +208,6 @@ fn explain(failure: &Failure) -> String {
     )
 }
 
-/// The predicate as the flow writes it.
 #[must_use]
 fn describe(predicate: &Predicate) -> String {
     let list = |word: &str, parts: &[Predicate]| {

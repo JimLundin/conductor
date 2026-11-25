@@ -18,7 +18,6 @@ pub fn plugin(settings: Settings) -> Plugin {
     }
 }
 
-/// Claude's Linux builds are for GNU libc and musl only.
 fn pin() -> Result<Pin, InstallError> {
     if cfg!(target_os = "linux")
         && !cfg!(any(target_env = "gnu", target_env = "musl"))

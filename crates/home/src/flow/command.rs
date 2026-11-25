@@ -210,7 +210,6 @@ pub fn homeless() -> (String, u8) {
     )
 }
 
-/// A reason as the command line says it.
 fn refusal(reason: &str) -> String {
     format!("home: {reason}\n")
 }
@@ -335,7 +334,6 @@ pub fn command(
     }
 }
 
-/// The issue a command line's word names.
 fn named(word: &str) -> Result<IssueId, String> {
     IssueId::parse(word).ok_or_else(|| format!("no issue is called {word}"))
 }
@@ -420,8 +418,6 @@ fn checklist_command(id: &str, action: &str, number: &str) -> Command {
     )
 }
 
-/// Each `<field>=<value>` of `pairs` as the field and its value, for an
-/// issue of `kind`.
 fn settings(
     home: &Snapshot,
     kind: &str,
@@ -439,9 +435,6 @@ fn settings(
         .collect()
 }
 
-/// `given` as the value of `field` on an issue of `kind`: a list where the
-/// field or relation takes several, a boolean where it takes one, else
-/// text.
 fn typed(
     flow: &Flow,
     kind: &str,
@@ -579,7 +572,6 @@ pub fn write(
     finished(home, flow, file)
 }
 
-/// Who writes a file, and when.
 struct Signer {
     at: String,
     by: String,
@@ -587,7 +579,6 @@ struct Signer {
 }
 
 impl Signer {
-    /// The log's entry of `event`, signed and dated.
     fn entry(&self, event: LogEvent, text: &str) -> Entry {
         Entry {
             at: Some(self.at.clone()),
@@ -597,7 +588,6 @@ impl Signer {
         }
     }
 
-    /// The document's text as it is written, marked.
     fn text(&self, mut document: Document) -> String {
         if let Some(mark) = &self.mark {
             document.comment(mark);
@@ -606,9 +596,6 @@ impl Signer {
     }
 }
 
-/// The file read back among the others, weighed as a move from the issue
-/// it was, refused on a structural problem or a broken `error` rule, else
-/// written with any warning.
 fn finished(
     home: &Snapshot,
     flow: &Flow,
@@ -719,8 +706,6 @@ fn opened(
     })
 }
 
-/// The file with `changes` made, in order, and a line in its log for
-/// each move and note, and one for the fields set.
 fn changed(
     flow: &Flow,
     file: &File,
@@ -774,13 +759,6 @@ fn changed(
     })
 }
 
-/// The key a move sets, the log's event for it, and the log's text, which
-/// says when the owner signed off.
-///
-/// # Errors
-///
-/// No stage or status is called `to`, or the move enters a stage with a
-/// sign-off unsigned.
 fn shifted(
     flow: &Flow,
     current: &Issue,
@@ -838,8 +816,6 @@ fn shifted(
     Ok((key, event, format!("{said}{unusual}")))
 }
 
-/// Sets a declared field or relation; an issue's own words change by
-/// changes of their own.
 fn setting(
     document: &mut Document,
     key: &str,
@@ -861,7 +837,6 @@ fn unread() -> String {
     String::from("its front matter doesn't read")
 }
 
-/// A value as TOML, its text trimmed and a list without empty items.
 fn toml_of(value: &Datum) -> String {
     match value {
         Datum::Text(text) => quoted(text.trim()),
@@ -898,8 +873,6 @@ fn checklist(
     }
 }
 
-/// The item's place in the issue's checklist, if it's still the one
-/// picked.
 fn picked(issue: &Issue, item: &Item) -> Result<usize, String> {
     if item
         .seen
@@ -917,7 +890,6 @@ fn picked(issue: &Issue, item: &Item) -> Result<usize, String> {
     }
 }
 
-/// `text` trimmed, unless that leaves nothing.
 fn needs<'a>(text: &'a str, missing: &str) -> Result<&'a str, String> {
     let kept = text.trim();
     if kept.is_empty() {

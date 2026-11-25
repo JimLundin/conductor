@@ -15,7 +15,8 @@ use tokio::sync::{mpsc, oneshot};
 
 const OPEN_TIMEOUT: Duration = Duration::from_secs(30);
 const CODE_TIMEOUT: Duration = Duration::from_mins(10);
-const INPUT_PAUSE: Duration = Duration::from_millis(40);
+const INK_PASTE_TO_ENTER_PAUSE: Duration = Duration::from_millis(40);
+const UNWRAPPED_OAUTH_URL_COLUMNS: u16 = 1400;
 const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_LINE: u64 = 16 * 1024;
 
@@ -93,8 +94,7 @@ impl Terminal {
         let pty = native_pty_system()
             .openpty(PtySize {
                 rows: 32,
-                // Keep the OAuth URL on a single rendered line.
-                cols: 1400,
+                cols: UNWRAPPED_OAUTH_URL_COLUMNS,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -124,8 +124,7 @@ async fn submit(
     tokio::task::spawn_blocking(move || {
         writer.write_all(code.as_bytes())?;
         writer.flush()?;
-        // Ink may handle pasted text and Enter as one key if the terminal coalesces them.
-        std::thread::sleep(INPUT_PAUSE);
+        std::thread::sleep(INK_PASTE_TO_ENTER_PAUSE);
         writer.write_all(b"\r")?;
         writer.flush()?;
         Ok::<_, io::Error>(writer)

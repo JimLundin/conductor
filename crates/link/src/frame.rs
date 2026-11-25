@@ -102,8 +102,6 @@ mod tests {
     }
 
     #[test]
-    /// `serde_json` writes an enum variant as its name, a command id as its
-    /// UUID and a session id as its 26-digit ULID.
     fn command_frame_is_json() -> Result<(), Box<dyn std::error::Error>> {
         let open = Open::Command {
             id: CommandId(uuid::Uuid::from_u128(7)),
@@ -146,7 +144,6 @@ mod tests {
     }
 
     #[test]
-    /// An epoch is random, so most pass 2^53: it travels as its digits.
     fn hello_and_subscribe_wire_shapes()
     -> Result<(), Box<dyn std::error::Error>> {
         let token = AuthToken::from_bytes([0xab; 16]);
@@ -169,8 +166,6 @@ mod tests {
     }
 
     #[test]
-    /// JSON keys are only strings, so the instances are `[id, status]`
-    /// pairs.
     fn the_welcome_lists_its_instances_as_pairs()
     -> Result<(), Box<dyn std::error::Error>> {
         let reply = HelloReply::Welcome(welcome());
@@ -265,8 +260,6 @@ mod tests {
     }
 
     #[test]
-    /// Stores and host traffic keep the postcard they had before the client
-    /// link became JSON.
     fn postcard_keeps_its_bytes() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             postcard::to_allocvec(&Command::Session(

@@ -81,8 +81,6 @@ const NO_CREDENTIAL: &str = "no credential configured";
 const REFRESHING: &str = "refreshing the instance's models";
 const STARTING: &str = "starting the instance's CLI";
 
-/// A session defaults to the credential's model, then the configured
-/// model, then the CLI's default.
 pub(crate) fn offered(
     configured: Configuration,
     chosen: Option<&ModelId>,
@@ -306,8 +304,6 @@ pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
     running
 }
 
-/// The session `instance` has on `issue` after `history`, if it has one
-/// it hasn't removed: an instance works on an issue in one session.
 #[must_use]
 fn on_issue(
     history: &[Event],
@@ -320,8 +316,6 @@ fn on_issue(
         .map(|(session, _)| session)
 }
 
-/// What the session's log says when the issue's brief, its first
-/// message, didn't reach the agent: `None` when it did.
 #[must_use]
 fn unbriefed(answer: Option<&SessionResult>) -> Option<String> {
     let why = match answer {
@@ -436,8 +430,6 @@ pub enum Effect<S, R> {
     Log(Note),
 }
 
-/// A session that may start: its instance's starter, the model and effort
-/// it runs with, and what the instance offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Launch<S> {
     start: S,
@@ -447,15 +439,11 @@ struct Launch<S> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Refresh<S, R> {
-    /// The latest job, which runs once the one running has ended unless it
-    /// is that one, and the changes waiting for it.
     Pending {
         active: u64,
         latest: Job<S>,
         replies: Vec<R>,
     },
-    /// Changes arriving during launch need one live refresh, even if the
-    /// last request repeats the credential the boot probe used.
     Starting {
         id: u64,
         refresh_requested: bool,
@@ -466,12 +454,9 @@ enum Refresh<S, R> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Registry<S, H, R> {
     roster: Roster,
-    /// Why the store doesn't open, while it doesn't.
     unreadable: Option<String>,
     launchers: BTreeMap<InstanceId, Launcher<S>>,
-    /// How each provider presents itself, and the credentials it takes.
     catalog: Catalog,
-    /// An instance with none is idle.
     refreshes: BTreeMap<InstanceId, Refresh<S, R>>,
     sessions: BTreeMap<SessionId, (InstanceId, H)>,
     jobs: u64,
@@ -544,13 +529,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         )
     }
 
-    /// Whether a session may start in a directory that `exists`, on
-    /// `instance` with the model and effort asked for.
-    ///
-    /// # Errors
-    ///
-    /// Why it may not: no such directory, no such instance, the instance
-    /// is unavailable, or it doesn't offer the model or effort.
     fn launch_session(
         &self,
         instance: &InstanceId,
@@ -883,7 +861,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// A Save of `roster`, unless the store doesn't open.
     fn save(
         &self,
         roster: Roster,
@@ -900,8 +877,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }])
     }
 
-    /// Drops how the host ran `instance`, and hands back the changes that
-    /// waited for it.
     fn forget(&mut self, instance: &InstanceId) -> Vec<R> {
         self.launchers.remove(instance);
         match self.refreshes.remove(instance) {
@@ -913,8 +888,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// Starts an instance's CLI, in its home as it is now, and answers
-    /// `replies` once it has.
     fn launch(
         &mut self,
         instance: InstanceId,
@@ -974,9 +947,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         })
     }
 
-    /// Refreshes `instance` with its credential, or, while a refresh
-    /// runs, makes it the next. An instance whose CLI is starting takes
-    /// it once started, and one the host can't run answers at once.
     fn schedule(
         &mut self,
         instance: InstanceId,
@@ -1054,10 +1024,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// How `instance`'s agents start and how it signs in, or why it
-    /// can't. A stored credential comes first, then the CLI's own sign-in.
-    /// A store that doesn't open may hold a credential, so it never falls
-    /// back to the sign-in.
     fn ready(
         &self,
         instance: &InstanceId,
@@ -1102,7 +1068,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    /// How `instance` signs in with `credential`, or that it can't.
     fn signs_in(
         &self,
         instance: &InstanceId,
@@ -1112,8 +1077,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         let info = self.catalog.of(&instance.provider);
         credential.zip(info).map_or_else(
             || match (&instance.account, own) {
-                // Only a sign-in names an account without a credential, so
-                // a CLI signed in however it is was signed in as it.
                 (Account::Named(_), OwnSignIn::Unmanaged) => Ok(Auth::SignedIn),
                 (Account::Own | Account::Named(_), _) => own.auth(),
             },
@@ -1131,7 +1094,6 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     }
 }
 
-/// Why a session's workspace could not be made.
 #[must_use]
 fn unprepared(error: GitError) -> SessionRefusal {
     match error {

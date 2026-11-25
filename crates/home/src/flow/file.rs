@@ -41,9 +41,7 @@ pub struct Front {
 /// An issue file, as its parts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
-    /// The front matter's lines, between the `+++` lines.
     front: Vec<String>,
-    /// The lines after the closing `+++`.
     rest: Vec<String>,
 }
 
@@ -64,14 +62,11 @@ impl Part {
     }
 }
 
-/// What a line after the front matter is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Place {
     part: Part,
-    /// It is the part's `## ` heading.
-    heading: bool,
-    /// It is outside code fences.
-    outside: bool,
+    is_section_heading: bool,
+    outside_code_fence: bool,
 }
 
 impl Document {
@@ -174,7 +169,7 @@ impl Document {
             if place.part != Part::Section {
                 continue;
             }
-            if place.heading {
+            if place.is_section_heading {
                 sections.push(Section {
                     heading: heading_of(line).to_owned(),
                     text: String::new(),
@@ -228,7 +223,10 @@ impl Document {
     pub fn log(&self) -> Vec<Entry> {
         let mut log: Vec<Entry> = Vec::new();
         for (line, place) in self.placed() {
-            if place.part != Part::Notes || place.heading || !place.outside {
+            if place.part != Part::Notes
+                || place.is_section_heading
+                || !place.outside_code_fence
+            {
                 continue;
             }
             if let Some(entry) = line.strip_prefix("- ") {
@@ -332,11 +330,11 @@ impl Document {
         self.append(Part::Notes, None, log_lines(entry));
     }
 
-    /// Each line after the front matter, with what it is.
     fn placed(&self) -> impl Iterator<Item = (&str, Place)> {
         let mut part = Part::Section;
-        markdown(&self.rest).map(move |(line, outside)| {
-            let heading = line.strip_prefix("## ").filter(|_| outside);
+        markdown(&self.rest).map(move |(line, outside_code_fence)| {
+            let heading =
+                line.strip_prefix("## ").filter(|_| outside_code_fence);
             if let Some(named) = heading {
                 part = match named.trim() {
                     "Checklist" => Part::Checklist,
@@ -348,8 +346,8 @@ impl Document {
                 line,
                 Place {
                     part,
-                    heading: heading.is_some(),
-                    outside,
+                    is_section_heading: heading.is_some(),
+                    outside_code_fence,
                 },
             )
         })
@@ -357,36 +355,33 @@ impl Document {
 
     fn items(&self) -> impl Iterator<Item = (usize, ChecklistItem)> + '_ {
         self.placed().enumerate().filter_map(|(at, (line, place))| {
-            (place.part == Part::Checklist && !place.heading && place.outside)
+            (place.part == Part::Checklist
+                && !place.is_section_heading
+                && place.outside_code_fence)
                 .then(|| item(line))
                 .flatten()
                 .map(|found| (at, found))
         })
     }
 
-    /// Where the body ends: at the checklist or the log, whichever is
-    /// first.
     fn body_end(&self) -> usize {
         self.placed()
-            .position(|(_, place)| place.heading && place.part != Part::Section)
+            .position(|(_, place)| {
+                place.is_section_heading && place.part != Part::Section
+            })
             .unwrap_or(self.rest.len())
     }
 
-    /// The first section of `part`, from its heading's line to the next
-    /// heading or the end, if the file has one.
     fn section(&self, part: Part) -> Option<(usize, usize)> {
         let mut headings = self
             .placed()
             .enumerate()
-            .filter(|(_, (_, place))| place.heading);
+            .filter(|(_, (_, place))| place.is_section_heading);
         let (start, _) = headings.find(|(_, (_, place))| place.part == part)?;
         let end = headings.next().map_or(self.rest.len(), |(index, _)| index);
         Some((start, end))
     }
 
-    /// Adds `lines` after the last line with text of the section of
-    /// `part`, or as a new section: before the one of `before`, or at the
-    /// end.
     fn append(&mut self, part: Part, before: Option<Part>, lines: Vec<String>) {
         if let Some((start, end)) = self.section(part) {
             let last = (start..end)
@@ -466,7 +461,6 @@ fn heading_of(line: &str) -> &str {
     line.strip_prefix("## ").unwrap_or(line).trim()
 }
 
-/// Each line, and whether it is outside code fences.
 fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
     let mut fence = None;
     rest.iter().map(move |line| {

@@ -1,7 +1,3 @@
-//! `conductord`, the host daemon: the one place that names the providers.
-//! It builds each provider's plugin from the command line and hands them
-//! to the `daemon` library, which knows none by name.
-
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -10,15 +6,12 @@ use clap::{Parser, Subcommand};
 use daemon::{Hosting, Plugins};
 use runtime::Settings;
 
-/// The providers this host runs, by the names their plugins declare.
 const PROVIDERS: [Provider; 2] = [claude::PROVIDER, codex::PROVIDER];
 
-/// The provider the command line calls `name`.
 fn provider(name: &str) -> Result<Provider, String> {
     host::start::provider(name, &PROVIDERS)
 }
 
-/// A provider's setting on the command line, `<provider>=<value>`.
 fn setting(text: &str) -> Result<(Provider, String), String> {
     host::start::setting(text, &PROVIDERS)
 }
@@ -32,17 +25,19 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Serve this host's sessions over iroh and print a join ticket.
+    #[command(
+        about = "Serve this host's sessions over iroh and print a join ticket"
+    )]
     Host(HostArgs),
-    /// Manage the local fleet root and its membership.
+    #[command(about = "Manage the local fleet root and its membership")]
     Fleet(FleetArgs),
-    /// Sign the public pairing request shown by a browser.
+    #[command(about = "Sign the public pairing request shown by a browser")]
     Pair {
         request: String,
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
-    /// Join a fleet using an invitation from its root host.
+    #[command(about = "Join a fleet using an invitation from its root host")]
     Join {
         ticket: String,
         #[arg(long, default_value = "conductor")]
@@ -50,10 +45,9 @@ enum Cmd {
         #[arg(long)]
         data_dir: Option<PathBuf>,
     },
-    /// Sign an instance's CLI in on this terminal, into the instance's
-    /// private home: `claude auth login --claudeai` for a Claude
-    /// subscription, `codex login --device-auth` for `ChatGPT` by device
-    /// code. Until the app can sign in (docs/roadmap.md).
+    #[command(
+        about = "Sign an instance's CLI in on this terminal, into the instance's private home: `claude auth login --claudeai` for a Claude subscription, `codex login --device-auth` for `ChatGPT` by device code. Until the app can sign in (docs/roadmap.md)"
+    )]
     Login(LoginArgs),
 }
 
@@ -99,47 +93,52 @@ enum FleetCommand {
 
 #[derive(Parser)]
 struct LoginArgs {
-    /// The provider whose CLI signs in: `claude` or `codex`.
+    #[arg(help = "The provider whose CLI signs in: `claude` or `codex`")]
     #[arg(value_parser = provider)]
     provider: Provider,
-    /// The account of the instance to sign in again, as the app's
-    /// credentials screen shows it. Without it the provider's own sign-in
-    /// runs, and the account the CLI names becomes an instance.
+    #[arg(
+        help = "The account of the instance to sign in again, as the app's credentials screen shows it. Without it the provider's own sign-in runs, and the account the CLI names becomes an instance"
+    )]
     #[arg(long)]
     account: Option<String>,
-    /// The host's data dir, as given to `conductord host`.
+    #[arg(help = "The host's data dir, as given to `conductord host`")]
     #[arg(long)]
     data_dir: Option<PathBuf>,
 }
 
 #[derive(Parser)]
 struct HostArgs {
-    /// Where the host key lives. Defaults to the OS data dir for "conductor".
+    #[arg(
+        help = "Where the host key lives. Defaults to the OS data dir for \"conductor\""
+    )]
     #[arg(long)]
     data_dir: Option<PathBuf>,
-    /// The name clients show for this host.
+    #[arg(help = "The name clients show for this host")]
     #[arg(long, default_value = "conductor")]
     name: String,
-    /// The web app's URL; the printed join link is this plus `#join=<ticket>`.
+    #[arg(
+        help = "The web app's URL; the printed join link is this plus `#join=<ticket>`"
+    )]
     #[arg(long, default_value = "http://localhost:8080/conductor/")]
     web_url: String,
-    /// A provider's CLI to run instead of the pinned one the host installs,
-    /// for tests and development, such as `codex=/opt/codex`: the default
-    /// of each of its instances. An instance where it doesn't run offers no
-    /// sessions. Give it once for each provider.
+    #[arg(
+        help = "A provider's CLI to run instead of the pinned one the host installs, for tests and development, such as `codex=/opt/codex`: the default of each of its instances. An instance where it doesn't run offers no sessions. Give it once for each provider"
+    )]
     #[arg(long = "cli", value_name = "PROVIDER=PATH", value_parser = setting)]
     clis: Vec<(Provider, String)>,
-    /// The model the sessions of a provider's instances get when they name
-    /// none, such as `claude=haiku`. Defaults to the CLI's.
+    #[arg(
+        help = "The model the sessions of a provider's instances get when they name none, such as `claude=haiku`. Defaults to the CLI's"
+    )]
     #[arg(long = "model", value_name = "PROVIDER=MODEL", value_parser = setting)]
     models: Vec<(Provider, String)>,
-    /// The home's git remote (docs/home.md), such as
-    /// `https://github.com/JimLundin/home.git`. The host clones it into its
-    /// data dir and keeps it there; the host remembers it, so give it once.
+    #[arg(
+        help = "The home's git remote (docs/home.md), such as `https://github.com/JimLundin/home.git`. The host clones it into its data dir and keeps it there; the host remembers it, so give it once"
+    )]
     #[arg(long, value_name = "REMOTE")]
     home: Option<String>,
-    /// A directory to look for the home's projects in: each directory in
-    /// it and in those. Give it once for each.
+    #[arg(
+        help = "A directory to look for the home's projects in: each directory in it and in those. Give it once for each"
+    )]
     #[arg(long = "projects", value_name = "DIR")]
     projects: Vec<PathBuf>,
 }
@@ -238,7 +237,6 @@ async fn fleet(args: FleetArgs) -> anyhow::Result<()> {
     }
 }
 
-/// Every provider's plugin, with the settings the command line gave it.
 fn plugins(
     given: Vec<(Provider, String)>,
     chosen: Vec<(Provider, String)>,
@@ -256,8 +254,6 @@ fn plugins(
     .with_fleet_credentials(fleet_sharing)
 }
 
-/// Which credentials the fleet shares: every API key, and a setup token
-/// (which only Claude has) as the only one of its provider.
 fn fleet_sharing(
     _: &Provider,
     credential: &agents::Credential,

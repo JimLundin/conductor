@@ -211,8 +211,6 @@ impl Runtime {
     }
 }
 
-/// Starts a turn, changing the CLI's effort in its process first if the
-/// turn asks for another.
 const fn send(text: String, effort: Option<Effort>) -> Effect {
     match effort {
         Some(changed) => Effect::Call {

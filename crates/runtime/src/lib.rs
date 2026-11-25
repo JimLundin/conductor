@@ -24,14 +24,12 @@ pub struct Runtime {
     pub events: mpsc::Receiver<Event>,
 }
 
-/// The agent's end of a [`Runtime`].
 #[derive(Debug)]
 struct Plug {
     commands: mpsc::Receiver<Command>,
     events: mpsc::Sender<Event>,
 }
 
-/// A runtime and the plug its agent's task takes.
 #[must_use]
 fn pair() -> (Runtime, Plug) {
     let (commands, received) = mpsc::channel(16);

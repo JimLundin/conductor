@@ -419,7 +419,6 @@ fn an_id_is_its_file_s_name() {
     );
 }
 
-/// The tests' flow with each edit's first text replaced by its second.
 fn flow_with(edits: &[(&str, &str)]) -> Result<Flow, String> {
     let text = edits.iter().fold(
         String::from(include_str!("../test-flow.toml")),

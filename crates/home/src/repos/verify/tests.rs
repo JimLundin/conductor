@@ -35,8 +35,6 @@ fn strings(names: &[&str]) -> Vec<String> {
     names.iter().copied().map(String::from).collect()
 }
 
-/// The standards, providing python and rust, and `app` with `profiles`,
-/// each checked out at its name, and the standards also at `checkouts`.
 fn home(profiles: &[&str], checkouts: &[&str]) -> Vec<Placed> {
     let mut standards = project("wcyv7j", "standards", STANDARDS);
     standards.provides = strings(&["python", "rust"]);

@@ -33,7 +33,6 @@ mod tests {
         }
     }
 
-    /// Each day from 1970 to past 2500, counted one at a time.
     #[test]
     fn each_day_is_the_date_after_the_one_before() {
         let mut date = (1970, 1, 1);

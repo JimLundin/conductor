@@ -90,9 +90,6 @@ pub fn choose(
     }
 }
 
-/// `effort`, if `model` (`None`: the default) takes it: one of the efforts
-/// the host lists for it, or any effort when the host doesn't list the
-/// model.
 fn takes(
     models: &Models,
     model: Option<&ModelId>,
@@ -147,7 +144,6 @@ pub enum Order {
     Stop(String),
 }
 
-/// Why the agent of a session being removed stops.
 const REMOVED: &str = "the session was removed";
 
 /// What happened, as the shell saw it.
@@ -196,10 +192,8 @@ pub enum Call {
     Agent(Command),
 }
 
-/// The running conversation and its effort.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Agent {
-    /// No agent runs: it exited, the host stopped it, or it never started.
     Down,
     Up {
         conversation: String,
@@ -223,10 +217,8 @@ impl Agent {
     }
 }
 
-/// An interrupt that arrived before the agent began the turn. Sent then, it
-/// would be lost (docs/architecture.md §5.1), so it waits for `TurnStarted`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Held {
+enum DeferredInterrupt {
     Nothing,
     Interrupt,
 }
@@ -234,13 +226,10 @@ enum Held {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Turn {
     Idle,
-    /// The message is sent and the agent has not begun the turn yet.
-    Starting(Held),
+    Starting(DeferredInterrupt),
     Running(NativeTurn),
 }
 
-/// First decision wins (architecture §8). A resolved request keeps its
-/// resolution, so a late answer is told who made the first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Pending {
     Open { native: NativeRequest, asked: Asked },
@@ -256,17 +245,13 @@ impl Pending {
     }
 }
 
-/// What an open request waits for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Asked {
-    /// A decision on tool call `call`. `for_session` is what approving for
-    /// the session allows, if the agent offers it.
     Approval {
         agent: Option<SubagentId>,
         call: ToolCallId,
         for_session: Option<String>,
     },
-    /// One answer for each of `count` questions.
     Question {
         agent: Option<SubagentId>,
         count: usize,
@@ -283,24 +268,17 @@ impl Asked {
     }
 }
 
-/// The call the session waits on, and what follows it.
 enum Flow {
     Idle,
     Saving(Saving),
     Capturing(Snapshot, Saved),
-    /// The user's message is being logged; `text` goes to the agent next.
     Recording(String),
-    /// The message is being sent, changing the agent's effort to this.
     Sending(Option<Effort>),
-    /// An agent call whose failure is logged as an error, then the reply.
     Noting(Option<SessionResult>),
     Diffing,
-    /// The agent is starting, for this.
     Starting,
-    /// The agent stops, for the session to be removed.
     Stopping,
     Removing,
-    /// The agent stops, and the session closes for this reason.
     Halting(String),
 }
 
@@ -309,7 +287,6 @@ struct Saving {
     then: Saved,
 }
 
-/// What a snapshot was taken for.
 enum Saved {
     Start(Models),
     Continue,
@@ -323,15 +300,12 @@ pub struct Session {
     directory: SessionDirectory,
     choice: Choice,
     agent: Agent,
-    /// The conversation a start resumes, once a turn has started in it.
-    /// Before that the CLI has written no history to resume.
     conversation: Option<String>,
     turn: Turn,
     requests: BTreeMap<RequestId, Pending>,
     last_request: RequestId,
     book: Book,
     turn_start: Option<HostSeq>,
-    /// Tool calls the user denied, whose failed result means `Declined`.
     declined: Vec<(Option<SubagentId>, ToolCallId)>,
     checklist: Vec<ChecklistEntry>,
     subagent_checklists: BTreeMap<SubagentId, Vec<ChecklistEntry>>,
@@ -492,7 +466,6 @@ impl Session {
             | (Order::Stop(_), Turn::Idle, Agent::Down) => {
                 answer(SessionResult::Accepted)
             }
-            // A closed session takes it too: `Continue` starts at it.
             (Order::Effort(effort, offered), _, _) => {
                 self.set_effort(effort, &offered)
             }
@@ -507,7 +480,7 @@ impl Session {
                 refuse(SessionRefusal::NoTurnRunning)
             }
             (Order::Interrupt, Turn::Starting(_), _) => {
-                self.turn = Turn::Starting(Held::Interrupt);
+                self.turn = Turn::Starting(DeferredInterrupt::Interrupt);
                 Vec::from([
                     Effect::Trace(
                         "holding the interrupt until the turn starts",
@@ -529,8 +502,6 @@ impl Session {
         }
     }
 
-    /// A model the provider no longer offers, after a credential change,
-    /// gives way to its default, and the log says so.
     fn offered(&mut self, offered: &Models) -> Vec<Effect> {
         match self.choice.model.clone().filter(|model| {
             offered.default.as_ref() != Some(model)
@@ -561,7 +532,6 @@ impl Session {
         }
     }
 
-    /// The same effort again is `Accepted` and logs nothing.
     fn set_effort(&mut self, effort: Effort, offered: &Models) -> Vec<Effect> {
         match (
             takes(offered, self.choice.model.as_ref(), effort),
@@ -588,9 +558,6 @@ impl Session {
         self.send(text, change)
     }
 
-    /// Starts a turn, at the session's effort if the agent runs another.
-    /// The session takes the turn's id from `TurnStarted`, which an
-    /// interrupt must wait for anyway.
     fn send(&mut self, text: String, change: Option<Effort>) -> Vec<Effect> {
         self.flow = Flow::Sending(change);
         Vec::from([Effect::Call(Call::Agent(Command::Send {
@@ -599,7 +566,6 @@ impl Session {
         }))])
     }
 
-    /// A message the agent never got starts no turn.
     fn sent(
         &mut self,
         change: Option<Effort>,
@@ -611,7 +577,7 @@ impl Session {
                     *effort = change.or(*effort);
                 }
                 self.conversation = self.agent.conversation();
-                self.turn = Turn::Starting(Held::Nothing);
+                self.turn = Turn::Starting(DeferredInterrupt::Nothing);
                 join(
                     self.conversation.clone().map(Effect::Conversation),
                     [Effect::Reply(SessionResult::Accepted)],
@@ -774,14 +740,8 @@ impl Session {
                 self.withdraw_scope(Some(&agent)),
                 subagent(agent, SubagentEvent::Ended { outcome, summary }),
             ),
-            // A request still open when the turn ends can't be answered any
-            // more: an agent may withdraw it only after `TurnCompleted`, and an
-            // answer in between would log a decision for a command that
-            // never runs. Its later withdrawal then finds nothing open.
             Step::TurnEnded(outcome) => self.save(Saved::TurnEnded(outcome)),
             Step::TurnStarted(native) => self.turn_started(native),
-            // Nothing the gone agent asked can be answered, and a turn it
-            // ran is over; clients mark both when they see the close.
             Step::Closed(reason) => match &self.turn {
                 Turn::Running(_) => self.save(Saved::Closed(reason)),
                 Turn::Idle | Turn::Starting(_) => self.closed(reason),
@@ -856,7 +816,6 @@ impl Session {
         }
     }
 
-    /// A call that failed after the user denied it was declined.
     fn finished(
         &mut self,
         agent: Option<&SubagentId>,
@@ -951,7 +910,7 @@ impl Session {
         let before =
             mem::replace(&mut self.turn, Turn::Running(native.clone()));
         let held = match before {
-            Turn::Starting(Held::Interrupt) => {
+            Turn::Starting(DeferredInterrupt::Interrupt) => {
                 self.flow = Flow::Noting(None);
                 Vec::from([
                     Effect::Trace(
@@ -960,15 +919,13 @@ impl Session {
                     Effect::Call(Call::Agent(Command::Interrupt(native))),
                 ])
             }
-            Turn::Starting(Held::Nothing) | Turn::Idle | Turn::Running(_) => {
-                Vec::new()
-            }
+            Turn::Starting(DeferredInterrupt::Nothing)
+            | Turn::Idle
+            | Turn::Running(_) => Vec::new(),
         };
         join(join(saved, started), held)
     }
 
-    /// Removes the closed session's workspace, once what the log staged is
-    /// committed; a session without one is removed at once.
     fn clean(&mut self) -> Vec<Effect> {
         match self.book.workspace().cloned() {
             Some(workspace) => {
@@ -1107,7 +1064,6 @@ impl Session {
         }
     }
 
-    /// Stores a new request open under the next id.
     fn open(&mut self, native: NativeRequest, asked: Asked) -> RequestId {
         let request = self.last_request.next();
         self.last_request = request;
@@ -1145,7 +1101,6 @@ fn removal_failed(reason: String) -> Vec<Effect> {
     ])
 }
 
-/// Whether `reply` answers what the request asked, and if not, why.
 fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
     match (asked, reply) {
         (
@@ -1174,14 +1129,10 @@ fn fits(asked: &Asked, reply: &Reply) -> Result<(), String> {
     }
 }
 
-/// The effort the agent should change to before its next turn, if it runs
-/// another than `wanted`.
 fn changed(wanted: Option<Effort>, running: Option<Effort>) -> Option<Effort> {
     wanted.filter(|&effort| running != Some(effort))
 }
 
-/// The resolved requests. One left open is unknown, which a reply takes as
-/// withdrawn.
 fn replay_requests(history: &[Event]) -> BTreeMap<RequestId, Pending> {
     history
         .iter()
@@ -1220,8 +1171,6 @@ fn snapshot_failed(saved: Result<(), String>) -> Option<Effect> {
     })
 }
 
-/// An agent call that failed after the command was accepted is logged as
-/// an `Error`, since the command's effects are already in the log.
 fn noted(
     called: Result<(), String>,
     then: Option<SessionResult>,

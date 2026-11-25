@@ -55,7 +55,7 @@ pub fn load(text: &str) -> Result<Flow, String> {
     let top = At::top();
     let file: File = toml::from_str::<Value>(text)
         .map_err(|err| format!("flow: {err}"))
-        .and_then(|value| decoded(&top, value))?;
+        .and_then(|value| decode_at_path(&top, value))?;
     let mut flow = Flow {
         default_kind: file.default_kind,
         statuses: listed(&top, "status", file.status, |_, read: Status| {
@@ -78,8 +78,6 @@ pub fn load(text: &str) -> Result<Flow, String> {
     Ok(flow)
 }
 
-/// The file's top level. Each list stays values until [`listed`] reads its
-/// entries, so an entry's problem names its place.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct File {
@@ -98,8 +96,6 @@ struct File {
     rule: Vec<Value>,
 }
 
-/// A field as the file writes it: its type is a word, with its values
-/// beside it for an enum.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FieldEntry {
@@ -122,7 +118,6 @@ enum TypeWord {
     Bool,
 }
 
-/// A kind as the file writes it: its label defaults to its name.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct KindEntry {
@@ -147,7 +142,6 @@ struct RuleEntry {
     require: Value,
 }
 
-/// `{ via = <relation>, where = <predicate> }`.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct AcrossEntry {
@@ -156,7 +150,6 @@ struct AcrossEntry {
     condition: Value,
 }
 
-/// Where a key or value is in the file, as `rule[0].require.any`.
 #[derive(Debug, Clone)]
 struct At(String);
 
@@ -186,15 +179,14 @@ impl At {
     }
 }
 
-/// `value` read by serde as a `T`, its problem at `at`, followed by the
-/// keys within it that toml names.
-fn decoded<T: DeserializeOwned>(at: &At, value: Value) -> Result<T, String> {
+fn decode_at_path<T: DeserializeOwned>(
+    at: &At,
+    value: Value,
+) -> Result<T, String> {
     T::deserialize(value)
         .or_else(|err| at.fail(err.to_string().trim_end().replace('\n', ", ")))
 }
 
-/// The entries under `key`, each read by serde and then by `read`, with no
-/// two sharing a name.
 fn listed<E: DeserializeOwned, T: Named>(
     at: &At,
     key: &str,
@@ -205,7 +197,7 @@ fn listed<E: DeserializeOwned, T: Named>(
     let mut read_all: Vec<T> = Vec::new();
     for (index, entry) in entries.into_iter().enumerate() {
         let entry_at = here.index(index);
-        let item = read(&entry_at, decoded(&entry_at, entry)?)?;
+        let item = read(&entry_at, decode_at_path(&entry_at, entry)?)?;
         if let Some(name) = item.name()
             && read_all.iter().any(|other| other.name() == Some(name))
         {
@@ -325,7 +317,6 @@ fn kind(at: &At, entry: KindEntry) -> Result<Kind, String> {
     })
 }
 
-/// The names the flow's parts use declare something it has.
 fn declarations(flow: &Flow) -> Result<(), String> {
     let top = At::top();
     if let Some(role) = Role::ALL
@@ -395,7 +386,6 @@ fn kinds_exist(flow: &Flow, at: &At, kinds: &[String]) -> Result<(), String> {
         })
 }
 
-/// No field at an earlier place in `seen` has `field`'s role.
 fn role_once(
     seen: &mut Vec<(FieldRole, At)>,
     at: At,
@@ -415,7 +405,6 @@ fn role_once(
     Ok(())
 }
 
-/// Whether the app can show `name` on an issue of `kind`.
 fn shown(flow: &Flow, kind: &Kind, name: &str) -> bool {
     matches!(name, "status" | "stage")
         || flow.field(&kind.name, name).is_some()
@@ -427,11 +416,14 @@ fn shown(flow: &Flow, kind: &Kind, name: &str) -> bool {
 }
 
 fn rule(flow: &Flow, at: &At, entry: RuleEntry) -> Result<Rule, String> {
-    let when =
-        Predicates { flow, moves: true }.read(&at.key("when"), &entry.when)?;
-    let require = Predicates {
+    let when = PredicateReader {
         flow,
-        moves: weighs_a_move(&when),
+        allows_move_predicates: true,
+    }
+    .read(&at.key("when"), &entry.when)?;
+    let require = PredicateReader {
+        flow,
+        allows_move_predicates: weighs_a_move(&when),
     }
     .read(&at.key("require"), &entry.require)?;
     Ok(Rule {
@@ -442,7 +434,6 @@ fn rule(flow: &Flow, at: &At, entry: RuleEntry) -> Result<Rule, String> {
     })
 }
 
-/// Whether `predicate` looks at the issue before or after an edit.
 fn weighs_a_move(predicate: &Predicate) -> bool {
     match predicate {
         Predicate::From(_) | Predicate::To(_) => true,
@@ -455,21 +446,13 @@ fn weighs_a_move(predicate: &Predicate) -> bool {
     }
 }
 
-/// How a rule's predicates are read: against the flow's declarations, and
-/// whether they may weigh a move, which a rule's `require` may only where
-/// its `when` does: a new issue has no before.
-///
-/// Hand-written rather than derived: a predicate is an inline table whose
-/// one key decides what its value is, and its names must be ones the flow
-/// declares.
 #[derive(Clone, Copy)]
-struct Predicates<'a> {
+struct PredicateReader<'a> {
     flow: &'a Flow,
-    moves: bool,
+    allows_move_predicates: bool,
 }
 
-impl Predicates<'_> {
-    /// The predicate `value` writes: an inline table of one key.
+impl PredicateReader<'_> {
     fn read(self, at: &At, value: &Value) -> Result<Predicate, String> {
         let Value::Table(table) = value else {
             return at.fail("is not a predicate, an inline table of one key");
@@ -505,7 +488,7 @@ impl Predicates<'_> {
             .map(Predicate::Has),
             "has_section" => word_of(&here, inner).map(Predicate::HasSection),
             "field" => field_atom(flow, &here, inner),
-            "from" | "to" if !self.moves => here.fail(
+            "from" | "to" if !self.allows_move_predicates => here.fail(
                 "a rule's require weighs a move only where its when does",
             ),
             "from" => nested(inner).map(Predicate::From),
@@ -520,8 +503,6 @@ impl Predicates<'_> {
         }
     }
 
-    /// `all` or `any` of a list, or `any`, `all` or `none` of a relation's
-    /// issues.
     fn combined(
         self,
         at: &At,
@@ -542,7 +523,7 @@ impl Predicates<'_> {
                 })
             }
             Value::Table(_) => {
-                let across: AcrossEntry = decoded(at, value.clone())?;
+                let across: AcrossEntry = decode_at_path(at, value.clone())?;
                 if self.flow.relation(&across.via).is_none() {
                     return at.key("via").fail(format!(
                         "no relation or reverse is called {:?}",
@@ -629,8 +610,6 @@ fn field_atom(
     })
 }
 
-/// The field called `name` of whichever kind has one: a predicate may
-/// name any kind's.
 fn some_field<'flow>(flow: &'flow Flow, name: &str) -> Option<&'flow Field> {
     flow.kinds
         .iter()

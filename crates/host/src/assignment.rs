@@ -32,7 +32,6 @@ impl Assignment {
     }
 }
 
-/// The issue and provider instance a session owns on this host.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Assigned {
     pub(crate) issue: Option<IssueId>,
@@ -40,7 +39,6 @@ pub(crate) struct Assigned {
 }
 
 impl Assigned {
-    /// The issue and instance after `kind`.
     #[must_use]
     pub(crate) fn after(self, kind: &EventKind) -> Self {
         match kind {
@@ -60,14 +58,12 @@ impl Assigned {
         }
     }
 
-    /// Whether the session is on `issue` in `instance`.
     #[must_use]
     pub(crate) fn is(&self, issue: IssueId, instance: &InstanceId) -> bool {
         self.issue == Some(issue) && self.instance.as_ref() == Some(instance)
     }
 }
 
-/// Each session's issue and instance after `history`.
 #[must_use]
 pub(crate) fn assigned(history: &[Event]) -> BTreeMap<SessionId, Assigned> {
     let mut sessions = BTreeMap::<SessionId, Assigned>::new();

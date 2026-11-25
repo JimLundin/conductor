@@ -21,11 +21,8 @@ use crate::flow::load;
 use crate::flow::snapshot::{Inputs, Snapshot};
 use crate::layout;
 
-/// 00000001.
 const ID: IssueId = IssueId::new(0, 1);
-/// 2026-11-18T10:12:00Z.
 const OPENED: u64 = 1_794_996_720;
-/// How the log signs and dates what the edits here write.
 const SIGNED: &str = "2026-11-18T10:12:00Z laptop·iPhone";
 
 fn text(value: &str) -> String {
@@ -36,7 +33,6 @@ fn project() -> ProjectId {
     ProjectId::parse("7r5n23").unwrap_or(ProjectId::new(0))
 }
 
-/// The home with the project `project()` and the issue files `files`.
 fn snapshot_of(files: &[File]) -> Snapshot {
     Snapshot::of(Inputs {
         flow: Ok(text(include_str!("../flow/test-flow.toml"))),
@@ -52,7 +48,6 @@ fn snapshot_of(files: &[File]) -> Snapshot {
     })
 }
 
-/// The issue's file as `id`, in `status`, with `more` front matter.
 fn filed(id: IssueId, status: &str, more: &str) -> File {
     File {
         project: project(),
@@ -64,7 +59,6 @@ fn filed(id: IssueId, status: &str, more: &str) -> File {
     }
 }
 
-/// The issue's file, holding [`written`].
 fn issue_file() -> File {
     File {
         project: project(),
@@ -73,7 +67,6 @@ fn issue_file() -> File {
     }
 }
 
-/// The flow Conductor's own home declares.
 fn flow() -> Flow {
     load(include_str!("../flow/test-flow.toml")).unwrap_or_else(|_| Flow {
         default_kind: String::new(),
@@ -86,12 +79,10 @@ fn flow() -> Flow {
     })
 }
 
-/// What `within` makes of the home whose issue files are `files`.
 fn among<T>(files: &[File], within: impl FnOnce(&Snapshot) -> T) -> T {
     within(&snapshot_of(files))
 }
 
-/// The issue `text` holds, as the flow reads it.
 fn parse(text: &str) -> Result<Issue, String> {
     read(&flow(), project(), ID, text).map(|(issue, _)| issue)
 }
@@ -199,9 +190,6 @@ fn written() -> String {
     )
 }
 
-/// The file as a person left it: a comment on the status, a key and a
-/// table Conductor doesn't read, a section of their own, Windows line
-/// ends.
 fn hand_edited() -> String {
     format!(
         "+++\n\
@@ -225,8 +213,6 @@ fn hand_edited() -> String {
     .replace('\n', "\r\n")
 }
 
-/// An edit id of its own for each change, so no edit here finds
-/// another's mark.
 fn edit_of(change: &command::Edit) -> EditId {
     EditId(format!("{change:?}").bytes().fold(1_000, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(u128::from(byte))
@@ -261,8 +247,6 @@ fn changing_to(change: IssueChange) -> Edit {
     edit(changing(change))
 }
 
-/// The file an edit writes, without the line that marks it written, or
-/// what it did instead.
 fn file_of(applied: Applied) -> Result<String, String> {
     match applied {
         Applied::Write { text, .. } => Ok(unmarked(&text)),
@@ -309,7 +293,6 @@ fn adding(item: &str) -> IssueChange {
     IssueChange::Checklist(ChecklistChange::Add(text(item)))
 }
 
-/// The checklist's item at `index`, picked from `seen`.
 const fn at(index: usize, seen: Option<Vec<ChecklistItem>>) -> Item {
     Item { index, seen }
 }
@@ -761,8 +744,6 @@ fn a_brief_names_the_issue_s_stage_and_the_skills_that_serve_it() {
     assert!(!brief_at(None).contains("stage"));
 }
 
-/// What a session's update moves the issue to from `status`, when it is
-/// blocked by an issue whose status is `blocker`, if the home has one.
 fn moved(
     mut update: SessionUpdate,
     status: &str,
@@ -866,8 +847,6 @@ fn an_issue_branch_is_the_homes_or_named_by_its_id() {
     assert_eq!(branch(None, ID), format!("refs/heads/issue/{ID}"));
 }
 
-/// A hand-written issue file with the front matter Conductor needs and
-/// `rest` after it.
 fn bare(rest: &str) -> String {
     format!(
         "+++\nid = \"{ID}\"\ntitle = \"Sign in\"\nstatus = \"open\"\n+++\n{rest}"
@@ -1233,8 +1212,6 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
     Ok(())
 }
 
-/// What recording `change` as edit `edit` on the file `current`
-/// keeps, and the commit it makes.
 fn recorded(
     change: IssueChange,
     edit: EditId,
@@ -1329,8 +1306,6 @@ fn issue_changes_decide_each_commit_and_replay_against_the_file()
     Ok(())
 }
 
-/// A retry reaches the home under a new command id, which the home never
-/// sees, carrying the edit id the app minted for the edit.
 #[test]
 fn an_edit_retried_with_its_edit_id_under_a_new_command_is_applied_once()
 -> Result<(), HomeRefusal> {
@@ -1479,8 +1454,6 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
     Ok(())
 }
 
-/// The home the `home` command line's own tests use: a spec, and a task
-/// under it that lacks a section.
 mod as_the_command_line {
     use crate::issue::{EditId, IssueChange};
     use crate::{HomeRefusal, IssueId, ProjectId};
@@ -1496,7 +1469,6 @@ mod as_the_command_line {
     const FOLDER: &str = "7w85je";
     const SPEC: &str = "0tm7zt01";
     const TASK: &str = "0tm7zx0d";
-    /// 2026-11-22T12:00:00Z, in seconds.
     const NOW: u64 = 1_795_348_800;
 
     fn issue(id: &str, front: &str, body: &str) -> File {
@@ -1534,8 +1506,6 @@ mod as_the_command_line {
         }
     }
 
-    /// What the command line says to `said`: its refusal or its
-    /// warnings, as the app would be told them.
     fn by_command_line(said: &str) -> Result<Vec<String>, String> {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
         let home = Snapshot::of(inputs());
@@ -1567,7 +1537,6 @@ mod as_the_command_line {
             .collect())
     }
 
-    /// What the app is told of `change` to the task.
     fn by_app(change: IssueChange) -> Result<Vec<String>, HomeRefusal> {
         let inputs = inputs();
         let home = Snapshot::of(inputs.clone());

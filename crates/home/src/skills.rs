@@ -79,7 +79,6 @@ pub fn plan(
     }
 }
 
-/// A listed name is a folder in the skills folder, never a path out of it.
 fn is_name(name: &str) -> bool {
     !name.is_empty()
         && !matches!(name, "." | "..")

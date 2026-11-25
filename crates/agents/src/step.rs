@@ -24,15 +24,15 @@ pub enum Step {
     /// The session logs what the agent produced.
     Emit(Output),
     /// The session assigns the `RequestId`, stores it open and logs
-    /// `RequestOpened`.
+    /// `RequestOpened`. `call` names the tool call the request asks about.
+    /// `for_session` describes what approving for the session allows, if
+    /// the agent offers it.
     Open {
         agent: Option<SubagentId>,
         native: NativeRequest,
-        /// The tool call the request asks about.
         call: ToolCallId,
         tool: ToolKind,
         reason: Option<String>,
-        /// What approving for the session allows, if the agent offers it.
         for_session: Option<String>,
     },
     /// The session assigns the `RequestId`, stores the question open and

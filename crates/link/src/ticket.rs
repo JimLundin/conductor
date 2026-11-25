@@ -61,7 +61,6 @@ impl AuthToken {
     }
 }
 
-/// Never print the secret in logs.
 impl fmt::Debug for AuthToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("AuthToken(..)")
@@ -102,7 +101,6 @@ mod tests {
         }
     }
 
-    /// The worked example as the web app's reader is tested against it.
     #[derive(Serialize)]
     struct Example {
         ticket: Ticket,
