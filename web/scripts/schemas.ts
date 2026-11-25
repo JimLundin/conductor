@@ -49,7 +49,7 @@ const print = (source: Readonly<JsonSchema.JsonSchema>): string => {
       dialect: "draft-2020-12",
       schemas: Arr.map(names, (name) => ({ $ref: `#/$defs/${name}` })),
     },
-    { closeObjects: true, patterns: "apply" },
+    { closeObjects: true, patterns: "ignore" },
   );
   const document = SchemaRepresentation.toRepresentations(Arr.map(schemas, Struct.get("ast")));
   const module = schemaModule();

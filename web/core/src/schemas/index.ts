@@ -163,12 +163,7 @@ const Canvas = Schema.Struct({ blocks: Schema.Array(Block), title: Schema.String
 
 type CanvasName = string;
 
-const CanvasName = Schema.String.check(
-  Schema.isPattern(new globalThis.RegExp("^[a-z0-9]+(-[a-z0-9]+)*$", "u")).annotate({
-    expected: "a string matching the RegExp ^[a-z0-9]+(-[a-z0-9]+)*$",
-    identifier: "CanvasName",
-  }),
-);
+const CanvasName = Schema.String.annotate({ identifier: "CanvasName" });
 
 type CanvasEntry = { readonly by: string; readonly name: CanvasName; readonly written: number };
 
