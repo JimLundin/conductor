@@ -527,7 +527,7 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
         assert_eq!(
             unsigned.output,
             format!(
-                "home: entering the stage {to} needs its sign-off
+                "home: entering the stage {to} needs its sign-off; fix: add `--signed-off` once the owner has signed off
 "
             )
         );

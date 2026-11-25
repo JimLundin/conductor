@@ -811,7 +811,9 @@ fn shifted(
         && !signed_off
         && flow.stage(to).is_some_and(|stage| stage.sign_off)
     {
-        return Err(format!("entering the stage {to} needs its sign-off"));
+        return Err(format!(
+            "entering the stage {to} needs its sign-off; fix: add `--signed-off` once the owner has signed off"
+        ));
     }
     let (before, after) = (
         from.unwrap_or_else(|| String::from("none")),
