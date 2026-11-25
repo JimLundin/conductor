@@ -1,42 +1,32 @@
 import { Atom, AtomRegistry } from "effect/reactivity";
 import type { Boundary, Store, StoreContext } from "#ui/store/types.ts";
-import { Effect, FiberMap } from "effect";
+import { Effect, FiberMap, FiberSet } from "effect";
+import type { Scope, Semaphore } from "effect";
 import type { HostKey } from "@conductor/core/saved";
 import type { HostLink } from "#ui/link/host.ts";
-import type { Scope } from "effect";
-import { adopt } from "#ui/store/actions.ts";
 import { initialView } from "@conductor/core/store";
+import { load } from "#ui/store/hosts.ts";
 import { methods } from "#ui/store/methods.ts";
-import { restore } from "#ui/saved.ts";
 
 const openStore: (
   boundary: Boundary,
   registry: AtomRegistry.AtomRegistry,
 ) => Effect.Effect<Store, never, Scope.Scope> = (boundary, registry) =>
   Effect.gen(function* opening() {
-    const execute = Atom.fn((effect: Effect.Effect<void>) => effect, { concurrent: true }).pipe(
-      Atom.keepAlive,
-    );
+    const fibers = yield* FiberMap.make<HostKey>();
+    const run = yield* FiberSet.makeRuntime();
     const context: StoreContext = {
       boundary,
-      execute,
-      fibers: yield* FiberMap.make<HostKey>(),
+      execute: (effect): void => {
+        run(effect);
+      },
+      fibers,
       linked: Atom.make<ReadonlyMap<HostKey, HostLink>>(new Map()).pipe(Atom.keepAlive),
+      locks: Atom.make<ReadonlyMap<HostKey, Semaphore.Semaphore>>(new Map()).pipe(Atom.keepAlive),
       registry,
       state: Atom.make(initialView()).pipe(Atom.keepAlive),
     };
-    const saved = yield* restore(boundary.storage);
-    const adopted = Atom.fnSync((record: (typeof saved)[number]) =>
-      adopt(context, { name: record.name, ticket: record.ticket }),
-    );
-    yield* Effect.forEach(
-      saved,
-      (record) =>
-        Effect.sync(() => {
-          registry.set(adopted, record);
-        }),
-      { discard: true },
-    );
+    yield* load(context);
     const store = methods(context);
     store.follow();
     return store;

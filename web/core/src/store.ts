@@ -1,3 +1,4 @@
+import { HostAction, HostOperation } from "#core/pairing";
 import type { HostKey, Saved } from "#core/saved";
 import { Route, route } from "#core/route";
 import type { SessionId, Ticket } from "#core/schemas/index";
@@ -15,12 +16,14 @@ interface PairedHost {
   readonly saved: string | undefined;
   readonly status: Status;
   readonly fold: Host;
+  readonly operation: HostOperation;
 }
 
 interface View {
   readonly hosts: Readonly<ReadonlyMap<HostKey, PairedHost>>;
   readonly route: Route;
   readonly notice: TicketError | undefined;
+  readonly restoration: "Ready" | "Failed";
 }
 
 interface Adopted {
@@ -40,6 +43,7 @@ const noHosts = 0;
 const initialView = (): View => ({
   hosts: new Map(),
   notice: undefined,
+  restoration: "Ready",
   route: Route.Pairing(),
 });
 
@@ -88,13 +92,18 @@ const sameTicket = (first: Ticket, second: Ticket): boolean =>
 const adoptHost = (view: View, ticket: Ticket, name: string | undefined): Adopted => {
   const key = hostKey(ticket);
   const known = view.hosts.get(key);
-  if (known !== undefined && sameTicket(known.ticket, ticket)) {
+  if (
+    known !== undefined &&
+    HostOperation.$is("Complete")(known.operation) &&
+    sameTicket(known.ticket, ticket)
+  ) {
     return { host: undefined, key };
   }
   return {
     host: {
       fold: known?.fold ?? emptyHost(),
       key,
+      operation: HostOperation.Complete({ action: HostAction.Restore() }),
       saved: known?.saved ?? name,
       status: { error: undefined, state: "Disconnected" },
       ticket,
@@ -115,7 +124,38 @@ const applyPairedUpdate = (view: View, key: HostKey, update: Update): Updated =>
   };
 };
 
+const requestedHost = (host: PairedHost, action: HostAction): PairedHost => ({
+  ...host,
+  fold: HostAction.$is("Forget")(action) ? emptyHost() : host.fold,
+  operation: HostOperation.Pending({ action }),
+  status: HostAction.$is("Remember")(action)
+    ? host.status
+    : { error: undefined, state: "Disconnected" },
+});
+
+const settledHost = (view: View, key: HostKey, operation: HostOperation): View => {
+  const host = view.hosts.get(key);
+  if (host?.operation.action !== operation.action) {
+    return view;
+  }
+  const hosts = new Map(view.hosts);
+  if (HostOperation.$is("Complete")(operation) && HostAction.$is("Forget")(operation.action)) {
+    hosts.delete(key);
+  } else {
+    hosts.set(key, { ...host, operation });
+  }
+  return { ...view, hosts };
+};
+
+const rememberAction = (host: PairedHost): HostAction | undefined =>
+  HostOperation.$is("Complete")(host.operation) || HostAction.$is("Remember")(host.operation.action)
+    ? HostAction.Remember()
+    : undefined;
+
 export {
+  rememberAction,
+  requestedHost,
+  settledHost,
   adoptHost,
   applyPairedUpdate,
   initialView,

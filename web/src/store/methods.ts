@@ -1,12 +1,9 @@
 import type { Store, StoreContext } from "#ui/store/types.ts";
-import { follow, forget, pair, show } from "#ui/store/actions.ts";
-import { reconnect, send } from "#ui/store/links.ts";
+import { follow, pair, show } from "#ui/store/actions.ts";
+import { forget, load, reconnect, retry, send } from "#ui/store/hosts.ts";
 import { Atom } from "effect/reactivity";
 import type { HostKey } from "@conductor/core/saved";
-import { Option } from "effect";
-import type { Result } from "effect";
 import type { Route } from "@conductor/core/route";
-import type { TicketError } from "@conductor/core/ticket";
 
 const methods: (context: StoreContext) => Store = (context) => {
   const followed = Atom.fnSync(() => {
@@ -18,14 +15,15 @@ const methods: (context: StoreContext) => Store = (context) => {
   const forgotten = Atom.fnSync((key: HostKey) => {
     forget(context, key);
   });
-  const paired = Atom.fnSync((text: string) => pair(context, text));
+  const retried = Atom.fnSync((key: HostKey) => {
+    retry(context, key);
+  });
+  const paired = Atom.fnSync((text: string) => {
+    pair(context, text);
+  });
   const reconnected = Atom.fnSync(() => {
     reconnect(context);
   });
-  const pairing: (text: string) => Result.Result<HostKey, TicketError> = (text) => {
-    context.registry.set(paired, text);
-    return Option.getOrThrow(context.registry.get(paired));
-  };
   return {
     follow: (): void => {
       context.registry.set(followed, undefined);
@@ -33,11 +31,19 @@ const methods: (context: StoreContext) => Store = (context) => {
     forget: (key): void => {
       context.registry.set(forgotten, key);
     },
-    pair: pairing,
+    pair: (text): void => {
+      context.registry.set(paired, text);
+    },
     reconnect: (): void => {
       context.registry.set(reconnected, undefined);
     },
     registry: context.registry,
+    restore: (): void => {
+      context.execute(load(context));
+    },
+    retry: (key): void => {
+      context.registry.set(retried, key);
+    },
     send: (key, body) => send(context, key, body),
     show: (route): void => {
       context.registry.set(shown, route);

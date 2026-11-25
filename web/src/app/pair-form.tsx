@@ -1,8 +1,8 @@
 import type { ComponentProps, ReactElement } from "react";
-import { pairingError, pairingNotice } from "@conductor/core/view/app";
-import { useCallback, useId, useState } from "react";
+import { useCallback, useId } from "react";
 import { useStore, useView } from "#ui/use-store.ts";
 import { Notice } from "#ui/session/notice.tsx";
+import { pairingNotice } from "@conductor/core/view/app";
 
 type FormAction = Exclude<ComponentProps<"form">["action"], string | undefined>;
 
@@ -13,16 +13,15 @@ const rows = 3;
 const PairForm = (): ReactElement => {
   const store = useStore();
   const { notice } = useView();
-  const [error, setError] = useState<string | undefined>();
   const field = useId();
   const pair = useCallback<FormAction>(
     (data: Readonly<Pick<FormData, "get">>) => {
       const ticket = data.get("ticket");
-      setError(pairingError(store.pair(typeof ticket === "string" ? ticket : "")));
+      store.pair(typeof ticket === "string" ? ticket : "");
     },
     [store],
   );
-  const shown = pairingNotice(error, notice);
+  const shown = pairingNotice(notice);
   return (
     <form action={pair} className="pair-form">
       <label htmlFor={field}>{label}</label>

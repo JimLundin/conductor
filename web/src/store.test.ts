@@ -1,7 +1,7 @@
-import { Effect, Result } from "effect";
 import { describe, expect, it } from "@effect/vitest";
 import { keysOf, memoryStorage, page, when } from "#ui/test/page.ts";
 import { scenario, serve } from "#ui/test/replay.ts";
+import { Effect } from "effect";
 import { Route } from "@conductor/core/route";
 import type { Store } from "#ui/store.ts";
 import { TicketError } from "@conductor/core/ticket";
@@ -28,7 +28,14 @@ describe("join links", () => {
         const storage = memoryStorage();
         const { boundary, at } = page(`#join=${exampleTicket}`, storage);
         const view = yield* Effect.scoped(
-          makeStore(boundary).pipe(Effect.map((store: Pick<Store, "view">) => store.view())),
+          makeStore(boundary).pipe(
+            Effect.flatMap((store: Pick<Store, "view" | "subscribe">) =>
+              when(
+                store,
+                (shown) => shown.view().hosts.get(exampleHost)?.operation._tag === "Complete",
+              ).pipe(Effect.map(() => store.view())),
+            ),
+          ),
         );
         expect([...view.hosts.keys()]).toStrictEqual([exampleHost]);
         expect(view.route).toStrictEqual(Route.Sessions());
@@ -42,20 +49,18 @@ describe("multiple hosts", () => {
   it.effect("a pasted ticket or join link pairs a second host beside the first", () =>
     Effect.gen(function* verify2() {
       const storage = memoryStorage();
-      const { first, second, hosts } = yield* Effect.scoped(
+      const hosts = yield* Effect.scoped(
         Effect.gen(function* pairing() {
           const store = yield* makeStore(page("", storage).boundary);
-          const paired = store.pair(`  ${exampleTicket}\n`);
-          const again = store.pair(`https://jimlundin.github.io/conductor/#join=${otherTicket}`);
-          return {
-            first: paired,
-            hosts: [...store.view().hosts.keys()],
-            second: again,
-          };
+          store.pair(`  ${exampleTicket}\n`);
+          store.pair(`https://jimlundin.github.io/conductor/#join=${otherTicket}`);
+          yield* when(store, (shown) =>
+            [...shown.view().hosts.values()].every((host) => host.operation._tag === "Complete"),
+          );
+          return [...store.view().hosts.keys()];
         }),
       );
-      expect(first).toStrictEqual(Result.succeed(exampleHost));
-      expect(Result.isSuccess(second)).toBe(true);
+      expect(hosts).toContain(exampleHost);
       expect(hosts).toHaveLength(2);
       expect(keysOf(storage)).toHaveLength(2);
     }),
@@ -80,7 +85,12 @@ describe("restored pairing", () => {
             const store = yield* makeStore(
               page(`#join=${exampleTicket}`, storage, host.pipe).boundary,
             );
-            yield* when(store, (shown) => shown.view().hosts.get(exampleHost)?.saved !== undefined);
+            yield* when(
+              store,
+              (shown) =>
+                shown.view().hosts.get(exampleHost)?.saved !== undefined &&
+                shown.view().hosts.get(exampleHost)?.operation._tag === "Complete",
+            );
           }),
         );
         const restored = yield* Effect.scoped(
@@ -110,8 +120,17 @@ describe("replaced tickets", () => {
           });
           const store = yield* makeStore(page("", storage, host.pipe).boundary);
           store.pair(exampleTicket);
-          yield* when(store, (shown) => shown.view().hosts.get(exampleHost)?.saved !== undefined);
+          yield* when(
+            store,
+            (shown) =>
+              shown.view().hosts.get(exampleHost)?.saved !== undefined &&
+              shown.view().hosts.get(exampleHost)?.operation._tag === "Complete",
+          );
           store.pair(renewed);
+          yield* when(
+            store,
+            (shown) => shown.view().hosts.get(exampleHost)?.operation._tag === "Complete",
+          );
           return store.view();
         }),
       );
@@ -181,6 +200,7 @@ describe("forgotten hosts", () => {
           yield* when(store, (shown) => sessionsOf(shown.view(), exampleHost).length > 0);
           const sessions = sessionsOf(store.view(), exampleHost);
           store.forget(exampleHost);
+          yield* when(store, (shown) => !shown.view().hosts.has(exampleHost));
           return { after: store.view(), before: sessions };
         }),
       );

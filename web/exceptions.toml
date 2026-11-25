@@ -121,7 +121,7 @@ rule = "lint/typescript/prefer-readonly-parameter-types"
 reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
 
 [[exception]]
-path = "src/store/links.ts"
+path = "src/store/hosts.ts"
 rule = "lint/typescript/prefer-readonly-parameter-types"
 reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
 
@@ -164,3 +164,13 @@ reason = "The shared TypeScript release gate invokes this mutation tool from the
 path = "knip.json"
 rule = "drift:ignoreDependencies:@stryker-mutator/vitest-runner"
 reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"
+
+[[exception]]
+path = "src/store/types.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The store submits Effect values to its scoped runtime; Effect's library type exposes mutable internal fields that the store does not mutate"
+
+[[exception]]
+path = "src/test/lifecycle.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The controlled storage and pipe adapters pass Effect Deferred handles and Uint8Array values to library operations without mutating their internals"

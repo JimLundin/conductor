@@ -3,7 +3,6 @@ import { Route, fragmentOf } from "@conductor/core/route";
 import type { HostKey } from "@conductor/core/saved";
 import type { LinkState } from "@conductor/core/link";
 import type { PairedHost } from "@conductor/core/store";
-import { Result } from "effect";
 import type { Session } from "@conductor/core/fold/session";
 import type { SessionId } from "@conductor/core/schemas/index";
 import type { TicketError } from "@conductor/core/ticket";
@@ -50,14 +49,8 @@ const sessionRow = (session: Session, route: Route, address: Address): Row => {
   };
 };
 
-const pairingError = Result.match({
-  onFailure: describeTicketError,
-  onSuccess: (): undefined => undefined,
-});
-const pairingNotice = (
-  error: string | undefined,
-  notice: TicketError | undefined,
-): string | undefined => error ?? (notice === undefined ? undefined : describeTicketError(notice));
+const pairingNotice = (notice: TicketError | undefined): string | undefined =>
+  notice === undefined ? undefined : describeTicketError(notice);
 const hostName = (key: HostKey, host: PairedHost | undefined): string =>
   host === undefined ? key : nameOf(host);
 
@@ -69,7 +62,6 @@ export {
   hostName,
   linkStates,
   newSessionHref,
-  pairingError,
   pairingHref,
   pairingNotice,
   sessionRow,

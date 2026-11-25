@@ -3,7 +3,7 @@ import type { FunctionComponent } from "react";
 interface Props {
   readonly text: string | undefined;
   readonly tone: string;
-  readonly role?: "alert";
+  readonly role?: "alert" | "status";
 }
 
 const Notice: FunctionComponent<Props> = ({ role, text, tone }) =>
