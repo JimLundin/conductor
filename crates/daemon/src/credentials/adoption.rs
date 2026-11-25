@@ -6,9 +6,7 @@ use anyhow::{Context, ensure};
 use host::registry::{AccountAdoption, dir};
 use serde::{Deserialize, Serialize};
 
-/// The journal's format, its first byte. A journal kept before it had one
-/// begins with its provider's index, 0 or 1, so the first format is 2.
-const FORMAT: u8 = 2;
+const JOURNAL_FORMAT: u8 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct Adoption {
@@ -50,7 +48,7 @@ impl Adoption {
     fn save(&self, data: &Path) -> anyhow::Result<()> {
         let journal = data.join("adoption");
         let next = journal.with_extension("new");
-        let file = postcard::to_extend(self, Vec::from([FORMAT]))?;
+        let file = postcard::to_extend(self, Vec::from([JOURNAL_FORMAT]))?;
         crate::write_private(&next, &file)?;
         rename(&next, &journal)?;
         Ok(crate::sync_dir(data)?)
@@ -70,18 +68,19 @@ impl Adoption {
 
     fn decode(file: &[u8]) -> anyhow::Result<Self> {
         match file.split_first() {
-            Some((&FORMAT, adoption)) => Ok(postcard::from_bytes(adoption)?),
+            Some((&JOURNAL_FORMAT, adoption)) => {
+                Ok(postcard::from_bytes(adoption)?)
+            }
             _ => anyhow::bail!(
                 "the journal is in an older format; finish or undo the adoption it records by hand, then remove it"
             ),
         }
     }
 
-    pub(super) fn move_directories(
+    pub(super) fn resume_directory_moves(
         &mut self,
         data: &Path,
     ) -> anyhow::Result<()> {
-        // A journal rename may have succeeded before its sync failed.
         crate::sync_dir(data)?;
         let directories = self.directories(data);
         for directory in &directories {
@@ -182,7 +181,6 @@ impl Directory {
     fn prepare_destination(&self) -> anyhow::Result<()> {
         if is_directory(&self.destination)? {
             if is_directory(&self.backup)? {
-                // A launcher recreated the destination after the original was backed up.
                 remove_directory(&self.destination)?;
             } else {
                 rename(&self.destination, &self.backup)?;
@@ -195,7 +193,6 @@ impl Directory {
         if is_directory(&self.backup)? {
             remove_directory(&self.backup)?;
         }
-        // A previous removal may have succeeded before syncing the parent.
         Ok(crate::sync_dir(&self.parent)?)
     }
 }

@@ -141,8 +141,6 @@ impl Membership {
             .map(drop)
     }
 
-    /// The browser's identity, once its certificate and its proof for this
-    /// connection verify.
     pub(crate) async fn admit_device(
         &self,
         remote: EndpointId,
@@ -773,7 +771,6 @@ fn verify_local(state: &State, local: EndpointId) -> anyhow::Result<()> {
     verify_root(state, root, &identity)
 }
 
-/// This host's identity, from its certificate.
 fn local(state: &State) -> anyhow::Result<Identity> {
     crypto::open(
         PublicKey::from_bytes(&state.current.config.snapshot.fleet)?,
@@ -885,8 +882,6 @@ fn store_key(data: &Path) -> anyhow::Result<Zeroizing<[u8; 32]>> {
     crate::load_or_create_secret(data, "fleet-store.key").map(Zeroizing::new)
 }
 
-/// The identity `certificate` holds, once it verifies against the fleet
-/// and names a current member of `role`.
 fn admit(
     snapshot: &Snapshot,
     certificate: &Certificate,

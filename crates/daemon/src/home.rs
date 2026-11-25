@@ -55,10 +55,8 @@ use tokio::sync::{mpsc, oneshot, watch};
 use crate::Stopped;
 use crate::workspace::{blob, text};
 
-/// How often the host pulls the home on its own.
-const EVERY: Duration = Duration::from_secs(300);
-/// A read pulls first unless the host tried within this many seconds.
-const FRESH: u64 = 30;
+const PULL_INTERVAL: Duration = Duration::from_secs(300);
+const PULL_RETRY_SECONDS: u64 = 30;
 
 /// Where the host keeps its home, and where it looks for checkouts.
 #[derive(Debug, Clone)]
@@ -80,7 +78,6 @@ pub struct Homing {
 pub struct HomeClone {
     inbox: mpsc::Sender<Msg>,
     shown: watch::Receiver<Option<Home>>,
-    /// The clone, which a session's instructions are read from.
     clone: PathBuf,
 }
 
@@ -221,11 +218,6 @@ impl HomeClone {
         self.shown.clone()
     }
 
-    /// Runs a home command once it has done what it asks.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the task has stopped.
     pub(crate) async fn order(
         &self,
         command: HomeCommand,
@@ -318,9 +310,7 @@ impl HomeClone {
 struct Actor {
     host: String,
     data_dir: PathBuf,
-    /// The clone, `<data>/home-repo`.
     clone: PathBuf,
-    /// Where "Clone here" clones a project, `<data>/projects`.
     clones: String,
     stored: PathBuf,
     remote: Option<String>,
@@ -328,20 +318,16 @@ struct Actor {
     destination: Option<Destination>,
     roots: Vec<PathBuf>,
     sync: Sync,
-    /// The clone as a scan or a replay last read it, which every issue
-    /// change is decided against.
     home: Snapshot,
     found: BTreeMap<ProjectId, Vec<Checkout>>,
     cloning: BTreeMap<ProjectId, Cloning>,
-    /// The issue changes the remote doesn't have yet, oldest first.
     edits: PendingEdits,
     edits_loaded: bool,
     edits_at: PathBuf,
     known: Vec<String>,
     shown: watch::Sender<Option<Home>>,
     user: Option<PathBuf>,
-    /// The clone's commit whose skills were last installed.
-    installed: Option<String>,
+    skills_commit: Option<String>,
 }
 
 impl Actor {
@@ -383,12 +369,12 @@ impl Actor {
             edits_at,
             shown,
             user,
-            installed: None,
+            skills_commit: None,
         }
     }
 
     async fn run(mut self, mut inbox: mpsc::Receiver<Msg>) {
-        let mut ticks = tokio::time::interval(EVERY);
+        let mut ticks = tokio::time::interval(PULL_INTERVAL);
         while let Some(msg) = next(&mut inbox, &mut ticks).await {
             self.handle(msg).await;
         }
@@ -514,15 +500,12 @@ impl Actor {
         home::answer(configured)
     }
 
-    /// Pulls before a read, unless the host tried a moment ago.
     async fn fresh(&mut self) {
-        if self.sync.due(now(), FRESH) {
+        if self.sync.due(now(), PULL_RETRY_SECONDS) {
             self.refresh().await;
         }
     }
 
-    /// Clones or pulls the home, or replays the host's changes onto it,
-    /// then reads it again.
     async fn refresh(&mut self) {
         let Some(remote) = self.remote.clone() else {
             return;
@@ -543,13 +526,13 @@ impl Actor {
         }
     }
 
-    /// Installs the clone's skills for the user once per commit it moves
-    /// to, as `home skills` does.
     async fn install(&mut self) {
         let moved = commit_of(&self.clone, "HEAD").await;
-        let Some((user, head)) =
-            skills::due(self.user.clone(), moved, self.installed.as_deref())
-        else {
+        let Some((user, head)) = skills::due(
+            self.user.clone(),
+            moved,
+            self.skills_commit.as_deref(),
+        ) else {
             return;
         };
         let clone = self.clone.clone();
@@ -560,14 +543,13 @@ impl Actor {
         .map_err(|err| err.to_string())
         .and_then(core::convert::identity);
         match done {
-            Ok(_) => self.installed = Some(head),
+            Ok(_) => self.skills_commit = Some(head),
             Err(reason) => {
                 tracing::warn!(%reason, "could not install the home's skills");
             }
         }
     }
 
-    /// Runs what brings the clone up to date with the remote.
     async fn bring_up(&mut self, remote: &str) -> Result<(), String> {
         self.destination = None;
         let (destination, existing) = self.prepare_destination(remote).await?;
@@ -726,7 +708,6 @@ impl Actor {
         )
     }
 
-    /// What an issue change is decided against.
     fn issue_context(&self, edit: EditId) -> Context<'_> {
         Context {
             remote: self.remote.as_deref(),
@@ -737,8 +718,6 @@ impl Actor {
         }
     }
 
-    /// Records the edit, written as the flow reads it back among the
-    /// clone's other issues, and says what the flow warns of it.
     async fn record(
         &mut self,
         request: Record,
@@ -797,7 +776,6 @@ impl Actor {
         }
     }
 
-    /// Applies every kept edit again to the clone as it is now.
     async fn rewrite_all(&mut self) {
         self.home = self.read_home();
         self.edits.reset();
@@ -878,8 +856,6 @@ impl Actor {
         )
     }
 
-    /// Writes and commits the issue's file, which the home is then read
-    /// with.
     async fn commit(&mut self, commit: Commit) -> Result<(), String> {
         let target =
             write_issue(&self.clone, &commit.target.path, &commit.text)?;
@@ -907,7 +883,6 @@ impl Actor {
         home::answer(remote.map(drop))
     }
 
-    /// Reads the home the clone holds and finds its projects' checkouts.
     async fn scan(&mut self) {
         self.home = self.read_home();
         self.home.problems().iter().for_each(|problem| {
@@ -935,7 +910,6 @@ impl Actor {
         self.publish();
     }
 
-    /// The home the clone holds now.
     fn read_home(&self) -> Snapshot {
         home_files::read(&self.clone)
     }
@@ -974,7 +948,6 @@ fn cloned(clone: &Path) -> bool {
     clone.join(".git").exists()
 }
 
-/// `git clone`, run in the data dir.
 async fn clone(
     data_dir: &Path,
     remote: &str,
@@ -1119,8 +1092,6 @@ async fn pull(clone: &Path, tracking: &str) -> Result<(), String> {
     pulled
 }
 
-/// Makes the checkout's issue branch what `home::issue::Branch` says. The
-/// remote is `origin`, which is how the home matched the checkout.
 async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
     ready_issue_branch(Path::new(&start.checkout.0), &start.branch).await
 }
@@ -1207,8 +1178,6 @@ async fn remote_branch(checkout: &Path, branch: &str) -> home::issue::Remote {
     }
 }
 
-/// Where a new issue branch starts: the remote's default branch as the
-/// checkout knows it, else its `HEAD`.
 async fn base(checkout: &Path) -> Result<String, String> {
     let remote = commit_of(checkout, "refs/remotes/origin/HEAD").await;
     let head = commit_of(checkout, "HEAD").await;
@@ -1224,7 +1193,6 @@ async fn commit_of(repository: &Path, reference: &str) -> Option<String> {
         .ok()
 }
 
-/// Whether `older` is an ancestor of `newer`, when the checkout has both.
 async fn ancestor(
     repository: &Path,
     older: Option<&str>,
@@ -1278,7 +1246,6 @@ async fn changed_at(
         .map_err(|err: std::num::ParseIntError| err.to_string())
 }
 
-/// Commits the file at `relative` alone, as Conductor.
 async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
     let relative = &commit.target.path;
     text(clone, &["add", "--", relative])
@@ -1312,8 +1279,6 @@ async fn probes(paths: Vec<String>) -> Vec<Probe> {
     found
 }
 
-/// What Git says of the repository at `path`, by its canonical path, each
-/// of [`home::checkout::ASKED`] run in turn with the daemon's time limit.
 async fn probe(path: &str) -> Option<Probe> {
     let canonical = std::fs::canonicalize(path).ok()?;
     let shown = canonical.to_str()?.to_owned();
@@ -1329,12 +1294,10 @@ async fn probe(path: &str) -> Option<Probe> {
     )
 }
 
-/// The host's clone of the home, `<data>/home-repo`.
 fn clone_of(data_dir: &Path) -> PathBuf {
     data_dir.join("home-repo")
 }
 
-/// `path` as checkouts are found, through any symlink.
 fn canonical(path: &SessionDirectory) -> String {
     std::fs::canonicalize(&path.0)
         .ok()
@@ -1346,11 +1309,8 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// The store's encoding. A store in any other is set aside, never read.
 const EDITS_VERSION: &[u8] = b"\x80\x00\x06";
 
-/// The unpushed issue changes the host kept. A store that no longer reads
-/// is moved aside, so its changes are not lost unseen.
 fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -1382,7 +1342,6 @@ fn decode_edits(bytes: &[u8]) -> Result<Vec<Edit>, postcard::Error> {
     Ok(edits)
 }
 
-/// What the host stored at `path`, or nothing if it can't be read.
 fn load<T: DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read(path)
         .ok()
@@ -1390,8 +1349,6 @@ fn load<T: DeserializeOwned + Default>(path: &Path) -> T {
         .unwrap_or_default()
 }
 
-/// Writes the store beside its file, then renames it over, so a crash
-/// leaves either.
 fn save<T: Serialize + ?Sized>(
     path: &Path,
     prefix: &[u8],
@@ -1461,7 +1418,6 @@ fn now() -> u64 {
         .map_or(0, |since| since.as_secs())
 }
 
-/// The randomness a new issue's id is minted with.
 fn draws() -> home::Draws {
     core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
 }

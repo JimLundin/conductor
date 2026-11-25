@@ -28,7 +28,6 @@ use iroh::SecretKey;
 use link::AuthToken;
 use tokio::sync::{mpsc, oneshot};
 
-/// The actor stopped: nobody can reach it any more.
 #[derive(Debug, thiserror::Error)]
 #[error("the actor has stopped")]
 pub(crate) struct Stopped {}
@@ -42,24 +41,12 @@ async fn ask<Msg, T>(
     answer.await.map_err(|_| Stopped {})
 }
 
-/// Loads the host's iroh key from `<data_dir>/host.key`, creating it on first
-/// run. The key's public half is the host's address, so it must persist.
-///
-/// # Errors
-///
-/// Fails if the key file can't be read, parsed or created.
 fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from_bytes(&load_or_create_secret(
         data_dir, "host.key",
     )?))
 }
 
-/// Keeps the ticket's authentication token stable across host restarts.
-/// It is stored with the same private-file and sync guarantees as the host key.
-///
-/// # Errors
-///
-/// Fails if the token file can't be read, parsed or created.
 fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
     let secret = load_or_create_secret(data_dir, "auth.key")?;
     let (bytes, _) = secret
@@ -68,8 +55,6 @@ fn load_or_create_token(data_dir: &Path) -> anyhow::Result<AuthToken> {
     Ok(AuthToken::from_bytes(bytes.try_into()?))
 }
 
-/// Loads 32 secret bytes from `<data_dir>/<name>` as hex, creating them on
-/// first run, readable by the owner only.
 fn load_or_create_secret(
     data_dir: &Path,
     name: &str,
@@ -87,9 +72,6 @@ fn load_or_create_secret(
     }
 }
 
-/// A new key is written whole beside the file and then linked to its
-/// name, which fails if the name exists, so of two first starts one key
-/// wins and the other start reads it.
 fn create_secret(
     data_dir: &Path,
     name: &str,
@@ -110,7 +92,6 @@ fn create_secret(
     }
 }
 
-/// The file's text, or `None` when there is no file.
 fn read_if_exists(path: &Path) -> std::io::Result<Option<String>> {
     match std::fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
@@ -119,7 +100,6 @@ fn read_if_exists(path: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
-/// Links `link` to `original`, or says it already exists.
 fn link_new(original: &Path, link: &Path) -> std::io::Result<bool> {
     match std::fs::hard_link(original, link) {
         Ok(()) => Ok(true),
@@ -164,7 +144,6 @@ fn private_options() -> std::fs::OpenOptions {
     options
 }
 
-/// Makes a rename or link in `dir` durable. Windows has no directory sync.
 #[cfg(unix)]
 fn sync_dir(dir: &Path) -> std::io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
@@ -181,14 +160,10 @@ fn random_key() -> anyhow::Result<[u8; 32]> {
     Ok(bytes)
 }
 
-/// # Errors
-///
-/// Fails if the OS has no random source.
 fn random_epoch() -> anyhow::Result<Epoch> {
     Ok(Epoch(getrandom::u64().context("no random source")?))
 }
 
-/// Logs what the host's core decided to report.
 fn log_note(note: &Note) {
     match note {
         Note::Ready {

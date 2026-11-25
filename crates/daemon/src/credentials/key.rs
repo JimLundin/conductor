@@ -64,9 +64,6 @@ fn open_native(vault: &impl Vault, slot: &Key) -> anyhow::Result<Key> {
     Ok(key)
 }
 
-/// A new store's key: saved in the keystore and read back before the slot
-/// that names it is recorded, so an interrupted save leaves no slot and the
-/// next start begins again.
 fn create(dir: &Path, vault: &mut impl Vault) -> anyhow::Result<Key> {
     let slot = crate::random_key()?;
     let account = account(&slot);
