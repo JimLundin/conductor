@@ -1043,6 +1043,8 @@ fn answered(input: Value, given: Vec<Answer>) -> serde_json::Result<Value> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeSet;
+
     use serde_json::Value;
 
     use agents::{
@@ -1677,9 +1679,9 @@ mod tests {
                 .map(|choice| (choice.id.0.as_str(), choice.efforts.clone()))
                 .collect::<Vec<_>>(),
             Vec::from([
-                ("opus", Vec::from([Effort::Low, Effort::High])),
-                ("haiku", Vec::new()),
-                ("custom", Vec::new()),
+                ("opus", BTreeSet::from([Effort::Low, Effort::High])),
+                ("haiku", BTreeSet::new()),
+                ("custom", BTreeSet::new()),
             ])
         );
         assert_eq!(models.default, Some(ModelId(String::from("haiku"))));

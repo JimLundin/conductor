@@ -243,6 +243,8 @@ fn unavailable<P, S>(reason: String) -> Next<P, S> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeSet;
+
     use agents::{Effort, ModelChoice, ModelId, Models, Provider};
 
     use super::{Mode, Next, Output, setting, start};
@@ -283,7 +285,7 @@ mod tests {
                 id: ModelId(String::from("opus")),
                 name: String::from("Opus"),
                 description: String::new(),
-                efforts: Vec::from([Effort::High]),
+                efforts: BTreeSet::from([Effort::High]),
             }]),
         }
     }

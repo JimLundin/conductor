@@ -2548,7 +2548,8 @@
           "items": {
             "$ref": "#/$defs/Effort"
           },
-          "type": "array"
+          "type": "array",
+          "uniqueItems": true
         },
         "id": {
           "$ref": "#/$defs/ModelId"

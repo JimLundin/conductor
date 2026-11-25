@@ -74,7 +74,9 @@ type ModelChoice = {
 
 const ModelChoice = Schema.Struct({
   description: Schema.String,
-  efforts: Schema.Array(Effort),
+  efforts: Schema.Array(Effort).check(
+    Schema.isUnique().annotate({ expected: "an array with unique items" }),
+  ),
   id: ModelId,
   name: Schema.String,
 }).annotate({ identifier: "ModelChoice" });

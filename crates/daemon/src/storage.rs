@@ -148,13 +148,33 @@ fn decode<T: DeserializeOwned>(value: &[u8]) -> anyhow::Result<T> {
 }
 
 #[cfg(test)]
+mod trace;
+
+#[cfg(test)]
 mod tests {
     use agents::ToolCallId;
-    use host::log::{Event, HostSeq};
+    use host::log::{Event, FORMAT, HostSeq};
     use host::session::{EventKind, RequestId, SessionId};
     use link::CommandResult;
 
+    use super::trace::Trace;
     use super::{Storage, conversation, event, store_receipt};
+
+    #[test]
+    fn every_stored_variant_keeps_its_place_in_this_format() {
+        let trace = Trace::default()
+            .with_text("an issue id of 8 base 32 digits", "00000000")
+            .with_text("a project id of 6 base 32 digits", "000000")
+            .with_text("lowercase words joined by `-`", "a")
+            .of::<Event>()
+            .of::<CommandResult>();
+        assert!(trace.complete());
+        assert_eq!(
+            format!("format {FORMAT}\n{}", trace.render()),
+            include_str!("storage/stored-variants.txt"),
+            "a stored variant moved or was added: bump host::log::FORMAT and write the new order to storage/stored-variants.txt"
+        );
+    }
 
     #[test]
     fn committed_events_receipts_and_conversations_reopen_together()

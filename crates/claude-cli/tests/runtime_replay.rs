@@ -1,6 +1,7 @@
 #![cfg(test)]
 #![cfg(unix)]
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -61,7 +62,7 @@ async fn configuring_a_claude_gateway_lists_its_models_and_efforts()
                 ("haiku", "Haiku"),
             ]),
             &Some(ModelId(String::from("opus"))),
-            Some(&Vec::from([
+            Some(&BTreeSet::from([
                 Effort::Low,
                 Effort::Medium,
                 Effort::High,
