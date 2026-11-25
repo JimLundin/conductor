@@ -122,6 +122,29 @@ fn a_relation_is_found_by_its_name_or_its_reverse() {
 }
 
 #[test]
+fn a_relation_with_no_kinds_listed_joins_any_kind() {
+    let joined = load(FLOW).map(|flow| {
+        ["parent", "blocked_by"].map(|name| {
+            flow.relation(name).map(|(relation, _)| {
+                (
+                    relation.starts_from("task"),
+                    relation.starts_from("spec"),
+                    relation.reaches("spec"),
+                    relation.reaches("task"),
+                )
+            })
+        })
+    });
+    assert_eq!(
+        joined,
+        Ok([
+            Some((true, false, true, false)),
+            Some((true, true, true, true)),
+        ])
+    );
+}
+
+#[test]
 fn every_role_needs_a_status() {
     assert_eq!(
         failure(

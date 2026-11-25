@@ -37,12 +37,12 @@ pub fn setting(
 }
 
 #[derive(Debug)]
-pub enum Next<P, S> {
+pub enum Next<CliPath, Starter> {
     Install(Installing),
-    Probe(P, Probing),
-    CheckSignIn(P, Checking<S>),
-    Configure(Configuring<S>),
-    Done(Launcher<S>, Vec<Note>),
+    Probe(CliPath, Probing),
+    CheckSignIn(CliPath, Checking<Starter>),
+    Configure(Configuring<Starter>),
+    Done(Launcher<Starter>, Vec<Note>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,11 +52,11 @@ pub struct Output {
 }
 
 #[must_use]
-pub fn start<P, S>(
+pub fn start<CliPath, Starter>(
     name: &str,
-    given: Option<P>,
+    given: Option<CliPath>,
     chosen: Option<String>,
-) -> Next<P, S> {
+) -> Next<CliPath, Starter> {
     match given {
         Some(path) => Next::Probe(
             path,
@@ -84,7 +84,10 @@ pub struct Installing {
 
 impl Installing {
     #[must_use]
-    pub fn installed<P, S>(self, path: Result<P, String>) -> Next<P, S> {
+    pub fn installed<CliPath, Starter>(
+        self,
+        path: Result<CliPath, String>,
+    ) -> Next<CliPath, Starter> {
         match path {
             Ok(installed) => Next::Probe(
                 installed,
@@ -109,13 +112,13 @@ pub struct Probing {
 
 impl Probing {
     #[must_use]
-    pub fn probed<P, S>(
+    pub fn probed<CliPath, Starter>(
         self,
-        path: P,
-        start: S,
+        path: CliPath,
+        start: Starter,
         program: String,
         ran: Result<Output, String>,
-    ) -> Next<P, S> {
+    ) -> Next<CliPath, Starter> {
         let version = match ran {
             Ok(output) if succeeded(output.code) => {
                 String::from(output.stdout.trim())
@@ -148,21 +151,24 @@ impl Probing {
 }
 
 #[derive(Debug)]
-struct Cli<S> {
+struct Cli<Starter> {
     path: String,
     version: String,
-    start: S,
+    start: Starter,
     chosen: Option<String>,
 }
 
 #[derive(Debug)]
-pub struct Checking<S> {
-    cli: Cli<S>,
+pub struct Checking<Starter> {
+    cli: Cli<Starter>,
 }
 
-impl<S> Checking<S> {
+impl<Starter> Checking<Starter> {
     #[must_use]
-    pub fn checked<P>(self, code: &Result<Option<i32>, String>) -> Next<P, S> {
+    pub fn checked<CliPath>(
+        self,
+        code: &Result<Option<i32>, String>,
+    ) -> Next<CliPath, Starter> {
         let own = match code {
             Ok(exit) if succeeded(*exit) => OwnSignIn::SignedIn,
             Ok(_) | Err(_) => OwnSignIn::Missing,
@@ -178,23 +184,23 @@ pub enum Mode {
 }
 
 #[derive(Debug)]
-pub struct Configuring<S> {
-    cli: Cli<S>,
+pub struct Configuring<Starter> {
+    cli: Cli<Starter>,
     own: OwnSignIn,
 }
 
-impl<S> Configuring<S> {
+impl<Starter> Configuring<Starter> {
     #[must_use]
-    pub const fn instance(&self) -> &S {
+    pub const fn instance(&self) -> &Starter {
         &self.cli.start
     }
 
     #[must_use]
-    pub fn configured<P>(
+    pub fn configured<CliPath>(
         self,
         result: Result<Configuration, String>,
         mode: Mode,
-    ) -> Next<P, S> {
+    ) -> Next<CliPath, Starter> {
         let Self { cli, own } = self;
         let chosen = cli.chosen.map(ModelId);
         let mut notes = Vec::new();
@@ -234,7 +240,7 @@ impl<S> Configuring<S> {
     }
 }
 
-fn unavailable<P, S>(reason: String) -> Next<P, S> {
+fn unavailable<CliPath, Starter>(reason: String) -> Next<CliPath, Starter> {
     let note = Note::Unavailable {
         reason: reason.clone(),
     };

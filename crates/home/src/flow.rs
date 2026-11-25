@@ -377,9 +377,7 @@ fn shown(flow: &Flow, kind: &Kind, name: &str) -> bool {
     matches!(name, "status" | "stage")
         || flow.field(&kind.name, name).is_some()
         || flow.relations.iter().any(|relation| {
-            relation.name == name
-                && (relation.from.is_empty()
-                    || relation.from.contains(&kind.name))
+            relation.name == name && relation.starts_from(&kind.name)
         })
 }
 

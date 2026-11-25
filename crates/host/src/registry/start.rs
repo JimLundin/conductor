@@ -67,7 +67,7 @@ pub struct StartRequest {
 }
 
 #[derive(Debug)]
-pub enum StartEffect<S, H> {
+pub enum StartEffect<Starter, Handle> {
     ReadyBranch(home::issue::Start),
     CheckDirectory(SessionDirectory),
     CreateWorkspace {
@@ -88,23 +88,24 @@ pub enum StartEffect<S, H> {
         directory: SessionDirectory,
         choice: Choice,
         provider: Provider,
-        agent: (S, Models),
+        agent: (Starter, Models),
         history: Box<[Event; 2]>,
     },
     Brief {
         session: SessionId,
-        handle: H,
+        handle: Handle,
         text: String,
         by: ClientName,
     },
 }
 
-pub type StartDecision<S, H> = ControlFlow<StartEnd, StartStep<S, H>>;
+pub type StartDecision<Starter, Handle> =
+    ControlFlow<StartEnd, StartStep<Starter, Handle>>;
 
 #[derive(Debug)]
-pub struct StartStep<S, H> {
-    pub effect: StartEffect<S, H>,
-    pub next: StartSession<S, H>,
+pub struct StartStep<Starter, Handle> {
+    pub effect: StartEffect<Starter, Handle>,
+    pub next: StartSession<Starter, Handle>,
 }
 
 #[derive(Debug)]
@@ -120,43 +121,44 @@ pub struct StartOutcome {
 }
 
 #[derive(Debug)]
-pub enum StartReport<H> {
+pub enum StartReport<Handle> {
     Branch(Result<(), SessionRefusal>),
     Directory(bool),
     Workspace(SessionId, Result<Workspace, GitError>),
     Snapshot(Result<String, GitError>),
     Recorded(Box<[Event; 2]>),
-    Spawned(H),
+    Spawned(Handle),
     BriefQueued,
     Stopped,
 }
 
 #[derive(Debug)]
-enum Phase<S, H> {
+enum Phase<Starter, Handle> {
     Branch,
     Directory,
-    Workspace(Launch<S>),
-    Snapshot(SessionId, Launch<S>, Workspace),
-    Record(SessionId, Launch<S>),
+    Workspace(Launch<Starter>),
+    Snapshot(SessionId, Launch<Starter>, Workspace),
+    Record(SessionId, Launch<Starter>),
     Spawn(SessionId),
-    Brief(SessionId, H),
+    Brief(SessionId, Handle),
 }
 
 #[derive(Debug)]
-pub struct StartSession<S, H> {
+pub struct StartSession<Starter, Handle> {
     request: StartRequest,
     placed: Placement,
-    phase: Phase<S, H>,
+    phase: Phase<Starter, Handle>,
 }
 
-type Planned<S, H> = (Phase<S, H>, StartEffect<S, H>);
+type Planned<Starter, Handle> =
+    (Phase<Starter, Handle>, StartEffect<Starter, Handle>);
 
 impl StartRequest {
-    pub fn placed<S, H>(
+    pub fn placed<Starter, Handle>(
         self,
         result: Result<Placement, HomeRefusal>,
         history: &[Event],
-    ) -> StartDecision<S, H> {
+    ) -> StartDecision<Starter, Handle> {
         let placed = match result {
             Ok(placement) => placement,
             Err(reason) => return refuse(SessionRefusal::Home(reason)),
@@ -186,12 +188,12 @@ impl StartRequest {
     }
 }
 
-impl<S: Clone, H: Clone> StartSession<S, H> {
-    pub fn report<R>(
+impl<Starter: Clone, Handle: Clone> StartSession<Starter, Handle> {
+    pub fn report<ReplyTo>(
         self,
-        registry: &mut Registry<S, H, R>,
-        report: StartReport<H>,
-    ) -> StartDecision<S, H> {
+        registry: &mut Registry<Starter, Handle, ReplyTo>,
+        report: StartReport<Handle>,
+    ) -> StartDecision<Starter, Handle> {
         let Self {
             request,
             placed,
@@ -284,12 +286,12 @@ impl<S: Clone, H: Clone> StartSession<S, H> {
     }
 }
 
-fn workspace_creation<S: Clone, H: Clone, R>(
-    registry: &Registry<S, H, R>,
+fn workspace_creation<Starter: Clone, Handle: Clone, ReplyTo>(
+    registry: &Registry<Starter, Handle, ReplyTo>,
     request: &StartRequest,
     placed: &Placement,
     exists: bool,
-) -> Result<Planned<S, H>, SessionRefusal> {
+) -> Result<Planned<Starter, Handle>, SessionRefusal> {
     let launch = registry.launch_session(
         &request.instance,
         exists,
@@ -305,25 +307,25 @@ fn workspace_creation<S: Clone, H: Clone, R>(
     ))
 }
 
-fn snapshotting<S, H>(
+fn snapshotting<Starter, Handle>(
     session: SessionId,
-    launch: Launch<S>,
+    launch: Launch<Starter>,
     workspace: Workspace,
-) -> Planned<S, H> {
+) -> Planned<Starter, Handle> {
     (
         Phase::Snapshot(session, launch, workspace.clone()),
         StartEffect::Snapshot { session, workspace },
     )
 }
 
-fn opening<S, H>(
+fn opening<Starter, Handle>(
     request: &StartRequest,
     placed: &Placement,
     session: SessionId,
-    launch: &Launch<S>,
+    launch: &Launch<Starter>,
     workspace: Workspace,
     commit: String,
-) -> StartEffect<S, H> {
+) -> StartEffect<Starter, Handle> {
     let created = EventKind::SessionCreated {
         instance: request.instance.clone(),
         directory: placed.directory.clone(),
@@ -349,13 +351,13 @@ fn opening<S, H>(
     }
 }
 
-fn admitted<S: Clone, H: Clone, R>(
-    registry: &mut Registry<S, H, R>,
+fn admitted<Starter: Clone, Handle: Clone, ReplyTo>(
+    registry: &mut Registry<Starter, Handle, ReplyTo>,
     request: StartRequest,
     placed: Placement,
     session: SessionId,
-    handle: H,
-) -> StartDecision<S, H> {
+    handle: Handle,
+) -> StartDecision<Starter, Handle> {
     registry.admit(session, request.instance, handle);
     Break(StartEnd::Finished(StartOutcome {
         progress: placed.on.map(|on| (on.issue, request.by)),
@@ -363,7 +365,9 @@ fn admitted<S: Clone, H: Clone, R>(
     }))
 }
 
-const fn refuse<S, H>(reason: SessionRefusal) -> StartDecision<S, H> {
+const fn refuse<Starter, Handle>(
+    reason: SessionRefusal,
+) -> StartDecision<Starter, Handle> {
     Break(StartEnd::Finished(StartOutcome {
         progress: None,
         result: SessionResult::Refused(reason),

@@ -31,6 +31,25 @@ class PinTest(unittest.TestCase):
                 self.pin["write"](provider, self.original[provider])
                 self.assertEqual(self.pin["read"](provider), self.original[provider])
 
+    def test_pin_file_read_and_written_back_is_unchanged(self):
+        paths = self.pin["read"].__globals__["PINS_RS"]
+        for provider in PROVIDERS:
+            with self.subTest(provider=provider):
+                before = paths[provider].read_bytes()
+                self.pin["write"](provider, self.pin["read"](provider))
+                self.assertEqual(paths[provider].read_bytes(), before)
+
+    def test_note_with_quotes_and_backslashes_is_escaped(self):
+        pinned = {
+            "version": "1.0.0",
+            "verified": 'the "release" key signs C:\\pins\nand every binary',
+            "sha256": {"test-platform": "a" * 64},
+        }
+        self.pin["write"]("claude", pinned)
+        written = self.pin["read"].__globals__["PINS_RS"]["claude"].read_text()
+        self.assertIn(r'"the \"release\" key signs C:\\pins\nand every binary"', written)
+        self.assertEqual(self.pin["read"]("claude"), pinned)
+
     def test_each_update_writes_only_its_providers_pin(self):
         for provider, other in (("claude", "codex"), ("codex", "claude")):
             with self.subTest(provider=provider):
