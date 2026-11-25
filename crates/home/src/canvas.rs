@@ -86,7 +86,7 @@ impl Canvas {
     }
 
     #[must_use]
-    pub fn markdown(&self) -> String {
+    pub(crate) fn markdown(&self) -> String {
         core::iter::once(format!("# {}\n", self.title.trim()))
             .chain(self.blocks.iter().map(Block::markdown))
             .collect::<Vec<String>>()
@@ -95,8 +95,7 @@ impl Canvas {
 }
 
 impl Block {
-    #[must_use]
-    pub fn markdown(&self) -> String {
+    fn markdown(&self) -> String {
         match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
             Self::Diagram(diagram) => diagram.mermaid(),
@@ -116,12 +115,8 @@ impl Block {
     fn check(&self) -> Result<(), CanvasError> {
         match self {
             Self::Prose { .. } | Self::Code(_) => Ok(()),
-            Self::Diagram(diagram) => {
-                diagram.check().map_err(CanvasError::Diagram)
-            }
-            Self::Statechart(chart) => {
-                chart.check().map_err(CanvasError::Statechart)
-            }
+            Self::Diagram(diagram) => diagram.check(),
+            Self::Statechart(chart) => chart.check(),
             Self::Progress { label, bar } => {
                 progress::check(label, bar).map_err(CanvasError::Progress)
             }
@@ -178,13 +173,33 @@ struct Stamped {
 
 const MOST_WORDS: usize = 8;
 
-fn repeated<'a>(mut ids: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+fn distinct<'a>(
+    part: &'static str,
+    mut ids: impl Iterator<Item = &'a str>,
+) -> Result<(), CanvasError> {
     let mut seen = BTreeSet::new();
-    ids.find(|id| !seen.insert(*id))
+    ids.find(|id| !seen.insert(*id)).map_or(Ok(()), |id| {
+        Err(CanvasError::Twice {
+            part,
+            id: String::from(id),
+        })
+    })
 }
 
-fn wordy(label: &str) -> bool {
-    label.split_whitespace().count() > MOST_WORDS
+fn short<'a>(
+    mut labels: impl Iterator<Item = &'a String>,
+) -> Result<(), CanvasError> {
+    labels
+        .find(|label| label.split_whitespace().count() > MOST_WORDS)
+        .map_or(Ok(()), |label| {
+            Err(CanvasError::LongLabel {
+                label: String::from(label.trim()),
+            })
+        })
+}
+
+fn quoted(label: &str) -> String {
+    format!("\"{}\"", label.trim().replace('"', "#quot;"))
 }
 
 fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
@@ -196,6 +211,8 @@ fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanvasError {
     Json { reason: String },
+    LongLabel { label: String },
+    Twice { part: &'static str, id: String },
     Diagram(DiagramError),
     Statechart(StatechartError),
     Progress(ProgressError),
@@ -207,6 +224,14 @@ impl fmt::Display for CanvasError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json { reason } => write!(out, "not a canvas: {reason}"),
+            Self::LongLabel { label } => write!(
+                out,
+                "the label `{label}` is over {MOST_WORDS} words: put the detail in prose"
+            ),
+            Self::Twice { part, id } => write!(
+                out,
+                "two {part}s are called `{id}`: give each {part} its own id"
+            ),
             Self::Diagram(error) => error.fmt(out),
             Self::Statechart(error) => error.fmt(out),
             Self::Progress(error) => error.fmt(out),

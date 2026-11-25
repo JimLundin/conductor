@@ -7,7 +7,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{repeated, wordy};
+use super::{CanvasError, distinct, quoted, short};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -45,14 +45,20 @@ pub struct Group {
 }
 
 impl Diagram {
-    pub(super) fn check(&self) -> Result<(), DiagramError> {
-        if let Some(id) =
-            repeated(self.nodes.iter().map(|node| node.id.as_str()))
-        {
-            return Err(DiagramError::Twice {
-                id: String::from(id),
-            });
-        }
+    pub(super) fn check(&self) -> Result<(), CanvasError> {
+        distinct("node", self.nodes.iter().map(|node| node.id.as_str()))?;
+        self.wired().map_err(CanvasError::Diagram)?;
+        short(
+            self.nodes
+                .iter()
+                .map(|node| &node.label)
+                .chain(self.edges.iter().filter_map(|edge| edge.label.as_ref()))
+                .chain(self.groups.iter().map(|group| &group.label)),
+        )?;
+        self.staged().map_err(CanvasError::Diagram)
+    }
+
+    fn wired(&self) -> Result<(), DiagramError> {
         if let Some(edge) = self
             .edges
             .iter()
@@ -79,18 +85,10 @@ impl Diagram {
                 group: node.group.clone().unwrap_or_default(),
             });
         }
-        if let Some(label) = self
-            .nodes
-            .iter()
-            .map(|node| &node.label)
-            .chain(self.edges.iter().filter_map(|edge| edge.label.as_ref()))
-            .chain(self.groups.iter().map(|group| &group.label))
-            .find(|label| wordy(label))
-        {
-            return Err(DiagramError::Wordy {
-                label: label.clone(),
-            });
-        }
+        Ok(())
+    }
+
+    fn staged(&self) -> Result<(), DiagramError> {
         if let Some((edge, node)) = self.edges.iter().find_map(|edge| {
             self.nodes
                 .iter()
@@ -115,8 +113,7 @@ impl Diagram {
             })
     }
 
-    #[must_use]
-    pub fn mermaid(&self) -> String {
+    pub(super) fn mermaid(&self) -> String {
         self.steps()
             .into_iter()
             .map(|step| self.flowchart(step))
@@ -197,18 +194,11 @@ impl Diagram {
 
 const MOST_NODES: usize = 6;
 
-fn quoted(label: &str) -> String {
-    format!("\"{}\"", label.trim().replace('"', "#quot;"))
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DiagramError {
     Crowded {
         step: u8,
         nodes: usize,
-    },
-    Wordy {
-        label: String,
     },
     Dangling {
         from: String,
@@ -226,9 +216,6 @@ pub enum DiagramError {
         node: String,
         shown: u8,
     },
-    Twice {
-        id: String,
-    },
 }
 
 impl fmt::Display for DiagramError {
@@ -236,12 +223,7 @@ impl fmt::Display for DiagramError {
         match self {
             Self::Crowded { step, nodes } => write!(
                 out,
-                "step {step} of a diagram shows {nodes} nodes, over six: split it into steps or diagrams"
-            ),
-            Self::Wordy { label } => write!(
-                out,
-                "the label `{}` is over eight words: put the detail in prose",
-                label.trim()
+                "step {step} of a diagram shows {nodes} nodes, over {MOST_NODES}: split it into steps or diagrams"
             ),
             Self::Dangling { from, to, missing } => write!(
                 out,
@@ -260,10 +242,6 @@ impl fmt::Display for DiagramError {
             } => write!(
                 out,
                 "the edge from `{from}` to `{to}` comes at step {step}, before node `{node}` at step {shown}: move the edge to step {shown} or later"
-            ),
-            Self::Twice { id } => write!(
-                out,
-                "two nodes are called `{id}`: give each node its own id"
             ),
         }
     }
