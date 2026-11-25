@@ -19,7 +19,7 @@ const rendered = (fragment: string, pipe?: Pipe): Effect.Effect<string, never, S
     Effect.map((store) => renderToStaticMarkup(<Root store={store} />)),
   );
 
-const turn = () => scenario("a_claude_turn_streams_asks_and_finishes");
+const turn = (): ReturnType<typeof scenario> => scenario("a_claude_turn_streams_asks_and_finishes");
 
 describe("empty app", () => {
   it.effect("the app opens on the empty pairing screen", () =>

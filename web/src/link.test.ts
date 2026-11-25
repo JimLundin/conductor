@@ -17,14 +17,55 @@ import {
   until,
 } from "#ui/test/replay.ts";
 import { describe, expect, it } from "@effect/vitest";
+import type { HostLink } from "#ui/link/host.ts";
+import type { FakeHost } from "#ui/test/fake-pipe.ts";
+import type { Scope } from "effect";
 import type { Connection } from "#ui/pipe.ts";
 import { TestClock } from "effect/testing";
-import { Update } from "#ui/link/host.ts";
+import { Update } from "@conductor/core/link";
 import type { Welcome } from "@conductor/core/schemas/index";
 import { fakeHost } from "#ui/test/fake-pipe.ts";
 import { link } from "#ui/link.ts";
 
-const turn = () => scenario("a_claude_turn_streams_asks_and_finishes");
+const turn = (): ReturnType<typeof scenario> => scenario("a_claude_turn_streams_asks_and_finishes");
+
+const dropped = (
+  host: FakeHost,
+  linked: HostLink,
+  reason: string,
+): Effect.Effect<ReadonlyArray<Update>> =>
+  Effect.gen(function* retrying() {
+    host.close(reason);
+    const seen = yield* until(linked, inState("Disconnected"));
+    yield* TestClock.adjust(300);
+    return seen;
+  });
+
+interface DialTrace {
+  readonly linked: HostLink;
+  readonly times: () => ReadonlyArray<number>;
+}
+
+const traced = (host: FakeHost): Effect.Effect<DialTrace, never, Scope.Scope> =>
+  Effect.gen(function* recording() {
+    const clock = yield* TestClock.testClockWith(Effect.succeed);
+    let at: ReadonlyArray<number> = [];
+    const timed = (dial: () => Promise<Connection>) => (): Promise<Connection> => {
+      at = [...at, clock.currentTimeMillisUnsafe()];
+      return dial();
+    };
+    const offline = timed(() => Promise.reject(new Error("offline")));
+    const linked = yield* link(
+      dialing([
+        ...Array.from({ length: 7 }, () => offline),
+        timed(() => reach(host)),
+        timed(() => Effect.runPromise(Effect.never)),
+      ]),
+      ticket,
+      client,
+    );
+    return { linked, times: (): ReadonlyArray<number> => at };
+  });
 
 const walking = ["Connecting", "Authenticating", "CatchingUp", "Live"] as const;
 
@@ -62,9 +103,8 @@ describe("initial connection", () => {
         Update.Welcome({ welcome }),
       ]);
       expect(subscribes).toStrictEqual([{ after_seq: 0, epoch: welcome.epoch }]);
-      expect(events(updates.slice(0, updates.findIndex(inState("Live"))))).toStrictEqual([
-        1, 2, 3, 4, 5, 6, 7, 8,
-      ]);
+      const caughtUp = updates.slice(0, updates.findIndex(inState("Live")));
+      expect(events(caughtUp)).toStrictEqual([1, 2, 3, 4, 5, 6, 7, 8]);
       expect(updates.filter(Update.$is("Feed")).map((update) => update.frame)).toStrictEqual(
         turn().feed(1),
       );
@@ -85,7 +125,7 @@ describe("dropped connection", () => {
             ];
             const reply = { Welcome: yield* turn().welcome(0) };
             const feed = turn().feed(0);
-            const dropAt = feed.findIndex(isDeltaFrame) + 2;
+            const dropAt = feed.findIndex((frame) => isDeltaFrame(frame)) + 2;
             yield* serve(first, { feed: feed.slice(0, dropAt), reply, results: [] });
             const again = yield* serve(second, {
               feed: stored(feed),
@@ -94,18 +134,21 @@ describe("dropped connection", () => {
             });
             const linked = yield* link(hosts([first, second]), ticket, client);
             const before = yield* throughFeed(linked, dropAt);
-            first.close("the network went away");
-            const after = yield* until(linked, (update) => events([update]).includes(13));
+            const down = yield* dropped(first, linked, "the network went away");
             return {
               sent: feed.slice(0, dropAt),
               subscribes: yield* Ref.get(again.subscribes),
-              updates: [...before, ...after],
+              updates: [
+                ...before,
+                ...down,
+                ...(yield* until(linked, (update) => events([update]).includes(13))),
+              ],
             };
           }),
         );
         expect(subscribes).toStrictEqual([{ after_seq: 10, epoch: "1" }]);
         expect(events(updates)).toStrictEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
-        expect(deltas(updates)).toStrictEqual(sent.filter(isDeltaFrame));
+        expect(deltas(updates)).toStrictEqual(sent.filter((frame) => isDeltaFrame(frame)));
         expect(updates.filter(Update.$is("Reset"))).toHaveLength(1);
         expect(updates.find(inState("Disconnected"))).toStrictEqual(
           Update.Status({
@@ -122,11 +165,11 @@ describe("changed epoch", () => {
     Effect.gen(function* verify3() {
       const { updates, subscribes, reborn } = yield* Effect.scoped(
         Effect.gen(function* rebirth() {
-          const [first, second] = [
+          const [first, second, welcome] = [
             yield* Effect.tryPromise(fakeHost),
             yield* Effect.tryPromise(fakeHost),
+            yield* turn().welcome(1),
           ];
-          const welcome = yield* turn().welcome(1);
           const restarted: Welcome = { ...welcome, epoch: `${welcome.epoch}0` };
           const feed = stored(turn().feed(1));
           yield* serve(first, { feed, reply: { Welcome: welcome }, results: [] });
@@ -137,12 +180,11 @@ describe("changed epoch", () => {
           });
           const linked = yield* link(hosts([first, second]), ticket, client);
           yield* until(linked, inState("Live"));
-          first.close("restarted");
-          const seen = yield* until(linked, inState("Live"));
+          const down = yield* dropped(first, linked, "restarted");
           return {
             reborn: restarted,
             subscribes: yield* Ref.get(again.subscribes),
-            updates: seen,
+            updates: [...down, ...(yield* until(linked, inState("Live")))],
           };
         }),
       );
@@ -180,9 +222,9 @@ describe("requested reconnect", () => {
             yield* until(linked, inState("Live"));
             yield* linked.reconnect;
             const seen = yield* until(linked, inState("Live"));
-            const dropped = yield* Effect.tryPromise(() => reach(first));
+            const connection = yield* Effect.tryPromise(() => reach(first));
             return {
-              closed: yield* Effect.tryPromise(() => dropped.closed()),
+              closed: yield* Effect.tryPromise(() => connection.closed()),
               subscribes: yield* Ref.get(next.subscribes),
               updates: seen,
             };
@@ -241,32 +283,18 @@ describe("reconnect delays", () => {
               reply: { Welcome: yield* turn().welcome(1) },
               results: [],
             });
-            const clock = yield* TestClock.testClockWith(Effect.succeed);
-            let at: ReadonlyArray<number> = [];
-            const timed = (dial: () => Promise<Connection>) => (): Promise<Connection> => {
-              at = [...at, clock.currentTimeMillisUnsafe()];
-              return dial();
-            };
-            const offline = timed(() => Promise.reject(new Error("offline")));
-            const linked = yield* link(
-              dialing([
-                ...Array.from({ length: 7 }, () => offline),
-                timed(() => reach(host)),
-                timed(() => Effect.runPromise(Effect.never)),
-              ]),
-              ticket,
-              client,
-            );
+            const { linked, times } = yield* traced(host);
             for (const delay of [275, 550, 1100, 2200, 4400, 8800, 11_000]) {
               yield* until(linked, inState("Disconnected"));
               yield* TestClock.adjust(delay);
             }
             yield* until(linked, inState("Live"));
-            host.close("restarted");
-            yield* until(linked, inState("Disconnected"));
-            yield* TestClock.adjust(275);
-            return at;
-          }).pipe(Effect.provide(TestClock.layer()), Effect.provideService(Random.Random, drawing)),
+            yield* Effect.sync(() => host.close("restarted")).pipe(
+              Effect.andThen(until(linked, inState("Disconnected"))),
+              Effect.andThen(TestClock.adjust(275)),
+            );
+            return times();
+          }).pipe(Effect.provideService(Random.Random, drawing)),
         );
         expect(dials.slice(1).map((time, index) => time - (dials[index] ?? 0))).toStrictEqual([
           275, 550, 1100, 2200, 4400, 8800, 11_000, 275,

@@ -12,10 +12,11 @@ import {
 } from "#ui/test/replay.ts";
 import { describe, expect, it } from "@effect/vitest";
 import type { Connection } from "#ui/pipe.ts";
+import { TestClock } from "effect/testing";
 import { fakeHost } from "#ui/test/fake-pipe.ts";
 import { link } from "#ui/link.ts";
 
-const turn = () => scenario("a_claude_turn_streams_asks_and_finishes");
+const turn = (): ReturnType<typeof scenario> => scenario("a_claude_turn_streams_asks_and_finishes");
 
 const stalled = (): Promise<Connection> => Effect.runPromise(Effect.never);
 
@@ -37,6 +38,7 @@ describe("stalled connections", () => {
               ticket,
               client,
             );
+            yield* TestClock.adjust(1500);
             return yield* until(linked, inState("Live"));
           }),
         );
@@ -71,6 +73,7 @@ describe("late connections", () => {
             ticket,
             client,
           );
+          yield* TestClock.adjust(1500);
           yield* until(linked, inState("Live"));
           const loser = yield* Effect.tryPromise(() => reach(late));
           yield* Deferred.succeed(connected, loser);

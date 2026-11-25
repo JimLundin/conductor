@@ -18,7 +18,7 @@ const exampleRecord = `conductor.v2.host.${exampleHost}`;
 const otherTicket =
   "AOr1251Bb2p0aTNfacOjGWA_ymOblEoyognrqD1bXfA_j1NbKmHUzEVqXP2oBgk2pGh0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay4v";
 
-const turn = () => scenario("a_claude_turn_streams_asks_and_finishes");
+const turn = (): ReturnType<typeof scenario> => scenario("a_claude_turn_streams_asks_and_finishes");
 
 describe("join links", () => {
   it.effect(
