@@ -16,6 +16,34 @@ fn selected() -> Selection {
 fn an_available_credential_must_have_a_host_reference() {
     let selection = selected();
     let backends = Backends {
+        tracker: Some(selection.clone()),
+        ..Backends::default()
+    };
+    let bindings = [Binding {
+        backend: Backend::IssueTracker,
+        selection,
+        capabilities: vec![Capability::ReadIssues],
+        credential: CredentialState::Available,
+    }];
+    assert_eq!(
+        preflight(&backends, &bindings, Capability::ReadIssues),
+        Err(Refusal::CredentialMissing {
+            backend: Backend::IssueTracker,
+            reference: None
+        })
+    );
+}
+
+#[test]
+fn capturing_a_local_snapshot_does_not_resolve_the_transport_credential()
+-> Result<(), String> {
+    let selection = Selection {
+        credential: Some(super::CredentialRef::try_from(String::from(
+            "host/remote",
+        ))?),
+        ..selected()
+    };
+    let backends = Backends {
         version_control: Some(selection.clone()),
         ..Backends::default()
     };
@@ -23,15 +51,13 @@ fn an_available_credential_must_have_a_host_reference() {
         backend: Backend::VersionControl,
         selection,
         capabilities: vec![Capability::CaptureSnapshot],
-        credential: CredentialState::Available,
+        credential: CredentialState::Missing,
     }];
     assert_eq!(
         preflight(&backends, &bindings, Capability::CaptureSnapshot),
-        Err(Refusal::CredentialMissing {
-            backend: Backend::VersionControl,
-            reference: None
-        })
+        Ok(&bindings[0])
     );
+    Ok(())
 }
 
 #[test]

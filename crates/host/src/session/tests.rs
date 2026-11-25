@@ -251,7 +251,10 @@ fn a_message_the_agent_never_got_fails_the_turn() {
                 turn_ended(),
                 Vec::from([
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot(workspace())),
+                    Effect::Call(Call::Snapshot(
+                        workspace(),
+                        vcs::command::SnapshotAttempt(text("turn-7")),
+                    )),
                 ]),
             ),
             (
@@ -1045,7 +1048,10 @@ fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
                 turn_ended(),
                 Vec::from([
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot(workspace())),
+                    Effect::Call(Call::Snapshot(
+                        workspace(),
+                        vcs::command::SnapshotAttempt(text("turn-4")),
+                    )),
                 ]),
             ),
             (
@@ -1061,7 +1067,10 @@ fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
                 start(),
                 Vec::from([
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot(workspace())),
+                    Effect::Call(Call::Snapshot(
+                        workspace(),
+                        vcs::command::SnapshotAttempt(text("turn-4")),
+                    )),
                 ]),
             ),
             (

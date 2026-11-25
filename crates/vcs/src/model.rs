@@ -10,6 +10,8 @@ pub enum Error {
     NotRepository,
     #[error("{0}")]
     Failed(String),
+    #[error("snapshot attempt {attempt} requires reconciliation: {reason}")]
+    Reconciliation { attempt: String, reason: String },
 }
 
 impl Error {

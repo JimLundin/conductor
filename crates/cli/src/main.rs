@@ -173,14 +173,21 @@ async fn main() -> anyhow::Result<()> {
         .init();
     match Args::parse().command {
         Cmd::Host(args) => {
+            let data = project_runtime::data_dir_or_default(args.data_dir)?;
+            let root = std::path::absolute(&data)?;
+            let workspaces = daemon::Workspaces::new(
+                vcs_git2::registration::local(&root),
+                vcs_git2::registration::register,
+            );
             let hosting = Hosting {
-                data_dir: args.data_dir,
+                data_dir: Some(data),
                 name: args.name,
                 web_url: args.web_url,
                 home: args.home,
                 projects: args.projects,
             };
-            daemon::serve(hosting, plugins(args.clis, args.models)).await
+            daemon::serve(hosting, plugins(args.clis, args.models), workspaces)
+                .await
         }
         Cmd::Project {
             command: ProjectCommand::Access { project, data_dir },

@@ -20,6 +20,7 @@ use vcs::Error as GitError;
 /// Where a session starts, and the issue it works on, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
+    pub project: Option<ProjectId>,
     pub directory: SessionDirectory,
     pub on: Option<home::issue::Start>,
 }
@@ -40,6 +41,7 @@ pub enum InHome {
 pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
     match at {
         StartAt::Directory(directory) => Ok(Placement {
+            project: None,
             directory,
             on: None,
         }),
@@ -62,14 +64,18 @@ pub fn place_in_home(
     match at {
         InHome::Project(id) => {
             home::first_checkout(home, id).map(|checkout| Placement {
+                project: Some(id),
                 directory: checkout.into(),
                 on: None,
             })
         }
-        InHome::Issue(id) => home::issue::start(home, id).map(|on| Placement {
-            directory: on.checkout.clone().into(),
-            on: Some(on),
-        }),
+        InHome::Issue(id) => {
+            home::issue::start(home, id).map(|(project, on)| Placement {
+                project: Some(project),
+                directory: on.checkout.clone().into(),
+                on: Some(on),
+            })
+        }
     }
 }
 

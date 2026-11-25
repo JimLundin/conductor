@@ -1289,6 +1289,7 @@ fn placement(on_issue: bool) -> Result<super::Placement, &'static str> {
     let issue = home::IssueId::new("local", "00000005")
         .ok_or("invalid fixture identity")?;
     Ok(super::Placement {
+        project: None,
         directory: SessionDirectory(text("/src")),
         on: on_issue.then(|| home::issue::Start {
             issue,
@@ -1373,6 +1374,7 @@ fn only_a_start_in_a_project_or_an_issue_waits_on_the_home()
         ],
         [
             Ok(super::Placement {
+                project: None,
                 directory,
                 on: None,
             }),

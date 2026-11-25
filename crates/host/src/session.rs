@@ -184,7 +184,7 @@ pub enum Effect {
 pub enum Call {
     /// Append the event to the log and answer its seq.
     Record(EventKind),
-    Snapshot(Workspace),
+    Snapshot(Workspace, vcs::command::SnapshotAttempt),
     Diff(Box<Compared>),
     /// Remove the workspace, keeping its branch.
     Remove(Workspace),
@@ -968,7 +968,10 @@ impl Session {
     fn save(&mut self, then: Saved) -> Vec<Effect> {
         match self.book.plan_snapshot() {
             Some(plan) => {
-                let call = Call::Snapshot(plan.workspace.clone());
+                let call = Call::Snapshot(
+                    plan.workspace.clone(),
+                    plan.attempt.clone(),
+                );
                 self.flow = Flow::Saving(Saving { plan, then });
                 Vec::from([Effect::Barrier, Effect::Call(call)])
             }

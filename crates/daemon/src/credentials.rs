@@ -69,12 +69,6 @@ pub struct RecoveredAdoption {
 }
 
 impl Store {
-    /// The data dir the store is in.
-    #[must_use]
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     /// Opens the store in `data_dir`, creating its key on first run, and
     /// reads what it holds.
     ///

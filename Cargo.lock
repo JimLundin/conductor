@@ -699,6 +699,7 @@ dependencies = [
  "runtime",
  "tokio",
  "tracing-subscriber",
+ "vcs-git2",
  "zeroize",
 ]
 
@@ -1022,6 +1023,7 @@ dependencies = [
  "ulid",
  "uuid",
  "vcs",
+ "vcs-git2",
  "windows-native-keyring-store",
  "winx",
  "zeroize",
@@ -1715,6 +1717,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "git-workspace"
+version = "0.1.0"
+
+[[package]]
 name = "git2"
 version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1910,6 +1916,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "vcs",
+ "vcs-git2",
 ]
 
 [[package]]
@@ -5477,9 +5484,17 @@ dependencies = [
 name = "vcs-git2"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "blake3",
+ "git-workspace",
  "git2",
+ "home",
  "project-runtime",
  "secrecy",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "vcs",
 ]
 

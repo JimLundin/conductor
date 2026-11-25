@@ -19,6 +19,7 @@ mod workspace;
 
 pub use home::clone_of as home_checkout;
 pub use start::{HostOptions, Hosted, Hosting, Plugins, login, serve, start};
+pub use workspace::Workspaces;
 
 use std::io::{ErrorKind, Write};
 use std::path::Path;

@@ -224,7 +224,11 @@ pub struct Hosting {
 /// # Errors
 ///
 /// Why the host could not start or stopped.
-pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
+pub async fn serve(
+    hosting: Hosting,
+    plugins: Plugins,
+    workspaces: crate::Workspaces,
+) -> anyhow::Result<()> {
     let Hosting {
         data_dir: given,
         name,
@@ -242,6 +246,7 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     let hosted = start(
         endpoint,
         plugins,
+        workspaces,
         HostOptions {
             data_dir: data_dir.clone(),
             name,
@@ -369,6 +374,7 @@ impl Hosted {
 pub async fn start(
     endpoint: Endpoint,
     plugins: Plugins,
+    workspaces: crate::Workspaces,
     options: HostOptions,
 ) -> anyhow::Result<Hosted> {
     let (lock, fleet) = open_fleet(&endpoint, &options.data_dir).await?;
@@ -379,8 +385,14 @@ pub async fn start(
     )?;
     let data = options.data_dir.clone();
     let (fleet_slot, _) = tokio::sync::watch::channel(fleet);
-    let started =
-        assemble(plugins, options, fleet_slot.clone(), endpoint.clone()).await;
+    let started = assemble(
+        plugins,
+        options,
+        workspaces,
+        fleet_slot.clone(),
+        endpoint.clone(),
+    )
+    .await;
     match started {
         Ok((conductor, log, token, initialized)) => {
             let protocol = crate::fleet::Protocol::new(
@@ -441,6 +453,7 @@ async fn open_fleet(
 async fn assemble(
     plugins: Plugins,
     options: HostOptions,
+    workspaces: crate::Workspaces,
     fleet: crate::fleet::Slot,
     endpoint: Endpoint,
 ) -> anyhow::Result<(
@@ -477,6 +490,7 @@ async fn assemble(
         &stored,
         Providers::new(plugins.clone(), data_dir, fleet.clone()),
         home.clone(),
+        workspaces,
     )
     .await?;
     crate::fleet::follow_credentials(

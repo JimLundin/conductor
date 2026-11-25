@@ -9,9 +9,17 @@ publish = false
 layer = "shell"
 
 [dependencies]
-project-runtime = { path = "../project-runtime" }
+home = { path = "../home" }
+anyhow.workspace = true
+blake3 = "1"
+git-workspace = { path = "../git-workspace" }
 git2 = { version = "=0.21.0", default-features = false, features = ["https", "ssh"] }
 secrecy = "0.10"
+project-runtime = { path = "../project-runtime" }
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+tempfile = "3.27.0"
+tokio.workspace = true
 vcs = { path = "../vcs" }
 
 [lints]
