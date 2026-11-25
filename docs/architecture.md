@@ -1851,20 +1851,30 @@ imports use `#ui/<path>` and `#transport` names the generated wasm pipe.
   ticket, link status and fold, and the screen shown. Each host's link runs
   in its own fiber of a `FiberMap`, and forgetting a host closes its fiber.
   Updates from a link since replaced or forgotten are dropped. An Effect
-  atom holds the view, and an atom registry owns its updates and command
-  effects. React reads it through `useAtomValue` in `web/src/use-store.ts`.
+  atom holds the view, and an atom registry owns its updates. Lifecycle
+  effects run within the store's scope. React reads the view through
+  `useAtomValue` in `web/src/use-store.ts`.
   Pure transitions and selectors live in `web/core/src/store.ts`; the
   browser supplies the pipe, storage, fragment and history so tests can
   supply them through `web/src/test/page.ts`. Browser event streams and
   storage use `BrowserStream` and `BrowserKeyValueStore`.
+  The store owns pairing, ticket replacement and forgetting through their
+  pending, successful and failed outcomes. Operations on one host coordinate
+  storage writes and connection ownership; different hosts connect independently.
+  Forget closes the connection even when deleting the saved pairing fails.
+  A failed Forget keeps a disconnected row with a retry action. Older storage
+  writes and restoration reads cannot revive a successfully forgotten host.
 - **Pairing.** A host pairs by a join link (`#join=`) opened on the device
   or by a join link or ticket pasted into the pairing screen. A join link's
-  fragment is replaced in history, so the ticket stays out of it. Pairing a
-  paired host again replaces its ticket.
+  fragment is replaced in history after its pairing is saved. A failed
+  write keeps the join link available for retry. Pairing a paired host again
+  replaces its ticket through the same tracked operation.
 - **Storage** (`web/src/saved.ts`). One local storage record per host
   under `conductor.v2.host.<endpoint id in hex>`, holding its ticket and
   the name from its last welcome. A record in any other format, the Dioxus
   app's included, is set aside unread, and those hosts are paired again.
+  Restoring a saved pairing starts its connection without rewriting the
+  record. Storage failures reach the store as typed outcomes.
 - **Routes** (`web/core/src/route.ts`). The screen is the URL fragment, so Pages
   serves one path: `#/pair`, `#/` (the sessions), `#/host/<host>/new` and
   `#/host/<host>/session/<id>`. With no host paired every fragment shows
