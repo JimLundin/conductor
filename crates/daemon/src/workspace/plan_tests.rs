@@ -104,7 +104,9 @@ fn valid(step: Step) -> Answer {
                 "unexpected repository step {request:?} in {path}"
             )),
         },
-        other => failed(&format!("unexpected step {other:?}")),
+        other @ Step::IsDirectory(_) => {
+            failed(&format!("unexpected step {other:?}"))
+        }
     }
 }
 

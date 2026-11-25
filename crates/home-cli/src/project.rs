@@ -8,9 +8,9 @@ use project_runtime::Registry;
 pub fn capabilities(root: &Path, name: &str) -> (String, u8) {
     let configuration = home_files::configuration(root);
     let mut registry = Registry::default();
-    let report = local_workspace(&configuration, name, &mut registry)
+    let result = local_workspace(&configuration, name, &mut registry)
         .and_then(|()| describe(&configuration, name, &registry));
-    report.map_or_else(
+    result.map_or_else(
         |problem| (format!("home: {problem}\n"), 1),
         |report| (report, 0),
     )

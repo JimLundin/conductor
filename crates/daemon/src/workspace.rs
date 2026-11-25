@@ -257,7 +257,7 @@ impl Runner {
                 self.scratch = None;
                 Ok(Answer::Done)
             }
-            filesystem => self.filesystem(filesystem),
+            filesystem => Self::filesystem(filesystem),
         }
     }
 
@@ -349,7 +349,7 @@ impl Runner {
         execute(&mut command, Output::CAPTURE).await
     }
 
-    fn filesystem(&self, step: Step) -> Result<Answer, GitError> {
+    fn filesystem(step: Step) -> Result<Answer, GitError> {
         match step {
             Step::Canonicalize(path) => canonical(Path::new(&path))
                 .map(|resolved| path_answer(&resolved)),
