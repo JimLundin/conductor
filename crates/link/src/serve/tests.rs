@@ -162,7 +162,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 }
 
 #[test]
-fn issue_commands_keep_a_receipt() {
+fn issue_commands_keep_a_receipt() -> Result<(), &'static str> {
     let new = NewIssue {
         project: home::ProjectId::new(1),
         kind: String::from("task"),
@@ -176,12 +176,14 @@ fn issue_commands_keep_a_receipt() {
         },
         HomeCommand::ChangeIssue {
             edit: EditId(2),
-            issue: IssueId::new(0, 1),
+            issue: IssueId::new("local", "00000001")
+                .ok_or("invalid fixture identity")?,
             change: IssueChange::Note(String::from("done")),
         },
     ]
     .map(|command| ledger(&Command::Home(command)));
     assert_eq!(recorded, [Some(Kind::Receipt); 2]);
+    Ok(())
 }
 
 #[test]

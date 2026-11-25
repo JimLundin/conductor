@@ -162,6 +162,7 @@ fn a_new_database_takes_the_format_and_another_format_does_not_open() {
             opens(false, Some(2)),
             opens(false, Some(3)),
             opens(false, Some(7)),
+            opens(false, Some(9)),
         ],
         [
             Ok(true),
@@ -169,7 +170,8 @@ fn a_new_database_takes_the_format_and_another_format_does_not_open() {
             refused(1),
             refused(2),
             refused(3),
-            refused(7)
+            refused(7),
+            refused(9)
         ]
     );
 }

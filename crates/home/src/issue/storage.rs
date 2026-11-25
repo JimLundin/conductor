@@ -77,14 +77,28 @@ pub fn decode(
         }
     }
     let branch = branch_of(
-        id,
+        &id,
         flow.field_with(&kind, FieldRole::Branch)
             .and_then(|field| fields.get(&field.name))
             .and_then(Datum::text),
     );
+    let created = flow
+        .field_with(&kind, FieldRole::Created)
+        .and_then(|field| {
+            fields
+                .get(&field.name)
+                .map(|value| (field.name.as_str(), value))
+        })
+        .map(|(name, value)| {
+            value.text().and_then(created).ok_or_else(|| {
+                fail(Some(name), String::from("is not a valid creation time"))
+            })
+        })
+        .transpose()?;
     let issue = Issue {
         id,
         project: file.project,
+        created,
         title,
         kind,
         status,
@@ -95,10 +109,11 @@ pub fn decode(
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
+        notes: Vec::new(),
         branch,
     };
     crate::flow::graph::validate(flow, &issue)?;
-    Ok((Observation::new(issue, document.body.clone()), document))
+    Ok((observation(issue, document.body.clone()), document))
 }
 
 fn datum(value: Value) -> Result<Datum, String> {
@@ -131,6 +146,8 @@ pub struct Inputs {
     pub flow: Result<String, String>,
     pub projects: Vec<(String, Result<String, String>)>,
     pub issues: Vec<File>,
+    pub unavailable: Vec<super::Unreadable>,
+    pub observed_at: Option<u64>,
     pub unread: Vec<String>,
 }
 
@@ -148,24 +165,37 @@ impl Inputs {
             .and_then(|text| crate::flow::load(&text))
             .map_err(|problem| format!("{}: {problem}", crate::flow::PATH));
         let mut documents = Vec::new();
-        let issues = flow.as_ref().map_or_else(
-            |_| Vec::new(),
-            |declared| {
-                self.issues
-                    .iter()
-                    .map(|file| {
-                        decode(declared, file).map(|(issue, document)| {
-                            documents.push((
-                                issue.issue().project,
-                                issue.issue().id,
-                                document,
-                            ));
-                            issue
+        let mut issues: Vec<Result<Observation, Problem>> =
+            flow.as_ref().map_or_else(
+                |_| Vec::new(),
+                |declared| {
+                    self.issues
+                        .iter()
+                        .map(|file| {
+                            decode(declared, file)
+                                .map(|(issue, document)| {
+                                    documents.push((
+                                        issue.project(),
+                                        issue.id().clone(),
+                                        document,
+                                    ));
+                                    issue
+                                })
+                                .or_else(|problem| invalid(file, problem))
                         })
-                    })
-                    .collect()
-            },
-        );
+                        .collect()
+                },
+            );
+        issues.extend(self.unavailable.into_iter().map(|record| {
+            let mut observation = Observation::invalid(record.clone());
+            observation.state = super::IssueState::Unavailable(record);
+            Ok(observation)
+        }));
+        for observation in
+            issues.iter_mut().filter_map(|record| record.as_mut().ok())
+        {
+            observation.observed_at = self.observed_at;
+        }
         ReadHome {
             snapshot: Snapshot::of(DomainInputs {
                 flow,
@@ -191,8 +221,8 @@ impl ReadHome {
             .documents
             .iter()
             .find(|(project, id, _)| {
-                *project == change.observation.issue().project
-                    && *id == change.observation.issue().id
+                *project == change.observation.project()
+                    && *id == *change.observation.id()
             })
             .map(|(_, _, document)| document.clone());
         encode(self.snapshot.flow()?, change, document, None)
@@ -206,7 +236,16 @@ pub(crate) fn snapshot(inputs: Inputs) -> Snapshot {
 
 #[cfg(test)]
 pub(crate) fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
-    decode(flow, file).map(|(observation, _)| observation.issue().clone())
+    decode(flow, file).and_then(|(observation, _)| {
+        observation.issue().cloned().ok_or_else(|| {
+            observation.problem().unwrap_or_else(|| Problem {
+                project: file.project,
+                record: file.stem.clone(),
+                field: None,
+                message: String::from("invalid"),
+            })
+        })
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,9 +316,9 @@ pub fn encode(
     existing: Option<Document>,
     marker: Option<super::EditId>,
 ) -> Result<File, String> {
-    let issue = change.observation.issue();
+    let (issue, body) = change.observation.editable()?;
     let mut document = if change.created {
-        opened(flow, change)
+        opened(flow, change)?
     } else {
         let mut document = existing
             .ok_or_else(|| String::from("the issue document is missing"))?;
@@ -288,7 +327,7 @@ pub fn encode(
         }
         document
     };
-    document.body = change.observation.body().clone();
+    document.body = body.clone();
     if let Some(id) = marker {
         document.comment(&edit_marker(id));
     }
@@ -299,9 +338,12 @@ pub fn encode(
     })
 }
 
-fn opened(flow: &Flow, change: &crate::flow::command::Change) -> Document {
+fn opened(
+    flow: &Flow,
+    change: &crate::flow::command::Change,
+) -> Result<Document, String> {
     use crate::flow::command::Mutation;
-    let issue = change.observation.issue();
+    let (issue, body) = change.observation.editable()?;
     let mut front = Vec::from([
         (String::from(ID), quoted(&issue.id.to_string())),
         (String::from(TITLE), quoted(&issue.title)),
@@ -324,7 +366,7 @@ fn opened(flow: &Flow, change: &crate::flow::command::Change) -> Document {
             _ => None,
         },
     ));
-    Document::new(&front, change.observation.body().clone())
+    Ok(Document::new(&front, body.clone()))
 }
 
 fn update(
@@ -391,4 +433,65 @@ impl Listing {
     pub fn created_from_path(path: &str) -> Option<IssueId> {
         crate::layout::issue_stem(path).and_then(IssueId::parse)
     }
+}
+
+#[must_use]
+pub fn fresh(
+    home: &Snapshot,
+    now: u64,
+    draws: &crate::Draws,
+) -> Option<IssueId> {
+    let seconds = now
+        .checked_sub(1_767_225_600)
+        .filter(|seconds| *seconds < (1 << 30))?;
+    draws
+        .iter()
+        .filter_map(|draw| {
+            let value = (seconds << 10) | (draw & 1023);
+            let digits = b"0123456789abcdefghjkmnpqrstvwxyz";
+            let key: String = (0..8)
+                .rev()
+                .map(|place| {
+                    char::from(
+                        digits[usize::try_from((value >> (place * 5)) & 31)
+                            .unwrap_or_default()],
+                    )
+                })
+                .collect();
+            IssueId::new("local", &key)
+        })
+        .find(|id| home.observation(id).is_none())
+}
+
+fn invalid(file: &File, problem: Problem) -> Result<Observation, Problem> {
+    let reason = problem.to_string();
+    let id = IssueId::parse(&file.stem).ok_or(problem)?;
+    let document = Document::of(&file.text).ok();
+    let front = document
+        .as_ref()
+        .and_then(|parsed| parsed.front_matter().ok());
+    let title = front.and_then(|parsed| parsed.title);
+    Ok(Observation::invalid(super::Unreadable {
+        id,
+        project: file.project,
+        title,
+        body: document.map(|parsed| parsed.body.text()),
+        created: None,
+        reason,
+    }))
+}
+
+#[must_use]
+pub fn observation(mut issue: Issue, body: super::body::Body) -> Observation {
+    issue.log = body.log();
+    Observation::mapped(issue, body)
+}
+
+fn created(text: &str) -> Option<u64> {
+    let at = time::OffsetDateTime::parse(
+        text,
+        &time::format_description::well_known::Rfc3339,
+    )
+    .ok()?;
+    u64::try_from(at.unix_timestamp_nanos() / 1_000_000).ok()
 }

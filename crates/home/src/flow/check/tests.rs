@@ -8,8 +8,8 @@ use crate::issue::storage::Inputs;
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
-const SPEC: &str = "0tm7zt00";
-const REVIEW: &str = "0tm7zx0c";
+const SPEC: &str = "local~0tm7zt00";
+const REVIEW: &str = "local~0tm7zx0c";
 
 fn project(
     folder: &str,
@@ -34,6 +34,8 @@ fn issue(id: &str, front: &str, body: &str) -> File {
 
 fn inputs(flow: &str, review_status: &str) -> Inputs {
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(String::from(flow)),
         projects: Vec::from([project("7r5n23", "conductor", "")]),
         issues: Vec::from([
@@ -164,8 +166,10 @@ fn two_issue_files_with_one_id_fail_the_check() {
     assert!(
         report.findings.contains(&Finding {
             severity: Severity::Error,
-            subject: Some(String::from("other/0tm7zt00")),
-            message: String::from("id: is also the id of 7r5n23/0tm7zt00"),
+            subject: Some(String::from("other/local~0tm7zt00")),
+            message: String::from(
+                "id: is also the id of 7r5n23/local~0tm7zt00"
+            ),
         }),
         "{}",
         report.text()
@@ -174,8 +178,8 @@ fn two_issue_files_with_one_id_fail_the_check() {
 
 #[test]
 fn an_active_issue_whose_blocker_isn_t_built_warns() {
-    const TASK: &str = "0tm7zy00";
-    const BLOCKER: &str = "0tm7zz00";
+    const TASK: &str = "local~0tm7zy00";
+    const BLOCKER: &str = "local~0tm7zz00";
     let mut home = inputs(FLOW, "done");
     home.issues.extend([
         issue(

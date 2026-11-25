@@ -47,7 +47,7 @@ impl Assigned {
                 ..self
             },
             EventKind::OnIssue { issue } => Self {
-                issue: Some(*issue),
+                issue: Some(issue.clone()),
                 ..self
             },
             EventKind::SessionRemoved { .. } => Self {

@@ -25,7 +25,7 @@ pub struct Placement {
 }
 
 /// A start that the home places: in a project or an issue.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InHome {
     Project(ProjectId),
     Issue(IssueId),
@@ -180,7 +180,7 @@ impl StartRequest {
         let (phase, effect) = match &placed.on {
             Some(on) => {
                 if let Some(session) =
-                    on_issue(history, on.issue, &self.instance)
+                    on_issue(history, &on.issue, &self.instance)
                 {
                     return refuse(SessionRefusal::IssueTaken { session });
                 }
@@ -347,10 +347,9 @@ fn opening<S, H>(
         model: launch.choice.model.clone(),
         effort: launch.choice.effort,
     };
-    let attached = placed
-        .on
-        .as_ref()
-        .map(|on| EventKind::OnIssue { issue: on.issue });
+    let attached = placed.on.as_ref().map(|on| EventKind::OnIssue {
+        issue: on.issue.clone(),
+    });
     let snapshot = Snapshot {
         turn_start: None,
         commit,

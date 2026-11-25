@@ -2,7 +2,16 @@ use crate::issue::{ChecklistItem, Entry, Section};
 use crate::prelude::*;
 use alloc::string::ToString;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(from = "String", into = "String")]
 pub struct Body {
     rest: Vec<String>,
 }
@@ -347,4 +356,16 @@ fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
         return None;
     }
     Some((marker, width, rest.get(width..)?))
+}
+
+impl From<String> for Body {
+    fn from(text: String) -> Self {
+        Self::of(&text)
+    }
+}
+
+impl From<Body> for String {
+    fn from(body: Body) -> Self {
+        body.text()
+    }
 }

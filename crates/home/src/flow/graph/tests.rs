@@ -8,9 +8,9 @@ use crate::flow::Flow;
 use crate::flow::load;
 use crate::issue::storage::{File, one};
 
-const SPEC: &str = "0tm7zt00";
-const TASK: &str = "0tm7zx0b";
-const DECISION: &str = "0tm7zx0a";
+const SPEC: &str = "local~0tm7zt00";
+const TASK: &str = "local~0tm7zx0b";
+const DECISION: &str = "local~0tm7zx0a";
 const HOME: &str = "hme000";
 const CONDUCTOR: &str = "cnd000";
 
@@ -451,7 +451,9 @@ fn an_issue_lands_on_the_branch_its_branch_field_names_whatever_it_is_called()
     let graph = read(&roleless, &[task(HOME, "branch = \"feature/x\"\n")]);
     assert_eq!(
         graph.issues.first().map(|issue| issue.branch.clone()),
-        Some(format!("issue/{TASK}"))
+        Some(String::from(
+            "issue/814e3c6f2f2b64d73c88f6a1fde2de4ff7c34e903c6fc603a6dc30607e945da3"
+        ))
     );
     Ok(())
 }
@@ -481,4 +483,71 @@ fn read(flow: &Flow, files: &[File]) -> Graph {
         flow,
         &files.iter().map(|file| one(flow, file)).collect::<Vec<_>>(),
     )
+}
+
+#[test]
+fn creation_time_orders_issues_independently_of_their_identity() {
+    let graph = read(
+        &flow(),
+        &[
+            file(
+                HOME,
+                TASK,
+                "title = \"Earlier\"\nkind = \"task\"\nstatus = \"open\"\ncreated = 2025-01-01T00:00:00Z\n",
+                "",
+            ),
+            spec(),
+        ],
+    );
+    assert_eq!(
+        graph.issues.first().map(|issue| issue.title.as_str()),
+        Some("Earlier")
+    );
+}
+
+#[test]
+fn creation_order_compares_instants_with_offsets_and_fractional_seconds() {
+    let graph = read(
+        &flow(),
+        &[
+            file(
+                HOME,
+                TASK,
+                "title = \"Earlier\"\nstatus = \"open\"\ncreated = 2026-01-01T01:00:00+01:00\n",
+                "",
+            ),
+            file(
+                HOME,
+                SPEC,
+                "title = \"Later\"\nstatus = \"open\"\ncreated = 2026-01-01T00:00:00.500Z\n",
+                "",
+            ),
+        ],
+    );
+    assert_eq!(
+        graph
+            .issues
+            .iter()
+            .map(|issue| (&*issue.title, issue.created))
+            .collect::<Vec<_>>(),
+        [
+            ("Earlier", Some(1_767_225_600_000)),
+            ("Later", Some(1_767_225_600_500))
+        ]
+    );
+}
+
+#[test]
+fn an_invalid_creation_time_remains_an_invalid_record() {
+    let graph = read(
+        &flow(),
+        &[file(
+            HOME,
+            TASK,
+            "title = \"Invalid date\"\nstatus = \"open\"\ncreated = \"yesterday\"\n",
+            "",
+        )],
+    );
+    assert_eq!(graph.issues.len(), 0);
+    assert_eq!(graph.problems.len(), 1);
 }

@@ -20,6 +20,7 @@
 //! subscription read it without waiting on a pull or a clone.
 
 mod issue_file;
+mod ownership;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -27,9 +28,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
 use home::checkout::Root;
-use home::flow::command::fresh;
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
+use home::issue::storage::fresh;
 use home::issue::storage::{self, Listing};
 use home::issue::{
     Commit, Context, Delivery, Edit, NoCommit, PendingEdits, Record,
@@ -441,11 +442,13 @@ impl Actor {
         note_id: Option<EditId>,
     ) {
         while let Some(change) =
-            self.next_session_change(&mut update, issue).await
+            self.next_session_change(&mut update, &issue).await
         {
             let id = SessionUpdate::edit_for(&change, note_id)
                 .unwrap_or_else(|| EditId(ulid::Ulid::new().0));
-            if let Err(error) = self.change(issue, change, client, id).await {
+            if let Err(error) =
+                self.change(issue.clone(), change, client, id).await
+            {
                 let answer = error.completion().into_result();
                 tracing::warn!(target: "home", ?answer, "a session's issue update was rejected");
             }
@@ -455,7 +458,7 @@ impl Actor {
     async fn next_session_change(
         &mut self,
         update: &mut SessionUpdate,
-        issue: IssueId,
+        issue: &IssueId,
     ) -> Option<IssueChange> {
         if *update == SessionUpdate::Done {
             return None;
@@ -485,7 +488,7 @@ impl Actor {
                 issue,
                 change,
             } => self
-                .change(issue, change, by, edit)
+                .change(issue.clone(), change, by, edit)
                 .await
                 .map_or_else(IssueError::completion, |warnings| {
                     home(HomeResult::IssueWritten { issue, warnings })
@@ -642,7 +645,9 @@ impl Actor {
                 "no issue id is free this second",
             ))
         })?;
-        let request = self.issue_context(edit).open(issue, new, &client.0)?;
+        let request =
+            self.issue_context(edit)
+                .open(issue.clone(), new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
         if let Some(opened) = self.created(&issue_dir, edit).await? {
             return Ok((opened, Vec::new()));
@@ -1124,7 +1129,12 @@ async fn pull(clone: &Path, tracking: &str) -> Result<(), String> {
 }
 
 async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
-    ready_issue_branch(Path::new(&start.checkout.0), &start.branch).await
+    ready_issue_branch(
+        Path::new(&start.checkout.0),
+        &start.issue,
+        &start.branch,
+    )
+    .await
 }
 
 /// Makes the checkout's issue branch `branch`, a full ref, what
@@ -1136,9 +1146,33 @@ async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
 /// When the remote can't be read for a new branch, or both have moved on.
 pub async fn ready_issue_branch(
     checkout: &Path,
+    issue: &IssueId,
     branch: &str,
 ) -> Result<(), String> {
+    run(checkout, &["check-ref-format", branch]).await?;
+    let directory = text(
+        checkout,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut ownership = ownership::lock(Path::new(directory.trim())).await?;
     let facts = branch_facts(checkout, branch).await?;
+    let exists = facts.local.is_some()
+        || matches!(
+            &facts.remote,
+            home::issue::Remote::At(_)
+                | home::issue::Remote::PresentUnfetched(_)
+        );
+    ownership.reserve(issue, branch, exists)?;
+    move_issue_branch(checkout, branch, facts).await
+}
+
+async fn move_issue_branch(
+    checkout: &Path,
+    branch: &str,
+    facts: home::issue::Branch,
+) -> Result<(), String> {
     match facts.next() {
         home::issue::Move::Keep => Ok(()),
         home::issue::Move::Refuse(reason) => Err(reason),
@@ -1353,7 +1387,7 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-const EDITS_VERSION: &[u8] = b"\x80\x00\x06";
+const EDITS_VERSION: &[u8] = b"\x80\x00\x07";
 
 fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
     let bytes = match std::fs::read(path) {

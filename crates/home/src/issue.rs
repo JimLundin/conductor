@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub use edit_id::EditId;
 pub use model::{
     ChecklistChange, ChecklistItem, Datum, Entry, Issue, IssueChange, Item,
-    LogEvent, NewIssue, Part, Section,
+    LogEvent, NewIssue, Note, Part, Section,
 };
 
 use crate::flow::Flow;
@@ -16,32 +16,9 @@ use crate::issue::body::{checklist_line, log_line};
 use crate::prelude::*;
 use crate::{CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Observation {
-    issue: Issue,
-    body: body::Body,
-}
-
-impl Observation {
-    #[must_use]
-    pub fn new(mut issue: Issue, body: body::Body) -> Self {
-        issue.body = body.body_text();
-        issue.sections = body.sections();
-        issue.checklist = body.checklist();
-        issue.log = body.log();
-        Self { issue, body }
-    }
-
-    #[must_use]
-    pub const fn issue(&self) -> &Issue {
-        &self.issue
-    }
-
-    #[must_use]
-    pub const fn body(&self) -> &body::Body {
-        &self.body
-    }
-}
+mod observation;
+pub mod ownership;
+pub use observation::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Observed {
@@ -56,13 +33,13 @@ fn message(edit: &command::Edit) -> String {
             format!("Open issue {id}: {}", issue.title.trim())
         }
         command::Edit::Change { id, changes } => match changes.as_slice() {
-            [change] => change_message(*id, change),
+            [change] => change_message(id, change),
             _ => format!("Change issue {id}"),
         },
     }
 }
 
-fn change_message(id: IssueId, change: &IssueChange) -> String {
+fn change_message(id: &IssueId, change: &IssueChange) -> String {
     match change {
         IssueChange::Move { to, .. } => format!("Move issue {id} to {to}"),
         IssueChange::Set { field, value } => {
@@ -117,7 +94,7 @@ pub struct EditData {
 }
 
 impl EditData {
-    const fn issue(&self) -> IssueId {
+    fn issue(&self) -> IssueId {
         self.edit.id()
     }
 }
@@ -284,7 +261,7 @@ fn apply(
         Ok(issue) => issue,
         Err(reason) => return Err(NotApplied::Unreadable(reason.clone())),
     };
-    let issue = reading.issue();
+    let (issue, _) = reading.editable().map_err(NotApplied::Unreadable)?;
     match mode {
         Mode::Record
             if changes.iter().all(|change| unchanged(issue, change)) =>
@@ -350,17 +327,20 @@ pub struct Start {
 /// project has no checkout on the host.
 pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
     let known = home.ok_or(HomeRefusal::NoHome)?;
-    let (project, issue) = known
+    let (project, observation) = known
         .projects
         .iter()
         .find_map(|project| {
             project
                 .issues
                 .iter()
-                .find(|issue| issue.id == id)
+                .find(|observation| observation.id() == &id)
                 .map(|issue| (project, issue))
         })
         .ok_or(HomeRefusal::UnknownIssue)?;
+    let (issue, _) = observation
+        .editable()
+        .map_err(|reason| HomeRefusal::IssueRefused { reason })?;
     let checkout = project
         .checkouts
         .first()
@@ -375,13 +355,14 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
 
 /// Issue `id`'s branch, as a full ref, as the home has it.
 #[must_use]
-pub fn branch(home: Option<&Home>, id: IssueId) -> String {
+pub fn branch(home: Option<&Home>, id: &IssueId) -> String {
     let named = home.and_then(|known| {
         known
             .projects
             .iter()
             .flat_map(|project| &project.issues)
-            .find(|issue| issue.id == id)
+            .filter_map(Observation::issue)
+            .find(|issue| &issue.id == id)
             .map(|issue| issue.branch.clone())
     });
     format!(
@@ -396,7 +377,17 @@ fn brief(project: &str, flow: Option<&Flow>, issue: &Issue) -> String {
         .iter()
         .map(checklist_line)
         .collect::<Vec<String>>();
-    let notes = issue.log.iter().map(log_line).collect::<Vec<String>>();
+    let notes = issue
+        .log
+        .iter()
+        .map(log_line)
+        .chain(
+            issue
+                .notes
+                .iter()
+                .map(|note| format!("- {}: {}", note.author, note.text)),
+        )
+        .collect::<Vec<String>>();
     let section = |heading: &str, lines: &[String]| {
         if lines.is_empty() {
             String::new()

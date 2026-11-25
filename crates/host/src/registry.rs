@@ -307,12 +307,12 @@ pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
 #[must_use]
 fn on_issue(
     history: &[Event],
-    issue: IssueId,
+    issue: &IssueId,
     instance: &InstanceId,
 ) -> Option<SessionId> {
     assigned(history)
         .into_iter()
-        .find(|(_, assigned)| assigned.is(issue, instance))
+        .find(|(_, assigned)| assigned.is(issue.clone(), instance))
         .map(|(session, _)| session)
 }
 

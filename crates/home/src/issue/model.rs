@@ -1,7 +1,4 @@
-//! Issues (docs/home.md §2, §3): what needs doing in a project. The home
-//! keeps each in `projects/<project>/issues/<id>.md`, read as its flow
-//! (`crate::flow`) declares it: the issue names its kind, status and stage,
-//! and its fields and relations are the ones the flow declares.
+//! Issue values interpreted by the project's flow.
 
 use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
@@ -16,11 +13,13 @@ use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
-/// An issue as the flow reads its file.
+/// An issue as the flow reads its record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Issue {
     pub id: IssueId,
     pub project: ProjectId,
+    /// Creation time in Unix milliseconds, or unknown.
+    pub created: Option<u64>,
     pub title: String,
     pub kind: String,
     pub status: String,
@@ -29,7 +28,7 @@ pub struct Issue {
     pub fields: BTreeMap<String, Datum>,
     /// The issues each relation from it points to, by relation.
     pub links: BTreeMap<String, Vec<IssueId>>,
-    /// The body before the checklist and the log, as its file has it.
+    /// The human body before the checklist and the log.
     pub body: String,
     /// The body's sections in order, the text before the first heading
     /// as one with no heading; the checklist and the log aren't among them.
@@ -38,6 +37,7 @@ pub struct Issue {
     pub checklist: Vec<ChecklistItem>,
     /// The `## Notes` section, oldest first.
     pub log: Vec<Entry>,
+    pub notes: Vec<Note>,
     /// The branch its sessions land on.
     pub branch: String,
 }
@@ -333,6 +333,15 @@ pub struct Item {
     /// changed since, the change is refused. `None` takes the place in
     /// the file as it is.
     pub seen: Option<Vec<ChecklistItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Note {
+    pub id: String,
+    pub author: String,
+    /// Creation time in Unix milliseconds.
+    pub created: u64,
+    pub text: String,
 }
 
 #[cfg(test)]

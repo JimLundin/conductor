@@ -1,12 +1,12 @@
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
+use crate::IssueId;
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
 use crate::issue::{
     ChecklistChange, Datum, Entry, ID, Issue, IssueChange, Item, KIND,
     LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
 };
-use crate::{Draws, IssueId};
 use serde::{Deserialize, Serialize};
 
 use super::PATH;
@@ -130,9 +130,9 @@ pub enum Edit {
 impl Edit {
     /// The issue it edits.
     #[must_use]
-    pub const fn id(&self) -> IssueId {
+    pub fn id(&self) -> IssueId {
         match self {
-            Self::New { id, .. } | Self::Change { id, .. } => *id,
+            Self::New { id, .. } | Self::Change { id, .. } => id.clone(),
         }
     }
 }
@@ -202,21 +202,6 @@ pub struct Planned {
     pub change: Change,
     pub subject: String,
     pub warnings: Vec<String>,
-}
-
-/// The id a new issue made at `now`, in seconds since the Unix epoch,
-/// takes: the first of `draws` that gives one the home has no issue of.
-#[must_use]
-pub fn fresh(home: &Snapshot, now: u64, draws: &Draws) -> Option<IssueId> {
-    let held: Vec<IssueId> = home
-        .records()
-        .iter()
-        .filter_map(|record| match record {
-            Ok(observation) => Some(observation.issue().id),
-            Err(problem) => IssueId::parse(&problem.record),
-        })
-        .collect();
-    IssueId::mint(now, draws, &held)
 }
 
 /// What `args`, after the program's name, ask of `home`: what [`command`]
@@ -362,7 +347,7 @@ fn opening_command(
 fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
     named(word)
         .and_then(|id| {
-            let kind = home.issue(id).map_or("", |issue| issue.kind.as_str());
+            let kind = home.issue(&id).map_or("", |issue| issue.kind.as_str());
             let changes = settings(home, kind, pairs)?
                 .into_iter()
                 .map(|(field, value)| match field.as_str() {
@@ -536,14 +521,18 @@ pub fn plan(
     let flow = home.flow()?;
     let sign = Signer {
         at: stamp(context.now),
+        now: context.now,
         by: context.by.clone(),
     };
     let change = match edit {
-        Edit::New { id, issue } => opened(home, flow, *id, &sign, issue)?,
+        Edit::New { id, issue } => opened(home, flow, id, &sign, issue)?,
         Edit::Change { id, changes } => {
-            let observation = home.observation(*id).ok_or_else(|| {
+            let observation = home.observation(id).ok_or_else(|| {
                 home.graph().problems.iter().find(|problem| problem.record == id.to_string())
                     .map_or_else(|| format!("no issue is called {id}"), |problem| format!("{id} doesn't read as the flow declares: {problem}"))
+            })?;
+            observation.editable().map_err(|reason| {
+                format!("{id} doesn't read as the flow declares: {reason}")
             })?;
             changed(flow, observation, changes, &sign)?
         }
@@ -552,6 +541,7 @@ pub fn plan(
 }
 
 struct Signer {
+    now: u64,
     at: String,
     by: String,
 }
@@ -572,7 +562,7 @@ fn finished(
     flow: &Flow,
     change: Change,
 ) -> Result<Planned, String> {
-    let issue = change.observation.issue();
+    let (issue, _) = change.observation.editable()?;
     let after = home.with(change.observation.clone());
     let graph = after.graph();
     let name = home
@@ -594,7 +584,7 @@ fn finished(
         .map(ToString::to_string)
         .collect();
     let moving = Move {
-        from: home.issue(issue.id),
+        from: home.issue(&issue.id),
         to: Some(issue),
     };
     let issues: Vec<&Issue> = graph.issues.iter().collect();
@@ -621,7 +611,7 @@ fn finished(
 fn opened(
     home: &Snapshot,
     flow: &Flow,
-    id: IssueId,
+    id: &IssueId,
     sign: &Signer,
     new: &NewIssue,
 ) -> Result<Change, String> {
@@ -639,8 +629,9 @@ fn opened(
         .ok_or_else(|| format!("no kind is called {kind}"))?;
     let title = String::from(needs(wanted, "an issue needs a title")?);
     let mut issue = Issue {
-        id,
+        id: id.clone(),
         project: *project,
+        created: Some(sign.now),
         title,
         kind: kind.clone(),
         status: opening(flow).map_or_else(String::new, String::from),
@@ -651,6 +642,7 @@ fn opened(
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
+        notes: Vec::new(),
         branch: branch_of(id, None),
     };
     let mut mutations = Vec::new();
@@ -687,9 +679,10 @@ fn opened(
     );
     let entry = sign.entry(LogEvent::Note, "opened.");
     let body = Body::new(&declared.sections, &entry);
-    mutations.push(Mutation::Note(entry));
+    mutations.push(Mutation::Note(entry.clone()));
+    issue.log.push(entry);
     Ok(Change {
-        observation: crate::issue::Observation::new(issue, body),
+        observation: crate::issue::Observation::mapped(issue, body),
         created: true,
         mutations,
     })
@@ -701,9 +694,9 @@ fn changed(
     changes: &[IssueChange],
     sign: &Signer,
 ) -> Result<Change, String> {
-    let current = observation.issue();
+    let (current, original_body) = observation.editable()?;
     let mut issue = current.clone();
-    let mut body = observation.body().clone();
+    let mut body = original_body.clone();
     let mut mutations = Vec::new();
     let mut set = Vec::new();
     for change in changes {
@@ -765,12 +758,22 @@ fn changed(
         mutations.push(Mutation::Note(entry));
     }
     issue.branch = branch_of(
-        issue.id,
+        &issue.id,
         flow.field_with(&issue.kind, FieldRole::Branch)
             .and_then(|field| issue.text(&field.name)),
     );
+    issue
+        .log
+        .extend(mutations.iter().filter_map(|mutation| match mutation {
+            Mutation::Note(entry) => Some(entry.clone()),
+            _ => None,
+        }));
+    let updated = crate::issue::Observation::mapped(issue, body);
     Ok(Change {
-        observation: crate::issue::Observation::new(issue, body),
+        observation: crate::issue::Observation {
+            state: updated.state,
+            ..observation.clone()
+        },
         created: false,
         mutations,
     })

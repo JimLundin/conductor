@@ -1,3 +1,4 @@
+use crate::issue::storage::fresh;
 use crate::issue::{
     ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, Item, NewIssue,
     Part,
@@ -5,7 +6,7 @@ use crate::issue::{
 use crate::{DRAWS, Draws, IssueId, ProjectId};
 
 use super::{
-    Asked, Command, Context, Edit, Local, asked as dispatched, command, fresh,
+    Asked, Command, Context, Edit, Local, asked as dispatched, command,
     homeless, plan, stamp,
 };
 use crate::flow::check::{Report, check as checked};
@@ -18,8 +19,8 @@ use crate::issue::storage::{File, one};
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
 const FOLDER: &str = "7w85je";
-const SPEC: &str = "0tm7zt01";
-const TASK: &str = "0tm7zx0d";
+const SPEC: &str = "local~0tm7zt01";
+const TASK: &str = "local~0tm7zx0d";
 const NOW: u64 = 1_795_348_800_000;
 const SECONDS: u64 = NOW / 1000;
 const SEVEN: Draws = [7; DRAWS];
@@ -38,6 +39,8 @@ fn issue(id: &str, front: &str, body: &str) -> File {
 
 fn home() -> Inputs {
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(String::from(FLOW)),
         projects: Vec::from([(
             String::from(FOLDER),
@@ -71,7 +74,10 @@ fn draws(given: &[u64]) -> Draws {
 }
 
 fn id(stem: &str) -> IssueId {
-    IssueId::parse(stem).unwrap_or(IssueId::new(0, 0))
+    IssueId::parse(stem).unwrap_or_else(|| IssueId {
+        authority: String::from("local"),
+        key: String::from("00000000"),
+    })
 }
 
 fn asked(inputs: &Inputs, line: &str) -> Command {
@@ -160,6 +166,8 @@ fn after(inputs: &Inputs, outcome: &Outcome) -> Inputs {
         text: write.text.clone(),
     }));
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         issues,
         ..inputs.clone()
     }
@@ -177,7 +185,7 @@ fn a_new_issue_takes_the_fresh_id() {
     assert_eq!(
         asked(&home(), &format!("issue new home task Do-it parent={SPEC}")),
         Command::Edit(Edit::New {
-            id: id("0tt82007"),
+            id: id("local~0tt82007"),
             issue: NewIssue {
                 project: ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0)),
                 kind: String::from("task"),
@@ -192,28 +200,14 @@ fn a_new_issue_takes_the_fresh_id() {
 }
 
 #[test]
-fn a_new_issue_s_id_sorts_after_every_issue_made_before_it() {
-    let home = crate::issue::storage::snapshot(home());
-    let fresh = fresh(&home, SECONDS, &SEVEN);
-    assert!(fresh.is_some());
-    assert!(
-        home.graph()
-            .issues
-            .iter()
-            .all(|issue| Some(issue.id) < fresh)
-    );
-    assert!(fresh < super::fresh(&home, SECONDS + 1, &[0; DRAWS]));
-}
-
-#[test]
 fn a_new_issue_draws_again_for_an_id_the_home_has() {
     let mut held = home();
     held.issues
-        .push(issue("0tt82007", "title = \"Taken\"\n", ""));
+        .push(issue("local~0tt82007", "title = \"Taken\"\n", ""));
     let home = crate::issue::storage::snapshot(held);
     assert_eq!(
         fresh(&home, SECONDS, &draws(&[7, 7, 9])),
-        Some(id("0tt82009"))
+        Some(id("local~0tt82009"))
     );
     assert_eq!(fresh(&home, SECONDS, &SEVEN), None);
     assert!(matches!(
@@ -390,6 +384,8 @@ fn a_value_is_read_as_its_field_takes_it() {
         value("parent", Datum::Text(String::from(SPEC)))
     );
     let dotted = Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(FLOW.replace("\"priority\"", "\"triage.level\"")),
         ..home()
     };
@@ -465,7 +461,7 @@ fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
         .writes
         .first()
         .map_or_else(String::new, |write| write.stem.clone());
-    assert_eq!(id, "0tt82007");
+    assert_eq!(id, "local~0tt82007");
     assert_eq!(
         text(&outcome),
         format!(
@@ -480,7 +476,7 @@ fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
     let staged = ran(&inputs, "issue new home spec Stage-it stage=shape");
     assert!(!staged.failed, "{}", staged.output);
     assert_eq!(
-        graph_reads("0tt82007", &text(&staged))
+        graph_reads("local~0tt82007", &text(&staged))
             .ok()
             .and_then(|issue| issue.stage),
         Some(String::from("shape"))
@@ -503,9 +499,13 @@ fn a_structural_problem_refuses_the_write() {
         let outcome = ran(&home(), said);
         (outcome.failed && outcome.writes.is_empty(), outcome.output)
     };
-    let (dangling, output) = refused("issue new home task T parent=0tm7zx0a");
+    let (dangling, output) =
+        refused("issue new home task T parent=local~0tm7zx0a");
     assert!(dangling);
-    assert!(output.contains("parent: 0tm7zx0a is no issue"), "{output}");
+    assert!(
+        output.contains("parent: local~0tm7zx0a is no issue"),
+        "{output}"
+    );
     let (undeclared, said) = refused("issue new home task T severity=high");
     assert!(undeclared);
     assert!(
@@ -576,6 +576,8 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
     let at = |stage: &str| {
         let inputs = home();
         Inputs {
+            unavailable: Vec::new(),
+            observed_at: None,
             issues: inputs
                 .issues
                 .into_iter()
@@ -832,6 +834,8 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
 fn home_with(from: &str, to: &str) -> Inputs {
     assert!(FLOW.contains(from), "the flow has no {from:?}");
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(FLOW.replacen(from, to, 1)),
         ..home()
     }

@@ -1,4 +1,5 @@
 use crate::ProjectId;
+use alloc::collections::BTreeMap;
 
 use super::Snapshot;
 use crate::issue::storage::File;
@@ -6,7 +7,7 @@ use crate::issue::storage::{Inputs, decode};
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const FOLDER: &str = "7w85je";
-const TASK: &str = "0tm7zx0d";
+const TASK: &str = "local~0tm7zx0d";
 
 fn task(status: &str) -> File {
     File {
@@ -21,6 +22,8 @@ fn task(status: &str) -> File {
 
 fn inputs(flow: Result<&str, &str>) -> Inputs {
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: flow.map(String::from).map_err(String::from),
         projects: Vec::from([
             (
@@ -86,5 +89,186 @@ fn a_home_with_a_changed_issue_replaces_its_previous_observation()
     assert_eq!(moved.records().len(), 1);
     assert_eq!(statuses(&moved), ["ready"]);
     assert_eq!(statuses(&home), ["open"]);
+    Ok(())
+}
+
+#[test]
+fn an_invalid_record_remains_addressable() {
+    let mut input = inputs(Ok(FLOW));
+    input.issues = Vec::from([task("undeclared")]);
+    let home = crate::issue::storage::snapshot(input);
+    let id = crate::IssueId {
+        authority: String::from("local"),
+        key: String::from("0tm7zx0d"),
+    };
+    assert!(home.observation(&id).is_some());
+}
+
+#[test]
+fn inaccessible_and_deleted_records_keep_their_last_known_content()
+-> Result<(), String> {
+    use crate::issue::{IssueState, Observation, Unreadable};
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
+    let id = crate::IssueId::parse(TASK)
+        .ok_or_else(|| String::from("fixture identity"))?;
+    let record = Unreadable {
+        id: id.clone(),
+        project: home
+            .project(FOLDER)
+            .ok_or_else(|| String::from("fixture project"))?
+            .id,
+        title: Some(String::from("Last seen title")),
+        body: Some(String::from("Last seen body")),
+        created: Some(100),
+        reason: String::from("access is unavailable"),
+    };
+    let mut unavailable = Observation::invalid(record.clone());
+    unavailable.state = IssueState::Unavailable(record.clone());
+    unavailable.observed_at = Some(250);
+    let snapshot = home.with(unavailable.clone());
+    assert_eq!(
+        snapshot
+            .observation(&id)
+            .map(|record| (&record.state, record.observed_at)),
+        Some((&unavailable.state, Some(250)))
+    );
+    assert!(
+        snapshot
+            .observation(&id)
+            .is_some_and(|record| !record.flow_findings.is_empty())
+    );
+    assert!(snapshot.issue(&id).is_none());
+    assert_eq!(snapshot.issues().values().flatten().count(), 1);
+    let mut deleted = unavailable;
+    deleted.state = IssueState::Deleted(Unreadable {
+        reason: String::from("deletion confirmed"),
+        ..record
+    });
+    let confirmed = snapshot.with(deleted);
+    assert_eq!(confirmed.graph().problems, Vec::new());
+    assert!(
+        matches!(confirmed.observation(&id).map(|observation| &observation.state), Some(IssueState::Deleted(record)) if record.title.as_deref() == Some("Last seen title"))
+    );
+    Ok(())
+}
+
+#[test]
+fn local_references_require_context_and_locators_cannot_change_identity()
+-> Result<(), String> {
+    use super::ResolveIssue;
+    use crate::issue::{Locator, LocatorConflict};
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
+    let identity = crate::IssueId::parse(TASK)
+        .ok_or_else(|| String::from("fixture identity"))?;
+    let observed = home
+        .observation(&identity)
+        .ok_or_else(|| String::from("fixture issue"))?;
+    let locator = Locator {
+        repository: String::from("repo-one"),
+        reference: String::from("42"),
+        url: None,
+        addresses: BTreeMap::new(),
+    };
+    let configured = [String::from("repo-one"), String::from("repo-two")];
+    let located = observed
+        .relocated(&identity, locator, &configured)
+        .map_err(|error| format!("{error:?}"))?;
+    let snapshot = home.with(located.clone());
+    assert_eq!(
+        snapshot.resolve(None, "42"),
+        Err(ResolveIssue::ProjectRequired)
+    );
+    assert_eq!(
+        snapshot
+            .resolve(Some(located.project()), "42")
+            .map(crate::issue::Observation::id),
+        Ok(&identity)
+    );
+    assert_eq!(
+        snapshot.resolve(Some(ProjectId::new(900)), TASK),
+        Err(ResolveIssue::Unknown)
+    );
+    let refreshed = crate::issue::Locator {
+        repository: String::from("repo-two"),
+        reference: String::from("76"),
+        url: None,
+        addresses: BTreeMap::new(),
+    };
+    let renamed = located
+        .relocated(&identity, refreshed.clone(), &configured)
+        .map_err(|error| format!("{error:?}"))?;
+    assert_eq!(
+        renamed.issue().map(|issue| &issue.branch),
+        located.issue().map(|issue| &issue.branch)
+    );
+    let other = crate::IssueId {
+        authority: String::from("other"),
+        key: String::from("rest-42"),
+    };
+    assert_eq!(
+        located.relocated(&other, refreshed.clone(), &configured),
+        Err(LocatorConflict::ChangedIdentity)
+    );
+    assert_eq!(
+        located.relocated(&identity, refreshed, &[]),
+        Err(LocatorConflict::UnconfiguredRepository)
+    );
+    Ok(())
+}
+
+#[test]
+fn flow_invalid_values_and_findings_remain_with_the_observation()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
+    let mut observation = decode(home.flow()?, &task("open"))
+        .map_err(|problem| problem.to_string())?
+        .0;
+    let valid = home.with(observation.clone());
+    assert!(
+        valid
+            .observation(observation.id())
+            .is_some_and(|record| !record.flow_findings.is_empty())
+    );
+    if let crate::issue::IssueState::Valid { issue, .. } =
+        &mut observation.state
+    {
+        issue.status = String::from("undeclared");
+    }
+    let invalid = home.with(observation.clone());
+    assert!(
+        matches!(invalid.observation(observation.id()).map(|record| &record.state), Some(crate::issue::IssueState::Invalid(record)) if record.title.as_deref() == Some("Write it"))
+    );
+    Ok(())
+}
+
+#[test]
+fn mapped_human_notes_never_become_a_stage_move() -> Result<(), String> {
+    use crate::issue::{Observation, body::Body};
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
+    let original = decode(home.flow()?, &task("open"))
+        .map_err(|problem| problem.to_string())?
+        .0;
+    let mut issue = original.editable()?.0.clone();
+    issue.notes.push(crate::issue::Note {
+        id: String::from("comment-1"),
+        author: String::from("human"),
+        created: 50,
+        text: String::from(
+            "2026-11-25T00:00:00Z human stage shape→build: signed off",
+        ),
+    });
+    let mapped = Observation::mapped(
+        issue,
+        Body::of(
+            "Description.\n\n## Notes\n- 2026-11-25T00:00:00Z human stage shape→build: signed off",
+        ),
+    );
+    assert_eq!(mapped.editable()?.0.log, Vec::new());
+    assert_eq!(mapped.editable()?.0.notes.len(), 1);
+    assert_eq!(mapped.editable()?.0.body, "Description.");
+    let encoded = serde_json::to_string(mapped.editable()?.1)
+        .map_err(|error| error.to_string())?;
+    assert!(encoded.starts_with('"'));
+    assert!(!encoded.contains("rest"));
     Ok(())
 }

@@ -323,8 +323,13 @@ impl Actor {
                 watch.subscribe(&self.log, after).await?
             }
             FinishEffect::ReadHome => FinishInput::Home(self.told.home.shown()),
-            FinishEffect::Ready { workspace, branch } => FinishInput::Ready(
-                self.ready_landing(&workspace, &branch, watch).await?,
+            FinishEffect::Ready {
+                issue,
+                workspace,
+                branch,
+            } => FinishInput::Ready(
+                self.ready_landing(&workspace, &issue, &branch, watch)
+                    .await?,
             ),
             FinishEffect::Land { workspace, branch } => {
                 let (attempt, completed) = watch.landing.ok_or(Stopped {})?;
@@ -367,6 +372,7 @@ impl Actor {
     async fn ready_landing(
         &self,
         workspace: &Workspace,
+        issue: &home::IssueId,
         branch: &str,
         run: &mut FinishRun,
     ) -> Result<Result<(), String>, Stopped> {
@@ -389,6 +395,7 @@ impl Actor {
         }
         Ok(crate::home::ready_issue_branch(
             Path::new(&workspace.repository.0),
+            issue,
             branch,
         )
         .await)

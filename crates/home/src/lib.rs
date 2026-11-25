@@ -35,7 +35,7 @@ pub use id::{DRAWS, Draws, IssueId, ProjectId};
 use serde::{Deserialize, Serialize};
 
 use crate::flow::Flow;
-use crate::issue::Issue;
+use crate::issue::Observation;
 use crate::prelude::*;
 use crate::sync::Sync;
 
@@ -87,7 +87,7 @@ pub struct Found<'host> {
     pub cloning: &'host BTreeMap<ProjectId, Cloning>,
     /// The home's flow, when it loads.
     pub flow: Option<&'host Flow>,
-    pub issues: &'host BTreeMap<ProjectId, Vec<Issue>>,
+    pub issues: &'host BTreeMap<ProjectId, Vec<Observation>>,
     /// Issue changes the remote doesn't have yet.
     pub unpushed: u64,
 }

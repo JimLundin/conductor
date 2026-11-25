@@ -60,7 +60,7 @@ pub struct Recorded(Recording, Vec<String>, Option<Commit>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Recording {
-    Keep(Edit, EditId),
+    Keep(Edit),
     Write(EditId),
     Push(EditId),
     Scan,
@@ -85,8 +85,8 @@ impl Recorded {
         outcome: Result<(), String>,
     ) -> Result<Option<RecordEffect<'_>>, HomeRefusal> {
         let effect = match core::mem::replace(&mut self.0, Recording::Done) {
-            Recording::Keep(edit, id) => {
-                self.0 = Recording::Write(id);
+            Recording::Keep(edit) => {
+                self.0 = Recording::Write(edit.id);
                 RecordEffect::Persist(edit)
             }
             Recording::Write(id) => {
@@ -188,7 +188,7 @@ impl PendingEdits {
     pub fn replay_target(&self, index: usize) -> Option<Read> {
         let (earlier, remaining) = self.0.split_at_checked(index)?;
         let target = remaining.first()?.edit.read();
-        can_commit(earlier, target.issue).then_some(target)
+        can_commit(earlier, &target.issue).then_some(target)
     }
 
     /// # Errors
@@ -309,7 +309,7 @@ impl Context<'_> {
         crate::configured(self.remote)?;
         let project = self
             .home
-            .issue(issue)
+            .issue(&issue)
             .map(|known| known.project)
             .ok_or(HomeRefusal::UnknownIssue)?;
         Ok(self.record(
@@ -343,7 +343,7 @@ impl Context<'_> {
 
 impl Record {
     #[must_use]
-    pub const fn read(&self) -> Read {
+    pub fn read(&self) -> Read {
         self.data.read()
     }
 
@@ -368,7 +368,7 @@ impl Record {
                     .reading
                     .as_ref()
                     .ok()
-                    .map(super::Observation::issue)
+                    .and_then(super::Observation::issue)
             }),
             &self.data.edit,
         );
@@ -393,19 +393,20 @@ impl Record {
                 return Err(HomeRefusal::IssueRefused { reason });
             }
         };
-        let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue()));
-        Ok(Recorded(Recording::Keep(edit, self.id), warnings, next))
+        let next =
+            commit.filter(|_| can_commit(&pending.0, &edit.data.issue()));
+        Ok(Recorded(Recording::Keep(edit), warnings, next))
     }
 }
 
-fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
+fn can_commit(earlier: &[Pending], issue: &IssueId) -> bool {
     earlier
         .iter()
-        .all(|pending| pending.covered || pending.edit.data.issue() != issue)
+        .all(|pending| pending.covered || &pending.edit.data.issue() != issue)
 }
 
 impl EditData {
-    const fn read(&self) -> Read {
+    fn read(&self) -> Read {
         Read {
             project: self.project,
             issue: self.issue(),
@@ -420,7 +421,7 @@ impl Edit {
     }
 
     #[must_use]
-    pub const fn read(&self) -> Read {
+    pub fn read(&self) -> Read {
         self.data.read()
     }
 
@@ -496,7 +497,7 @@ impl SessionUpdate {
     pub fn next(
         &mut self,
         home: &Snapshot,
-        id: IssueId,
+        id: &IssueId,
     ) -> Option<IssueChange> {
         let update = core::mem::replace(self, Self::Done);
         match update {

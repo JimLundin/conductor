@@ -55,11 +55,22 @@ const RENAMED: [&str; 7] = [
     "pairing",
 ];
 
-const WAITING: IssueId = IssueId::new(0, 1);
-const BLOCKER: IssueId = IssueId::new(0, 2);
+fn waiting_id() -> IssueId {
+    IssueId {
+        authority: String::from("local"),
+        key: String::from("00000001"),
+    }
+}
+fn blocker_id() -> IssueId {
+    IssueId {
+        authority: String::from("local"),
+        key: String::from("00000002"),
+    }
+}
 
 fn issue(id: IssueId, status: &str) -> Issue {
     Issue {
+        created: None,
         id,
         project: ProjectId::new(1),
         title: text("an issue"),
@@ -72,6 +83,7 @@ fn issue(id: IssueId, status: &str) -> Issue {
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
+        notes: Vec::new(),
         branch: String::new(),
     }
 }
@@ -85,7 +97,7 @@ fn a_new_issue_opens_in_the_first_idle_status() {
 fn starting_a_session_makes_an_idle_or_startable_issue_active_by_role() {
     let flow = renamed();
     let after = |status: &str| {
-        let issue = issue(WAITING, status);
+        let issue = issue(waiting_id(), status);
         started(&flow, &[&issue], &issue)
     };
     assert_eq!(
@@ -97,12 +109,12 @@ fn starting_a_session_makes_an_idle_or_startable_issue_active_by_role() {
 #[test]
 fn an_issue_blocked_by_one_not_yet_built_is_not_startable() {
     let flow = renamed();
-    let mut waiting = issue(WAITING, "queued");
+    let mut waiting = issue(waiting_id(), "queued");
     waiting
         .links
-        .insert(text("blocked_by"), Vec::from([BLOCKER]));
+        .insert(text("blocked_by"), Vec::from([blocker_id()]));
     let offered = |status: &str| {
-        let blocking = issue(BLOCKER, status);
+        let blocking = issue(blocker_id(), status);
         let issues = [&waiting, &blocking];
         (
             can_start(&flow, &issues, &waiting),
@@ -127,7 +139,7 @@ fn an_issue_blocked_by_one_not_yet_built_is_not_startable() {
 fn an_issue_not_yet_built_whose_session_landed_work_is_up_for_review_by_role() {
     let flow = renamed();
     assert_eq!(
-        RENAMED.map(|status| landed(&flow, &issue(WAITING, status))),
+        RENAMED.map(|status| landed(&flow, &issue(waiting_id(), status))),
         [
             Some("checking"),
             Some("checking"),
@@ -143,11 +155,11 @@ fn an_issue_not_yet_built_whose_session_landed_work_is_up_for_review_by_role() {
 #[test]
 fn what_can_start_is_what_the_flow_s_start_rule_says() {
     let blocked_by_one_in = |flow: &Flow, status: &str| {
-        let mut waiting = issue(WAITING, "queued");
+        let mut waiting = issue(waiting_id(), "queued");
         waiting
             .links
-            .insert(text("blocked_by"), Vec::from([BLOCKER]));
-        let blocking = issue(BLOCKER, status);
+            .insert(text("blocked_by"), Vec::from([blocker_id()]));
+        let blocking = issue(blocker_id(), status);
         can_start(flow, &[&waiting, &blocking], &waiting)
     };
     let built =
@@ -167,7 +179,7 @@ fn what_can_start_is_what_the_flow_s_start_rule_says() {
 fn only_waiting_work_starts() {
     let flow = renamed();
     let from = |status: &str| {
-        let issue = issue(WAITING, status);
+        let issue = issue(waiting_id(), status);
         can_start(&flow, &[&issue], &issue)
     };
     assert_eq!(

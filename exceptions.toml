@@ -71,3 +71,8 @@ reason = "boxes recursive or large values, which predates the plain-values rule"
 path = "crates/host/src/fleet/protocol.rs"
 rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home/src/issue/observation.rs"
+rule = "box"
+reason = "the observation holds either one complete Issue or an invalid, unavailable or deleted record; boxing only the valid payload keeps the states disjoint without fragmenting Issue or adding contradictory optional payloads"

@@ -207,6 +207,7 @@ pub enum Effect {
     NextEvent,
     ReadHome,
     Ready {
+        issue: IssueId,
         workspace: Workspace,
         branch: String,
     },
@@ -388,14 +389,19 @@ impl Finish {
         last: Option<String>,
         home: Option<&Home>,
     ) -> Vec<Effect> {
-        let branch = home::issue::branch(home, assignment.issue);
+        let branch = home::issue::branch(home, &assignment.issue);
+        let issue = assignment.issue.clone();
         self.stage = Stage::Readying(
             assignment,
             workspace.clone(),
             last,
             branch.clone(),
         );
-        Vec::from([Effect::Ready { workspace, branch }])
+        Vec::from([Effect::Ready {
+            issue,
+            workspace,
+            branch,
+        }])
     }
 
     fn observe(
@@ -454,7 +460,7 @@ impl Finish {
         let commits = landed(&finished);
         self.stage = Stage::Noting(finished);
         Vec::from([Effect::Note {
-            issue: assignment.issue,
+            issue: assignment.issue.clone(),
             summary,
             by: assignment.signer(),
             commits,

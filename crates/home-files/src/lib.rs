@@ -23,7 +23,7 @@ pub mod git;
 #[must_use]
 pub fn read(root: &Path) -> storage::ReadHome {
     let folders = folders(&root.join(layout::PROJECTS));
-    let inputs = layout::inputs(
+    let mut inputs = layout::inputs(
         text(root, PATH),
         folders
             .iter()
@@ -37,6 +37,10 @@ pub fn read(root: &Path) -> storage::ReadHome {
             .flat_map(|project| issues(root, project))
             .collect(),
     );
+    inputs.observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok());
     inputs.read()
 }
 

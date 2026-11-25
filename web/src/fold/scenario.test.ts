@@ -211,7 +211,7 @@ describe("finishing controls", () => {
   it("offers finish only while an issue session can finish", () => {
     expect.hasAssertions();
     const updates = received(recordedFeed(scenario), 0);
-    const onIssue = then(folded(through(updates, 4)), 5, { OnIssue: { issue: "0twr04e5" } });
+    const onIssue = then(folded(through(updates, 4)), 5, { OnIssue: { issue: "local~0twr04e5" } });
     const stages = finishing(onIssue).map((host) => theSession(host));
     const done = Option.getOrThrow(Arr.last(stages));
     expect(stages.map((current) => controls(current).finish)).toStrictEqual([

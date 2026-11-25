@@ -10,7 +10,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::flow::Flow;
-use crate::issue::{EditId, Issue, IssueChange, NewIssue};
+use crate::issue::{EditId, IssueChange, NewIssue, Observation};
 use crate::{IssueId, ProjectId};
 
 /// The host's clone of the home, and the projects it lists.
@@ -62,8 +62,8 @@ pub struct Project {
     /// first. None: it isn't checked out here.
     pub checkouts: Vec<Checkout>,
     pub cloning: Cloning,
-    /// By id, which orders them by when they were opened.
-    pub issues: Vec<Issue>,
+    /// By creation time, with identity breaking ties.
+    pub issues: Vec<Observation>,
 }
 
 /// A repository on this host whose root commit and remote are a project's.

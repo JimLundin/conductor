@@ -856,6 +856,14 @@ mod tests {
     async fn synchronization_refuses_to_move_a_checked_out_issue_branch()
     -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await?;
+        let identity = home::IssueId::new("fixture", "issue-x")
+            .ok_or("fixture identity")?;
+        crate::home::ready_issue_branch(
+            &repo.source,
+            &identity,
+            "refs/heads/issue/x",
+        )
+        .await?;
         let (workspace, issue) = diverged(&repo, "remote-only.txt").await?;
         let remote = repo.root.join("remote.git");
         let _ =
@@ -877,7 +885,7 @@ mod tests {
         .await?;
         std::fs::write(linked.join("deleted.txt"), "dirty\n")?;
         assert!(
-            crate::home::ready_issue_branch(&repo.source, &issue)
+            crate::home::ready_issue_branch(&repo.source, &identity, &issue)
                 .await
                 .is_err_and(|reason| reason.contains(&linked_name))
         );
