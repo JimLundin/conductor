@@ -71,7 +71,6 @@ pub fn probes(paths: &[String]) -> Vec<Probe> {
         .collect()
 }
 
-/// What Git says of the repository at `path`, by its canonical path.
 fn probe(path: &Path) -> Option<Probe> {
     let at = fs::canonicalize(path).ok()?;
     let [top, roots, remote] = checkout::ASKED.map(|args| git(&at, args));
@@ -112,7 +111,6 @@ pub fn names(path: &Path) -> Vec<String> {
     entries(path).map(|(name, _)| name).collect()
 }
 
-/// Each issue file of `project`, with its text or why it couldn't be read.
 fn issues(
     root: &Path,
     project: ProjectId,
@@ -129,7 +127,6 @@ fn issues(
         .collect()
 }
 
-/// The names of the folders in `path`, sorted.
 fn folders(path: &Path) -> Vec<String> {
     let mut found: Vec<String> = entries(path)
         .filter(|(_, folder)| *folder)
@@ -139,8 +136,6 @@ fn folders(path: &Path) -> Vec<String> {
     found
 }
 
-/// Each entry of `path` by name, and whether it is a folder; none when it
-/// can't be read.
 fn entries(path: &Path) -> impl Iterator<Item = (String, bool)> {
     fs::read_dir(path)
         .into_iter()
@@ -189,7 +184,6 @@ pub fn install(home: &Path, user: &Path) -> Result<String, String> {
         .collect()
 }
 
-/// [`install`] into one harness's folder, as [`skills::plan`] decides.
 fn harnessed(
     folder: &Path,
     source: &Path,
@@ -228,7 +222,6 @@ fn copy(from: &Path, to: &Path) -> io::Result<()> {
     })
 }
 
-/// The text of the file at `path` from `root`, or why it couldn't be read.
 fn text(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|err| err.to_string())
 }
@@ -340,7 +333,6 @@ mod tests {
         Ok(())
     }
 
-    /// What Git printed running `args` in `at`, dated `date` if given.
     fn git(
         at: &std::path::Path,
         args: &[&str],
@@ -361,7 +353,6 @@ mod tests {
         Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
     }
 
-    /// A repository at `at` with one commit, and that commit.
     fn committed(at: &std::path::Path) -> std::io::Result<String> {
         fs::create_dir_all(at.join("inner"))?;
         fs::write(at.join("README.md"), "")?;

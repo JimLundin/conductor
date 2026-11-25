@@ -1,9 +1,3 @@
-//! Prints the JSON Schema of the client link's frames, which
-//! `tools/schemas.sh` writes beside `link` as `link.schema.json` for a
-//! client to generate its types from (ADR 0002): every frame on the link,
-//! the ticket a client reaches a host by and every type they reach, in
-//! `$defs`, as serde writes them, and the link's ALPN as `Alpn`.
-
 use std::io::Write;
 
 use link::{ALPN, CommandResult, Feed, HelloReply, Open, Ticket};
