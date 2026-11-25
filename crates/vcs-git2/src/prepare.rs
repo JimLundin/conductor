@@ -38,7 +38,7 @@ pub struct Session {
     pub repo: Repository,
     pub record: Record,
     pub name: String,
-    _lock: File,
+    _lock: RepositoryLock,
 }
 
 fn root(repo: &Repository) -> anyhow::Result<PathBuf> {
@@ -114,7 +114,15 @@ fn text(path: &Path) -> anyhow::Result<String> {
     Ok(utf8.to_owned())
 }
 
-pub fn lock(common: &Path) -> anyhow::Result<File> {
+pub struct RepositoryLock(File);
+
+impl Drop for RepositoryLock {
+    fn drop(&mut self) {
+        let _released = self.0.unlock();
+    }
+}
+
+pub fn lock(common: &Path) -> anyhow::Result<RepositoryLock> {
     let locked = File::options()
         .read(true)
         .write(true)
@@ -124,7 +132,7 @@ pub fn lock(common: &Path) -> anyhow::Result<File> {
     locked
         .try_lock()
         .context("workspace operation already in progress")?;
-    Ok(locked)
+    Ok(RepositoryLock(locked))
 }
 
 fn admin(base: &Path, name: &str) -> PathBuf {
