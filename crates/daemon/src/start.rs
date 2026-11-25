@@ -14,6 +14,7 @@ use crate::serve::Conductor;
 use crate::sign_in::Signing;
 use agents::Provider;
 use anyhow::Context;
+use home_files::FolderStore;
 use host::registry::{AccountAdoption, sign_in_instance};
 use host::registry::{Catalog, Instance, InstanceId};
 use host::start::{Mode, Next, Output};
@@ -459,6 +460,7 @@ async fn assemble(
         remote,
         roots: projects,
         user,
+        canvases: Box::new(FolderStore::new(crate::home::clone_of(&data_dir))),
     });
     let (registry, initialized) = Registry::spawn(
         log.clone(),
