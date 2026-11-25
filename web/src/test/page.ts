@@ -65,10 +65,10 @@ const page = (
 };
 
 // Resolves once `holds` is true of the store.
-const when: (store: Store, holds: (store: Store) => boolean) => Effect.Effect<void> = (
-  store,
-  holds,
-) =>
+const when: (
+  store: Pick<Store, "view" | "subscribe">,
+  holds: (store: Pick<Store, "view">) => boolean,
+) => Effect.Effect<void> = (store, holds) =>
   Effect.callback((resume) => {
     if (holds(store)) {
       resume(Effect.void);

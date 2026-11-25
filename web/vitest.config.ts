@@ -1,7 +1,7 @@
 import type { ConfigEnv } from "vitest/config";
 import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import react from "@vitejs/plugin-react";
 
 // Each mode's property-test runs and seed, and the failures a run ends on.
 // A mode is vitest's --mode; its default, test, is Stryker's, so mutation.
