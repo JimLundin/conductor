@@ -1,30 +1,21 @@
-//! The `home` command line as data: what its words ask for, and what doing
-//! it to the home's issues writes and says.
-//!
-//! The shell reads the files, the clock and some randomness, and writes
-//! what [`run`] returns. Every write, the command line's and the app's
-//! alike, is made by [`write()`], which reads it back against the flow
-//! before it's made: a structural problem or a broken `error` rule refuses
-//! it, and anything softer is written with a warning.
-
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
 use crate::issue::{
-    ChecklistChange, Datum, Entry, Issue, IssueChange, Item, LogEvent,
-    NewIssue, Part,
+    ChecklistChange, Datum, Entry, ID, Issue, IssueChange, Item, KIND,
+    LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
 };
-use crate::{Draws, IssueId, ProjectId};
+use crate::{Draws, IssueId};
 use serde::{Deserialize, Serialize};
-use toml::Value;
 
 use super::PATH;
-use super::check::{Finding, check, of_issue};
+use super::check::{check, of_issue};
 use super::eval::Move;
-use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
-use super::graph::{File, parsed};
+use super::graph::branch_of;
 use super::role::opening;
 use super::snapshot::Snapshot;
+use crate::issue::body::Body;
 use crate::prelude::*;
 
 /// What `home` says alone: every command and what it means.
@@ -154,36 +145,28 @@ pub struct Context {
     pub now: u64,
     /// As the log signs it, `<node>·<harness>`.
     pub by: String,
-    /// A comment the written file's front matter ends with.
-    pub mark: Option<String>,
 }
 
-/// An issue file to write, whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Write {
-    pub project: ProjectId,
-    pub stem: String,
-    pub text: String,
+pub enum Mutation {
+    Set { field: String, value: Datum },
+    Title(String),
+    Move { part: Part, to: String },
+    Body(String),
+    Checklist(ChecklistChange),
+    Note(Entry),
 }
 
-impl Write {
-    /// Where it is written, from the home's root.
-    #[must_use]
-    pub fn path(&self) -> String {
-        crate::layout::issue_file(&self.project, &self.stem)
-    }
-
-    /// The folder it is written in, from the home's root, made first since
-    /// a project's first issue finds none.
-    #[must_use]
-    pub fn folder(&self) -> String {
-        crate::layout::issues(&self.project)
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub observation: crate::issue::Observation,
+    pub created: bool,
+    pub mutations: Vec<Mutation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
-    pub writes: Vec<Write>,
+    pub changes: Vec<Change>,
     pub output: String,
     pub failed: bool,
 }
@@ -214,23 +197,24 @@ fn refusal(reason: &str) -> String {
     format!("home: {reason}\n")
 }
 
-/// The file an edit writes, `<project name>/<id>` that names it, and what
-/// the flow warns of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Written {
-    pub write: Write,
+pub struct Planned {
+    pub change: Change,
     pub subject: String,
     pub warnings: Vec<String>,
 }
 
 /// The id a new issue made at `now`, in seconds since the Unix epoch,
-/// takes: the first of `draws` that gives one the home has no file of.
+/// takes: the first of `draws` that gives one the home has no issue of.
 #[must_use]
 pub fn fresh(home: &Snapshot, now: u64, draws: &Draws) -> Option<IssueId> {
     let held: Vec<IssueId> = home
-        .files()
+        .records()
         .iter()
-        .filter_map(|file| IssueId::parse(&file.stem))
+        .filter_map(|record| match record {
+            Ok(observation) => Some(observation.issue().id),
+            Err(problem) => IssueId::parse(&problem.record),
+        })
         .collect();
     IssueId::mint(now, draws, &held)
 }
@@ -495,7 +479,7 @@ pub fn run(
         Command::Check => {
             let report = check(home);
             return Outcome {
-                writes: Vec::new(),
+                changes: Vec::new(),
                 output: report.text(),
                 failed: report.failed(),
             };
@@ -511,9 +495,9 @@ pub fn run(
         }
         Command::Edit(edit) => edit,
     };
-    match write(home, &edit, context) {
-        Ok(Written {
-            write,
+    match plan(home, &edit, context) {
+        Ok(Planned {
+            change,
             subject,
             warnings,
         }) => Outcome {
@@ -525,7 +509,7 @@ pub fn run(
                     .collect::<Vec<String>>()
                     .concat()
             ),
-            writes: Vec::from([write]),
+            changes: Vec::from([change]),
             failed: false,
         },
         Err(reason) => refused(refusal(&reason)),
@@ -534,48 +518,42 @@ pub fn run(
 
 const fn refused(output: String) -> Outcome {
     Outcome {
-        writes: Vec::new(),
+        changes: Vec::new(),
         output,
         failed: true,
     }
 }
 
-/// What `edit` writes to `home`'s issues, read back against the flow among
-/// the others.
+/// Plans an issue edit against its current observations and flow.
 ///
 /// # Errors
-///
-/// Why the edit can't be made, or what the flow refuses it for.
-pub fn write(
+/// The issue cannot be changed, or the proposed change fails the flow.
+pub fn plan(
     home: &Snapshot,
     edit: &Edit,
     context: &Context,
-) -> Result<Written, String> {
+) -> Result<Planned, String> {
     let flow = home.flow()?;
     let sign = Signer {
         at: stamp(context.now),
         by: context.by.clone(),
-        mark: context.mark.clone(),
     };
-    let file = match edit {
+    let change = match edit {
         Edit::New { id, issue } => opened(home, flow, *id, &sign, issue)?,
         Edit::Change { id, changes } => {
-            let stem = id.to_string();
-            let file = home
-                .files()
-                .iter()
-                .find(|file| file.stem == stem)
-                .ok_or_else(|| format!("no issue is called {id}"))?;
-            changed(flow, file, changes, &sign)?
+            let observation = home.observation(*id).ok_or_else(|| {
+                home.graph().problems.iter().find(|problem| problem.record == id.to_string())
+                    .map_or_else(|| format!("no issue is called {id}"), |problem| format!("{id} doesn't read as the flow declares: {problem}"))
+            })?;
+            changed(flow, observation, changes, &sign)?
         }
     };
-    finished(home, flow, file)
+    finished(home, flow, change)
 }
 
 struct Signer {
     at: String,
     by: String,
-    mark: Option<String>,
 }
 
 impl Signer {
@@ -587,53 +565,40 @@ impl Signer {
             text: String::from(text),
         }
     }
-
-    fn text(&self, mut document: Document) -> String {
-        if let Some(mark) = &self.mark {
-            document.comment(mark);
-        }
-        document.text()
-    }
 }
 
 fn finished(
     home: &Snapshot,
     flow: &Flow,
-    file: File,
-) -> Result<Written, String> {
-    let after = home.with(file.clone());
+    change: Change,
+) -> Result<Planned, String> {
+    let issue = change.observation.issue();
+    let after = home.with(change.observation.clone());
     let graph = after.graph();
     let name = home
         .projects()
         .iter()
-        .find(|project| project.id == file.project)
+        .find(|project| project.id == issue.project)
         .map_or_else(
-            || file.project.to_string(),
+            || issue.project.to_string(),
             |project| project.name.clone(),
         );
-    let subject = format!("{name}/{}", file.stem);
+    let subject = format!("{name}/{}", issue.id);
     let mut problems: Vec<String> = graph
         .problems
         .iter()
         .filter(|problem| {
-            problem.project == file.project && problem.stem == file.stem
+            problem.project == issue.project
+                && problem.record == issue.id.to_string()
         })
         .map(ToString::to_string)
         .collect();
-    let findings: Vec<Finding> = graph
-        .issues
-        .iter()
-        .find(|issue| {
-            issue.project == file.project && issue.id.to_string() == file.stem
-        })
-        .map_or_else(Vec::new, |issue| {
-            let moving = Move {
-                from: home.issue(issue.id),
-                to: Some(issue),
-            };
-            let issues: Vec<&Issue> = graph.issues.iter().collect();
-            of_issue(flow, &issues, issue, moving, &subject)
-        });
+    let moving = Move {
+        from: home.issue(issue.id),
+        to: Some(issue),
+    };
+    let issues: Vec<&Issue> = graph.issues.iter().collect();
+    let findings = of_issue(flow, &issues, issue, moving, &subject);
     problems.extend(
         findings
             .iter()
@@ -643,17 +608,13 @@ fn finished(
     if !problems.is_empty() {
         return Err(format!("refused {subject}: {}", problems.join("; ")));
     }
-    Ok(Written {
+    Ok(Planned {
         warnings: findings
             .into_iter()
             .map(|finding| finding.message)
             .collect(),
         subject,
-        write: Write {
-            project: file.project,
-            stem: file.stem,
-            text: file.text,
-        },
+        change,
     })
 }
 
@@ -663,58 +624,87 @@ fn opened(
     id: IssueId,
     sign: &Signer,
     new: &NewIssue,
-) -> Result<File, String> {
+) -> Result<Change, String> {
     let NewIssue {
         project,
         kind,
         title: wanted,
         fields,
     } = new;
-    let at = &sign.at;
     if !home.projects().iter().any(|known| known.id == *project) {
         return Err(format!("no project is called {project}"));
     }
     let declared = flow
         .kind(kind)
         .ok_or_else(|| format!("no kind is called {kind}"))?;
-    let title = needs(wanted, "an issue needs a title")?;
-    let status = opening(flow).map_or_else(String::new, String::from);
-    let stem = id.to_string();
-    let mut front = Vec::from([
-        (String::from(ID), quoted(&stem)),
-        (String::from(TITLE), quoted(title)),
-        (String::from(KIND), quoted(kind)),
-        (String::from(STATUS), quoted(&status)),
-    ]);
-    front.extend(
-        fields
-            .iter()
-            .map(|(key, value)| (key.clone(), toml_of(value))),
-    );
-    if let Some(created) = flow.field_with(kind, FieldRole::Created) {
-        front.push((created.name.clone(), at.clone()));
-    }
-    let document = Document::new(
-        &front,
-        &declared.sections,
-        &sign.entry(LogEvent::Note, "opened."),
-    );
-    Ok(File {
+    let title = String::from(needs(wanted, "an issue needs a title")?);
+    let mut issue = Issue {
+        id,
         project: *project,
-        stem,
-        text: sign.text(document),
+        title,
+        kind: kind.clone(),
+        status: opening(flow).map_or_else(String::new, String::from),
+        stage: None,
+        fields: BTreeMap::new(),
+        links: BTreeMap::new(),
+        body: String::new(),
+        sections: Vec::new(),
+        checklist: Vec::new(),
+        log: Vec::new(),
+        branch: branch_of(id, None),
+    };
+    let mut mutations = Vec::new();
+    let mut names = BTreeSet::from([ID, TITLE, KIND, STATUS]);
+    if let Some(created) = flow.field_with(kind, FieldRole::Created) {
+        names.insert(&created.name);
+    }
+    for (field, value) in fields {
+        if !names.insert(field) {
+            return Err(format!("{field}: is given more than once"));
+        }
+        if field == STAGE {
+            issue.stage = value.text().map(str::trim).map(String::from);
+        } else {
+            assign(flow, &mut issue, field, value)?;
+        }
+        mutations.push(Mutation::Set {
+            field: field.clone(),
+            value: normalized(value),
+        });
+    }
+    if let Some(created) = flow.field_with(kind, FieldRole::Created) {
+        let value = Datum::Text(sign.at.clone());
+        issue.fields.insert(created.name.clone(), value.clone());
+        mutations.push(Mutation::Set {
+            field: created.name.clone(),
+            value,
+        });
+    }
+    issue.branch = branch_of(
+        id,
+        flow.field_with(kind, FieldRole::Branch)
+            .and_then(|field| issue.text(&field.name)),
+    );
+    let entry = sign.entry(LogEvent::Note, "opened.");
+    let body = Body::new(&declared.sections, &entry);
+    mutations.push(Mutation::Note(entry));
+    Ok(Change {
+        observation: crate::issue::Observation::new(issue, body),
+        created: true,
+        mutations,
     })
 }
 
 fn changed(
     flow: &Flow,
-    file: &File,
+    observation: &crate::issue::Observation,
     changes: &[IssueChange],
     sign: &Signer,
-) -> Result<File, String> {
-    let (issue, mut document) = parsed(flow, file).map_err(|problem| {
-        format!("{} doesn't read as the flow declares: {problem}", file.stem)
-    })?;
+) -> Result<Change, String> {
+    let current = observation.issue();
+    let mut issue = current.clone();
+    let mut body = observation.body().clone();
+    let mut mutations = Vec::new();
     let mut set = Vec::new();
     for change in changes {
         match change {
@@ -724,38 +714,65 @@ fn changed(
                 reason,
                 signed_off,
             } => {
-                let (key, event, text) =
-                    shifted(flow, &issue, (*part, to, reason), *signed_off)?;
-                document.set(key, &quoted(to)).ok_or_else(unread)?;
-                document.log_entry(&sign.entry(event, &text));
+                let (_, event, text) =
+                    shifted(flow, current, (*part, to, reason), *signed_off)?;
+                match part {
+                    Part::Stage => issue.stage = Some(to.clone()),
+                    Part::Status => issue.status.clone_from(to),
+                }
+                mutations.push(Mutation::Move {
+                    part: *part,
+                    to: to.clone(),
+                });
+                let entry = sign.entry(event, &text);
+                body.log_entry(&entry);
+                mutations.push(Mutation::Note(entry));
             }
             IssueChange::Set { field, value } => {
-                setting(&mut document, field, value)?;
+                setting(flow, &mut issue, field, value)?;
+                mutations.push(Mutation::Set {
+                    field: field.clone(),
+                    value: normalized(value),
+                });
                 set.push(format!("{field}={}", said(value)));
             }
             IssueChange::Title(title) => {
                 let kept = needs(title, "an issue needs a title")?;
-                document.set(TITLE, &quoted(kept)).ok_or_else(unread)?;
+                issue.title = String::from(kept);
+                mutations.push(Mutation::Title(issue.title.clone()));
                 set.push(format!("{TITLE}={kept}"));
             }
             IssueChange::Note(note) => {
-                let text = needs(note, "a note needs text")?;
-                document.log_entry(&sign.entry(LogEvent::Note, text));
+                let entry = sign
+                    .entry(LogEvent::Note, needs(note, "a note needs text")?);
+                body.log_entry(&entry);
+                mutations.push(Mutation::Note(entry));
             }
-            IssueChange::Body(text) => document.body(text.trim()),
+            IssueChange::Body(text) => {
+                body.body(text.trim());
+                mutations.push(Mutation::Body(String::from(text.trim())));
+            }
             IssueChange::Checklist(item) => {
-                checklist(&issue, &mut document, item)?;
+                checklist(current, &mut body, item)?;
+                mutations.push(Mutation::Checklist(item.clone()));
             }
         }
     }
     if !set.is_empty() {
-        document.log_entry(
-            &sign.entry(LogEvent::Note, &format!("set {}.", set.join(", "))),
-        );
+        let entry =
+            sign.entry(LogEvent::Note, &format!("set {}.", set.join(", ")));
+        body.log_entry(&entry);
+        mutations.push(Mutation::Note(entry));
     }
-    Ok(File {
-        text: sign.text(document),
-        ..file.clone()
+    issue.branch = branch_of(
+        issue.id,
+        flow.field_with(&issue.kind, FieldRole::Branch)
+            .and_then(|field| issue.text(&field.name)),
+    );
+    Ok(Change {
+        observation: crate::issue::Observation::new(issue, body),
+        created: false,
+        mutations,
     })
 }
 
@@ -817,7 +834,8 @@ fn shifted(
 }
 
 fn setting(
-    document: &mut Document,
+    flow: &Flow,
+    issue: &mut Issue,
     key: &str,
     value: &Datum,
 ) -> Result<(), String> {
@@ -829,47 +847,77 @@ fn setting(
         TITLE => Err(String::from(
             "the title changes by retitling, not by setting a field",
         )),
-        _ => document.set(key, &toml_of(value)).ok_or_else(unread),
+        _ => assign(flow, issue, key, value),
     }
 }
 
-fn unread() -> String {
-    String::from("its front matter doesn't read")
+fn assign(
+    flow: &Flow,
+    issue: &mut Issue,
+    key: &str,
+    value: &Datum,
+) -> Result<(), String> {
+    let kept = normalized(value);
+    if flow.field(&issue.kind, key).is_some() {
+        issue.fields.insert(String::from(key), kept);
+    } else if let Some(relation) = flow.relations.iter().find(|relation| {
+        relation.name == key
+            && (relation.from.is_empty() || relation.from.contains(&issue.kind))
+    }) {
+        let names = match (&kept, relation.many) {
+            (Datum::Text(name), _) => Vec::from([name.clone()]),
+            (Datum::Texts(names), true) => names.clone(),
+            (Datum::Texts(_), false) => {
+                return Err(String::from("points to one issue, not a list"));
+            }
+            (Datum::Bool(_), _) => return Err(String::from("is not an id")),
+        };
+        let targets = names
+            .iter()
+            .map(|name| {
+                IssueId::parse(name)
+                    .ok_or_else(|| format!("{name} is no issue"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        issue.links.insert(String::from(key), targets);
+    } else {
+        issue.fields.insert(String::from(key), kept);
+    }
+    Ok(())
 }
 
-fn toml_of(value: &Datum) -> String {
+fn normalized(value: &Datum) -> Datum {
     match value {
-        Datum::Text(text) => quoted(text.trim()),
-        Datum::Texts(texts) => Value::Array(
+        Datum::Text(text) => Datum::Text(String::from(text.trim())),
+        Datum::Texts(texts) => Datum::Texts(
             texts
                 .iter()
-                .map(|item| item.trim())
-                .filter(|item| !item.is_empty())
-                .map(|item| Value::String(item.to_owned()))
+                .map(|text| text.trim())
+                .filter(|text| !text.is_empty())
+                .map(String::from)
                 .collect(),
-        )
-        .to_string(),
-        Datum::Bool(flag) => Value::Boolean(*flag).to_string(),
+        ),
+        Datum::Bool(flag) => Datum::Bool(*flag),
     }
 }
 
 fn checklist(
     issue: &Issue,
-    document: &mut Document,
+    body: &mut Body,
     change: &ChecklistChange,
 ) -> Result<(), String> {
     let missing = || String::from("its checklist doesn't read");
     match change {
         ChecklistChange::Add(text) => {
-            document.add_item(needs(text, "a checklist item needs text")?);
+            body.add_item(needs(text, "a checklist item needs text")?);
             Ok(())
         }
-        ChecklistChange::Check { item, done } => document
-            .check(picked(issue, item)?, *done)
-            .ok_or_else(missing),
-        ChecklistChange::Remove(item) => document
-            .remove_item(picked(issue, item)?)
-            .ok_or_else(missing),
+        ChecklistChange::Check { item, done } => {
+            body.check(picked(issue, item)?, *done).ok_or_else(missing)
+        }
+        ChecklistChange::Remove(item) => {
+            body.remove_item(picked(issue, item)?).ok_or_else(missing)
+        }
     }
 }
 
@@ -897,10 +945,6 @@ fn needs<'a>(text: &'a str, missing: &str) -> Result<&'a str, String> {
     } else {
         Ok(kept)
     }
-}
-
-fn quoted(text: &str) -> String {
-    Value::String(text.to_owned()).to_string()
 }
 
 /// `now` as the log writes a time, RFC 3339 in UTC to the second.

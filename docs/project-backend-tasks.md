@@ -21,6 +21,12 @@ only after every caller batch is integrated. Temporary coexistence is
 internal to this branch, with one domain model and no compatibility API,
 dual write, migration or runtime fallback.
 
+The issue prefactor keeps the temporary Markdown codec in
+`home::issue::storage` and `home::issue::document`. The CLI and daemon use
+that codec at the `home-files` boundary. Task `0v2cswmj` removes it when
+all issue callers use the tracker. `home::issue::body` remains the shared
+interpreter for human Markdown sections, checklists and notes.
+
 The leader uses the build skill on `github-backends`. Each worker gets its
 own branch and worktree from that branch. Keep one target directory per
 checkout and serialize builds/checks on this VM. After each merge, run

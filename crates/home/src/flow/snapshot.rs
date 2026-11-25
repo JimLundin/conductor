@@ -1,29 +1,23 @@
-//! The home as one reading of its files.
-//!
-//! Its flow, its projects, every issue file and the graph the flow reads
-//! from them. The check, every write and every replay are made against one
-//! of these, so each sees the home the same way.
-
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use crate::flow::Flow;
-use crate::issue::Issue;
+use crate::issue::{Issue, Observation};
 use crate::{IssueId, ProjectId};
 
-use super::graph::{File, Graph, read};
-use super::{PATH, load};
+use super::graph::{Graph, Problem, read};
 use crate::prelude::*;
-use crate::project::{Listing, Project, listed};
+use crate::project::{Listing, Project};
 
-/// What the shell found of the home's files.
+/// The decoded flow, projects and issue observations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
-    /// The text at [`PATH`], or why it couldn't be read.
-    pub flow: Result<String, String>,
-    /// Each folder of `projects/` with its `project.toml`, or why not.
-    pub projects: Vec<(String, Result<String, String>)>,
-    pub issues: Vec<File>,
-    /// Why each issue file that couldn't be read wasn't, naming it.
+    /// The flow, or why it could not be loaded.
+    pub flow: Result<Flow, String>,
+    /// The project catalog and its findings.
+    pub projects: Listing,
+    pub issues: Vec<Result<Observation, Problem>>,
+    /// Failures reported by the observation source.
     pub unread: Vec<String>,
 }
 
@@ -31,7 +25,7 @@ pub struct Inputs {
 pub struct Snapshot {
     flow: Result<Flow, String>,
     listing: Listing,
-    files: Vec<File>,
+    records: Vec<Result<Observation, Problem>>,
     unread: Vec<String>,
     graph: Graph,
 }
@@ -41,18 +35,15 @@ impl Snapshot {
     /// loads.
     #[must_use]
     pub fn of(inputs: Inputs) -> Self {
-        let flow = inputs
-            .flow
-            .and_then(|text| load(&text))
-            .map_err(|problem| format!("{PATH}: {problem}"));
+        let flow = inputs.flow;
         let graph = flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |read_flow| read(read_flow, &inputs.issues),
+            |read_flow| read(read_flow, &issues(&inputs.issues)),
         );
         Self {
             flow,
-            listing: listed(inputs.projects),
-            files: inputs.issues,
+            listing: inputs.projects,
+            records: inputs.issues,
             unread: inputs.unread,
             graph,
         }
@@ -64,31 +55,37 @@ impl Snapshot {
         Self {
             flow: Err(reason),
             listing: Listing::default(),
-            files: Vec::new(),
+            records: Vec::new(),
             unread: Vec::new(),
             graph: Graph::default(),
         }
     }
 
-    /// The home with `file` written, in place of any file it had of the
-    /// same name.
     #[must_use]
-    pub fn with(&self, file: File) -> Self {
-        let mut files: Vec<File> = self
-            .files
+    pub fn with(&self, observation: Observation) -> Self {
+        let issue = observation.issue();
+        let mut records: Vec<Result<Observation, Problem>> = self
+            .records
             .iter()
-            .filter(|other| {
-                other.project != file.project || other.stem != file.stem
+            .filter(|record| match record {
+                Ok(other) => {
+                    other.issue().project != issue.project
+                        || other.issue().id != issue.id
+                }
+                Err(problem) => {
+                    problem.project != issue.project
+                        || problem.record != issue.id.to_string()
+                }
             })
             .cloned()
             .collect();
-        files.push(file);
-        let graph = self
-            .flow
-            .as_ref()
-            .map_or_else(|_| Graph::default(), |flow| read(flow, &files));
+        records.push(Ok(observation));
+        let graph = self.flow.as_ref().map_or_else(
+            |_| Graph::default(),
+            |flow| read(flow, &issues(&records)),
+        );
         Self {
-            files,
+            records,
             graph,
             ..self.clone()
         }
@@ -118,10 +115,9 @@ impl Snapshot {
             .find(|project| project.name == name || Some(project.id) == id)
     }
 
-    /// Every issue file that could be read.
     #[must_use]
-    pub fn files(&self) -> &[File] {
-        &self.files
+    pub fn records(&self) -> &[Result<Observation, Problem>] {
+        &self.records
     }
 
     #[must_use]
@@ -132,6 +128,15 @@ impl Snapshot {
     #[must_use]
     pub fn issue(&self, id: IssueId) -> Option<&Issue> {
         self.graph.issues.iter().find(|issue| issue.id == id)
+    }
+
+    #[must_use]
+    pub fn observation(&self, id: IssueId) -> Option<&Observation> {
+        self.issue(id)?;
+        self.records
+            .iter()
+            .filter_map(|record| record.as_ref().ok())
+            .find(|observation| observation.issue().id == id)
     }
 
     /// Its issues, by project and id.
@@ -150,15 +155,13 @@ impl Snapshot {
         &self.listing.problems
     }
 
-    /// Why each issue file that couldn't be read wasn't.
+    /// Failures reported by the observation source.
     #[must_use]
     pub fn unread(&self) -> &[String] {
         &self.unread
     }
 
-    /// Everything that kept part of the home from being read: a flow that
-    /// doesn't load, a folder that isn't a project, a file that couldn't
-    /// be read or isn't an issue, each naming where.
+    /// Flow, project and issue observation problems, each naming its subject.
     #[must_use]
     pub fn problems(&self) -> Vec<String> {
         self.flow
@@ -169,7 +172,7 @@ impl Snapshot {
             .chain(self.listing.problems.iter().cloned())
             .chain(self.unread.iter().cloned())
             .chain(self.graph.problems.iter().map(|problem| {
-                format!("{}/{}: {problem}", problem.project, problem.stem)
+                format!("{}/{}: {problem}", problem.project, problem.record)
             }))
             .collect()
     }
@@ -177,3 +180,17 @@ impl Snapshot {
 
 #[cfg(test)]
 mod tests;
+
+fn issues(
+    records: &[Result<Observation, Problem>],
+) -> Vec<Result<Issue, Problem>> {
+    records
+        .iter()
+        .map(|record| {
+            record
+                .as_ref()
+                .map(|observation| observation.issue().clone())
+                .map_err(Clone::clone)
+        })
+        .collect()
+}

@@ -1,18 +1,3 @@
-//! An issue's file in the home (docs/home.md §3), where `crate::layout`
-//! puts it, and the changes a host makes to it.
-//!
-//! The file's layout is `crate::flow::file`'s, and the flow's graph
-//! (`crate::flow::graph`) reads issues from it. A change is a
-//! `crate::flow::command::Edit`, written by `crate::flow::command` as the
-//! `home` command line's is, and read back against the flow before it is
-//! kept.
-//!
-//! The host keeps each change as an [`Edit`] until the remote has it, and
-//! when the remote moved on it applies the edit again on top
-//! ([`Edit::replay`]). Then a field someone else changed since stays theirs
-//! unless the edit is newer. Replay recognizes edits it already applied,
-//! even when a separately submitted note has the same text.
-
 use alloc::string::ToString;
 
 use serde::{Deserialize, Serialize};
@@ -25,27 +10,43 @@ pub use model::{
 
 use crate::flow::Flow;
 use crate::flow::command::{self, said};
-use crate::flow::file::{Document, checklist_line, log_line};
-use crate::flow::graph::{self, File, branch_of};
+use crate::flow::graph::branch_of;
 use crate::flow::snapshot::Snapshot;
+use crate::issue::body::{checklist_line, log_line};
 use crate::prelude::*;
 use crate::{CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId};
 
-fn read(
-    flow: &Flow,
-    project: ProjectId,
-    id: IssueId,
-    text: &str,
-) -> Result<(Issue, Document), String> {
-    graph::parsed(
-        flow,
-        &File {
-            project,
-            stem: id.to_string(),
-            text: String::from(text),
-        },
-    )
-    .map_err(|problem| problem.to_string())
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Observation {
+    issue: Issue,
+    body: body::Body,
+}
+
+impl Observation {
+    #[must_use]
+    pub fn new(mut issue: Issue, body: body::Body) -> Self {
+        issue.body = body.body_text();
+        issue.sections = body.sections();
+        issue.checklist = body.checklist();
+        issue.log = body.log();
+        Self { issue, body }
+    }
+
+    #[must_use]
+    pub const fn issue(&self) -> &Issue {
+        &self.issue
+    }
+
+    #[must_use]
+    pub const fn body(&self) -> &body::Body {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Observed {
+    pub reading: Result<Observation, String>,
+    pub applied: Vec<EditId>,
 }
 
 #[must_use]
@@ -128,28 +129,18 @@ enum Mode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Applied {
-    Write { text: String, warnings: Vec<String> },
+struct Applied {
+    change: command::Change,
+    warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NotApplied {
     AlreadyRecorded,
     Unchanged,
     Gone,
     Unreadable(String),
     Refused(String),
-}
-
-#[must_use]
-fn was(
-    flow: Option<&Flow>,
-    current: Option<&str>,
-    edit: &EditData,
-) -> Vec<Option<Vec<String>>> {
-    let issue = flow
-        .zip(current)
-        .and_then(|(read_flow, text)| {
-            read(read_flow, edit.project, edit.issue(), text).ok()
-        })
-        .map(|(issue, _)| issue);
-    values(issue.as_ref(), &edit.edit)
 }
 
 fn values(
@@ -266,96 +257,76 @@ fn stale(issue: &Issue, item: &Item) -> bool {
         || item.index >= issue.checklist.len()
 }
 
-#[must_use]
 fn apply(
     home: &Snapshot,
-    current: Option<&str>,
+    current: Option<&Observed>,
     edit: &Edit,
     mode: Mode,
-) -> Applied {
+) -> Result<Applied, NotApplied> {
     let data = &edit.data;
-    let marker = edit_marker(edit.id);
-    let readable = |text: &str| {
-        home.flow()
-            .map_err(String::from)
-            .and_then(|flow| read(flow, data.project, data.issue(), text))
-    };
-    let (changes, text) = match (&data.edit, current) {
-        (command::Edit::New { .. }, Some(text)) => {
-            return readable(text).map_or_else(Applied::Unreadable, |_| {
-                Applied::AlreadyRecorded
-            });
+    let (changes, observed) = match (&data.edit, current) {
+        (command::Edit::New { .. }, Some(observed)) => {
+            return Err(observed.reading.as_ref().map_or_else(
+                |reason| NotApplied::Unreadable(reason.clone()),
+                |_| NotApplied::AlreadyRecorded,
+            ));
         }
-        (command::Edit::New { .. }, None) => {
-            return written(home, data, None, &marker);
+        (command::Edit::New { .. }, None) => return written(home, data, None),
+        (command::Edit::Change { .. }, None) => return Err(NotApplied::Gone),
+        (command::Edit::Change { changes, .. }, Some(observed)) => {
+            (changes, observed)
         }
-        (command::Edit::Change { .. }, None) => return Applied::Gone,
-        (command::Edit::Change { changes, .. }, Some(text)) => (changes, text),
     };
-    let (issue, document) = match readable(text) {
-        Ok((_, document)) if document.has_comment(&marker) => {
-            return Applied::AlreadyRecorded;
+    let reading = match &observed.reading {
+        Ok(_) if observed.applied.contains(&edit.id) => {
+            return Err(NotApplied::AlreadyRecorded);
         }
-        Ok(read) => read,
-        Err(reason) => return Applied::Unreadable(reason),
+        Ok(issue) => issue,
+        Err(reason) => return Err(NotApplied::Unreadable(reason.clone())),
     };
+    let issue = reading.issue();
     match mode {
         Mode::Record
-            if changes.iter().all(|change| unchanged(&issue, change)) =>
+            if changes.iter().all(|change| unchanged(issue, change)) =>
         {
-            Applied::Unchanged
+            Err(NotApplied::Unchanged)
         }
         Mode::Replay { changed }
-            if changes.iter().all(|change| moot(&issue, change))
-                || (data.at < changed && overtaken(data, &issue)) =>
+            if changes.iter().all(|change| moot(issue, change))
+                || (data.at < changed && overtaken(data, issue)) =>
         {
-            marked(document, &marker)
+            Ok(Applied {
+                change: command::Change {
+                    observation: reading.clone(),
+                    created: false,
+                    mutations: Vec::new(),
+                },
+                warnings: Vec::new(),
+            })
         }
         Mode::Record | Mode::Replay { .. } => {
-            written(home, data, Some(text), &marker)
+            written(home, data, Some(reading))
         }
-    }
-}
-
-fn edit_marker(id: EditId) -> String {
-    format!("conductor-edit: {id}")
-}
-
-fn marked(mut document: Document, marker: &str) -> Applied {
-    document.comment(marker);
-    Applied::Write {
-        text: document.text(),
-        warnings: Vec::new(),
     }
 }
 
 fn written(
     home: &Snapshot,
     data: &EditData,
-    current: Option<&str>,
-    marker: &str,
-) -> Applied {
-    let among = current.map_or_else(
-        || home.clone(),
-        |text| {
-            home.with(File {
-                project: data.project,
-                stem: data.issue().to_string(),
-                text: String::from(text),
-            })
-        },
-    );
+    current: Option<&Observation>,
+) -> Result<Applied, NotApplied> {
+    let among =
+        current.map_or_else(|| home.clone(), |issue| home.with(issue.clone()));
     let context = command::Context {
         now: data.at.saturating_mul(1000),
         by: data.by.clone(),
-        mark: Some(String::from(marker)),
     };
-    match command::write(&among, &data.edit, &context) {
-        Ok(made) => Applied::Write {
-            text: made.write.text,
+    match command::plan(&among, &data.edit, &context) {
+        Ok(made) => Ok(Applied {
+            change: made.change,
             warnings: made.warnings,
-        },
-        Err(reason) => Applied::Refused(reason),
+        }),
+        Err(reason) => Err(NotApplied::Refused(reason)),
     }
 }
 
@@ -365,7 +336,7 @@ pub struct Start {
     pub issue: IssueId,
     /// The project's checkout the session's worktree is made from.
     pub checkout: CheckoutLocation,
-    /// The issue's branch, as a full ref, which the session's is cut from.
+    /// Issue `id`'s branch, as a full ref, as the home has it.
     pub branch: String,
     /// The agent's first message.
     pub brief: String,
@@ -553,7 +524,16 @@ impl Branch {
 #[cfg(test)]
 mod tests;
 
+pub mod body;
+pub mod document;
 mod edit_id;
+pub mod storage;
+
+pub const ID: &str = "id";
+pub const TITLE: &str = "title";
+pub const KIND: &str = "kind";
+pub const STATUS: &str = "status";
+pub const STAGE: &str = "stage";
 mod model;
 mod operation;
 pub use operation::*;

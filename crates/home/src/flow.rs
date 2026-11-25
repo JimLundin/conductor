@@ -22,7 +22,6 @@ use crate::prelude::*;
 pub mod check;
 pub mod command;
 pub mod eval;
-pub mod file;
 pub mod graph;
 pub mod role;
 pub mod snapshot;

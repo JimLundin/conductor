@@ -1,7 +1,8 @@
 use crate::ProjectId;
 
-use super::{Inputs, Snapshot};
-use crate::flow::graph::File;
+use super::Snapshot;
+use crate::issue::storage::File;
+use crate::issue::storage::{Inputs, decode};
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const FOLDER: &str = "7w85je";
@@ -46,7 +47,7 @@ fn statuses(home: &Snapshot) -> Vec<&str> {
 
 #[test]
 fn a_home_reads_its_projects_and_issues_and_says_what_it_could_not_read() {
-    let home = Snapshot::of(inputs(Ok(FLOW)));
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
     let named = |name: &str| {
         home.project(name)
             .map(|project| (project.id.to_string(), project.name.as_str()))
@@ -66,7 +67,7 @@ fn a_home_reads_its_projects_and_issues_and_says_what_it_could_not_read() {
 
 #[test]
 fn a_flow_that_does_not_load_reads_no_issues_and_says_where_it_is() {
-    let home = Snapshot::of(inputs(Err("not found")));
+    let home = crate::issue::storage::snapshot(inputs(Err("not found")));
     assert_eq!(home.flow(), Err("docs/agents/flow.toml: not found"));
     assert_eq!(statuses(&home), Vec::<&str>::new());
     assert_eq!(
@@ -76,10 +77,14 @@ fn a_flow_that_does_not_load_reads_no_issues_and_says_where_it_is() {
 }
 
 #[test]
-fn a_home_with_a_file_written_reads_it_in_place_of_the_old_one() {
-    let home = Snapshot::of(inputs(Ok(FLOW)));
-    let moved = home.with(task("ready"));
-    assert_eq!(moved.files().len(), 1);
+fn a_home_with_a_changed_issue_replaces_its_previous_observation()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
+    let changed = decode(home.flow()?, &task("ready"))
+        .map_err(|problem| problem.to_string())?;
+    let moved = home.with(changed.0);
+    assert_eq!(moved.records().len(), 1);
     assert_eq!(statuses(&moved), ["ready"]);
     assert_eq!(statuses(&home), ["open"]);
+    Ok(())
 }
