@@ -1,10 +1,10 @@
-import type { FunctionComponent, ReactNode } from "react";
+import type { FunctionComponent, ReactElement } from "react";
 import type { Subagent } from "@conductor/core/fold/subagent";
 import { SubagentStatus } from "@conductor/core/fold/subagent";
 import { subagentStatus } from "@conductor/core/session/words";
 
 interface Props {
-  readonly children: ReactNode;
+  readonly children: Readonly<ReactElement>;
   readonly subagent: Subagent;
 }
 

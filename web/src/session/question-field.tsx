@@ -1,6 +1,7 @@
 import type { ChangeEventHandler, FunctionComponent } from "react";
 import type { Picked } from "@conductor/core/session/commands";
 import { QuestionOption } from "#ui/session/question-option.tsx";
+import type { ValueChange } from "#ui/event.ts";
 import type { questions } from "@conductor/core/view/requests";
 import { useCallback } from "react";
 
@@ -13,7 +14,7 @@ interface Props {
 const QuestionField: FunctionComponent<Props> = ({ disabled, field, pick }) => {
   const { index, picked, question } = field;
   const typed = useCallback<ChangeEventHandler<HTMLInputElement>>(
-    (event) => {
+    (event: ValueChange) => {
       pick(index, { ...picked, typed: event.target.value });
     },
     [index, pick, picked],

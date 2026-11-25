@@ -1,11 +1,11 @@
-import type { FunctionComponent, ReactNode } from "react";
+import type { FunctionComponent, ReactElement } from "react";
 import { toolName, toolStatus } from "@conductor/core/session/words";
 import { ApprovalLine } from "#ui/session/approval-line.tsx";
 import type { Item } from "@conductor/core/fold/transcript";
 import { ToolDetail } from "#ui/session/tool-detail.tsx";
 
 interface Props {
-  readonly children: ReactNode;
+  readonly children: ReadonlyArray<Readonly<ReactElement>>;
   readonly item: Extract<Item, { readonly _tag: "Tool" }>;
 }
 

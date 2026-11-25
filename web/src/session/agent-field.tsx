@@ -1,5 +1,6 @@
 import type { ChangeEventHandler, FunctionComponent } from "react";
 import type { Choosable, Draft } from "@conductor/core/session/start";
+import type { ValueChange } from "#ui/event.ts";
 import { useCallback } from "react";
 
 interface Props {
@@ -13,7 +14,7 @@ const choose = "Choose an agent";
 
 const AgentField: FunctionComponent<Props> = ({ change, choices, value }) => {
   const selected = useCallback<ChangeEventHandler<HTMLSelectElement>>(
-    (event) => {
+    (event: ValueChange) => {
       change({ effort: "", instance: event.target.value, model: "" });
     },
     [change],

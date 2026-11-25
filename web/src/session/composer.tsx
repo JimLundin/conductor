@@ -1,4 +1,4 @@
-import type { ChangeEventHandler, FunctionComponent, SubmitEventHandler } from "react";
+import type { ChangeEventHandler, FunctionComponent, SubmitEvent, SubmitEventHandler } from "react";
 import type { Command, SessionId } from "@conductor/core/schemas/index";
 import { message, sessionOffers } from "@conductor/core/session/commands";
 import { useCallback, useState } from "react";
@@ -6,6 +6,7 @@ import { Notice } from "#ui/session/notice.tsx";
 import { Offers } from "#ui/session/offers.tsx";
 import type { Send } from "#ui/link/host.ts";
 import type { Session } from "@conductor/core/fold/session";
+import type { ValueChange } from "#ui/event.ts";
 import { composer } from "@conductor/core/view/session";
 import { useSending } from "#ui/session/sending.ts";
 
@@ -22,7 +23,7 @@ const Composer: FunctionComponent<Props> = ({ id, send, session }) => {
   const sending = useSending();
   const shown = composer(session, sending.pending);
   const submit = useCallback<SubmitEventHandler<HTMLFormElement>>(
-    (event) => {
+    (event: Readonly<Pick<SubmitEvent<HTMLFormElement>, "preventDefault">>) => {
       event.preventDefault();
       if (text.trim() !== "") {
         sending.run(send, message(id, text), () => {
@@ -32,7 +33,7 @@ const Composer: FunctionComponent<Props> = ({ id, send, session }) => {
     },
     [id, send, sending, text],
   );
-  const change = useCallback<ChangeEventHandler<HTMLTextAreaElement>>((event) => {
+  const change = useCallback<ChangeEventHandler<HTMLTextAreaElement>>((event: ValueChange) => {
     setText(event.target.value);
   }, []);
   const run = useCallback(

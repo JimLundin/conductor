@@ -16,7 +16,7 @@ const PairForm = (): ReactElement => {
   const [error, setError] = useState<string | undefined>();
   const field = useId();
   const pair = useCallback<FormAction>(
-    (data) => {
+    (data: Readonly<Pick<FormData, "get">>) => {
       const ticket = data.get("ticket");
       setError(pairingError(store.pair(typeof ticket === "string" ? ticket : "")));
     },
