@@ -1245,6 +1245,15 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
             ),
             "two states are called `open`: give each state its own id",
         ),
+        (
+            statechart(
+                r#"{"id": "open", "label": "Open", "marked": "the owner reads it here before the worker starts"}"#,
+                "open",
+                "",
+                "",
+            ),
+            "the label `the owner reads it here before the worker starts` is over 8 words: put the detail in prose",
+        ),
     ];
     for (text, said) in cases {
         let outcome =
@@ -1622,7 +1631,7 @@ fn blocks(blocks: &str) -> String {
 const CHOICES: &str = r#"[{"label": "Home folder", "gets": "history in git", "costs": "a sync per write"}, {"label": "Database", "gets": "queries", "costs": "a server to run"}]"#;
 
 #[test]
-fn a_canvas_put_with_more_done_than_total_a_pick_past_the_options_or_groups_out_of_order_writes_nothing_and_says_what_to_change()
+fn a_canvas_put_with_more_done_than_total_fewer_than_two_options_a_pick_past_them_or_groups_out_of_order_writes_nothing_and_says_what_to_change()
  {
     let cases = [
         (
@@ -1647,7 +1656,13 @@ fn a_canvas_put_with_more_done_than_total_a_pick_past_the_options_or_groups_out_
             blocks(
                 r#"{"options": {"question": "Where?", "options": [], "pick": 0, "why": "it syncs"}}"#,
             ),
-            "`Where?` has no options: add the choices the pick is made from",
+            "`Where?` has fewer than two options: add the choices the pick is made from",
+        ),
+        (
+            blocks(
+                r#"{"options": {"question": "Where?", "options": [{"label": "Home folder", "gets": "history in git", "costs": "a sync per write"}], "pick": 0, "why": "it syncs"}}"#,
+            ),
+            "`Where?` has fewer than two options: add the choices the pick is made from",
         ),
         (
             blocks(
@@ -1722,7 +1737,7 @@ fn a_canvas_show_prints_progress_as_text_bars_with_one_line_per_stretch()
 }
 
 #[test]
-fn a_canvas_show_prints_options_as_a_list_with_the_pick_marked_and_why()
+fn a_canvas_show_prints_options_as_a_list_with_the_pick_recommended_and_why()
 -> Result<(), String> {
     let outcome = shown(&blocks(&format!(
         r#"{{"options": {{"question": "Where do canvases live?", "options": {CHOICES}, "pick": 0, "why": "it syncs with the issues"}}}}"#
@@ -1734,9 +1749,9 @@ fn a_canvas_show_prints_options_as_a_list_with_the_pick_marked_and_why()
             String::from(
                 "# Where it stands\n\n\
                  **Where do canvases live?**\n\n\
-                 - **Home folder** (picked): gets history in git; costs a sync per write\n\
+                 - **Home folder** (recommended): gets history in git; costs a sync per write\n\
                  - **Database**: gets queries; costs a server to run\n\n\
-                 Picked **Home folder**: it syncs with the issues\n"
+                 Recommended **Home folder**: it syncs with the issues\n"
             )
         )
     );
