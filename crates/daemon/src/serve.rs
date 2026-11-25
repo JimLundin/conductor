@@ -229,6 +229,7 @@ const fn command_outcome(result: &CommandResult) -> &'static str {
         | CommandResult::Fleet(FleetResult::Unavailable) => "rejected",
         CommandResult::Session(SessionResult::Diff(_)) => "diff",
         CommandResult::Home(HomeResult::IssueWritten { .. }) => "issue_written",
+        CommandResult::Home(HomeResult::Canvas(_)) => "canvas",
         CommandResult::Push(PushResult::PublicKey(_)) => "push_public_key",
         CommandResult::Push(PushResult::Unavailable) => "push_unavailable",
         CommandResult::Fleet(FleetResult::Status(_)) => "fleet_status",
