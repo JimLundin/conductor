@@ -183,6 +183,16 @@
         {
           "additionalProperties": false,
           "properties": {
+            "diagram": {
+              "$ref": "#/$defs/Diagram"
+            }
+          },
+          "required": ["diagram"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
             "statechart": {
               "$ref": "#/$defs/Statechart"
             }
@@ -838,6 +848,31 @@
       "required": ["certificate", "proof"],
       "type": "object"
     },
+    "Diagram": {
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "items": {
+            "$ref": "#/$defs/Edge"
+          },
+          "type": "array"
+        },
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/Group"
+          },
+          "type": "array"
+        },
+        "nodes": {
+          "items": {
+            "$ref": "#/$defs/Node"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["nodes", "edges", "groups"],
+      "type": "object"
+    },
     "DiffChange": {
       "description": "What a snapshot did to a file, as Git's diff status says.",
       "oneOf": [
@@ -860,6 +895,28 @@
     "DiffExtent": {
       "enum": ["Complete", "Truncated"],
       "type": "string"
+    },
+    "Edge": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "label": {
+          "type": ["string", "null"]
+        },
+        "step": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": ["from", "to", "step"],
+      "type": "object"
     },
     "EditId": {
       "description": "128 random bits, whose text is a ULID's as the `ulid` crate writes it.\n\nA human-readable format writes the text, since JSON's numbers are exact\nonly to 2^53; others write the number.",
@@ -1754,6 +1811,19 @@
         }
       },
       "required": ["name", "value", "default", "role"],
+      "type": "object"
+    },
+    "Group": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "label"],
       "type": "object"
     },
     "Hello": {
@@ -2789,6 +2859,28 @@
         }
       },
       "required": ["project", "kind", "title", "fields"],
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "group": {
+          "type": ["string", "null"]
+        },
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "step": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["id", "label", "step"],
       "type": "object"
     },
     "Open": {

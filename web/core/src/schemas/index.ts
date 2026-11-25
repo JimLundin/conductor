@@ -194,6 +194,66 @@ const Bar = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "Bar" });
 
+type Edge = {
+  readonly from: string;
+  readonly label?: string | null;
+  readonly step: number;
+  readonly to: string;
+};
+
+const Edge = Schema.Struct({
+  from: Schema.String,
+  label: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  step: Schema.Number.annotate({ format: "uint8" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+    ),
+  to: Schema.String,
+}).annotate({ identifier: "Edge" });
+
+type Group = { readonly id: string; readonly label: string };
+
+const Group = Schema.Struct({ id: Schema.String, label: Schema.String }).annotate({
+  identifier: "Group",
+});
+
+type Node = {
+  readonly group?: string | null;
+  readonly id: string;
+  readonly label: string;
+  readonly step: number;
+};
+
+const Node = Schema.Struct({
+  group: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  id: Schema.String,
+  label: Schema.String,
+  step: Schema.Number.annotate({ format: "uint8" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    )
+    .check(
+      Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
+    ),
+}).annotate({ identifier: "Node" });
+
+type Diagram = {
+  readonly edges: globalThis.ReadonlyArray<Edge>;
+  readonly groups: globalThis.ReadonlyArray<Group>;
+  readonly nodes: globalThis.ReadonlyArray<Node>;
+};
+
+const Diagram = Schema.Struct({
+  edges: Schema.Array(Edge),
+  groups: Schema.Array(Group),
+  nodes: Schema.Array(Node),
+}).annotate({ identifier: "Diagram" });
+
 type State = { readonly id: string; readonly label: string; readonly marked?: string | null };
 
 const State = Schema.Struct({
@@ -293,6 +353,7 @@ const ChangeGroup = Schema.Struct({ entries: Schema.Array(Change), kind: ChangeK
 
 type Block =
   | { readonly prose: { readonly text: string } }
+  | { readonly diagram: Diagram }
   | { readonly statechart: Statechart }
   | { readonly progress: { readonly bar: Bar; readonly label: string } }
   | {
@@ -309,6 +370,7 @@ type Block =
 const Block = Schema.Union(
   [
     Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ diagram: Diagram }),
     Schema.Struct({ statechart: Statechart }),
     Schema.Struct({ progress: Schema.Struct({ bar: Bar, label: Schema.String }) }),
     Schema.Struct({
@@ -2797,8 +2859,10 @@ export {
   Datum,
   Decision,
   DeviceHello,
+  Diagram,
   DiffChange,
   DiffExtent,
+  Edge,
   EditId,
   Effort,
   EnrollmentToken,
@@ -2818,6 +2882,7 @@ export {
   FleetResult,
   Flow,
   FlowField,
+  Group,
   Hello,
   HelloReply,
   Home,
@@ -2847,6 +2912,7 @@ export {
   ModelId,
   Models,
   NewIssue,
+  Node,
   Open,
   Origin,
   Output,
