@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use home::canvas::{
-    CanvasEntry, CanvasError, CanvasFile, CanvasKey, Held, Stray, StrayReason,
+    CanvasEntry, CanvasError, CanvasFile, CanvasKey, CanvasName, Held, Stray,
+    StrayReason,
 };
 use home::{IssueId, ProjectId};
 
@@ -9,24 +10,42 @@ use crate::{CanvasStore, StoreError};
 
 #[derive(Debug, Default)]
 pub struct Memory {
-    canvases: BTreeMap<CanvasKey, Result<CanvasFile, CanvasError>>,
-    strays: Vec<(ProjectId, Option<IssueId>, Stray)>,
+    issues: BTreeMap<(ProjectId, IssueId), Folder>,
+    strays: Vec<Stray>,
+}
+
+#[derive(Debug, Default)]
+struct Folder {
+    canvases: BTreeMap<CanvasName, Result<CanvasFile, CanvasError>>,
+    strays: Vec<Stray>,
 }
 
 impl Memory {
     pub fn spoil(&mut self, key: CanvasKey, error: CanvasError) -> String {
         let place = place(&key);
-        self.canvases.insert(key, Err(error));
+        self.folder(&key).canvases.insert(key.name, Err(error));
         place
     }
 
     pub fn stray(
         &mut self,
         project: ProjectId,
-        issue: Option<IssueId>,
+        under: Option<IssueId>,
         stray: Stray,
     ) {
-        self.strays.push((project, issue, stray));
+        match under {
+            Some(issue) => self
+                .issues
+                .entry((project, issue))
+                .or_default()
+                .strays
+                .push(stray),
+            None => self.strays.push(stray),
+        }
+    }
+
+    fn folder(&mut self, key: &CanvasKey) -> &mut Folder {
+        self.issues.entry((key.project, key.issue)).or_default()
     }
 }
 
@@ -37,11 +56,22 @@ fn place(key: &CanvasKey) -> String {
 impl CanvasStore for Memory {
     fn all(&self) -> Result<Held<CanvasKey>, StoreError> {
         Ok(Held {
-            canvases: self.canvases.keys().cloned().collect(),
-            strays: self
-                .strays
+            canvases: self
+                .issues
                 .iter()
-                .map(|(_, _, stray)| stray.clone())
+                .flat_map(|(&(project, issue), folder)| {
+                    folder.canvases.keys().map(move |name| CanvasKey {
+                        project,
+                        issue,
+                        name: name.clone(),
+                    })
+                })
+                .collect(),
+            strays: self
+                .issues
+                .values()
+                .flat_map(|folder| folder.strays.iter().cloned())
+                .chain(self.strays.iter().cloned())
                 .collect(),
         })
     }
@@ -52,32 +82,32 @@ impl CanvasStore for Memory {
         issue: &IssueId,
     ) -> Result<Held<CanvasEntry>, StoreError> {
         let mut held = Held::default();
-        self.canvases
-            .iter()
-            .filter(|(key, _)| key.project == *project && key.issue == *issue)
-            .for_each(|(key, kept)| match kept {
+        let Some(folder) = self.issues.get(&(*project, *issue)) else {
+            return Ok(held);
+        };
+        for (name, kept) in &folder.canvases {
+            match kept {
                 Ok(file) => {
-                    held.canvases.push(CanvasEntry::of(key.name.clone(), file));
+                    held.canvases.push(CanvasEntry::of(name.clone(), file));
                 }
                 Err(error) => held.strays.push(Stray {
-                    place: place(key),
+                    place: place(&CanvasKey {
+                        project: *project,
+                        issue: *issue,
+                        name: name.clone(),
+                    }),
                     reason: StrayReason::Invalid(error.clone()),
                 }),
-            });
-        held.strays.extend(
-            self.strays
-                .iter()
-                .filter(|(at, under, _)| {
-                    at == project && *under == Some(*issue)
-                })
-                .map(|(_, _, stray)| stray.clone()),
-        );
+            }
+        }
+        held.strays.extend(folder.strays.iter().cloned());
         Ok(held)
     }
 
     fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
-        self.canvases
-            .get(key)
+        self.issues
+            .get(&(key.project, key.issue))
+            .and_then(|folder| folder.canvases.get(&key.name))
             .cloned()
             .transpose()
             .map_err(|error| StoreError::Invalid {
@@ -91,7 +121,9 @@ impl CanvasStore for Memory {
         key: &CanvasKey,
         file: &CanvasFile,
     ) -> Result<(), StoreError> {
-        self.canvases.insert(key.clone(), Ok(file.clone()));
+        self.folder(key)
+            .canvases
+            .insert(key.name.clone(), Ok(file.clone()));
         Ok(())
     }
 }
