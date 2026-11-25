@@ -346,7 +346,7 @@ fn written(
         },
     );
     let context = command::Context {
-        now: data.at.saturating_mul(1000),
+        now_ms: data.at.saturating_mul(1000),
         by: data.by.clone(),
         mark: Some(String::from(marker)),
     };

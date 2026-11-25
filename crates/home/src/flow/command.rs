@@ -151,7 +151,7 @@ impl Edit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
     /// Milliseconds since the Unix epoch.
-    pub now: u64,
+    pub now_ms: u64,
     /// As the log signs it, `<node>·<harness>`.
     pub by: String,
     /// A comment the written file's front matter ends with.
@@ -226,13 +226,13 @@ pub struct Written {
 /// The id a new issue made at `now`, in seconds since the Unix epoch,
 /// takes: the first of `draws` that gives one the home has no file of.
 #[must_use]
-pub fn fresh(home: &Snapshot, now: u64, draws: &Draws) -> Option<IssueId> {
+pub fn fresh(home: &Snapshot, now_secs: u64, draws: &Draws) -> Option<IssueId> {
     let held: Vec<IssueId> = home
         .files()
         .iter()
         .filter_map(|file| IssueId::parse(&file.stem))
         .collect();
-    IssueId::mint(now, draws, &held)
+    IssueId::mint(now_secs, draws, &held)
 }
 
 /// What `args`, after the program's name, ask of `home`: what [`command`]
@@ -553,7 +553,7 @@ pub fn write(
 ) -> Result<Written, String> {
     let flow = home.flow()?;
     let sign = Signer {
-        at: stamp(context.now),
+        at: stamp(context.now_ms),
         by: context.by.clone(),
         mark: context.mark.clone(),
     };
@@ -905,8 +905,8 @@ fn quoted(text: &str) -> String {
 
 /// `now` as the log writes a time, RFC 3339 in UTC to the second.
 #[must_use]
-pub fn stamp(now: u64) -> String {
-    let seconds = now / 1000;
+pub fn stamp(now_ms: u64) -> String {
+    let seconds = now_ms / 1000;
     let (year, month, day) = crate::calendar::civil(seconds / 86_400);
     let of_day = seconds % 86_400;
     format!(

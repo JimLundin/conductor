@@ -56,8 +56,8 @@ impl IssueId {
     /// None when `now` is outside the years an id can count, or every draw
     /// gives a held id.
     #[must_use]
-    pub fn mint(now: u64, draws: &Draws, held: &[Self]) -> Option<Self> {
-        let seconds = now
+    pub fn mint(now_secs: u64, draws: &Draws, held: &[Self]) -> Option<Self> {
+        let seconds = now_secs
             .checked_sub(Self::EPOCH)
             .filter(|seconds| *seconds <= mask(Self::TIME_BITS))?;
         draws

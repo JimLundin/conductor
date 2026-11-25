@@ -23,9 +23,9 @@ pub enum Git {
 pub struct Sync {
     /// When the clone last matched the remote, in seconds since the Unix
     /// epoch.
-    pub synced: Option<u64>,
+    pub synced_secs: Option<u64>,
     /// When the host last tried.
-    pub attempted: Option<u64>,
+    pub attempted_secs: Option<u64>,
     pub status: HomeSync,
 }
 
@@ -39,8 +39,8 @@ impl Sync {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            synced: None,
-            attempted: None,
+            synced_secs: None,
+            attempted_secs: None,
             status: HomeSync::Syncing,
         }
     }
@@ -48,9 +48,9 @@ impl Sync {
     /// Whether a read at `now` pulls first: the host hasn't tried within
     /// `fresh` seconds.
     #[must_use]
-    pub fn due(&self, now: u64, fresh: u64) -> bool {
-        self.attempted
-            .is_none_or(|at| now.saturating_sub(at) >= fresh)
+    pub fn due(&self, now_secs: u64, fresh_secs: u64) -> bool {
+        self.attempted_secs
+            .is_none_or(|at| now_secs.saturating_sub(at) >= fresh_secs)
     }
 
     /// Where the clone stands once an attempt at `now` has ended, with a
@@ -60,21 +60,21 @@ impl Sync {
         self,
         outcome: Result<(), String>,
         cloned: bool,
-        now: u64,
+        now_secs: u64,
     ) -> Self {
         match (outcome, cloned) {
             (Ok(()), _) => Self {
-                synced: Some(now),
-                attempted: Some(now),
+                synced_secs: Some(now_secs),
+                attempted_secs: Some(now_secs),
                 status: HomeSync::Synced,
             },
             (Err(reason), true) => Self {
-                attempted: Some(now),
+                attempted_secs: Some(now_secs),
                 status: HomeSync::Behind { reason },
                 ..self
             },
             (Err(reason), false) => Self {
-                attempted: Some(now),
+                attempted_secs: Some(now_secs),
                 status: HomeSync::Failed { reason },
                 ..self
             },

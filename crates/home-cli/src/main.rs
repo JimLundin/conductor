@@ -27,7 +27,7 @@ fn main() -> ExitCode {
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
     let snapshot = home_files::read(home);
     let context = context();
-    let fresh = fresh(&snapshot, context.now / 1000, &draws());
+    let fresh = fresh(&snapshot, context.now_ms / 1000, &draws());
     match asked(args, &snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, &snapshot),
         Asked::Flow(command) => issues(home, command, &snapshot, &context),
@@ -62,13 +62,13 @@ fn context() -> Context {
         .or_else(|_| env::var("HOSTNAME"))
         .unwrap_or_else(|_| String::from("host"))
         .to_lowercase();
-    let now = SystemTime::now()
+    let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| {
             u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
         });
     Context {
-        now,
+        now_ms,
         by: env::var("HOME_BY").unwrap_or_else(|_| format!("{host}·cli")),
         mark: None,
     }
