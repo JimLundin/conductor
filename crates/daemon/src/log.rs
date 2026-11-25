@@ -9,12 +9,25 @@ use host::log::{Effect as Logged, FreshRequest};
 use host::log::{Event, HostSeq};
 use host::registry::{Catalog, Instances};
 use host::session::{EventKind, SessionId};
+use iroh::protocol::Router;
 use link::CommandId;
 use link::log::{Begun, Completion, Effect, Kind, Lease, Log as Core};
 use link::{CommandResult, Subscribe, Welcome};
 use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::Stopped;
+
+pub struct TransportStopped(());
+
+impl TransportStopped {
+    pub async fn stop(
+        router: Router,
+    ) -> (Self, Result<(), n0_future::task::JoinError>) {
+        let stopped = router.shutdown().await;
+        drop(router);
+        (Self(()), stopped)
+    }
+}
 
 const LIVE_BUFFER: usize = 1024;
 
@@ -267,7 +280,10 @@ impl Log {
         self.inbox.closed().await;
     }
 
-    pub async fn shutdown(&self) -> Result<(), Stopped> {
+    pub async fn shutdown(
+        &self,
+        _transport: TransportStopped,
+    ) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Shutdown { reply }).await
     }
 
@@ -573,7 +589,7 @@ mod tests {
     async fn deltas_go_live_with_the_last_seq_and_are_never_replayed()
     -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), host::log::Epoch(5));
-        let mut live = log.subscribe(HostSeq(0)).await?.live;
+        let mut live = log.subscribe(HostSeq::BEFORE_FIRST).await?.live;
         log.append(SessionId(1), EventKind::SessionReady).await?;
         log.append(SessionId(1), delta("a")).await?;
         log.append(
@@ -640,7 +656,7 @@ mod durability_tests {
 
     use super::{
         BeginCommand, CommandLease, CommandResult, CommandStart, Kind, Log,
-        LogMsg,
+        LogMsg, TransportStopped,
     };
     use tokio::sync::oneshot;
 
@@ -722,7 +738,7 @@ mod durability_tests {
                 host::session::SessionResult::Accepted
             ))
         );
-        log.shutdown().await?;
+        log.shutdown(TransportStopped(())).await?;
         let reopened = Log::open(String::from("test"), &path)?;
         let cached = match reopened
             .begin(CommandId(uuid::Uuid::from_u128(23)), Kind::Receipt)
@@ -737,7 +753,7 @@ mod durability_tests {
                 host::session::SessionResult::Accepted
             ))
         );
-        reopened.shutdown().await?;
+        reopened.shutdown(TransportStopped(())).await?;
         Ok(())
     }
 
@@ -753,11 +769,11 @@ mod durability_tests {
         let log = Log::open(String::from("test"), &path)?;
         let running = lease(&log, 1).await?;
         log.append(SessionId(1), EventKind::SessionReady).await?;
-        log.shutdown().await?;
+        log.shutdown(TransportStopped(())).await?;
         let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(reopened.history().await?, Vec::new());
         drop(running);
-        reopened.shutdown().await?;
+        reopened.shutdown(TransportStopped(())).await?;
         std::fs::remove_file(path)?;
         Ok(())
     }
@@ -824,7 +840,7 @@ mod durability_tests {
             host::session::SessionResult::Accepted,
         ))
         .await?;
-        log.shutdown().await?;
+        log.shutdown(TransportStopped(())).await?;
         std::fs::remove_file(path)?;
         Ok(())
     }
@@ -855,7 +871,7 @@ mod durability_tests {
         let log = Log::open(String::from("test"), &path)?;
         let first = lease(&log, 1).await?;
         let super::Subscription { mut live, .. } =
-            log.subscribe(HostSeq(0)).await?;
+            log.subscribe(HostSeq::BEFORE_FIRST).await?;
         log.append(SessionId(1), EventKind::SessionReady).await?;
         log.append(
             SessionId(1),
@@ -864,7 +880,10 @@ mod durability_tests {
             }),
         )
         .await?;
-        assert_eq!(log.subscribe(HostSeq(0)).await?.replay, Vec::new());
+        assert_eq!(
+            log.subscribe(HostSeq::BEFORE_FIRST).await?.replay,
+            Vec::new()
+        );
         assert_eq!(
             tokio::time::timeout(Duration::from_millis(20), live.recv())
                 .await
@@ -915,9 +934,16 @@ mod durability_tests {
                 host::session::SessionResult::Accepted,
             ))
             .await?;
-        log.shutdown().await?;
+        log.shutdown(TransportStopped(())).await?;
         let reopened = Log::open(String::from("test"), &path)?;
-        assert_eq!(reopened.subscribe(HostSeq(0)).await?.replay.len(), 1);
+        assert_eq!(
+            reopened
+                .subscribe(HostSeq::BEFORE_FIRST)
+                .await?
+                .replay
+                .len(),
+            1
+        );
         let cached = match reopened
             .begin(CommandId(uuid::Uuid::from_u128(1)), Kind::Session)
             .await?
@@ -931,7 +957,7 @@ mod durability_tests {
                 host::session::SessionResult::Accepted
             ))
         );
-        reopened.shutdown().await?;
+        reopened.shutdown(TransportStopped(())).await?;
         let _ = std::fs::remove_file(path);
         Ok(())
     }
@@ -952,7 +978,7 @@ mod durability_tests {
         log.append(SessionId(1), started.clone()).await?;
         log.barrier().await?;
         assert_eq!(
-            log.subscribe(HostSeq(0))
+            log.subscribe(HostSeq::BEFORE_FIRST)
                 .await?
                 .replay
                 .into_iter()
@@ -989,7 +1015,7 @@ mod durability_tests {
                 host::session::SessionResult::Accepted,
             ))
             .await?;
-        reopened.shutdown().await?;
+        reopened.shutdown(TransportStopped(())).await?;
         let _ = std::fs::remove_file(path);
         Ok(())
     }
@@ -1018,7 +1044,7 @@ mod durability_tests {
                 host::session::SessionResult::Accepted,
             ))
             .await?;
-        reopened.shutdown().await?;
+        reopened.shutdown(TransportStopped(())).await?;
         let _ = std::fs::remove_file(path);
         Ok(())
     }

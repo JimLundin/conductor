@@ -300,7 +300,7 @@ impl Runner<'_> {
                 failure("writing git update-ref", &error.to_string())
             })?;
             drop(stdin);
-            capture(child, Output::CAPTURE).await
+            capture(child, Output::CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT).await
         })
         .await
         .map_err(|error| {
@@ -333,7 +333,7 @@ impl Runner<'_> {
                 .env("GIT_COMMITTER_NAME", "Conductor")
                 .env("GIT_COMMITTER_EMAIL", "conductor@localhost");
         }
-        execute(&mut command, Output::CAPTURE)
+        execute(&mut command, Output::CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT)
             .await
             .map(Answer::Git)
     }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::credentials::Store;
 use crate::home::{HomeClone, Homing};
-use crate::log::Log;
+use crate::log::{Log, TransportStopped};
 use crate::registry::{Launcher, Registry};
 use crate::serve::Conductor;
 use crate::sign_in::Signing;
@@ -306,9 +306,8 @@ impl Hosted {
             fleet_lock: _fleet_lock,
             ..
         } = self;
-        let stopped = router.shutdown().await;
-        drop(router);
-        log.shutdown().await?;
+        let (transport, stopped) = TransportStopped::stop(router).await;
+        log.shutdown(transport).await?;
         stopped?;
         Ok(())
     }
