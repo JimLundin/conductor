@@ -43,3 +43,63 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
     assert!(project.join("issues").join(format!("{id}.md")).is_file());
     Ok(())
 }
+
+#[test]
+fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_write()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = Scratch(
+        std::env::temp_dir()
+            .join(format!("home-tracked-{}", std::process::id())),
+    );
+    let project = home.0.join("projects").join(FOLDER);
+    fs::create_dir_all(&project)?;
+    let catalog = project.join("project.toml");
+    let local = "name = \"sample\"\ntitle = \"Sample\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n";
+    fs::write(&catalog, local)?;
+    let cli = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_home"))
+            .current_dir(&project)
+            .args(args)
+            .output()
+    };
+    let unconfigured = cli(&["issue", "list", "sample"])?;
+    assert_eq!(
+        String::from_utf8(unconfigured.stdout)?,
+        "home: tracker not configured\n"
+    );
+
+    fs::create_dir_all(home.0.join("docs/agents"))?;
+    fs::write(home.0.join("docs/agents/flow.toml"), FLOW)?;
+    fs::write(
+        catalog,
+        format!(
+            "{local}[backends.tracker]\nadapter = \"github\"\nresource = \"owner/issues\"\n"
+        ),
+    )?;
+    let rejected = cli(&["issue", "new", "sample", "bug", "Report"])?;
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8(rejected.stdout)?.contains("configured tracker"));
+    assert!(!project.join("issues").exists());
+
+    let online = cli(&["issue", "list", "sample", "--data-dir", "host"])?;
+    assert!(!online.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&online.stdout)?;
+    assert_eq!(report["records"], serde_json::json!([]));
+    assert_eq!(report["status"]["failure"], "CredentialMissing");
+    assert_eq!(report["status"]["complete"], false);
+    let offline = cli(&[
+        "issue",
+        "show",
+        "sample",
+        "#42",
+        "--data-dir",
+        "host",
+        "--offline",
+    ])?;
+    assert!(!offline.status.success());
+    let cached: serde_json::Value = serde_json::from_slice(&offline.stdout)?;
+    assert!(cached["record"].is_null());
+    assert!(cached["status"]["failure"].is_null());
+    assert_eq!(cached["status"]["freshness"], "Unknown");
+    Ok(())
+}

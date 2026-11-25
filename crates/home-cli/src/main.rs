@@ -14,6 +14,7 @@ use home::issue::storage::File;
 mod local;
 mod operations;
 mod project;
+mod tracking;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -27,7 +28,9 @@ fn main() -> ExitCode {
 }
 
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
-    if let Some(answer) = project::answer(home, args) {
+    if let Some(answer) =
+        tracking::answer(home, args).or_else(|| project::answer(home, args))
+    {
         return answer;
     }
     let loaded = home_files::read(home);

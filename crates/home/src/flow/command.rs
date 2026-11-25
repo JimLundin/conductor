@@ -29,6 +29,11 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
       Shows the operation, its confirmed steps and any step awaiting evidence.
   home check
       Checks every project and issue against the flow; fails only on errors.
+  home issue list <project> [--offline] [--data-dir <dir>]
+      Lists tracked issues as JSON with freshness, coverage and refresh failures.
+  home issue show <project> <reference> [--offline] [--data-dir <dir>]
+      Reads one tracked issue by qualified ID or project reference such as '#42'.
+      Both commands refresh by default. --offline reads the host cache.
   home issue new <project> <kind> <title> [<field>=<value>...]
       Opens an issue of the kind in the project, named by its name or id,
       with the kind's sections and a fresh id, which it prints. Give the

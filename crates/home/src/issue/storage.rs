@@ -193,11 +193,19 @@ impl ReadHome {
     /// Encodes a planned change using its previously read document.
     ///
     /// # Errors
-    /// The flow or the existing issue document is unavailable or invalid.
+    /// The project uses a tracker, or the flow or issue document is unavailable or invalid.
     pub fn encode(
         &self,
         change: &crate::flow::command::Change,
     ) -> Result<File, String> {
+        if self.snapshot.projects().iter().any(|project| {
+            project.id == change.observation.project()
+                && project.backends.tracker.is_some()
+        }) {
+            return Err(String::from(
+                "edit this issue in the configured tracker; local issue writes are disabled for this project",
+            ));
+        }
         let document = self
             .documents
             .iter()

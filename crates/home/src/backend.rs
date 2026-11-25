@@ -345,13 +345,24 @@ pub fn requested(args: &[String]) -> Option<&str> {
 }
 
 #[must_use]
-pub fn report(name: &str, capabilities: &[Availability]) -> String {
+pub fn report(
+    name: &str,
+    capabilities: &[Availability],
+    tracker_error: Option<&str>,
+) -> String {
     let mut text = format!("{name}\n");
     for available in capabilities {
-        let outcome = available
-            .refusal
-            .as_ref()
-            .map_or_else(|| String::from("available"), Refusal::label);
+        let failure = tracker_error
+            .filter(|_| available.capability == Capability::ReadIssues);
+        let outcome = failure.map_or_else(
+            || {
+                available
+                    .refusal
+                    .as_ref()
+                    .map_or_else(|| String::from("available"), Refusal::label)
+            },
+            String::from,
+        );
         let _written =
             writeln!(text, "  {}: {outcome}", available.capability.label());
     }
@@ -410,5 +421,10 @@ pub fn access_requested(args: &[String]) -> Option<(&str, Option<&str>)> {
 
 #[must_use]
 pub fn configuration_query(args: &[String]) -> bool {
-    requested(args).is_some() || access_requested(args).is_some()
+    requested(args).is_some()
+        || access_requested(args).is_some()
+        || issue_query(args).is_some()
 }
+
+mod query;
+pub use query::{IssueQuery, issue_query};

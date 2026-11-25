@@ -5,20 +5,22 @@ use home::flow::snapshot::Snapshot;
 use project_runtime::Registry;
 
 pub fn capabilities(root: &Path, name: &str) -> (String, u8) {
-    let configuration = home_files::configuration(root);
-    let mut registry = Registry::default();
-    let result = local_workspace(&configuration, name, &mut registry)
-        .and_then(|()| describe(&configuration, name, &registry));
-    result.map_or_else(
-        |problem| (format!("home: {problem}\n"), 1),
-        |report| (report, 0),
-    )
+    run(async {
+        let configuration = home_files::configuration(root);
+        let data = project_runtime::data_dir_or_default(None)
+            .map_err(|error| error.to_string())?;
+        let mut registry = Registry::default();
+        local_workspace(&configuration, name, &mut registry, &data)?;
+        describe(&configuration, name, &mut registry, &data)
+            .map(|report| (report, 0))
+    })
 }
 
 fn local_workspace(
     configuration: &Snapshot,
     name: &str,
     registry: &mut Registry,
+    data: &Path,
 ) -> Result<(), String> {
     let Some(selection) = configuration
         .project(name)
@@ -26,11 +28,9 @@ fn local_workspace(
     else {
         return Ok(());
     };
-    let data = project_runtime::data_dir_or_default(None)
-        .map_err(|error| error.to_string())?;
     vcs_git2::registration::register(
         registry,
-        vcs_git2::registration::local(&data),
+        vcs_git2::registration::local(data),
         selection,
         Path::new(&selection.resource),
     )
@@ -40,34 +40,42 @@ fn local_workspace(
 fn describe(
     configuration: &Snapshot,
     name: &str,
-    registry: &Registry,
+    registry: &mut Registry,
+    data: &Path,
 ) -> Result<String, String> {
-    let project = selected(configuration, name)?;
+    let selected = selected(configuration, name)?;
+    let failure = selected
+        .tracker
+        .and_then(|tracker| {
+            super::tracking::register(registry, data, tracker).err()
+        })
+        .map(|err| err.to_string());
     Ok(home::backend::report(
-        &project.name,
-        &registry.capabilities(&project.backends),
+        &selected.project.name,
+        &registry.capabilities(&selected.project.backends),
+        failure.as_deref(),
     ))
 }
 
 pub fn access(root: &Path, project: &str, data: Option<&str>) -> (String, u8) {
-    access_report(root, project, data)
-        .unwrap_or_else(|problem| (format!("home: {problem}\n"), 1))
+    run(async {
+        let host_data = project_runtime::data_dir_or_default(
+            data.map(std::path::PathBuf::from),
+        )
+        .map_err(|err| err.to_string())?;
+        github_api::project_access(root, project, &host_data).await
+    })
 }
 
-fn access_report(
-    root: &Path,
-    project: &str,
-    data: Option<&str>,
-) -> Result<(String, u8), String> {
-    let host_data = project_runtime::data_dir_or_default(
-        data.map(std::path::PathBuf::from),
-    )
-    .map_err(|err| err.to_string())?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
+pub fn run(
+    task: impl Future<Output = Result<(String, u8), String>>,
+) -> (String, u8) {
+    tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
-        .map_err(|err| err.to_string())?;
-    runtime.block_on(github_api::project_access(root, project, &host_data))
+        .map_err(|err| err.to_string())
+        .and_then(|runtime| runtime.block_on(task))
+        .unwrap_or_else(|problem| (format!("home: {problem}\n"), 1))
 }
 
 pub fn answer(root: &Path, args: &[String]) -> Option<(String, u8)> {
@@ -110,14 +118,19 @@ mod tests {
     }
 
     #[test]
-    fn configured_adapters_are_unavailable_until_registered()
+    fn a_configured_tracker_reports_its_missing_credential()
     -> Result<(), String> {
         let loaded = configuration(
             "[backends.tracker]\nadapter = \"github\"\nresource = \"owner/issues\"\n",
         );
-        let report = describe(&loaded, "local", &Registry::default())?;
+        let report = describe(
+            &loaded,
+            "local",
+            &mut Registry::default(),
+            std::path::Path::new("."),
+        )?;
         assert!(
-            report.contains("read issues: adapter \"github\" is unavailable"),
+            report.contains("read issues: host credential is missing"),
             "{report}"
         );
         assert!(
@@ -132,7 +145,15 @@ mod tests {
         let loaded = configuration(
             "[backends.tracker]\nadapter = \"github\"\nresource = \"owner/issues\"\noptions = 'namespace = \"\"'\n",
         );
-        assert!(describe(&loaded, "local", &Registry::default()).is_err());
+        assert!(
+            describe(
+                &loaded,
+                "local",
+                &mut Registry::default(),
+                std::path::Path::new(".")
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -142,7 +163,12 @@ mod tests {
             "[backends.version_control]\nadapter = \"local-vcs\"\nresource = \"/local/project\"\n[backends.hosting]\nadapter = \"github\"\nresource = \"owner/builds\"\noptions = 'queue = \"configured\"'\n",
             Err(String::from("issue flow is unavailable")),
         );
-        let report = describe(&loaded, "local", &Registry::default())?;
+        let report = describe(
+            &loaded,
+            "local",
+            &mut Registry::default(),
+            std::path::Path::new("."),
+        )?;
         assert!(
             report.contains(
                 "capture snapshot: adapter \"local-vcs\" is unavailable"
@@ -166,7 +192,12 @@ mod tests {
         let loaded = configuration(
             "[backends.hosting]\nadapter = \"github\"\nresource = \"owner/builds\"\noptions = 'queue = \"configured\"'\n",
         );
-        let report = describe(&loaded, "local", &Registry::default())?;
+        let report = describe(
+            &loaded,
+            "local",
+            &mut Registry::default(),
+            std::path::Path::new("."),
+        )?;
         assert!(
             report.contains("read statuses: adapter \"github\" is unavailable"),
             "{report}"

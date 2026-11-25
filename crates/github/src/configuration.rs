@@ -4,7 +4,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use home::backend::{Backend, Selection};
+use home::backend::Selection;
 use home::flow::Flow;
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +78,17 @@ pub fn load(text: &str, flow: &Flow) -> Result<Configuration, String> {
 #[cfg(test)]
 mod tests;
 
+pub struct Selected<'a> {
+    pub project: &'a home::project::Project,
+    pub tracker: Option<TrackerMapping<'a>>,
+}
+
+pub struct TrackerMapping<'a> {
+    pub selection: &'a Selection,
+    pub flow: &'a Flow,
+    pub mapping: Configuration,
+}
+
 /// Finds a selected project and validates its configuration before contacting GitHub.
 ///
 /// # Errors
@@ -85,7 +96,7 @@ mod tests;
 pub fn selected<'a>(
     configuration: &'a home::flow::snapshot::Snapshot,
     name: &str,
-) -> Result<&'a home::project::Project, String> {
+) -> Result<Selected<'a>, String> {
     let project = configuration.project(name).ok_or_else(|| {
         configuration
             .listing_problems()
@@ -97,33 +108,20 @@ pub fn selected<'a>(
         .backends
         .validate()
         .map_err(|refusal| refusal.label())?;
-    [
-        Backend::VersionControl,
-        Backend::IssueTracker,
-        Backend::RepositoryHosting,
-    ]
-    .into_iter()
-    .filter_map(|backend| {
-        project
-            .backends
-            .selected(backend)
-            .map(|selection| (backend, selection))
-    })
-    .try_for_each(|(backend, selection)| {
-        validate(backend, selection, configuration.flow())
-    })?;
-    Ok(project)
-}
-
-fn validate(
-    backend: Backend,
-    selection: &Selection,
-    flow: Result<&Flow, &str>,
-) -> Result<(), String> {
-    match (backend, selection.adapter.as_str()) {
-        (Backend::IssueTracker, crate::ADAPTER) => {
-            load(&selection.options, flow?).map(drop)
-        }
-        _ => Ok(()),
-    }
+    let tracker = project
+        .backends
+        .tracker
+        .as_ref()
+        .filter(|selection| selection.adapter == crate::ADAPTER)
+        .map(|selection| {
+            let flow = configuration.flow()?;
+            let mapping = load(&selection.options, flow)?;
+            Ok::<_, String>(TrackerMapping {
+                selection,
+                flow,
+                mapping,
+            })
+        })
+        .transpose()?;
+    Ok(Selected { project, tracker })
 }

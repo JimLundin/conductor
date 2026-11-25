@@ -42,10 +42,9 @@ Invalid configuration fails the query. A successful query can report
 unavailable operations, including missing backends, missing or expired
 credentials, and unsupported capabilities.
 
-The query currently reports configured adapters as unavailable until the
-binary registers constructed instances. The registry contains no default
-or placeholder implementation. The adapter and credential implementation
-tasks will supply those instances.
+The CLI registers the local workspace adapter and the GitHub issue reader
+when it can construct them. Use the access command below to check the
+credential against the remote repository.
 
 `project-runtime::Registry` provides the same registration, capability and
 preflight query for CLI and daemon construction. A binding includes its
@@ -60,6 +59,35 @@ Access to statuses does not imply access to required checks. Hosted-result
 requests retain their exact revision. Workspace methods use `vcs` values
 for preparation, capture, comparison, integration and preservation; Git
 commands, indexes and object operations do not cross this interface.
+
+## Reading tracked issues
+
+Run these commands from the home checkout. The project argument accepts
+a name or project ID. Quote GitHub references so the shell passes the
+number sign to the command.
+
+```sh
+home issue list my-project
+home issue show my-project '#42'
+home issue show my-project '#42' --offline
+```
+
+Both commands print JSON. A refresh reads direct GitHub edits. The list
+includes open, closed and invalid issues. Each record includes its stable
+ID, locator, findings and coverage. You can pass its stable ID to
+`home issue show`. Comments and native relations have incomplete coverage
+until their readers are available.
+
+A successful refresh reports `Fresh`. If a page fails, the command exits
+with status 1 and reports the failure alongside the previous complete list.
+`--offline` reads the host cache and reports `Stale` with the observation
+time. A first read with no cached result reports `Unknown` and exits
+with status 1. Use `--data-dir <dir>` to select the host data directory.
+
+Edit tracker-backed issues in GitHub during this read-only implementation.
+The CLI refuses to write a second Markdown record for a project with a tracker.
+
+## Repository access and credentials
 
 Run `home project access <project> [host-data-dir]` to check which
 GitHub endpoints the configured credentials can read. It looks up the
