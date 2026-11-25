@@ -14,6 +14,7 @@ use super::{CanvasError, distinct, quoted, short};
 pub struct Diagram {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    #[serde(default)]
     pub groups: Vec<Group>,
 }
 
@@ -47,6 +48,7 @@ pub struct Group {
 impl Diagram {
     pub(super) fn check(&self) -> Result<(), CanvasError> {
         distinct("node", self.nodes.iter().map(|node| node.id.as_str()))?;
+        distinct("group", self.groups.iter().map(|group| group.id.as_str()))?;
         self.wired().map_err(CanvasError::Diagram)?;
         short(
             self.nodes
@@ -55,7 +57,37 @@ impl Diagram {
                 .chain(self.edges.iter().filter_map(|edge| edge.label.as_ref()))
                 .chain(self.groups.iter().map(|group| &group.label)),
         )?;
-        self.staged().map_err(CanvasError::Diagram)
+        self.staged()
+            .and_then(|()| self.numbered())
+            .and_then(|()| self.connected())
+            .map_err(CanvasError::Diagram)
+    }
+
+    fn numbered(&self) -> Result<(), DiagramError> {
+        let steps = self.steps();
+        if steps.contains(&0) {
+            return Err(DiagramError::StepZero);
+        }
+        (1..=steps.last().copied().unwrap_or_default())
+            .find(|step| !steps.contains(step))
+            .map_or(Ok(()), |step| Err(DiagramError::Skipped { step }))
+    }
+
+    fn connected(&self) -> Result<(), DiagramError> {
+        self.nodes
+            .iter()
+            .find(|node| {
+                !self.edges.iter().any(|edge| {
+                    edge.step <= node.step
+                        && (edge.from == node.id || edge.to == node.id)
+                })
+            })
+            .map_or(Ok(()), |node| {
+                Err(DiagramError::Alone {
+                    node: node.id.clone(),
+                    step: node.step,
+                })
+            })
     }
 
     fn wired(&self) -> Result<(), DiagramError> {
@@ -216,6 +248,14 @@ pub enum DiagramError {
         node: String,
         shown: u8,
     },
+    StepZero,
+    Skipped {
+        step: u8,
+    },
+    Alone {
+        node: String,
+        step: u8,
+    },
 }
 
 impl fmt::Display for DiagramError {
@@ -242,6 +282,18 @@ impl fmt::Display for DiagramError {
             } => write!(
                 out,
                 "the edge from `{from}` to `{to}` comes at step {step}, before node `{node}` at step {shown}: move the edge to step {shown} or later"
+            ),
+            Self::StepZero => write!(
+                out,
+                "a diagram has a step 0: number its steps from 1 with no gap"
+            ),
+            Self::Skipped { step } => write!(
+                out,
+                "a diagram skips step {step}: number its steps from 1 with no gap"
+            ),
+            Self::Alone { node, step } => write!(
+                out,
+                "node `{node}` stands alone at step {step}: bring the node in with the edge that connects it"
             ),
         }
     }

@@ -1431,6 +1431,64 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 "home: canvas design of home/{TASK}: the label `the shell does every piece of input and output` is over 8 words: put the detail in prose\n"
             ),
         ),
+        (
+            diagram(
+                &[
+                    node("core", "Core", 1),
+                    node("store", "Store", 1),
+                    node("cache", "Cache", 1),
+                ]
+                .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}, {"from": "store", "to": "cache", "step": 2}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: node `cache` stands alone at step 1: bring the node in with the edge that connects it\n"
+            ),
+        ),
+        (
+            diagram(&node("core", "Core", 1), ""),
+            format!(
+                "home: canvas design of home/{TASK}: node `core` stands alone at step 1: bring the node in with the edge that connects it\n"
+            ),
+        ),
+        (
+            diagram(
+                &[node("core", "Core", 0), node("store", "Store", 0)]
+                    .join(", "),
+                r#"{"from": "core", "to": "store", "step": 0}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: a diagram has a step 0: number its steps from 1 with no gap\n"
+            ),
+        ),
+        (
+            diagram(
+                &[
+                    node("core", "Core", 1),
+                    node("store", "Store", 1),
+                    node("cache", "Cache", 3),
+                ]
+                .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}, {"from": "store", "to": "cache", "step": 3}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: a diagram skips step 2: number its steps from 1 with no gap\n"
+            ),
+        ),
+        (
+            diagram(
+                &[node("core", "Core", 1), node("store", "Store", 1)]
+                    .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}"#,
+            )
+            .replace(
+                r#"{"id": "shell", "label": "Shell"}"#,
+                r#"{"id": "shell", "label": "Shell"}, {"id": "shell", "label": "Host"}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: two groups are called `shell`: give each group its own id\n"
+            ),
+        ),
     ];
     for (text, said) in cases {
         let outcome = put_canvas(&text);
@@ -1445,6 +1503,19 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
             "{text}"
         );
     }
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_without_groups_writes_it() {
+    let outcome = put_canvas(
+        r#"{"title": "Design", "blocks": [{"diagram": {"nodes": [{"id": "core", "label": "Core", "step": 1}, {"id": "store", "label": "Store", "step": 1}], "edges": [{"from": "core", "to": "store", "step": 1}]}}]}"#,
+    );
+    assert_eq!(
+        (outcome.failed, outcome.canvases.len()),
+        (false, 1),
+        "{}",
+        outcome.output
+    );
 }
 
 #[test]

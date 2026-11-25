@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/49";
+type Alpn = "conductor/50";
 
-const Alpn = Schema.Literal("conductor/49").annotate({
+const Alpn = Schema.Literal("conductor/50").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -202,7 +202,7 @@ type Diagram = {
 
 const Diagram = Schema.Struct({
   edges: Schema.Array(Edge),
-  groups: Schema.Array(Group),
+  groups: Schema.Array(Group).annotate({ default: [] }),
   nodes: Schema.Array(Node),
 }).annotate({ identifier: "Diagram" });
 
