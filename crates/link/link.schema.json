@@ -19,7 +19,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/49",
+      "const": "conductor/50",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -778,6 +778,7 @@
           "type": "array"
         },
         "groups": {
+          "default": [],
           "items": {
             "$ref": "#/$defs/Group"
           },
