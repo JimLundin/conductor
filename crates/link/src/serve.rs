@@ -4,10 +4,14 @@
 
 use alloc::string::String;
 
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+
 use crate::AuthToken;
 use crate::CommandId;
 use agents::ClientName;
-use home::HomeCommand;
+use home::canvas::{CanvasEntry, CanvasFile, CanvasKey, CanvasName};
+use home::{Home, HomeCommand, HomeRefusal, HomeResult, IssueId};
 use host::fleet::{DeviceHello, FleetCommand, Identity};
 use host::push::PushCommand;
 use host::registry::InstanceCommand;
@@ -99,7 +103,7 @@ pub fn stream(open: Option<Open>) -> Stream {
 }
 
 /// Which log a command's receipt goes to, if it keeps one: sign-ins, push,
-/// the fleet, a diff and the home's sync and clone run every time.
+/// the fleet, a diff, a canvas and the home's sync and clone run every time.
 #[must_use]
 pub const fn ledger(command: &Command) -> Option<Kind> {
     match command {
@@ -107,7 +111,11 @@ pub const fn ledger(command: &Command) -> Option<Kind> {
         | Command::SignIn(_)
         | Command::Push(_)
         | Command::Fleet(_)
-        | Command::Home(HomeCommand::Sync | HomeCommand::Clone { .. }) => None,
+        | Command::Home(
+            HomeCommand::Sync
+            | HomeCommand::Clone { .. }
+            | HomeCommand::Canvas { .. },
+        ) => None,
         Command::Instance(_)
         | Command::Session(SessionCommand::Finish { .. })
         | Command::Home(
@@ -149,6 +157,7 @@ pub const fn operation(command: &Command) -> &'static str {
             HomeCommand::Clone { .. } => "clone_project",
             HomeCommand::CreateIssue { .. } => "create_issue",
             HomeCommand::ChangeIssue { .. } => "change_issue",
+            HomeCommand::Canvas { .. } => "get_canvas",
         },
         Command::Push(asked) => match asked {
             PushCommand::PublicKey => "push_public_key",
@@ -161,6 +170,59 @@ pub const fn operation(command: &Command) -> &'static str {
             FleetCommand::Approve(_) => "fleet_approve",
             FleetCommand::Admit { .. } => "fleet_admit",
         },
+    }
+}
+
+/// The home as the app is shown it: each issue with the canvases the
+/// host's store lists for it in `listed`.
+#[must_use]
+pub fn with_canvases(
+    mut home: Home,
+    listed: &BTreeMap<IssueId, Vec<CanvasEntry>>,
+) -> Home {
+    home.projects
+        .iter_mut()
+        .flat_map(|project| project.issues.iter_mut())
+        .for_each(|issue| {
+            issue.canvases = listed.get(&issue.id).cloned().unwrap_or_default();
+        });
+    home
+}
+
+/// Where a `HomeCommand::Canvas` looks in the host's store: the issue's
+/// canvas `name`, when the host's home lists the issue.
+///
+/// # Errors
+///
+/// The refusal of an issue the host's home doesn't list, or of a host
+/// with no home.
+pub fn canvas_key(
+    home: Option<&Home>,
+    issue: IssueId,
+    name: CanvasName,
+) -> Result<CanvasKey, HomeRefusal> {
+    let projects = &home.ok_or(HomeRefusal::NoHome)?.projects;
+    projects
+        .iter()
+        .find(|project| project.issues.iter().any(|known| known.id == issue))
+        .map(|project| CanvasKey {
+            project: project.id,
+            issue,
+            name,
+        })
+        .ok_or(HomeRefusal::UnknownIssue)
+}
+
+/// What a `HomeCommand::Canvas` answers, given what the store keeps under
+/// its key, or why the store couldn't say.
+#[must_use]
+pub fn kept_canvas(kept: Result<Option<CanvasFile>, String>) -> HomeResult {
+    match kept {
+        Ok(Some(file)) => HomeResult::Canvas(file),
+        Ok(None) => HomeResult::Refused(HomeRefusal::UnknownCanvas),
+        Err(reason) => {
+            HomeResult::Refused(HomeRefusal::CanvasUnavailable { reason })
+        }
     }
 }
 

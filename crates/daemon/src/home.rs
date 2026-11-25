@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
+use home::canvas::{CanvasEntry, CanvasName};
 use home::checkout::{Probe, Root};
 use home::flow::command::fresh;
 use home::flow::graph::File;
@@ -43,6 +44,8 @@ use home::{
     IssueId, ProjectId,
 };
 use home::{Found, Stored};
+use home_files::FolderStore;
+use home_store::CanvasStore;
 use host::registry::InHome;
 use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
@@ -328,6 +331,8 @@ struct Actor {
     shown: watch::Sender<Option<Home>>,
     user: Option<PathBuf>,
     skills_commit: Option<String>,
+    canvases: Box<dyn CanvasStore + Send + core::marker::Sync>,
+    listed: BTreeMap<IssueId, Vec<CanvasEntry>>,
 }
 
 impl Actor {
@@ -346,6 +351,8 @@ impl Actor {
         let _ = std::fs::create_dir_all(&clones);
         Self {
             clone: clone_of(&data_dir),
+            canvases: Box::new(FolderStore::new(clone_of(&data_dir))),
+            listed: BTreeMap::new(),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
                 .to_string_lossy()
@@ -489,7 +496,22 @@ impl Actor {
                 .map_or_else(IssueError::completion, |warnings| {
                     home(HomeResult::IssueWritten { issue, warnings })
                 }),
+            HomeCommand::Canvas { issue, name } => {
+                home(self.canvas(issue, name))
+            }
         }
+    }
+
+    fn canvas(&self, issue: IssueId, name: CanvasName) -> HomeResult {
+        let shown = self.shown.borrow();
+        link::serve::canvas_key(shown.as_ref(), issue, name).map_or_else(
+            HomeResult::Refused,
+            |key| {
+                link::serve::kept_canvas(
+                    self.canvases.get(&key).map_err(|error| error.to_string()),
+                )
+            },
+        )
     }
 
     async fn pull_now(&mut self) -> HomeResult {
@@ -885,6 +907,7 @@ impl Actor {
 
     async fn scan(&mut self) {
         self.home = self.read_home();
+        self.listed = listed(&self.home, self.canvases.as_ref());
         self.home.problems().iter().for_each(|problem| {
             tracing::warn!(target: "home", %problem, "read the home without it");
         });
@@ -917,21 +940,45 @@ impl Actor {
     fn publish(&self) {
         self.shown
             .send_replace(self.remote.as_deref().map(|remote| {
-                home::view(
-                    remote,
-                    &self.sync,
-                    self.home.projects(),
-                    Found {
-                        checkouts: &self.found,
-                        cloning: &self.cloning,
-                        flow: self.home.flow().ok(),
-                        issues: &self.home.issues(),
-                        unpushed: u64::try_from(self.edits.count())
-                            .unwrap_or(u64::MAX),
-                    },
+                link::serve::with_canvases(
+                    home::view(
+                        remote,
+                        &self.sync,
+                        self.home.projects(),
+                        Found {
+                            checkouts: &self.found,
+                            cloning: &self.cloning,
+                            flow: self.home.flow().ok(),
+                            issues: &self.home.issues(),
+                            unpushed: u64::try_from(self.edits.count())
+                                .unwrap_or(u64::MAX),
+                        },
+                    ),
+                    &self.listed,
                 )
             }));
     }
+}
+
+fn listed(
+    home: &Snapshot,
+    store: &dyn CanvasStore,
+) -> BTreeMap<IssueId, Vec<CanvasEntry>> {
+    home.issues()
+        .into_iter()
+        .flat_map(|(project, issues)| {
+            issues.into_iter().map(move |issue| (project, issue.id))
+        })
+        .filter_map(|(project, issue)| {
+            store
+                .list(&project, &issue)
+                .inspect_err(|error| {
+                    tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
+                })
+                .ok()
+                .map(|entries| (issue, entries))
+        })
+        .collect()
 }
 
 async fn next(

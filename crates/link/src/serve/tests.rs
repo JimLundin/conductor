@@ -1,8 +1,16 @@
+use std::collections::BTreeMap;
+
 use crate::AuthToken;
 use crate::CommandId;
 use agents::{ClientName, Effort, Provider, SignInCode};
-use home::issue::{EditId, IssueChange, NewIssue};
-use home::{HomeCommand, IssueId};
+use home::canvas::{
+    Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
+};
+use home::issue::{EditId, Issue, IssueChange, NewIssue};
+use home::{
+    Home, HomeCommand, HomeRefusal, HomeResult, HomeSync, IssueId, ProjectId,
+};
+use home_store::{CanvasStore, Memory, StoreError};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
 use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};
@@ -13,7 +21,8 @@ use crate::log::Kind;
 use crate::{Command, Hello, Open, Subscribe};
 
 use super::{
-    Admission, Stream, admit, device, device_hello, ledger, operation, stream,
+    Admission, Stream, admit, canvas_key, device, device_hello, kept_canvas,
+    ledger, operation, stream, with_canvases,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -244,4 +253,223 @@ fn a_command_is_named_in_log_lines_by_its_operation() {
         ],
         ["interrupt", "sync_home", "cancel_sign_in"]
     );
+}
+
+const PROJECT: ProjectId = ProjectId::new(1);
+const DESIGNED: IssueId = IssueId::new(1, 0);
+const BARE: IssueId = IssueId::new(2, 0);
+
+fn issue(id: IssueId) -> Issue {
+    Issue {
+        id,
+        project: PROJECT,
+        title: String::from("Serve canvases"),
+        kind: String::from("task"),
+        status: String::from("open"),
+        stage: None,
+        fields: BTreeMap::new(),
+        links: BTreeMap::new(),
+        body: String::new(),
+        sections: Vec::new(),
+        checklist: Vec::new(),
+        log: Vec::new(),
+        branch: format!("issue/{id}"),
+        canvases: Vec::new(),
+    }
+}
+
+fn a_home() -> Home {
+    Home {
+        remote: String::from("origin"),
+        synced: None,
+        sync: HomeSync::Synced,
+        unpushed: 0,
+        flow: None,
+        projects: Vec::from([home::Project {
+            id: PROJECT,
+            name: String::from("conductor"),
+            title: String::from("Conductor"),
+            remote: None,
+            profiles: Vec::new(),
+            provides: Vec::new(),
+            checkouts: Vec::new(),
+            cloning: home::Cloning::Idle,
+            issues: Vec::from([issue(DESIGNED), issue(BARE)]),
+        }]),
+    }
+}
+
+fn named(text: &str) -> Result<CanvasName, String> {
+    CanvasName::parse(text).map_err(|error| error.to_string())
+}
+
+fn key(issue: IssueId, name: &str) -> Result<CanvasKey, String> {
+    Ok(CanvasKey {
+        project: PROJECT,
+        issue,
+        name: named(name)?,
+    })
+}
+
+fn written(at: u64, by: &str) -> CanvasFile {
+    CanvasFile {
+        written: at,
+        by: String::from(by),
+        canvas: Canvas {
+            title: format!("By {by}"),
+            blocks: Vec::from([Block::Prose {
+                text: String::from("The host serves it."),
+            }]),
+        },
+    }
+}
+
+fn two_canvases() -> Result<Memory, String> {
+    let mut store = Memory::default();
+    store
+        .put(&key(DESIGNED, "design")?, &written(10, "devbox·claude"))
+        .map_err(|error| error.to_string())?;
+    store
+        .put(&key(DESIGNED, "a-plan")?, &written(20, "laptop·codex"))
+        .map_err(|error| error.to_string())?;
+    Ok(store)
+}
+
+struct Failing;
+
+impl CanvasStore for Failing {
+    fn all(&self) -> Result<Vec<CanvasKey>, StoreError> {
+        Err(gone())
+    }
+
+    fn list(
+        &self,
+        _: &ProjectId,
+        _: &IssueId,
+    ) -> Result<Vec<CanvasEntry>, StoreError> {
+        Err(gone())
+    }
+
+    fn get(&self, _: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
+        Err(gone())
+    }
+
+    fn put(&mut self, _: &CanvasKey, _: &CanvasFile) -> Result<(), StoreError> {
+        Err(gone())
+    }
+}
+
+fn gone() -> StoreError {
+    StoreError::Unavailable {
+        reason: String::from("the disk is gone"),
+    }
+}
+
+fn asked(
+    store: &dyn CanvasStore,
+    home: Option<&Home>,
+    issue: IssueId,
+    name: &str,
+) -> Result<HomeResult, String> {
+    Ok(canvas_key(home, issue, named(name)?)
+        .map_or_else(HomeResult::Refused, |at| {
+            kept_canvas(store.get(&at).map_err(|error| error.to_string()))
+        }))
+}
+
+#[test]
+fn an_issue_with_two_canvases_is_served_with_both_entries() -> Result<(), String>
+{
+    let store = two_canvases()?;
+    let listed = [DESIGNED, BARE]
+        .into_iter()
+        .map(|id| {
+            Ok((id, store.list(&PROJECT, &id).map_err(|e| e.to_string())?))
+        })
+        .collect::<Result<BTreeMap<_, _>, String>>()?;
+    let served = with_canvases(a_home(), &listed);
+    let canvases = served.projects[0]
+        .issues
+        .iter()
+        .map(|issue| issue.canvases.clone())
+        .collect::<Vec<_>>();
+    let entry =
+        |name: &str, at: u64, by: &str| -> Result<CanvasEntry, String> {
+            Ok(CanvasEntry {
+                name: named(name)?,
+                written: at,
+                by: String::from(by),
+            })
+        };
+    assert_eq!(
+        canvases,
+        [
+            Vec::from([
+                entry("a-plan", 20, "laptop·codex")?,
+                entry("design", 10, "devbox·claude")?,
+            ]),
+            Vec::new(),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_command_answers_the_issues_canvas_of_that_name()
+-> Result<(), String> {
+    assert_eq!(
+        asked(&two_canvases()?, Some(&a_home()), DESIGNED, "design")?,
+        HomeResult::Canvas(written(10, "devbox·claude"))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_the_issue_lacks_or_an_issue_the_home_lacks_is_refused()
+-> Result<(), String> {
+    let store = two_canvases()?;
+    let home = a_home();
+    let refused = [
+        asked(&store, Some(&home), BARE, "design")?,
+        asked(&store, Some(&home), IssueId::new(3, 0), "design")?,
+        asked(&store, None, DESIGNED, "design")?,
+    ];
+    assert_eq!(
+        refused,
+        [
+            HomeResult::Refused(HomeRefusal::UnknownCanvas),
+            HomeResult::Refused(HomeRefusal::UnknownIssue),
+            HomeResult::Refused(HomeRefusal::NoHome),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_failing_store_leaves_the_canvas_unavailable() -> Result<(), String> {
+    let refusal = HomeRefusal::CanvasUnavailable {
+        reason: String::from("the disk is gone"),
+    };
+    assert_eq!(
+        asked(&Failing, Some(&a_home()), DESIGNED, "design")?,
+        HomeResult::Refused(refusal.clone())
+    );
+    assert_eq!(
+        refusal.label(),
+        "the canvas can't be read now: the disk is gone"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_is_read_every_time_and_named_get_canvas() -> Result<(), String> {
+    let command = Command::Home(HomeCommand::Canvas {
+        issue: DESIGNED,
+        name: named("design")?,
+    });
+    assert_eq!(
+        (ledger(&command), operation(&command)),
+        (None, "get_canvas")
+    );
+    Ok(())
 }

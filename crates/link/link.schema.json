@@ -22,7 +22,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/46",
+      "const": "conductor/48",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -119,6 +119,90 @@
           "type": "object"
         }
       ]
+    },
+    "Block": {
+      "description": "One part of a canvas, written in JSON as an object of one field named\nby its kind.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Short markdown.",
+          "properties": {
+            "prose": {
+              "additionalProperties": false,
+              "properties": {
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": ["text"],
+              "type": "object"
+            }
+          },
+          "required": ["prose"],
+          "type": "object"
+        }
+      ]
+    },
+    "Canvas": {
+      "additionalProperties": false,
+      "description": "An explanation of an issue's work, as its writer gives it.",
+      "properties": {
+        "blocks": {
+          "items": {
+            "$ref": "#/$defs/Block"
+          },
+          "type": "array"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "required": ["title", "blocks"],
+      "type": "object"
+    },
+    "CanvasEntry": {
+      "description": "What an issue's list of canvases says of one.",
+      "properties": {
+        "by": {
+          "type": "string"
+        },
+        "name": {
+          "$ref": "#/$defs/CanvasName"
+        },
+        "written": {
+          "description": "Milliseconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["name", "written", "by"],
+      "type": "object"
+    },
+    "CanvasFile": {
+      "additionalProperties": false,
+      "description": "A canvas as it is kept: stamped with when it was written and by whom.",
+      "properties": {
+        "by": {
+          "description": "As the log signs it, `<node>·<harness>`.",
+          "type": "string"
+        },
+        "canvas": {
+          "$ref": "#/$defs/Canvas"
+        },
+        "written": {
+          "description": "Milliseconds since the Unix epoch.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["written", "by", "canvas"],
+      "type": "object"
+    },
+    "CanvasName": {
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "type": "string"
     },
     "Catalog": {
       "additionalProperties": {
@@ -1613,6 +1697,26 @@
           },
           "required": ["ChangeIssue"],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Answers `Canvas` with the issue's canvas of that name.",
+          "properties": {
+            "Canvas": {
+              "properties": {
+                "issue": {
+                  "$ref": "#/$defs/IssueId"
+                },
+                "name": {
+                  "$ref": "#/$defs/CanvasName"
+                }
+              },
+              "required": ["issue", "name"],
+              "type": "object"
+            }
+          },
+          "required": ["Canvas"],
+          "type": "object"
         }
       ]
     },
@@ -1670,6 +1774,28 @@
           },
           "required": ["IssueRefused"],
           "type": "object"
+        },
+        {
+          "const": "UnknownCanvas",
+          "description": "The issue has no canvas of that name.",
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The host's store of canvases can't be read now, for this reason.",
+          "properties": {
+            "CanvasUnavailable": {
+              "properties": {
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": ["reason"],
+              "type": "object"
+            }
+          },
+          "required": ["CanvasUnavailable"],
+          "type": "object"
         }
       ]
     },
@@ -1700,6 +1826,16 @@
             }
           },
           "required": ["IssueWritten"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Canvas": {
+              "$ref": "#/$defs/CanvasFile"
+            }
+          },
+          "required": ["Canvas"],
           "type": "object"
         },
         {
@@ -2018,6 +2154,13 @@
           "description": "The branch its sessions land on.",
           "type": "string"
         },
+        "canvases": {
+          "description": "The canvases its store keeps, by name; none as its file reads.",
+          "items": {
+            "$ref": "#/$defs/CanvasEntry"
+          },
+          "type": "array"
+        },
         "checklist": {
           "description": "The items of the `## Checklist` section.",
           "items": {
@@ -2088,7 +2231,8 @@
         "sections",
         "checklist",
         "log",
-        "branch"
+        "branch",
+        "canvases"
       ],
       "type": "object"
     },

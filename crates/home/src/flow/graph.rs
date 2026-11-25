@@ -178,6 +178,7 @@ pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
         checklist: document.checklist(),
         log: document.log(),
         branch,
+        canvases: Vec::new(),
     };
     Ok((issue, document))
 }

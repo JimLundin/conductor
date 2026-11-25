@@ -19,9 +19,9 @@ const Account = Schema.Union(
   identifier: "Account",
 });
 
-type Alpn = "conductor/46";
+type Alpn = "conductor/48";
 
-const Alpn = Schema.Literal("conductor/46").annotate({
+const Alpn = Schema.Literal("conductor/48").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -148,6 +148,73 @@ const Availability = Schema.Union(
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "Availability" });
+
+type Block = { readonly prose: { readonly text: string } };
+
+const Block = Schema.Union(
+  [
+    Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }).annotate({
+      description: "Short markdown.",
+    }),
+  ],
+  { mode: "oneOf" },
+).annotate({
+  description:
+    "One part of a canvas, written in JSON as an object of one field named\nby its kind.",
+  identifier: "Block",
+});
+
+type Canvas = { readonly blocks: globalThis.ReadonlyArray<Block>; readonly title: string };
+
+const Canvas = Schema.Struct({ blocks: Schema.Array(Block), title: Schema.String }).annotate({
+  description: "An explanation of an issue's work, as its writer gives it.",
+  identifier: "Canvas",
+});
+
+type CanvasName = string;
+
+const CanvasName = Schema.String.check(
+  Schema.isPattern(new globalThis.RegExp("^[a-z0-9]+(-[a-z0-9]+)*$", "u")).annotate({
+    expected: "a string matching the RegExp ^[a-z0-9]+(-[a-z0-9]+)*$",
+    identifier: "CanvasName",
+  }),
+);
+
+type CanvasEntry = { readonly by: string; readonly name: CanvasName; readonly written: number };
+
+const CanvasEntry = Schema.Struct({
+  by: Schema.String,
+  name: CanvasName,
+  written: Schema.Number.annotate({
+    description: "Milliseconds since the Unix epoch.",
+    format: "uint64",
+  })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+}).annotate({
+  description: "What an issue's list of canvases says of one.",
+  identifier: "CanvasEntry",
+});
+
+type CanvasFile = { readonly by: string; readonly canvas: Canvas; readonly written: number };
+
+const CanvasFile = Schema.Struct({
+  by: Schema.String.annotate({ description: "As the log signs it, `<node>·<harness>`." }),
+  canvas: Canvas,
+  written: Schema.Number.annotate({
+    description: "Milliseconds since the Unix epoch.",
+    format: "uint64",
+  })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+}).annotate({
+  description: "A canvas as it is kept: stamped with when it was written and by whom.",
+  identifier: "CanvasFile",
+});
 
 type FieldKind = "Text" | "Url" | "Secret";
 
@@ -734,7 +801,8 @@ type HomeCommand =
         readonly edit: EditId;
         readonly issue: IssueId;
       };
-    };
+    }
+  | { readonly Canvas: { readonly issue: IssueId; readonly name: CanvasName } };
 
 const HomeCommand = Schema.Union(
   [
@@ -753,6 +821,9 @@ const HomeCommand = Schema.Union(
     Schema.Struct({
       ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueId }),
     }).annotate({ description: "Answers `IssueWritten` once written, like `CreateIssue`." }),
+    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueId, name: CanvasName }) }).annotate({
+      description: "Answers `Canvas` with the issue's canvas of that name.",
+    }),
   ],
   { mode: "oneOf" },
 ).annotate({
@@ -932,7 +1003,9 @@ type HomeRefusal =
   | "NotCheckedOut"
   | "NoRemote"
   | { readonly IssueNotSaved: { readonly reason: string } }
-  | { readonly IssueRefused: { readonly reason: string } };
+  | { readonly IssueRefused: { readonly reason: string } }
+  | "UnknownCanvas"
+  | { readonly CanvasUnavailable: { readonly reason: string } };
 
 const HomeRefusal = Schema.Union(
   [
@@ -949,6 +1022,12 @@ const HomeRefusal = Schema.Union(
     }),
     Schema.Struct({ IssueRefused: Schema.Struct({ reason: Schema.String }) }).annotate({
       description: "The flow refuses the edit, for this reason, as the `home` command\nline would.",
+    }),
+    Schema.Literal("UnknownCanvas").annotate({
+      description: "The issue has no canvas of that name.",
+    }),
+    Schema.Struct({ CanvasUnavailable: Schema.Struct({ reason: Schema.String }) }).annotate({
+      description: "The host's store of canvases can't be read now, for this reason.",
     }),
   ],
   { mode: "oneOf" },
@@ -1186,6 +1265,7 @@ type HomeResult =
         readonly warnings: globalThis.ReadonlyArray<string>;
       };
     }
+  | { readonly Canvas: CanvasFile }
   | { readonly Refused: HomeRefusal };
 
 const HomeResult = Schema.Union(
@@ -1197,6 +1277,7 @@ const HomeResult = Schema.Union(
       description:
         "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
     }),
+    Schema.Struct({ Canvas: CanvasFile }),
     Schema.Struct({ Refused: HomeRefusal }),
   ],
   { mode: "oneOf" },
@@ -2267,6 +2348,7 @@ const Section = Schema.Struct({
 type Issue = {
   readonly body: string;
   readonly branch: string;
+  readonly canvases: globalThis.ReadonlyArray<CanvasEntry>;
   readonly checklist: globalThis.ReadonlyArray<ChecklistItem>;
   readonly fields: { readonly [x: string]: Datum };
   readonly id: IssueId;
@@ -2285,6 +2367,9 @@ const Issue = Schema.Struct({
     description: "The body before the checklist and the log, as its file has it.",
   }),
   branch: Schema.String.annotate({ description: "The branch its sessions land on." }),
+  canvases: Schema.Array(CanvasEntry).annotate({
+    description: "The canvases its store keeps, by name; none as its file reads.",
+  }),
   checklist: Schema.Array(ChecklistItem).annotate({
     description: "The items of the `## Checklist` section.",
   }),
@@ -2542,6 +2627,11 @@ export {
   Auth,
   AuthToken,
   Availability,
+  Block,
+  Canvas,
+  CanvasEntry,
+  CanvasFile,
+  CanvasName,
   Catalog,
   Change,
   ChecklistChange,

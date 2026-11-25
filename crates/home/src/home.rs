@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::canvas::{CanvasFile, CanvasName};
 use crate::flow::Flow;
 use crate::issue::{EditId, Issue, IssueChange, NewIssue};
 use crate::{IssueId, ProjectId};
@@ -122,6 +123,8 @@ pub enum HomeCommand {
         issue: IssueId,
         change: IssueChange,
     },
+    /// Answers `Canvas` with the issue's canvas of that name.
+    Canvas { issue: IssueId, name: CanvasName },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -133,6 +136,7 @@ pub enum HomeResult {
         issue: IssueId,
         warnings: Vec<String>,
     },
+    Canvas(CanvasFile),
     Refused(HomeRefusal),
 }
 
@@ -153,6 +157,12 @@ pub enum HomeRefusal {
     /// The flow refuses the edit, for this reason, as the `home` command
     /// line would.
     IssueRefused {
+        reason: String,
+    },
+    /// The issue has no canvas of that name.
+    UnknownCanvas,
+    /// The host's store of canvases can't be read now, for this reason.
+    CanvasUnavailable {
         reason: String,
     },
 }
@@ -181,6 +191,12 @@ impl HomeRefusal {
                 format!("the issue was not saved: {reason}")
             }
             Self::IssueRefused { reason } => reason.clone(),
+            Self::UnknownCanvas => {
+                String::from("the issue has no canvas of that name")
+            }
+            Self::CanvasUnavailable { reason } => {
+                format!("the canvas can't be read now: {reason}")
+            }
         }
     }
 }
