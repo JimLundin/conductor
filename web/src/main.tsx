@@ -1,6 +1,6 @@
+import { Application } from "#ui/application.tsx";
 import { RegistryProvider } from "@effect/atom-react";
 import { Suspense } from "react";
-import { Application } from "#ui/application.tsx";
 import { createRoot } from "react-dom/client";
 
 const element = document.querySelector("#root");

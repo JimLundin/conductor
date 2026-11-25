@@ -19,7 +19,8 @@ const useHosts: () => ReadonlyArray<PairedHost> = () => listed(useView());
 
 const useHost: (host: HostKey) => PairedHost | undefined = (host) => useView().hosts.get(host);
 
-const useSessions: (host: HostKey) => ReadonlyArray<SessionId> = (host) => sessionsOf(useView(), host);
+const useSessions: (host: HostKey) => ReadonlyArray<SessionId> = (host) =>
+  sessionsOf(useView(), host);
 
 const useSession: (host: HostKey, session: SessionId) => Session | undefined = (host, session) =>
   sessionOf(useView(), host, session);

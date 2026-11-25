@@ -1,5 +1,4 @@
-import { joinNotice, replacedFragment } from "@conductor/core/runtime/fragment";
-import { Effect, FiberMap, Result } from "effect";
+import { Effect, FiberMap, Option, Result } from "effect";
 import type { Pairing, StoreContext } from "#ui/store/types.ts";
 import { Route, fragmentOf, isJoin } from "@conductor/core/route";
 import { adoptHost, shown } from "@conductor/core/store";
@@ -9,6 +8,7 @@ import type { HostKey } from "@conductor/core/saved";
 import type { TicketError } from "@conductor/core/ticket";
 import type { View } from "@conductor/core/store";
 import { parseJoin } from "@conductor/core/ticket";
+import { replacedFragment } from "@conductor/core/runtime/fragment";
 
 const withHosts: (context: StoreContext, hosts: View["hosts"]) => View = (context, hosts) => ({
   ...context.registry.get(context.state),
@@ -22,7 +22,10 @@ const adopt: (context: StoreContext, pairing: Pairing) => HostKey = (context, pa
   if (planned.host === undefined) {
     return planned.key;
   }
-  context.registry.set(context.state, withHosts(context, new Map(view.hosts).set(planned.key, planned.host)));
+  context.registry.set(
+    context.state,
+    withHosts(context, new Map(view.hosts).set(planned.key, planned.host)),
+  );
   const record = { name: planned.host.saved, ticket: planned.host.ticket };
   const started = start(context, planned.key, pairing.ticket);
   const persisted = save(context.boundary.storage, record).pipe(Effect.andThen(started));
@@ -32,14 +35,15 @@ const adopt: (context: StoreContext, pairing: Pairing) => HostKey = (context, pa
 
 const pairedFragment: (context: StoreContext, fragment: string) => void = (context, fragment) => {
   const joined = parseJoin(fragment);
-  context.boundary.replace(replacedFragment(joined));
+  const notice = Option.getOrUndefined(Result.getFailure(joined));
+  context.boundary.replace(replacedFragment(notice));
   if (Result.isSuccess(joined)) {
     adopt(context, { name: undefined, ticket: joined.success });
   }
   const view = context.registry.get(context.state);
   context.registry.set(context.state, {
     ...withHosts(context, view.hosts),
-    notice: joinNotice(joined),
+    notice,
   });
 };
 
@@ -58,7 +62,10 @@ const show: (context: StoreContext, next: Route) => void = (context, next) => {
   follow(context);
 };
 
-const pair: (context: StoreContext, text: string) => Result.Result<HostKey, TicketError> = (context, text) => {
+const pair: (context: StoreContext, text: string) => Result.Result<HostKey, TicketError> = (
+  context,
+  text,
+) => {
   const parsed = parseJoin(text);
   if (Result.isFailure(parsed)) {
     return Result.fail(parsed.failure);

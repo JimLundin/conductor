@@ -17,13 +17,16 @@ const adopt: (host: Host, epoch: Epoch) => Effect.Effect<void> = (host, epoch) =
         return Effect.void;
       }
       const reset = Option.some({ epoch, seq: 0 });
-      return Ref.set(host.cursor, reset).pipe(
-        Effect.andThen(emit(host, Update.Reset({ epoch }))),
-      );
+      const update = Update.Reset({ epoch });
+      return Ref.set(host.cursor, reset).pipe(Effect.andThen(emit(host, update)));
     }),
   );
 
-const catchUp: (host: Host, applied: HostSeq, liveAt: HostSeq) => Effect.Effect<void> = (host, applied, liveAt) =>
+const catchUp: (host: Host, applied: HostSeq, liveAt: HostSeq) => Effect.Effect<void> = (
+  host,
+  applied,
+  liveAt,
+) =>
   Ref.get(host.status).pipe(
     Effect.flatMap((status) =>
       caughtUp(status, applied, liveAt)
@@ -39,7 +42,11 @@ const execute: (host: Host, action: FeedAction) => Effect.Effect<void> = (host, 
   return emit(host, Update.Feed({ frame: action.frame }));
 };
 
-const applyEvent: (host: Host, welcome: Welcome, frame: EventFrame) => Effect.Effect<void, string> = (host, welcome, frame) =>
+const applyEvent: (
+  host: Host,
+  welcome: Welcome,
+  frame: EventFrame,
+) => Effect.Effect<void, string> = (host, welcome, frame) =>
   Effect.gen(function* applying() {
     const after = yield* appliedSeq(host);
     const actions = yield* Effect.fromResult(eventActions(welcome, frame, after));
@@ -48,7 +55,11 @@ const applyEvent: (host: Host, welcome: Welcome, frame: EventFrame) => Effect.Ef
     yield* catchUp(host, applied, welcome.head_seq);
   });
 
-const apply: (host: Host, welcome: Welcome, frame: Feed) => Effect.Effect<void, string> = (host, welcome, frame) => {
+const apply: (host: Host, welcome: Welcome, frame: Feed) => Effect.Effect<void, string> = (
+  host,
+  welcome,
+  frame,
+) => {
   if (!("Event" in frame)) {
     return emit(host, Update.Feed({ frame }));
   }
@@ -64,11 +75,11 @@ const nextFrame: (stream: Stream) => Effect.Effect<Feed, string> = (stream) =>
     ),
   );
 
-const subscribe: (host: Host, connection: Connection, welcome: Welcome) => Effect.Effect<never, string> = (
-  host,
-  connection,
-  welcome,
-) =>
+const subscribe: (
+  host: Host,
+  connection: Connection,
+  welcome: Welcome,
+) => Effect.Effect<never, string> = (host, connection, welcome) =>
   Effect.gen(function* subscription() {
     const stream = yield* open(connection);
     const after = yield* appliedSeq(host);

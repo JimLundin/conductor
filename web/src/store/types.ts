@@ -1,9 +1,9 @@
 import type { Atom, AtomRegistry } from "effect/reactivity";
 import type { Command, CommandResult, Ticket } from "@conductor/core/schemas/index";
 import type { Effect, FiberMap, Result } from "effect";
+import type { Boundary } from "#ui/store/boundary.ts";
 import type { HostKey } from "@conductor/core/saved";
 import type { HostLink } from "#ui/link/host.ts";
-import type { Boundary } from "#ui/store/boundary.ts";
 import type { Route } from "@conductor/core/route";
 import type { SendError } from "@conductor/core/link";
 import type { TicketError } from "@conductor/core/ticket";
