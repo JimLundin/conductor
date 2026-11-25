@@ -35,8 +35,15 @@ impl Canvas {
     /// The text is not a canvas.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
         let canvas: Self = decoded(text)?;
-        canvas.blocks.iter().try_for_each(Block::check)?;
+        canvas.check()?;
         Ok(canvas)
+    }
+
+    /// # Errors
+    ///
+    /// A block breaks a drawing rule.
+    pub fn check(&self) -> Result<(), CanvasError> {
+        self.blocks.iter().try_for_each(Block::check)
     }
 
     #[must_use]
@@ -80,7 +87,9 @@ impl CanvasFile {
     ///
     /// The text is not a canvas file.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
-        decoded(text)
+        let file: Self = decoded(text)?;
+        file.canvas.check()?;
+        Ok(file)
     }
 
     #[must_use]

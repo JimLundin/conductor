@@ -9,12 +9,12 @@ use home::Draws;
 use home::canvas::{CanvasFile, CanvasKey, CanvasName};
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Given, Need, Source, Wanted, Write, asked, fresh,
-    homeless, run,
+    Asked, Command, Context, Given, Need, Source, Stored, Wanted, Write, asked,
+    fresh, homeless, run,
 };
 use home::flow::snapshot::Snapshot;
 use home_files::FolderStore;
-use home_store::CanvasStore;
+use home_store::{CanvasStore, StoreError};
 
 mod local;
 
@@ -52,6 +52,7 @@ fn issues(
         Need::Read(Source::File(path)) => Given::Text(read(Path::new(&path))),
         Need::Read(Source::Stdin) => Given::Text(stdin()),
         Need::Canvases(wanted) => Given::Canvases(fetched(&*store, &wanted)),
+        Need::EveryCanvas => Given::EveryCanvas(every(&*store)),
     });
     let outcome = run(asked, given, snapshot, context);
     let saved = outcome
@@ -96,6 +97,21 @@ fn fetched(
                 .transpose()
         })
         .collect()
+}
+
+fn every(store: &dyn CanvasStore) -> Result<Vec<Stored>, String> {
+    Ok(store
+        .all()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|key| {
+            let got = store.get(&key).map_err(|refused| match refused {
+                StoreError::Invalid { error, .. } => error.to_string(),
+                StoreError::Unavailable { reason } => reason,
+            });
+            Stored { key, got }
+        })
+        .collect())
 }
 
 fn stdin() -> Result<String, String> {
