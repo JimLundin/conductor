@@ -1,13 +1,16 @@
 import { Schema } from "effect";
-import { expect, test } from "vitest";
-import { RecordedFeed, recordedFeeds } from "./recorded-feeds.ts";
+import { describe, expect, it } from "@effect/vitest";
+import { RecordedFeed, recordedFeeds } from "#ui/test/recorded-feeds.ts";
 
-test("every frame of the recorded host feeds decodes with the generated schemas", () => {
-  const decode = Schema.decodeUnknownSync(RecordedFeed, {
-    onExcessProperty: "error",
+describe("schemas", () => {
+  it("every frame of the recorded host feeds decodes with the generated schemas", () => {
+    expect.hasAssertions();
+    const decode = Schema.decodeUnknownSync(RecordedFeed, {
+      onExcessProperty: "error",
+    });
+    expect(recordedFeeds().size).toBeGreaterThan(0);
+    for (const [scenario, feed] of recordedFeeds()) {
+      expect(() => decode(feed), scenario).not.toThrow();
+    }
   });
-  expect(recordedFeeds().size).toBeGreaterThan(0);
-  for (const [scenario, feed] of recordedFeeds()) {
-    expect(() => decode(feed), scenario).not.toThrow();
-  }
 });
