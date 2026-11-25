@@ -9,14 +9,18 @@ Home Screen. The design is in
 ## Writing code
 
 - **The shared Rust standard.** Code follows the Rust standard in
-  the standards project, checked out at
-  `C:\Users\Jim.Lundin\Projects\standards` (`README.md` there): pedantic
+  the standards project (`../standards/README.md`): pedantic
   clippy with no suppressions, libraries as a pure `no_std` core with a
   data-only API, and binaries and shell crates as a thin shell. A crate that
   does I/O declares `layer = "shell"` under `[package.metadata.standards]`
   in its `Cargo.toml`; its decisions belong in a core crate. Relax a check
   only with a reasoned entry in `exceptions.toml`; never with an `#[allow]`
   or a weaker config.
+- **The shared TypeScript standard.** `web/core` is the pure core,
+  `web` is the UI and `web/scripts` is the Node shell. Keep decisions in
+  core and browser effects in Effect atoms. Tests use `@effect/vitest`.
+  Run `STANDARDS=/path/to/standards tools/check.sh commit`; CI also accepts
+  a `standards-ref` input for checking incoming standards.
 - **No API is stable.** Every crate is internal to this workspace. Change a
   public API whenever a clearer shape appears, and update its callers in
   the same change; never keep an old shape for compatibility.
@@ -31,7 +35,7 @@ Home Screen. The design is in
   on `web/` (`web`) at `commit`, and at `step` that standard's step with
   the web app's Vitest tests (`web-step`).
   The web app builds with `npm run build` in `web/`, which Pages deploys;
-  it first builds `crates/web-iroh`, the only crate built for wasm, into
+  it first builds `crates/web-iroh` and its dependencies for wasm into
   `web/web-iroh` with wasm-pack (`npm run pipe`), which needs wasm-pack and
   clang besides the toolchain. Nothing it generates is committed.
 - **Generated and recorded files.** `web/core/src/schemas/` is generated from

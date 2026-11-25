@@ -1670,13 +1670,13 @@ record scope changes.
 The browser app is TypeScript, React and Effect in `web/`, over iroh
 compiled to wasm (ADR 0001). The link to a host and the fold of its events
 live only there. `crates/client`, `net`'s `HostLink` and the Rust fold
-(`HostFold`, `HostView`) are gone, and `net` builds natively only: the
-daemon keeps its `wire` I/O and the relay helpers
-(`net::without_root_dot`, `net::n0_relays`).
+(`HostFold`, `HostView`) are gone. Both the daemon and the wasm pipe
+use `net::wire` for framing; the daemon also uses the relay helpers
+`net::without_root_dot` and `net::n0_relays`.
 
 ### 7.1 The pipe (`crates/web-iroh`)
 
-A wasm-bindgen crate (`layer = "shell"`), the only crate built for wasm.
+A wasm-bindgen crate (`layer = "shell"`), the browser build entry point.
 It is a byte pipe to one endpoint, and its whole surface as TypeScript
 sees it is:
 
@@ -1701,7 +1701,7 @@ interface Stream { send(frame: Uint8Array): Promise<void>; recv(): Promise<Uint8
   the `wasm` profile: `opt-level = "z"`, LTO, one codegen unit) into
   `web/web-iroh`, which is not committed.
 - `web/src/pipe.ts` types the app's `Pipe` from the generated declarations,
-  and `web/src/fake-pipe.ts`, an in-memory pipe whose host side a test
+  and `web/src/test/fake-pipe.ts`, an in-memory pipe whose host side a test
   plays, is typed against the same declarations, so a change to the pipe's
   surface fails the type-check of both.
 
@@ -1766,7 +1766,7 @@ Nothing there is edited by hand. Encoding is tested only in Rust, by
 `link`'s frame tests; the app's tests check what it does with decoded
 values, and `web/src/schemas.test.ts` decodes every recorded feed
 (§9) with the generated schemas. The schemas carry a ticket only in its
-JSON form, so `web/src/ticket.ts` is the one reader of a ticket's text
+JSON form, so `web/core/src/ticket.ts` is the one reader of a ticket's text
 (base64url of its version, host id, token and relay URL), and Rust has
 only its writer, `link::Ticket::to_text`. The reader is tested against
 the worked example `link` publishes as `crates/link/ticket.example.json`,
@@ -1789,7 +1789,7 @@ commands, and runs until its scope closes, which closes its connection.
   connected in 1.5 s is hedged with a fresh one; the first to connect wins,
   and every other is closed once it settles.
 - **Hello.** The first stream sends `Hello { client, token }`, where
-  `client` is the device's kind (`web/src/device.ts`). A `Welcome` must
+  `client` is the device's kind (`web/core/src/device.ts`). A `Welcome` must
   arrive within 10 s; a refusal or a timeout ends the connection.
 - **Cursor** (`link/feed.ts`). The link keeps the epoch and last applied
   seq. A welcome from another epoch, or a first one, sets the cursor to the
@@ -1807,12 +1807,12 @@ commands, and runs until its scope closes, which closes its connection.
   live. `reconnect` drops the connection and dials at once; the page calls
   it when the browser comes back online or the page becomes visible.
 - **Commands** (`link/command.ts`). Each command opens its own stream,
-  sends `Command { id, body }` with an id from `crypto.randomUUID()`, finishes the
+  sends `Command { id, body }` with an id from Effect `SecureRandom`, provided by `BrowserCrypto`, finishes the
   stream and returns the one `CommandResult` to its caller. `send` waits
   while the link connects and fails with `NotConnected` while it is down;
   the caller decides whether to retry.
 
-### 7.5 The fold (`web/src/fold/`)
+### 7.5 The fold (`web/core/src/fold/`)
 
 Pure functions over the generated types, with Effect's `Data` and `Match`
 for tagged values. It is the only fold of a host's events.
@@ -1837,16 +1837,25 @@ for tagged values. It is the only fold of a host's events.
 ## 8. The app (`web/`)
 
 Vite, React and Effect, checked by the standards' `typescript/check.sh`
-and tested with Vitest. `npm run build` builds the pipe and then the app
+and tested through `@effect/vitest`. `npm run build` builds the pipe and then the app
 into `web/dist`, which Pages serves (`.github/workflows/pages.yml`).
+
+The npm workspace separates three packages (ADR 0004). `web/core` owns
+pure folds, routes, ticket decoding, storage decisions, commands and view
+models. `web` owns React views and browser effects. `web/scripts` owns the
+Node schema generator. Core exports use `@conductor/core/<path>`; UI
+imports use `#ui/<path>` and `#transport` names the generated wasm pipe.
 
 - **Store** (`web/src/store.ts`). One store over every paired host: its
   ticket, link status and fold, and the screen shown. Each host's link runs
   in its own fiber of a `FiberMap`, and forgetting a host closes its fiber.
-  Updates from a link since replaced or forgotten are dropped. React reads
-  it through the hooks in `web/src/use-store.ts`. What it needs from the
-  page (pipe, storage, fragment, history) is passed in, so tests play it
-  (`web/src/test-page.ts`).
+  Updates from a link since replaced or forgotten are dropped. An Effect
+  atom holds the view, and an atom registry owns its updates and command
+  effects. React reads it through `useAtomValue` in `web/src/use-store.ts`.
+  Pure transitions and selectors live in `web/core/src/store.ts`; the
+  browser supplies the pipe, storage, fragment and history so tests can
+  supply them through `web/src/test/page.ts`. Browser event streams and
+  storage use `BrowserStream` and `BrowserKeyValueStore`.
 - **Pairing.** A host pairs by a join link (`#join=`) opened on the device
   or by a join link or ticket pasted into the pairing screen. A join link's
   fragment is replaced in history, so the ticket stays out of it. Pairing a
@@ -1855,7 +1864,7 @@ into `web/dist`, which Pages serves (`.github/workflows/pages.yml`).
   under `conductor.v2.host.<endpoint id in hex>`, holding its ticket and
   the name from its last welcome. A record in any other format, the Dioxus
   app's included, is set aside unread, and those hosts are paired again.
-- **Routes** (`web/src/route.ts`). The screen is the URL fragment, so Pages
+- **Routes** (`web/core/src/route.ts`). The screen is the URL fragment, so Pages
   serves one path: `#/pair`, `#/` (the sessions), `#/host/<host>/new` and
   `#/host/<host>/session/<id>`. With no host paired every fragment shows
   pairing, and an unknown one shows the sessions.
@@ -1914,10 +1923,10 @@ as expired. The app has no service worker, so nothing subscribes yet.
   tests refuse a signed payload whose bytes differ by one byte. An
   end-to-end test is added only as the regression test of an observed
   bug.
-- **The app's tests** (Vitest, in `web/`) replay recorded host feeds
+- **The app's tests** (`@effect/vitest`, in `web/`) replay recorded host feeds
   (`web/fixtures/feeds/`, frozen data in the client link's shape)
-  through the fake pipe (`web/src/recorded-feeds.ts`,
-  `web/src/link/replay.ts`, where a fake host serves a feed's welcome,
+  through the fake pipe (`web/src/test/recorded-feeds.ts`,
+  `web/src/test/replay.ts`, where a fake host serves a feed's welcome,
   frames and the results and frames that answer each command). They cover
   the link going live from a fresh cursor, resubscribing after a dropped
   connection with no duplicated or missing event, and resetting and

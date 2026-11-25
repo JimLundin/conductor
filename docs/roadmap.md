@@ -4,6 +4,14 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Branch consolidation and TypeScript standards.** The reviewed frontend
+  fixes, profile reporting, message cleanup and Effect rollout are integrated.
+  The web app now separates pure core, browser UI and Node schema generation,
+  with Effect atoms for browser effects and `@effect/vitest` for tests.
+  Migration exceptions are removed; remaining entries describe specific
+  generated-code and library boundaries. Frontend features and the hands-on
+  iPhone acceptance remain deferred.
+
 - **Inactive branch consolidation.** The architecture reviews are reconciled
   against the retained product in [the consolidation assessment](reviews/consolidation.md).
   Their completed cuts remain in place. Remaining cleanup borrows question
