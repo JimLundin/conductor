@@ -28,5 +28,8 @@
   },
   "engines": {
     "node": ">=26"
+  },
+  "standards": {
+    "layer": "ui"
   }
 }
