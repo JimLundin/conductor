@@ -10,6 +10,7 @@ layer = "shell"
 
 [dependencies]
 home = { path = "../home" }
+home-store = { path = "../home-store" }
 
 [lints]
 workspace = true

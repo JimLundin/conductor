@@ -81,3 +81,8 @@ reason = "boxes recursive or large values, which predates the plain-values rule"
 path = "crates/host/src/fleet/protocol.rs"
 rule = "box"
 reason = "boxes recursive or large values, which predates the plain-values rule"
+
+[[exception]]
+path = "crates/home-store/src/memory.rs"
+rule = "clippy::disallowed_types"
+reason = "CanvasStore puts through a shared reference (ADR 0006), so the in-memory store holds its canvases behind a std Mutex"

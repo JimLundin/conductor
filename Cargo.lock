@@ -1623,6 +1623,14 @@ name = "home-files"
 version = "0.1.0"
 dependencies = [
  "home",
+ "home-store",
+]
+
+[[package]]
+name = "home-store"
+version = "0.1.0"
+dependencies = [
+ "home",
 ]
 
 [[package]]
