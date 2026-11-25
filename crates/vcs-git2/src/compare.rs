@@ -55,9 +55,16 @@ const fn change(kind: Delta) -> DiffChange {
 }
 
 fn patch(diff: &Diff<'_>, index: usize) -> anyhow::Result<FilePatch> {
-    let Some(mut patch) = Patch::from_diff(diff, index)? else {
+    let Some(patch) = Patch::from_diff(diff, index)? else {
         return Ok(FilePatch::Binary);
     };
+    if patch.delta().flags().contains(git2::DiffFlags::BINARY) {
+        return Ok(FilePatch::Binary);
+    }
+    text(patch)
+}
+
+fn text(mut patch: Patch<'_>) -> anyhow::Result<FilePatch> {
     if patch.size(true, true, true) > PATCH_LIMIT {
         return Ok(FilePatch::TooLarge);
     }

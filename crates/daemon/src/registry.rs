@@ -325,9 +325,9 @@ impl RegistryActor {
         let workspaces = self.workspaces.clone();
         tokio::spawn(self.run(messages));
         Registry {
+            workspaces,
             inbox,
             home,
-            workspaces,
         }
     }
 
