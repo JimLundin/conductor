@@ -6,7 +6,7 @@ use crate::issue::{
     ChecklistChange, Datum, Entry, Issue, IssueChange, Item, LogEvent,
     NewIssue, Part,
 };
-use crate::{Draws, IssueId, ProjectId};
+use crate::{Draws, IssueId, ProjectId, UnixMillis, UnixSecs};
 use serde::{Deserialize, Serialize};
 use toml::Value;
 
@@ -169,7 +169,7 @@ impl Edit {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
-    pub now_ms: u64,
+    pub now: UnixMillis,
     pub by: String,
     pub mark: Option<String>,
 }
@@ -237,13 +237,13 @@ pub struct Written {
 }
 
 #[must_use]
-pub fn fresh(home: &Snapshot, now_secs: u64, draws: &Draws) -> Option<IssueId> {
+pub fn fresh(home: &Snapshot, now: UnixSecs, draws: &Draws) -> Option<IssueId> {
     let held: Vec<IssueId> = home
         .files()
         .iter()
         .filter_map(|file| IssueId::parse(&file.stem))
         .collect();
-    IssueId::mint(now_secs, draws, &held)
+    IssueId::mint(now, draws, &held)
 }
 
 #[must_use]
@@ -631,7 +631,7 @@ fn put(
             canvases: Vec::from([CanvasWrite {
                 key,
                 file: CanvasFile {
-                    written: context.now_ms,
+                    written: context.now,
                     by: context.by.clone(),
                     canvas,
                 },
@@ -709,7 +709,7 @@ pub fn write(
 ) -> Result<Written, String> {
     let flow = home.flow()?;
     let sign = Signer {
-        at: stamp(context.now_ms),
+        at: stamp(context.now.secs()),
         by: context.by.clone(),
         mark: context.mark.clone(),
     };
@@ -1065,8 +1065,8 @@ fn quoted(text: &str) -> String {
 }
 
 #[must_use]
-pub fn stamp(now_ms: u64) -> String {
-    let seconds = now_ms / 1000;
+pub fn stamp(at: UnixSecs) -> String {
+    let UnixSecs(seconds) = at;
     let (year, month, day) = crate::calendar::civil(seconds / 86_400);
     let of_day = seconds % 86_400;
     format!(

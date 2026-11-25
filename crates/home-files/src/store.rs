@@ -215,7 +215,7 @@ mod tests {
 
     use home::canvas::{Block, Canvas, CanvasFile, CanvasKey, CanvasName};
     use home::layout;
-    use home::{IssueId, ProjectId};
+    use home::{IssueId, ProjectId, UnixMillis};
     use home_store::{CanvasStore, Plant, StoreError};
 
     use super::FolderStore;
@@ -297,7 +297,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let scratch = Scratch::new("canvas-path");
         let file = CanvasFile {
-            written: 5,
+            written: UnixMillis(5),
             by: String::from("devbox·claude"),
             canvas: Canvas::new(
                 String::from("t"),

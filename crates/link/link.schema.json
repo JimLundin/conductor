@@ -19,7 +19,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/50",
+      "const": "conductor/52",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -1718,7 +1718,7 @@
         "sync": {
           "$ref": "#/$defs/HomeSync"
         },
-        "synced": {
+        "synced_secs": {
           "format": "uint64",
           "minimum": 0,
           "type": ["integer", "null"]
@@ -1729,7 +1729,7 @@
           "type": "integer"
         }
       },
-      "required": ["remote", "synced", "sync", "unpushed", "flow", "projects"],
+      "required": ["remote", "synced_secs", "sync", "unpushed", "flow", "projects"],
       "type": "object"
     },
     "HomeCommand": {

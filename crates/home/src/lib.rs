@@ -5,6 +5,7 @@ extern crate alloc;
 mod calendar;
 pub mod canvas;
 pub mod checkout;
+mod clock;
 pub mod flow;
 mod home;
 mod id;
@@ -20,6 +21,7 @@ pub mod sync;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 
+pub use clock::{UnixMillis, UnixSecs};
 pub use home::{
     Checkout, CheckoutLocation, Cloning, Home, HomeCommand, HomeRefusal,
     HomeResult, HomeSync, Origin, Project,
@@ -96,7 +98,7 @@ pub fn view(
     } = found;
     Home {
         remote: checkout::display(remote),
-        synced_secs: sync.synced_secs,
+        synced_secs: sync.synced,
         sync: sync.status.clone(),
         unpushed,
         flow: flow.cloned().map(Box::new),

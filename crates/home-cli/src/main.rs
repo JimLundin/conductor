@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use home::Draws;
 use home::canvas::{CanvasKey, Held};
 use home::flow::PATH;
 use home::flow::command::{
@@ -13,6 +12,7 @@ use home::flow::command::{
     asked, fresh, homeless, run,
 };
 use home::flow::snapshot::Snapshot;
+use home::{Draws, UnixMillis};
 use home_files::FolderStore;
 use home_store::{CanvasStore, StoreError};
 
@@ -32,7 +32,7 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     let snapshot = home_files::read(home);
     let mut store = FolderStore::new(home.to_path_buf());
     let context = context();
-    let fresh = fresh(&snapshot, context.now_ms / 1000, &draws());
+    let fresh = fresh(&snapshot, context.now.secs(), &draws());
     match asked(args, &snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, &snapshot),
         Asked::Flow(command) => {
@@ -148,13 +148,12 @@ fn context() -> Context {
         .or_else(|_| env::var("HOSTNAME"))
         .unwrap_or_else(|_| String::from("host"))
         .to_lowercase();
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        });
     Context {
-        now_ms,
+        now: UnixMillis::since_epoch(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default(),
+        ),
         by: env::var("HOME_BY").unwrap_or_else(|_| format!("{host}·cli")),
         mark: None,
     }

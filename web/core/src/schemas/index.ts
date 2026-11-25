@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/50";
+type Alpn = "conductor/52";
 
-const Alpn = Schema.Literal("conductor/50").annotate({
+const Alpn = Schema.Literal("conductor/52").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -2127,7 +2127,7 @@ type Home = {
   readonly projects: globalThis.ReadonlyArray<Project>;
   readonly remote: string;
   readonly sync: HomeSync;
-  readonly synced: number | null;
+  readonly synced_secs: number | null;
   readonly unpushed: number;
 };
 
@@ -2136,7 +2136,7 @@ const Home = Schema.Struct({
   projects: Schema.Array(Project),
   remote: Schema.String,
   sync: HomeSync,
-  synced: Schema.Union([
+  synced_secs: Schema.Union([
     Schema.Int.check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),

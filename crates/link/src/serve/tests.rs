@@ -11,6 +11,7 @@ use home::project::Project;
 use home::sync::Sync;
 use home::{
     Found, Home, HomeCommand, HomeRefusal, HomeResult, IssueId, ProjectId,
+    UnixMillis,
 };
 use home_store::{CanvasStore, Memory, StoreError};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
@@ -325,7 +326,7 @@ fn key(issue: IssueId, name: &str) -> Result<CanvasKey, String> {
 
 fn written(at: u64, by: &str) -> Result<CanvasFile, String> {
     Ok(CanvasFile {
-        written: at,
+        written: UnixMillis(at),
         by: String::from(by),
         canvas: Canvas::new(
             format!("By {by}"),
@@ -380,7 +381,7 @@ fn served_entries(store: &Memory) -> Result<(), String> {
         |name: &str, at: u64, by: &str| -> Result<CanvasEntry, String> {
             Ok(CanvasEntry {
                 name: named(name)?,
-                written: at,
+                written: UnixMillis(at),
                 by: String::from(by),
             })
         };

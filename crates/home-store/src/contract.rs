@@ -4,7 +4,7 @@ use home::canvas::{
     Block, Broken, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
     Held, Stray, StrayReason,
 };
-use home::{IssueId, ProjectId};
+use home::{IssueId, ProjectId, UnixMillis};
 
 use crate::{CanvasStore, StoreError};
 
@@ -196,7 +196,7 @@ fn key(
 
 fn file(written: u64, text: &str) -> Result<CanvasFile, String> {
     Ok(CanvasFile {
-        written,
+        written: UnixMillis(written),
         by: format!("host·{text}"),
         canvas: Canvas::new(
             format!("The {text} canvas"),
