@@ -20,17 +20,21 @@ pub struct EarlyEvents {
     overflowed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overflowed;
+
 impl EarlyEvents {
+    pub const LIMIT: usize = 4096;
+
     pub fn capture(
         &mut self,
         event: CodexEvent,
         opening: bool,
     ) -> Option<CodexEvent> {
-        const LIMIT: usize = 4096;
         if let CodexEvent::Thread { thread, .. } = &event
             && opening
         {
-            if self.count < LIMIT {
+            if self.count < Self::LIMIT {
                 self.count += 1;
                 self.by_thread
                     .entry(thread.clone())
@@ -45,15 +49,20 @@ impl EarlyEvents {
         }
     }
 
-    #[must_use]
-    pub const fn overflowed(&self) -> bool {
-        self.overflowed
-    }
-
-    pub fn take(&mut self, thread: &ThreadId) -> Vec<CodexEvent> {
+    pub fn open(
+        &mut self,
+        thread: &ThreadId,
+    ) -> Result<Vec<CodexEvent>, Overflowed> {
+        if self.overflowed {
+            return Err(Overflowed);
+        }
         let events = self.by_thread.remove(thread).unwrap_or_default();
         self.count -= events.len();
-        events
+        Ok(events)
+    }
+
+    pub fn settle(&mut self) {
+        *self = Self::default();
     }
 }
 
@@ -434,7 +443,9 @@ mod tests {
     use agents::Exit;
     use serde_json::json;
 
-    use super::{Ask, Command, Effect, Hub, Input, Routed};
+    use super::{
+        Ask, Command, EarlyEvents, Effect, Hub, Input, Overflowed, Routed,
+    };
     use crate::{CodexEvent, ThreadEvent, ThreadId, TurnId};
 
     type Step = Effect<u8, char, &'static str, u16, &'static str>;
@@ -722,5 +733,20 @@ mod tests {
         let mut hub = running();
         let seen: Vec<Step> = hub.step(Input::Closed);
         assert_eq!(seen, Vec::from([Effect::End]));
+    }
+
+    #[test]
+    fn early_events_past_the_limit_fail_opens_until_the_batch_settles() {
+        let mut early = EarlyEvents::default();
+        for _ in 0..EarlyEvents::LIMIT {
+            assert_eq!(early.capture(turn("th_1"), true), None);
+        }
+        assert_eq!(early.open(&id("th_2")), Ok(Vec::new()));
+        assert_eq!(early.capture(turn("th_1"), true), None);
+        assert_eq!(early.open(&id("th_1")), Err(Overflowed));
+        assert_eq!(early.open(&id("th_2")), Err(Overflowed));
+        early.settle();
+        assert_eq!(early.capture(turn("th_2"), true), None);
+        assert_eq!(early.open(&id("th_2")), Ok(Vec::from([turn("th_2")])));
     }
 }

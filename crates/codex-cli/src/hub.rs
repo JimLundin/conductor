@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use agents::Models;
 use codex::CodexCredential;
-use codex::hub::{Ask, Command, EarlyEvents, Routed};
+use codex::hub::{Ask, Command, EarlyEvents, Overflowed, Routed};
 use codex::{CodexEvent, ThreadId, ThreadOptions};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
@@ -301,14 +301,14 @@ impl Task {
     ) -> Result<(), Ended> {
         let route = completed.and_then(Result::ok).and_then(
             |Completed { reply, outcome }| {
-                connect_open(outcome, reply, self.early.overflowed())
+                connect_open(outcome, reply, &mut self.early)
             },
         );
-        if let Some((id, sender)) = route {
-            self.install_route(id, sender).await?;
+        if let Some((id, sender, early)) = route {
+            self.install_route(id, sender, early).await?;
         }
         if self.opens.is_empty() {
-            self.early = EarlyEvents::default();
+            self.early.settle();
         }
         Ok(())
     }
@@ -317,8 +317,8 @@ impl Task {
         &mut self,
         thread: ThreadId,
         sender: mpsc::Sender<Routed>,
+        early: Vec<CodexEvent>,
     ) -> Result<(), Ended> {
-        let early = self.early.take(&thread);
         let (events, queued) = mpsc::channel(ROUTE_BACKLOG);
         let (terminal, closing) = watch::channel(None);
         self.generation += 1;
@@ -357,7 +357,7 @@ impl Task {
     fn clear_opening(&mut self) {
         self.opens = JoinSet::new();
         self.lists = JoinSet::new();
-        self.early = EarlyEvents::default();
+        self.early.settle();
     }
 
     async fn stop(&mut self) {
@@ -382,15 +382,20 @@ impl Task {
 fn connect_open(
     outcome: Result<CodexThread, Error>,
     reply: oneshot::Sender<Result<Thread, Error>>,
-    overflowed: bool,
-) -> Option<(ThreadId, mpsc::Sender<Routed>)> {
-    match outcome {
-        Ok(thread) if !overflowed => {
+    early: &mut EarlyEvents,
+) -> Option<(ThreadId, mpsc::Sender<Routed>, Vec<CodexEvent>)> {
+    let opened = outcome.and_then(|thread| {
+        early
+            .open(&thread.id)
+            .map(|events| (thread, events))
+            .map_err(|Overflowed| Error::EventBacklog)
+    });
+    match opened {
+        Ok((thread, events)) => {
             let id = thread.id.clone();
-            connect(thread, reply).map(|sender| (id, sender))
+            connect(thread, reply).map(|sender| (id, sender, events))
         }
-        rejected => {
-            let error = rejected.err().unwrap_or(Error::EventBacklog);
+        Err(error) => {
             let _ = reply.send(Err(error));
             None
         }
@@ -494,10 +499,10 @@ mod tests {
         let active = ThreadId(String::from("active"));
         let (paused_sender, mut paused_receiver) = mpsc::channel(1);
         let (active_sender, mut active_receiver) = mpsc::channel(1);
-        task.install_route(paused.clone(), paused_sender)
+        task.install_route(paused.clone(), paused_sender, Vec::new())
             .await
             .map_err(|_| "stopped")?;
-        task.install_route(active.clone(), active_sender)
+        task.install_route(active.clone(), active_sender, Vec::new())
             .await
             .map_err(|_| "stopped")?;
 
@@ -585,7 +590,8 @@ mod tests {
         let _ = task.opens.join_next().await;
 
         let (sender, mut events) = mpsc::channel(1);
-        task.install_route(thread.clone(), sender)
+        let early = task.early.open(&thread).map_err(|_| "overflowed")?;
+        task.install_route(thread.clone(), sender, early)
             .await
             .map_err(|_| "stopped")?;
         let later = event(&thread, "later");
@@ -608,7 +614,7 @@ mod tests {
 
         for _ in 0..3 {
             let (sender, events) = mpsc::channel(1);
-            task.install_route(thread.clone(), sender)
+            task.install_route(thread.clone(), sender, Vec::new())
                 .await
                 .map_err(|_| "stopped")?;
             drop(events);
