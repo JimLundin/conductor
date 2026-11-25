@@ -52,7 +52,7 @@ fn identity(_path: &Path) -> Result<String> {
 
 fn entries(path: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = fs::read_dir(path)?
-        .map(|entry| entry.map(|entry| entry.path()))
+        .map(|result| result.map(|entry| entry.path()))
         .collect::<io::Result<Vec<_>>>()?;
     paths.sort();
     Ok(paths)
@@ -186,7 +186,9 @@ fn publication_line(suffix: &[u8], intent: &Intent, journal: &Journal) -> bool {
     suffix.len() <= 8192
         && suffix.starts_with(start.as_bytes())
         && suffix.ends_with(ending.as_bytes())
-        && suffix.iter().filter(|byte| **byte == b'\n').count() == 1
+        && suffix
+            .strip_suffix(b"\n")
+            .is_some_and(|line| !line.contains(&b'\n'))
 }
 
 pub fn oid(text: &str) -> Result<Oid> {

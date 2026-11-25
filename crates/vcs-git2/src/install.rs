@@ -2,7 +2,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::path::Path;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use git_workspace::install::{
     Head, Index as IndexState, Observation, Progress, Step,
 };
@@ -15,7 +15,7 @@ mod observed;
 use journal::{INDEX_LIMIT, Intent, Journal};
 use observed::{Checkout, oid};
 
-pub(super) fn ensure_available(
+pub fn ensure_available(
     repo: &Repository,
     attempt: Option<&str>,
 ) -> Result<(), vcs::Error> {
@@ -36,7 +36,7 @@ fn available(repo: &Repository, attempt: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn recorded(
+pub fn recorded(
     repo: &Repository,
     branch: &str,
     attempt: &str,
@@ -67,7 +67,7 @@ fn previous(
     Ok(None)
 }
 
-pub(super) fn run(
+pub fn run(
     repo: &Repository,
     branch: &str,
     attempt: &str,
@@ -202,7 +202,7 @@ fn sync_ref(repo: &Repository, name: &str) -> Result<()> {
     for directory in path
         .ancestors()
         .skip(1)
-        .take_while(|path| path.starts_with(common))
+        .take_while(|directory| directory.starts_with(common))
     {
         journal::sync(directory)?;
     }
@@ -279,7 +279,8 @@ fn index_lock(repo: &Repository) -> Result<NamedTempFile> {
     let file = OpenOptions::new()
         .create_new(true)
         .write(true)
-        .open(&path)?;
+        .open(&path)
+        .context("acquiring workspace index.lock")?;
     Ok(NamedTempFile::from_parts(
         file,
         TempPath::try_from_path(path)?,

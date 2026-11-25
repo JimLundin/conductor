@@ -13,10 +13,7 @@ use git2::{
 #[cfg(test)]
 mod tests;
 
-pub(super) fn check(
-    repo: &Repository,
-    revision: Oid,
-) -> Result<(), vcs::Error> {
+pub fn check(repo: &Repository, revision: Oid) -> Result<(), vcs::Error> {
     inspect(repo, revision).map_err(|problem| {
         vcs::Error::failed("workspace preflight", &problem.to_string())
     })

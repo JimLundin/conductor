@@ -77,7 +77,12 @@ fn opened(
 }
 
 fn failed(problem: project_runtime::Failure) -> anyhow::Error {
-    anyhow::anyhow!("{problem:?}")
+    match problem {
+        project_runtime::Failure::Workspace(reason) => {
+            anyhow::Error::new(reason)
+        }
+        other => anyhow::anyhow!("{other:?}"),
+    }
 }
 
 #[tokio::test]

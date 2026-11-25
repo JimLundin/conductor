@@ -1510,9 +1510,6 @@ dependencies = [
 [[package]]
 name = "git-workspace"
 version = "0.1.0"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "git2"

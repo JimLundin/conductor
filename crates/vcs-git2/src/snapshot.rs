@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Context as _, ensure};
 use git2::{ErrorCode, Index, IndexAddOption, Oid, Repository, Signature};
 
-pub(super) fn tree(repo: &Repository) -> Result<Oid, vcs::Error> {
+pub fn tree(repo: &Repository) -> Result<Oid, vcs::Error> {
     scratch_tree(repo).map_err(super::failure)
 }
 
@@ -20,7 +20,7 @@ fn scratch_tree(repo: &Repository) -> anyhow::Result<Oid> {
     Ok(index.write_tree_to(&session)?)
 }
 
-pub(super) fn candidate(repo: &Repository) -> anyhow::Result<Oid> {
+pub fn candidate(repo: &Repository) -> anyhow::Result<Oid> {
     let parent = repo.head()?.peel_to_commit()?;
     crate::features::check(repo, parent.id())?;
     let files = tree(repo)?;
@@ -38,7 +38,7 @@ pub(super) fn candidate(repo: &Repository) -> anyhow::Result<Oid> {
     )?)
 }
 
-pub(super) fn retained(
+pub fn retained(
     repo: &Repository,
     owner: &str,
     revision: &str,
@@ -56,11 +56,7 @@ pub(super) fn retained(
     Ok(oid)
 }
 
-pub(super) fn retain(
-    repo: &Repository,
-    owner: &str,
-    oid: Oid,
-) -> anyhow::Result<()> {
+pub fn retain(repo: &Repository, owner: &str, oid: Oid) -> anyhow::Result<()> {
     let reference = format!("refs/conductor/{owner}/{oid}");
     match repo.find_reference(&reference) {
         Ok(found) => {
@@ -82,7 +78,7 @@ pub(super) fn retain(
     Ok(())
 }
 
-pub(super) fn tree_at(
+pub fn tree_at(
     repo: &Repository,
     revision: Oid,
     path: &Path,
@@ -101,7 +97,7 @@ pub(super) fn tree_at(
     Ok(())
 }
 
-pub(super) fn captured(
+pub fn captured(
     session: &crate::prepare::Session,
     attempt: &str,
 ) -> anyhow::Result<Oid> {

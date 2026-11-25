@@ -45,14 +45,13 @@ impl GitWorkspaces {
 
 fn failure(error: anyhow::Error) -> vcs::Error {
     error
-        .downcast_ref::<vcs::Error>()
-        .cloned()
-        .unwrap_or_else(|| vcs::Error::Failed(format!("{error:#}")))
+        .downcast::<vcs::Error>()
+        .unwrap_or_else(|report| vcs::Error::Failed(format!("{report:#}")))
 }
 
 impl VersionControl for GitWorkspaces {
     fn prepare(&self, request: Prepare) -> Completion<'_, Prepared> {
-        self.run(move |base| prepare::create(&base, request))
+        self.run(move |base| prepare::create(&base, &request))
     }
 
     fn capture(&self, request: Capture) -> Completion<'_, Revision> {

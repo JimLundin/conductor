@@ -18,10 +18,7 @@ struct Removal {
     kept: Kept,
 }
 
-pub(super) fn workspace(
-    base: &Path,
-    owned: &OwnedWorkspace,
-) -> anyhow::Result<Kept> {
+pub fn workspace(base: &Path, owned: &OwnedWorkspace) -> anyhow::Result<Kept> {
     let name = &owned.id.0;
     prepare::require_name(name)?;
     let receipt = prepare::receipts(base, name);

@@ -4,7 +4,7 @@ use vcs::command::Comparison;
 use vcs::plan::{FILE_LIMIT, PATCH_LIMIT, budget};
 use vcs::{DiffChange, DiffExtent, FilePatch, SnapshotFile};
 
-pub(super) fn revisions(
+pub fn revisions(
     repo: &Repository,
     previous: Oid,
     revision: Oid,

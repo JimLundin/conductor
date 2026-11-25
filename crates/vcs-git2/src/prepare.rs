@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 use vcs::command::{OwnedWorkspace, Prepare, Prepared};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct Location {
-    pub(super) source: PathBuf,
+pub struct Location {
+    pub source: PathBuf,
     original: PathBuf,
-    pub(super) root: PathBuf,
-    pub(super) directory: PathBuf,
-    pub(super) branch: String,
+    pub root: PathBuf,
+    pub directory: PathBuf,
+    pub branch: String,
     common: PathBuf,
     selected_base: Option<String>,
 }
@@ -29,15 +29,15 @@ struct Identity {
 }
 
 #[derive(Serialize, Deserialize)]
-pub(super) struct Record {
-    pub(super) location: Location,
+pub struct Record {
+    pub location: Location,
     identity: Identity,
 }
 
-pub(super) struct Session {
-    pub(super) repo: Repository,
-    pub(super) record: Record,
-    pub(super) name: String,
+pub struct Session {
+    pub repo: Repository,
+    pub record: Record,
+    pub name: String,
     _lock: File,
 }
 
@@ -48,7 +48,7 @@ fn root(repo: &Repository) -> anyhow::Result<PathBuf> {
         .canonicalize()?)
 }
 
-pub(super) fn require_name(name: &str) -> anyhow::Result<()> {
+pub fn require_name(name: &str) -> anyhow::Result<()> {
     ensure!(
         !name.is_empty()
             && name.len() <= 128
@@ -109,12 +109,12 @@ impl Location {
 }
 
 fn text(path: &Path) -> anyhow::Result<String> {
-    let path = path.to_str().context("non-UTF-8 workspace path")?;
-    ensure!(!path.contains('\n'), "newline in workspace path");
-    Ok(path.to_owned())
+    let utf8 = path.to_str().context("non-UTF-8 workspace path")?;
+    ensure!(!utf8.contains('\n'), "newline in workspace path");
+    Ok(utf8.to_owned())
 }
 
-pub(super) fn lock(common: &Path) -> anyhow::Result<File> {
+pub fn lock(common: &Path) -> anyhow::Result<File> {
     let locked = File::options()
         .read(true)
         .write(true)
@@ -131,11 +131,11 @@ fn admin(base: &Path, name: &str) -> PathBuf {
     base.join(".conductor").join(name)
 }
 
-pub(super) fn receipts(base: &Path, name: &str) -> PathBuf {
+pub fn receipts(base: &Path, name: &str) -> PathBuf {
     admin(base, name).with_extension("removed")
 }
 
-pub(super) fn save(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+pub fn save(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     let parent = path.parent().context("workspace metadata has no parent")?;
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
     temporary.write_all(bytes)?;
@@ -150,11 +150,7 @@ fn read_record(base: &Path, name: &str) -> anyhow::Result<Record> {
 }
 
 impl Record {
-    pub(super) fn open(
-        &self,
-        base: &Path,
-        name: &str,
-    ) -> anyhow::Result<Repository> {
+    pub fn open(&self, base: &Path, name: &str) -> anyhow::Result<Repository> {
         let owner = &self.location;
         let expected = base.canonicalize()?.join(name);
         ensure!(expected == owner.root, "worktree path changed");
@@ -191,7 +187,7 @@ impl Record {
     }
 }
 
-pub(super) fn open(
+pub fn open(
     base: &Path,
     workspace: &OwnedWorkspace,
 ) -> anyhow::Result<Session> {
@@ -250,10 +246,7 @@ fn new_location(
     })
 }
 
-pub(super) fn create(
-    base: &Path,
-    request: Prepare,
-) -> anyhow::Result<Prepared> {
+pub fn create(base: &Path, request: &Prepare) -> anyhow::Result<Prepared> {
     let name = &request.name.0;
     require_name(name)?;
     let original = Path::new(&request.directory).canonicalize()?;
@@ -262,7 +255,7 @@ pub(super) fn create(
     let tip = target(&source, request.base.as_deref())?;
     crate::features::check(&source, tip)?;
     fs::create_dir_all(base)?;
-    let location = new_location(&source, base, original, &request)?;
+    let location = new_location(&source, base, original, request)?;
     let _lock = lock(&location.common)?;
     crate::features::check(&source, tip)?;
     let record_path = admin(base, name);
@@ -330,7 +323,7 @@ fn create_link(
     Ok(())
 }
 
-pub(super) fn branch(repo: &Repository, name: &str) -> anyhow::Result<()> {
+pub fn branch(repo: &Repository, name: &str) -> anyhow::Result<()> {
     ensure!(
         repo.head()?.name()? == format!("refs/heads/{name}"),
         "workspace branch changed"
