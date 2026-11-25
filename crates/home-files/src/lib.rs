@@ -13,7 +13,7 @@ use home::checkout::Root;
 use vcs::discovery::Probe;
 
 use home::flow::PATH;
-use home::flow::snapshot::Snapshot;
+use home::issue::{self, storage};
 use home::layout::{self, IssueLocation};
 use home::skills;
 
@@ -21,9 +21,9 @@ pub mod git;
 
 /// The home whose root is `root`.
 #[must_use]
-pub fn read(root: &Path) -> Snapshot {
+pub fn read(root: &Path) -> storage::ReadHome {
     let folders = folders(&root.join(layout::PROJECTS));
-    Snapshot::of(layout::inputs(
+    let inputs = layout::inputs(
         text(root, PATH),
         folders
             .iter()
@@ -36,7 +36,8 @@ pub fn read(root: &Path) -> Snapshot {
             .filter_map(|folder| ProjectId::parse(folder))
             .flat_map(|project| issues(root, project))
             .collect(),
-    ))
+    );
+    inputs.read()
 }
 
 /// A search root with the folders in it and in each of those that isn't
@@ -234,6 +235,15 @@ fn text(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|err| err.to_string())
 }
 
+#[must_use]
+pub fn issue(
+    flow: &home::flow::Flow,
+    target: &issue::Read,
+    text: Option<&str>,
+) -> Option<storage::Loaded> {
+    text.map(|contents| storage::load(flow, target, contents))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -327,9 +337,16 @@ mod tests {
         fs::create_dir_all(&issues)?;
         fs::write(issues.join("one.md"), "+++\n+++\n")?;
         fs::write(issues.join("notes.txt"), "not an issue")?;
-        let home = super::read(&scratch.0);
-        let stems: Vec<&str> =
-            home.files().iter().map(|file| file.stem.as_str()).collect();
+        let flow = scratch.0.join(home::flow::PATH);
+        fs::create_dir_all(flow.parent().unwrap_or(&scratch.0))?;
+        fs::write(flow, include_str!("../../home/src/flow/test-flow.toml"))?;
+        let home = super::read(&scratch.0).snapshot;
+        let stems: Vec<&str> = home
+            .graph()
+            .problems
+            .iter()
+            .map(|problem| problem.record.as_str())
+            .collect();
         assert_eq!(stems, ["one"]);
         assert!(
             home.listing_problems()

@@ -8,9 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use home::Draws;
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Write, asked, fresh, homeless, run,
+    Asked, Command, Context, asked, fresh, homeless, run,
 };
-use home::flow::snapshot::Snapshot;
+use home::issue::storage::File;
 
 mod local;
 
@@ -25,27 +25,27 @@ fn main() -> ExitCode {
 }
 
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
-    let snapshot = home_files::read(home);
+    let loaded = home_files::read(home);
+    let snapshot = &loaded.snapshot;
     let context = context();
-    let fresh = fresh(&snapshot, context.now / 1000, &draws());
-    match asked(args, &snapshot, fresh) {
-        Asked::Local(local) => local::run(home, local, &snapshot),
-        Asked::Flow(command) => issues(home, command, &snapshot, &context),
+    let fresh = fresh(snapshot, context.now / 1000, &draws());
+    match asked(args, snapshot, fresh) {
+        Asked::Local(local) => local::run(home, local, snapshot),
+        Asked::Flow(command) => issues(home, command, &loaded, &context),
     }
 }
 
 fn issues(
     home: &Path,
     asked: Command,
-    snapshot: &Snapshot,
+    loaded: &home::issue::storage::ReadHome,
     context: &Context,
 ) -> (String, u8) {
     let file = asked.file().map(|path| read(Path::new(path)));
-    let outcome = run(asked, file, snapshot, context);
-    let saved = outcome
-        .writes
-        .iter()
-        .try_for_each(|write| save(home, write));
+    let outcome = run(asked, file, &loaded.snapshot, context);
+    let saved = outcome.changes.iter().try_for_each(|change| {
+        loaded.encode(change).and_then(|file| save(home, &file))
+    });
     outcome.ended(saved)
 }
 
@@ -70,7 +70,6 @@ fn context() -> Context {
     Context {
         now,
         by: env::var("HOME_BY").unwrap_or_else(|_| format!("{host}·cli")),
-        mark: None,
     }
 }
 
@@ -82,7 +81,7 @@ fn read(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-fn save(root: &Path, write: &Write) -> Result<(), String> {
+fn save(root: &Path, write: &File) -> Result<(), String> {
     let path = root.join(write.path());
     fs::create_dir_all(root.join(write.folder()))
         .and_then(|()| fs::write(&path, &write.text))

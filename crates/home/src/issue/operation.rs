@@ -1,37 +1,33 @@
-use alloc::boxed::Box;
-use alloc::string::ToString;
-
 use super::{
-    Applied, Edit, EditData, EditId, Issue, IssueChange, Mode, NewIssue, Part,
-    apply, edit_marker, message, signer, was,
+    Applied, Edit, EditData, EditId, Issue, IssueChange, Mode, NewIssue,
+    NotApplied, Observed, Part, apply, message, signer, values,
 };
 use crate::flow::command;
 use crate::flow::role;
 use crate::flow::snapshot::Snapshot;
-use crate::layout;
 use crate::prelude::*;
 use crate::{HomeRefusal, IssueId, ProjectId};
 
-/// The issue and file an operation reads before deciding what to write.
+/// The issue an operation observes before planning a change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
     pub project: ProjectId,
     pub issue: IssueId,
-    pub path: String,
 }
 
-/// A local edit ready to read its file.
+/// A local edit ready to observe its issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     id: EditId,
     data: EditData,
 }
 
-/// The files and commit a home mutation requires.
+/// A semantic issue change and its local commit metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
     pub target: Read,
-    pub text: String,
+    pub change: command::Change,
+    pub marker: EditId,
     pub message: String,
     pub author: &'static str,
     pub email: &'static str,
@@ -39,8 +35,7 @@ pub struct Commit {
 
 /// What the decision needs from the clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Write {
-    Commit(Commit),
+pub enum NoCommit {
     Unchanged,
     Dropped,
     Waiting(String),
@@ -48,9 +43,9 @@ pub enum Write {
 
 /// The actions that record an edit locally and attempt to deliver it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RecordEffect {
+pub enum RecordEffect<'a> {
     Persist(Edit),
-    Commit(Commit),
+    Commit(&'a Commit),
     Deliver {
         delivery: Delivery,
         id: Option<EditId>,
@@ -61,12 +56,12 @@ pub enum RecordEffect {
 /// An edit ready to record in the clone, and what the flow warns of
 /// what it writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Recorded(Recording, Vec<String>);
+pub struct Recorded(Recording, Vec<String>, Option<Commit>);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Recording {
-    Keep(Box<Edit>, Option<Commit>, EditId),
-    Write(EditId, Option<Commit>),
+    Keep(Edit, EditId),
+    Write(EditId),
     Push(EditId),
     Scan,
     Done,
@@ -88,16 +83,16 @@ impl Recorded {
     pub fn next(
         &mut self,
         outcome: Result<(), String>,
-    ) -> Result<Option<RecordEffect>, HomeRefusal> {
+    ) -> Result<Option<RecordEffect<'_>>, HomeRefusal> {
         let effect = match core::mem::replace(&mut self.0, Recording::Done) {
-            Recording::Keep(edit, commit, id) => {
-                self.0 = Recording::Write(id, commit);
-                RecordEffect::Persist(*edit)
+            Recording::Keep(edit, id) => {
+                self.0 = Recording::Write(id);
+                RecordEffect::Persist(edit)
             }
-            Recording::Write(id, commit) => {
+            Recording::Write(id) => {
                 outcome
                     .map_err(|reason| HomeRefusal::IssueNotSaved { reason })?;
-                let (next, effect) = commit.map_or(
+                let (next, effect) = self.2.as_ref().map_or(
                     (
                         Recording::Scan,
                         RecordEffect::Deliver {
@@ -196,14 +191,15 @@ impl PendingEdits {
         can_commit(earlier, target.issue).then_some(target)
     }
 
-    #[must_use]
+    /// # Errors
+    /// The edit is unchanged, dropped, or waiting for a valid observation.
     pub fn replay(
         &self,
         home: &Snapshot,
         index: usize,
-        current: Result<Option<&str>, String>,
+        current: Result<Option<&Observed>, String>,
         upstream_changed: Option<u64>,
-    ) -> Write {
+    ) -> Result<Commit, NoCommit> {
         self.0[index].edit.replay(home, current, upstream_changed)
     }
 
@@ -347,7 +343,7 @@ impl Context<'_> {
 
 impl Record {
     #[must_use]
-    pub fn read(&self) -> Read {
+    pub const fn read(&self) -> Read {
         self.data.read()
     }
 
@@ -356,46 +352,49 @@ impl Record {
         self.data.project
     }
 
-    /// Decides the commit and what to keep and deliver, among the home's
-    /// issues, the one it is to being `current`.
+    /// Plans the commit and retained edit against the current observation.
     ///
     /// # Errors
-    ///
-    /// The file is gone or cannot be read as an issue, or the flow refuses
-    /// what the edit writes.
+    /// The issue is missing, unreadable, or refused by the flow.
     pub fn decide(
         mut self,
-        current: Option<&str>,
+        current: Option<&Observed>,
         home: &Snapshot,
         pending: &PendingEdits,
     ) -> Result<Recorded, HomeRefusal> {
-        self.data.was = was(home.flow().ok(), current, &self.data);
+        self.data.was = values(
+            current.and_then(|observed| {
+                observed
+                    .reading
+                    .as_ref()
+                    .ok()
+                    .map(super::Observation::issue)
+            }),
+            &self.data.edit,
+        );
         let edit = Edit {
             id: self.id,
             data: self.data,
         };
         let (commit, warnings) = match apply(home, current, &edit, Mode::Record)
         {
-            Applied::Write { text, warnings } => {
-                (Some(edit.commit(text)), warnings)
+            Ok(Applied { change, warnings }) => {
+                (Some(edit.commit(change)), warnings)
             }
-            Applied::AlreadyRecorded => {
-                return Ok(Recorded(Recording::Done, Vec::new()));
+            Err(NotApplied::AlreadyRecorded) => {
+                return Ok(Recorded(Recording::Done, Vec::new(), None));
             }
-            Applied::Unchanged => (None, Vec::new()),
-            Applied::Gone => return Err(HomeRefusal::UnknownIssue),
-            Applied::Unreadable(reason) => {
+            Err(NotApplied::Unchanged) => (None, Vec::new()),
+            Err(NotApplied::Gone) => return Err(HomeRefusal::UnknownIssue),
+            Err(NotApplied::Unreadable(reason)) => {
                 return Err(HomeRefusal::IssueNotSaved { reason });
             }
-            Applied::Refused(reason) => {
+            Err(NotApplied::Refused(reason)) => {
                 return Err(HomeRefusal::IssueRefused { reason });
             }
         };
         let next = commit.filter(|_| can_commit(&pending.0, edit.data.issue()));
-        Ok(Recorded(
-            Recording::Keep(Box::new(edit), next, self.id),
-            warnings,
-        ))
+        Ok(Recorded(Recording::Keep(edit, self.id), warnings, next))
     }
 }
 
@@ -406,11 +405,10 @@ fn can_commit(earlier: &[Pending], issue: IssueId) -> bool {
 }
 
 impl EditData {
-    fn read(&self) -> Read {
+    const fn read(&self) -> Read {
         Read {
             project: self.project,
             issue: self.issue(),
-            path: layout::issue_file(&self.project, &self.issue().to_string()),
         }
     }
 }
@@ -422,41 +420,45 @@ impl Edit {
     }
 
     #[must_use]
-    pub fn read(&self) -> Read {
+    pub const fn read(&self) -> Read {
         self.data.read()
     }
 
-    /// Decides whether the edit still applies to the upstream file, among
+    /// Decides whether the edit still applies to the upstream observation, among
     /// the home's issues.
-    #[must_use]
+    /// # Errors
+    /// The edit is unchanged, dropped, or waiting for a valid observation.
     pub fn replay(
         &self,
         home: &Snapshot,
-        current: Result<Option<&str>, String>,
+        current: Result<Option<&Observed>, String>,
         upstream_changed: Option<u64>,
-    ) -> Write {
+    ) -> Result<Commit, NoCommit> {
         let contents = match current {
             Ok(contents) => contents,
-            Err(reason) => return Write::Waiting(reason),
+            Err(reason) => return Err(NoCommit::Waiting(reason)),
         };
         if contents.is_none() && upstream_changed.is_some() {
-            return Write::Dropped;
+            return Err(NoCommit::Dropped);
         }
         let changed = upstream_changed.unwrap_or(0);
         match apply(home, contents, self, Mode::Replay { changed }) {
-            Applied::Write { text, .. } => Write::Commit(self.commit(text)),
-            Applied::Unchanged | Applied::AlreadyRecorded => Write::Unchanged,
-            Applied::Gone => Write::Dropped,
-            Applied::Unreadable(reason) | Applied::Refused(reason) => {
-                Write::Waiting(reason)
+            Ok(Applied { change, .. }) => Ok(self.commit(change)),
+            Err(NotApplied::Unchanged | NotApplied::AlreadyRecorded) => {
+                Err(NoCommit::Unchanged)
             }
+            Err(NotApplied::Gone) => Err(NoCommit::Dropped),
+            Err(
+                NotApplied::Unreadable(reason) | NotApplied::Refused(reason),
+            ) => Err(NoCommit::Waiting(reason)),
         }
     }
 
-    fn commit(&self, text: String) -> Commit {
+    fn commit(&self, change: command::Change) -> Commit {
         Commit {
             target: self.read(),
-            text,
+            change,
+            marker: self.id,
             message: message(&self.data.edit),
             author: "Conductor",
             email: "conductor@localhost",
@@ -607,22 +609,5 @@ impl RemoteProbe {
             (Self::Observed(remote), _) => Self::Observed(remote),
             (Self::Origin { .. }, Err(_)) => Self::Observed(Remote::Absent),
         }
-    }
-}
-
-/// Where a project's issue files are, and how a new one is found.
-pub struct Listing {
-    pub path: String,
-}
-
-impl Listing {
-    #[must_use]
-    pub fn creation_pattern(id: EditId) -> String {
-        format!("^{}$", crate::flow::file::comment_line(&edit_marker(id)))
-    }
-
-    #[must_use]
-    pub fn created_from_path(path: &str) -> Option<IssueId> {
-        layout::issue_stem(path).and_then(IssueId::parse)
     }
 }

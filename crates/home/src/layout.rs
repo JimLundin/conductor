@@ -12,8 +12,8 @@
 use crate::ProjectId;
 use alloc::string::ToString;
 
-use crate::flow::graph::File;
-use crate::flow::snapshot::Inputs;
+use crate::issue::storage::File;
+use crate::issue::storage::Inputs;
 use crate::prelude::*;
 
 /// The folder whose folders are the home's projects.

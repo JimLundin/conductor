@@ -3,8 +3,8 @@ use crate::ProjectId;
 use crate::flow::Severity;
 
 use super::{Finding, check as checked};
-use crate::flow::graph::File;
-use crate::flow::snapshot::{Inputs, Snapshot};
+use crate::issue::storage::File;
+use crate::issue::storage::Inputs;
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
@@ -56,7 +56,7 @@ fn inputs(flow: &str, review_status: &str) -> Inputs {
 }
 
 fn check(inputs: &Inputs) -> super::Report {
-    checked(&Snapshot::of(inputs.clone()))
+    checked(&crate::issue::storage::snapshot(inputs.clone()))
 }
 
 fn subject(id: &str) -> String {

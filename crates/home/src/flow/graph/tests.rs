@@ -3,9 +3,10 @@ use alloc::collections::BTreeMap;
 use crate::issue::{ChecklistItem, Datum, Entry, LogEvent, Section};
 use crate::{IssueId, ProjectId};
 
-use super::{File, Graph, Problem, read};
+use super::{Graph, Problem};
 use crate::flow::Flow;
 use crate::flow::load;
+use crate::issue::storage::{File, one};
 
 const SPEC: &str = "0tm7zt00";
 const TASK: &str = "0tm7zx0b";
@@ -67,11 +68,15 @@ fn problems(graph: &Graph) -> Vec<(String, Option<String>, String)> {
         .map(
             |Problem {
                  project,
-                 stem,
+                 record,
                  field,
                  message,
              }| {
-                (format!("{project}/{stem}"), field.clone(), message.clone())
+                (
+                    format!("{project}/{record}"),
+                    field.clone(),
+                    message.clone(),
+                )
             },
         )
         .collect()
@@ -206,7 +211,7 @@ fn an_issue_keeps_its_body_before_the_checklist_and_the_log() {
 fn a_problem_says_what_is_wrong_after_the_field_that_causes_it() {
     let at = |field: Option<&str>| Problem {
         project: ProjectId::new(0),
-        stem: String::from(TASK),
+        record: String::from(TASK),
         field: field.map(String::from),
         message: String::from("is missing"),
     };
@@ -469,4 +474,11 @@ fn each_file_holding_an_id_another_file_holds_is_a_problem() {
             ),
         ])
     );
+}
+
+fn read(flow: &Flow, files: &[File]) -> Graph {
+    super::read(
+        flow,
+        &files.iter().map(|file| one(flow, file)).collect::<Vec<_>>(),
+    )
 }

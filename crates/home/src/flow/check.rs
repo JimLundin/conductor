@@ -106,7 +106,7 @@ pub fn check(home: &Snapshot) -> Report {
     };
     findings.extend(graph.problems.iter().map(|problem| {
         error(
-            Some(named(problem.project, &problem.stem)),
+            Some(named(problem.project, &problem.record)),
             problem.to_string(),
         )
     }));

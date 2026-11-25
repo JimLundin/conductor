@@ -28,12 +28,12 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use agents::ClientName;
 use home::checkout::Root;
 use home::flow::command::fresh;
-use home::flow::graph::File;
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
+use home::issue::storage::{self, Listing};
 use home::issue::{
-    Commit, Context, Delivery, Edit, Listing, PendingEdits, Record,
-    RecordEffect, RemoteProbe, SessionUpdate, Write,
+    Commit, Context, Delivery, Edit, NoCommit, PendingEdits, Record,
+    RecordEffect, RemoteProbe, SessionUpdate,
 };
 use home::issue::{EditId, IssueChange, NewIssue};
 use home::skills;
@@ -723,15 +723,22 @@ impl Actor {
         &mut self,
         request: Record,
     ) -> Result<Vec<String>, IssueError> {
-        self.home
-            .flow()
-            .map_err(|reason| HomeRefusal::IssueNotSaved {
-                reason: String::from(reason),
-            })?;
-        let current = read_issue(&self.clone, &request.read().path)
+        let flow =
+            self.home
+                .flow()
+                .map_err(|reason| HomeRefusal::IssueNotSaved {
+                    reason: String::from(reason),
+                })?;
+        let current = read_issue(&self.clone, &storage::path(&request.read()))
             .map_err(IssueError::Retryable)?;
+        let loaded =
+            home_files::issue(flow, &request.read(), current.as_deref());
         let mut recorded = request
-            .decide(current.as_deref(), &self.home, &self.edits)
+            .decide(
+                loaded.as_ref().map(|loaded| &loaded.observed),
+                &self.home,
+                &self.edits,
+            )
             .map_err(IssueError::local)?;
         let warnings = recorded.warnings().to_vec();
         let mut outcome = Ok(());
@@ -740,7 +747,15 @@ impl Actor {
         {
             outcome = match effect {
                 RecordEffect::Persist(edit) => self.persist(edit),
-                RecordEffect::Commit(commit) => self.commit(commit).await,
+                RecordEffect::Commit(commit) => {
+                    self.commit(
+                        commit,
+                        loaded
+                            .as_ref()
+                            .and_then(|loaded| loaded.document.clone()),
+                    )
+                    .await
+                }
                 RecordEffect::Deliver { delivery, id } => {
                     self.edits.committed(id);
                     self.deliver(delivery).await
@@ -782,7 +797,7 @@ impl Actor {
         self.edits.reset();
         for index in 0..self.edits.count() {
             if let Some(read) = self.edits.replay_target(index) {
-                let outcome = self.rewrite(index, &read.path).await.inspect_err(|reason| {
+                let outcome = self.rewrite(index, &read).await.inspect_err(|reason| {
                     tracing::warn!(target: "home", issue = ?read.issue, %reason, "an issue change waits");
                 });
                 self.edits.replayed(index, outcome.is_ok());
@@ -793,24 +808,28 @@ impl Actor {
     async fn rewrite(
         &mut self,
         index: usize,
-        path: &str,
+        target: &home::issue::Read,
     ) -> Result<(), String> {
+        let issue_path = storage::path(target);
+        let path = issue_path.as_str();
         let changed =
             changed_at(&self.clone, &self.destination()?.tracking, path)
                 .await?;
-        let current = committed_issue(&self.clone, path).await;
+        let current = committed_issue(&self.clone, path).await?;
+        let loaded =
+            home_files::issue(self.home.flow()?, target, current.as_deref());
         match self.edits.replay(
             &self.home,
             index,
-            current
-                .as_ref()
-                .map(Option::as_deref)
-                .map_err(String::clone),
+            Ok(loaded.as_ref().map(|loaded| &loaded.observed)),
             changed,
         ) {
-            Write::Unchanged | Write::Dropped => Ok(()),
-            Write::Waiting(reason) => Err(reason),
-            Write::Commit(commit) => self.commit(commit).await,
+            Err(NoCommit::Unchanged | NoCommit::Dropped) => Ok(()),
+            Err(NoCommit::Waiting(reason)) => Err(reason),
+            Ok(commit) => {
+                self.commit(&commit, loaded.and_then(|loaded| loaded.document))
+                    .await
+            }
         }
     }
 
@@ -857,16 +876,21 @@ impl Actor {
         )
     }
 
-    async fn commit(&mut self, commit: Commit) -> Result<(), String> {
-        let target =
-            write_issue(&self.clone, &commit.target.path, &commit.text)?;
-        let result = commit_file(&self.clone, &commit).await;
+    async fn commit(
+        &mut self,
+        commit: &Commit,
+        document: Option<home::issue::document::Document>,
+    ) -> Result<(), String> {
+        let file = storage::encode(
+            self.home.flow()?,
+            &commit.change,
+            document,
+            Some(commit.marker),
+        )?;
+        let target = write_issue(&self.clone, &file.path(), &file.text)?;
+        let result = commit_file(&self.clone, commit).await;
         drop(target);
-        self.home = self.home.with(File {
-            project: commit.target.project,
-            stem: commit.target.issue.to_string(),
-            text: commit.text,
-        });
+        self.home = self.home.with(commit.change.observation.clone());
         result
     }
 
@@ -912,7 +936,7 @@ impl Actor {
     }
 
     fn read_home(&self) -> Snapshot {
-        home_files::read(&self.clone)
+        home_files::read(&self.clone).snapshot
     }
 
     fn publish(&self) {
@@ -1254,7 +1278,8 @@ async fn changed_at(
 }
 
 async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
-    let relative = &commit.target.path;
+    let issue_path = storage::path(&commit.target);
+    let relative = issue_path.as_str();
     text(clone, &["add", "--", relative])
         .await
         .map_err(|err| err.to_string())?;
