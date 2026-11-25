@@ -35,13 +35,10 @@ fn set(cmd: &mut Command, var: Var, home: &Home) {
     };
 }
 
-/// Keeps a host started without a console, such as from Task Scheduler, from
-/// opening a console window for each agent process.
 #[cfg(not(unix))]
 #[must_use]
 fn no_window(mut cmd: Command) -> Command {
     use std::os::windows::process::CommandExt;
-    /// `CREATE_NO_WINDOW` from the Win32 process creation flags.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     cmd.as_std_mut().creation_flags(CREATE_NO_WINDOW);
     cmd
@@ -53,7 +50,6 @@ const fn no_window(cmd: Command) -> Command {
     cmd
 }
 
-/// Closes stdin, waits briefly for a clean exit, then kills.
 pub(crate) async fn stop(mut child: Child, stdin: ChildStdin) -> Exit {
     drop(stdin);
     let graceful = tokio::time::timeout(EXIT_GRACE, child.wait())
@@ -140,7 +136,6 @@ impl SignInRun {
     }
 }
 
-/// Each line of `stream`, invalid UTF-8 replaced, until it closes or fails.
 async fn lines(stream: impl AsyncRead + Unpin, printed: &impl Fn(String)) {
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();

@@ -1,12 +1,9 @@
-//! `home` alone, in a home on disk.
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
 const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
 
-/// Every command `home` takes, as its usage writes it.
 const COMMANDS: [&str; 14] = [
     "home check",
     "home issue new <project> <kind> <title> [<field>=<value>...]",

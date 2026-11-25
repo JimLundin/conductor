@@ -1,5 +1,3 @@
-//! The `home` command line run in a home on disk.
-
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
