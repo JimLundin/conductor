@@ -352,25 +352,23 @@ impl Runner<'_> {
         path: &str,
         request: Instruction,
     ) -> Result<Answer, GitError> {
-        let output = match &request {
-            Instruction::Integrate {
-                branch,
-                commit,
-                expected,
-                receipt,
-            } => {
-                Self::land_refs(path, branch, commit, expected, receipt).await?
-            }
-            _ => {
-                let command = executable::command(&request);
-                self.git(
-                    path,
-                    &command.args,
-                    command.index == Index::Scratch,
-                    command.identity,
-                )
-                .await?
-            }
+        let output = if let Instruction::Integrate {
+            branch,
+            commit,
+            expected,
+            receipt,
+        } = &request
+        {
+            Self::land_refs(path, branch, commit, expected, receipt).await?
+        } else {
+            let command = executable::command(&request);
+            self.git(
+                path,
+                &command.args,
+                command.index == Index::Scratch,
+                command.identity,
+            )
+            .await?
         };
         Ok(Answer::Repository(executable::reply(&request, output)))
     }

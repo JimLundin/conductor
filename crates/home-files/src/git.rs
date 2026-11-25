@@ -27,7 +27,7 @@ pub fn command(request: &Instruction) -> Command {
     }
 }
 
-fn index(request: &Instruction) -> Index {
+const fn index(request: &Instruction) -> Index {
     match request {
         Instruction::ReadTree { index, .. }
         | Instruction::Stage { index }
@@ -54,9 +54,11 @@ fn args(request: &Instruction) -> Vec<String> {
         Instruction::Root | Instruction::ProbeRoot => {
             words(&["rev-parse", "--show-toplevel"])
         }
-        Instruction::CommittedHead => {
-            words(&["rev-parse", "--verify", "HEAD^{commit}"])
-        }
+        Instruction::CommittedHead => words(&[
+            "rev-parse",
+            "--verify",
+            &revision(&Revision::Commit(String::from("HEAD"))),
+        ]),
         Instruction::GitDirectory => {
             words(&["rev-parse", "--absolute-git-dir"])
         }
@@ -149,7 +151,7 @@ fn diff(previous: &str, commit: &str, path: Option<&str>) -> Vec<String> {
         Some(_) => words(&["--no-color"]),
     });
     args.extend(words(&[previous, commit, "--"]));
-    args.extend(path.map(|path| format!(":(literal){path}")));
+    args.extend(path.map(|entry_path| format!(":(literal){entry_path}")));
     args
 }
 
@@ -222,7 +224,7 @@ pub fn reply(request: &Instruction, output: Output) -> Result<Reply, Error> {
         Instruction::DiffPatch { .. } => patch(output).map(Reply::Patch),
         Instruction::Worktrees => text(output, "worktree")
             .map(|listed| Reply::Worktrees(worktrees(&listed))),
-        Instruction::Merge { .. } => merge(output).map(Reply::Merge),
+        Instruction::Merge { .. } => merge(&output).map(Reply::Merge),
         Instruction::Ancestor { .. } => Ok(Reply::Found(output.success)),
         Instruction::CountAhead { .. } => text(output, "rev-list")?
             .parse()
@@ -292,8 +294,11 @@ fn listing(output: Output) -> Result<Reply, Error> {
 }
 
 fn bounded(entries: Vec<Entry>) -> Reply {
-    let (entries, extent) = vcs::plan::bounded_entries(entries);
-    Reply::Names { entries, extent }
+    let (kept, extent) = vcs::plan::bounded_entries(entries);
+    Reply::Names {
+        entries: kept,
+        extent,
+    }
 }
 
 fn entries(metadata: &str) -> Result<Vec<Entry>, Error> {
@@ -345,7 +350,7 @@ fn decoded_patch(bytes: Vec<u8>) -> FilePatch {
     }
 }
 
-fn merge(output: Output) -> Result<Merge, Error> {
+fn merge(output: &Output) -> Result<Merge, Error> {
     let text = String::from_utf8_lossy(&output.bytes);
     let mut lines = text.lines();
     let tree = lines.next().unwrap_or_default();
@@ -414,12 +419,11 @@ type Status = (
 );
 
 fn status_line((mut state, upstream, distance): Status, line: &str) -> Status {
-    match line.strip_prefix("# ") {
-        Some(header) => status_header((state, upstream, distance), header),
-        None => {
-            state.changed += 1;
-            (state, upstream, distance)
-        }
+    if let Some(header) = line.strip_prefix("# ") {
+        status_header((state, upstream, distance), header)
+    } else {
+        state.changed += 1;
+        (state, upstream, distance)
     }
 }
 

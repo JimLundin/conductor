@@ -271,7 +271,7 @@ fn wrong_answer() -> GitError {
     failure("workspace plan", "unexpected step result")
 }
 
-impl<'a> Plan<'a, Workspace> {
+impl Plan<'_, Workspace> {
     pub fn create(request: Prepare) -> Self {
         Self::new(|steps| async move { steps.create(&request).await })
     }
@@ -447,10 +447,9 @@ impl Steps {
             source_common,
             linked,
         };
-        match ownership(workspace).repository(&observed) {
-            Some(error) => Err(error),
-            None => Ok(directory),
-        }
+        ownership(workspace)
+            .repository(&observed)
+            .map_or(Ok(directory), Err)
     }
 
     async fn common_dir(&self, path: &str) -> Result<String, GitError> {
@@ -459,7 +458,7 @@ impl Steps {
     }
 }
 
-impl<'a> Plan<'a, String> {
+impl Plan<'_, String> {
     pub fn snapshot(request: Capture) -> Self {
         Self::new(|steps| async move {
             let workspace = workspace(request.workspace);
@@ -621,7 +620,7 @@ impl Steps {
     }
 }
 
-impl<'a> Plan<'a, Comparison> {
+impl Plan<'_, Comparison> {
     pub fn diff(request: Compare) -> Self {
         Self::new(|steps| async move {
             steps
@@ -670,14 +669,14 @@ impl Steps {
     }
     async fn patch(
         &self,
-        path: &str,
+        root: &str,
         previous: &str,
         commit: &str,
         entry: vcs::Entry,
     ) -> Result<SnapshotFile, GitError> {
         let Reply::Patch(patch) = self
             .request(
-                path,
+                root,
                 Instruction::DiffPatch {
                     previous: String::from(previous),
                     commit: String::from(commit),
@@ -696,7 +695,7 @@ impl Steps {
     }
 }
 
-impl<'a> Plan<'a, Kept> {
+impl Plan<'_, Kept> {
     pub fn remove(request: PreserveAndRemove) -> Self {
         Self::new(|steps| async move {
             steps.remove(&workspace(request.workspace)).await
@@ -704,7 +703,7 @@ impl<'a> Plan<'a, Kept> {
     }
 }
 
-impl<'a> Plan<'a, u64> {
+impl Plan<'_, u64> {
     pub fn land(request: Integrate) -> Self {
         Self::new(|steps| async move {
             steps
@@ -718,7 +717,7 @@ impl<'a> Plan<'a, u64> {
     }
 }
 
-impl<'a> Plan<'a, Option<u64>> {
+impl Plan<'_, Option<u64>> {
     pub fn landing_receipt(request: Integrate) -> Self {
         Self::new(|steps| async move {
             steps

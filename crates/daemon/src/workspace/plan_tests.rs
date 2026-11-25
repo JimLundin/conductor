@@ -177,7 +177,10 @@ fn create_probes_the_selected_base_and_writes_ownership_only_for_a_new_worktree(
                             created.push("worktree");
                             output("")
                         }
-                        request => valid(Step::Repository { path, request }),
+                        other => valid(Step::Repository {
+                            path,
+                            request: other,
+                        }),
                     }
                 }
                 other => valid(other),

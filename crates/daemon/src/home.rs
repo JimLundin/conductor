@@ -735,7 +735,7 @@ impl Actor {
             home_files::issue(flow, &request.read(), current.as_deref());
         let mut recorded = request
             .decide(
-                loaded.as_ref().map(|loaded| &loaded.observed),
+                loaded.as_ref().map(|observation| &observation.observed),
                 &self.home,
                 &self.edits,
             )
@@ -750,9 +750,9 @@ impl Actor {
                 RecordEffect::Commit(commit) => {
                     self.commit(
                         commit,
-                        loaded
-                            .as_ref()
-                            .and_then(|loaded| loaded.document.clone()),
+                        loaded.as_ref().and_then(|observation| {
+                            observation.document.clone()
+                        }),
                     )
                     .await
                 }
@@ -821,14 +821,17 @@ impl Actor {
         match self.edits.replay(
             &self.home,
             index,
-            Ok(loaded.as_ref().map(|loaded| &loaded.observed)),
+            Ok(loaded.as_ref().map(|observation| &observation.observed)),
             changed,
         ) {
             Err(NoCommit::Unchanged | NoCommit::Dropped) => Ok(()),
             Err(NoCommit::Waiting(reason)) => Err(reason),
             Ok(commit) => {
-                self.commit(&commit, loaded.and_then(|loaded| loaded.document))
-                    .await
+                self.commit(
+                    &commit,
+                    loaded.and_then(|observation| observation.document),
+                )
+                .await
             }
         }
     }
