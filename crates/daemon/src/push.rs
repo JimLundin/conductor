@@ -5,9 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use data_encoding::{BASE64URL_NOPAD, HEXLOWER};
-use host::log::FreshRequest;
+use host::log::{FreshRequest, HostSeq};
 use host::push::{Devices, Registration};
 use host::push::{PushCommand, PushResult, PushSubscription};
+use host::session::SessionId;
 use sad_web_push::{
     ContentEncoding, HyperWebPushClient, PartialVapidSignatureBuilder,
     SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushError,
@@ -168,8 +169,8 @@ fn save_devices(path: &Path, contents: &[u8]) -> std::io::Result<()> {
 #[derive(Serialize)]
 struct Notice<'a> {
     host: &'a str,
-    session: String,
-    event: String,
+    session: SessionId,
+    event: HostSeq,
     expires: u64,
 }
 
@@ -177,8 +178,8 @@ impl<'a> Notice<'a> {
     fn from_request(host: &'a str, request: FreshRequest, now: u64) -> Self {
         Self {
             host,
-            session: format!("{:032x}", request.session.0),
-            event: format!("{:016x}", request.seq.0),
+            session: request.session,
+            event: request.seq,
             expires: now.saturating_add(u64::from(TTL)),
         }
     }
@@ -221,7 +222,7 @@ fn push_message(
     let bytes = serde_json::to_vec(notice)?;
     let mut builder = WebPushMessageBuilder::new(subscription);
     builder.set_ttl(TTL);
-    builder.set_topic(notice.session.clone());
+    builder.set_topic(notice.session.to_string());
     builder.set_payload(ContentEncoding::Aes128Gcm, &bytes);
     builder.set_vapid_signature(vapid.build()?);
     Ok(builder.build()?)
@@ -230,16 +231,15 @@ fn push_message(
 #[cfg(test)]
 mod tests {
 
-    use host::log::HostSeq;
     use host::push::PushSubscription;
-    use host::session::{EventKind, RequestId, SessionId};
+    use host::session::{EventKind, RequestId};
     use sad_web_push::{
         ContentEncoding, SubscriptionInfo, VapidSignatureBuilder,
     };
 
     use super::{
-        Devices, FreshRequest, Log, Notice, TTL, load_devices, push_message,
-        save_devices,
+        Devices, FreshRequest, HostSeq, Log, Notice, SessionId, TTL,
+        load_devices, push_message, save_devices,
     };
 
     fn subscription(endpoint: &str) -> PushSubscription {
@@ -265,8 +265,8 @@ mod tests {
             plain,
             serde_json::json!({
                 "host": host,
-                "session": "0000000000000000000000000000002a",
-                "event": "0000000000000011",
+                "session": "0000000000000000000000001A",
+                "event": 17,
                 "expires": 310,
             }),
         );

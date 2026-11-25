@@ -1,4 +1,5 @@
-import { Effect, Ref } from "effect";
+import { Effect, Random, Ref } from "effect";
+import { TestClock } from "effect/testing";
 import { expect, test } from "vitest";
 import { fakeHost } from "./fake-pipe.ts";
 import { link } from "./link.ts";
@@ -6,6 +7,7 @@ import { Update } from "./link/host.ts";
 import {
   client,
   deltas,
+  dialing,
   events,
   hosts,
   inState,
@@ -20,6 +22,7 @@ import {
   ticket,
   until,
 } from "./link/replay.ts";
+import type { Connection } from "./pipe.ts";
 import type { Welcome } from "./schemas/index.ts";
 
 const turn = scenario("a_claude_turn_streams_asks_and_finishes");
@@ -183,4 +186,51 @@ test("a refused hello drops the connection with the host's reason", async () => 
       error: "the host refused us: unknown token",
     }),
   );
+});
+
+// Every jitter draws 0.75, which stretches a delay by 1.1 within its 0.8 to 1.2.
+const drawing = {
+  nextIntUnsafe: (): number => 0,
+  nextDoubleUnsafe: (): number => 0.75,
+} as const satisfies Random.Random;
+
+test("the link backs off from 250 ms, doubling to 10 s with jitter, and from 250 ms again after Live", async () => {
+  const dials = await scoped(
+    Effect.gen(function* backingOff() {
+      const host = yield* Effect.promise(fakeHost);
+      yield* serve(host, {
+        reply: { Welcome: yield* turn.welcome(1) },
+        feed: stored(turn.feed(1)),
+        results: [],
+      });
+      const clock = yield* TestClock.testClockWith(Effect.succeed);
+      let at: readonly number[] = [];
+      const timed = (dial: () => Promise<Connection>) => (): Promise<Connection> => {
+        at = [...at, clock.currentTimeMillisUnsafe()];
+        return dial();
+      };
+      const offline = timed(() => Promise.reject(new Error("offline")));
+      const linked = yield* link(
+        dialing([
+          ...Array.from({ length: 7 }, () => offline),
+          timed(() => reach(host)),
+          timed(() => Effect.runPromise(Effect.never)),
+        ]),
+        ticket,
+        client,
+      );
+      for (const delay of [275, 550, 1100, 2200, 4400, 8800, 11_000]) {
+        yield* until(linked, inState("Disconnected"));
+        yield* TestClock.adjust(delay);
+      }
+      yield* until(linked, inState("Live"));
+      host.close("restarted");
+      yield* until(linked, inState("Disconnected"));
+      yield* TestClock.adjust(275);
+      return at;
+    }).pipe(Effect.provide(TestClock.layer()), Effect.provideService(Random.Random, drawing)),
+  );
+  expect(dials.slice(1).map((time, index) => time - (dials[index] ?? 0))).toEqual([
+    275, 550, 1100, 2200, 4400, 8800, 11_000, 275,
+  ]);
 });

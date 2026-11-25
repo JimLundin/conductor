@@ -1,21 +1,15 @@
 import { Result } from "effect";
 import { expect, test } from "vitest";
+import example from "../../crates/link/ticket.example.json" with { type: "json" };
 import { parseJoin, parseTicket, TicketError } from "./ticket.ts";
 
-// crates/link/src/ticket.rs's worked example.
-const text =
-  "AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
-const ticket = {
-  host: [0x58, ...Array.from({ length: 31 }, () => 0x66)],
-  relay: "https://r.example/",
-  token: Array.from({ length: 16 }, () => 1),
-} as const;
+const { text, ticket } = example;
 
-test("a ticket's text reads as host's worked example", () => {
+test("a ticket reads as the host wrote it", () => {
   expect(parseTicket(text)).toEqual(Result.succeed(ticket));
 });
 
-test("malformed tickets are refused as host refuses them", () => {
+test("malformed tickets are refused", () => {
   expect(parseTicket("not base64!")).toEqual(Result.fail(TicketError.Encoding()));
   expect(parseTicket(`${text}==`)).toEqual(Result.fail(TicketError.Encoding()));
   expect(parseTicket(text.slice(0, 20))).toEqual(Result.fail(TicketError.Truncated()));

@@ -694,7 +694,10 @@ mod durability_tests {
         log: &Log,
         key: u128,
     ) -> Result<CommandLease, crate::Stopped> {
-        match log.begin(CommandId(key), Kind::Session).await? {
+        match log
+            .begin(CommandId(uuid::Uuid::from_u128(key)), Kind::Session)
+            .await?
+        {
             BeginCommand::Execute(lease) => Ok(lease),
             BeginCommand::Cached(_) => Err(crate::Stopped {}),
         }
@@ -710,7 +713,10 @@ mod durability_tests {
             directory.join(format!("receipts-{}.redb", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let log = Log::open(String::from("test"), &path)?;
-        let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
+        let receipt = match log
+            .begin(CommandId(uuid::Uuid::from_u128(23)), Kind::Receipt)
+            .await?
+        {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -721,7 +727,7 @@ mod durability_tests {
         let (finished_reply, mut finished) = oneshot::channel();
         log.inbox
             .send(LogMsg::Finish {
-                key: CommandId(23),
+                key: CommandId(uuid::Uuid::from_u128(23)),
                 completion: CommandResult::Session(
                     host::session::SessionResult::Accepted,
                 )
@@ -732,7 +738,7 @@ mod durability_tests {
         let (retry_reply, retry) = oneshot::channel();
         log.inbox
             .send(LogMsg::Begin(CommandStart {
-                key: CommandId(23),
+                key: CommandId(uuid::Uuid::from_u128(23)),
                 kind: link::log::Kind::Session,
                 reply: retry_reply,
             }))
@@ -764,7 +770,10 @@ mod durability_tests {
         );
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
-        let cached = match reopened.begin(CommandId(23), Kind::Receipt).await? {
+        let cached = match reopened
+            .begin(CommandId(uuid::Uuid::from_u128(23)), Kind::Receipt)
+            .await?
+        {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };
@@ -813,7 +822,7 @@ mod durability_tests {
         for id in 1..=64 {
             super::storage::store_receipt(
                 &transaction,
-                CommandId(id),
+                CommandId(uuid::Uuid::from_u128(id)),
                 &CommandResult::Session(host::session::SessionResult::Accepted),
             )?;
         }
@@ -826,7 +835,7 @@ mod durability_tests {
             let (reply, answer) = oneshot::channel();
             log.inbox
                 .send(LogMsg::Begin(CommandStart {
-                    key: CommandId(id),
+                    key: CommandId(uuid::Uuid::from_u128(id)),
                     kind: link::log::Kind::Session,
                     reply,
                 }))
@@ -836,7 +845,7 @@ mod durability_tests {
         let (reply, cache_miss) = oneshot::channel();
         log.inbox
             .send(LogMsg::Begin(CommandStart {
-                key: CommandId(65),
+                key: CommandId(uuid::Uuid::from_u128(65)),
                 kind: link::log::Kind::Session,
                 reply,
             }))
@@ -870,7 +879,10 @@ mod durability_tests {
     async fn receipt_lease_drop_fails_closed()
     -> Result<(), Box<dyn std::error::Error>> {
         let log = Log::spawn(String::from("test"), host::log::Epoch(1));
-        let receipt = match log.begin(CommandId(23), Kind::Receipt).await? {
+        let receipt = match log
+            .begin(CommandId(uuid::Uuid::from_u128(23)), Kind::Receipt)
+            .await?
+        {
             BeginCommand::Execute(lease) => Some(lease),
             BeginCommand::Cached(_) => None,
         }
@@ -909,7 +921,7 @@ mod durability_tests {
         let (duplicate_reply, duplicate) = oneshot::channel();
         log.inbox
             .send(LogMsg::Begin(CommandStart {
-                key: CommandId(1),
+                key: CommandId(uuid::Uuid::from_u128(1)),
                 kind: link::log::Kind::Session,
                 reply: duplicate_reply,
             }))
@@ -917,7 +929,7 @@ mod durability_tests {
         let (next_reply, next) = oneshot::channel();
         log.inbox
             .send(LogMsg::Begin(CommandStart {
-                key: CommandId(2),
+                key: CommandId(uuid::Uuid::from_u128(2)),
                 kind: link::log::Kind::Session,
                 reply: next_reply,
             }))
@@ -952,7 +964,10 @@ mod durability_tests {
         log.shutdown().await?;
         let reopened = Log::open(String::from("test"), &path)?;
         assert_eq!(reopened.subscribe(HostSeq(0)).await?.replay.len(), 1);
-        let cached = match reopened.begin(CommandId(1), Kind::Session).await? {
+        let cached = match reopened
+            .begin(CommandId(uuid::Uuid::from_u128(1)), Kind::Session)
+            .await?
+        {
             BeginCommand::Cached(result) => Some(result),
             BeginCommand::Execute(_) => None,
         };

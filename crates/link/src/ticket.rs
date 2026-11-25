@@ -4,8 +4,7 @@
 //! Binary layout, then base64url without padding:
 //! `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`.
 //!
-//! This checks only the layout; `net::parse` also checks that the id is a
-//! valid key and the relay a valid URL.
+//! Only the web app reads it, in `web/src/ticket.ts`.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -31,20 +30,6 @@ pub struct Ticket {
 /// prints in its ticket and requires in every `Hello`.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AuthToken([u8; TOKEN_LEN]);
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum TicketError {
-    #[error("ticket is not base64url")]
-    Encoding,
-    #[error("ticket is truncated")]
-    Truncated,
-    #[error("ticket version {0} is not supported")]
-    Version(u8),
-    #[error("ticket host id is not a valid key")]
-    HostId,
-    #[error("ticket relay url is invalid")]
-    RelayUrl,
-}
 
 /// A `Hello` whose token is not the host's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -94,49 +79,18 @@ impl Ticket {
             .collect::<Vec<u8>>();
         BASE64URL_NOPAD.encode(&bytes)
     }
-
-    /// # Errors
-    ///
-    /// The first way `text` departs from the layout.
-    pub fn parse(text: &str) -> Result<Self, TicketError> {
-        let bytes = BASE64URL_NOPAD
-            .decode(text.trim().as_bytes())
-            .map_err(|_| TicketError::Encoding)?;
-        let (version, rest) =
-            bytes.split_first().ok_or(TicketError::Truncated)?;
-        match *version {
-            VERSION => Self::parse_fields(rest),
-            other => Err(TicketError::Version(other)),
-        }
-    }
-
-    /// Everything after the version byte.
-    fn parse_fields(bytes: &[u8]) -> Result<Self, TicketError> {
-        let (id, rest) = bytes
-            .split_first_chunk::<ID_LEN>()
-            .ok_or(TicketError::Truncated)?;
-        let (token, relay) = rest
-            .split_first_chunk::<TOKEN_LEN>()
-            .ok_or(TicketError::Truncated)?;
-        let text =
-            core::str::from_utf8(relay).map_err(|_| TicketError::RelayUrl)?;
-        Ok(Self {
-            host: *id,
-            relay: String::from(text),
-            token: AuthToken(*token),
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use alloc::format;
     use alloc::string::String;
-    use alloc::vec::Vec;
+    use std::path::PathBuf;
 
-    use data_encoding::BASE64URL_NOPAD;
+    use serde::Serialize;
+    use serde_json::Value;
 
-    use super::{AuthToken, Ticket, TicketError};
+    use super::{AuthToken, Ticket};
 
     const TOKEN: AuthToken = AuthToken::from_bytes([1; 16]);
 
@@ -148,35 +102,33 @@ mod tests {
         }
     }
 
-    #[test]
-    fn ticket_text_is_fragment_safe_base64url() {
-        let text = ticket().to_text();
-        assert_eq!(
-            text,
-            "AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw"
-        );
-        assert_eq!(Ticket::parse(&text), Ok(ticket()));
+    /// The worked example as the web app's reader is tested against it.
+    #[derive(Serialize)]
+    struct Example {
+        ticket: Ticket,
+        text: String,
     }
 
     #[test]
-    fn malformed_tickets_are_refused() -> Result<(), data_encoding::DecodeError>
-    {
-        let text = ticket().to_text();
-        assert_eq!(Ticket::parse("not base64!"), Err(TicketError::Encoding));
+    fn ticket_text_is_fragment_safe_base64url() {
         assert_eq!(
-            Ticket::parse(
-                text.split_at_checked(20).map_or("", |(head, _)| head)
-            ),
-            Err(TicketError::Truncated)
+            ticket().to_text(),
+            "AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw"
         );
-        let bytes = BASE64URL_NOPAD.decode(text.as_bytes())?;
-        let v1 = core::iter::once(1)
-            .chain(bytes.into_iter().skip(1))
-            .collect::<Vec<u8>>();
-        assert_eq!(
-            Ticket::parse(&BASE64URL_NOPAD.encode(&v1)),
-            Err(TicketError::Version(1))
-        );
+    }
+
+    #[test]
+    fn the_worked_example_is_published_beside_link()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("ticket.example.json");
+        let example = serde_json::to_value(Example {
+            ticket: ticket(),
+            text: ticket().to_text(),
+        })?;
+        let published =
+            serde_json::from_slice::<Value>(&std::fs::read(&path)?)?;
+        assert_eq!(published, example);
         Ok(())
     }
 

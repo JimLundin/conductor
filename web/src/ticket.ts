@@ -94,6 +94,7 @@ const parseTicket = (text: string): Result.Result<Ticket, TicketError> => {
   return fields(bytes);
 };
 
+// What a join link puts before its ticket; the daemon writes the same in crates/daemon/src/start.rs.
 const joinMarker = "#join=";
 
 // What a person pastes: a whole join link, or the bare ticket.
@@ -110,4 +111,4 @@ const describeTicketError = TicketError.$match({
   RelayUrl: () => "The ticket's relay URL is invalid.",
 });
 
-export { describeTicketError, parseJoin, parseTicket, TicketError };
+export { describeTicketError, joinMarker, parseJoin, parseTicket, TicketError };

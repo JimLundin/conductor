@@ -36,9 +36,10 @@ Home Screen. The design is in
   clang besides the toolchain. Nothing it generates is committed.
 - **Generated and recorded files.** `web/src/schemas/` is generated from
   `link`'s root types (ADR 0002, ADR 0003) and never edited by hand: after
-  changing a type the client link reaches, bump `link::ALPN` and run
-  `tools/schemas.sh`
-  (needs `npm ci` in `web/`), then commit both. `web/fixtures/feeds/` holds
+  changing a type the client link reaches, run `tools/schemas.sh` (needs
+  `npm ci` in `web/`) and commit what it writes, with `link::ALPN` bumped
+  from main's: the `schemas` suite fails on a document that differs from
+  main's under main's ALPN. `web/fixtures/feeds/` holds
   host feeds the web app's tests replay, as frozen data: when the client
   link changes, edit them to its new shape.
   Use `commit` for local validation when the environment is available. If

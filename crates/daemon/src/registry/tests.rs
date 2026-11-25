@@ -256,12 +256,15 @@ async fn a_pending_relaunch_blocks_removal_then_removal_blocks_relaunch()
     let mut fx = Fixture::new()?;
     let launch = fx.launch().await?;
     assert_eq!(
-        fx.remove(CommandId(1)).await?,
+        fx.remove(CommandId(uuid::Uuid::from_u128(1))).await?,
         InstanceResult::Refused(InstanceRefusal::InstanceInUse { sessions: 1 }),
     );
     fx.release.send_replace(true);
     let _ = tokio::time::timeout(DEADLINE, launch).await???;
-    assert_eq!(fx.remove(CommandId(2)).await?, InstanceResult::Accepted);
+    assert_eq!(
+        fx.remove(CommandId(uuid::Uuid::from_u128(2))).await?,
+        InstanceResult::Accepted
+    );
     assert!(fx.actor.offers.borrow().of(&fx.source).is_none());
     assert!(matches!(
         fx.adapter().await?,

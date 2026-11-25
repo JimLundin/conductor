@@ -1,13 +1,13 @@
 import { Effect, Result } from "effect";
 import { expect, test } from "vitest";
+import example from "../../crates/link/ticket.example.json" with { type: "json" };
 import { fakeHost } from "./fake-pipe.ts";
 import { scenario, scoped, serve } from "./link/replay.ts";
 import { makeStore, sessionsOf } from "./store.ts";
 import { keysOf, memoryStorage, page, when } from "./test-page.ts";
 
-// crates/link/src/ticket.rs's worked example, and the host it names.
-const exampleTicket =
-  "AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";
+// The ticket link writes as its worked example, and the host it names.
+const exampleTicket = example.text;
 const exampleHost = `58${"66".repeat(31)}`;
 const exampleRecord = `conductor.v2.host.${exampleHost}`;
 

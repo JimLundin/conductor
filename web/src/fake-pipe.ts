@@ -10,7 +10,7 @@ type Frame = Parameters<Stream["send"]>[0];
 
 // The host's side of a stream the app opened.
 interface HostStream {
-  readonly send: (frame: Uint8Array) => void;
+  readonly send: (frame: Frame) => Promise<void>;
   readonly finish: () => void;
   // The app's next frame, or undefined once the app finished the stream.
   readonly recv: () => Promise<Uint8Array | undefined>;
@@ -36,7 +36,7 @@ const appStream = (up: Frames, down: Frames): Stream => ({
 });
 
 const hostStream = (up: Frames, down: Frames): HostStream => ({
-  send: (frame: Uint8Array): void => send(down, frame),
+  send: (frame: Frame): Promise<void> => Promise.resolve(send(down, frame)),
   finish: (): void => end(down),
   recv: (): Promise<Uint8Array | undefined> => next(up),
 });

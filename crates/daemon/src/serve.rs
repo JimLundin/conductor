@@ -66,6 +66,8 @@ pub struct ConnectionOptions {
 enum StreamError {
     #[error("{0}")]
     Wire(#[from] WireError),
+    #[error("malformed frame body: {0}")]
+    Frame(#[from] serde_json::Error),
     #[error("could not finish the stream: {0}")]
     Finish(#[from] ClosedStream),
     #[error("{0}")]
@@ -200,9 +202,26 @@ async fn admit_fleet(
     }
 }
 
+async fn write<T: link::frame::Frame + Sync>(
+    send: &mut SendStream,
+    msg: &T,
+) -> Result<(), StreamError> {
+    Ok(wire::write(send, &link::frame::encode(msg)?).await?)
+}
+
+async fn read(
+    recv: &mut RecvStream,
+    limit: usize,
+) -> Result<Option<Open>, StreamError> {
+    Ok(wire::read(recv, limit)
+        .await?
+        .map(|body| link::frame::decode(&body))
+        .transpose()?)
+}
+
 fn trace_command(id: CommandId, command: &Command) {
     let operation = link::serve::operation(command);
-    tracing::info!(command = id.0, operation, "command received");
+    tracing::info!(command = %id.0, operation, "command received");
 }
 
 const fn command_outcome(result: &CommandResult) -> &'static str {
@@ -280,13 +299,12 @@ impl Conductor {
         let connection = conn.stable_id();
         tracing::debug!(%peer, connection, "waiting for hello");
         let (mut send, mut recv) = conn.accept_bi().await?;
-        let first =
-            wire::read_bounded::<Open>(&mut recv, HELLO_BODY_LIMIT).await?;
+        let first = read(&mut recv, HELLO_BODY_LIMIT).await?;
         let (admission, certificate) = self.admission(peer, first).await;
         match admission {
             Admission::Admitted(client) => {
                 tracing::debug!(%peer, connection, elapsed_ms = started.elapsed().as_millis(), "hello received");
-                wire::write(
+                write(
                     &mut send,
                     &HelloReply::Welcome(self.welcome(conn).await?),
                 )
@@ -299,7 +317,7 @@ impl Conductor {
                 }))
             }
             Admission::Refused { reason } => {
-                wire::write(&mut send, &HelloReply::Refused { reason }).await?;
+                write(&mut send, &HelloReply::Refused { reason }).await?;
                 send.finish()?;
                 // Let the refusal reach the client before the close does.
                 let _ = send.stopped().await;
@@ -354,16 +372,16 @@ impl Conductor {
         mut recv: RecvStream,
         client: ClientName,
     ) -> Result<(), StreamError> {
-        match link::serve::stream(wire::read::<Open>(&mut recv).await?) {
+        match link::serve::stream(read(&mut recv, wire::MAX_FRAME_LEN).await?) {
             Stream::Command(id, command) => {
                 trace_command(id, &command);
                 let result = self.run(id, command, client).await?;
                 tracing::info!(
-                    command = id.0,
+                    command = %id.0,
                     outcome = command_outcome(&result),
                     "command finished"
                 );
-                wire::write(&mut send, &result).await?;
+                write(&mut send, &result).await?;
                 send.finish()?;
             }
             Stream::Subscribe(subscribe) => {
@@ -559,7 +577,7 @@ impl Feed {
         loop {
             match self.next(conn).await {
                 Upcoming::Frame(frame) => {
-                    wire::write(&mut self.send, &frame).await?;
+                    write(&mut self.send, &frame).await?;
                 }
                 Upcoming::Quiet => {}
                 Upcoming::Resubscribe => break Ok(self.send.finish()?),
@@ -619,14 +637,14 @@ mod diagnostics_tests {
                 .finish(),
             || {
                 super::trace_command(
-                    CommandId(1),
+                    CommandId(uuid::Uuid::from_u128(1)),
                     &Command::Session(SessionCommand::SendMessage {
                         session: SessionId(1),
                         text: String::from("synthetic-message-marker"),
                     }),
                 );
                 super::trace_command(
-                    CommandId(2),
+                    CommandId(uuid::Uuid::from_u128(2)),
                     &Command::Session(SessionCommand::Answer {
                         session: SessionId(1),
                         request: RequestId(1),
@@ -647,8 +665,12 @@ mod diagnostics_tests {
         );
         let logged = std::fs::read_to_string(&path)?;
         std::fs::remove_file(path)?;
-        assert!(logged.contains(r#"command=1 operation="send_message""#));
-        assert!(logged.contains(r#"command=2 operation="answer""#));
+        assert!(logged.contains(
+            r#"command=00000000-0000-0000-0000-000000000001 operation="send_message""#
+        ));
+        assert!(logged.contains(
+            r#"command=00000000-0000-0000-0000-000000000002 operation="answer""#
+        ));
         assert!(logged.contains("pushed"));
         assert!(!logged.contains("synthetic-"));
         Ok(())

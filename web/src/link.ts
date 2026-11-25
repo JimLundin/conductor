@@ -32,6 +32,7 @@ import {
   type Command,
   type CommandResult,
   HelloReply,
+  Open,
   type Ticket,
   type Welcome,
 } from "./schemas/index.ts";
@@ -44,7 +45,7 @@ const backoffFactor = 2;
 const hello = (host: Host, connection: Connection): Effect.Effect<HelloReply | undefined, string> =>
   Effect.gen(function* greeting() {
     const stream = yield* open(connection);
-    yield* write(stream, {
+    yield* write(Open, stream, {
       Hello: { client: host.client, token: host.ticket.token },
     });
     return yield* read(HelloReply, stream);

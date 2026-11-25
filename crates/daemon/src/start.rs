@@ -21,9 +21,8 @@ use install::Home;
 use install::process::command;
 use iroh::endpoint::presets;
 use iroh::protocol::Router;
-use iroh::{Endpoint, RelayMode, RelayUrl};
+use iroh::{Endpoint, RelayMode};
 use link::Ticket;
-use net::Target;
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin, Settings};
@@ -236,17 +235,11 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     } = hosting;
     let data_dir = data_dir_or_default(given)?;
     let endpoint = Endpoint::builder(presets::N0)
-        .relay_mode(RelayMode::Custom(n0_relays()))
+        .relay_mode(RelayMode::Custom(net::n0_relays()))
         .secret_key(crate::load_or_create_key(&data_dir)?)
         .bind()
         .await?;
     endpoint.online().await;
-    let relay = endpoint
-        .addr()
-        .relay_urls()
-        .next()
-        .cloned()
-        .context("online, but no home relay")?;
     let hosted = start(
         endpoint,
         plugins,
@@ -259,12 +252,6 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         },
     )
     .await?;
-    let target = hosted.target();
-    let ticket = Ticket {
-        host: *target.addr.id.as_bytes(),
-        relay: relay.to_string(),
-        token: target.token,
-    };
     let announced = if hosted.has_fleet {
         writeln!(
             std::io::stdout().lock(),
@@ -272,7 +259,9 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
         )
         .map_err(anyhow::Error::from)
     } else {
-        announce(&data_dir, &web_url, &ticket)
+        hosted
+            .ticket()
+            .and_then(|ticket| announce(&data_dir, &web_url, &ticket))
     };
     let ended = match announced {
         Ok(()) => tokio::select! {
@@ -312,13 +301,24 @@ pub struct Hosted {
 }
 
 impl Hosted {
-    /// Address and authentication token for clients.
-    #[must_use]
-    pub fn target(&self) -> Target {
-        Target {
-            addr: self.router.endpoint().addr(),
+    /// The ticket a client reaches this host and is admitted by.
+    ///
+    /// # Errors
+    ///
+    /// The endpoint has no home relay.
+    pub fn ticket(&self) -> anyhow::Result<Ticket> {
+        let endpoint = self.router.endpoint();
+        let relay = endpoint
+            .addr()
+            .relay_urls()
+            .next()
+            .cloned()
+            .context("online, but no home relay")?;
+        Ok(Ticket {
+            host: *endpoint.id().as_bytes(),
+            relay: relay.to_string(),
             token: self.token,
-        }
+        })
     }
 
     /// Waits for the stored instances to finish configuring while the host serves.
@@ -799,17 +799,6 @@ fn announce(
         }
     }
     Ok(())
-}
-
-/// n0's public relays without the root dot. A host advertises its home relay
-/// to peers, and a browser that dials the dotted name fails `WebKit`'s
-/// certificate check (`net::without_root_dot`).
-fn n0_relays() -> iroh::RelayMap {
-    iroh::defaults::prod::default_relay_map()
-        .urls::<Vec<RelayUrl>>()
-        .iter()
-        .map(net::without_root_dot)
-        .collect()
 }
 
 #[cfg(all(test, unix))]

@@ -1,10 +1,22 @@
 // A subscription's frames, applied once each and in order after the link's cursor.
 import { Effect, Option, Ref, SubscriptionRef } from "effect";
-import { isDelta } from "../fold/host.ts";
 import type { Connection } from "../pipe.ts";
-import { type Epoch, Feed, type HostSeq, type Welcome } from "../schemas/index.ts";
+import {
+  type Epoch,
+  type Event,
+  Feed,
+  type HostSeq,
+  Open,
+  type Welcome,
+} from "../schemas/index.ts";
 import { open, read, write } from "./frames.ts";
 import { appliedSeq, emit, type EventFrame, type Host, publish, Update } from "./host.ts";
+
+// A live delta repeats the last stored seq, which may be another session's.
+const isDelta = (event: Event): boolean =>
+  typeof event.kind === "object" &&
+  "Agent" in event.kind &&
+  ("AssistantDelta" in event.kind.Agent || "ReasoningDelta" in event.kind.Agent);
 
 // Keeps the cursor if the host's log is the one it points into; otherwise starts over from the
 // beginning of the new epoch.
@@ -82,7 +94,7 @@ const subscribe = (
   Effect.gen(function* subscription() {
     const stream = yield* open(connection);
     const after = yield* appliedSeq(host);
-    yield* write(stream, {
+    yield* write(Open, stream, {
       Subscribe: { epoch: welcome.epoch, after_seq: after },
     });
     // The host always sends a first frame once it accepts the subscription.
@@ -95,4 +107,4 @@ const subscribe = (
     );
   });
 
-export { adopt, subscribe };
+export { adopt, isDelta, subscribe };

@@ -1,7 +1,8 @@
 // The recorded host feeds, and a fake host that replays one to a link over the fake pipe.
-import { Deferred, Effect, Ref, Schema, type Scope, Stream } from "effect";
+import { Deferred, Effect, Ref, type Scope, Stream } from "effect";
 import type { FakeHost } from "../fake-pipe.ts";
-import { isDelta } from "../fold/host.ts";
+import { isDelta } from "./feed.ts";
+import { read, write } from "./frames.ts";
 import type { HostLink, LinkState, Update } from "./host.ts";
 import type { Connection, Pipe } from "../pipe.ts";
 import {
@@ -118,27 +119,6 @@ const client = "test-client";
 
 type HostStream = Awaited<ReturnType<FakeHost["accept"]>>;
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-const sendFrame = <T, E>(
-  schema: Schema.Codec<T, E>,
-  stream: HostStream,
-  frame: T,
-): Effect.Effect<void> =>
-  Schema.encodeEffect(schema)(frame).pipe(
-    Effect.map((json) => stream.send(encoder.encode(JSON.stringify(json)))),
-    Effect.orDie,
-  );
-
-const opened = (stream: HostStream): Effect.Effect<Open> =>
-  Effect.promise(() => stream.recv()).pipe(
-    Effect.flatMap((frame) =>
-      Schema.decodeUnknownEffect(Schema.fromJsonString(Open))(decoder.decode(frame)),
-    ),
-    Effect.orDie,
-  );
-
 // What the app asked the host for.
 interface Served {
   readonly subscribes: Ref.Ref<readonly Subscribe[]>;
@@ -168,11 +148,10 @@ const answered = (script: Script): Effect.Effect<void> =>
   next(script.answers).pipe(
     Effect.flatMap((frames) =>
       Effect.forEach(frames.flat(), (frame) =>
-        Deferred.await(script.subscribed).pipe(
-          Effect.flatMap((feed) => sendFrame(Feed, feed, frame)),
-        ),
+        Deferred.await(script.subscribed).pipe(Effect.flatMap((feed) => write(Feed, feed, frame))),
       ),
     ),
+    Effect.orDie,
   );
 
 const answer = (
@@ -181,14 +160,15 @@ const answer = (
   served: Served,
   script: Script,
 ): Effect.Effect<void> =>
-  opened(stream).pipe(
+  read(Open, stream).pipe(
+    Effect.flatMap(Effect.fromNullishOr),
     Effect.flatMap((open) => {
       if ("Hello" in open) {
-        return sendFrame(HelloReply, stream, replay.reply);
+        return write(HelloReply, stream, replay.reply);
       }
       if ("Subscribe" in open) {
         return Ref.update(served.subscribes, (all) => [...all, open.Subscribe]).pipe(
-          Effect.andThen(Effect.forEach(replay.feed, (frame) => sendFrame(Feed, stream, frame))),
+          Effect.andThen(Effect.forEach(replay.feed, (frame) => write(Feed, stream, frame))),
           Effect.andThen(Deferred.succeed(script.subscribed, stream)),
         );
       }
@@ -196,7 +176,7 @@ const answer = (
         return Ref.update(served.commands, (all) => [...all, open.Command]).pipe(
           Effect.andThen(next(script.results)),
           Effect.flatMap((results) =>
-            Effect.forEach(results, (result) => sendFrame(CommandResult, stream, result)),
+            Effect.forEach(results, (result) => write(CommandResult, stream, result)),
           ),
           Effect.andThen(Effect.sync(() => stream.finish())),
           Effect.andThen(answered(script)),
@@ -204,6 +184,7 @@ const answer = (
       }
       return Effect.void;
     }),
+    Effect.orDie,
   );
 
 // Plays one connection of a host: `reply` to the hello, `feed` on each subscription, and the
@@ -285,7 +266,6 @@ export {
   reach,
   scenario,
   scoped,
-  type Sent,
   serve,
   states,
   stored,

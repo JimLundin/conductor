@@ -219,19 +219,18 @@ client:
 | `Open::Subscribe { epoch, after_seq }` | Replays the log after the cursor and the sign-ins running, then streams live, each frame a `Feed`: an `Event`, a live-only `SignIn` step (§6.3), the current `Home`, or the current `Instances` offer. A cursor from another epoch is refused. |
 
 Each frame is a big-endian `u32` length and a JSON body written by serde.
-A 128-bit id (`SessionId`, `CommandId`, `EditId`) is its 26-character
+A 128-bit id (`SessionId`, `EditId`) is its 26-character
 ULID text as the `ulid` crate writes it, in upper case (it reads either
-case), an `IssueId` or `ProjectId` its short text (`home`), and an
+case), a `CommandId` its UUID text as the `uuid` crate writes it, an `IssueId` or `ProjectId` its short text (`home`), and an
 `Epoch` its decimal digits, since JavaScript's numbers are exact only to
 2^53; `Instances` and `Roster` are lists of `[InstanceId, value]` pairs,
-since a JSON key is only a string; bytes are arrays of integers. Stores and host-to-host frames stay postcard, whose
-bytes these choices don't change.
+since a JSON key is only a string; bytes are arrays of integers. Stores and host-to-host frames stay postcard.
 
 ### 4.2 iroh
 
 - A host binds with a custom relay map: n0's relays named without the root
   dot, because WebKit refuses the dotted name's certificate
-  (`net::without_root_dot`, `net::platform::n0_relays`).
+  (`net::without_root_dot`, `net::n0_relays`).
 - The host waits for `Endpoint::online()` and prints a ticket with its node id,
   home relay and the auth token (`link::Ticket`), as a QR code and a
   `#join=` link. The fragment never reaches the static server.
@@ -544,7 +543,7 @@ until someone re-records them by hand (§6.2).
   persist, so an existing ticket remains valid after restart. Streaming
   deltas stay live-only.
 - **Idempotent commands (built):** receipts are keyed by fleet-unique
-  `CommandId`s (128 random bits), so a hedge onto a new transport identity
+  `CommandId`s (random UUIDs), so a hedge onto a new transport identity
   still finds the same receipt. One command at a time stages its durable
   events and conversation writes, then commits them with its receipt
   before replying. Ordinary commands use one transaction. Snapshot capture
@@ -1672,9 +1671,8 @@ The browser app is TypeScript, React and Effect in `web/`, over iroh
 compiled to wasm (ADR 0001). The link to a host and the fold of its events
 live only there. `crates/client`, `net`'s `HostLink` and the Rust fold
 (`HostFold`, `HostView`) are gone, and `net` builds natively only: the
-daemon keeps its `wire` I/O, ticket addressing (`net::address`,
-`net::Target`) and the relay helpers (`net::without_root_dot`,
-`net::platform::n0_relays`).
+daemon keeps its `wire` I/O and the relay helpers
+(`net::without_root_dot`, `net::n0_relays`).
 
 ### 7.1 The pipe (`crates/web-iroh`)
 
@@ -1692,10 +1690,8 @@ interface Stream { send(frame: Uint8Array): Promise<void>; recv(): Promise<Uint8
   from its ticket, binds a fresh local endpoint (`presets::Minimal`) whose
   only relay is that one, and dials. The connection owns its endpoint, and
   `close` closes both; `closed` resolves with why the connection ended.
-- A frame is one body. `send` writes `link::frame::header` before it;
-  `recv` reads a header, refuses one announcing more than
-  `link::frame::MAX_FRAME_LEN` (`link::frame::body_len`), and returns the
-  body, or `undefined` once the peer
+- A frame is one body, framed by `net::wire` (§7.2). `send` writes it;
+  `recv` returns the next body, or `undefined` once the peer
   finished the stream between frames. Sending and receiving on one stream
   may run at once.
 - It reads no body and knows nothing of tickets, authentication or
@@ -1715,19 +1711,20 @@ on n0's relays.
 
 ### 7.2 Frames and their codecs
 
-A frame is a big-endian `u32` body length and its body. Each link
-frames its own messages, each in its own codec, and a message can only
-travel in its link's (`link::frame::Frame`, `host::fleet::frame::Frame`):
+A frame is a big-endian `u32` body length and its body, at most 16 MiB,
+and `net::wire` alone writes and reads it, refusing an oversized frame
+before its body. Each link encodes its own messages in its own codec, and
+a message can only travel in its link's (`link::frame::Frame`,
+`host::fleet::frame::Frame`):
 
-| Link | Framing | Codec | Messages |
+| Link | Codec | Encoding | Messages |
 |---|---|---|---|
-| Client and host (`link::ALPN`, `conductor/45`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`link::ALPN`, `conductor/46`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
-Callers own the I/O: on a host, `net::wire` for the client link and the
-daemon's `fleet::wire` for the fleet, which reads a frame's header and
-body with `net::wire` and frames them with `host::fleet::frame`; in the
-browser, `web-iroh`.
+On a host, the daemon's `serve` and `fleet::wire` pair `net::wire` with
+their link's codec; in the browser, `web-iroh` carries bodies through
+`net::wire` and TypeScript encodes them.
 JSON names every variant and field, so any change to a type reachable from
 the four client roots bumps `link::ALPN`, and an older peer fails the
 handshake. Each id writes its own JSON form, the `ulid` crate's text; an
@@ -1749,27 +1746,33 @@ that differs by one byte is refused.
 The Rust types are the only definition of the client link's types
 (ADR 0002, ADR 0003):
 
-1. They derive `schemars::JsonSchema`. The `link` unit test
-   `schema::the_frames_schema_is_published_beside_link` writes
-   `crates/link/link.schema.json`, which `link` publishes and no Rust code
-   reads from elsewhere: a draft 2020-12 document with the
-   four client roots and every type they reach under `$defs`, as serde
-   serializes them. It rewrites the file only when its content differs.
+1. They derive `schemars::JsonSchema`. `link`'s `schema` example prints
+   the document `tools/schemas.sh` writes as
+   `crates/link/link.schema.json`, which no Rust code reads: a draft
+   2020-12 document with the four client roots, the ticket and every type
+   they reach under `$defs`, as serde serializes them, and `link::ALPN` as
+   `Alpn`.
 2. `web/scripts/schemas.ts` reads that document with Effect's
    `JsonSchema`, `SchemaRepresentation` (objects closed) and `Codegen`, and
    writes `web/src/schemas/index.ts`, one Effect Schema per definition.
-3. `tools/schemas.sh` runs both and formats the output with oxfmt.
+3. `tools/schemas.sh` runs both and formats their output with oxfmt.
    `tools/schemas.sh --check`, the `schemas` suite, then fails when
    `crates/link/link.schema.json` or `web/src/schemas/` differs from what is
-   committed or holds an untracked file. `link` names no path in `web/`;
+   committed or holds an untracked file, and when the document differs
+   from main's while `link::ALPN` doesn't. `link` names no path in `web/`;
    the web app pulls the schema.
 
 Nothing there is edited by hand. Encoding is tested only in Rust, by
 `link`'s frame tests; the app's tests check what it does with decoded
 values, and `web/src/schemas.test.ts` decodes every recorded feed
 (§9) with the generated schemas. The schemas carry a ticket only in its
-JSON form, so `web/src/ticket.ts` is the app's one reader of a ticket's
-text (base64url of its version, host id, token and relay URL).
+JSON form, so `web/src/ticket.ts` is the one reader of a ticket's text
+(base64url of its version, host id, token and relay URL), and Rust has
+only its writer, `link::Ticket::to_text`. The reader is tested against
+the worked example `link` publishes as `crates/link/ticket.example.json`,
+whose writer test fails when the file no longer holds what it writes.
+`ticket.ts` also holds the app's one `#join=` marker, which the daemon
+writes in `start.rs`.
 
 ### 7.4 The link (`web/src/link.ts`, `web/src/link/`)
 
@@ -1804,7 +1807,7 @@ commands, and runs until its scope closes, which closes its connection.
   live. `reconnect` drops the connection and dials at once; the page calls
   it when the browser comes back online or the page becomes visible.
 - **Commands** (`link/command.ts`). Each command opens its own stream,
-  sends `Command { id, body }` with a fresh random ULID, finishes the
+  sends `Command { id, body }` with an id from `crypto.randomUUID()`, finishes the
   stream and returns the one `CommandResult` to its caller. `send` waits
   while the link connects and fails with `NotConnected` while it is down;
   the caller decides whether to retry.

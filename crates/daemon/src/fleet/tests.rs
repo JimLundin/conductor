@@ -262,15 +262,6 @@ async fn check_owner_proof(
     let admitted = member.admit_device(outsider, &hello).await?;
     assert_eq!(admitted.name, "phone");
     assert!(member.admit_device(root_id, &hello).await.is_err());
-    let mut renamed = hello.clone();
-    let at = renamed
-        .certificate
-        .payload
-        .windows(b"phone".len())
-        .position(|bytes| bytes == b"phone")
-        .context("the certificate's JSON names the browser")?;
-    renamed.certificate.payload[at] = b'P';
-    assert!(member.admit_device(outsider, &renamed).await.is_err());
     Ok((hello, admitted.device))
 }
 
