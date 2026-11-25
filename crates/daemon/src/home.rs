@@ -20,7 +20,7 @@ use home::skills;
 use home::sync::{self, Git, Sync};
 use home::{
     Checkout, Cloning, Home, HomeCommand, HomeRefusal, HomeResult, HomeSync,
-    IssueId, ProjectId,
+    IssueId, ProjectId, UnixSecs,
 };
 use home::{Found, Stored};
 use home_store::CanvasStore;
@@ -37,7 +37,7 @@ use crate::Stopped;
 use crate::workspace::{blob, text};
 
 const PULL_INTERVAL: Duration = Duration::from_secs(300);
-const PULL_RETRY_SECONDS: u64 = 30;
+const PULL_RETRY: Duration = Duration::from_secs(30);
 
 pub struct Homing {
     pub host: String,
@@ -458,7 +458,7 @@ impl Actor {
     }
 
     async fn fresh(&mut self) {
-        if self.sync.due(now_secs(), PULL_RETRY_SECONDS) {
+        if self.sync.due(now(), PULL_RETRY) {
             self.refresh().await;
         }
     }
@@ -468,11 +468,10 @@ impl Actor {
             return;
         };
         let outcome = self.bring_up(&remote).await;
-        self.sync = self.sync.clone().after(
-            outcome,
-            self.destination.is_some(),
-            now_secs(),
-        );
+        self.sync =
+            self.sync
+                .clone()
+                .after(outcome, self.destination.is_some(), now());
         if self.destination.is_some() {
             self.install().await;
             self.scan().await;
@@ -594,12 +593,11 @@ impl Actor {
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
-        let issue =
-            fresh(&self.home, now_secs(), &draws()).ok_or_else(|| {
-                IssueError::Retryable(String::from(
-                    "no issue id is free this second",
-                ))
-            })?;
+        let issue = fresh(&self.home, now(), &draws()).ok_or_else(|| {
+            IssueError::Retryable(String::from(
+                "no issue id is free this second",
+            ))
+        })?;
         let request = self.issue_context(edit).open(issue, new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
         if let Some(opened) = self.created(&issue_dir, edit).await? {
@@ -672,7 +670,7 @@ impl Actor {
             remote: self.remote.as_deref(),
             home: &self.home,
             host: &self.host,
-            at: now_secs(),
+            at: now(),
             edit,
         }
     }
@@ -1211,7 +1209,7 @@ async fn changed_at(
     clone: &Path,
     tracking: &str,
     relative: &str,
-) -> Result<Option<u64>, String> {
+) -> Result<Option<UnixSecs>, String> {
     let seconds = text(
         clone,
         &[
@@ -1232,7 +1230,7 @@ async fn changed_at(
     seconds
         .trim()
         .parse()
-        .map(Some)
+        .map(|changed| Some(UnixSecs(changed)))
         .map_err(|err: std::num::ParseIntError| err.to_string())
 }
 
@@ -1402,10 +1400,12 @@ async fn committed_blob_at(
         .map_err(|err| err.to_string())
 }
 
-fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
+fn now() -> UnixSecs {
+    UnixSecs::since_epoch(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default(),
+    )
 }
 
 fn draws() -> home::Draws {
@@ -1424,7 +1424,7 @@ mod tests {
         CanvasName,
     };
     use home::issue::Remote;
-    use home::{HomeRefusal, HomeResult, IssueId, ProjectId};
+    use home::{HomeRefusal, HomeResult, IssueId, ProjectId, UnixMillis};
     use home_store::{CanvasStore, Memory};
     use std::path::{Path, PathBuf};
     use tokio::sync::watch;
@@ -1479,7 +1479,7 @@ mod tests {
 
     fn written(at: u64, by: &str) -> Result<CanvasFile, CanvasError> {
         Ok(CanvasFile {
-            written: at,
+            written: UnixMillis(at),
             by: by.to_owned(),
             canvas: Canvas::new(
                 format!("By {by}"),
@@ -1568,12 +1568,12 @@ mod tests {
                     Vec::from([
                         CanvasEntry {
                             name: named("a-plan")?,
-                            written: 20,
+                            written: UnixMillis(20),
                             by: String::from("laptop·codex"),
                         },
                         CanvasEntry {
                             name: named("design")?,
-                            written: 10,
+                            written: UnixMillis(10),
                             by: String::from("devbox·claude"),
                         },
                     ])

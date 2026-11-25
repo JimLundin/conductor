@@ -9,7 +9,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::{self, DeserializeOwned, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::{IssueId, ProjectId};
+use crate::{IssueId, ProjectId, UnixMillis};
 
 mod changes;
 mod code;
@@ -123,7 +123,7 @@ impl Block {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CanvasFile {
-    pub written: u64,
+    pub written: UnixMillis,
     pub by: String,
     pub canvas: Canvas,
 }
@@ -149,7 +149,7 @@ impl CanvasFile {
 #[derive(Deserialize)]
 #[serde(expecting = "struct CanvasFile", deny_unknown_fields)]
 struct Stamped {
-    written: u64,
+    written: UnixMillis,
     by: String,
     canvas: Drawn,
 }
@@ -334,7 +334,7 @@ pub struct CanvasKey {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CanvasEntry {
     pub name: CanvasName,
-    pub written: u64,
+    pub written: UnixMillis,
     pub by: String,
 }
 

@@ -10,7 +10,7 @@ use crate::flow::role;
 use crate::flow::snapshot::Snapshot;
 use crate::layout;
 use crate::prelude::*;
-use crate::{HomeRefusal, IssueId, ProjectId};
+use crate::{HomeRefusal, IssueId, ProjectId, UnixSecs};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
@@ -187,7 +187,7 @@ impl PendingEdits {
         home: &Snapshot,
         index: usize,
         current: Result<Option<&str>, String>,
-        upstream_changed: Option<u64>,
+        upstream_changed: Option<UnixSecs>,
     ) -> Write {
         self.0[index].edit.replay(home, current, upstream_changed)
     }
@@ -244,7 +244,7 @@ pub struct Context<'a> {
     pub remote: Option<&'a str>,
     pub home: &'a Snapshot,
     pub host: &'a str,
-    pub at: u64,
+    pub at: UnixSecs,
     pub edit: EditId,
 }
 
@@ -393,7 +393,7 @@ impl Edit {
         &self,
         home: &Snapshot,
         current: Result<Option<&str>, String>,
-        upstream_changed: Option<u64>,
+        upstream_changed: Option<UnixSecs>,
     ) -> Write {
         let contents = match current {
             Ok(contents) => contents,
@@ -402,7 +402,7 @@ impl Edit {
         if contents.is_none() && upstream_changed.is_some() {
             return Write::Dropped;
         }
-        let changed = upstream_changed.unwrap_or(0);
+        let changed = upstream_changed.unwrap_or(UnixSecs(0));
         match apply(home, contents, self, Mode::Replay { changed }) {
             Applied::Write { text, .. } => Write::Commit(self.commit(text)),
             Applied::Unchanged | Applied::AlreadyRecorded => Write::Unchanged,

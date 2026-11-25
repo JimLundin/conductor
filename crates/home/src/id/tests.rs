@@ -1,12 +1,12 @@
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-use super::{DRAWS, Draws, IssueId, ProjectId};
+use super::{DRAWS, Draws, IssueId, ProjectId, UnixSecs};
 
 const NOW: u64 = 1_795_348_800;
 
 fn minted(now: u64, random: u64) -> Option<IssueId> {
-    IssueId::mint(now, &[random; DRAWS], &[])
+    IssueId::mint(UnixSecs(now), &[random; DRAWS], &[])
 }
 
 fn draws(given: &[u64]) -> Draws {
@@ -57,10 +57,10 @@ fn issue_ids_sort_by_when_they_were_minted() {
 fn minting_an_id_the_home_has_draws_again() {
     let held = Vec::from_iter(minted(NOW, 7));
     assert_eq!(
-        IssueId::mint(NOW, &draws(&[7, 7, 9]), &held),
+        IssueId::mint(UnixSecs(NOW), &draws(&[7, 7, 9]), &held),
         minted(NOW, 9)
     );
-    assert_eq!(IssueId::mint(NOW, &draws(&[7]), &held), None);
+    assert_eq!(IssueId::mint(UnixSecs(NOW), &draws(&[7]), &held), None);
 }
 
 #[test]

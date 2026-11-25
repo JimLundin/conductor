@@ -1,4 +1,6 @@
-use crate::HomeSync;
+use core::time::Duration;
+
+use crate::{HomeSync, UnixSecs};
 
 use crate::prelude::*;
 
@@ -11,8 +13,8 @@ pub enum Git {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Sync {
-    pub synced_secs: Option<u64>,
-    pub attempted_secs: Option<u64>,
+    pub synced: Option<UnixSecs>,
+    pub attempted: Option<UnixSecs>,
     pub status: HomeSync,
 }
 
@@ -26,16 +28,16 @@ impl Sync {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            synced_secs: None,
-            attempted_secs: None,
+            synced: None,
+            attempted: None,
             status: HomeSync::Syncing,
         }
     }
 
     #[must_use]
-    pub fn due(&self, now_secs: u64, fresh_secs: u64) -> bool {
-        self.attempted_secs
-            .is_none_or(|at| now_secs.saturating_sub(at) >= fresh_secs)
+    pub fn due(&self, now: UnixSecs, fresh: Duration) -> bool {
+        self.attempted
+            .is_none_or(|at| now.elapsed_since(at) >= fresh)
     }
 
     #[must_use]
@@ -43,21 +45,21 @@ impl Sync {
         self,
         outcome: Result<(), String>,
         cloned: bool,
-        now_secs: u64,
+        now: UnixSecs,
     ) -> Self {
         match (outcome, cloned) {
             (Ok(()), _) => Self {
-                synced_secs: Some(now_secs),
-                attempted_secs: Some(now_secs),
+                synced: Some(now),
+                attempted: Some(now),
                 status: HomeSync::Synced,
             },
             (Err(reason), true) => Self {
-                attempted_secs: Some(now_secs),
+                attempted: Some(now),
                 status: HomeSync::Behind { reason },
                 ..self
             },
             (Err(reason), false) => Self {
-                attempted_secs: Some(now_secs),
+                attempted: Some(now),
                 status: HomeSync::Failed { reason },
                 ..self
             },

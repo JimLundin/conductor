@@ -7,6 +7,8 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
+use crate::UnixSecs;
+
 const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
 const BITS_PER_DIGIT: u32 = 5;
@@ -34,8 +36,9 @@ impl IssueId {
     }
 
     #[must_use]
-    pub fn mint(now_secs: u64, draws: &Draws, held: &[Self]) -> Option<Self> {
-        let seconds = now_secs
+    pub fn mint(now: UnixSecs, draws: &Draws, held: &[Self]) -> Option<Self> {
+        let seconds = now
+            .0
             .checked_sub(Self::EPOCH)
             .filter(|seconds| *seconds <= mask(Self::TIME_BITS))?;
         draws

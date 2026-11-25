@@ -7,7 +7,7 @@ use crate::issue::{
 };
 use crate::{
     Checkout, CheckoutLocation, Cloning, Home, HomeRefusal, HomeSync, IssueId,
-    Origin, ProjectId,
+    Origin, ProjectId, UnixSecs,
 };
 
 use super::{
@@ -225,7 +225,7 @@ fn edit(change: command::Edit) -> Edit {
         id: edit_of(&change),
         data: EditData {
             project: project(),
-            at: OPENED,
+            at: UnixSecs(OPENED),
             by: text("laptop·iPhone"),
             edit: change,
             was: Vec::new(),
@@ -461,7 +461,13 @@ fn creating_writes_what_home_issue_new_does_and_again_changes_nothing()
         return Err(text("expected a file"));
     };
     assert_eq!(
-        apply(Some(&marked), &create, Mode::Replay { changed: 0 }),
+        apply(
+            Some(&marked),
+            &create,
+            Mode::Replay {
+                changed: UnixSecs(0)
+            }
+        ),
         Applied::AlreadyRecorded
     );
     Ok(())
@@ -495,7 +501,7 @@ fn a_note_is_signed_kept_twice_when_made_twice_and_replayed_once()
             Some(&once),
             &first,
             Mode::Replay {
-                changed: OPENED + 9
+                changed: UnixSecs(OPENED + 9)
             }
         ),
         Applied::AlreadyRecorded,
@@ -516,10 +522,10 @@ fn a_replayed_field_yields_to_a_newer_change_by_someone_else() {
     assert_eq!(done.data.was, [Some(Vec::from([text("active")]))]);
     let reviewed = written().replace("\"active\"", "\"review\"");
     let after = Mode::Replay {
-        changed: OPENED + 60,
+        changed: UnixSecs(OPENED + 60),
     };
     let before = Mode::Replay {
-        changed: OPENED - 60,
+        changed: UnixSecs(OPENED - 60),
     };
     let closed = |file: &str, mode| {
         file_of(apply(Some(file), &done, mode))
@@ -556,7 +562,7 @@ fn context(home: &Snapshot, edit: EditId) -> super::Context<'_> {
         remote: Some("origin"),
         home,
         host: "stone",
-        at: OPENED,
+        at: UnixSecs(OPENED),
         edit,
     }
 }
@@ -948,7 +954,9 @@ fn a_replay_made_in_the_second_of_the_remotes_last_change_still_applies()
     let replayed = file_of(apply(
         Some(&reviewed),
         &done,
-        Mode::Replay { changed: OPENED },
+        Mode::Replay {
+            changed: UnixSecs(OPENED),
+        },
     ))?;
     assert_eq!(parse(&replayed).map(|read| read.status), Ok(text("done")));
     Ok(())
@@ -967,7 +975,7 @@ fn an_item_added_again_is_kept_twice_and_a_new_note_replays_in()
         Some(&written()),
         &changing_to(IssueChange::Note(text("later"))),
         Mode::Replay {
-            changed: OPENED + 9,
+            changed: UnixSecs(OPENED + 9),
         },
     ))?;
     assert_eq!(
@@ -1063,7 +1071,7 @@ fn a_newer_label_list_with_a_comma_is_a_distinct_snapshot() {
             Some(&written()),
             &queued,
             Mode::Replay {
-                changed: OPENED + 1
+                changed: UnixSecs(OPENED + 1)
             }
         ))
         .and_then(|kept| parse(&kept))
@@ -1184,7 +1192,7 @@ fn an_opening_is_rejected_until_its_edit_can_be_recovered()
         among(&[], |home| edit.replay(
             home,
             Ok(Some(&commit.text)),
-            Some(OPENED)
+            Some(UnixSecs(OPENED))
         )),
         Write::Unchanged
     );
@@ -1239,7 +1247,9 @@ fn replay(
     current: Option<&str>,
     changed: Option<u64>,
 ) -> super::Write {
-    among(&[], |home| edit.replay(home, Ok(current), changed))
+    among(&[], |home| {
+        edit.replay(home, Ok(current), changed.map(UnixSecs))
+    })
 }
 
 #[test]
@@ -1445,7 +1455,7 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
             Some(&done),
             &finishing,
             Mode::Replay {
-                changed: OPENED + 1
+                changed: UnixSecs(OPENED + 1)
             }
         ))
         .and_then(|kept| parse(&kept))
@@ -1457,7 +1467,7 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 
 mod as_the_command_line {
     use crate::issue::{EditId, IssueChange};
-    use crate::{HomeRefusal, IssueId, ProjectId};
+    use crate::{HomeRefusal, IssueId, ProjectId, UnixSecs};
 
     use crate::issue::Datum;
 
@@ -1470,7 +1480,7 @@ mod as_the_command_line {
     const FOLDER: &str = "7w85je";
     const SPEC: &str = "0tm7zt01";
     const TASK: &str = "0tm7zx0d";
-    const NOW: u64 = 1_795_348_800;
+    const NOW: UnixSecs = UnixSecs(1_795_348_800);
 
     fn issue(id: &str, front: &str, body: &str) -> File {
         File {
@@ -1515,7 +1525,7 @@ mod as_the_command_line {
             None,
             &home,
             &command::Context {
-                now_ms: NOW * 1000,
+                now: NOW.millis(),
                 by: String::from("laptop·claude"),
                 mark: None,
             },
@@ -1635,7 +1645,7 @@ mod as_the_command_line {
             .map(String::from)
             .collect();
         let by = command::Context {
-            now_ms: NOW * 1000,
+            now: NOW.millis(),
             by: String::from("laptop·iPhone"),
             mark: None,
         };

@@ -1,3 +1,5 @@
+use crate::UnixMillis;
+
 use super::{
     Block, Canvas, CanvasError, CanvasFile, CanvasName, ChangeKind, Choice,
     Options, OptionsError, StatechartError, Tag,
@@ -5,7 +7,7 @@ use super::{
 
 fn file() -> Result<CanvasFile, CanvasError> {
     Ok(CanvasFile {
-        written: 1_795_000_000_000,
+        written: UnixMillis(1_795_000_000_000),
         by: String::from("devbox·claude"),
         canvas: Canvas::new(
             String::from("Why a store"),

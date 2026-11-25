@@ -9,13 +9,12 @@ use serde::{Deserialize, Serialize};
 use crate::canvas::{CanvasFile, CanvasName};
 use crate::flow::Flow;
 use crate::issue::{EditId, Issue, IssueChange, NewIssue};
-use crate::{IssueId, ProjectId};
+use crate::{IssueId, ProjectId, UnixSecs};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Home {
     pub remote: String,
-    #[serde(rename = "synced")]
-    pub synced_secs: Option<u64>,
+    pub synced_secs: Option<UnixSecs>,
     pub sync: HomeSync,
     pub unpushed: u64,
     pub flow: Option<Box<Flow>>,
