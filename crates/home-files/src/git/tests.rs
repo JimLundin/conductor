@@ -141,3 +141,19 @@ fn recorded_snapshots_require_full_object_ids() {
         "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
     ));
 }
+
+#[test]
+fn output_one_byte_past_the_patch_limit_is_refused_as_oversized() {
+    let captured = super::Output {
+        bytes: vec![b'a'; super::Output::CAPTURE_TO_SEE_AN_OVERSIZED_PATCH],
+        success: true,
+        error: String::new(),
+    };
+    assert_eq!(
+        super::checked(captured, "git diff").err(),
+        Some(vcs::Error::Failed(String::from(
+            "git diff: Git output exceeded the capture limit"
+        )))
+    );
+    assert_eq!(super::Output::CAPTURE_TO_SEE_AN_OVERSIZED_PATCH, 65537);
+}
