@@ -1,16 +1,17 @@
-// What a new session can start with on a host: its available instances, their models and
-// efforts, and its projects and directories.
-import type { Host } from "../fold/host.ts";
 import type {
   Command,
-  Effort,
   InstanceId,
   ModelChoice,
   ModelId,
   Models,
   Project,
   StartAt,
-} from "../schemas/index.ts";
+} from "#core/schemas/index";
+import { Option, Schema } from "effect";
+import { Effort } from "#core/schemas/index";
+import type { Host } from "#core/fold/host";
+// What a new session can start with on a host: its available instances, their models and
+// Efforts, and its projects and directories.
 
 interface Choosable {
   readonly key: string;
@@ -31,12 +32,12 @@ interface Draft {
 }
 
 const blank: Draft = {
+  directory: "",
+  effort: "",
   host: "",
   instance: "",
-  project: "",
-  directory: "",
   model: "",
-  effort: "",
+  project: "",
 } as const;
 
 const instanceKey = (instance: InstanceId): string =>
@@ -48,13 +49,13 @@ const instanceLabel = (host: Host, instance: InstanceId): string => {
 };
 
 // The instances a session can start on now: those whose CLI is available.
-const choosable = (host: Host): readonly Choosable[] =>
+const choosable = (host: Host): ReadonlyArray<Choosable> =>
   host.instances.flatMap(([instance, { availability }]) =>
     "Available" in availability
       ? [
           {
-            key: instanceKey(instance),
             instance,
+            key: instanceKey(instance),
             label: instanceLabel(host, instance),
             models: availability.Available.models,
           },
@@ -63,44 +64,46 @@ const choosable = (host: Host): readonly Choosable[] =>
   );
 
 // The model a session would run: the one chosen, or the instance's default.
-const modelOf = (models: Models, model: ModelId | null): ModelChoice | undefined =>
+const modelOf = (models: Models, model: ModelId | undefined): ModelChoice | undefined =>
   models.choices.find((choice) => choice.id === (model ?? models.default));
 
 // The efforts the model takes, lowest first.
-const effortsOf = (models: Models, model: ModelId | null): readonly Effort[] =>
+const effortsOf = (models: Models, model: ModelId | undefined): ReadonlyArray<Effort> =>
   modelOf(models, model)?.efforts ?? [];
 
 // A project starts in its first checkout on the host, so only a project checked out here can.
-const startable = (host: Host): readonly Project[] =>
-  host.projects.filter((project) => project.checkouts.length > 0);
+const firstCheckout = 0;
 
-const placeOf = (draft: Draft): StartAt | null => {
+const startable = (host: Host): ReadonlyArray<Project> =>
+  host.projects.filter((project) => project.checkouts.at(firstCheckout) !== undefined);
+
+const placeOf = (draft: Draft): StartAt | undefined => {
   if (draft.project !== "") {
     return { Project: draft.project };
   }
   const directory = draft.directory.trim();
-  return directory === "" ? null : { Directory: directory };
+  return directory === "" ? undefined : { Directory: directory };
 };
 
-const orNull = <T extends string>(value: string): T | null => (value === "" ? null : (value as T));
+const optional = (value: string): string | undefined => (value === "" ? undefined : value);
 
 // The command that starts the session the draft describes on `host`, once it names an
-// available instance and a place.
-const startOf = (host: Host, draft: Draft): Command | null => {
+// Available instance and a place.
+const startOf = (host: Host, draft: Draft): Command | undefined => {
   const chosen = choosable(host).find((one) => one.key === draft.instance);
   const at = placeOf(draft);
-  return chosen === undefined || at === null
-    ? null
+  return chosen === undefined || at === undefined
+    ? undefined
     : {
         Session: {
           Start: {
-            instance: chosen.instance,
             at,
-            model: orNull<ModelId>(draft.model),
-            effort: orNull<Effort>(draft.effort),
+            effort: Option.getOrNull(Schema.decodeUnknownOption(Effort)(draft.effort)),
+            instance: chosen.instance,
+            model: Option.getOrNull(Option.fromUndefinedOr(optional(draft.model))),
           },
         },
       };
 };
 
-export { blank, type Choosable, choosable, type Draft, effortsOf, orNull, startable, startOf };
+export { blank, type Choosable, choosable, type Draft, effortsOf, optional, startable, startOf };

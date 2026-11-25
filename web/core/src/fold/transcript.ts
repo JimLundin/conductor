@@ -1,5 +1,3 @@
-// A transcript's items, and the changes later events make to earlier ones.
-import { Data } from "effect";
 import type {
   ClientName,
   CloseReason,
@@ -11,9 +9,10 @@ import type {
   ToolKind,
   ToolOutcome,
   TurnOutcome,
-} from "../schemas/index.ts";
-
-type Unit = Record<never, never>;
+} from "#core/schemas/index";
+import { Data } from "effect";
+import type { Unit } from "#core/data";
+// A transcript's items, and the changes later events make to earlier ones.
 
 // A reply or reasoning streams until its final text arrives or something else follows it.
 type ReplyState = "Streaming" | "Done";
@@ -39,9 +38,9 @@ type Approval = Data.TaggedEnum<{
   readonly Asked: {
     readonly request: RequestId;
     // The agent's own words for why it asks.
-    readonly reason: string | null;
+    readonly reason: string | undefined;
     // What approving for the session allows, when the agent offers it.
-    readonly forSession: string | null;
+    readonly forSession: string | undefined;
     readonly state: RequestState;
   };
 }>;
@@ -62,7 +61,7 @@ type Item = Data.TaggedEnum<{
   };
   readonly Question: {
     readonly request: RequestId;
-    readonly questions: readonly Question[];
+    readonly questions: ReadonlyArray<Question>;
     readonly state: RequestState;
   };
   readonly TurnCompleted: { readonly outcome: TurnOutcome };
@@ -86,37 +85,37 @@ type Change = Data.TaggedEnum<{
   };
   readonly Finish: { readonly call: ToolCallId; readonly outcome: ToolOutcome };
   // The host ended the turn or the session: nothing still running will finish, and nothing
-  // still open will be answered.
+  // Still open will be answered.
   readonly End: Unit;
 }>;
 
 const Change = Data.taggedEnum<Change>();
 
 const requestChanged = (state: RequestState, request: RequestId, next: Change): RequestState => {
-  if (next._tag === "Resolve" && next.request === request) {
+  if (Change.$is("Resolve")(next) && next.request === request) {
     return RequestState.Resolved({ resolution: next.resolution });
   }
-  if (next._tag === "End" && state._tag === "Open") {
+  if (Change.$is("End")(next) && RequestState.$is("Open")(state)) {
     return RequestState.Resolved({ resolution: "Withdrawn" });
   }
   return state;
 };
 
 const toolChanged = (state: ToolState, call: ToolCallId, next: Change): ToolState => {
-  if (next._tag === "Finish" && next.call === call) {
+  if (Change.$is("Finish")(next) && next.call === call) {
     return ToolState.Finished({ outcome: next.outcome });
   }
-  if (next._tag === "End" && state._tag === "Running") {
+  if (Change.$is("End")(next) && ToolState.$is("Running")(state)) {
     return ToolState.Stopped();
   }
   return state;
 };
 
 const approvalChanged = (approval: Approval, call: ToolCallId, next: Change): Approval => {
-  if (next._tag === "Ask" && next.call === call) {
+  if (Change.$is("Ask")(next) && next.call === call) {
     return next.approval;
   }
-  if (approval._tag === "Asked") {
+  if (Approval.$is("Asked")(approval)) {
     return Approval.Asked({
       ...approval,
       state: requestChanged(approval.state, approval.request, next),
@@ -128,14 +127,14 @@ const approvalChanged = (approval: Approval, call: ToolCallId, next: Change): Ap
 const itemChanged =
   (next: Change) =>
   (item: Item): Item => {
-    if (item._tag === "Tool") {
+    if (Item.$is("Tool")(item)) {
       return Item.Tool({
         ...item,
-        state: toolChanged(item.state, item.call, next),
         approval: approvalChanged(item.approval, item.call, next),
+        state: toolChanged(item.state, item.call, next),
       });
     }
-    if (item._tag === "Question") {
+    if (Item.$is("Question")(item)) {
       return Item.Question({
         ...item,
         state: requestChanged(item.state, item.request, next),
@@ -144,56 +143,72 @@ const itemChanged =
     return item;
   };
 
-const changeItems = (items: readonly Item[], next: Change): readonly Item[] =>
+const changeItems = (items: ReadonlyArray<Item>, next: Change): ReadonlyArray<Item> =>
   items.map(itemChanged(next));
 
 // The item, done streaming: something else follows it.
 const settled = (item: Item): Item => {
-  if (item._tag === "Reply") {
-    return Item.Reply({ text: item.text, state: "Done" });
+  if (Item.$is("Reply")(item)) {
+    return Item.Reply({ state: "Done", text: item.text });
   }
-  if (item._tag === "Reasoning") {
-    return Item.Reasoning({ text: item.text, state: "Done" });
+  if (Item.$is("Reasoning")(item)) {
+    return Item.Reasoning({ state: "Done", text: item.text });
   }
   return item;
 };
 
+const firstItem = 0;
+const lastItem = -1;
+const lastOffset = 1;
+
 // Settles the last item.
-const settle = (items: readonly Item[]): readonly Item[] =>
-  items.map((item, index) => (index === items.length - 1 ? settled(item) : item));
+const settle = (items: ReadonlyArray<Item>): ReadonlyArray<Item> =>
+  items.map((item, index) => (index === items.length - lastOffset ? settled(item) : item));
 
 type Streamed = "Reply" | "Reasoning";
 
 // A delta joins the reply or reasoning still streaming; the final text replaces it, so a client
-// that missed the deltas shows the same text.
+// That missed the deltas shows the same text.
+interface Fragment {
+  readonly state: ReplyState;
+  readonly tag: Streamed;
+  readonly text: string;
+}
+
 const streamedItems = (
-  items: readonly Item[],
-  tag: Streamed,
-  text: string,
-  state: ReplyState,
-): readonly Item[] => {
-  const last = items.at(-1);
+  items: ReadonlyArray<Item>,
+  { tag, text, state }: Fragment,
+): ReadonlyArray<Item> => {
+  const last = items.at(lastItem);
   const streaming =
-    last !== undefined && last._tag === tag && last.state === "Streaming" ? last.text : undefined;
-  const earlier = streaming === undefined ? settle(items) : items.slice(0, -1);
+    last !== undefined && Item.$is(tag)(last) && last.state === "Streaming" ? last.text : undefined;
+  const earlier = streaming === undefined ? settle(items) : items.slice(firstItem, lastItem);
   const joined = state === "Streaming" ? `${streaming ?? ""}${text}` : text;
   const item =
-    tag === "Reply" ? Item.Reply({ text: joined, state }) : Item.Reasoning({ text: joined, state });
+    tag === "Reply" ? Item.Reply({ state, text: joined }) : Item.Reasoning({ state, text: joined });
   return [...earlier, item];
 };
 
-const hasCall = (items: readonly Item[], call: ToolCallId): boolean =>
-  items.some((item) => item._tag === "Tool" && item.call === call);
+const hasCall = (items: ReadonlyArray<Item>, call: ToolCallId): boolean =>
+  items.some((item) => Item.$is("Tool")(item) && item.call === call);
 
 const openApproval = (
   request: RequestId,
   reason: string | null,
   forSession: string | null,
-): Approval => Approval.Asked({ request, reason, forSession, state: RequestState.Open() });
+): Approval =>
+  Approval.Asked({
+    forSession: forSession ?? undefined,
+    reason: reason ?? undefined,
+    request,
+    state: RequestState.Open(),
+  });
 
 const isRequestOpen = (item: Item): boolean =>
-  (item._tag === "Tool" && item.approval._tag === "Asked" && item.approval.state._tag === "Open") ||
-  (item._tag === "Question" && item.state._tag === "Open");
+  (Item.$is("Tool")(item) &&
+    Approval.$is("Asked")(item.approval) &&
+    RequestState.$is("Open")(item.approval.state)) ||
+  (Item.$is("Question")(item) && RequestState.$is("Open")(item.state));
 
 export {
   Approval,
@@ -209,5 +224,4 @@ export {
   type Streamed,
   streamedItems,
   ToolState,
-  type Unit,
 };
