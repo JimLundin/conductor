@@ -1,7 +1,7 @@
+/// <reference types="vite/client" />
 import { CommandResult, Feed, HelloReply } from "@conductor/core/schemas/index";
 import { Schema } from "effect";
 
-/// <reference types="vite/client" />
 // Recorded host feeds in web/fixtures/feeds/, for tests: each frame a host sent,
 // On which of the test client's connections and streams.
 

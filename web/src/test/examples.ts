@@ -116,8 +116,8 @@ interface Asked {
 const asked = ({ approval, call, request, state }: Asked): Item =>
   Item.Tool({
     approval: Approval.Asked({
-      forSession: null,
-      reason: null,
+      forSession: undefined,
+      reason: undefined,
       request,
       state: approval,
     }),

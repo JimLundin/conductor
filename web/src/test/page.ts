@@ -27,7 +27,7 @@ const memoryStorage = (entries: ReadonlyArray<readonly [string, string]> = []): 
   };
 };
 
-const keysOf = (storage: Storage): ReadonlyArray<string> =>
+const keysOf = (storage: Readonly<Storage>): ReadonlyArray<string> =>
   storage.length === 0 ? [] : Arr.makeBy(storage.length, (index) => storage.key(index) ?? "");
 
 interface Page {
@@ -39,7 +39,7 @@ interface Page {
 // A page at `start`, whose links dial `pipe`; by default one that never connects.
 const page = (
   start: string,
-  storage: Storage = memoryStorage(),
+  storage: Readonly<Storage> = memoryStorage(),
   pipe: Pipe = dialing([]),
 ): Page => {
   let fragment = start;
