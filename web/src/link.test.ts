@@ -99,15 +99,14 @@ describe("dropped connection", () => {
             });
             const linked = yield* link(hosts([first, second]), ticket, client);
             const before = yield* throughFeed(linked, dropAt);
-            const down = yield* dropped(first, linked, "the network went away");
+            const [down, after] = [
+              yield* dropped(first, linked, "the network went away"),
+              yield* until(linked, (update) => events([update]).includes(13)),
+            ];
             return {
               sent: feed.slice(0, dropAt),
               subscribes: yield* Ref.get(again.subscribes),
-              updates: [
-                ...before,
-                ...down,
-                ...(yield* until(linked, (update) => events([update]).includes(13))),
-              ],
+              updates: [...before, ...down, ...after],
             };
           }),
         );
@@ -145,11 +144,14 @@ describe("changed epoch", () => {
           });
           const linked = yield* link(hosts([first, second]), ticket, client);
           yield* until(linked, inState("Live"));
-          const down = yield* dropped(first, linked, "restarted");
+          const [down, seen] = [
+            yield* dropped(first, linked, "restarted"),
+            yield* until(linked, inState("Live")),
+          ];
           return {
             reborn: restarted,
             subscribes: yield* Ref.get(again.subscribes),
-            updates: [...down, ...(yield* until(linked, inState("Live")))],
+            updates: [...down, ...seen],
           };
         }),
       );

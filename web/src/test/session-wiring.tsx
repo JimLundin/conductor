@@ -26,7 +26,7 @@ const recordedSpan = (from: number, through: number): ReadonlyArray<Feed> =>
       return frame.Event.seq >= from && frame.Event.seq <= through;
     });
 
-const waiting = (store: Store): number => {
+const waiting = (store: Pick<Store, "view">): number => {
   const found = sessionOf(store.view(), host, session);
   return found === undefined ? -1 : openRequests(found).length;
 };
