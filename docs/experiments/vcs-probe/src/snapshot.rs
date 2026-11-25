@@ -5,7 +5,7 @@ use git2::{Index, IndexAddOption, Oid, Repository};
 
 use crate::fixture;
 
-fn capture(path: &Path) -> Result<Oid> {
+pub fn capture(path: &Path) -> Result<Oid> {
     let repo = Repository::open(path)?;
     let parent = repo.head()?.peel_to_commit()?;
     let mut index = Index::new()?;

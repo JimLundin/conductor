@@ -1,6 +1,6 @@
 # Local Git adapter probe
 
-Decision `0v26ayew`, spec `0v265ymj`. Verified on Linux with
+Decisions `0v26ayew` and `0v2cse85`, spec `0v265ymj`. Verified on Linux with
 `nightly-2026-11-15`, git2 `0.21.0` and libgit2 `1.9.7` on 2026-11-25.
 This standalone workspace does not change Conductor's production
 dependencies or select its production adapter.
@@ -10,6 +10,12 @@ Git subprocess. Recoverable landing needs a stored intent and separate
 reference writes. Git2 does not provide the atomic multi-reference update
 used by Conductor's existing landing implementation.
 
+The [installation policy](installation.md) extends this result with
+retained candidate refs, snapshot installation, required attributes,
+external checkout changes and cancellation limits. It defines the
+supported repository scope and the evidence still required before
+production replacement.
+
 ## Run
 
 From Conductor's root:
@@ -17,7 +23,8 @@ From Conductor's root:
 ```sh
 cargo run --locked --manifest-path docs/experiments/vcs-probe/Cargo.toml
 cargo test --locked --workspace --manifest-path docs/experiments/vcs-probe/Cargo.toml
-cargo clippy --locked --all-targets --all-features --manifest-path docs/experiments/vcs-probe/Cargo.toml
+cargo clippy --locked --workspace --all-targets --all-features --manifest-path docs/experiments/vcs-probe/Cargo.toml
+cargo check --locked -p vcs-probe-core --all-features --target wasm32v1-none --manifest-path docs/experiments/vcs-probe/Cargo.toml
 cargo fmt --all --check --manifest-path docs/experiments/vcs-probe/Cargo.toml
 ```
 
@@ -50,6 +57,12 @@ and reference scenarios.
 | Missing or inconsistent evidence | A missing reflog or wrong receipt refuses recovery. An existing intent cannot be replaced by another attempt's data. |
 | Ref locking | A competing resume and a separate repository handle's conditional write cannot bypass held landing ref locks. |
 | Checked-out branch | Landing refuses to publish an issue branch checked out in another worktree. |
+| Snapshot installation | Reopened index/ref/receipt boundaries complete without changing source HEAD/index/files or session files. Clean and fully staged session indexes install; partial staging refuses. |
+| Retained candidates | Owned refs make prepared snapshot and integration commits reachable. Missing retention refuses unfinished work. |
+| Installation interference | External file/index/HEAD changes, a branch rewind and replacement checkout directory refuse continuation. Completed retries preserve later user edits. |
+| Required attributes and modes | Capture and linked checkout preserve LF normalization, binary bytes, executable mode and file symlinks on Linux. A binary attribute refuses textual merging of disjoint edits. |
+| Unsupported filters | A configured required external filter is skipped by capture. This mode requires production preflight refusal. |
+| Cancellation and lock limits | A detached blocking worker completes its ref update. Stale Git locks remain untouched; branch/index locks do not prevent all HEAD/path changes. |
 
 The push wrapper collects `push_update_reference` rejection messages as
 well as the return value of `Remote::push`. The local non-fast-forward
@@ -59,7 +72,8 @@ established by the published callback API, not by this run.
 
 ## Landing protocol
 
-The prototype stores one immutable JSON intent before changing the issue
+The prototype retains the candidate under an operation-owned ref and
+stores one immutable JSON intent before changing the issue
 branch. It contains the branch and receipt names, expected old OID,
 candidate OID, added commit count and baseline reflog bytes. It installs
 the intent without replacing an existing file and synchronizes that file
@@ -87,35 +101,37 @@ between that check and publication.
 ## Limits
 
 This is a feasibility artifact, not a complete adapter. Snapshot capture
-and its staging policy are covered; installation of snapshots into live
-sessions and recovery of that installation remain implementation work.
-The fixtures use simple SHA-1 repositories and ordinary files. Submodules,
-Git LFS, attributes, filters, sparse indexes, alternate object stores,
-SHA-256 repositories and platform differences are not covered.
+and installation are covered within the [declared scope](installation.md).
+The fixtures use SHA-1 repositories on Linux. Submodules, Git LFS, sparse
+indexes, alternate object stores, SHA-256 repositories and platform
+differences require refusal until verified. External filters require
+refusal; the probe demonstrates their missing behavior.
 
 The interruption scenarios drop handles and reopen after each stored
 boundary. They do not kill a process during a write or simulate power loss.
 They do not establish fsync guarantees for libgit2's refs or objects,
 cross-host coordination, stale-lock cleanup, or universal exactly-once
-execution. The intent's parent directory creation and object retention
-also need a production durability policy.
+execution. Candidate refs establish reachability, not power-loss
+durability or exclusion of concurrent external garbage collection.
 
 Missing, pruned or changed reflog evidence causes refusal when recovery
 would otherwise republish an expected branch. Deliberately restoring the
 exact old reflog bytes or editing refs while bypassing their locks is
 outside the protocol. A completed receipt still permits an outcome read
-after a branch rewrite. Intent corruption, malicious edits and garbage
-collection of an unreferenced prepared candidate need production handling.
+after a branch rewrite. Intent corruption, malicious edits and retention
+cleanup need production handling.
 
 Ref locks do not serialize arbitrary changes to worktree HEADs, files or
 directories. The checked-out-branch observation and ownership checks are
-verified without concurrent filesystem edits. Removal races, path
-replacement, concurrent checkouts and unusual ref backends remain
-unproven.
+verified without simultaneous filesystem edits. The extension demonstrates
+HEAD/path changes despite held Git locks and refuses detected replacements.
+Removal races, simultaneous checkouts and unusual ref backends remain
+unproven. Installation requires a quiescent, exclusively controlled session.
 
 No live GitHub request, credentials, HTTPS/SSH authentication, credential
-refresh, hooks, server-side push rejection, cancellation or deadline is
-tested. Clean and conflicting merge examples do not establish parity with
+refresh, hooks or server-side push rejection is tested. Blocking-worker
+cancellation has local evidence; transport cancellation and hard deadlines
+remain unverified. Clean and conflicting merge examples do not establish parity with
 native Git's merge strategy. Gix's full operation coverage is a separate
 source audit; this artifact does not demonstrate a gix implementation.
 

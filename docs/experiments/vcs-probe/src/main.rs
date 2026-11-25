@@ -1,4 +1,6 @@
+mod features;
 mod fixture;
+mod installation;
 mod integration;
 mod recovery;
 mod snapshot;
@@ -35,6 +37,16 @@ fn main() -> Result<()> {
     writeln!(
         io::stdout(),
         "PASS recovery: reopened boundaries, replay, competing refs, rewind refusal"
+    )?;
+    installation::run(directory.path())?;
+    writeln!(
+        io::stdout(),
+        "PASS installation: retained candidate, index/ref boundaries, source preservation, external changes and stale locks"
+    )?;
+    features::run(directory.path())?;
+    writeln!(
+        io::stdout(),
+        "PASS features: text/eol/binary attributes, custom filter gap, blocking cancellation and stale ref locks"
     )?;
     Ok(())
 }

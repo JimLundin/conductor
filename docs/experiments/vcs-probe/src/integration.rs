@@ -153,9 +153,8 @@ fn push(repo: &Repository, refspec: &str) -> Result<PushReport> {
     let mut rejected_refs = Vec::new();
     let mut callbacks = RemoteCallbacks::new();
     callbacks.push_update_reference(|reference, status| {
-        if let Some(message) = status {
-            rejected_refs.push(format!("{reference}: {message}"));
-        }
+        rejected_refs
+            .extend(status.map(|message| format!("{reference}: {message}")));
         Ok(())
     });
     let mut options = PushOptions::new();

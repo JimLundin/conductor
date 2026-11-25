@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod installation;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Receipt {
     Missing,
@@ -58,12 +60,47 @@ pub const fn classify_receipt(matches_candidate: Option<bool>) -> Receipt {
 #[must_use]
 pub const fn classify_branch(
     at_expected: bool,
+    at_candidate: bool,
     contains_candidate: bool,
 ) -> Branch {
-    match (at_expected, contains_candidate) {
+    match (at_expected, at_candidate || contains_candidate) {
         (_, true) => Branch::CandidateOrDescendant,
         (true, false) => Branch::Expected,
         (false, false) => Branch::Diverged,
+    }
+}
+
+#[must_use]
+pub fn any_checkout(main: bool, linked: &[bool]) -> bool {
+    main || linked.contains(&true)
+}
+
+#[must_use]
+pub const fn guard_retention(action: Recovery, retained: bool) -> Recovery {
+    match (action, retained) {
+        (Recovery::Completed, _) | (_, true) => action,
+        _ => Recovery::Refuse,
+    }
+}
+
+#[must_use]
+pub const fn checkout_branch(action: Recovery, branch: &str) -> Option<&str> {
+    match action {
+        Recovery::Publish => Some(branch),
+        _ => None,
+    }
+}
+
+#[must_use]
+pub const fn recovery_target<'a>(
+    action: Recovery,
+    branch: &'a str,
+    receipt: &'a str,
+) -> Option<&'a str> {
+    match action {
+        Recovery::Publish => Some(branch),
+        Recovery::RepairReceipt => Some(receipt),
+        _ => None,
     }
 }
 

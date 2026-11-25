@@ -9,6 +9,7 @@ use crate::fixture;
 
 const BRANCH: &str = "refs/heads/issue";
 const RECEIPT: &str = "refs/conductor/land/attempt-one";
+const CANDIDATE: &str = "refs/conductor/prepared/land-attempt-one";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Prepared {
@@ -82,6 +83,12 @@ fn prepare(path: &Path) -> Result<Prepared> {
         added_count: commits.len(),
         baseline_log: fs::read(repo.commondir().join("logs").join(BRANCH))?,
     };
+    repo.reference(
+        CANDIDATE,
+        candidate,
+        false,
+        "retain integration candidate",
+    )?;
     save(&repo, &prepared)?;
     drop(transaction);
     Ok(prepared)
@@ -94,12 +101,14 @@ fn receipt(repo: &Repository, prepared: &Prepared) -> Result<Receipt> {
     ))
 }
 
-fn target(repo: &Repository, name: &str) -> Result<Option<Oid>> {
-    match repo.refname_to_id(name) {
-        Ok(oid) => Ok(Some(oid)),
-        Err(error) if error.code() == ErrorCode::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-    }
+pub fn target(repo: &Repository, name: &str) -> Result<Option<Oid>> {
+    repo.references_glob(name)?
+        .next()
+        .transpose()?
+        .map(|reference| {
+            reference.target().context("expected a direct owned ref")
+        })
+        .transpose()
 }
 
 fn branch(repo: &Repository, prepared: &Prepared) -> Result<Branch> {
@@ -107,7 +116,8 @@ fn branch(repo: &Repository, prepared: &Prepared) -> Result<Branch> {
     let candidate = Oid::from_str(&prepared.candidate)?;
     Ok(vcs_probe_core::classify_branch(
         current == Oid::from_str(&prepared.expected)?,
-        current == candidate || repo.graph_descendant_of(current, candidate)?,
+        current == candidate,
+        repo.graph_descendant_of(current, candidate)?,
     ))
 }
 
@@ -123,15 +133,18 @@ fn checked_out(repo: &Repository, name: &str) -> Result<bool> {
             Ok(Repository::open(worktree.path())?.head()?.name()? == name)
         })
         .collect::<Result<_>>()?;
-    Ok(main || heads.contains(&true))
+    Ok(vcs_probe_core::any_checkout(main, &heads))
 }
 
 fn history_unchanged(repo: &Repository, prepared: &Prepared) -> Result<bool> {
-    match fs::read(repo.commondir().join("logs").join(&prepared.branch)) {
-        Ok(current) => Ok(current == prepared.baseline_log),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
-    }
+    fs::read(repo.commondir().join("logs").join(&prepared.branch))
+        .map(|current| current == prepared.baseline_log)
+        .or_else(|error| {
+            (error.kind() == std::io::ErrorKind::NotFound)
+                .then_some(false)
+                .ok_or(error)
+        })
+        .map_err(Into::into)
 }
 
 fn observe(repo: &Repository, prepared: &Prepared) -> Result<Recovery> {
@@ -139,10 +152,13 @@ fn observe(repo: &Repository, prepared: &Prepared) -> Result<Recovery> {
     if observed_receipt == Receipt::Matches {
         return Ok(Recovery::Completed);
     }
-    Ok(vcs_probe_core::recover(
-        observed_receipt,
-        branch(repo, prepared)?,
-        history_unchanged(repo, prepared)?,
+    Ok(vcs_probe_core::guard_retention(
+        vcs_probe_core::recover(
+            observed_receipt,
+            branch(repo, prepared)?,
+            history_unchanged(repo, prepared)?,
+        ),
+        target(repo, CANDIDATE)? == Some(Oid::from_str(&prepared.candidate)?),
     ))
 }
 
@@ -151,21 +167,21 @@ fn resume(path: &Path) -> Result<Progress> {
     let prepared = load(&repo)?;
     let mut transaction = lock(&repo, &prepared.branch, &prepared.receipt)?;
     let action = next_action(&repo, &prepared)?;
-    match action {
-        Recovery::Publish => transaction.set_target(
-            &prepared.branch,
+    vcs_probe_core::recovery_target(
+        action,
+        &prepared.branch,
+        &prepared.receipt,
+    )
+    .map(|name| -> Result<()> {
+        transaction.set_target(
+            name,
             Oid::from_str(&prepared.candidate)?,
             Some(&fixture::signature()?),
             "landing attempt-one",
-        )?,
-        Recovery::RepairReceipt => transaction.set_target(
-            &prepared.receipt,
-            Oid::from_str(&prepared.candidate)?,
-            Some(&fixture::signature()?),
-            "landing receipt attempt-one",
-        )?,
-        Recovery::Completed | Recovery::Refuse => (),
-    }
+        )?;
+        Ok(())
+    })
+    .transpose()?;
     transaction.commit()?;
     Ok(Progress {
         action,
@@ -174,13 +190,12 @@ fn resume(path: &Path) -> Result<Progress> {
 }
 
 fn next_action(repo: &Repository, prepared: &Prepared) -> Result<Recovery> {
-    match observe(repo, prepared)? {
-        Recovery::Publish => Ok(vcs_probe_core::guard_checkout(
-            Recovery::Publish,
-            checked_out(repo, &prepared.branch)?,
-        )),
-        action => Ok(action),
-    }
+    let action = observe(repo, prepared)?;
+    let occupied = vcs_probe_core::checkout_branch(action, &prepared.branch)
+        .map(|name| checked_out(repo, name))
+        .transpose()?
+        .unwrap_or(false);
+    Ok(vcs_probe_core::guard_checkout(action, occupied))
 }
 
 fn expect_step(path: &Path, expected: Recovery) -> Result<()> {
@@ -395,6 +410,26 @@ fn checked_out_branch(root: &Path) -> Result<()> {
     Ok(())
 }
 
+fn retained_candidate(root: &Path) -> Result<()> {
+    let path = root.join("integration-retention");
+    let prepared = prepare(&path)?;
+    let repo = Repository::open(&path)?;
+    let mut walk = repo.revwalk()?;
+    walk.push_glob("refs/conductor/prepared/*")?;
+    let retained = walk.collect::<std::result::Result<Vec<_>, _>>()?;
+    ensure!(
+        retained.contains(&Oid::from_str(&prepared.candidate)?),
+        "integration candidate is unreachable"
+    );
+    repo.find_reference(CANDIDATE)?.delete()?;
+    expect_step(&path, Recovery::Refuse)?;
+    ensure!(
+        repo.refname_to_id(BRANCH)? == Oid::from_str(&prepared.expected)?,
+        "missing retention changed branch"
+    );
+    Ok(())
+}
+
 pub fn run(root: &Path) -> Result<()> {
     interrupted_boundaries(root)?;
     divergent(root)?;
@@ -406,5 +441,6 @@ pub fn run(root: &Path) -> Result<()> {
     lock_contention(root)?;
     intent_collision(root)?;
     checked_out_branch(root)?;
+    retained_candidate(root)?;
     Ok(())
 }
