@@ -7,7 +7,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::wordy;
+use super::{repeated, wordy};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -46,6 +46,13 @@ pub struct Group {
 
 impl Diagram {
     pub(super) fn check(&self) -> Result<(), DiagramError> {
+        if let Some(id) =
+            repeated(self.nodes.iter().map(|node| node.id.as_str()))
+        {
+            return Err(DiagramError::Twice {
+                id: String::from(id),
+            });
+        }
         if let Some(edge) = self
             .edges
             .iter()
@@ -77,10 +84,26 @@ impl Diagram {
             .iter()
             .map(|node| &node.label)
             .chain(self.edges.iter().filter_map(|edge| edge.label.as_ref()))
+            .chain(self.groups.iter().map(|group| &group.label))
             .find(|label| wordy(label))
         {
             return Err(DiagramError::Wordy {
                 label: label.clone(),
+            });
+        }
+        if let Some((edge, node)) = self.edges.iter().find_map(|edge| {
+            self.nodes
+                .iter()
+                .filter(|node| node.id == edge.from || node.id == edge.to)
+                .find(|node| node.step > edge.step)
+                .map(|node| (edge, node))
+        }) {
+            return Err(DiagramError::Early {
+                from: edge.from.clone(),
+                to: edge.to.clone(),
+                step: edge.step,
+                node: node.id.clone(),
+                shown: node.step,
             });
         }
         self.steps()
@@ -196,6 +219,16 @@ pub enum DiagramError {
         node: String,
         group: String,
     },
+    Early {
+        from: String,
+        to: String,
+        step: u8,
+        node: String,
+        shown: u8,
+    },
+    Twice {
+        id: String,
+    },
 }
 
 impl fmt::Display for DiagramError {
@@ -217,6 +250,20 @@ impl fmt::Display for DiagramError {
             Self::Ungrouped { node, group } => write!(
                 out,
                 "node `{node}` is in group `{group}`, but the diagram has no group `{group}`: add the group or take the node out of it"
+            ),
+            Self::Early {
+                from,
+                to,
+                step,
+                node,
+                shown,
+            } => write!(
+                out,
+                "the edge from `{from}` to `{to}` comes at step {step}, before node `{node}` at step {shown}: move the edge to step {shown} or later"
+            ),
+            Self::Twice { id } => write!(
+                out,
+                "two nodes are called `{id}`: give each node its own id"
             ),
         }
     }

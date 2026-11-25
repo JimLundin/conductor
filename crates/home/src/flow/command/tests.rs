@@ -1152,6 +1152,15 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
             ),
             "the label `the worker pushes the branch and asks for a review` is over eight words: put the detail in prose",
         ),
+        (
+            statechart(
+                r#"{"id": "open", "label": "Open"}, {"id": "open", "label": "Reopened"}"#,
+                "open",
+                "",
+                "",
+            ),
+            "two states are called `open`: give each state its own id",
+        ),
     ];
     for (text, said) in cases {
         let outcome =
@@ -1286,6 +1295,33 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
             ),
             format!(
                 "home: canvas design of home/{TASK}: node `folder` is in group `core`, but the diagram has no group `core`: add the group or take the node out of it\n"
+            ),
+        ),
+        (
+            diagram(
+                &[node("core", "Core", 1), node("store", "Store", 2)]
+                    .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: the edge from `core` to `store` comes at step 1, before node `store` at step 2: move the edge to step 2 or later\n"
+            ),
+        ),
+        (
+            diagram(
+                &[node("core", "Core", 1), node("core", "Store", 2)].join(", "),
+                "",
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: two nodes are called `core`: give each node its own id\n"
+            ),
+        ),
+        (
+            String::from(
+                r#"{"title": "Design", "blocks": [{"diagram": {"nodes": [], "edges": [], "groups": [{"id": "shell", "label": "the shell does every piece of input and output"}]}}]}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: the label `the shell does every piece of input and output` is over eight words: put the detail in prose\n"
             ),
         ),
     ];
@@ -1524,22 +1560,8 @@ fn prose_file() -> CanvasFile {
 }
 
 #[test]
-fn check_reports_each_canvas_the_store_cant_return_that_breaks_its_rules_or_that_no_issue_holds()
+fn check_reports_each_canvas_the_store_cant_return_or_that_no_issue_holds()
 -> Result<(), String> {
-    let mut canvas = Canvas::parse(&statechart(
-        STATES,
-        "open",
-        TRANSITIONS,
-        r#""review", "done""#,
-    ))
-    .map_err(|error| error.to_string())?;
-    if let Some(Block::Statechart(chart)) = canvas.blocks.first_mut() {
-        chart.start = String::from("gone");
-    }
-    let broken = CanvasFile {
-        canvas,
-        ..prose_file()
-    };
     let checked = given(
         "check",
         Given::EveryCanvas(Ok(Vec::from([
@@ -1550,7 +1572,6 @@ fn check_reports_each_canvas_the_store_cant_return_that_breaks_its_rules_or_that
                 "garbled",
                 Err(String::from("not a canvas: missing field `title`")),
             )?,
-            stored(TASK, "turn", Ok(Some(broken)))?,
             stored(TASK, "vanished", Ok(None))?,
             stored("0v29xvc9", "orphan", Ok(Some(prose_file())))?,
         ]))),
@@ -1563,10 +1584,9 @@ fn check_reports_each_canvas_the_store_cant_return_that_breaks_its_rules_or_that
                 "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
                  error  home/{TASK}  canvas denied: permission denied\n\
                  error  home/{TASK}  canvas garbled: not a canvas: missing field `title`\n\
-                 error  home/{TASK}  canvas turn: the statechart starts at `gone`, which isn't a state: add the state or change `start`\n\
                  error  home/{TASK}  canvas vanished: the store lists it but returns nothing\n\
                  error  home/0v29xvc9  canvas orphan: the issue doesn't exist: write the canvas under one that does, or remove it\n\
-                 5 errors, 1 warnings\n"
+                 4 errors, 1 warnings\n"
             )
         )
     );

@@ -154,18 +154,11 @@ pub fn canvases(
                 Ok(None) => {
                     Some(String::from("the store lists it but returns nothing"))
                 }
-                Ok(Some(file)) => file
-                    .canvas
-                    .check()
-                    .err()
-                    .map(|error| error.to_string())
-                    .or_else(|| {
-                        (!held(stored)).then(|| {
-                            String::from(
-                                "the issue doesn't exist: write the canvas under one that does, or remove it",
-                            )
-                        })
-                    }),
+                Ok(Some(_)) => (!held(stored)).then(|| {
+                    String::from(
+                        "the issue doesn't exist: write the canvas under one that does, or remove it",
+                    )
+                }),
             };
             wrong.map(|reason| Finding {
                 severity: Severity::Error,

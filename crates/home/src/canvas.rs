@@ -1,4 +1,5 @@
 use alloc::borrow::Cow;
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -25,10 +26,29 @@ pub use progress::{Bar, ProgressError, Stretch};
 pub use statechart::{State, Statechart, StatechartError, Transition};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, try_from = "Drawn")]
 pub struct Canvas {
     pub title: String,
     pub blocks: Vec<Block>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename = "Canvas", expecting = "struct Canvas", deny_unknown_fields)]
+struct Drawn {
+    title: String,
+    blocks: Vec<Block>,
+}
+
+impl TryFrom<Drawn> for Canvas {
+    type Error = CanvasError;
+
+    fn try_from(drawn: Drawn) -> Result<Self, CanvasError> {
+        drawn.blocks.iter().try_for_each(Block::check)?;
+        Ok(Self {
+            title: drawn.title,
+            blocks: drawn.blocks,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -60,16 +80,7 @@ impl Canvas {
     ///
     /// The text is not a canvas.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
-        let canvas: Self = decoded(text)?;
-        canvas.check()?;
-        Ok(canvas)
-    }
-
-    /// # Errors
-    ///
-    /// A block breaks a drawing rule.
-    pub fn check(&self) -> Result<(), CanvasError> {
-        self.blocks.iter().try_for_each(Block::check)
+        decoded::<Drawn>(text).and_then(Self::try_from)
     }
 
     #[must_use]
@@ -139,9 +150,12 @@ impl CanvasFile {
     ///
     /// The text is not a canvas file.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
-        let file: Self = decoded(text)?;
-        file.canvas.check()?;
-        Ok(file)
+        let file: Stamped = decoded(text)?;
+        Ok(Self {
+            written: file.written,
+            by: file.by,
+            canvas: Canvas::try_from(file.canvas)?,
+        })
     }
 
     #[must_use]
@@ -152,7 +166,21 @@ impl CanvasFile {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(expecting = "struct CanvasFile", deny_unknown_fields)]
+struct Stamped {
+    written: u64,
+    by: String,
+    canvas: Drawn,
+}
+
 const MOST_WORDS: usize = 8;
+
+fn repeated<'a>(ids: impl Iterator<Item = &'a str>) -> Option<&'a str> {
+    let mut seen = BTreeSet::new();
+    let mut ids = ids;
+    ids.find(|id| !seen.insert(*id))
+}
 
 fn wordy(label: &str) -> bool {
     label.split_whitespace().count() > MOST_WORDS
