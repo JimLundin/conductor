@@ -141,7 +141,9 @@ impl Log {
     /// The last stored event's seq, or 0 before the first.
     #[must_use]
     pub fn head(&self) -> HostSeq {
-        self.events.last().map_or(HostSeq(0), |event| event.seq)
+        self.events
+            .last()
+            .map_or(HostSeq::BEFORE_FIRST, |event| event.seq)
     }
 
     /// Records an event: stored with the next seq, or live only with the
@@ -263,6 +265,8 @@ fn alone(write: Write) -> Vec<Effect> {
 pub struct HostSeq(pub u64);
 
 impl HostSeq {
+    pub const BEFORE_FIRST: Self = Self(0);
+
     #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.saturating_add(1))
