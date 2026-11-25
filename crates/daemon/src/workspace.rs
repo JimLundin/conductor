@@ -710,9 +710,12 @@ mod tests {
         )
         .await?;
         let before = text(path, &["rev-parse", "HEAD"]).await?;
-        std::fs::write(&lock, "")?;
+        let attempt = vcs::command::SnapshotAttempt(String::from("turn-5"));
+        let backend = workspaces(&repo.data);
+        std::fs::write(&lock, "other writer")?;
         assert!(
-            repo.snapshot(&workspace, id)
+            backend
+                .snapshot(&workspace, id, attempt.clone())
                 .await
                 .is_err_and(|error| error.to_string().contains("index.lock"))
         );
@@ -721,8 +724,9 @@ mod tests {
             std::fs::read_to_string(path.join("new.txt"))?,
             "snapshotted\n"
         );
+        assert_eq!(std::fs::read(&lock)?, b"other writer");
         std::fs::remove_file(lock)?;
-        let committed = repo.snapshot(&workspace, id).await?;
+        let committed = backend.snapshot(&workspace, id, attempt).await?;
         assert_eq!(text(path, &["rev-parse", "HEAD"]).await?, committed);
         assert_eq!(text(path, &["show", "HEAD:new.txt"]).await?, "snapshotted");
         let _ = text(path, &["diff", "--cached", "--quiet"]).await?;
@@ -752,7 +756,7 @@ mod tests {
                 .remove(&workspace, id)
                 .await
                 .is_err_and(|reason| {
-                    reason.to_string().contains("index contains changes")
+                    reason.to_string().contains("partial staging")
                 })
         );
         assert_eq!(text(root, &["show", ":deleted.txt"]).await?, "staged only");
