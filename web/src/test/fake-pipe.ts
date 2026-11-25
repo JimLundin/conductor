@@ -1,7 +1,9 @@
+import type { Connection, Pipe, Stream } from "#ui/pipe.ts";
+import { Deferred, Effect, Option, Queue } from "effect";
+import type { Cause } from "effect";
+
 // An in-memory pipe for tests, where the test plays the host. Its connections and streams are
-// typed as web-iroh's, so a change to the pipe's declarations breaks the type-check here.
-import { type Cause, Deferred, Effect, Queue } from "effect";
-import type { Connection, Pipe, Stream } from "./pipe.ts";
+// Typed as web-iroh's, so a change to the pipe's declarations breaks the type-check here.
 
 // One direction of a stream: its frames in order, then its end.
 type Frames = Queue.Queue<Uint8Array, Cause.Done>;
@@ -17,7 +19,7 @@ interface HostStream {
 }
 
 const next = (queue: Frames): Promise<Uint8Array | undefined> =>
-  Effect.runPromise(Queue.take(queue).pipe(Effect.orElseSucceed(() => undefined)));
+  Effect.runPromise(Queue.take(queue).pipe(Effect.option, Effect.map(Option.getOrUndefined)));
 
 const send = (queue: Frames, frame: Frame): void => {
   Queue.offerUnsafe(queue, Uint8Array.from(frame));
@@ -28,17 +30,34 @@ const end = (queue: Frames): void => {
 };
 
 const appStream = (up: Frames, down: Frames): Stream => ({
-  free: (): void => undefined,
   [Symbol.dispose]: (): void => undefined,
-  send: (frame: Frame): Promise<void> => Promise.resolve(send(up, frame)),
+  finish: (): Promise<void> =>
+    Effect.runPromise(
+      Effect.sync(() => {
+        end(up);
+      }),
+    ),
+  free: (): void => undefined,
   recv: (): Promise<Uint8Array | undefined> => next(down),
-  finish: (): Promise<void> => Promise.resolve(end(up)),
+  send: (frame: Frame): Promise<void> =>
+    Effect.runPromise(
+      Effect.sync(() => {
+        send(up, frame);
+      }),
+    ),
 });
 
 const hostStream = (up: Frames, down: Frames): HostStream => ({
-  send: (frame: Frame): Promise<void> => Promise.resolve(send(down, frame)),
-  finish: (): void => end(down),
+  finish: (): void => {
+    end(down);
+  },
   recv: (): Promise<Uint8Array | undefined> => next(up),
+  send: (frame: Frame): Promise<void> =>
+    Effect.runPromise(
+      Effect.sync(() => {
+        send(down, frame);
+      }),
+    ),
 });
 
 const closeWith = (closed: Deferred.Deferred<string>, reason: string): void => {
@@ -59,16 +78,23 @@ const openBi = (opened: Queue.Queue<HostStream>): Promise<Stream> =>
 
 const fake = (opened: Queue.Queue<HostStream>, closed: Deferred.Deferred<string>): FakeHost => {
   const connection: Connection = {
-    free: (): void => undefined,
     [Symbol.dispose]: (): void => undefined,
-    openBi: (): Promise<Stream> => openBi(opened),
+    close: (): Promise<void> =>
+      Effect.runPromise(
+        Effect.sync(() => {
+          closeWith(closed, "closed");
+        }),
+      ),
     closed: (): Promise<string> => Effect.runPromise(Deferred.await(closed)),
-    close: (): Promise<void> => Promise.resolve(closeWith(closed, "closed")),
+    free: (): void => undefined,
+    openBi: (): Promise<Stream> => openBi(opened),
   };
   return {
-    pipe: { connect: (): Promise<Connection> => Promise.resolve(connection) },
     accept: (): Promise<HostStream> => Effect.runPromise(Queue.take(opened)),
-    close: (reason: string): void => closeWith(closed, reason),
+    close: (reason: string): void => {
+      closeWith(closed, reason);
+    },
+    pipe: { connect: (): Promise<Connection> => Promise.resolve(connection) },
   };
 };
 
