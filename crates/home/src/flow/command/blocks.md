@@ -1,6 +1,6 @@
 # Canvas blocks
 
-A canvas is one JSON object with a `title` and a list of `blocks`. Each block is an object with one key, its kind, whose value holds the block's fields. A field is required unless its section calls it optional.
+A canvas is one JSON object with a `title` and a list of `blocks`. Each block is an object with one key, the block's kind. That key's value holds the block's fields. A field is required unless its section calls it optional.
 
 ```json
 {
