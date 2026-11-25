@@ -78,6 +78,15 @@ impl Canvas {
         decoded::<Drawn>(text).and_then(Self::try_from)
     }
 
+    #[must_use]
+    pub fn schema() -> String {
+        let mut text =
+            serde_json::to_string_pretty(&schemars::schema_for!(Drawn))
+                .unwrap_or_default();
+        text.push('\n');
+        text
+    }
+
     pub(crate) fn markdown(&self) -> String {
         core::iter::once(format!("# {}\n", self.title.trim()))
             .chain(self.blocks.iter().map(Block::markdown))
