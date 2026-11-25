@@ -24,9 +24,10 @@ interface Host {
 }
 
 type Sessions = Host["sessions"];
+type SessionEntry = readonly [SessionId, Session];
 
 const without = (sessions: Sessions, id: SessionId): Sessions =>
-  new Map([...sessions].filter(([known]) => known !== id));
+  new Map([...sessions].filter(([known]: SessionEntry) => known !== id));
 
 const applied = (sessions: Sessions, event: Event): Sessions => {
   const session = sessions.get(event.session);
@@ -99,8 +100,10 @@ const applyUpdate = (host: Host, update: Update): Host =>
 // The sessions, the most recently active first.
 const recent = (host: Host): ReadonlyArray<SessionId> =>
   [...host.sessions]
-    .toSorted(([, first], [, second]) => second.activity - first.activity)
-    .map(([id]) => id);
+    .toSorted(
+      ([, first]: SessionEntry, [, second]: SessionEntry) => second.activity - first.activity,
+    )
+    .map(([id]: SessionEntry) => id);
 
 // Each directory a session ran in, once, the most recent first: the suggestions for a new
 // Session.
