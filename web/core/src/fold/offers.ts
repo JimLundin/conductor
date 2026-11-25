@@ -1,7 +1,11 @@
-// What a session offers and shows, decided here so the views only render it.
 import { Data, Match } from "effect";
-import type { Session, SessionStatus } from "./session.ts";
-import { isRequestOpen, type Item } from "./transcript.ts";
+import { Item, ToolState, isRequestOpen } from "#core/fold/transcript";
+import type { Session } from "#core/fold/session";
+import { SessionStatus } from "#core/fold/session";
+// What a session offers and shows, decided here so the views only render it.
+
+const noItems = 0;
+const lastItem = -1;
 
 type Composer = "Open" | "Busy" | "Closed";
 
@@ -22,13 +26,13 @@ const ListStatus = Data.taggedEnum<ListStatus>();
 type EmptyTranscript = "Starting" | "Ready" | "Closed";
 
 // The approvals and questions waiting on a person, the session's own and then its sub-agents'.
-const openRequests = (session: Session): readonly Item[] =>
-  [...session.items, ...session.subagents.flatMap((subagent) => subagent.items)].filter(
-    isRequestOpen,
+const openRequests = (session: Session): ReadonlyArray<Item> =>
+  [...session.items, ...session.subagents.flatMap((subagent) => subagent.items)].filter((item) =>
+    isRequestOpen(item),
   );
 
 const controls = (session: Session): Controls => {
-  const status = session.status._tag;
+  const { _tag: status } = session.status;
   return {
     composer: Match.value(status).pipe(
       Match.withReturnType<Composer>(),
@@ -36,28 +40,28 @@ const controls = (session: Session): Controls => {
       Match.when("Closed", () => "Closed"),
       Match.orElse(() => "Busy"),
     ),
-    interrupt: status === "Running",
     continue: status === "Closed",
     finish:
-      session.issue !== null &&
+      session.issue !== undefined &&
       (status === "Idle" || status === "Closed") &&
       (session.finish === "Ready" || session.finish === "Retrying"),
+    interrupt: status === "Running",
   };
 };
 
 // The list shows a session's open requests in place of its status.
 const listStatus = (session: Session): ListStatus => {
   const count = openRequests(session).length;
-  return count === 0
-    ? ListStatus.Session({ status: session.status._tag })
-    : ListStatus.Requests({ count });
+  const { _tag: status } = session.status;
+  return count === noItems ? ListStatus.Session({ status }) : ListStatus.Requests({ count });
 };
 
-const emptyTranscript = (session: Session): EmptyTranscript | null => {
-  if (session.items.length > 0) {
-    return null;
+const emptyTranscript = (session: Session): EmptyTranscript | undefined => {
+  if (session.items.length > noItems) {
+    return undefined;
   }
-  return Match.value(session.status._tag).pipe(
+  const { _tag: status } = session.status;
+  return Match.value(status).pipe(
     Match.withReturnType<EmptyTranscript>(),
     Match.when("Starting", () => "Starting"),
     Match.when("Closed", () => "Closed"),
@@ -67,14 +71,14 @@ const emptyTranscript = (session: Session): EmptyTranscript | null => {
 
 const isLive = (item: Item | undefined): boolean =>
   item !== undefined &&
-  (((item._tag === "Reply" || item._tag === "Reasoning") && item.state === "Streaming") ||
-    (item._tag === "Tool" && item.state._tag === "Running"));
+  (((Item.$is("Reply")(item) || Item.$is("Reasoning")(item)) && item.state === "Streaming") ||
+    (Item.$is("Tool")(item) && ToolState.$is("Running")(item.state)));
 
 // A running turn shows it is working, unless it waits on a person or its last item is live
-// already: a reply or reasoning streaming in, or a tool call running.
+// Already: a reply or reasoning streaming in, or a tool call running.
 const isWorking = (session: Session): boolean =>
-  session.status._tag === "Running" &&
-  openRequests(session).length === 0 &&
-  !isLive(session.items.at(-1));
+  SessionStatus.$is("Running")(session.status) &&
+  openRequests(session).length === noItems &&
+  !isLive(session.items.at(lastItem));
 
 export { controls, emptyTranscript, isWorking, ListStatus, listStatus, openRequests };

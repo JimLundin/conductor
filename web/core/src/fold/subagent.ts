@@ -1,5 +1,13 @@
-// A session's sub-agents: children with no session of their own, whose events are its.
-import { Data, Match } from "effect";
+import {
+  Approval,
+  Change,
+  Item,
+  RequestState,
+  ToolState,
+  changeItems,
+  hasCall,
+  openApproval,
+} from "#core/fold/transcript";
 import type {
   ChecklistEntry,
   SubagentActivity,
@@ -8,18 +16,10 @@ import type {
   SubagentOutcome,
   ToolCallId,
   ToolKind,
-} from "../schemas/index.ts";
-import {
-  Approval,
-  Change,
-  changeItems,
-  hasCall,
-  Item,
-  openApproval,
-  RequestState,
-  ToolState,
-  type Unit,
-} from "./transcript.ts";
+} from "#core/schemas/index";
+import { Data, Match } from "effect";
+import type { Unit } from "#core/data";
+// A session's sub-agents: children with no session of their own, whose events are its.
 
 type SubagentStatus = Data.TaggedEnum<{
   readonly Running: Unit;
@@ -35,16 +35,18 @@ interface Subagent {
   readonly id: SubagentId;
   readonly call: ToolCallId;
   readonly description: string;
-  readonly kind: string | null;
-  readonly checklist: readonly ChecklistEntry[];
+  readonly kind: string | undefined;
+  readonly checklist: ReadonlyArray<ChecklistEntry>;
   readonly status: SubagentStatus;
   // Its own transcript, whose last reply is its report.
-  readonly items: readonly Item[];
+  readonly items: ReadonlyArray<Item>;
 }
 
-type Subagents = readonly Subagent[];
+type Subagents = ReadonlyArray<Subagent>;
 
 type Update = (subagent: Subagent) => Subagent;
+
+const lastItem = -1;
 
 const pushed = (subagent: Subagent, item: Item): Subagent => ({
   ...subagent,
@@ -52,17 +54,17 @@ const pushed = (subagent: Subagent, item: Item): Subagent => ({
 });
 
 // Its tool calls still running stop with it, and its report ends its transcript.
-const ended = (subagent: Subagent, status: SubagentStatus, summary: string | null): Subagent => {
+const ended = (subagent: Subagent, status: SubagentStatus, summary?: string): Subagent => {
   const stopped = {
     ...subagent,
-    status,
     items: changeItems(subagent.items, Change.End()),
+    status,
   };
-  const last = stopped.items.at(-1);
-  const isRepeated = last !== undefined && last._tag === "Reply" && last.text === summary;
-  return summary === null || isRepeated
+  const last = stopped.items.at(lastItem);
+  const isRepeated = last !== undefined && Item.$is("Reply")(last) && last.text === summary;
+  return summary === undefined || isRepeated
     ? stopped
-    : pushed(stopped, Item.Reply({ text: summary, state: "Done" }));
+    : pushed(stopped, Item.Reply({ state: "Done", text: summary }));
 };
 
 const toolStarted = (subagent: Subagent, call: ToolCallId, tool: ToolKind): Subagent =>
@@ -70,16 +72,16 @@ const toolStarted = (subagent: Subagent, call: ToolCallId, tool: ToolKind): Suba
     ? {
         ...subagent,
         items: subagent.items.map((item) =>
-          item._tag === "Tool" && item.call === call ? Item.Tool({ ...item, tool }) : item,
+          Item.$is("Tool")(item) && item.call === call ? Item.Tool({ ...item, tool }) : item,
         ),
       }
     : pushed(
         subagent,
         Item.Tool({
-          call,
-          tool,
-          state: ToolState.Running(),
           approval: Approval.NotAsked(),
+          call,
+          state: ToolState.Running(),
+          tool,
         }),
       );
 
@@ -89,19 +91,19 @@ const did = Match.type<SubagentActivity>().pipe(
   Match.when(
     { Message: Match.any },
     ({ Message: { text } }) =>
-      (subagent: Subagent) =>
-        pushed(subagent, Item.Reply({ text, state: "Done" })),
+      (subagent: Subagent): Subagent =>
+        pushed(subagent, Item.Reply({ state: "Done", text })),
   ),
   Match.when(
     { Reasoning: Match.any },
     ({ Reasoning: { text } }) =>
-      (subagent: Subagent) =>
-        pushed(subagent, Item.Reasoning({ text, state: "Done" })),
+      (subagent: Subagent): Subagent =>
+        pushed(subagent, Item.Reasoning({ state: "Done", text })),
   ),
   Match.when(
     { ToolCall: Match.any },
     ({ ToolCall: { call, phase } }) =>
-      (subagent: Subagent) =>
+      (subagent: Subagent): Subagent =>
         "Finished" in phase
           ? {
               ...subagent,
@@ -116,16 +118,16 @@ const did = Match.type<SubagentActivity>().pipe(
 );
 
 // A request joins its tool call's card; a request for a call never seen started gets a card of
-// its own.
+// Its own.
 const asked =
   (call: ToolCallId, tool: ToolKind, approval: Approval): Update =>
   (subagent) =>
     hasCall(subagent.items, call)
       ? {
           ...subagent,
-          items: changeItems(subagent.items, Change.Ask({ call, approval })),
+          items: changeItems(subagent.items, Change.Ask({ approval, call })),
         }
-      : pushed(subagent, Item.Tool({ call, tool, state: ToolState.Running(), approval }));
+      : pushed(subagent, Item.Tool({ approval, call, state: ToolState.Running(), tool }));
 
 const update = Match.type<Exclude<SubagentEvent, { readonly Started: unknown }>>().pipe(
   Match.withReturnType<Update>(),
@@ -133,17 +135,17 @@ const update = Match.type<Exclude<SubagentEvent, { readonly Started: unknown }>>
   Match.when(
     { Ended: Match.any },
     ({ Ended: { outcome, summary } }) =>
-      (subagent: Subagent) =>
-        ended(subagent, SubagentStatus.Ended({ outcome }), summary),
+      (subagent: Subagent): Subagent =>
+        ended(subagent, SubagentStatus.Ended({ outcome }), summary ?? undefined),
   ),
-  Match.when({ Kind: Match.any }, ({ Kind: { kind } }) => (subagent: Subagent) => ({
+  Match.when({ Kind: Match.any }, ({ Kind: { kind } }) => (subagent: Subagent): Subagent => ({
     ...subagent,
-    kind,
+    kind: kind ?? undefined,
   })),
   Match.when(
     { ChecklistChanged: Match.any },
     ({ ChecklistChanged: { checklist } }) =>
-      (subagent: Subagent) => ({ ...subagent, checklist }),
+      (subagent: Subagent): Subagent => ({ ...subagent, checklist }),
   ),
   Match.when({ RequestOpened: Match.any }, ({ RequestOpened: body }) =>
     asked(body.call, body.tool, openApproval(body.request, body.reason, body.for_session)),
@@ -151,8 +153,8 @@ const update = Match.type<Exclude<SubagentEvent, { readonly Started: unknown }>>
   Match.when(
     { QuestionAsked: Match.any },
     ({ QuestionAsked: { request, questions } }) =>
-      (subagent: Subagent) =>
-        pushed(subagent, Item.Question({ request, questions, state: RequestState.Open() })),
+      (subagent: Subagent): Subagent =>
+        pushed(subagent, Item.Question({ questions, request, state: RequestState.Open() })),
   ),
   Match.exhaustive,
 );
@@ -161,8 +163,7 @@ const update = Match.type<Exclude<SubagentEvent, { readonly Started: unknown }>>
 const started = (
   subagents: Subagents,
   id: SubagentId,
-  call: ToolCallId,
-  description: string,
+  { call, description }: { readonly call: ToolCallId; readonly description: string },
 ): Subagents =>
   subagents.some((subagent) => subagent.id === id)
     ? subagents.map((subagent) =>
@@ -171,13 +172,13 @@ const started = (
     : [
         ...subagents,
         {
-          id,
           call,
-          description,
-          kind: null,
           checklist: [],
-          status: SubagentStatus.Running(),
+          description,
+          id,
           items: [],
+          kind: undefined,
+          status: SubagentStatus.Running(),
         },
       ];
 
@@ -188,7 +189,7 @@ const applySubagentEvent = (
   event: SubagentEvent,
 ): Subagents => {
   if ("Started" in event) {
-    return started(subagents, id, event.Started.call, event.Started.description);
+    return started(subagents, id, event.Started);
   }
   const apply = update(event);
   return subagents.map((subagent) => (subagent.id === id ? apply(subagent) : subagent));
@@ -202,7 +203,9 @@ const changeSubagents = (subagents: Subagents, next: Change): Subagents =>
 
 const stopSubagents = (subagents: Subagents): Subagents =>
   subagents.map((subagent) =>
-    subagent.status._tag === "Running" ? ended(subagent, SubagentStatus.Stopped(), null) : subagent,
+    SubagentStatus.$is("Running")(subagent.status)
+      ? ended(subagent, SubagentStatus.Stopped())
+      : subagent,
   );
 
 export { applySubagentEvent, changeSubagents, stopSubagents, type Subagent, SubagentStatus };
