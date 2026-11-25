@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/50";
+type Alpn = "conductor/51";
 
-const Alpn = Schema.Literal("conductor/50").annotate({
+const Alpn = Schema.Literal("conductor/51").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -159,7 +159,7 @@ const Edge = Schema.Struct({
   step: Schema.Number.annotate({ format: "uint8" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
-      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+      Schema.isGreaterThanOrEqualTo(1).annotate({ expected: "a value greater than or equal to 1" }),
     )
     .check(
       Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
@@ -187,7 +187,7 @@ const Node = Schema.Struct({
   step: Schema.Number.annotate({ format: "uint8" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
-      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+      Schema.isGreaterThanOrEqualTo(1).annotate({ expected: "a value greater than or equal to 1" }),
     )
     .check(
       Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
@@ -202,7 +202,7 @@ type Diagram = {
 
 const Diagram = Schema.Struct({
   edges: Schema.Array(Edge),
-  groups: Schema.Array(Group),
+  groups: Schema.Array(Group).annotate({ default: [] }),
   nodes: Schema.Array(Node),
 }).annotate({ identifier: "Diagram" });
 

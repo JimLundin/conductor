@@ -19,7 +19,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/50",
+      "const": "conductor/51",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -823,6 +823,7 @@
           "type": "array"
         },
         "groups": {
+          "default": [],
           "items": {
             "$ref": "#/$defs/Group"
           },
@@ -858,7 +859,7 @@
         "step": {
           "format": "uint8",
           "maximum": 255,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer"
         },
         "to": {
@@ -2776,7 +2777,7 @@
         "step": {
           "format": "uint8",
           "maximum": 255,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer"
         }
       },

@@ -1171,6 +1171,80 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     );
 }
 
+const BLOCKS: &str = include_str!("blocks.json");
+
+const KINDS: [&str; 7] = [
+    "changes",
+    "code",
+    "diagram",
+    "options",
+    "progress",
+    "prose",
+    "statechart",
+];
+
+fn schema() -> Result<serde_json::Value, String> {
+    let outcome = ran(&home(), "canvas schema");
+    if outcome.failed {
+        return Err(outcome.output);
+    }
+    serde_json::from_str(&outcome.output).map_err(|error| error.to_string())
+}
+
+fn examples() -> Result<Vec<serde_json::Value>, String> {
+    let examples: Vec<serde_json::Value> =
+        serde_json::from_str(BLOCKS).map_err(|error| error.to_string())?;
+    Ok(examples
+        .into_iter()
+        .map(|example| {
+            if example.get("title").is_some() {
+                example
+            } else {
+                serde_json::json!({"title": "A block", "blocks": [example]})
+            }
+        })
+        .collect())
+}
+
+#[test]
+fn a_canvas_schema_prints_a_json_schema_with_a_definition_of_each_block_kind()
+-> Result<(), String> {
+    let schema = schema()?;
+    let kinds: Vec<&str> = schema["$defs"]["Block"]["oneOf"]
+        .as_array()
+        .ok_or("no Block definition")?
+        .iter()
+        .filter_map(|variant| variant["required"][0].as_str())
+        .collect::<alloc::collections::BTreeSet<&str>>()
+        .into_iter()
+        .collect();
+    assert_eq!(kinds, KINDS, "{schema:#}");
+    assert_eq!(schema["required"], serde_json::json!(["title", "blocks"]));
+    Ok(())
+}
+
+#[test]
+fn the_canvas_schema_and_canvas_put_agree_on_every_example_of_the_explain_skill_s_blocks()
+-> Result<(), String> {
+    let validator = jsonschema::validator_for(&schema()?)
+        .map_err(|error| error.to_string())?;
+    for example in examples()? {
+        let unfit: Vec<String> = validator
+            .iter_errors(&example)
+            .map(|error| error.to_string())
+            .collect();
+        assert_eq!(unfit, Vec::<String>::new(), "{example}");
+        let put = put_canvas(&example.to_string());
+        assert_eq!(
+            (put.failed, put.canvases.len()),
+            (false, 1),
+            "{example}: {}",
+            put.output
+        );
+    }
+    Ok(())
+}
+
 fn statechart(
     states: &str,
     start: &str,
@@ -1245,6 +1319,15 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
                 "",
             ),
             "two states are called `open`: give each state its own id",
+        ),
+        (
+            statechart(
+                r#"{"id": "open", "label": "Open", "marked": "the owner reads it here before the worker starts"}"#,
+                "open",
+                "",
+                "",
+            ),
+            "the label `the owner reads it here before the worker starts` is over 8 words: put the detail in prose",
         ),
     ];
     for (text, said) in cases {
@@ -1511,6 +1594,96 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
             ),
         ),
     ];
+    refuses_each(cases);
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_group_writes_nothing_and_says_what_to_change()
+ {
+    let cases = [
+        (
+            diagram(
+                &[
+                    node("core", "Core", 1),
+                    node("store", "Store", 1),
+                    node("cache", "Cache", 1),
+                ]
+                .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}, {"from": "store", "to": "cache", "step": 2}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: node `cache` stands alone at step 1: bring the node in with the edge that connects it\n"
+            ),
+        ),
+        (
+            diagram(&node("core", "Core", 1), ""),
+            format!(
+                "home: canvas design of home/{TASK}: node `core` stands alone at step 1: bring the node in with the edge that connects it\n"
+            ),
+        ),
+        (
+            diagram(
+                &[
+                    node("core", "Core", 1),
+                    node("store", "Store", 1),
+                    node("cache", "Cache", 3),
+                ]
+                .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}, {"from": "store", "to": "cache", "step": 3}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: a diagram skips step 2: number its steps from 1 with no gap\n"
+            ),
+        ),
+        (
+            diagram(
+                &[node("core", "Core", 1), node("store", "Store", 1)]
+                    .join(", "),
+                r#"{"from": "core", "to": "store", "step": 1}"#,
+            )
+            .replace(
+                r#"{"id": "shell", "label": "Shell"}"#,
+                r#"{"id": "shell", "label": "Shell"}, {"id": "shell", "label": "Host"}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: two groups are called `shell`: give each group its own id\n"
+            ),
+        ),
+    ];
+    refuses_each(cases);
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_step_of_0_is_refused_when_decoding_and_says_to_number_steps_from_1()
+ {
+    let text = diagram(
+        &[node("core", "Core", 0), node("store", "Store", 1)].join(", "),
+        r#"{"from": "core", "to": "store", "step": 1}"#,
+    );
+    refuses_each([(
+        text,
+        format!(
+            "home: canvas design of home/{TASK}: not a canvas: a diagram has a step 0: number its steps from 1 at line 1 column 96\n"
+        ),
+    )]);
+}
+
+#[test]
+fn a_canvas_schema_gives_a_diagram_step_a_minimum_of_1() -> Result<(), String> {
+    let schema = schema()?;
+    let steps: Vec<&serde_json::Value> = ["Node", "Edge"]
+        .iter()
+        .map(|part| &schema["$defs"][part]["properties"]["step"]["minimum"])
+        .collect();
+    assert_eq!(
+        steps,
+        [&serde_json::json!(1), &serde_json::json!(1)],
+        "{schema:#}"
+    );
+    Ok(())
+}
+
+fn refuses_each<const N: usize>(cases: [(String, String); N]) {
     for (text, said) in cases {
         let outcome = put_canvas(&text);
         assert_eq!(
@@ -1524,6 +1697,19 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
             "{text}"
         );
     }
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_without_groups_writes_it() {
+    let outcome = put_canvas(
+        r#"{"title": "Design", "blocks": [{"diagram": {"nodes": [{"id": "core", "label": "Core", "step": 1}, {"id": "store", "label": "Store", "step": 1}], "edges": [{"from": "core", "to": "store", "step": 1}]}}]}"#,
+    );
+    assert_eq!(
+        (outcome.failed, outcome.canvases.len()),
+        (false, 1),
+        "{}",
+        outcome.output
+    );
 }
 
 #[test]
@@ -1623,7 +1809,7 @@ fn blocks(blocks: &str) -> String {
 const CHOICES: &str = r#"[{"label": "Home folder", "gets": "history in git", "costs": "a sync per write"}, {"label": "Database", "gets": "queries", "costs": "a server to run"}]"#;
 
 #[test]
-fn a_canvas_put_with_more_done_than_total_a_pick_past_the_options_or_groups_out_of_order_writes_nothing_and_says_what_to_change()
+fn a_canvas_put_with_more_done_than_total_fewer_than_two_options_a_pick_past_them_or_groups_out_of_order_writes_nothing_and_says_what_to_change()
  {
     let cases = [
         (
@@ -1648,7 +1834,13 @@ fn a_canvas_put_with_more_done_than_total_a_pick_past_the_options_or_groups_out_
             blocks(
                 r#"{"options": {"question": "Where?", "options": [], "pick": 0, "why": "it syncs"}}"#,
             ),
-            "`Where?` has no options: add the choices the pick is made from",
+            "`Where?` has fewer than two options: add the choices the pick is made from",
+        ),
+        (
+            blocks(
+                r#"{"options": {"question": "Where?", "options": [{"label": "Home folder", "gets": "history in git", "costs": "a sync per write"}], "pick": 0, "why": "it syncs"}}"#,
+            ),
+            "`Where?` has fewer than two options: add the choices the pick is made from",
         ),
         (
             blocks(
@@ -1723,7 +1915,7 @@ fn a_canvas_show_prints_progress_as_text_bars_with_one_line_per_stretch()
 }
 
 #[test]
-fn a_canvas_show_prints_options_as_a_list_with_the_pick_marked_and_why()
+fn a_canvas_show_prints_options_as_a_list_with_the_pick_recommended_and_why()
 -> Result<(), String> {
     let outcome = shown(&blocks(&format!(
         r#"{{"options": {{"question": "Where do canvases live?", "options": {CHOICES}, "pick": 0, "why": "it syncs with the issues"}}}}"#
@@ -1735,9 +1927,9 @@ fn a_canvas_show_prints_options_as_a_list_with_the_pick_marked_and_why()
             String::from(
                 "# Where it stands\n\n\
                  **Where do canvases live?**\n\n\
-                 - **Home folder** (picked): gets history in git; costs a sync per write\n\
+                 - **Home folder** (recommended): gets history in git; costs a sync per write\n\
                  - **Database**: gets queries; costs a server to run\n\n\
-                 Picked **Home folder**: it syncs with the issues\n"
+                 Recommended **Home folder**: it syncs with the issues\n"
             )
         )
     );

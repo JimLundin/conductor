@@ -61,6 +61,8 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
   home canvas show <id> [<name>]
       Prints the issue's canvas of that name, or every canvas it has, as
       markdown.
+  home canvas schema
+      Prints the JSON Schema of the canvas that canvas put reads.
   home repos
       Shows each project's checkouts on this machine and their state.
   home repos --verify
@@ -102,6 +104,7 @@ pub enum Command {
     BodyFrom { id: IssueId, path: String },
     CanvasPut { key: CanvasKey, from: Source },
     CanvasShow(Wanted),
+    CanvasSchema,
     Wrong(String),
     Usage,
 }
@@ -286,6 +289,7 @@ pub fn command(
         ["canvas", "put", id, name, "--file", path] => {
             putting(home, id, name, Source::File((*path).to_owned()))
         }
+        ["canvas", "schema"] => Command::CanvasSchema,
         ["canvas", "show", id] => showing(home, id, None),
         ["canvas", "show", id, name] => showing(home, id, Some(name)),
         ["issue", "set", id, pairs @ ..] if !pairs.is_empty() => {
@@ -563,6 +567,12 @@ pub fn run(
             return put(home, key, text(given, place), context);
         }
         Command::CanvasShow(wanted) => return shown(home, &wanted, given),
+        Command::CanvasSchema => {
+            return Outcome {
+                output: Canvas::schema(),
+                ..said_only()
+            };
+        }
         Command::Edit(edit) => edit,
     };
     match plan(home, &edit, context) {
