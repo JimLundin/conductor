@@ -149,11 +149,45 @@ const Availability = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "Availability" });
 
-type Block = { readonly prose: { readonly text: string } };
+type State = { readonly id: string; readonly label: string; readonly marked?: string | null };
 
-const Block = Schema.Union([Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) })], {
-  mode: "oneOf",
-}).annotate({ identifier: "Block" });
+const State = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  marked: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+}).annotate({ identifier: "State" });
+
+type Transition = { readonly event: string; readonly from: string; readonly to: string };
+
+const Transition = Schema.Struct({
+  event: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+}).annotate({ identifier: "Transition" });
+
+type Statechart = {
+  readonly path?: globalThis.ReadonlyArray<string>;
+  readonly start: string;
+  readonly states: globalThis.ReadonlyArray<State>;
+  readonly transitions: globalThis.ReadonlyArray<Transition>;
+};
+
+const Statechart = Schema.Struct({
+  path: Schema.optionalKey(Schema.Array(Schema.String)),
+  start: Schema.String,
+  states: Schema.Array(State),
+  transitions: Schema.Array(Transition),
+}).annotate({ identifier: "Statechart" });
+
+type Block = { readonly prose: { readonly text: string } } | { readonly statechart: Statechart };
+
+const Block = Schema.Union(
+  [
+    Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ statechart: Statechart }),
+  ],
+  { mode: "oneOf" },
+).annotate({ identifier: "Block" });
 
 type Canvas = { readonly blocks: globalThis.ReadonlyArray<Block>; readonly title: string };
 
@@ -2709,6 +2743,8 @@ export {
   SnapshotFile,
   Stage,
   StartAt,
+  State,
+  Statechart,
   Status,
   SubagentActivity,
   SubagentEvent,
@@ -2720,6 +2756,7 @@ export {
   ToolKind,
   ToolOutcome,
   ToolPhase,
+  Transition,
   TurnOutcome,
   Welcome,
   WorkingCopy,

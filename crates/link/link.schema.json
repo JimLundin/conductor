@@ -138,6 +138,16 @@
           },
           "required": ["prose"],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "statechart": {
+              "$ref": "#/$defs/Statechart"
+            }
+          },
+          "required": ["statechart"],
+          "type": "object"
         }
       ]
     },
@@ -4137,6 +4147,50 @@
         }
       ]
     },
+    "State": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "marked": {
+          "type": ["string", "null"]
+        }
+      },
+      "required": ["id", "label"],
+      "type": "object"
+    },
+    "Statechart": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "start": {
+          "type": "string"
+        },
+        "states": {
+          "items": {
+            "$ref": "#/$defs/State"
+          },
+          "type": "array"
+        },
+        "transitions": {
+          "items": {
+            "$ref": "#/$defs/Transition"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["states", "start", "transitions"],
+      "type": "object"
+    },
     "Status": {
       "additionalProperties": false,
       "properties": {
@@ -4493,6 +4547,22 @@
           "type": "object"
         }
       ]
+    },
+    "Transition": {
+      "additionalProperties": false,
+      "properties": {
+        "event": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        }
+      },
+      "required": ["from", "to", "event"],
+      "type": "object"
     },
     "TurnOutcome": {
       "oneOf": [
