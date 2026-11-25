@@ -815,10 +815,11 @@ pub fn models(initialize: &Value) -> Models {
                 name: row.display_name,
                 description: row.description,
                 efforts: Effort::listed(
-                    row.supported_effort_levels
+                    &row.supported_effort_levels
                         .iter()
                         .flatten()
-                        .map(String::as_str),
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
                 ),
             })
             .collect(),

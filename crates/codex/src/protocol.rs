@@ -1238,9 +1238,10 @@ pub fn models(result: Value) -> serde_json::Result<Models> {
                 name: m.display_name,
                 description: m.description,
                 efforts: Effort::listed(
-                    m.supported_reasoning_efforts
+                    &m.supported_reasoning_efforts
                         .iter()
-                        .map(|e| e.reasoning_effort.as_str()),
+                        .map(|e| e.reasoning_effort.as_str())
+                        .collect::<Vec<_>>(),
                 ),
             })
             .collect(),

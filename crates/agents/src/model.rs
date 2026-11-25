@@ -118,9 +118,10 @@ impl Effort {
     }
 
     #[must_use]
-    pub fn listed<'a>(words: impl IntoIterator<Item = &'a str>) -> Vec<Self> {
+    pub fn listed(words: &[&str]) -> Vec<Self> {
         words
-            .into_iter()
+            .iter()
+            .copied()
             .filter_map(Self::parse)
             .collect::<BTreeSet<Self>>()
             .into_iter()
@@ -198,7 +199,7 @@ mod tests {
     #[test]
     fn a_listing_gives_its_known_efforts_lowest_first_once_each() {
         assert_eq!(
-            Effort::listed(["max", "minimal", "low", "high", "low"]),
+            Effort::listed(&["max", "minimal", "low", "high", "low"]),
             [Effort::Low, Effort::High, Effort::Max]
         );
     }
