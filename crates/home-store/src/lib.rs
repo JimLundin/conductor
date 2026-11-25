@@ -46,8 +46,11 @@ pub trait CanvasStore {
     /// # Errors
     ///
     /// The store can't be written.
-    fn put(&self, key: &CanvasKey, file: &CanvasFile)
-    -> Result<(), StoreError>;
+    fn put(
+        &mut self,
+        key: &CanvasKey,
+        file: &CanvasFile,
+    ) -> Result<(), StoreError>;
 }
 
 /// Why a store couldn't do what it was asked.

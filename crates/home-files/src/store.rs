@@ -115,7 +115,7 @@ impl CanvasStore for FolderStore {
     }
 
     fn put(
-        &self,
+        &mut self,
         key: &CanvasKey,
         file: &CanvasFile,
     ) -> Result<(), StoreError> {
@@ -172,7 +172,7 @@ mod tests {
     fn the_folder_store_keeps_the_store_contract() {
         let scratch = Scratch::new("contract");
         assert_eq!(
-            home_store::contract(&FolderStore::new(scratch.0.clone())),
+            home_store::contract(&mut FolderStore::new(scratch.0.clone())),
             Ok(())
         );
     }

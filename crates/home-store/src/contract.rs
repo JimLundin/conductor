@@ -13,7 +13,7 @@ use crate::CanvasStore;
 /// # Errors
 ///
 /// The clause the store broke, with what it gave and what it should have.
-pub fn contract(store: &dyn CanvasStore) -> Result<(), String> {
+pub fn contract(store: &mut dyn CanvasStore) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
     let (one, two) = (IssueId::new(1, 0), IssueId::new(2, 0));
     let design = key(alpha, one, "design")?;
