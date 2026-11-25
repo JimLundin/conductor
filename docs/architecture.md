@@ -1422,6 +1422,7 @@ FleetConfig {
     roster: Vec<HostEntry>,       // node id, name, home relay, added_at
     revoked: Vec<NodeId>,         // devices and hosts
     instances: Roster,            // with their API keys and Claude token; sent only to hosts
+    project_credentials: Map,     // named repository credentials shared with hosts
 }
 SignedFleetConfig { config: FleetConfig, signature: [u8; 64] }  // by the root key
 ```
@@ -1451,8 +1452,8 @@ transfer is enough. There is no gossip protocol, CRDT or per-field merge.
 The single writer costs nothing extra here, because a signature from one key
 is already what makes the roster trustworthy.
 
-The fleet exchange uses `conductor-fleet/4`. Full configuration signatures,
-local sealed state and root backups use version 3 contexts. A certificate
+The fleet exchange uses `conductor-fleet/5`. Full configuration signatures,
+local sealed state and root backups use version 5 contexts. A certificate
 and the public snapshot are signed over their exact JSON bytes, under the
 version 2 certificate and snapshot domains, and carried as those bytes
 (`host::fleet::Signed`): JSON has no canonical form, so every verifier,
@@ -1720,7 +1721,7 @@ a message can only travel in its link's (`link::frame::Frame`,
 | Link | Codec | Encoding | Messages |
 |---|---|---|---|
 | Client and host (`link::ALPN`, `conductor/52`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
-| Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
+| Host and host (`host::fleet::ALPN`, `conductor-fleet/5`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 On a host, the daemon's `serve` and `fleet::wire` pair `net::wire` with
 their link's codec; in the browser, `web-iroh` carries bodies through

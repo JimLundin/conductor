@@ -14,7 +14,8 @@ use crate::assignment::assigned;
 use crate::prelude::*;
 use crate::session::{Choice, choose};
 use crate::start::Mode;
-use crate::workspace::GitError;
+use alloc::string::ToString;
+use vcs::Error as GitError;
 
 mod instance;
 pub use instance::{
@@ -237,12 +238,12 @@ pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
 #[must_use]
 fn on_issue(
     history: &[Event],
-    issue: IssueId,
+    issue: &IssueId,
     instance: &InstanceId,
 ) -> Option<SessionId> {
     assigned(history)
         .into_iter()
-        .find(|(_, assigned)| assigned.is(issue, instance))
+        .find(|(_, assigned)| assigned.is(issue.clone(), instance))
         .map(|(session, _)| session)
 }
 
@@ -983,7 +984,9 @@ impl<Starter: Clone, Handle: Clone, ReplyTo>
 fn unprepared(error: GitError) -> SessionRefusal {
     match error {
         GitError::NotRepository => SessionRefusal::NotGitRepository,
-        GitError::Failed(reason) => SessionRefusal::WorkspaceFailure { reason },
+        other => SessionRefusal::WorkspaceFailure {
+            reason: other.to_string(),
+        },
     }
 }
 

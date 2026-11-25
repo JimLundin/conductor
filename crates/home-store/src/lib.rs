@@ -31,8 +31,13 @@ pub trait CanvasStore {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StoreError {
-    Unavailable { reason: String },
-    Invalid { key: CanvasKey, error: CanvasError },
+    Unavailable {
+        reason: String,
+    },
+    Invalid {
+        key: CanvasKey,
+        error: Box<CanvasError>,
+    },
 }
 
 impl fmt::Display for StoreError {

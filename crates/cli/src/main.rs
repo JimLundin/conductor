@@ -29,6 +29,11 @@ enum Cmd {
         about = "Serve this host's sessions over iroh and print a join ticket"
     )]
     Host(HostArgs),
+    #[command(about = "Inspect a project in this host's home checkout")]
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommand,
+    },
     #[command(about = "Manage the local fleet root and its membership")]
     Fleet(FleetArgs),
     #[command(about = "Sign the public pairing request shown by a browser")]
@@ -51,6 +56,18 @@ enum Cmd {
     Login(LoginArgs),
 }
 
+#[derive(Subcommand)]
+enum ProjectCommand {
+    #[command(
+        about = "Check GitHub repository access with this host's configured credential"
+    )]
+    Access {
+        project: String,
+        #[arg(long)]
+        data_dir: Option<PathBuf>,
+    },
+}
+
 #[derive(Parser)]
 struct FleetArgs {
     #[arg(long, global = true)]
@@ -70,6 +87,11 @@ enum FleetCommand {
         backup: PathBuf,
     },
     Status,
+    #[command(about = "Manage project credentials shared with fleet hosts")]
+    Credential {
+        #[command(subcommand)]
+        command: FleetCredential,
+    },
     Revoke {
         node: String,
     },
@@ -89,6 +111,16 @@ enum FleetCommand {
         #[arg(long)]
         output: PathBuf,
     },
+}
+
+#[derive(Subcommand)]
+enum FleetCredential {
+    #[command(
+        about = "Publish a named project credential from the root host's credential store"
+    )]
+    Share { reference: String },
+    #[command(about = "Remove a shared project credential from the fleet")]
+    Remove { reference: String },
 }
 
 #[derive(Parser)]
@@ -156,14 +188,40 @@ async fn main() -> anyhow::Result<()> {
         .init();
     match Args::parse().command {
         Cmd::Host(args) => {
+            let data = project_runtime::data_dir_or_default(args.data_dir)?;
+            let root = std::path::absolute(&data)?;
+            let workspaces = daemon::Workspaces::new(
+                vcs_git2::registration::local(&root),
+                vcs_git2::registration::register,
+            );
             let hosting = Hosting {
-                data_dir: args.data_dir,
+                data_dir: Some(data),
                 name: args.name,
                 web_url: args.web_url,
                 home: args.home,
                 projects: args.projects,
             };
-            daemon::serve(hosting, plugins(args.clis, args.models)).await
+            daemon::serve(hosting, plugins(args.clis, args.models), workspaces)
+                .await
+        }
+        Cmd::Project {
+            command: ProjectCommand::Access { project, data_dir },
+        } => {
+            let data = project_runtime::data_dir_or_default(data_dir)?;
+            let (report, code) = github_api::project_access_with_fleet(
+                &daemon::home_checkout(&data),
+                &project,
+                &data,
+                daemon::fleet::project_credential,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            std::io::Write::write_all(
+                &mut std::io::stdout().lock(),
+                report.as_bytes(),
+            )?;
+            anyhow::ensure!(code == 0, "some repository reads are unavailable");
+            Ok(())
         }
         Cmd::Fleet(args) => fleet(args).await,
         Cmd::Pair { request, data_dir } => {
@@ -207,6 +265,19 @@ async fn fleet(args: FleetArgs) -> anyhow::Result<()> {
                 &backup,
                 passphrase.as_bytes(),
             )
+        }
+        FleetCommand::Credential { command } => {
+            let data = project_runtime::data_dir_or_default(args.data_dir)?;
+            let (reference, entry) = match command {
+                FleetCredential::Share { reference } => {
+                    let source = github_api::HostCredentials::new(&data);
+                    let entry = source.export_for_fleet(&reference)?;
+                    (reference, Some(entry))
+                }
+                FleetCredential::Remove { reference } => (reference, None),
+            };
+            daemon::fleet::change_project_credential(&data, reference, entry)
+                .await
         }
         FleetCommand::Status => daemon::fleet::status(args.data_dir).await,
         FleetCommand::Revoke { node } => {

@@ -219,13 +219,12 @@ mod tests {
     use crate::registry::InstanceId;
     use crate::session::SessionDirectory;
     use crate::session::{EventKind, RequestId, Resolution, SessionId};
-    use crate::workspace::{
-        Repository, Snapshot, WorkingCopy, Workspace, Worktree,
-    };
+    use crate::workspace::{Snapshot, Workspace};
     use agents::{
         ClientName, Effort, ModelId, Provider, ToolCallId, ToolKind,
         TurnOutcome,
     };
+    use vcs::{Repository, WorkingCopy, Worktree};
 
     use super::{Created, Recovery, SnapshotPlan, Step, created, events_of};
     use crate::session::Choice;
@@ -347,6 +346,7 @@ mod tests {
                 branch: String::from("conductor/1"),
             },
             turn_start: Some(HostSeq(9)),
+            attempt: vcs::command::SnapshotAttempt(String::from("turn-9")),
         }
     }
 
@@ -488,6 +488,9 @@ mod tests {
             [
                 recovery(Some(SnapshotPlan {
                     turn_start: Some(HostSeq(6)),
+                    attempt: vcs::command::SnapshotAttempt(String::from(
+                        "turn-6"
+                    )),
                     ..turn()
                 })),
                 recovery(None),

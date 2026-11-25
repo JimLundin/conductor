@@ -1,19 +1,19 @@
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 
 use crate::flow::Flow;
-use crate::issue::Issue;
+use crate::issue::{Issue, Observation};
 use crate::{IssueId, ProjectId};
 
-use super::graph::{File, Graph, read};
-use super::{PATH, load};
+use super::graph::{Graph, Problem};
 use crate::prelude::*;
-use crate::project::{Listing, Project, listed};
+use crate::project::{Listing, Project};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
-    pub flow: Result<String, String>,
-    pub projects: Vec<(String, Result<String, String>)>,
-    pub issues: Vec<File>,
+    pub flow: Result<Flow, String>,
+    pub projects: Listing,
+    pub issues: Vec<Result<Observation, Problem>>,
     pub unread: Vec<String>,
 }
 
@@ -21,7 +21,7 @@ pub struct Inputs {
 pub struct Snapshot {
     flow: Result<Flow, String>,
     listing: Listing,
-    files: Vec<File>,
+    records: Vec<Result<Observation, Problem>>,
     unread: Vec<String>,
     graph: Graph,
 }
@@ -29,18 +29,16 @@ pub struct Snapshot {
 impl Snapshot {
     #[must_use]
     pub fn of(inputs: Inputs) -> Self {
-        let flow = inputs
-            .flow
-            .and_then(|text| load(&text))
-            .map_err(|problem| format!("{PATH}: {problem}"));
+        let flow = inputs.flow;
+        let mut records = inputs.issues;
         let graph = flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |read_flow| read(read_flow, &inputs.issues),
+            |read_flow| observed(read_flow, &mut records, true),
         );
         Self {
             flow,
-            listing: listed(inputs.projects),
-            files: inputs.issues,
+            listing: inputs.projects,
+            records,
             unread: inputs.unread,
             graph,
         }
@@ -51,29 +49,35 @@ impl Snapshot {
         Self {
             flow: Err(reason),
             listing: Listing::default(),
-            files: Vec::new(),
+            records: Vec::new(),
             unread: Vec::new(),
             graph: Graph::default(),
         }
     }
 
     #[must_use]
-    pub fn with(&self, file: File) -> Self {
-        let mut files: Vec<File> = self
-            .files
+    pub fn with(&self, observation: Observation) -> Self {
+        let id = observation.id();
+        let project = observation.project();
+        let mut records: Vec<Result<Observation, Problem>> = self
+            .records
             .iter()
-            .filter(|other| {
-                other.project != file.project || other.stem != file.stem
+            .filter(|record| match record {
+                Ok(other) => other.project() != project || other.id() != id,
+                Err(problem) => {
+                    problem.project != project
+                        || problem.record != id.to_string()
+                }
             })
             .cloned()
             .collect();
-        files.push(file);
-        let graph = self
-            .flow
-            .as_ref()
-            .map_or_else(|_| Graph::default(), |flow| read(flow, &files));
+        records.push(Ok(observation));
+        let graph = self.flow.as_ref().map_or_else(
+            |_| Graph::default(),
+            |flow| observed(flow, &mut records, true),
+        );
         Self {
-            files,
+            records,
             graph,
             ..self.clone()
         }
@@ -97,8 +101,8 @@ impl Snapshot {
     }
 
     #[must_use]
-    pub fn files(&self) -> &[File] {
-        &self.files
+    pub fn records(&self) -> &[Result<Observation, Problem>] {
+        &self.records
     }
 
     #[must_use]
@@ -107,15 +111,33 @@ impl Snapshot {
     }
 
     #[must_use]
-    pub fn issue(&self, id: IssueId) -> Option<&Issue> {
-        self.graph.issues.iter().find(|issue| issue.id == id)
+    pub fn issue(&self, id: &IssueId) -> Option<&Issue> {
+        self.graph.issues.iter().find(|issue| &issue.id == id)
     }
 
     #[must_use]
-    pub fn issues(&self) -> BTreeMap<ProjectId, Vec<Issue>> {
-        let mut issues: BTreeMap<ProjectId, Vec<Issue>> = BTreeMap::new();
-        for issue in &self.graph.issues {
-            issues.entry(issue.project).or_default().push(issue.clone());
+    pub fn observation(&self, id: &IssueId) -> Option<&Observation> {
+        self.records
+            .iter()
+            .filter_map(|record| record.as_ref().ok())
+            .find(|observation| observation.id() == id)
+    }
+
+    #[must_use]
+    pub fn issues(&self) -> BTreeMap<ProjectId, Vec<Observation>> {
+        let mut issues: BTreeMap<ProjectId, Vec<Observation>> = BTreeMap::new();
+        for observation in self
+            .records
+            .iter()
+            .filter_map(|record| record.as_ref().ok())
+        {
+            issues
+                .entry(observation.project())
+                .or_default()
+                .push(observation.clone());
+        }
+        for records in issues.values_mut() {
+            records.sort_by(creation_order);
         }
         issues
     }
@@ -140,7 +162,7 @@ impl Snapshot {
             .chain(self.listing.problems.iter().cloned())
             .chain(self.unread.iter().cloned())
             .chain(self.graph.problems.iter().map(|problem| {
-                format!("{}/{}: {problem}", problem.project, problem.stem)
+                format!("{}/{}: {problem}", problem.project, problem.record)
             }))
             .collect()
     }
@@ -148,3 +170,154 @@ impl Snapshot {
 
 #[cfg(test)]
 mod tests;
+
+fn issues(
+    records: &[Result<Observation, Problem>],
+) -> Vec<Result<Issue, Problem>> {
+    records
+        .iter()
+        .filter(|record| {
+            !record.as_ref().is_ok_and(|observation| {
+                matches!(
+                    &observation.state,
+                    crate::issue::IssueState::Deleted(_)
+                )
+            })
+        })
+        .map(|record| {
+            record
+                .as_ref()
+                .map_err(Clone::clone)
+                .and_then(|observation| {
+                    observation
+                        .editable()
+                        .map(|(issue, _)| issue.clone())
+                        .map_err(|message| Problem {
+                            project: observation.project(),
+                            record: observation.id().to_string(),
+                            field: None,
+                            message,
+                        })
+                })
+        })
+        .collect()
+}
+
+pub(crate) fn project_issues(
+    flow: &Flow,
+    records: Vec<Observation>,
+) -> Vec<Observation> {
+    let applicable = super::coverage::applicable(flow, &records);
+    let mut inputs: Vec<_> = records.into_iter().map(Ok).collect();
+    observed(&applicable, &mut inputs, false);
+    let mut evaluated: Vec<_> = inputs.into_iter().flatten().collect();
+    evaluated.sort_by(creation_order);
+    evaluated
+}
+
+fn creation_order(
+    one: &Observation,
+    other: &Observation,
+) -> core::cmp::Ordering {
+    one.created()
+        .is_none()
+        .cmp(&other.created().is_none())
+        .then_with(|| one.created().cmp(&other.created()))
+        .then_with(|| one.id().cmp(other.id()))
+}
+
+fn observed(
+    flow: &Flow,
+    records: &mut [Result<Observation, Problem>],
+    complete_catalog: bool,
+) -> Graph {
+    for observation in
+        records.iter_mut().filter_map(|record| record.as_mut().ok())
+    {
+        if let Some(issue) = observation.issue()
+            && let Err(problem) = super::graph::validate(flow, issue)
+        {
+            let record = crate::issue::Unreadable {
+                id: issue.id.clone(),
+                project: issue.project,
+                title: Some(issue.title.clone()),
+                body: observation.body().map(crate::issue::body::Body::text),
+                created: issue.created,
+                reason: problem.to_string(),
+            };
+            observation.state = crate::issue::IssueState::Invalid(record);
+        }
+    }
+    let graph =
+        super::graph::observed(flow, &issues(records), complete_catalog);
+    let all: Vec<&Issue> = graph.issues.iter().collect();
+    for observation in
+        records.iter_mut().filter_map(|record| record.as_mut().ok())
+    {
+        let subject = observation.id().to_string();
+        observation.flow_findings = graph
+            .problems
+            .iter()
+            .filter(|problem| {
+                problem.record == subject
+                    && problem.project == observation.project()
+            })
+            .map(|problem| super::check::Finding {
+                severity: crate::flow::Severity::Error,
+                subject: Some(subject.clone()),
+                message: problem.to_string(),
+            })
+            .collect();
+        if let Some(issue) = observation.issue() {
+            let standing = super::eval::Move {
+                from: Some(issue),
+                to: Some(issue),
+            };
+            let findings =
+                super::check::of_issue(flow, &all, issue, standing, &subject);
+            observation.flow_findings.extend(findings);
+        }
+    }
+    graph
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolveIssue {
+    ProjectRequired,
+    Unknown,
+    Ambiguous,
+}
+
+impl Snapshot {
+    pub fn resolve(
+        &self,
+        project: Option<ProjectId>,
+        reference: &str,
+    ) -> Result<&Observation, ResolveIssue> {
+        if let Some(id) = IssueId::parse(reference) {
+            return self
+                .observation(&id)
+                .filter(|observation| {
+                    project
+                        .is_none_or(|context| context == observation.project())
+                })
+                .ok_or(ResolveIssue::Unknown);
+        }
+        let context = project.ok_or(ResolveIssue::ProjectRequired)?;
+        let mut found =
+            self.records
+                .iter()
+                .filter_map(|record| record.as_ref().ok())
+                .filter(|record| {
+                    record.project() == context
+                        && record.locator.as_ref().is_some_and(|locator| {
+                            locator.reference == reference
+                        })
+                });
+        let issue = found.next().ok_or(ResolveIssue::Unknown)?;
+        if found.next().is_some() {
+            return Err(ResolveIssue::Ambiguous);
+        }
+        Ok(issue)
+    }
+}

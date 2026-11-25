@@ -7,8 +7,6 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
-use crate::UnixSecs;
-
 const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
 const BITS_PER_DIGIT: u32 = 5;
@@ -17,47 +15,8 @@ pub const DRAWS: usize = 64;
 
 pub type Draws = [u64; DRAWS];
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct IssueId(u64);
-
-impl IssueId {
-    pub const EPOCH: u64 = 1_767_225_600;
-
-    const DIGITS: u32 = 8;
-    const RANDOM_BITS: u32 = 2 * BITS_PER_DIGIT;
-    const TIME_BITS: u32 = (Self::DIGITS - 2) * BITS_PER_DIGIT;
-
-    #[must_use]
-    pub const fn new(seconds: u64, random: u64) -> Self {
-        Self(
-            ((seconds & mask(Self::TIME_BITS)) << Self::RANDOM_BITS)
-                | (random & mask(Self::RANDOM_BITS)),
-        )
-    }
-
-    #[must_use]
-    pub fn mint(now: UnixSecs, draws: &Draws, held: &[Self]) -> Option<Self> {
-        let seconds = now
-            .0
-            .checked_sub(Self::EPOCH)
-            .filter(|seconds| *seconds <= mask(Self::TIME_BITS))?;
-        draws
-            .iter()
-            .map(|random| Self::new(seconds, *random))
-            .find(|id| !held.contains(id))
-    }
-
-    #[must_use]
-    pub fn parse(text: &str) -> Option<Self> {
-        read(text, Self::DIGITS).map(Self)
-    }
-}
-
-impl fmt::Display for IssueId {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write(out, self.0, Self::DIGITS)
-    }
-}
+mod qualified;
+pub use qualified::IssueId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProjectId(u64);
@@ -172,7 +131,6 @@ macro_rules! textual {
     };
 }
 
-textual!(IssueId, "an issue id of 8 base 32 digits");
 textual!(ProjectId, "a project id of 6 base 32 digits");
 
 #[cfg(test)]

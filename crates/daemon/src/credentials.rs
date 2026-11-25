@@ -1,6 +1,8 @@
 mod adoption;
 mod key;
 
+pub use key::{exists as has_file, read_file as read_key};
+
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;
@@ -56,11 +58,6 @@ pub struct RecoveredAdoption {
 }
 
 impl Store {
-    #[must_use]
-    pub fn dir(&self) -> &Path {
-        &self.dir
-    }
-
     pub fn open(
         data_dir: &Path,
         catalog: Catalog,

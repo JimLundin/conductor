@@ -174,7 +174,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 }
 
 #[test]
-fn issue_commands_keep_a_receipt() {
+fn issue_commands_keep_a_receipt() -> Result<(), &'static str> {
     let new = NewIssue {
         project: home::ProjectId::new(1),
         kind: String::from("task"),
@@ -188,12 +188,14 @@ fn issue_commands_keep_a_receipt() {
         },
         HomeCommand::ChangeIssue {
             edit: EditId(2),
-            issue: IssueId::new(0, 1),
+            issue: IssueId::new("local", "00000001")
+                .ok_or("invalid fixture identity")?,
             change: IssueChange::Note(String::from("done")),
         },
     ]
     .map(|command| ledger(&Command::Home(command)));
     assert_eq!(recorded, [Some(Kind::Receipt); 2]);
+    Ok(())
 }
 
 #[test]
@@ -259,34 +261,42 @@ fn a_command_is_named_in_log_lines_by_its_operation() {
 }
 
 const PROJECT: ProjectId = ProjectId::new(1);
-const DESIGNED: IssueId = IssueId::new(1, 0);
-const BARE: IssueId = IssueId::new(2, 0);
-
-fn issue(id: IssueId) -> Issue {
-    Issue {
-        id,
-        project: PROJECT,
-        title: String::from("Serve canvases"),
-        kind: String::from("task"),
-        status: String::from("open"),
-        stage: None,
-        fields: BTreeMap::new(),
-        links: BTreeMap::new(),
-        body: String::new(),
-        sections: Vec::new(),
-        checklist: Vec::new(),
-        log: Vec::new(),
-        branch: format!("issue/{id}"),
-        canvases: Vec::new(),
-    }
+fn id(key: &str) -> Result<IssueId, String> {
+    IssueId::new("local", key).ok_or_else(|| String::from("test issue ID"))
 }
 
-fn a_home() -> Home {
+fn issue(id: IssueId) -> home::issue::Observation {
+    home::issue::Observation::mapped(
+        Issue {
+            branch: format!("issue/{id}"),
+            id,
+            created: None,
+            notes: Vec::new(),
+            project: PROJECT,
+            title: String::from("Serve canvases"),
+            kind: String::from("task"),
+            status: String::from("open"),
+            stage: None,
+            fields: BTreeMap::new(),
+            links: BTreeMap::new(),
+            body: String::new(),
+            sections: Vec::new(),
+            checklist: Vec::new(),
+            log: Vec::new(),
+            canvases: Vec::new(),
+        },
+        home::issue::body::Body::of(""),
+    )
+}
+
+fn a_home() -> Result<Home, String> {
     listed_home(&BTreeMap::new())
 }
 
-fn listed_home(listed: &BTreeMap<IssueId, Vec<CanvasEntry>>) -> Home {
-    home::view(
+fn listed_home(
+    listed: &BTreeMap<IssueId, Vec<CanvasEntry>>,
+) -> Result<Home, String> {
+    Ok(home::view(
         "origin",
         &Sync::new(),
         &[Project {
@@ -297,6 +307,7 @@ fn listed_home(listed: &BTreeMap<IssueId, Vec<CanvasEntry>>) -> Home {
             root: String::new(),
             profiles: Vec::new(),
             provides: Vec::new(),
+            backends: home::backend::Backends::default(),
         }],
         Found {
             checkouts: &BTreeMap::new(),
@@ -304,12 +315,12 @@ fn listed_home(listed: &BTreeMap<IssueId, Vec<CanvasEntry>>) -> Home {
             flow: None,
             issues: &BTreeMap::from([(
                 PROJECT,
-                Vec::from([issue(DESIGNED), issue(BARE)]),
+                Vec::from([issue(id("00000001")?), issue(id("00000002")?)]),
             )]),
             canvases: listed,
             unpushed: 0,
         },
-    )
+    ))
 }
 
 fn named(text: &str) -> Result<CanvasName, String> {
@@ -341,10 +352,16 @@ fn written(at: u64, by: &str) -> Result<CanvasFile, String> {
 fn two_canvases() -> Result<Memory, String> {
     let mut store = Memory::default();
     store
-        .put(&key(DESIGNED, "design")?, &written(10, "devbox·claude")?)
+        .put(
+            &key(id("00000001")?, "design")?,
+            &written(10, "devbox·claude")?,
+        )
         .map_err(|error| error.to_string())?;
     store
-        .put(&key(DESIGNED, "a-plan")?, &written(20, "laptop·codex")?)
+        .put(
+            &key(id("00000001")?, "a-plan")?,
+            &written(20, "laptop·codex")?,
+        )
         .map_err(|error| error.to_string())?;
     Ok(store)
 }
@@ -356,11 +373,11 @@ fn an_issue_with_two_canvases_is_served_with_both_entries() -> Result<(), String
 }
 
 fn served_entries(store: &Memory) -> Result<(), String> {
-    let listed = [DESIGNED, BARE]
+    let listed = [id("00000001")?, id("00000002")?]
         .into_iter()
         .map(|id| {
             Ok((
-                id,
+                id.clone(),
                 store
                     .list(&PROJECT, &id)
                     .map_err(|e| e.to_string())?
@@ -371,10 +388,11 @@ fn served_entries(store: &Memory) -> Result<(), String> {
             ))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let served = listed_home(&listed);
+    let served = listed_home(&listed)?;
     let canvases = served.projects[0]
         .issues
         .iter()
+        .filter_map(home::issue::Observation::issue)
         .map(|issue| issue.canvases.clone())
         .collect::<Vec<_>>();
     let entry =
@@ -402,8 +420,8 @@ fn served_entries(store: &Memory) -> Result<(), String> {
 fn a_canvas_of_a_known_issue_is_keyed_by_the_issues_project()
 -> Result<(), String> {
     assert_eq!(
-        canvas_key(Some(&a_home()), DESIGNED, named("design")?),
-        Ok(key(DESIGNED, "design")?)
+        canvas_key(Some(&a_home()?), id("00000001")?, named("design")?),
+        Ok(key(id("00000001")?, "design")?)
     );
     Ok(())
 }
@@ -413,8 +431,8 @@ fn a_canvas_of_an_issue_the_home_lacks_or_of_no_home_is_refused()
 -> Result<(), String> {
     assert_eq!(
         [
-            canvas_key(Some(&a_home()), IssueId::new(3, 0), named("design")?),
-            canvas_key(None, DESIGNED, named("design")?),
+            canvas_key(Some(&a_home()?), id("00000003")?, named("design")?),
+            canvas_key(None, id("00000001")?, named("design")?),
         ],
         [Err(HomeRefusal::UnknownIssue), Err(HomeRefusal::NoHome),]
     );
@@ -454,7 +472,7 @@ fn a_failing_store_leaves_the_canvas_unavailable() {
 #[test]
 fn a_canvas_is_read_every_time_and_named_get_canvas() -> Result<(), String> {
     let command = Command::Home(HomeCommand::Canvas {
-        issue: DESIGNED,
+        issue: id("00000001")?,
         name: named("design")?,
     });
     assert_eq!(

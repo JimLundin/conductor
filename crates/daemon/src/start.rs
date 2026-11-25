@@ -207,7 +207,11 @@ pub struct Hosting {
     pub projects: Vec<PathBuf>,
 }
 
-pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
+pub async fn serve(
+    hosting: Hosting,
+    plugins: Plugins,
+    workspaces: crate::Workspaces,
+) -> anyhow::Result<()> {
     let Hosting {
         data_dir: given,
         name,
@@ -225,6 +229,7 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     let hosted = start(
         endpoint,
         plugins,
+        workspaces,
         HostOptions {
             data_dir: data_dir.clone(),
             name,
@@ -272,9 +277,15 @@ pub struct Hosted {
     initialized: tokio::sync::watch::Receiver<bool>,
     fleet_lock: std::fs::File,
     has_fleet: bool,
+    operations: project_runtime::operations::Operations,
 }
 
 impl Hosted {
+    #[must_use]
+    pub const fn operations(&self) -> &project_runtime::operations::Operations {
+        &self.operations
+    }
+
     pub fn ticket(&self) -> anyhow::Result<Ticket> {
         let endpoint = self.router.endpoint();
         let relay = endpoint
@@ -317,14 +328,25 @@ impl Hosted {
 pub async fn start(
     endpoint: Endpoint,
     plugins: Plugins,
+    workspaces: crate::Workspaces,
     options: HostOptions,
 ) -> anyhow::Result<Hosted> {
     let (lock, fleet) = open_fleet(&endpoint, &options.data_dir).await?;
     let has_fleet = fleet.is_some();
+    let operations = project_runtime::operations::Operations::bind(
+        &options.data_dir,
+        *endpoint.id().as_bytes(),
+    )?;
     let data = options.data_dir.clone();
     let (fleet_slot, _) = tokio::sync::watch::channel(fleet);
-    let started =
-        assemble(plugins, options, fleet_slot.clone(), endpoint.clone()).await;
+    let started = assemble(
+        plugins,
+        options,
+        workspaces,
+        fleet_slot.clone(),
+        endpoint.clone(),
+    )
+    .await;
     match started {
         Ok((conductor, log, token, initialized)) => {
             let protocol = crate::fleet::Protocol::new(
@@ -347,6 +369,7 @@ pub async fn start(
                 initialized,
                 fleet_lock: lock,
                 has_fleet,
+                operations,
             })
         }
         Err(error) => {
@@ -384,6 +407,7 @@ async fn open_fleet(
 async fn assemble(
     plugins: Plugins,
     options: HostOptions,
+    workspaces: crate::Workspaces,
     fleet: crate::fleet::Slot,
     endpoint: Endpoint,
 ) -> anyhow::Result<(
@@ -421,6 +445,7 @@ async fn assemble(
         &stored,
         Providers::new(plugins.clone(), data_dir, fleet.clone()),
         home.clone(),
+        workspaces,
     )
     .await?;
     crate::fleet::follow_credentials(
@@ -629,17 +654,7 @@ fn private_home(
         .map_err(|err| format!("creating the private home for {id}: {err}"))
 }
 
-pub fn data_dir_or_default(
-    data_dir: Option<PathBuf>,
-) -> anyhow::Result<PathBuf> {
-    match data_dir {
-        Some(dir) => Ok(dir),
-        None => Ok(directories::ProjectDirs::from("", "", "conductor")
-            .context("no home directory to put the data dir in")?
-            .data_dir()
-            .to_path_buf()),
-    }
-}
+pub use project_runtime::data_dir_or_default;
 
 const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 

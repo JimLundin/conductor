@@ -64,6 +64,11 @@ impl UnixMillis {
     pub const fn secs(self) -> UnixSecs {
         UnixSecs(self.0 / MILLIS_PER_SEC)
     }
+
+    #[must_use]
+    pub const fn subsec_millis(self) -> u64 {
+        self.0 % MILLIS_PER_SEC
+    }
 }
 
 #[cfg(test)]

@@ -35,8 +35,12 @@ fn dir() -> anyhow::Result<PathBuf> {
 }
 
 fn entry(endpoint: &Endpoint, name: &str) -> HostEntry {
+    host_entry(endpoint.id(), name)
+}
+
+fn host_entry(id: EndpointId, name: &str) -> HostEntry {
     HostEntry {
-        node: *endpoint.id().as_bytes(),
+        node: *id.as_bytes(),
         name: name.into(),
         relay: "https://relay.example.invalid/".into(),
         added_at: 0,
@@ -114,7 +118,7 @@ async fn loopback_join_replays_for_one_host_and_propagates_revocations()
     .await?;
     assert!(member.admit_device(outsider.id(), &hello).await.is_err());
     assert!(!member.adopt(config).await?);
-    assert_eq!(member.snapshot().await.version, 5);
+    assert_eq!(member.snapshot().await.version, 6);
 
     root.revoke(*member_endpoint.id().as_bytes()).await?;
     tokio::time::timeout(
@@ -327,6 +331,7 @@ async fn verify_replication(
         );
     })
     .await?;
+    publish(root, Some("fixture-replicated")).await?;
     root.revoke(owner).await?;
     sync(outsider, witness, root_endpoint).await?;
 
@@ -339,6 +344,16 @@ async fn verify_replication(
 
     sync(member_endpoint, member, outsider).await?;
     assert!(member.credentials().await.of(&instance).is_some());
+    let latest = member
+        .config_after(0)
+        .await
+        .context("missing configuration")?;
+    assert_eq!(
+        latest.config.project_credentials.get(SHARED),
+        Some(&host::fleet::ProjectCredential::new(
+            "fixture-replicated".to_owned()
+        ))
+    );
     let public = postcard::to_stdvec(&member.public_snapshot().await)?;
     assert!(
         !public
@@ -365,7 +380,8 @@ async fn check_recovery(
         restored,
         Some(crypto::recover(&export, phrase)?),
     )?;
-    assert_eq!(recovered_root.snapshot().await.version, 6);
+    assert_eq!(recovered_root.snapshot().await.version, 7);
+    check_shared(&recovered_dir, "fixture-replicated")?;
     assert!(recovered_root.admit_owner(owner).await.is_err());
     assert_eq!(crate::load_or_create_key(&recovered_dir)?.public(), root_id);
     Ok(())
@@ -443,5 +459,152 @@ async fn standalone_admission_and_browser_approval_use_the_same_root()
 
     target_router.shutdown().await?;
     std::fs::remove_dir_all(path)?;
+    Ok(())
+}
+
+const SHARED: &str = "fleet/example";
+
+async fn publish(root: &Membership, token: Option<&str>) -> anyhow::Result<()> {
+    let entry = token
+        .map(|value| host::fleet::ProjectCredential::new(value.to_owned()));
+    root.change_project_credential(SHARED.to_owned(), entry)
+        .await
+}
+
+fn check_shared(data: &Path, expected: &str) -> anyhow::Result<()> {
+    use project_runtime::transport::SharedCredential;
+    use secrecy::ExposeSecret as _;
+    let resolved = super::project_credential(data, SHARED)?;
+    ensure!(!format!("{resolved:?}").contains(expected));
+    let SharedCredential::Stored(entry) = resolved else {
+        anyhow::bail!("no shared credential");
+    };
+    ensure!(
+        entry.expose_secret() == expected,
+        "unexpected shared credential"
+    );
+    Ok(())
+}
+
+async fn latest(root: &Membership, member: &Membership) -> anyhow::Result<()> {
+    let config = root
+        .config_after(member.snapshot().await.version)
+        .await
+        .context("missing update")?;
+    assert!(member.adopt(config).await?);
+    Ok(())
+}
+
+#[tokio::test]
+async fn hosts_share_rotate_withdraw_and_revoke_project_credentials()
+-> anyhow::Result<()> {
+    use project_runtime::transport::SharedCredential;
+
+    let path = dir()?;
+    let data = path.join("root");
+    let member_dir = path.join("member");
+    let root_id = crate::load_or_create_key(&data)?;
+    let member_id = crate::load_or_create_key(&member_dir)?.public();
+    assert!(matches!(
+        super::project_credential(&data, SHARED)?,
+        SharedCredential::Standalone
+    ));
+    Membership::initialize(
+        &data,
+        host_entry(root_id.public(), "root"),
+        &root_id,
+        &path.join("backup"),
+        b"fixture passphrase",
+    )?;
+    assert!(matches!(
+        super::project_credential(&data, SHARED)?,
+        SharedCredential::Missing
+    ));
+    let original = "fixture-github-original";
+    super::change_project_credential(
+        &data,
+        SHARED.to_owned(),
+        Some(original.into()),
+    )
+    .await?;
+    let root = super::local(&data)?;
+    let version = root.snapshot().await.version;
+    publish(&root, Some(original)).await?;
+    assert_eq!(root.snapshot().await.version, version);
+    check_shared(&data, original)?;
+    let invite = root.invite(1).await?;
+    let (certificate, config) = root
+        .join(
+            member_id,
+            &invite.secret,
+            host_entry(member_id, "member"),
+            2,
+        )
+        .await?;
+    ensure!(!format!("{config:?}").contains(original));
+    let mut tampered = config.clone();
+    tampered.config.project_credentials.clear();
+    assert!(
+        crypto::verify_config(
+            iroh::PublicKey::from_bytes(&invite.fleet)?,
+            &tampered
+        )
+        .is_err()
+    );
+    let public = std::str::from_utf8(&config.public.payload)?;
+    assert!(!public.contains(original));
+    assert!(!public.contains(SHARED));
+    let member = Membership::install_joined(
+        &member_dir,
+        member_id,
+        &invite,
+        certificate,
+        config,
+    )?;
+    check_shared(&member_dir, original)?;
+    assert!(
+        super::change_project_credential(&member_dir, SHARED.to_owned(), None)
+            .await
+            .is_err()
+    );
+    let rotated = "fixture-github-rotated";
+    publish(&root, Some(rotated)).await?;
+    check_shared(&member_dir, original)?;
+    latest(&root, &member).await?;
+    check_shared(&member_dir, rotated)?;
+    publish(&root, None).await?;
+    latest(&root, &member).await?;
+    assert!(matches!(
+        super::project_credential(&member_dir, SHARED)?,
+        SharedCredential::Missing
+    ));
+    publish(&root, Some(rotated)).await?;
+    latest(&root, &member).await?;
+    root.revoke(*member_id.as_bytes()).await?;
+    member
+        .adopt_revocation(root.public_snapshot().await)
+        .await?;
+    assert!(matches!(
+        super::project_credential(&member_dir, SHARED)?,
+        SharedCredential::Missing
+    ));
+
+    damaged_membership(&data, &member_dir)?;
+    std::fs::remove_dir_all(path)?;
+    Ok(())
+}
+
+fn damaged_membership(data: &Path, member_dir: &Path) -> anyhow::Result<()> {
+    let identity_path = data.join("host.key");
+    std::fs::copy(member_dir.join("host.key"), &identity_path)?;
+    assert!(super::project_credential(data, SHARED).is_err());
+    std::fs::remove_file(identity_path)?;
+    assert!(super::project_credential(data, SHARED).is_err());
+    assert!(!data.join("host.key").exists());
+    let sealed = member_dir.join("fleet.sealed");
+    std::fs::write(&sealed, b"corrupt")?;
+    assert!(super::project_credential(member_dir, SHARED).is_err());
+    std::fs::remove_file(sealed)?;
+    assert!(super::project_credential(member_dir, SHARED).is_err());
     Ok(())
 }

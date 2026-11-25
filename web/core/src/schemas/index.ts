@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/52";
+type Alpn = "conductor/51";
 
-const Alpn = Schema.Literal("conductor/52").annotate({
+const Alpn = Schema.Literal("conductor/51").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -355,6 +355,10 @@ const Block = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "Block" });
 
+type Body = string;
+
+const Body = Schema.String.annotate({ identifier: "Body" });
+
 type Canvas = { readonly blocks: globalThis.ReadonlyArray<Block>; readonly title: string };
 
 const Canvas = Schema.Struct({ blocks: Schema.Array(Block), title: Schema.String }).annotate({
@@ -551,10 +555,11 @@ const ProjectId = Schema.String.check(
 type IssueId = string;
 
 const IssueId = Schema.String.check(
-  Schema.isMinCodePoints(8).annotate({ expected: "a string with at least 8 code points" }),
-).check(
-  Schema.isMaxCodePoints(8).annotate({
-    expected: "a string with at most 8 code points",
+  Schema.isPattern(
+    new globalThis.RegExp("^(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+~(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+$", "u"),
+  ).annotate({
+    expected:
+      "a string matching the RegExp ^(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+~(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+$",
     identifier: "IssueId",
   }),
 );
@@ -1378,6 +1383,28 @@ const CommandResult = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "CommandResult" });
 
+type Coverage = "Complete" | { readonly Incomplete: { readonly reason: string } };
+
+const Coverage = Schema.Union(
+  [
+    Schema.Literal("Complete"),
+    Schema.Struct({ Incomplete: Schema.Struct({ reason: Schema.String }) }),
+  ],
+  { mode: "oneOf" },
+).annotate({ identifier: "Coverage" });
+
+type Completeness = {
+  readonly fields: Coverage;
+  readonly notes: Coverage;
+  readonly relations: { readonly [x: string]: Coverage };
+};
+
+const Completeness = Schema.Struct({
+  fields: Coverage,
+  notes: Coverage,
+  relations: Schema.Record(Schema.String, Coverage),
+}).annotate({ identifier: "Completeness" });
+
 type DeviceHello = {
   readonly certificate: Signed;
   readonly proof: globalThis.ReadonlyArray<number>;
@@ -2043,6 +2070,50 @@ const Flow = Schema.Struct({
   statuses: Schema.Array(Status),
 }).annotate({ identifier: "Flow" });
 
+type Finding = {
+  readonly message: string;
+  readonly severity: Severity;
+  readonly subject: string | null;
+};
+
+const Finding = Schema.Struct({
+  message: Schema.String,
+  severity: Severity,
+  subject: Schema.Union([Schema.String, Schema.Null]),
+}).annotate({ identifier: "Finding" });
+
+type Locator = {
+  readonly addresses: { readonly [x: string]: string };
+  readonly reference: string;
+  readonly repository: string;
+  readonly url: string | null;
+};
+
+const Locator = Schema.Struct({
+  addresses: Schema.Record(Schema.String, Schema.String),
+  reference: Schema.String,
+  repository: Schema.String,
+  url: Schema.Union([Schema.String, Schema.Null]),
+}).annotate({ identifier: "Locator" });
+
+type Note = {
+  readonly author: string;
+  readonly created: number;
+  readonly id: string;
+  readonly text: string;
+};
+
+const Note = Schema.Struct({
+  author: Schema.String,
+  created: Schema.Number.annotate({ format: "uint64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+  id: Schema.String,
+  text: Schema.String,
+}).annotate({ identifier: "Note" });
+
 type Section = { readonly heading: string; readonly text: string };
 
 const Section = Schema.Struct({ heading: Schema.String, text: Schema.String }).annotate({
@@ -2054,11 +2125,13 @@ type Issue = {
   readonly branch: string;
   readonly canvases: globalThis.ReadonlyArray<CanvasEntry>;
   readonly checklist: globalThis.ReadonlyArray<ChecklistItem>;
+  readonly created: number | null;
   readonly fields: { readonly [x: string]: Datum };
   readonly id: IssueId;
   readonly kind: string;
   readonly links: { readonly [x: string]: globalThis.ReadonlyArray<IssueId> };
   readonly log: globalThis.ReadonlyArray<Entry>;
+  readonly notes: globalThis.ReadonlyArray<Note>;
   readonly project: ProjectId;
   readonly sections: globalThis.ReadonlyArray<Section>;
   readonly stage: string | null;
@@ -2071,11 +2144,18 @@ const Issue = Schema.Struct({
   branch: Schema.String,
   canvases: Schema.Array(CanvasEntry),
   checklist: Schema.Array(ChecklistItem),
+  created: Schema.Union([
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+    Schema.Null,
+  ]).annotate({ format: "uint64" }),
   fields: Schema.Record(Schema.String, Datum),
   id: IssueId,
   kind: Schema.String,
   links: Schema.Record(Schema.String, Schema.Array(IssueId)),
   log: Schema.Array(Entry),
+  notes: Schema.Array(Note),
   project: ProjectId,
   sections: Schema.Array(Section),
   stage: Schema.Union([Schema.String, Schema.Null]),
@@ -2083,11 +2163,75 @@ const Issue = Schema.Struct({
   title: Schema.String,
 }).annotate({ identifier: "Issue" });
 
+type Unreadable = {
+  readonly body: string | null;
+  readonly created: number | null;
+  readonly id: IssueId;
+  readonly project: ProjectId;
+  readonly reason: string;
+  readonly title: string | null;
+};
+
+const Unreadable = Schema.Struct({
+  body: Schema.Union([Schema.String, Schema.Null]),
+  created: Schema.Union([
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+    Schema.Null,
+  ]).annotate({ format: "uint64" }),
+  id: IssueId,
+  project: ProjectId,
+  reason: Schema.String,
+  title: Schema.Union([Schema.String, Schema.Null]),
+}).annotate({ identifier: "Unreadable" });
+
+type IssueState =
+  | { readonly Valid: { readonly body: Body; readonly issue: Issue } }
+  | { readonly Invalid: Unreadable }
+  | { readonly Unavailable: Unreadable }
+  | { readonly Deleted: Unreadable };
+
+const IssueState = Schema.Union(
+  [
+    Schema.Struct({ Valid: Schema.Struct({ body: Body, issue: Issue }) }),
+    Schema.Struct({ Invalid: Unreadable }),
+    Schema.Struct({ Unavailable: Unreadable }),
+    Schema.Struct({ Deleted: Unreadable }),
+  ],
+  { mode: "oneOf" },
+).annotate({ identifier: "IssueState" });
+
+type Observation = {
+  readonly completeness: Completeness;
+  readonly findings: globalThis.ReadonlyArray<Finding>;
+  readonly flow_findings: globalThis.ReadonlyArray<Finding>;
+  readonly locator: Locator | null;
+  readonly observed_at: number | null;
+  readonly revision: string | null;
+  readonly state: IssueState;
+};
+
+const Observation = Schema.Struct({
+  completeness: Completeness,
+  findings: Schema.Array(Finding),
+  flow_findings: Schema.Array(Finding),
+  locator: Schema.Union([Locator, Schema.Null]),
+  observed_at: Schema.Union([
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+    Schema.Null,
+  ]).annotate({ format: "uint64" }),
+  revision: Schema.Union([Schema.String, Schema.Null]),
+  state: IssueState,
+}).annotate({ identifier: "Observation" });
+
 type Project = {
   readonly checkouts: globalThis.ReadonlyArray<Checkout>;
   readonly cloning: Cloning;
   readonly id: ProjectId;
-  readonly issues: globalThis.ReadonlyArray<Issue>;
+  readonly issues: globalThis.ReadonlyArray<Observation>;
   readonly name: string;
   readonly profiles: globalThis.ReadonlyArray<string>;
   readonly provides: globalThis.ReadonlyArray<string>;
@@ -2099,7 +2243,7 @@ const Project = Schema.Struct({
   checkouts: Schema.Array(Checkout),
   cloning: Cloning,
   id: ProjectId,
-  issues: Schema.Array(Issue),
+  issues: Schema.Array(Observation),
   name: Schema.String,
   profiles: Schema.Array(Schema.String),
   provides: Schema.Array(Schema.String),
@@ -2127,7 +2271,7 @@ type Home = {
   readonly projects: globalThis.ReadonlyArray<Project>;
   readonly remote: string;
   readonly sync: HomeSync;
-  readonly synced_secs: number | null;
+  readonly synced: number | null;
   readonly unpushed: number;
 };
 
@@ -2136,7 +2280,7 @@ const Home = Schema.Struct({
   projects: Schema.Array(Project),
   remote: Schema.String,
   sync: HomeSync,
-  synced_secs: Schema.Union([
+  synced: Schema.Union([
     Schema.Int.check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
@@ -2267,6 +2411,7 @@ export {
   Availability,
   Bar,
   Block,
+  Body,
   Canvas,
   CanvasEntry,
   CanvasFile,
@@ -2291,6 +2436,8 @@ export {
   Command,
   CommandId,
   CommandResult,
+  Completeness,
+  Coverage,
   Credential,
   CredentialForm,
   Datum,
@@ -2314,6 +2461,7 @@ export {
   FieldType,
   FileChange,
   FilePatch,
+  Finding,
   Finished,
   FleetCommand,
   FleetResult,
@@ -2340,16 +2488,20 @@ export {
   Issue,
   IssueChange,
   IssueId,
+  IssueState,
   Item,
   Kept,
   Kind,
   Literal,
+  Locator,
   LogEvent,
   ModelChoice,
   ModelId,
   Models,
   NewIssue,
   Node,
+  Note,
+  Observation,
   Open,
   Options,
   Origin,
@@ -2412,6 +2564,7 @@ export {
   ToolPhase,
   Transition,
   TurnOutcome,
+  Unreadable,
   Welcome,
   WorkingCopy,
   Workspace,

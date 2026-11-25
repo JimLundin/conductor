@@ -10,9 +10,9 @@ pub use enrollment::{EnrollmentToken, WrongEnrollmentToken};
 pub use protocol::{
     ALPN, Certificate, Configuration, DeviceHello, FleetCommand, FleetResult,
     HostEntry, Identity, Invite, InviteSecret, NodeId, PairRequest, Pairing,
-    Payload, Peer, Reply, Request, Role, Signed, SignedConfiguration,
-    SignedSnapshot, Snapshot, Sync, TextError, decode_saved, device_proof,
-    encode_saved,
+    Payload, Peer, ProjectCredential, Reply, Request, Role, Signed,
+    SignedConfiguration, SignedSnapshot, Snapshot, Sync, TextError,
+    decode_saved, device_proof, encode_saved,
 };
 
 use crate::registry::{

@@ -3,11 +3,12 @@ use crate::log::{Event, HostSeq};
 use crate::registry::InstanceId;
 use crate::session::SessionDirectory;
 use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
-use crate::workspace::{Kept, Workspace};
-use crate::workspace::{Repository, WorkingCopy, Worktree};
+use crate::workspace::Workspace;
 use agents::Output;
 use agents::{ClientName, CloseReason, Provider, TurnOutcome};
 use home::IssueId;
+use vcs::Kept;
+use vcs::{Repository, WorkingCopy, Worktree};
 
 use super::{
     Effect, Finish, Finishing, Input, finished, finishing, landed, summary,
@@ -17,7 +18,9 @@ use crate::assignment::Assignment;
 use crate::session::Order;
 
 const SESSION: SessionId = SessionId(1);
-const ISSUE: IssueId = IssueId::new(0, 9);
+fn issue_id() -> Result<IssueId, &'static str> {
+    IssueId::new("local", "00000009").ok_or("invalid fixture identity")
+}
 
 fn text(value: &str) -> String {
     String::from(value)
@@ -45,8 +48,8 @@ fn instance() -> InstanceId {
     InstanceId::own(Provider::new("claude"))
 }
 
-fn started() -> Vec<Event> {
-    Vec::from([
+fn started() -> Result<Vec<Event>, &'static str> {
+    Ok(Vec::from([
         event(
             1,
             EventKind::SessionCreated {
@@ -57,7 +60,7 @@ fn started() -> Vec<Event> {
                 effort: None,
             },
         ),
-        event(2, EventKind::OnIssue { issue: ISSUE }),
+        event(2, EventKind::OnIssue { issue: issue_id()? }),
         event(
             3,
             EventKind::WorkspaceCreated {
@@ -65,7 +68,7 @@ fn started() -> Vec<Event> {
             },
         ),
         event(4, EventKind::SessionReady),
-    ])
+    ]))
 }
 
 fn and(mut history: Vec<Event>, more: Vec<Event>) -> Vec<Event> {
@@ -100,13 +103,13 @@ fn done(seq: u64) -> Event {
 }
 
 #[test]
-fn a_session_on_an_issue_finishes_between_turns() {
+fn a_session_on_an_issue_finishes_between_turns() -> Result<(), &'static str> {
     assert_eq!(
-        finishing(&started(), SESSION),
+        finishing(&started()?, SESSION),
         Ok(Finishing {
             retry: false,
             assignment: Assignment {
-                issue: ISSUE,
+                issue: issue_id()?,
                 instance: instance(),
             },
             workspace: workspace(),
@@ -114,11 +117,11 @@ fn a_session_on_an_issue_finishes_between_turns() {
         })
     );
     assert_eq!(
-        finishing(&and(started(), Vec::from([user(5)])), SESSION),
+        finishing(&and(started()?, Vec::from([user(5)])), SESSION),
         Err(SessionRefusal::TurnInProgress)
     );
     let closed = and(
-        started(),
+        started()?,
         Vec::from([
             user(5),
             event(
@@ -134,7 +137,7 @@ fn a_session_on_an_issue_finishes_between_turns() {
         Ok(false),
         "a closed session finishes without asking its agent"
     );
-    let plain = started()
+    let plain = started()?
         .into_iter()
         .filter(|event| !matches!(event.kind, EventKind::OnIssue { .. }))
         .collect::<Vec<Event>>();
@@ -142,7 +145,7 @@ fn a_session_on_an_issue_finishes_between_turns() {
     assert_eq!(
         finishing(
             &and(
-                started(),
+                started()?,
                 Vec::from([event(5, EventKind::SessionRemoved { kept: None })])
             ),
             SESSION
@@ -150,12 +153,14 @@ fn a_session_on_an_issue_finishes_between_turns() {
         Err(SessionRefusal::SessionRemoved)
     );
     assert_eq!(finishing(&[], SESSION), Err(SessionRefusal::UnknownSession));
+    Ok(())
 }
 
 #[test]
-fn the_summary_is_the_last_reply_of_the_summary_turn() {
+fn the_summary_is_the_last_reply_of_the_summary_turn()
+-> Result<(), &'static str> {
     let history = and(
-        started(),
+        started()?,
         Vec::from([
             user(5),
             reply(6, "Built it."),
@@ -175,7 +180,7 @@ fn the_summary_is_the_last_reply_of_the_summary_turn() {
         Some(text("Built it.")),
         "a stopped agent's last reply stands in"
     );
-    assert_eq!(summary(&started(), SESSION, HostSeq(0)), None);
+    assert_eq!(summary(&started()?, SESSION, HostSeq(0)), None);
     let other = Event {
         session: SessionId(2),
         ..reply(12, "Another session's reply.")
@@ -196,6 +201,7 @@ fn the_summary_is_the_last_reply_of_the_summary_turn() {
     );
     assert!(turn_ended(&done(11), SESSION));
     assert!(!turn_ended(&reply(10, "x"), SESSION));
+    Ok(())
 }
 
 #[test]
@@ -222,9 +228,9 @@ fn finishing_says_what_landed_and_where_the_branch_went() {
 }
 
 #[test]
-fn a_session_finishes_once_until_it_does_more() {
+fn a_session_finishes_once_until_it_does_more() -> Result<(), &'static str> {
     let finishing_now =
-        and(started(), Vec::from([event(5, EventKind::FinishStarted)]));
+        and(started()?, Vec::from([event(5, EventKind::FinishStarted)]));
     assert_eq!(
         finishing(&finishing_now, SESSION).map(|_| ()),
         Err(SessionRefusal::AlreadyFinished)
@@ -253,7 +259,7 @@ fn a_session_finishes_once_until_it_does_more() {
         Vec::from([user(10), reply(11, "more"), done(12)]),
     );
     assert!(finishing(&more, SESSION).is_ok());
-    let starting = started()
+    let starting = started()?
         .into_iter()
         .filter(|event| event.kind != EventKind::SessionReady)
         .collect::<Vec<Event>>();
@@ -262,6 +268,7 @@ fn a_session_finishes_once_until_it_does_more() {
         Ok(true),
         "a session still starting counts as running"
     );
+    Ok(())
 }
 
 #[test]
@@ -288,15 +295,15 @@ fn client() -> ClientName {
     ClientName(text("phone"))
 }
 
-fn ask() -> (Finish, Vec<Effect>) {
+fn ask() -> Result<(Finish, Vec<Effect>), &'static str> {
     let (mut finish, first) = Finish::new(SESSION, client());
     assert_eq!(first, Effect::History);
-    let effects = finish.step(Input::History(started()));
-    (finish, effects)
+    let effects = finish.step(Input::History(started()?));
+    Ok((finish, effects))
 }
 
-fn watching() -> Finish {
-    let (mut finish, _) = ask();
+fn watching() -> Result<Finish, &'static str> {
+    let (mut finish, _) = ask()?;
     assert_eq!(
         finish.step(Input::Ordered(Some(SessionResult::Accepted))),
         [Effect::Watch {
@@ -304,24 +311,24 @@ fn watching() -> Finish {
             seconds: 600
         }]
     );
-    finish
+    Ok(finish)
 }
 
-fn branch() -> String {
-    home::issue::branch(None, ISSUE)
+fn branch() -> Result<String, &'static str> {
+    Ok(home::issue::branch(None, &issue_id()?))
 }
 
-fn note(summary: Option<&str>, commits: u64) -> Effect {
-    Effect::Note {
-        issue: ISSUE,
+fn note(summary: Option<&str>, commits: u64) -> Result<Effect, &'static str> {
+    Ok(Effect::Note {
+        issue: issue_id()?,
         summary: summary.map(text),
         by: Assignment {
-            issue: ISSUE,
+            issue: issue_id()?,
             instance: instance(),
         }
         .signer(),
         commits,
-    }
+    })
 }
 
 fn last(finish: &mut Finish, finished: Finished) {
@@ -342,8 +349,8 @@ fn failed(finish: &mut Finish, reason: &str) {
 
 #[test]
 fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch()
- {
-    let (mut finish, effects) = ask();
+-> Result<(), &'static str> {
+    let (mut finish, effects) = ask()?;
     assert_eq!(
         effects,
         [
@@ -361,7 +368,7 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
     ));
     assert_eq!(
         finish.step(Input::RequestedAgain(and(
-            started(),
+            started()?,
             Vec::from([event(5, EventKind::FinishStarted)])
         ))),
         [
@@ -393,27 +400,28 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
     assert_eq!(
         finish.step(Input::Home(None)),
         [Effect::Ready {
+            issue: issue_id()?,
             workspace: workspace(),
-            branch: branch()
+            branch: branch()?
         }]
     );
     assert_eq!(
         finish.step(Input::Ready(Ok(()))),
         [Effect::Land {
             workspace: workspace(),
-            branch: branch()
+            branch: branch()?
         }]
     );
     assert_eq!(
         finish.step(Input::Landed(Ok(3))),
         [Effect::Push {
             workspace: workspace(),
-            branch: branch()
+            branch: branch()?
         }]
     );
     assert_eq!(
         finish.step(Input::Pushed(Some((text("origin"), Ok(()))))),
-        [note(Some("summary"), 3)]
+        [note(Some("summary"), 3)?]
     );
     last(
         &mut finish,
@@ -424,26 +432,30 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
             },
         },
     );
+    Ok(())
 }
 
 #[test]
-fn an_active_turn_is_rejected_before_logging_or_asking() {
+fn an_active_turn_is_rejected_before_logging_or_asking()
+-> Result<(), &'static str> {
     let (mut finish, _) = Finish::new(SESSION, client());
     assert_eq!(
-        finish.step(Input::History(and(started(), Vec::from([user(5)])))),
+        finish.step(Input::History(and(started()?, Vec::from([user(5)])))),
         [Effect::Reply(SessionResult::Refused(
             SessionRefusal::TurnInProgress
         ))]
     );
+    Ok(())
 }
 
 #[test]
-fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure() {
-    let (mut finish, _) = ask();
-    assert_eq!(finish.step(Input::Ordered(None)), [note(None, 0)]);
+fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure()
+-> Result<(), &'static str> {
+    let (mut finish, _) = ask()?;
+    assert_eq!(finish.step(Input::Ordered(None)), [note(None, 0)?]);
     failed(&mut finish, "asking for a summary: the session stopped");
 
-    let mut finish = watching();
+    let mut finish = watching()?;
     let closed = event(
         6,
         EventKind::SessionClosed {
@@ -458,15 +470,16 @@ fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure() {
     let reason = format!("stopping the agent: {}", refusal.label());
     assert_eq!(
         finish.step(Input::Ordered(Some(SessionResult::Refused(refusal)))),
-        [note(None, 0)]
+        [note(None, 0)?]
     );
     failed(&mut finish, &reason);
+    Ok(())
 }
 
 #[test]
 fn a_summary_timeout_interrupts_and_skips_landing_even_if_the_interrupt_is_refused()
- {
-    let mut finish = watching();
+-> Result<(), &'static str> {
+    let mut finish = watching()?;
     assert_eq!(
         finish.step(Input::TimedOut),
         [Effect::Order(Order::Interrupt)]
@@ -475,12 +488,13 @@ fn a_summary_timeout_interrupts_and_skips_landing_even_if_the_interrupt_is_refus
         finish.step(Input::Ordered(Some(SessionResult::Refused(
             SessionRefusal::NoTurnRunning
         )))),
-        [note(None, 0)]
+        [note(None, 0)?]
     );
     failed(&mut finish, super::IMPATIENT);
+    Ok(())
 }
 
-fn closed_finish() -> Finish {
+fn closed_finish() -> Result<Finish, &'static str> {
     let (mut finish, _) = Finish::new(SESSION, client());
     let closed = event(
         8,
@@ -490,7 +504,7 @@ fn closed_finish() -> Finish {
     );
     assert_eq!(
         finish.step(Input::History(and(
-            started(),
+            started()?,
             Vec::from([user(5), reply(6, "old summary"), done(7), closed]),
         ))),
         [
@@ -500,37 +514,39 @@ fn closed_finish() -> Finish {
         ]
     );
     let _ = finish.step(Input::Home(None));
-    finish
+    Ok(finish)
 }
 
 #[test]
 fn readiness_and_landing_failures_keep_the_closed_agents_summary_and_skip_push()
-{
-    let mut finish = closed_finish();
+-> Result<(), &'static str> {
+    let mut finish = closed_finish()?;
     assert_eq!(
         finish.step(Input::Ready(Err(text("diverged")))),
-        [note(Some("old summary"), 0)]
+        [note(Some("old summary"), 0)?]
     );
     failed(&mut finish, "diverged");
 
-    let mut finish = closed_finish();
+    let mut finish = closed_finish()?;
     let _ = finish.step(Input::Ready(Ok(())));
     assert_eq!(
         finish.step(Input::Landed(Err(text("conflict")))),
-        [note(Some("old summary"), 0)]
+        [note(Some("old summary"), 0)?]
     );
     failed(&mut finish, "conflict");
+    Ok(())
 }
 
 #[test]
-fn a_failed_push_still_notes_the_commits_that_landed() {
-    let mut finish = closed_finish();
+fn a_failed_push_still_notes_the_commits_that_landed()
+-> Result<(), &'static str> {
+    let mut finish = closed_finish()?;
     let _ = finish.step(Input::Ready(Ok(())));
     let _ = finish.step(Input::Landed(Ok(2)));
     assert_eq!(
         finish
             .step(Input::Pushed(Some((text("origin"), Err(text("offline")))))),
-        [note(Some("old summary"), 2)]
+        [note(Some("old summary"), 2)?]
     );
     last(
         &mut finish,
@@ -541,12 +557,14 @@ fn a_failed_push_still_notes_the_commits_that_landed() {
             },
         },
     );
+    Ok(())
 }
 
 #[test]
-fn a_restarted_finish_reuses_its_pending_attempt_and_summary() {
+fn a_restarted_finish_reuses_its_pending_attempt_and_summary()
+-> Result<(), &'static str> {
     let history = and(
-        started(),
+        started()?,
         Vec::from([
             event(5, EventKind::FinishStarted),
             user(6),
@@ -575,6 +593,7 @@ fn a_restarted_finish_reuses_its_pending_attempt_and_summary() {
     let _ = finish.step(Input::Landed(Ok(2)));
     assert_eq!(
         finish.step(Input::Pushed(None)),
-        [note(Some("saved summary"), 2)]
+        [note(Some("saved summary"), 2)?]
     );
+    Ok(())
 }

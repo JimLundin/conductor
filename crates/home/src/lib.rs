@@ -2,16 +2,19 @@
 
 extern crate alloc;
 
+pub mod backend;
 mod calendar;
 pub mod canvas;
 pub mod checkout;
 mod clock;
 pub mod flow;
 mod home;
+pub mod hosting;
 mod id;
 pub mod instructions;
 pub mod issue;
 pub mod layout;
+pub mod operations;
 mod prelude;
 pub mod project;
 pub mod repos;
@@ -31,7 +34,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canvas::CanvasEntry;
 use crate::flow::Flow;
-use crate::issue::Issue;
+use crate::issue::Observation;
 use crate::prelude::*;
 use crate::sync::Sync;
 
@@ -76,7 +79,7 @@ pub struct Found<'host> {
     pub checkouts: &'host BTreeMap<ProjectId, Vec<Checkout>>,
     pub cloning: &'host BTreeMap<ProjectId, Cloning>,
     pub flow: Option<&'host Flow>,
-    pub issues: &'host BTreeMap<ProjectId, Vec<Issue>>,
+    pub issues: &'host BTreeMap<ProjectId, Vec<Observation>>,
     pub canvases: &'host BTreeMap<IssueId, Vec<CanvasEntry>>,
     pub unpushed: u64,
 }
@@ -97,7 +100,7 @@ pub fn view(
         unpushed,
     } = found;
     Home {
-        remote: checkout::display(remote),
+        remote: vcs::remote::display(remote),
         synced_secs: sync.synced,
         sync: sync.status.clone(),
         unpushed,
@@ -108,7 +111,7 @@ pub fn view(
                 id: project.id,
                 name: project.name.clone(),
                 title: project.title.clone(),
-                remote: project.remote.as_deref().map(checkout::display),
+                remote: project.remote.as_deref().map(vcs::remote::display),
                 profiles: project.profiles.clone(),
                 provides: project.provides.clone(),
                 checkouts: checkouts
@@ -123,12 +126,18 @@ pub fn view(
                     .get(&project.id)
                     .into_iter()
                     .flatten()
-                    .map(|issue| Issue {
-                        canvases: canvases
-                            .get(&issue.id)
-                            .cloned()
-                            .unwrap_or_default(),
-                        ..issue.clone()
+                    .cloned()
+                    .map(|mut record| {
+                        if let crate::issue::IssueState::Valid {
+                            issue, ..
+                        } = &mut record.state
+                        {
+                            issue.canvases = canvases
+                                .get(&issue.id)
+                                .cloned()
+                                .unwrap_or_default();
+                        }
+                        record
                     })
                     .collect(),
             })

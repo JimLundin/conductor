@@ -17,6 +17,11 @@ reason = "The generated numbers are bounds and lengths from the Rust wire contra
 
 [[exception]]
 path = "core/src/schemas/index.ts"
+rule = "lint/eslint/prefer-regex-literals"
+reason = "Effect 4.1.5 Codegen emits RegExp constructors for schema patterns, its expression parser rejects regex literals, and the pinned Oxlint cannot autofix this form"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
 rule = "lint/typescript/consistent-type-definitions"
 reason = "Effect Codegen emits object type aliases for the mutually referential schema types"
 

@@ -15,15 +15,16 @@ use home::{Home, HomeRefusal, IssueId, ProjectId};
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;
 use crate::session::Choice;
-use crate::workspace::GitError;
+use vcs::Error as GitError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
+    pub project: Option<ProjectId>,
     pub directory: SessionDirectory,
     pub on: Option<home::issue::Start>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InHome {
     Project(ProjectId),
     Issue(IssueId),
@@ -32,6 +33,7 @@ pub enum InHome {
 pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
     match at {
         StartAt::Directory(directory) => Ok(Placement {
+            project: None,
             directory,
             on: None,
         }),
@@ -47,14 +49,18 @@ pub fn place_in_home(
     match at {
         InHome::Project(id) => {
             home::first_checkout(home, id).map(|checkout| Placement {
+                project: Some(id),
                 directory: checkout.into(),
                 on: None,
             })
         }
-        InHome::Issue(id) => home::issue::start(home, id).map(|on| Placement {
-            directory: on.checkout.clone().into(),
-            on: Some(on),
-        }),
+        InHome::Issue(id) => {
+            home::issue::start(home, id).map(|(project, on)| Placement {
+                project: Some(project),
+                directory: on.checkout.clone().into(),
+                on: Some(on),
+            })
+        }
     }
 }
 
@@ -166,7 +172,7 @@ impl StartRequest {
         let (phase, effect) = match &placed.on {
             Some(on) => {
                 if let Some(session) =
-                    on_issue(history, on.issue, &self.instance)
+                    on_issue(history, &on.issue, &self.instance)
                 {
                     return refuse(SessionRefusal::IssueTaken { session });
                 }
@@ -333,10 +339,9 @@ fn opening<Starter, Handle>(
         model: launch.choice.model.clone(),
         effort: launch.choice.effort,
     };
-    let attached = placed
-        .on
-        .as_ref()
-        .map(|on| EventKind::OnIssue { issue: on.issue });
+    let attached = placed.on.as_ref().map(|on| EventKind::OnIssue {
+        issue: on.issue.clone(),
+    });
     let snapshot = Snapshot {
         turn_start: None,
         commit,

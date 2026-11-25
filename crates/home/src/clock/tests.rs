@@ -15,6 +15,17 @@ fn a_millisecond_clock_reads_as_its_whole_seconds() {
 }
 
 #[test]
+fn a_millisecond_clock_keeps_the_milliseconds_past_its_second() {
+    assert_eq!(
+        [
+            UnixMillis(2_000).subsec_millis(),
+            UnixMillis(1_999).subsec_millis()
+        ],
+        [0, 999]
+    );
+}
+
+#[test]
 fn a_second_clock_reads_as_milliseconds_and_saturates() {
     assert_eq!(
         [UnixSecs(3).millis(), UnixSecs(u64::MAX).millis()],

@@ -15,7 +15,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use crate::finish::Finished;
 use crate::log::HostSeq;
 use crate::registry::InstanceId;
-use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
+use crate::workspace::{Snapshot, SnapshotDiff, Workspace};
+use vcs::Kept;
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema,

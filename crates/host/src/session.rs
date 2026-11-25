@@ -4,7 +4,7 @@ use crate::log::{Event, HostSeq};
 use crate::prelude::*;
 use crate::snapshots::Book;
 pub use crate::snapshots::{Compared, SnapshotPlan};
-use crate::workspace::{Kept, Snapshot, SnapshotDiff, Workspace};
+use crate::workspace::{Snapshot, SnapshotDiff, Workspace};
 use agents::Output;
 use agents::runtime::{Command, Outcome, Start, Started};
 use agents::{
@@ -16,6 +16,7 @@ use agents::{NativeRequest, NativeTurn, Reply, Step};
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
+use vcs::Kept;
 
 mod record;
 pub use record::{
@@ -130,7 +131,7 @@ pub enum Effect {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     Record(EventKind),
-    Snapshot(Workspace),
+    Snapshot(Workspace, vcs::command::SnapshotAttempt),
     Diff(Box<Compared>),
     Remove(Workspace),
     Agent(Command),
@@ -910,7 +911,10 @@ impl Session {
     fn save(&mut self, then: Saved) -> Vec<Effect> {
         match self.book.plan_snapshot() {
             Some(plan) => {
-                let call = Call::Snapshot(plan.workspace.clone());
+                let call = Call::Snapshot(
+                    plan.workspace.clone(),
+                    plan.attempt.clone(),
+                );
                 self.flow = Flow::Saving(Saving { plan, then });
                 Vec::from([Effect::Barrier, Effect::Call(call)])
             }

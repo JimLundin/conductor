@@ -25,6 +25,7 @@ type Performed = Result<Option<Input>, Stopped>;
 
 #[derive(Debug, Clone)]
 pub struct Told {
+    pub workspaces: crate::Workspaces,
     pub home: HomeClone,
     pub instructions_file: Option<String>,
 }
@@ -306,8 +307,13 @@ impl Actor {
                 watch.subscribe(&self.log, after).await?
             }
             FinishEffect::ReadHome => FinishInput::Home(self.told.home.shown()),
-            FinishEffect::Ready { workspace, branch } => FinishInput::Ready(
-                self.ready_landing(&workspace, &branch, watch).await?,
+            FinishEffect::Ready {
+                issue,
+                workspace,
+                branch,
+            } => FinishInput::Ready(
+                self.ready_landing(&workspace, &issue, &branch, watch)
+                    .await?,
             ),
             FinishEffect::Land { workspace, branch } => {
                 let (attempt, completed) = watch.landing.ok_or(Stopped {})?;
@@ -350,6 +356,7 @@ impl Actor {
     async fn ready_landing(
         &self,
         workspace: &Workspace,
+        issue: &home::IssueId,
         branch: &str,
         run: &mut FinishRun,
     ) -> Result<Result<(), String>, Stopped> {
@@ -372,6 +379,7 @@ impl Actor {
         }
         Ok(crate::home::ready_issue_branch(
             Path::new(&workspace.repository.0),
+            issue,
             branch,
         )
         .await)
@@ -461,10 +469,20 @@ impl Actor {
             Call::Record(kind) => {
                 Input::Recorded(self.log.record(self.id, kind).await?.seq)
             }
-            Call::Snapshot(workspace) => snapshot(workspace, self.id).await,
-            Call::Diff(compared) => diff(*compared).await,
+            Call::Snapshot(workspace, attempt) => Input::Snapshotted(
+                self.told
+                    .workspaces
+                    .snapshot(&workspace, self.id, attempt)
+                    .await
+                    .map_err(|err| err.to_string()),
+            ),
+            Call::Diff(compared) => {
+                diff(&self.told.workspaces, self.id, *compared).await
+            }
             Call::Remove(workspace) => Input::Removed(
-                workspace::remove(&workspace)
+                self.told
+                    .workspaces
+                    .remove(&workspace, self.id)
                     .await
                     .map_err(|err| err.to_string()),
             ),
@@ -547,18 +565,19 @@ fn watched(
     }
 }
 
-async fn snapshot(workspace: Workspace, session: SessionId) -> Input {
-    let taken = workspace::snapshot(&workspace, session).await;
-    Input::Snapshotted(taken.map_err(|err| err.to_string()))
-}
-
-async fn diff(compared: Compared) -> Input {
-    let listed = workspace::diff(
-        &compared.workspace,
-        compared.snapshot,
-        &compared.commit,
-        &compared.previous,
-    )
-    .await;
+async fn diff(
+    workspaces: &crate::Workspaces,
+    session: SessionId,
+    compared: Compared,
+) -> Input {
+    let listed = workspaces
+        .diff(
+            &compared.workspace,
+            session,
+            compared.snapshot,
+            &compared.commit,
+            &compared.previous,
+        )
+        .await;
     Input::Diffed(listed.map_err(|err| err.to_string()))
 }

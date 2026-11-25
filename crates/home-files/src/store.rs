@@ -28,14 +28,14 @@ impl FolderStore {
         Self { root }
     }
 
-    fn issue(project: ProjectId, issue: IssueId) -> String {
-        format!("{}/{issue}", layout::issues(&project))
+    fn issue(project: ProjectId, issue: &IssueId) -> String {
+        format!("{}/{}", layout::issues(&project), issue.reference())
     }
 
     fn place(key: &CanvasKey) -> String {
         format!(
             "{}/{}{SUFFIX}",
-            Self::issue(key.project, key.issue),
+            Self::issue(key.project, &key.issue),
             key.name
         )
     }
@@ -69,7 +69,7 @@ impl FolderStore {
     fn named(
         &self,
         project: ProjectId,
-        issue: IssueId,
+        issue: &IssueId,
     ) -> Result<Held<CanvasName>, StoreError> {
         let folder = Self::issue(project, issue);
         let mut held = Held::default();
@@ -98,18 +98,20 @@ impl FolderStore {
         let folder = layout::issues(&project);
         let mut held = Held::default();
         for found in self.found(&folder)?.into_iter().filter(|f| f.folder) {
-            let Some(issue) = IssueId::parse(&found.name) else {
+            let Some(issue) = IssueId::from_reference(&found.name)
+                .filter(|id| id.reference() == found.name)
+            else {
                 held.strays.push(Stray {
                     place: format!("{folder}/{}", found.name),
                     reason: StrayReason::NotAnIssue,
                 });
                 continue;
             };
-            let named = self.named(project, issue)?;
+            let named = self.named(project, &issue)?;
             held.canvases.extend(named.canvases.into_iter().map(|name| {
                 CanvasKey {
                     project,
-                    issue,
+                    issue: issue.clone(),
                     name,
                 }
             }));
@@ -141,7 +143,7 @@ impl CanvasStore for FolderStore {
         project: &ProjectId,
         issue: &IssueId,
     ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError> {
-        let named = self.named(*project, *issue)?;
+        let named = self.named(*project, issue)?;
         let mut held = Held {
             canvases: Vec::new(),
             strays: named.strays,
@@ -149,7 +151,7 @@ impl CanvasStore for FolderStore {
         for name in named.canvases {
             let key = CanvasKey {
                 project: *project,
-                issue: *issue,
+                issue: issue.clone(),
                 name,
             };
             match self.get(&key) {
@@ -167,7 +169,7 @@ impl CanvasStore for FolderStore {
                 Err(StoreError::Invalid { error, .. }) => {
                     held.canvases.push(Err(Broken {
                         name: key.name,
-                        error,
+                        error: *error,
                     }));
                 }
                 Err(error) => return Err(error),
@@ -182,7 +184,7 @@ impl CanvasStore for FolderStore {
             Ok(text) => CanvasFile::parse(&text).map(Some).map_err(|error| {
                 StoreError::Invalid {
                     key: key.clone(),
-                    error,
+                    error: Box::new(error),
                 }
             }),
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
@@ -196,7 +198,7 @@ impl CanvasStore for FolderStore {
         file: &CanvasFile,
     ) -> Result<(), StoreError> {
         let path = self.path(key);
-        fs::create_dir_all(self.root.join(Self::issue(key.project, key.issue)))
+        fs::create_dir_all(self.root.join(Self::issue(key.project, &key.issue)))
             .and_then(|()| fs::write(&path, file.encode()))
             .map_err(|error| unavailable(&path, &error))
     }
@@ -240,7 +242,7 @@ mod tests {
     fn key(name: &str) -> Result<CanvasKey, Box<dyn std::error::Error>> {
         Ok(CanvasKey {
             project: ProjectId::parse("a1b2c3").ok_or("project")?,
-            issue: IssueId::parse("0v29xv1q").ok_or("issue")?,
+            issue: IssueId::from_reference("0v29xv1q").ok_or("issue")?,
             name: CanvasName::parse(name)?,
         })
     }
@@ -262,7 +264,7 @@ mod tests {
     fn spoiled(root: &std::path::Path, key: &CanvasKey) {
         let folder = root
             .join(layout::issues(&key.project))
-            .join(key.issue.to_string());
+            .join(key.issue.reference());
         let made = fs::create_dir_all(&folder).and_then(|()| {
             fs::write(folder.join(format!("{}.json", key.name)), "{}")
         });
@@ -272,11 +274,15 @@ mod tests {
     fn planted(root: &std::path::Path, plant: &Plant) -> String {
         let (folder, file) = match plant {
             Plant::Folder { project, issue } => (
-                format!("{}/{issue}/notes.json", layout::issues(project)),
+                format!(
+                    "{}/{}/notes.json",
+                    layout::issues(project),
+                    issue.reference()
+                ),
                 None,
             ),
             Plant::Unnamed { project, issue } => (
-                format!("{}/{issue}", layout::issues(project)),
+                format!("{}/{}", layout::issues(project), issue.reference()),
                 Some(String::from("Bad Name.json")),
             ),
             Plant::NotAnIssue(project) => {
@@ -313,6 +319,30 @@ mod tests {
                 .join("projects/a1b2c3/issues/0v29xv1q/design-tree.json"),
         )?;
         assert_eq!(CanvasFile::parse(&kept), Ok(file));
+        Ok(())
+    }
+
+    #[test]
+    fn a_tracker_identity_with_path_characters_is_one_canvas_directory()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = Scratch::new("qualified-canvas");
+        let mut store = FolderStore::new(scratch.0.clone());
+        let mut key = key("plan")?;
+        key.issue = IssueId::new("tracker/host", "../42").ok_or("issue")?;
+        let file = CanvasFile {
+            written: UnixMillis(5),
+            by: String::from("author"),
+            canvas: Canvas::new(
+                String::from("Plan"),
+                vec![Block::Prose {
+                    text: String::from("text"),
+                }],
+            )?,
+        };
+        store.put(&key, &file)?;
+        assert!(scratch.0.join("projects/a1b2c3/issues/tracker%2Fhost~%2E%2E%2F42/plan.json").is_file());
+        assert_eq!(store.get(&key)?, Some(file));
+        assert_eq!(store.all()?.canvases, [key]);
         Ok(())
     }
 

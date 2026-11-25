@@ -152,7 +152,7 @@ pub fn canvas_key(
     let project = known
         .projects
         .iter()
-        .find(|project| project.issues.iter().any(|at| at.id == issue))
+        .find(|project| project.issues.iter().any(|at| at.id() == &issue))
         .ok_or(HomeRefusal::UnknownIssue)?;
     Ok(CanvasKey {
         project: project.id,

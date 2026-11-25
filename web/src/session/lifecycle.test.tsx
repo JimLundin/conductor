@@ -38,7 +38,7 @@ describe("finishing a session", () => {
     expect.hasAssertions();
     const onIssue = [
       created(directory),
-      { OnIssue: { issue: "0twtnsfs" } },
+      { OnIssue: { issue: "local~0twtnsfs" } },
       "SessionReady",
     ] as const;
     const before = shownSession(onSession(onIssue));

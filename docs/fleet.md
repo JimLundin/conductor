@@ -32,9 +32,30 @@ files remain local. The app can show updated instances when the new host
 applies the signed configuration. The real CLI sign-in assumptions and
 the second-host Home Screen walkthrough are still to be verified.
 
+## Share a GitHub credential
+
+Use the same `fleet/<name>` reference in the project's backend selection
+and in the root host's credential store. The root store format and the
+supported GitHub credential types are in [Project backends](project-backends.md#repository-access-and-credentials).
+The project file holds only the reference. An SSH agent identity stays
+on its host.
+
+Stop the root daemon. Run
+`orchestrator fleet --data-dir <dir> credential share fleet/<name>`,
+then restart it. The command publishes the named entry, including its
+repository and expiry. Enrolled hosts receive it in the signed private
+configuration. Background project operations read the latest verified
+configuration on their host. The public roster carries no credentials.
+
+To rotate the credential, update the entry in the root store and run
+`credential share` again with the daemon stopped. To withdraw it, run
+`orchestrator fleet --data-dir <dir> credential remove fleet/<name>`.
+Restart the root daemon to synchronize the change. Revoke the old token
+at GitHub to invalidate copies held by an offline or revoked host.
+
 ## Availability and revocation
 
-The root must be online to invite hosts and edit shared credentials.
+The root daemon must be online to invite hosts and accept credential changes from the app.
 A member that has already synchronized can keep serving while the root
 is unavailable. On a new daemon start, a member waits for authenticated
 fleet synchronization before accepting browser sessions. The peer does
@@ -93,15 +114,14 @@ select CLI versions or publish provider settings.
 
 ## Fleet format changes
 
-This release uses `conductor-fleet/4` and new signing and encryption
+This release uses `conductor-fleet/5` and version 5 signing and encryption
 contexts for full configurations, local fleet state and root backups.
 Hosts must support the same fleet protocol version to synchronize.
-Certificates and the public roster are now signed over their JSON bytes
-and carried as those bytes, so earlier certificates no longer verify.
+Certificates and public snapshots still use version 2 signatures over
+their JSON bytes.
 
-Previous `fleet.sealed` files and root backups cannot be opened by this
-release. A host with unreadable fleet state refuses to start; it does not
-fall back to standalone ticket authentication. Stop the affected hosts,
-set the old fleet state and backups aside, and initialize and enroll the
-fleet again with fresh backups. Pair the apps again with the new root,
-which has a new signing key. There is no conversion of old state.
+Plan a coordinated upgrade from version 4. Stop the hosts and set the old
+`fleet.sealed`, `fleet-store.key` and backups aside. Initialize the root
+with a fresh backup, enroll the hosts again and pair the apps with the new
+root. Reapply the shared credentials. The version 5 daemon rejects old
+sealed state and backups.

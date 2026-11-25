@@ -13,6 +13,14 @@ name = "home"
 path = "src/main.rs"
 
 [dependencies]
+daemon = { path = "../daemon" }
+vcs-git2 = { path = "../vcs-git2" }
+serde_json.workspace = true
+github-api = { path = "../github-api" }
+tokio.workspace = true
+github = { path = "../github" }
+project-runtime = { path = "../project-runtime" }
+vcs = { path = "../vcs" }
 home = { path = "../home" }
 home-files = { path = "../home-files" }
 home-store = { path = "../home-store" }

@@ -1,3 +1,4 @@
+use crate::issue::storage::fresh;
 use crate::issue::{
     ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, Item, NewIssue,
     Part,
@@ -6,18 +7,18 @@ use crate::{DRAWS, Draws, IssueId, ProjectId, UnixMillis, UnixSecs};
 
 use super::{
     Asked, CanvasWrite, Command, Context, Edit, Fetched, Given, Local, Need,
-    Outcome, Source, Wanted, asked as dispatched, command, fresh, homeless,
-    run, stamp, write,
+    Source, Wanted, asked as dispatched, command, homeless, plan, stamp,
 };
 use crate::canvas::{
     BadName, Block, Canvas, CanvasError, CanvasFile, CanvasKey, CanvasName,
     Held, Stray, StrayReason,
 };
 use crate::flow::check::{Report, check as checked};
-use crate::flow::file::log_line;
-use crate::flow::graph::{File, one};
 use crate::flow::load;
-use crate::flow::snapshot::{Inputs, Snapshot};
+use crate::flow::snapshot::Snapshot;
+use crate::issue::body::log_line;
+use crate::issue::storage::Inputs;
+use crate::issue::storage::{File, one};
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
@@ -42,6 +43,8 @@ fn issue(id: &str, front: &str, body: &str) -> File {
 
 fn home() -> Inputs {
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(String::from(FLOW)),
         projects: Vec::from([(
             String::from(FOLDER),
@@ -75,33 +78,83 @@ fn draws(given: &[u64]) -> Draws {
 }
 
 fn id(stem: &str) -> IssueId {
-    IssueId::parse(stem).unwrap_or(IssueId::new(0, 0))
+    IssueId::from_reference(stem).unwrap_or_else(|| IssueId {
+        authority: String::from("local"),
+        key: String::from("00000000"),
+    })
 }
 
 fn asked(inputs: &Inputs, line: &str) -> Command {
-    let home = Snapshot::of(inputs.clone());
+    let home = crate::issue::storage::snapshot(inputs.clone());
     command(&words(line), &home, fresh(&home, SECONDS, &SEVEN))
 }
 
+#[derive(Debug)]
+struct Outcome {
+    writes: Vec<File>,
+    output: String,
+    failed: bool,
+    canvases: Vec<CanvasWrite>,
+}
+
+impl Outcome {
+    fn ended(&self, saved: Result<(), String>) -> (String, u8) {
+        super::Outcome {
+            changes: Vec::new(),
+            canvases: self.canvases.clone(),
+            output: self.output.clone(),
+            failed: self.failed,
+        }
+        .ended(saved)
+    }
+}
+
+fn saved(outcome: super::Outcome, inputs: &Inputs) -> Outcome {
+    let loaded = inputs.clone().read();
+    let writes = outcome
+        .changes
+        .iter()
+        .map(|change| loaded.encode(change))
+        .collect::<Result<Vec<_>, _>>();
+    assert!(writes.is_ok(), "{writes:?}");
+    Outcome {
+        writes: writes.unwrap_or_default(),
+        output: outcome.output,
+        failed: outcome.failed,
+        canvases: outcome.canvases,
+    }
+}
+
+fn run(
+    command: Command,
+    given: Option<Given>,
+    snapshot: &Snapshot,
+    context: &Context,
+) -> Outcome {
+    saved(super::run(command, given, snapshot, context), &home())
+}
+
 fn ran(inputs: &Inputs, line: &str) -> Outcome {
-    let home = Snapshot::of(inputs.clone());
-    run(
-        command(&words(line), &home, fresh(&home, SECONDS, &SEVEN)),
-        None,
-        &home,
-        &context(),
+    let home = inputs.clone().read().snapshot;
+    saved(
+        super::run(
+            command(&words(line), &home, fresh(&home, SECONDS, &SEVEN)),
+            None,
+            &home,
+            &context(),
+        ),
+        inputs,
     )
 }
 
 fn check(inputs: &Inputs) -> Report {
-    checked(&Snapshot::of(inputs.clone()))
+    checked(&crate::issue::storage::snapshot(inputs.clone()))
 }
 
 fn context() -> Context {
     Context {
         now: NOW,
         by: String::from("laptop·claude"),
-        mark: None,
     }
 }
 
@@ -120,6 +173,8 @@ fn after(inputs: &Inputs, outcome: &Outcome) -> Inputs {
         text: write.text.clone(),
     }));
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         issues,
         ..inputs.clone()
     }
@@ -152,25 +207,11 @@ fn a_new_issue_takes_the_fresh_id() {
 }
 
 #[test]
-fn a_new_issue_s_id_sorts_after_every_issue_made_before_it() {
-    let home = Snapshot::of(home());
-    let fresh = fresh(&home, SECONDS, &SEVEN);
-    assert!(fresh.is_some());
-    assert!(
-        home.graph()
-            .issues
-            .iter()
-            .all(|issue| Some(issue.id) < fresh)
-    );
-    assert!(fresh < super::fresh(&home, UnixSecs(SECONDS.0 + 1), &[0; DRAWS]));
-}
-
-#[test]
 fn a_new_issue_draws_again_for_an_id_the_home_has() {
     let mut held = home();
     held.issues
         .push(issue("0tt82007", "title = \"Taken\"\n", ""));
-    let home = Snapshot::of(held);
+    let home = crate::issue::storage::snapshot(held);
     assert_eq!(
         fresh(&home, SECONDS, &draws(&[7, 7, 9])),
         Some(id("0tt82009"))
@@ -352,12 +393,27 @@ fn a_value_is_read_as_its_field_takes_it() {
         set(&format!("parent={SPEC}")),
         value("parent", Datum::Text(String::from(SPEC)))
     );
+    let dotted = Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
+        flow: Ok(FLOW.replace("\"priority\"", "\"triage.level\"")),
+        ..home()
+    };
+    for words in [
+        String::from("issue new home task T triage.level=high"),
+        format!("issue set {TASK} triage.level=low"),
+    ] {
+        let result = ran(&dotted, &words);
+        assert!(!result.failed, "{}", result.output);
+        let report = check(&after(&dotted, &result));
+        assert!(!report.failed(), "{}", report.text());
+    }
 }
 
 #[test]
 fn a_body_from_a_file_is_the_text_the_shell_read() {
     let inputs = home();
-    let home = Snapshot::of(inputs.clone());
+    let home = crate::issue::storage::snapshot(inputs.clone());
     let from_file =
         || asked(&inputs, &format!("issue body {TASK} --file why.md"));
     let written = run(
@@ -427,6 +483,24 @@ fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
     );
     assert_eq!(outcome.output, format!("wrote home/{id}\n"));
     assert!(!check(&after(&inputs, &outcome)).failed());
+    let staged = ran(&inputs, "issue new home spec Stage-it stage=shape");
+    assert!(!staged.failed, "{}", staged.output);
+    assert_eq!(
+        graph_reads("0tt82007", &text(&staged))
+            .ok()
+            .and_then(|issue| issue.stage),
+        Some(String::from("shape"))
+    );
+    for fields in ["priority=high priority=low", "created=2026-11-21T00:00:00Z"]
+    {
+        let duplicate =
+            ran(&inputs, &format!("issue new home task T {fields}"));
+        assert!(
+            duplicate.failed && duplicate.writes.is_empty(),
+            "{}",
+            duplicate.output
+        );
+    }
 }
 
 #[test]
@@ -508,6 +582,8 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
     let at = |stage: &str| {
         let inputs = home();
         Inputs {
+            unavailable: Vec::new(),
+            observed_at: None,
             issues: inputs
                 .issues
                 .into_iter()
@@ -614,7 +690,7 @@ fn a_note_of_several_lines_is_indented_under_its_first() {
             ))]),
         }),
         None,
-        &Snapshot::of(home()),
+        &crate::issue::storage::snapshot(home()),
         &context(),
     );
     assert!(text(&outcome).ends_with(
@@ -764,6 +840,8 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
 fn home_with(from: &str, to: &str) -> Inputs {
     assert!(FLOW.contains(from), "the flow has no {from:?}");
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(FLOW.replacen(from, to, 1)),
         ..home()
     }
@@ -804,7 +882,8 @@ fn an_issue_s_own_words_are_refused_as_fields_in_the_flow_s_terms() {
                 value: Datum::Text(String::from("x")),
             }]),
         };
-        write(&Snapshot::of(home()), &edit, &context()).map(|_| ())
+        plan(&crate::issue::storage::snapshot(home()), &edit, &context())
+            .map(|_| ())
     };
     assert_eq!(
         ["status", "stage", "kind", "id", "title"].map(refused),
@@ -842,7 +921,7 @@ fn an_edit_to_an_issue_that_doesn_t_read_says_what_is_wrong_with_it() {
 
 #[test]
 fn repos_and_skills_are_done_in_the_home_s_folder_and_the_rest_on_its_issues() {
-    let home = Snapshot::of(home());
+    let home = crate::issue::storage::snapshot(home());
     let local = |line: &str| dispatched(&words(line), &home, None);
     assert_eq!(local("repos"), Asked::Local(Local::Status));
     assert_eq!(local("repos --verify"), Asked::Local(Local::Verify));
@@ -878,7 +957,7 @@ fn given(line: &str, supplied: Given) -> Outcome {
     run(
         asked(&inputs, line),
         Some(supplied),
-        &Snapshot::of(inputs.clone()),
+        &crate::issue::storage::snapshot(inputs.clone()),
         &context(),
     )
 }
@@ -936,7 +1015,7 @@ fn a_canvas_put_on_an_issue_writes_the_canvas_under_its_key_stamped_with_when_an
 #[test]
 fn a_canvas_put_on_an_unknown_issue_with_a_bad_name_or_json_that_isnt_a_canvas_writes_nothing_and_says_why()
  {
-    let home = Snapshot::of(home());
+    let home = crate::issue::storage::snapshot(home());
     let put = |words: &[&str], text: &str| {
         let args: Vec<String> =
             words.iter().copied().map(String::from).collect();
@@ -1889,7 +1968,7 @@ fn fetched(
     Ok(Fetched {
         key: CanvasKey {
             project: ProjectId::parse(FOLDER).ok_or("project")?,
-            issue: IssueId::parse(issue).ok_or("issue")?,
+            issue: IssueId::from_reference(issue).ok_or("issue")?,
             name: CanvasName::parse(name).map_err(|error| error.to_string())?,
         },
         got,

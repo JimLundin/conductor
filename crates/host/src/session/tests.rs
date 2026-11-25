@@ -4,8 +4,7 @@ use crate::session::{
     EventKind, RequestId, Resolution, SessionId, SessionRefusal, SessionResult,
     SubagentEvent,
 };
-use crate::workspace::{Kept, Snapshot, Workspace};
-use crate::workspace::{Repository, WorkingCopy, Worktree};
+use crate::workspace::{Snapshot, Workspace};
 use agents::Output;
 use agents::runtime::{Command, Directory, Outcome, Start, Started};
 use agents::{
@@ -15,6 +14,8 @@ use agents::{
     ToolOutcome, ToolPhase, TurnOutcome,
 };
 use agents::{NativeRequest, NativeTurn, Reply, Step};
+use vcs::Kept;
+use vcs::{Repository, WorkingCopy, Worktree};
 
 use super::{Asked, Call, Choice, Effect, Input, Order, Session, fits};
 
@@ -250,7 +251,10 @@ fn a_message_the_agent_never_got_fails_the_turn() {
                 turn_ended(),
                 Vec::from([
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot(workspace())),
+                    Effect::Call(Call::Snapshot(
+                        workspace(),
+                        vcs::command::SnapshotAttempt(text("turn-7")),
+                    )),
                 ]),
             ),
             (
@@ -1044,7 +1048,10 @@ fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
                 turn_ended(),
                 Vec::from([
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot(workspace())),
+                    Effect::Call(Call::Snapshot(
+                        workspace(),
+                        vcs::command::SnapshotAttempt(text("turn-4")),
+                    )),
                 ]),
             ),
             (
@@ -1060,7 +1067,10 @@ fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
                 start(),
                 Vec::from([
                     Effect::Barrier,
-                    Effect::Call(Call::Snapshot(workspace())),
+                    Effect::Call(Call::Snapshot(
+                        workspace(),
+                        vcs::command::SnapshotAttempt(text("turn-4")),
+                    )),
                 ]),
             ),
             (

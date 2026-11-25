@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::canvas::{CanvasFile, CanvasName};
 use crate::flow::Flow;
-use crate::issue::{EditId, Issue, IssueChange, NewIssue};
+use crate::issue::{EditId, IssueChange, NewIssue, Observation};
 use crate::{IssueId, ProjectId, UnixSecs};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -39,7 +39,7 @@ pub struct Project {
     pub provides: Vec<String>,
     pub checkouts: Vec<Checkout>,
     pub cloning: Cloning,
-    pub issues: Vec<Issue>,
+    pub issues: Vec<Observation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

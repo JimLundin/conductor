@@ -9,6 +9,8 @@ publish = false
 layer = "shell"
 
 [dependencies]
+project-runtime = { path = "../project-runtime" }
+vcs = { path = "../vcs" }
 uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
 argon2 = "0.5.3"
@@ -17,7 +19,6 @@ cap-std = "4.0.2"
 # The credential store's cipher (§6.3), XChaCha20-Poly1305.
 chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
 data-encoding.workspace = true
-directories = "6.0.0"
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
 net = { path = "../net" }
@@ -41,6 +42,7 @@ thiserror.workspace = true
 tempfile = "3.27.0"
 subtle = "2.6.1"
 zeroize = "1.8.2"
+secrecy = "0.10"
 tokio = { workspace = true, features = ["fs", "net", "signal"] }
 tracing = { workspace = true, features = ["std"] }
 
@@ -60,6 +62,7 @@ windows-native-keyring-store = { version = "1.1", default-features = false }
 dbus-secret-service = { version = "4.2", default-features = false, features = ["crypto-rust", "vendored"] }
 
 [dev-dependencies]
+vcs-git2 = { path = "../vcs-git2" }
 tracing-subscriber.workspace = true
 
 [lints]

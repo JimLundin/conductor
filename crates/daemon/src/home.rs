@@ -1,4 +1,5 @@
 mod issue_file;
+mod ownership;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -6,14 +7,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
 use home::canvas::{CanvasEntry, CanvasName};
-use home::checkout::{Probe, Root};
-use home::flow::command::fresh;
-use home::flow::graph::File;
+use home::checkout::Root;
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
+use home::issue::storage::fresh;
+use home::issue::storage::{self, Listing};
 use home::issue::{
-    Commit, Context, Delivery, Edit, Listing, PendingEdits, Record,
-    RecordEffect, RemoteProbe, SessionUpdate, Write,
+    Commit, Context, Delivery, Edit, NoCommit, PendingEdits, Record,
+    RecordEffect, RemoteProbe, SessionUpdate,
 };
 use home::issue::{EditId, IssueChange, NewIssue};
 use home::skills;
@@ -32,6 +33,7 @@ use link::log::Completion;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
+use vcs::discovery::Probe;
 
 use crate::Stopped;
 use crate::workspace::{blob, text};
@@ -200,6 +202,35 @@ impl HomeClone {
                 self.ask(|reply| Msg::Place { at: start, reply }).await
             }
         }
+    }
+
+    pub async fn check_workspaces(
+        &self,
+        placed: &Placed,
+        workspaces: &crate::Workspaces,
+    ) -> Result<(), String> {
+        let Some((id, directory)) = placed
+            .as_ref()
+            .ok()
+            .and_then(|p| p.project.map(|id| (id, p.directory.clone())))
+        else {
+            return Ok(());
+        };
+        let root = self.clone.clone();
+        let backend = workspaces.clone();
+        tokio::task::spawn_blocking(move || {
+            let catalog = home_files::configuration(&root);
+            let project = catalog
+                .projects()
+                .iter()
+                .find(|p| p.id == id)
+                .ok_or_else(|| HomeRefusal::UnknownProject.label())?;
+            backend
+                .preflight(&project.backends, &directory)
+                .map_err(|reason| reason.label())
+        })
+        .await
+        .map_err(|_| String::from("workspace capability check stopped"))?
     }
 
     pub async fn ready(
@@ -387,11 +418,13 @@ impl Actor {
         note_id: Option<EditId>,
     ) {
         while let Some(change) =
-            self.next_session_change(&mut update, issue).await
+            self.next_session_change(&mut update, &issue).await
         {
             let id = SessionUpdate::edit_for(&change, note_id)
                 .unwrap_or_else(|| EditId(ulid::Ulid::new().0));
-            if let Err(error) = self.change(issue, change, client, id).await {
+            if let Err(error) =
+                self.change(issue.clone(), change, client, id).await
+            {
                 let answer = error.completion().into_result();
                 tracing::warn!(target: "home", ?answer, "a session's issue update was rejected");
             }
@@ -401,7 +434,7 @@ impl Actor {
     async fn next_session_change(
         &mut self,
         update: &mut SessionUpdate,
-        issue: IssueId,
+        issue: &IssueId,
     ) -> Option<IssueChange> {
         if *update == SessionUpdate::Done {
             return None;
@@ -431,7 +464,7 @@ impl Actor {
                 issue,
                 change,
             } => self
-                .change(issue, change, by, edit)
+                .change(issue.clone(), change, by, edit)
                 .await
                 .map_or_else(IssueError::completion, |warnings| {
                     home(HomeResult::IssueWritten { issue, warnings })
@@ -598,7 +631,9 @@ impl Actor {
                 "no issue id is free this second",
             ))
         })?;
-        let request = self.issue_context(edit).open(issue, new, &client.0)?;
+        let request =
+            self.issue_context(edit)
+                .open(issue.clone(), new, &client.0)?;
         let issue_dir = home::layout::issues(&request.project());
         if let Some(opened) = self.created(&issue_dir, edit).await? {
             return Ok((opened, Vec::new()));
@@ -679,15 +714,22 @@ impl Actor {
         &mut self,
         request: Record,
     ) -> Result<Vec<String>, IssueError> {
-        self.home
-            .flow()
-            .map_err(|reason| HomeRefusal::IssueNotSaved {
-                reason: String::from(reason),
-            })?;
-        let current = read_issue(&self.clone, &request.read().path)
+        let flow =
+            self.home
+                .flow()
+                .map_err(|reason| HomeRefusal::IssueNotSaved {
+                    reason: String::from(reason),
+                })?;
+        let current = read_issue(&self.clone, &storage::path(&request.read()))
             .map_err(IssueError::Retryable)?;
+        let loaded =
+            home_files::issue(flow, &request.read(), current.as_deref());
         let mut recorded = request
-            .decide(current.as_deref(), &self.home, &self.edits)
+            .decide(
+                loaded.as_ref().map(|observation| &observation.observed),
+                &self.home,
+                &self.edits,
+            )
             .map_err(IssueError::local)?;
         let warnings = recorded.warnings().to_vec();
         let mut outcome = Ok(());
@@ -696,7 +738,15 @@ impl Actor {
         {
             outcome = match effect {
                 RecordEffect::Persist(edit) => self.persist(edit),
-                RecordEffect::Commit(commit) => self.commit(commit).await,
+                RecordEffect::Commit(commit) => {
+                    self.commit(
+                        commit,
+                        loaded.as_ref().and_then(|observation| {
+                            observation.document.clone()
+                        }),
+                    )
+                    .await
+                }
                 RecordEffect::Deliver { delivery, id } => {
                     self.edits.committed(id);
                     self.deliver(delivery).await
@@ -738,7 +788,7 @@ impl Actor {
         self.edits.reset();
         for index in 0..self.edits.count() {
             if let Some(read) = self.edits.replay_target(index) {
-                let outcome = self.rewrite(index, &read.path).await.inspect_err(|reason| {
+                let outcome = self.rewrite(index, &read).await.inspect_err(|reason| {
                     tracing::warn!(target: "home", issue = ?read.issue, %reason, "an issue change waits");
                 });
                 self.edits.replayed(index, outcome.is_ok());
@@ -749,24 +799,31 @@ impl Actor {
     async fn rewrite(
         &mut self,
         index: usize,
-        path: &str,
+        target: &home::issue::Read,
     ) -> Result<(), String> {
+        let issue_path = storage::path(target);
+        let path = issue_path.as_str();
         let changed =
             changed_at(&self.clone, &self.destination()?.tracking, path)
                 .await?;
-        let current = committed_issue(&self.clone, path).await;
+        let current = committed_issue(&self.clone, path).await?;
+        let loaded =
+            home_files::issue(self.home.flow()?, target, current.as_deref());
         match self.edits.replay(
             &self.home,
             index,
-            current
-                .as_ref()
-                .map(Option::as_deref)
-                .map_err(String::clone),
+            Ok(loaded.as_ref().map(|observation| &observation.observed)),
             changed,
         ) {
-            Write::Unchanged | Write::Dropped => Ok(()),
-            Write::Waiting(reason) => Err(reason),
-            Write::Commit(commit) => self.commit(commit).await,
+            Err(NoCommit::Unchanged | NoCommit::Dropped) => Ok(()),
+            Err(NoCommit::Waiting(reason)) => Err(reason),
+            Ok(commit) => {
+                self.commit(
+                    &commit,
+                    loaded.and_then(|observation| observation.document),
+                )
+                .await
+            }
         }
     }
 
@@ -813,16 +870,21 @@ impl Actor {
         )
     }
 
-    async fn commit(&mut self, commit: Commit) -> Result<(), String> {
-        let target =
-            write_issue(&self.clone, &commit.target.path, &commit.text)?;
-        let result = commit_file(&self.clone, &commit).await;
+    async fn commit(
+        &mut self,
+        commit: &Commit,
+        document: Option<home::issue::document::Document>,
+    ) -> Result<(), String> {
+        let file = storage::encode(
+            self.home.flow()?,
+            &commit.change,
+            document,
+            Some(commit.marker),
+        )?;
+        let target = write_issue(&self.clone, &file.path(), &file.text)?;
+        let result = commit_file(&self.clone, commit).await;
         drop(target);
-        self.home = self.home.with(File {
-            project: commit.target.project,
-            stem: commit.target.issue.to_string(),
-            text: commit.text,
-        });
+        self.home = self.home.with(commit.change.observation.clone());
         result
     }
 
@@ -869,7 +931,7 @@ impl Actor {
     }
 
     fn read_home(&self) -> Snapshot {
-        home_files::read(&self.clone)
+        home_files::read(&self.clone).snapshot
     }
 
     fn publish(&self) {
@@ -897,14 +959,11 @@ fn listed(
     home: &Snapshot,
     store: &dyn CanvasStore,
 ) -> BTreeMap<IssueId, Vec<CanvasEntry>> {
-    home.issues()
-        .into_iter()
-        .flat_map(|(project, issues)| {
-            issues.into_iter().map(move |issue| (project, issue.id))
-        })
-        .filter_map(|(project, issue)| {
+    home.graph().issues.iter()
+        .filter_map(|record| {
+            let issue = &record.id;
             store
-                .list(&project, &issue)
+                .list(&record.project, issue)
                 .inspect_err(|error| {
                     tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
                 })
@@ -923,7 +982,7 @@ fn listed(
                             .ok()
                         })
                         .collect();
-                    (issue, canvases)
+                    (issue.clone(), canvases)
                 })
         })
         .collect()
@@ -975,7 +1034,7 @@ fn remote_address(data_dir: &Path, remote: &str) -> Result<String, String> {
 }
 
 fn remote_failure(remote: &str, reason: &str) -> String {
-    let display = home::checkout::display(remote);
+    let display = vcs::remote::display(remote);
     if display == remote {
         reason.to_owned()
     } else {
@@ -1015,7 +1074,10 @@ impl Destination {
         let head = text(clone, &["symbolic-ref", "--quiet", "HEAD"])
             .await
             .map_err(|_| String::from("the home checkout is detached"))?;
-        let branch = sync::publishing_branch(&tracking, &head)?;
+        let branch = sync::publishing_branch(
+            home_files::git::tracking_branch(&tracking).as_deref(),
+            &head,
+        )?;
         Ok(Self {
             remote,
             branch,
@@ -1088,14 +1150,43 @@ async fn pull(clone: &Path, tracking: &str) -> Result<(), String> {
 }
 
 async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
-    ready_issue_branch(Path::new(&start.checkout.0), &start.branch).await
+    ready_issue_branch(
+        Path::new(&start.checkout.0),
+        &start.issue,
+        &start.branch,
+    )
+    .await
 }
 
 pub async fn ready_issue_branch(
     checkout: &Path,
+    issue: &IssueId,
     branch: &str,
 ) -> Result<(), String> {
+    run(checkout, &["check-ref-format", branch]).await?;
+    let directory = text(
+        checkout,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let mut ownership = ownership::lock(Path::new(directory.trim())).await?;
     let facts = branch_facts(checkout, branch).await?;
+    let exists = facts.local.is_some()
+        || matches!(
+            &facts.remote,
+            home::issue::Remote::At(_)
+                | home::issue::Remote::PresentUnfetched(_)
+        );
+    ownership.reserve(issue, branch, exists)?;
+    move_issue_branch(checkout, branch, facts).await
+}
+
+async fn move_issue_branch(
+    checkout: &Path,
+    branch: &str,
+    facts: home::issue::Branch,
+) -> Result<(), String> {
     match facts.next() {
         home::issue::Move::Keep => Ok(()),
         home::issue::Move::Refuse(reason) => Err(reason),
@@ -1104,7 +1195,10 @@ pub async fn ready_issue_branch(
                 text(checkout, &["worktree", "list", "--porcelain", "-z"])
                     .await
                     .map_err(|error| error.to_string())?;
-            if let Some(path) = host::workspace::checked_out(&listed, branch) {
+            if let Some(path) = vcs::plan::checked_out(
+                &home_files::git::worktrees(&listed),
+                branch,
+            ) {
                 return Err(format!(
                     "the issue branch is checked out at {path}; switch that worktree to another branch before synchronizing"
                 ));
@@ -1235,7 +1329,8 @@ async fn changed_at(
 }
 
 async fn commit_file(clone: &Path, commit: &Commit) -> Result<(), String> {
-    let relative = &commit.target.path;
+    let issue_path = storage::path(&commit.target);
+    let relative = issue_path.as_str();
     text(clone, &["add", "--", relative])
         .await
         .map_err(|err| err.to_string())?;
@@ -1270,18 +1365,28 @@ async fn probes(paths: Vec<String>) -> Vec<Probe> {
 async fn probe(path: &str) -> Option<Probe> {
     let canonical = std::fs::canonicalize(path).ok()?;
     let shown = canonical.to_str()?.to_owned();
-    let [asked_top, asked_roots, asked_remote] = home::checkout::ASKED;
-    let top = text(&canonical, asked_top).await.ok();
-    let roots = text(&canonical, asked_roots).await.ok();
-    let remote = text(&canonical, asked_remote).await.ok();
-    home::checkout::probed(
-        &shown,
-        top.as_deref(),
-        roots.as_deref(),
-        remote.as_deref(),
+    let top = crate::workspace::repository_text(
+        &canonical,
+        home_files::git::Instruction::Root,
     )
+    .await
+    .ok()?;
+    let roots = crate::workspace::repository_text(
+        &canonical,
+        home_files::git::Instruction::RootCommits,
+    )
+    .await
+    .ok()?;
+    let remote = crate::workspace::repository_text(
+        &canonical,
+        home_files::git::Instruction::Origin { push: false },
+    )
+    .await
+    .ok();
+    home_files::git::probed(&shown, Some(&top), Some(&roots), remote.as_deref())
 }
 
+#[must_use]
 pub fn clone_of(data_dir: &Path) -> PathBuf {
     data_dir.join("home-repo")
 }
@@ -1297,7 +1402,7 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-const EDITS_VERSION: &[u8] = b"\x80\x00\x06";
+const EDITS_VERSION: &[u8] = b"\x80\x00\x07";
 
 fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
     let bytes = match std::fs::read(path) {
@@ -1516,7 +1621,7 @@ mod tests {
         an_issue(&issues, DESIGNED)?;
         an_issue(&issues, BARE)?;
         let project = ProjectId::parse(PROJECT).ok_or("project id")?;
-        let designed = IssueId::parse(DESIGNED).ok_or("issue id")?;
+        let designed = IssueId::from_reference(DESIGNED).ok_or("issue id")?;
         let named = |name: &str| CanvasName::parse(name);
         let mut store = Memory::default();
         for (name, at, by) in [
@@ -1525,7 +1630,7 @@ mod tests {
         ] {
             let key = CanvasKey {
                 project,
-                issue: designed,
+                issue: designed.clone(),
                 name: named(name)?,
             };
             store.put(&key, &written(at, by)?)?;
@@ -1533,7 +1638,7 @@ mod tests {
         store.spoil(
             CanvasKey {
                 project,
-                issue: designed,
+                issue: designed.clone(),
                 name: named("broken")?,
             },
             CanvasError::Json {
@@ -1558,7 +1663,8 @@ mod tests {
             .projects
             .iter()
             .flat_map(|project| project.issues.iter())
-            .map(|issue| (issue.id.to_string(), issue.canvases.clone()))
+            .filter_map(home::issue::Observation::issue)
+            .map(|issue| (issue.id.reference(), issue.canvases.clone()))
             .collect::<Vec<_>>();
         assert_eq!(
             canvases,
@@ -1582,7 +1688,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            actor.canvas(designed, named("a-plan")?),
+            actor.canvas(designed.clone(), named("a-plan")?),
             HomeResult::Canvas(written(20, "laptop·codex")?)
         );
         assert_eq!(
@@ -1590,7 +1696,10 @@ mod tests {
             HomeResult::Refused(HomeRefusal::UnknownCanvas)
         );
         assert_eq!(
-            actor.canvas(IssueId::new(3, 0), named("design")?),
+            actor.canvas(
+                IssueId::from_reference("00000003").ok_or("issue id")?,
+                named("design")?
+            ),
             HomeResult::Refused(HomeRefusal::UnknownIssue)
         );
         Ok(())

@@ -4,33 +4,58 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use home::ProjectId;
-use home::checkout::{self, Probe, Root};
+use home::checkout::Root;
+use vcs::discovery::Probe;
+
 use home::flow::PATH;
-use home::flow::snapshot::Snapshot;
+use home::issue::{self, storage};
 use home::layout::{self, IssueLocation};
 use home::skills;
 
+pub mod git;
 mod store;
 
 pub use store::FolderStore;
 
 #[must_use]
-pub fn read(root: &Path) -> Snapshot {
-    let folders = folders(&root.join(layout::PROJECTS));
-    Snapshot::of(layout::inputs(
-        text(root, PATH),
-        folders
-            .iter()
-            .map(|folder| {
-                (folder.clone(), text(root, &layout::project_file(folder)))
-            })
-            .collect(),
-        folders
-            .iter()
-            .filter_map(|folder| ProjectId::parse(folder))
-            .flat_map(|project| issues(root, project))
-            .collect(),
-    ))
+pub fn has_configuration(root: &Path) -> bool {
+    folders(&root.join(layout::PROJECTS)).iter().any(|folder| {
+        ProjectId::parse(folder).is_some()
+            && root.join(layout::project_file(folder)).is_file()
+    })
+}
+
+#[must_use]
+pub fn configuration(root: &Path) -> home::flow::snapshot::Snapshot {
+    layout::inputs(text(root, PATH), project_files(root), Vec::new())
+        .read()
+        .snapshot
+}
+
+#[must_use]
+pub fn read(root: &Path) -> storage::ReadHome {
+    let projects = project_files(root);
+    let records = projects
+        .iter()
+        .filter_map(|(folder, _)| ProjectId::parse(folder))
+        .flat_map(|project| issues(root, project))
+        .collect();
+    let mut inputs = layout::inputs(text(root, PATH), projects, records);
+    inputs.observed_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(home::UnixMillis::since_epoch);
+    inputs.read()
+}
+
+fn project_files(root: &Path) -> Vec<(String, Result<String, String>)> {
+    folders(&root.join(layout::PROJECTS))
+        .into_iter()
+        .map(|folder| {
+            let read = text(root, &layout::project_file(&folder));
+            (folder, read)
+        })
+        .collect()
 }
 
 #[must_use]
@@ -67,13 +92,17 @@ pub fn probes(paths: &[String]) -> Vec<Probe> {
 
 fn probe(path: &Path) -> Option<Probe> {
     let at = fs::canonicalize(path).ok()?;
-    let [top, roots, remote] = checkout::ASKED.map(|args| git(&at, args));
-    checkout::probed(
-        at.to_str()?,
-        top.as_deref(),
-        roots.as_deref(),
-        remote.as_deref(),
-    )
+    let top = repository_text(&at, &git::Instruction::Root)?;
+    let roots = repository_text(&at, &git::Instruction::RootCommits)?;
+    let remote =
+        repository_text(&at, &git::Instruction::Origin { push: false });
+    git::probed(at.to_str()?, Some(&top), Some(&roots), remote.as_deref())
+}
+
+fn repository_text(at: &Path, request: &git::Instruction) -> Option<String> {
+    let command = git::command(request);
+    let args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+    git(at, &args)
 }
 
 #[must_use]
@@ -206,6 +235,15 @@ fn text(root: &Path, path: &str) -> Result<String, String> {
     fs::read_to_string(root.join(path)).map_err(|err| err.to_string())
 }
 
+#[must_use]
+pub fn issue(
+    flow: &home::flow::Flow,
+    target: &issue::Read,
+    text: Option<&str>,
+) -> Option<storage::Loaded> {
+    text.map(|contents| storage::load(flow, target, contents))
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -299,9 +337,16 @@ mod tests {
         fs::create_dir_all(&issues)?;
         fs::write(issues.join("one.md"), "+++\n+++\n")?;
         fs::write(issues.join("notes.txt"), "not an issue")?;
-        let home = super::read(&scratch.0);
-        let stems: Vec<&str> =
-            home.files().iter().map(|file| file.stem.as_str()).collect();
+        let flow = scratch.0.join(home::flow::PATH);
+        fs::create_dir_all(flow.parent().unwrap_or(&scratch.0))?;
+        fs::write(flow, include_str!("../../home/src/flow/test-flow.toml"))?;
+        let home = super::read(&scratch.0).snapshot;
+        let stems: Vec<&str> = home
+            .graph()
+            .problems
+            .iter()
+            .map(|problem| problem.record.as_str())
+            .collect();
         assert_eq!(stems, ["one"]);
         assert!(
             home.listing_problems()
@@ -310,6 +355,30 @@ mod tests {
             "{:?}",
             home.listing_problems()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn configuration_reads_do_not_refresh_issue_records() -> std::io::Result<()>
+    {
+        let scratch = Scratch(
+            std::env::temp_dir()
+                .join(format!("home-configuration-{}", std::process::id())),
+        );
+        let project = scratch.0.join("projects/a1b2c3");
+        fs::create_dir_all(project.join("issues"))?;
+        fs::write(
+            project.join("project.toml"),
+            "name = \"local\"\ntitle = \"Local\"\nroot = \"fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5\"\n",
+        )?;
+        fs::write(project.join("issues/invalid.md"), "not an issue")?;
+        let flow = scratch.0.join(home::flow::PATH);
+        fs::create_dir_all(flow.parent().unwrap_or(&scratch.0))?;
+        fs::write(flow, include_str!("../../home/src/flow/test-flow.toml"))?;
+        let configuration = super::configuration(&scratch.0);
+        assert_eq!(configuration.projects().len(), 1);
+        assert_eq!(configuration.graph().problems, Vec::new());
+        assert_eq!(configuration.graph().issues, Vec::new());
         Ok(())
     }
 

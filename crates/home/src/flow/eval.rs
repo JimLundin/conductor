@@ -55,7 +55,7 @@ impl Walk<'_> {
     ) -> Result<(), Failure> {
         let fail = |failed: &Predicate| Failure {
             predicate: failed.clone(),
-            issue: issue.id,
+            issue: issue.id.clone(),
             path: path.to_vec(),
         };
         match predicate {
@@ -116,7 +116,7 @@ impl Walk<'_> {
             let mut longer = path.to_vec();
             longer.push(Step {
                 via: String::from(via),
-                issue: target.id,
+                issue: target.id.clone(),
             });
             longer
         };
@@ -144,7 +144,7 @@ impl Walk<'_> {
                 .map_or(Ok(()), |target| {
                     Err(Some(Failure {
                         predicate: Predicate::Not(Box::new(condition.clone())),
-                        issue: target.id,
+                        issue: target.id.clone(),
                         path: step(target),
                     }))
                 }),
