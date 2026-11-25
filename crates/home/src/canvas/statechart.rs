@@ -6,7 +6,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{repeated, wordy};
+use super::{CanvasError, distinct, quoted, short};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -36,25 +36,16 @@ pub struct Transition {
 }
 
 impl Statechart {
-    pub(super) fn check(&self) -> Result<(), StatechartError> {
-        let known = |id: &str| self.states.iter().any(|state| state.id == id);
-        if let Some(id) =
-            repeated(self.states.iter().map(|state| state.id.as_str()))
-        {
-            return Err(StatechartError::Twice {
-                id: String::from(id),
-            });
-        }
-        self.states
-            .iter()
-            .map(|state| &state.label)
-            .chain(self.transitions.iter().map(|transition| &transition.event))
-            .find(|label| wordy(label))
-            .map_or(Ok(()), |label| {
-                Err(StatechartError::LongLabel {
-                    label: label.clone(),
-                })
-            })?;
+    pub(super) fn check(&self) -> Result<(), CanvasError> {
+        distinct("state", self.states.iter().map(|state| state.id.as_str()))?;
+        short(self.states.iter().map(|state| &state.label).chain(
+            self.transitions.iter().map(|transition| &transition.event),
+        ))?;
+        self.walkable().map_err(CanvasError::Statechart)
+    }
+
+    fn walkable(&self) -> Result<(), StatechartError> {
+        let known = |id: &str| self.index(id).is_some();
         if !known(&self.start) {
             return Err(StatechartError::UnknownStart {
                 start: self.start.clone(),
@@ -72,8 +63,17 @@ impl Statechart {
                 });
             }
         }
-        self.walked()
-            .zip(self.path.iter())
+        if let Some(first) =
+            self.path.first().filter(|first| **first != self.start)
+        {
+            return Err(StatechartError::PathStart {
+                start: self.start.clone(),
+                first: first.clone(),
+            });
+        }
+        self.path
+            .iter()
+            .zip(self.path.iter().skip(1))
             .find(|&(from, to)| {
                 !self.transitions.iter().any(|transition| {
                     transition.from == *from && transition.to == *to
@@ -87,40 +87,46 @@ impl Statechart {
             })
     }
 
-    fn walked(&self) -> impl Iterator<Item = &String> {
-        core::iter::once(&self.start).chain(self.path.iter())
+    fn index(&self, id: &str) -> Option<usize> {
+        self.states.iter().position(|state| state.id == id)
+    }
+
+    fn named(&self, id: &str) -> String {
+        self.index(id)
+            .map_or_else(String::new, |at| format!("s{at}"))
     }
 
     pub(super) fn mermaid(&self) -> String {
-        let states = self
-            .states
-            .iter()
-            .map(|state| format!("state \"{}\" as {}", state.label, state.id));
-        let start = core::iter::once(format!("[*] --> {}", self.start));
+        let states = self.states.iter().enumerate().map(|(at, state)| {
+            format!("state {} as s{at}", quoted(&state.label))
+        });
+        let start =
+            core::iter::once(format!("[*] --> {}", self.named(&self.start)));
         let transitions = self.transitions.iter().map(|transition| {
             format!(
                 "{} --> {} : {}",
-                transition.from, transition.to, transition.event
+                self.named(&transition.from),
+                self.named(&transition.to),
+                transition.event
             )
         });
-        let notes = self.states.iter().filter_map(|state| {
+        let notes = self.states.iter().enumerate().filter_map(|(at, state)| {
             state
                 .marked
                 .as_ref()
-                .map(|reason| format!("note right of {} : {reason}", state.id))
+                .map(|reason| format!("note right of s{at} : {reason}"))
         });
-        let marked: Vec<&str> = self
+        let marked: Vec<String> = self
             .states
             .iter()
-            .filter(|state| state.marked.is_some())
-            .map(|state| state.id.as_str())
+            .enumerate()
+            .filter(|(_, state)| state.marked.is_some())
+            .map(|(at, _)| format!("s{at}"))
             .collect();
-        let mut path: Vec<&str> = Vec::new();
-        if !self.path.is_empty() {
-            for id in self.walked() {
-                if !path.contains(&id.as_str()) {
-                    path.push(id);
-                }
+        let mut path: Vec<String> = Vec::new();
+        for id in self.path.iter().map(|id| self.named(id)) {
+            if !path.contains(&id) {
+                path.push(id);
             }
         }
         let styles = styled(&marked, "marked", "fill:#fde68a,stroke:#b45309")
@@ -139,7 +145,7 @@ impl Statechart {
     }
 }
 
-fn styled(ids: &[&str], class: &str, style: &str) -> Vec<String> {
+fn styled(ids: &[String], class: &str, style: &str) -> Vec<String> {
     if ids.is_empty() {
         return Vec::new();
     }
@@ -151,21 +157,16 @@ fn styled(ids: &[&str], class: &str, style: &str) -> Vec<String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StatechartError {
-    LongLabel { label: String },
     UnknownStart { start: String },
     UnknownFrom { state: String },
     UnknownTo { state: String },
+    PathStart { start: String, first: String },
     OffPath { from: String, to: String },
-    Twice { id: String },
 }
 
 impl fmt::Display for StatechartError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::LongLabel { label } => write!(
-                out,
-                "the label `{label}` is over eight words: put the detail in prose"
-            ),
             Self::UnknownStart { start } => write!(
                 out,
                 "the statechart starts at `{start}`, which isn't a state: add the state or change `start`"
@@ -182,9 +183,9 @@ impl fmt::Display for StatechartError {
                 out,
                 "the path goes from `{from}` to `{to}`, but no transition does: add that transition or change the path"
             ),
-            Self::Twice { id } => write!(
+            Self::PathStart { start, first } => write!(
                 out,
-                "two states are called `{id}`: give each state its own id"
+                "the path begins at `{first}`, but the statechart starts at `{start}`: begin the path with `{start}`"
             ),
         }
     }

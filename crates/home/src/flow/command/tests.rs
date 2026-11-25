@@ -1113,7 +1113,7 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
  {
     let cases = [
         (
-            statechart(STATES, "open", TRANSITIONS, r#""done""#),
+            statechart(STATES, "open", TRANSITIONS, r#""open", "done""#),
             "the path goes from `open` to `done`, but no transition does: add that transition or change the path",
         ),
         (
@@ -1139,13 +1139,17 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
             "the statechart starts at `gone`, which isn't a state: add the state or change `start`",
         ),
         (
+            statechart(STATES, "open", TRANSITIONS, r#""review", "done""#),
+            "the path begins at `review`, but the statechart starts at `open`: begin the path with `open`",
+        ),
+        (
             statechart(
                 r#"{"id": "open", "label": "Open and waiting for someone to pick it up today"}"#,
                 "open",
                 "",
                 "",
             ),
-            "the label `Open and waiting for someone to pick it up today` is over eight words: put the detail in prose",
+            "the label `Open and waiting for someone to pick it up today` is over 8 words: put the detail in prose",
         ),
         (
             statechart(
@@ -1154,7 +1158,7 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
                 r#"{"from": "open", "to": "review", "event": "the worker pushes the branch and asks for a review"}"#,
                 "",
             ),
-            "the label `the worker pushes the branch and asks for a review` is over eight words: put the detail in prose",
+            "the label `the worker pushes the branch and asks for a review` is over 8 words: put the detail in prose",
         ),
         (
             statechart(
@@ -1189,7 +1193,8 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
 #[test]
 fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_states_and_the_path_styled()
 -> Result<(), String> {
-    let text = statechart(STATES, "open", TRANSITIONS, r#""review", "done""#);
+    let text =
+        statechart(STATES, "open", TRANSITIONS, r#""open", "review", "done""#);
     let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
     let shown = given(
         &format!("canvas show {TASK} turn"),
@@ -1210,23 +1215,77 @@ fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_stat
                 "# A task's turn\n\n\
                  ```mermaid\n\
                  stateDiagram-v2\n    \
-                 state \"Open\" as open\n    \
-                 state \"In review\" as review\n    \
-                 state \"Done\" as done\n    \
-                 [*] --> open\n    \
-                 open --> review : submit\n    \
-                 review --> open : send back\n    \
-                 review --> done : land\n    \
-                 note right of review : the owner reads it here\n    \
+                 state \"Open\" as s0\n    \
+                 state \"In review\" as s1\n    \
+                 state \"Done\" as s2\n    \
+                 [*] --> s0\n    \
+                 s0 --> s1 : submit\n    \
+                 s1 --> s0 : send back\n    \
+                 s1 --> s2 : land\n    \
+                 note right of s1 : the owner reads it here\n    \
                  classDef marked fill:#fde68a,stroke:#b45309\n    \
-                 class review marked\n    \
+                 class s1 marked\n    \
                  classDef path stroke:#2563eb,stroke-width:3px\n    \
-                 class open,review,done path\n\
+                 class s0,s1,s2 path\n\
                  ```\n"
             )
         )
     );
     Ok(())
+}
+
+#[test]
+fn a_canvas_show_prints_a_state_by_its_index_with_its_label_quoted() {
+    let text = statechart(
+        r#"{"id": "open", "label": "Open"}, {"id": "in review", "label": "Say \"hi\""}"#,
+        "open",
+        r#"{"from": "open", "to": "in review", "event": "submit"}"#,
+        "",
+    );
+    let put = given(&format!("canvas put {TASK} turn"), Given::Text(Ok(text)));
+    let shown = given(
+        &format!("canvas show {TASK} turn"),
+        Given::Canvases(Ok(held(
+            put.canvases
+                .into_iter()
+                .map(|write| (write.key.name, write.file))
+                .collect(),
+        ))),
+    );
+    assert_eq!(
+        (shown.failed, shown.output.as_str()),
+        (
+            false,
+            "# A task's turn\n\n\
+             ```mermaid\n\
+             stateDiagram-v2\n    \
+             state \"Open\" as s0\n    \
+             state \"Say #quot;hi#quot;\" as s1\n    \
+             [*] --> s0\n    \
+             s0 --> s1 : submit\n\
+             ```\n"
+        )
+    );
+}
+
+#[test]
+fn a_canvas_put_of_a_path_that_begins_at_start_and_follows_transitions_writes_it()
+ {
+    let outcome = given(
+        &format!("canvas put {TASK} turn"),
+        Given::Text(Ok(statechart(
+            r#"{"id": "a", "label": "A"}, {"id": "b", "label": "B"}"#,
+            "a",
+            r#"{"from": "a", "to": "b", "event": "go"}"#,
+            r#""a", "b""#,
+        ))),
+    );
+    assert_eq!(
+        (outcome.failed, outcome.canvases.len()),
+        (false, 1),
+        "{}",
+        outcome.output
+    );
 }
 
 fn put_canvas(text: &str) -> Outcome {
@@ -1257,7 +1316,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
         (
             diagram(&seven, ""),
             format!(
-                "home: canvas design of home/{TASK}: step 2 of a diagram shows 7 nodes, over six: split it into steps or diagrams\n"
+                "home: canvas design of home/{TASK}: step 2 of a diagram shows 7 nodes, over 6: split it into steps or diagrams\n"
             ),
         ),
         (
@@ -1270,7 +1329,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 "",
             ),
             format!(
-                "home: canvas design of home/{TASK}: the label `the core decides what every store keeps and how` is over eight words: put the detail in prose\n"
+                "home: canvas design of home/{TASK}: the label `the core decides what every store keeps and how` is over 8 words: put the detail in prose\n"
             ),
         ),
         (
@@ -1280,7 +1339,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 r#"{"from": "core", "to": "store", "label": "this edge label runs on for nine whole words", "step": 1}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: the label `this edge label runs on for nine whole words` is over eight words: put the detail in prose\n"
+                "home: canvas design of home/{TASK}: the label `this edge label runs on for nine whole words` is over 8 words: put the detail in prose\n"
             ),
         ),
         (
@@ -1325,7 +1384,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 r#"{"title": "Design", "blocks": [{"diagram": {"nodes": [], "edges": [], "groups": [{"id": "shell", "label": "the shell does every piece of input and output"}]}}]}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: the label `the shell does every piece of input and output` is over eight words: put the detail in prose\n"
+                "home: canvas design of home/{TASK}: the label `the shell does every piece of input and output` is over 8 words: put the detail in prose\n"
             ),
         ),
     ];
