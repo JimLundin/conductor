@@ -103,13 +103,9 @@ pub struct Log {
     active: Option<CommandId>,
     active_waiters: Vec<Lease>,
     waiting: VecDeque<Start>,
-    /// The start whose receipt the shell is reading.
-    starting: Option<Start>,
-    /// Each running receipt command, and the retries waiting for it.
-    receipts: BTreeMap<CommandId, Vec<Lease>>,
-    /// Credential finishes held until the active command commits, since
-    /// only one transaction can be open.
-    held: VecDeque<Finish>,
+    receipt_lookup: Option<Start>,
+    receipt_waiters: BTreeMap<CommandId, Vec<Lease>>,
+    finishes_after_active_commit: VecDeque<Finish>,
     leases: u64,
 }
 
@@ -124,9 +120,9 @@ impl Log {
             active: None,
             active_waiters: Vec::new(),
             waiting: VecDeque::new(),
-            starting: None,
-            receipts: BTreeMap::new(),
-            held: VecDeque::new(),
+            receipt_lookup: None,
+            receipt_waiters: BTreeMap::new(),
+            finishes_after_active_commit: VecDeque::new(),
             leases: 0,
         }
     }
@@ -213,7 +209,7 @@ impl Log {
             key,
             kind,
         };
-        let effects = match (self.active, self.receipts.get_mut(&key)) {
+        let effects = match (self.active, self.receipt_waiters.get_mut(&key)) {
             (Some(active), _) if active == key => {
                 self.active_waiters.push(start.lease);
                 Vec::new()
@@ -233,11 +229,11 @@ impl Log {
 
     /// The receipt the shell found for the start it looked up.
     pub fn receipt(&mut self, found: Option<CommandResult>) -> Vec<Effect> {
-        let Some(start) = self.starting.take() else {
+        let Some(start) = self.receipt_lookup.take() else {
             return Vec::new();
         };
         let mut effects = Vec::new();
-        match (found, self.receipts.get_mut(&start.key)) {
+        match (found, self.receipt_waiters.get_mut(&start.key)) {
             (Some(result), _) => {
                 effects.push(Effect::Begun(start.lease, Begun::Cached(result)));
             }
@@ -257,7 +253,7 @@ impl Log {
                         });
                     }
                     Kind::Receipt => {
-                        self.receipts.insert(start.key, Vec::new());
+                        self.receipt_waiters.insert(start.key, Vec::new());
                     }
                 }
                 effects.push(Effect::Begun(
@@ -285,14 +281,15 @@ impl Log {
             result: outcome.into_result(),
         };
         let lease = finish.lease;
-        let effects = match (self.receipts.contains_key(&key), self.active) {
-            (true, Some(_)) => {
-                self.held.push_back(finish);
-                Vec::new()
-            }
-            (true, None) => self.settle(&finish),
-            (false, _) => self.close(&finish),
-        };
+        let effects =
+            match (self.receipt_waiters.contains_key(&key), self.active) {
+                (true, Some(_)) => {
+                    self.finishes_after_active_commit.push_back(finish);
+                    Vec::new()
+                }
+                (true, None) => self.settle(&finish),
+                (false, _) => self.close(&finish),
+            };
         (lease, effects)
     }
 
@@ -301,7 +298,7 @@ impl Log {
     #[must_use]
     pub fn abort(&self, key: CommandId) -> Vec<Effect> {
         let running =
-            self.receipts.contains_key(&key) || self.active == Some(key);
+            self.receipt_waiters.contains_key(&key) || self.active == Some(key);
         running.then_some(Effect::Stop).into_iter().collect()
     }
 
@@ -318,8 +315,9 @@ impl Log {
             },
         ));
         effects.push(Effect::Finished(finish.lease));
-        for held in mem::take(&mut self.held) {
-            effects.extend(self.settle(&held));
+        for deferred_finish in mem::take(&mut self.finishes_after_active_commit)
+        {
+            effects.extend(self.settle(&deferred_finish));
         }
         effects.extend(self.next());
         effects
@@ -334,7 +332,8 @@ impl Log {
                 Effect::Log(Logged::Commit),
             ]);
         }
-        let waiters = self.receipts.remove(&finish.key).unwrap_or_default();
+        let waiters =
+            self.receipt_waiters.remove(&finish.key).unwrap_or_default();
         effects.extend(waiters.into_iter().map(|waiter| {
             Effect::Begun(waiter, Begun::Cached(finish.result.clone()))
         }));
@@ -351,7 +350,7 @@ impl Log {
     }
 
     const fn look_up(&mut self, start: Start) -> Effect {
-        self.starting = Some(start);
+        self.receipt_lookup = Some(start);
         Effect::Lookup(start.key)
     }
 

@@ -38,7 +38,6 @@ fn published(event: Event) -> Effect {
     Effect::Log(Logged::Publish(event))
 }
 
-/// Begins `key` on an idle log whose store has no receipt for it.
 fn execute(log: &mut Log, key: u128, kind: Kind) -> Lease {
     let (lease, effects) =
         log.begin(CommandId(uuid::Uuid::from_u128(key)), kind);
@@ -287,8 +286,6 @@ fn a_restored_log_welcomes_with_its_head() {
     );
 }
 
-/// A Claude instance with `availability`, and one Codex instance that
-/// can't run.
 fn instances(availability: Availability) -> Instances {
     let status = |availability| InstanceStatus { availability };
     Instances(
