@@ -64,7 +64,7 @@ These terms describe the direction chosen in spec `0v265ymj`. The
 backends are not implemented yet.
 
 **Project operation**:
-A request to act on a project's work, such as publishing a branch or
+A request to act on a project's work, such as publishing a revision or
 landing reviewed changes. Its rules belong to Conductor; its Git and
 repository hosting actions belong to the backends it uses.
 _Avoid_: raw command, stage
@@ -73,15 +73,17 @@ _Avoid_: raw command, stage
 The interface between the issue model and the store that holds its records.
 _Avoid_: issue file store
 
-**Local Git backend**:
-The interface for a host's repositories, worktrees, commits and remote
-publication.
-_Avoid_: GitHub backend
+**Version control backend**:
+The interface for preparing owned workspaces, preserving and comparing
+snapshots, integrating session work and publishing exact revisions.
+The Git implementation maps those operations to worktrees, indexes,
+commits and refs.
+_Avoid_: Git command interface, GitHub backend
 
 **Repository hosting backend**:
 The interface for a hosting service's repository checks, statuses and
 workflow runs.
-_Avoid_: local Git backend
+_Avoid_: version control backend
 
 **Issue observation**:
 An issue's observed state or invalid record, with its identity, findings,

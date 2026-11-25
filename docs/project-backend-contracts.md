@@ -372,10 +372,17 @@ transition history.
 Keep requests and results in their owning domain. The shell interfaces
 provide these bounded capabilities:
 
+The owner clarified during implementation that `VersionControl` models
+project work, not the Git command model. Its callers request owned
+workspaces, snapshots, comparisons, session integration and publication of
+an exact revision. Git indexes, object construction, ref transactions and
+worktree mechanics stay inside the implementation. Typed Git commands may
+exist during the extraction, but must not become the shared backend port.
+
 | Interface | Required requests |
 |---|---|
 | `IssueTracker` | Read an issue; list issues with continuation/completeness; read notes and relations; create; apply a validated semantic edit; append a note; observe a prior operation. |
-| `VersionControl` | Discover/open and clone; read refs and repository facts; prepare/remove an owned workspace; capture/compare/install snapshots; integrate with expected refs and receipt; fetch; publish; observe publication. |
+| `VersionControl` | Locate or obtain a project repository; observe revisions and workspace ownership; prepare/remove an owned workspace; capture/compare/install snapshots; integrate against an expected target revision with a recoverable result; synchronize; publish an exact revision; observe publication. |
 | `RepositoryHosting` | Read declared commit statuses, check runs and workflow runs for a revision; observe a configured queue attempt; dispatch only a configured workflow when an operation requires it. |
 
 Capabilities belong to the configured repository and credential, not just

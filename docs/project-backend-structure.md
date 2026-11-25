@@ -27,7 +27,7 @@ and give both CLI and daemon one project operation service.
 | Crate | Layer | Responsibility |
 |---|---|---|
 | `home` | Core, existing | Project catalog, issues, relations, flow rules, project operation plans and hosting results. |
-| `vcs` | Core, new | Repository, revision and workspace types; version control requests, results and preservation rules. |
+| `vcs` | Core, new | Owned workspaces, snapshots, revisions, integration and publication; preservation rules for project work. |
 | `project-runtime` | Shell, new | Backend interfaces, execution of project plans, operation records, cached reads and refresh. |
 | `vcs-git2` | Shell, new | Implements the version control interface through git2 and libgit2. |
 | `github` | Core, new | Pure GitHub field and relation mapping, including metadata GitHub cannot represent natively. |
@@ -79,7 +79,7 @@ This keeps I/O traits out of the pure core's data-only API.
 
 | Interface | Operations | Implementation |
 |---|---|---|
-| `VersionControl` | Discover repositories, create workspaces, capture snapshots, compare revisions, integrate changes, fetch and publish branches. | `vcs-git2`, using git2. |
+| `VersionControl` | Locate project work, prepare and remove owned workspaces, capture and compare snapshots, integrate session work, synchronize and publish an exact revision. | `vcs-git2`, using git2. |
 | `IssueTracker` | List and read issues, create issues, apply edits, append notes and change relations. | `github-api`, using Octocrab. |
 | `RepositoryHosting` | Read checks, workflow runs and commit statuses; request supported hosted actions. | `github-api`, using the same Octocrab client. |
 
@@ -87,10 +87,19 @@ Checks and Actions belong to the hosting interface. A project operation
 can use all three interfaces, while a tracker replacement only needs to
 implement `IssueTracker`.
 
-Methods accept domain values such as an issue edit or branch publication,
+Methods accept domain values such as an issue edit or revision publication,
 never arbitrary Git arguments, API paths or JSON. An operation that is
 unsupported, partially applied or uncertain returns that outcome. A missing
 capability is detected before a dependent operation changes state.
+
+The owner clarified during implementation that this abstraction models
+Conductor's intended work. Callers ask for a workspace, a preserved snapshot,
+an integration result or publication of a reviewed revision. They do not
+assemble Git operations. Index staging, object construction, ref updates,
+worktree mechanics and Git recovery records belong inside the implementation.
+An internal typed replacement for Git arguments is a refactoring step; it
+is not the `VersionControl` interface. Tests of project plans use domain
+outcomes and do not prescribe a sequence of Git commands.
 
 The shell converts SDK types at the boundary. It reuses Octocrab's API
 models and git2's repository types instead of defining another wire model.
@@ -177,9 +186,11 @@ change the domain model.
 
 1. Replace file-shaped issue inputs and writes in `home` with domain issue
    snapshots and changes. Keep its flow interpreter and rule evaluation.
-2. Move repository facts, Git command planning and preservation decisions
-   out of `host::workspace` and the home repository helpers into `vcs`.
-   Keep session policy in `host` and issue branch policy in `home`.
+2. Move workspace, snapshot, integration and preservation decisions out of
+   `host::workspace` and the home repository helpers into `vcs`. Keep
+   session policy in `host` and issue branch policy in `home`. Keep Git
+   command planning inside the temporary executable implementation until
+   the git2 implementation replaces it.
 3. Move shared project I/O out of `daemon::home` and `home-cli::local` into
    `project-runtime`. Both callers receive the same outcomes.
 4. Add the git2 and Octocrab implementations behind those contracts. Change
