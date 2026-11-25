@@ -14,14 +14,11 @@ use crate::log::HostSeq;
 use crate::prelude::*;
 use crate::session::{SessionDirectory, SessionId};
 
-/// The most of Git's output the host reads, and the largest patch it sends.
 const PATCH_LIMIT: usize = 65536;
 
 mod plan;
 pub use plan::{Answer, Plan, Step};
-/// The most patch text one diff carries.
 const TOTAL_LIMIT: usize = 262_144;
-/// The most files one diff lists.
 const FILE_LIMIT: usize = 100;
 
 const BRANCHES: &str = "conductor/";
@@ -46,7 +43,6 @@ pub struct Output {
     pub error: String,
 }
 
-/// A file a snapshot diff lists, before its patch is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Entry {
     path: String,
@@ -58,26 +54,17 @@ fn failure(context: &str, error: &str) -> GitError {
     GitError::Failed(format!("{context}: {error}"))
 }
 
-/// # Errors
-///
-/// When `actual` isn't `expected`.
 fn same(actual: &str, expected: &str, context: &str) -> Result<(), GitError> {
     (actual == expected)
         .then_some(())
         .ok_or_else(|| failure(context, "metadata differs"))
 }
 
-/// Whether Git wrote more than the host reads, so the shell stops it.
 #[must_use]
 const fn oversized(len: usize) -> bool {
     len > PATCH_LIMIT
 }
 
-/// The output of a run that must succeed within the capture limit.
-///
-/// # Errors
-///
-/// When the output was cut off or Git failed.
 fn checked(output: Output, context: &str) -> Result<Vec<u8>, GitError> {
     match (oversized(output.bytes.len()), output.success) {
         (true, _) => {
@@ -88,19 +75,11 @@ fn checked(output: Output, context: &str) -> Result<Vec<u8>, GitError> {
     }
 }
 
-/// # Errors
-///
-/// When the bytes aren't UTF-8.
 fn utf8(bytes: Vec<u8>, context: &str) -> Result<String, GitError> {
     String::from_utf8(bytes)
         .map_err(|error| failure(context, &error.to_string()))
 }
 
-/// A path or metadata line Git printed, without its final newlines.
-///
-/// # Errors
-///
-/// When the run failed or printed something that isn't UTF-8.
 fn text(output: Output, context: &str) -> Result<String, GitError> {
     utf8(
         checked(output, context)?,
@@ -109,12 +88,6 @@ fn text(output: Output, context: &str) -> Result<String, GitError> {
     .map(|text| text.trim_end_matches('\n').to_owned())
 }
 
-/// The output of a probe whose failure means the directory has no
-/// repository with a committed `HEAD`.
-///
-/// # Errors
-///
-/// [`GitError::NotRepository`] when Git failed.
 fn probed(output: Output, context: &str) -> Result<String, GitError> {
     if output.success {
         utf8(checked(output, context)?, context)
@@ -123,12 +96,6 @@ fn probed(output: Output, context: &str) -> Result<String, GitError> {
     }
 }
 
-/// A path the host can record: UTF-8 (`None` when it isn't), with no
-/// newline, since the ownership marker is one path per line.
-///
-/// # Errors
-///
-/// When the path is neither.
 fn host_path(path: Option<&str>) -> Result<String, GitError> {
     let text = path.ok_or_else(|| {
         failure("Git workspace path", "non-UTF-8 paths are unsupported")
@@ -143,23 +110,16 @@ fn host_path(path: Option<&str>) -> Result<String, GitError> {
     }
 }
 
-/// The name of the session's worktree directory.
 #[must_use]
 fn worktree(session: SessionId) -> String {
     session.to_string()
 }
 
-/// The branch Conductor owns for the session.
 #[must_use]
 pub(crate) fn branch(session: SessionId) -> String {
     format!("{BRANCHES}{}", worktree(session))
 }
 
-/// The session a branch Conductor owns belongs to, as its worktree's name.
-///
-/// # Errors
-///
-/// When Conductor doesn't own the branch.
 fn owner(workspace: &Workspace) -> Result<String, GitError> {
     let session = workspace
         .branch
@@ -170,8 +130,6 @@ fn owner(workspace: &Workspace) -> Result<String, GitError> {
     Ok(String::from(session))
 }
 
-/// What the worktree's Git directory records about its owner, one field
-/// per line.
 #[must_use]
 fn marker(workspace: &Workspace) -> String {
     format!(
@@ -198,8 +156,6 @@ pub fn snapshots(workspace: &Workspace) -> Result<String, GitError> {
     Ok(format!("refs/conductor/{session}/"))
 }
 
-/// The object a selected subdirectory must be a tree in, at `head`; `None`
-/// for the repository's root.
 #[must_use]
 fn subtree(head: &str, relative: &str) -> Option<String> {
     (!relative.is_empty()).then(|| format!("{head}:{relative}"))
@@ -214,16 +170,12 @@ fn reference(workspace: &Workspace, commit: &str) -> Result<String, GitError> {
     Ok(format!("{}{commit}", snapshots(workspace)?))
 }
 
-/// A turn's snapshot is a commit on the session's branch: a new one on
-/// its tip, or the tip itself when the turn changed no file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Turn {
     Tip,
     Commit,
 }
 
-/// Whether a turn whose worktree holds `tree` makes a commit on a branch
-/// whose tip holds `tip_tree`.
 #[must_use]
 fn turn(tip_tree: &str, tree: &str) -> Turn {
     if tip_tree == tree {
@@ -233,12 +185,6 @@ fn turn(tip_tree: &str, tree: &str) -> Turn {
     }
 }
 
-/// The files to patch from `git diff --name-status -z`, at most
-/// the file limit, and whether that is all of them.
-///
-/// # Errors
-///
-/// When Git failed, a path isn't UTF-8, or a record is cut short.
 fn listing(output: Output) -> Result<(Vec<Entry>, DiffExtent), GitError> {
     if oversized(output.bytes.len()) {
         Ok((Vec::new(), DiffExtent::Truncated))
@@ -290,11 +236,6 @@ fn entry(parts: &[&str]) -> Result<Entry, GitError> {
     })
 }
 
-/// The entry's file, from the output of its `git diff`.
-///
-/// # Errors
-///
-/// When Git failed.
 fn patch(output: Output, entry: Entry) -> Result<SnapshotFile, GitError> {
     let patch = if oversized(output.bytes.len()) {
         FilePatch::TooLarge
@@ -314,8 +255,6 @@ fn patch(output: Output, entry: Entry) -> Result<SnapshotFile, GitError> {
     })
 }
 
-/// Keeps the patches within the total patch budget, in order: a patch past it is
-/// sent as too large, and the diff as truncated.
 #[must_use]
 fn budget(
     files: Vec<SnapshotFile>,
@@ -351,7 +290,6 @@ pub fn head(workspace: &Workspace) -> String {
     format!("refs/heads/{}", workspace.branch)
 }
 
-/// Where the branch was kept, from the push the plan ran, if it had one.
 #[must_use]
 pub(crate) fn kept(pushed: Option<(String, Result<(), String>)>) -> Kept {
     match pushed {
@@ -452,12 +390,6 @@ pub enum DiffExtent {
 #[cfg(test)]
 mod tests;
 
-/// What `git merge-tree --write-tree --name-only --no-messages` gave: the
-/// merged tree, or why there is none.
-///
-/// # Errors
-///
-/// The files that conflict, or what Git said when it failed otherwise.
 fn merged(success: bool, output: &str, error: &str) -> Result<String, String> {
     let mut lines = output.lines();
     let tree = lines.next().unwrap_or_default();
@@ -485,7 +417,6 @@ pub fn checked_out(porcelain: &str, branch: &str) -> Option<String> {
     })
 }
 
-/// The message of the merge commit that lands `session` on `issue`.
 #[must_use]
 fn merge_message(issue: &str, session: &str) -> String {
     format!("Land {session} on {issue}")

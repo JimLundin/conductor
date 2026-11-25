@@ -39,8 +39,7 @@ pub use model::{
 /// code expires after 15 minutes.
 pub const LIMIT: Duration = Duration::from_mins(15);
 
-/// The most output lines kept while the link isn't shown yet.
-const KEPT: usize = 200;
+const OUTPUT_LINE_LIMIT: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Run(pub u64);
@@ -178,12 +177,9 @@ pub struct SignIns {
 #[derive(Clone)]
 struct Running {
     run: Run,
-    /// How to read the run's output, once it has started.
     flow: Option<Flow>,
-    /// Its output, until it shows the link.
     seen: Vec<String>,
     step: SignInStep,
-    /// What the output said a failure means.
     failure: Option<String>,
     committing: bool,
     credential: Option<CredentialTarget>,
@@ -477,7 +473,6 @@ impl SignIns {
         };
         match result {
             Ok(account) => {
-                // The registry attempts adoption in the same turn as this effect.
                 running.committing = true;
                 Vec::from([Effect::Refresh(key.clone(), account)])
             }
@@ -534,7 +529,6 @@ impl SignIns {
             .collect()
     }
 
-    /// The instance's sign-in, if `key` is its run.
     fn current(&mut self, key: &Key) -> Option<&mut Running> {
         self.running
             .get_mut(&key.instance)
@@ -551,8 +545,6 @@ impl SignIns {
 }
 
 impl Running {
-    /// Reads a line of output: a failure it names, and once the link and
-    /// any code are there, the step that shows them.
     fn read(&mut self, text: String) -> Option<SignInStep> {
         let flow = self.flow.as_ref()?;
         if let Some(means) = flow.failure(&text) {
@@ -561,7 +553,7 @@ impl Running {
         if self.step != SignInStep::Starting {
             return None;
         }
-        if self.seen.len() >= KEPT {
+        if self.seen.len() >= OUTPUT_LINE_LIMIT {
             self.seen.remove(0);
         }
         self.seen.push(text);

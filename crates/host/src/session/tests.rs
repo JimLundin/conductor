@@ -51,7 +51,6 @@ fn restored(history: &[Event], conversation: Option<&str>) -> Session {
     )
 }
 
-/// Steps `session` through each input, checking the effects of each.
 fn expect(session: Session, script: Vec<(Input, Vec<Effect>)>) -> Session {
     script.into_iter().fold(session, |now, (input, expected)| {
         let shown = format!("{input:?}");
@@ -156,7 +155,6 @@ fn ready() -> Session {
     )
 }
 
-/// A session whose turn has begun.
 fn running() -> Session {
     expect(
         ready(),
@@ -271,8 +269,6 @@ fn a_message_the_agent_never_got_fails_the_turn() {
     );
 }
 
-/// A sub-agent's call asks like the agent's own, so a denied one that
-/// fails was declined.
 #[test]
 fn a_subagent_is_logged_and_its_denied_call_declined() {
     let deny = || Reply::Decide(Decision::Deny);
@@ -901,8 +897,6 @@ fn each_denied_call_is_declined_when_it_fails() {
     );
 }
 
-/// The ids of requests the log holds stay taken, and a resolved one keeps
-/// who resolved it.
 #[test]
 fn a_restored_session_keeps_its_request_ids_and_who_answered_them() {
     let history = [
@@ -957,8 +951,6 @@ fn a_restored_session_keeps_its_request_ids_and_who_answered_them() {
     );
 }
 
-/// A model the credential no longer offers gives way to the default, but
-/// the default itself stays even when the CLI doesn't list it.
 #[test]
 fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
     let model = |id: &str| Some(ModelId(text(id)));

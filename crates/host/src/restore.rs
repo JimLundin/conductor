@@ -448,9 +448,6 @@ mod tests {
         );
     }
 
-    /// A running turn's files are snapshotted on top of the last
-    /// snapshot, at the model the log last chose; a finished turn's
-    /// are not.
     #[test]
     fn a_restart_snapshots_a_running_turn_and_leaves_a_finished_one() {
         let user = EventKind::UserMessage {

@@ -43,7 +43,6 @@ fn own(provider: Provider) -> InstanceId {
     InstanceId::own(provider)
 }
 
-/// Claude's instance of the gateway account.
 fn api() -> InstanceId {
     InstanceId::named(Provider::new("claude"), GATEWAY)
 }
@@ -96,7 +95,6 @@ fn booted(
     registry
 }
 
-/// A host on which Claude's own instance runs as `own_sign_in` says.
 fn registry(own_sign_in: OwnSignIn, stored: &Stored) -> Test {
     booted(
         BTreeMap::from([
@@ -110,8 +108,6 @@ fn registry(own_sign_in: OwnSignIn, stored: &Stored) -> Test {
     )
 }
 
-/// A host with these instances besides the own ones, each running on the
-/// starter named with it.
 fn host_of(instances: &[(&'static str, InstanceId)]) -> Test {
     let mut launchers = BTreeMap::from([
         (
@@ -137,8 +133,6 @@ fn host_of(instances: &[(&'static str, InstanceId)]) -> Test {
     booted(launchers, &Stored::Opened(roster))
 }
 
-/// Each provider takes a gateway: a URL, which is its account, and a
-/// token.
 fn catalog() -> Catalog {
     let field = |id: &str, kind| Field {
         id: text(id),
@@ -197,7 +191,6 @@ fn stored_auth() -> Auth {
     }
 }
 
-/// The own instances, Claude's as `availability` says.
 fn claude(availability: Availability) -> Instances {
     Instances(BTreeMap::from([
         (
@@ -260,7 +253,6 @@ fn listing() -> Configuration {
     }
 }
 
-/// Performs a Save the registry asks for, as the shell would.
 fn saving(registry: &mut Test, effects: Seen) -> Seen {
     match effects.into_iter().next() {
         Some(Effect::Save {
@@ -680,8 +672,6 @@ fn a_start_for_an_instance_since_removed_is_dropped() {
     assert_eq!(registry.instances().of(&codex_api), None);
 }
 
-/// Starting an instance added again runs only its new CLI: the start of
-/// the one removed meanwhile is dropped.
 #[test]
 fn a_start_from_before_an_instance_was_added_again_is_dropped() {
     let mut registry = registry(OwnSignIn::Unmanaged, &opened());
@@ -1093,8 +1083,6 @@ fn a_sign_in_that_names_no_account_signs_the_home_in_and_relists_its_models() {
     );
 }
 
-/// The own instance's home becomes the account's instance, whose CLI
-/// starts in it, and the own instance starts afresh for the next sign-in.
 #[test]
 fn a_sign_in_that_names_an_account_makes_its_instance() {
     let mut registry = registry(OwnSignIn::Missing, &opened());
@@ -1181,8 +1169,6 @@ fn a_sign_in_that_names_an_account_makes_its_instance() {
     );
 }
 
-/// The account's instance signs in on its own, so it keeps none of the
-/// credential of the instance it signed in from.
 #[test]
 fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
     let me = InstanceId::named(Provider::new("claude"), "me@example.com");
@@ -1325,8 +1311,6 @@ fn home_with(checkouts: &[&str]) -> Home {
     }
 }
 
-/// The directory a session starts in: the one given, or the first
-/// checkout of a project or an issue's project, as the daemon places it.
 fn place(
     at: StartAt,
     home: Option<&Home>,

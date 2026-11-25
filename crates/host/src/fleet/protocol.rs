@@ -253,33 +253,65 @@ pub enum FleetResult {
 #[error("invalid fleet text")]
 pub struct TextError;
 
-macro_rules! text_artifact {
-    ($kind:ty) => {
-        impl $kind {
-            /// Encodes the fleet artifact as fragment-safe text.
-            ///
-            /// # Errors
-            ///
-            /// If the artifact cannot be encoded or exceeds the exchange budget.
-            pub fn to_text(&self) -> Result<String, TextError> {
-                encode_text(self)
-            }
+impl Invite {
+    /// Encodes the fleet artifact as fragment-safe text.
+    ///
+    /// # Errors
+    ///
+    /// If the artifact cannot be encoded or exceeds the exchange budget.
+    pub fn to_text(&self) -> Result<String, TextError> {
+        encode_text(self)
+    }
 
-            /// Parses a fleet artifact from fragment-safe text.
-            ///
-            /// # Errors
-            ///
-            /// If the text is malformed or exceeds the exchange budget.
-            pub fn parse_text(text: &str) -> Result<Self, TextError> {
-                decode_text(text)
-            }
-        }
-    };
+    /// Parses a fleet artifact from fragment-safe text.
+    ///
+    /// # Errors
+    ///
+    /// If the text is malformed or exceeds the exchange budget.
+    pub fn parse_text(text: &str) -> Result<Self, TextError> {
+        decode_text(text)
+    }
 }
 
-text_artifact!(Invite);
-text_artifact!(PairRequest);
-text_artifact!(Pairing);
+impl PairRequest {
+    /// Encodes the fleet artifact as fragment-safe text.
+    ///
+    /// # Errors
+    ///
+    /// If the artifact cannot be encoded or exceeds the exchange budget.
+    pub fn to_text(&self) -> Result<String, TextError> {
+        encode_text(self)
+    }
+
+    /// Parses a fleet artifact from fragment-safe text.
+    ///
+    /// # Errors
+    ///
+    /// If the text is malformed or exceeds the exchange budget.
+    pub fn parse_text(text: &str) -> Result<Self, TextError> {
+        decode_text(text)
+    }
+}
+
+impl Pairing {
+    /// Encodes the fleet artifact as fragment-safe text.
+    ///
+    /// # Errors
+    ///
+    /// If the artifact cannot be encoded or exceeds the exchange budget.
+    pub fn to_text(&self) -> Result<String, TextError> {
+        encode_text(self)
+    }
+
+    /// Parses a fleet artifact from fragment-safe text.
+    ///
+    /// # Errors
+    ///
+    /// If the text is malformed or exceeds the exchange budget.
+    pub fn parse_text(text: &str) -> Result<Self, TextError> {
+        decode_text(text)
+    }
+}
 
 /// Encodes the app's saved pairing and latest known roster.
 ///
@@ -304,11 +336,6 @@ pub fn decode_saved(
     decode_text(text)
 }
 
-/// Encodes an invitation or pairing artifact as fragment-safe text.
-///
-/// # Errors
-///
-/// If the value cannot be encoded or exceeds the exchange budget.
 fn encode_text<T: Serialize>(value: &T) -> Result<String, TextError> {
     let bytes = postcard::to_allocvec(value).map_err(|_| TextError)?;
     if bytes.len() > 16_384 {
@@ -317,11 +344,6 @@ fn encode_text<T: Serialize>(value: &T) -> Result<String, TextError> {
     Ok(data_encoding::BASE64URL_NOPAD.encode(&bytes))
 }
 
-/// Parses a fragment-safe invitation or pairing artifact.
-///
-/// # Errors
-///
-/// If the text is malformed or exceeds the exchange budget.
 fn decode_text<T: serde::de::DeserializeOwned>(
     value: &str,
 ) -> Result<T, TextError> {
