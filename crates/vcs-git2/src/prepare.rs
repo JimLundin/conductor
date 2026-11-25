@@ -199,6 +199,10 @@ pub(super) fn open(
     require_name(name)?;
     let record = read_record(base, name)?;
     ensure!(
+        Path::new(&workspace.root) == record.location.root,
+        "session worktree path changed"
+    );
+    ensure!(
         Path::new(&workspace.directory) == record.location.directory,
         "selected workspace path changed"
     );

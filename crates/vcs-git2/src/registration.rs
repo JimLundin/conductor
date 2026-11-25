@@ -26,10 +26,10 @@ fn checkout(
         .is_empty()
         .then_some(())
         .ok_or_else(invalid)?;
-    let selected = selected.canonicalize().map_err(|_| invalid())?;
+    let canonical = selected.canonicalize().map_err(|_| invalid())?;
     let repo = git2::Repository::discover(directory).map_err(|_| invalid())?;
     let observed = repo.workdir().and_then(|root| root.canonicalize().ok());
-    if observed.as_deref() != Some(&selected) {
+    if observed.as_deref() != Some(&canonical) {
         return Err(invalid());
     }
     Ok(repo)

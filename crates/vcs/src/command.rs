@@ -14,6 +14,7 @@ pub struct SnapshotAttempt(pub String);
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedWorkspace {
     pub id: WorkspaceId,
+    pub root: String,
     pub directory: String,
 }
 

@@ -148,7 +148,6 @@ impl Fixture {
             home,
             initialized,
             crate::Workspaces::new(
-                data.0.join("worktrees"),
                 vcs_git2::registration::local(&data.0),
                 vcs_git2::registration::register,
             ),

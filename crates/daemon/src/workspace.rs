@@ -474,7 +474,6 @@ mod tests {
 
     fn workspaces(data: &Path) -> super::Workspaces {
         super::Workspaces::new(
-            data.join("worktrees"),
             vcs_git2::registration::local(data),
             vcs_git2::registration::register,
         )

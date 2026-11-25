@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use home::backend::{Backends, Capability, Refusal, Selection};
@@ -23,30 +23,21 @@ pub type RegisterWorkspaces = fn(
 pub struct Workspaces {
     adapter: Arc<dyn VersionControl>,
     register: RegisterWorkspaces,
-    root: PathBuf,
 }
 
 impl std::fmt::Debug for Workspaces {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("Workspaces")
-            .field("root", &self.root)
-            .finish_non_exhaustive()
+        formatter.debug_struct("Workspaces").finish_non_exhaustive()
     }
 }
 
 impl Workspaces {
     #[must_use]
-    pub fn new(
-        root: PathBuf,
+    pub const fn new(
         adapter: Arc<dyn VersionControl>,
         register: RegisterWorkspaces,
     ) -> Self {
-        Self {
-            root,
-            adapter,
-            register,
-        }
+        Self { adapter, register }
     }
 
     pub(crate) fn preflight(
@@ -98,34 +89,13 @@ impl Workspaces {
         })
     }
 
-    fn owned(
-        &self,
-        workspace: &Workspace,
-        id: SessionId,
-    ) -> Result<OwnedWorkspace, Error> {
-        let name = id.to_string();
-        let root = self.root.canonicalize().map_err(|error| {
-            Error::failed("worktree path", &error.to_string())
-        })?;
-        if root.join(&name) != Path::new(&workspace.worktree.0) {
-            return Err(Error::failed(
-                "worktree path",
-                "does not match the session's owned workspace",
-            ));
-        }
-        Ok(OwnedWorkspace {
-            id: WorkspaceId(name),
-            directory: workspace.directory.0.clone(),
-        })
-    }
-
     pub(crate) async fn snapshot(
         &self,
         workspace: &Workspace,
         id: SessionId,
         attempt: SnapshotAttempt,
     ) -> Result<String, Error> {
-        let owned = self.owned(workspace, id)?;
+        let owned = owned(workspace, id);
         let revision = self
             .adapter
             .capture(Capture {
@@ -156,7 +126,7 @@ impl Workspaces {
         let compared = self
             .adapter
             .compare(Compare {
-                workspace: self.owned(workspace, id)?,
+                workspace: owned(workspace, id),
                 revision: Revision(String::from(revision)),
                 baseline: Revision(String::from(baseline)),
             })
@@ -177,12 +147,20 @@ impl Workspaces {
         let kept = self
             .adapter
             .preserve_and_remove(PreserveAndRemove {
-                workspace: self.owned(workspace, id)?,
+                workspace: owned(workspace, id),
             })
             .await
             .map_err(failure)?;
         super::trace_removed(&workspace.branch, &kept);
         Ok(kept)
+    }
+}
+
+fn owned(workspace: &Workspace, id: SessionId) -> OwnedWorkspace {
+    OwnedWorkspace {
+        id: WorkspaceId(id.to_string()),
+        root: workspace.worktree.0.clone(),
+        directory: workspace.directory.0.clone(),
     }
 }
 

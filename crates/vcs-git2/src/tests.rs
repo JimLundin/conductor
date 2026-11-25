@@ -91,6 +91,7 @@ async fn removal_refuses_foreign_branch_detachment_marker_or_unpreserved_files()
     let prepared = adapter.prepare(prepare).await.map_err(failed)?;
     let request = PreserveAndRemove {
         workspace: OwnedWorkspace {
+            root: prepared.root.clone(),
             id: name,
             directory: prepared.directory,
         },
@@ -132,6 +133,7 @@ async fn snapshot_capture_and_install_are_separate_and_the_same_attempt_can_resu
     let prepared = adapter.prepare(prepare).await.map_err(failed)?;
     let request = Capture {
         workspace: OwnedWorkspace {
+            root: prepared.root.clone(),
             id,
             directory: prepared.directory,
         },
@@ -178,6 +180,7 @@ async fn removal_preserves_the_revision_at_its_destination_and_replays_after_pru
     fs::write(Path::new(&prepared.root).join("leftover"), "uncommitted\n")?;
     let request = PreserveAndRemove {
         workspace: OwnedWorkspace {
+            root: prepared.root.clone(),
             id: name,
             directory: prepared.directory,
         },
@@ -215,6 +218,7 @@ async fn a_captured_turn_keeps_its_original_revision_when_the_reply_is_lost()
     let prepared = adapter.prepare(prepare).await.map_err(failed)?;
     let request = Capture {
         workspace: OwnedWorkspace {
+            root: prepared.root.clone(),
             id,
             directory: prepared.directory,
         },

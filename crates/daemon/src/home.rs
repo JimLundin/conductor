@@ -248,7 +248,7 @@ impl HomeClone {
         placed: &Placed,
         workspaces: &crate::Workspaces,
     ) -> Result<(), String> {
-        let Some((project, directory)) = placed
+        let Some((id, directory)) = placed
             .as_ref()
             .ok()
             .and_then(|p| p.project.map(|id| (id, p.directory.clone())))
@@ -256,15 +256,15 @@ impl HomeClone {
             return Ok(());
         };
         let root = self.clone.clone();
-        let workspaces = workspaces.clone();
+        let backend = workspaces.clone();
         tokio::task::spawn_blocking(move || {
             let catalog = home_files::configuration(&root);
             let project = catalog
                 .projects()
                 .iter()
-                .find(|p| p.id == project)
+                .find(|p| p.id == id)
                 .ok_or_else(|| HomeRefusal::UnknownProject.label())?;
-            workspaces
+            backend
                 .preflight(&project.backends, &directory)
                 .map_err(|reason| reason.label())
         })

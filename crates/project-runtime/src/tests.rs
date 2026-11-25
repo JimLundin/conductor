@@ -261,6 +261,7 @@ async fn local_workspaces_snapshots_and_diffs_need_no_tracker_or_hosting()
         .map_err(|error| format!("{error:?}"))?;
     assert_eq!(prepared, workspace());
     let owned = OwnedWorkspace {
+        root: prepared.root,
         id: WorkspaceId(String::from("session")),
         directory: prepared.directory,
     };

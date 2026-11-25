@@ -159,7 +159,6 @@ async fn main() -> anyhow::Result<()> {
             let data = daemon::data_dir_or_default(args.data_dir)?;
             let root = std::path::absolute(&data)?;
             let workspaces = daemon::Workspaces::new(
-                root.join("worktrees"),
                 vcs_git2::registration::local(&root),
                 vcs_git2::registration::register,
             );

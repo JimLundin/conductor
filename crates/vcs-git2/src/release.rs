@@ -12,6 +12,7 @@ use crate::prepare::{self, Session};
 
 #[derive(Serialize, Deserialize)]
 struct Removal {
+    root: String,
     directory: String,
     revision: String,
     kept: Kept,
@@ -38,6 +39,7 @@ pub(super) fn workspace(
     )?;
     let candidate = preserve(&session)?;
     let result = Removal {
+        root: owned.root.clone(),
         directory: owned.directory.clone(),
         revision: candidate.to_string(),
         kept: publish(
@@ -90,6 +92,7 @@ fn finish(
     owned: &OwnedWorkspace,
     receipt: &Removal,
 ) -> anyhow::Result<Kept> {
+    ensure!(owned.root == receipt.root, "session worktree path changed");
     ensure!(
         owned.directory == receipt.directory,
         "selected worktree path changed"
