@@ -30,7 +30,9 @@ const useSending: () => Sending = () => {
   return {
     notice: result.waiting ? undefined : Option.getOrUndefined(AsyncResult.value(result)),
     pending: result.waiting,
-    run: (send, body, taken): void =>{  run({ body, send, taken }); },
+    run: (send, body, taken): void => {
+      run({ body, send, taken });
+    },
   };
 };
 

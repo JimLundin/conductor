@@ -3,7 +3,9 @@ import { hostKey, restored, savedText, storageKey } from "@conductor/core/saved"
 import { Effect } from "effect";
 import type { KeyValueStore } from "effect/persistence";
 
-const restore: (storage: KeyValueStore.KeyValueStore) => Effect.Effect<ReadonlyArray<Saved>> = (storage) =>
+const restore: (storage: KeyValueStore.KeyValueStore) => Effect.Effect<ReadonlyArray<Saved>> = (
+  storage,
+) =>
   storage.keys.pipe(
     Effect.flatMap((keys) =>
       Effect.forEach(keys, (key) =>
@@ -14,10 +16,14 @@ const restore: (storage: KeyValueStore.KeyValueStore) => Effect.Effect<ReadonlyA
     Effect.orDie,
   );
 
-const save: (storage: KeyValueStore.KeyValueStore, saved: Saved) => Effect.Effect<void> = (storage, saved) =>
-  storage.set(storageKey(hostKey(saved.ticket)), savedText(saved)).pipe(Effect.orDie);
+const save: (storage: KeyValueStore.KeyValueStore, saved: Saved) => Effect.Effect<void> = (
+  storage,
+  saved,
+) => storage.set(storageKey(hostKey(saved.ticket)), savedText(saved)).pipe(Effect.orDie);
 
-const unsave: (storage: KeyValueStore.KeyValueStore, host: HostKey) => Effect.Effect<void> = (storage, host) =>
-  storage.remove(storageKey(host)).pipe(Effect.orDie);
+const unsave: (storage: KeyValueStore.KeyValueStore, host: HostKey) => Effect.Effect<void> = (
+  storage,
+  host,
+) => storage.remove(storageKey(host)).pipe(Effect.orDie);
 
 export { restore, save, unsave };

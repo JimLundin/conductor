@@ -9,11 +9,11 @@ const described: (error: unknown) => string = (error) => {
   return String(error);
 };
 
-const write: <Decoded, Encoded>(schema: Schema.Codec<Decoded, Encoded>, stream: Pick<Stream, "send">, frame: Decoded) => Effect.Effect<void, string> = (
-  schema,
-  stream,
-  frame,
-) =>
+const write: <Decoded, Encoded>(
+  schema: Schema.Codec<Decoded, Encoded>,
+  stream: Pick<Stream, "send">,
+  frame: Decoded,
+) => Effect.Effect<void, string> = (schema, stream, frame) =>
   Schema.encodeEffect(Schema.fromJsonString(schema))(frame).pipe(
     Effect.mapError(described),
     Effect.flatMap((json) =>
@@ -24,20 +24,23 @@ const write: <Decoded, Encoded>(schema: Schema.Codec<Decoded, Encoded>, stream: 
     ),
   );
 
-const decode: <Decoded>(schema: Schema.Decoder<Decoded>, frame: Uint8Array) => Effect.Effect<Decoded, string> = (schema, frame) =>
+const decode: <Decoded>(
+  schema: Schema.Decoder<Decoded>,
+  frame: Uint8Array,
+) => Effect.Effect<Decoded, string> = (schema, frame) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(new TextDecoder().decode(frame)).pipe(
     Effect.mapError(described),
   );
 
 // The stream's next frame, or undefined once the host finished it.
-const read: <Decoded>(schema: Schema.Decoder<Decoded>, stream: Pick<Stream, "recv">) => Effect.Effect<Decoded | undefined, string> = (
-  schema,
-  stream,
-) =>
+const read: <Decoded>(
+  schema: Schema.Decoder<Decoded>,
+  stream: Pick<Stream, "recv">,
+) => Effect.Effect<Decoded | undefined, string> = (schema, stream) =>
   Effect.tryPromise({ catch: described, try: () => stream.recv() }).pipe(
     Effect.flatMap((frame) => {
       if (frame === undefined) {
-        return Effect.succeed(undefined);
+        return Effect.succeed(frame);
       }
       return decode(schema, frame);
     }),
@@ -55,4 +58,4 @@ const closing: (connection: Connection) => Effect.Effect<never, string> = (conne
 const close: (connection: Connection) => Effect.Effect<void> = (connection) =>
   Effect.tryPromise(() => connection.close()).pipe(Effect.ignore);
 
-export { close, closing, decode, described, open, read, write };
+export { close, closing, described, open, read, write };

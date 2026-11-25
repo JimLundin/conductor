@@ -1,4 +1,10 @@
-import type { ClientName, Command, CommandResult, HostSeq, Ticket } from "@conductor/core/schemas/index";
+import type {
+  ClientName,
+  Command,
+  CommandResult,
+  HostSeq,
+  Ticket,
+} from "@conductor/core/schemas/index";
 import type { Connection, Pipe } from "#ui/pipe.ts";
 import type { Cursor, LinkState, SendError, Status } from "@conductor/core/link";
 import { Effect, Option, Queue, Ref } from "effect";
@@ -34,7 +40,9 @@ const hasChanged: (before: Status, after: Status) => boolean = (before, after) =
 
 const publish: (host: Host, next: Status) => Effect.Effect<void> = (host, next) =>
   Ref.getAndSet(host.status, next).pipe(
-    Effect.flatMap((before) => hasChanged(before, next) ? emit(host, Update.Status(next)) : Effect.void),
+    Effect.flatMap((before) =>
+      hasChanged(before, next) ? emit(host, Update.Status(next)) : Effect.void,
+    ),
   );
 
 const show: (host: Host, state: LinkState) => Effect.Effect<void> = (host, state) =>
@@ -42,7 +50,12 @@ const show: (host: Host, state: LinkState) => Effect.Effect<void> = (host, state
 
 const appliedSeq: (host: Host) => Effect.Effect<HostSeq> = (host) =>
   Ref.get(host.cursor).pipe(
-    Effect.map((cursor) => Option.getOrElse(Option.map(cursor, (value) => value.seq), () => firstSequence)),
+    Effect.map((cursor) =>
+      Option.getOrElse(
+        Option.map(cursor, (value) => value.seq),
+        () => firstSequence,
+      ),
+    ),
   );
 
 export { type Access, appliedSeq, emit, type Host, type HostLink, publish, type Send, show };

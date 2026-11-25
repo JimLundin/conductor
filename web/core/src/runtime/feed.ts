@@ -1,7 +1,7 @@
-import type { Cursor, EventFrame, Status } from "@conductor/core/link";
-import type { Epoch, Feed, HostSeq, Welcome } from "@conductor/core/schemas/index";
+import type { Cursor, EventFrame, Status } from "#core/link";
+import type { Epoch, Feed, HostSeq, Welcome } from "#core/schemas/index";
 import { Result } from "effect";
-import { isDelta } from "@conductor/core/link";
+import { isDelta } from "#core/link";
 
 const nextSequence = 1;
 
@@ -17,19 +17,23 @@ interface ForwardAction {
 
 type FeedAction = CursorAction | ForwardAction;
 
-const sameEpoch: (cursor: Cursor | undefined, epoch: Epoch) => boolean = (cursor, epoch) => cursor?.epoch === epoch;
+const sameEpoch: (cursor: Cursor | undefined, epoch: Epoch) => boolean = (cursor, epoch) =>
+  cursor?.epoch === epoch;
 
-const caughtUp: (status: Status, applied: HostSeq, liveAt: HostSeq) => boolean = (status, applied, liveAt) =>
-  applied >= liveAt && status.state === "CatchingUp";
+const caughtUp: (status: Status, applied: HostSeq, liveAt: HostSeq) => boolean = (
+  status,
+  applied,
+  liveAt,
+) => applied >= liveAt && status.state === "CatchingUp";
 
-const eventActions: (welcome: Welcome, frame: EventFrame, after: HostSeq) => Result.Result<ReadonlyArray<FeedAction>, string> = (
-  welcome,
-  frame,
-  after,
-) => {
+const eventActions: (
+  welcome: Welcome,
+  frame: EventFrame,
+  after: HostSeq,
+) => Result.Result<ReadonlyArray<FeedAction>, string> = (welcome, frame, after) => {
   const { seq } = frame.Event;
   const delta = isDelta(frame.Event);
-  const forward: ForwardAction = { kind: "Forward", frame };
+  const forward: ForwardAction = { frame, kind: "Forward" };
   if (seq <= after && delta) {
     return Result.succeed([forward]);
   }
@@ -39,7 +43,7 @@ const eventActions: (welcome: Welcome, frame: EventFrame, after: HostSeq) => Res
   if (seq > after + nextSequence || delta) {
     return Result.fail(`event ${String(seq)} arrived after ${String(after)}: the feed has a gap`);
   }
-  return Result.succeed([{ kind: "Cursor", cursor: { epoch: welcome.epoch, seq } }, forward]);
+  return Result.succeed([{ cursor: { epoch: welcome.epoch, seq }, kind: "Cursor" }, forward]);
 };
 
 export { caughtUp, eventActions, type FeedAction, sameEpoch };
