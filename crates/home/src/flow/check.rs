@@ -13,7 +13,7 @@ use crate::canvas::Held;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use crate::issue::Issue;
 
-use super::command::{Fetched, subject};
+use super::command::{Fetched, canvas_named};
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -168,14 +168,10 @@ pub fn canvases(
                     )
                 }),
             };
-            wrong.map(|reason| Finding {
+            wrong.map(|message| Finding {
                 severity: Severity::Error,
-                subject: Some(subject(
-                    home,
-                    fetched.key.project,
-                    &fetched.key.issue.to_string(),
-                )),
-                message: format!("canvas {}: {reason}", fetched.key.name),
+                subject: Some(canvas_named(home, &fetched.key)),
+                message,
             })
         })
         .chain(strays)

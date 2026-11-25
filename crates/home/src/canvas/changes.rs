@@ -6,7 +6,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{CanvasError, CodeRef, wire};
+use super::{CanvasError, CodeRef};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +40,24 @@ pub enum ChangeKind {
     Mechanical,
 }
 
+impl ChangeKind {
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+            Self::Wiring => "wiring",
+            Self::Mechanical => "mechanical",
+        }
+    }
+
+    const fn heading(self) -> &'static str {
+        match self {
+            Self::Core => "Core",
+            Self::Wiring => "Wiring",
+            Self::Mechanical => "Mechanical",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
@@ -58,6 +76,17 @@ pub enum Tag {
     Breaking,
     Race,
     Perf,
+}
+
+impl Tag {
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Subtle => "subtle",
+            Self::Breaking => "breaking",
+            Self::Race => "race",
+            Self::Perf => "perf",
+        }
+    }
 }
 
 impl Changes {
@@ -88,7 +117,7 @@ impl Changes {
                     .iter()
                     .map(|change| {
                         let tag = change.tag.map_or_else(String::new, |tag| {
-                            format!(" ({})", wire(&tag))
+                            format!(" ({})", tag.word())
                         });
                         format!(
                             "- {}: {}{tag}\n",
@@ -97,19 +126,11 @@ impl Changes {
                         )
                     })
                     .collect();
-                format!("**{}**\n\n{}", heading(group.kind), entries.concat())
+                format!("**{}**\n\n{}", group.kind.heading(), entries.concat())
             })
             .collect::<Vec<String>>()
             .join("\n")
     }
-}
-
-fn heading(kind: ChangeKind) -> String {
-    let name = wire(&kind);
-    let mut letters = name.chars();
-    letters.next().map_or_else(String::new, |first| {
-        first.to_uppercase().chain(letters).collect()
-    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,13 +145,13 @@ impl fmt::Display for ChangesError {
             Self::OutOfOrder { kind, after } => write!(
                 out,
                 "the `{}` group comes after `{}`: order the groups core, wiring, mechanical",
-                wire(kind),
-                wire(after)
+                kind.word(),
+                after.word()
             ),
             Self::Twice { kind } => write!(
                 out,
                 "the `{}` group comes twice: merge them into one",
-                wire(kind)
+                kind.word()
             ),
         }
     }

@@ -162,7 +162,7 @@ pub struct Wanted {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Given {
     Text(Result<String, String>),
-    Canvases(Result<Held<(CanvasName, CanvasFile)>, String>),
+    Canvases(Result<Held<Fetched>, String>),
     EveryCanvas(Result<Held<Fetched>, String>),
 }
 
@@ -667,16 +667,14 @@ fn put(
     read: Result<String, String>,
     context: &Context,
 ) -> Outcome {
-    let subject = subject(home, key.project, &key.issue.to_string());
+    let named = canvas_named(home, &key);
     let parsed = read.and_then(|text| {
-        Canvas::parse(&text).map_err(|error| {
-            format!("canvas {} of {subject}: {error}", key.name)
-        })
+        Canvas::parse(&text).map_err(|error| format!("{named}: {error}"))
     });
     match parsed {
         Ok(canvas) => Outcome {
             writes: Vec::new(),
-            output: format!("wrote canvas {} of {subject}\n", key.name),
+            output: format!("wrote {named}\n"),
             canvases: Vec::from([CanvasWrite {
                 key,
                 file: CanvasFile {
@@ -697,41 +695,56 @@ fn shown(home: &Snapshot, wanted: &Wanted, given: Option<Given>) -> Outcome {
         Some(Given::Canvases(fetched)) => fetched,
         _ => Err(format!("the canvases of {subject} weren't fetched")),
     };
-    match (fetched, &wanted.name) {
-        (Err(reason), _) => refused(refusal(&reason)),
-        (Ok(none), Some(name))
-            if none.canvases.is_empty() && none.strays.is_empty() =>
+    let held = match fetched {
+        Ok(held) => held,
+        Err(reason) => return refused(refusal(&reason)),
+    };
+    let mut drawn = Vec::new();
+    let mut broken = Vec::new();
+    for Fetched { key, got } in &held.canvases {
+        match got
+            .as_ref()
+            .map(|kept| kept.as_ref().map(|file| file.canvas.markdown()))
         {
-            refused(refusal(&format!(
-                "no canvas is called {name} on {subject}"
-            )))
+            Ok(None) => {}
+            Ok(Some(Ok(markdown))) => drawn.push(markdown),
+            Ok(Some(Err(error))) => broken.push(refusal(&format!(
+                "{}: {error}",
+                canvas_named(home, key)
+            ))),
+            Err(reason) => broken.push(refusal(&format!(
+                "{}: {reason}",
+                canvas_named(home, key)
+            ))),
         }
-        (Ok(none), None)
-            if none.canvases.is_empty() && none.strays.is_empty() =>
-        {
-            Outcome {
-                output: format!("{subject} has no canvases\n"),
-                ..said_only()
-            }
-        }
-        (Ok(held), _) => Outcome {
-            output: held
-                .canvases
-                .iter()
-                .map(|(_, file)| file.canvas.markdown())
-                .collect::<Vec<String>>()
-                .join("\n")
-                + &held
-                    .strays
-                    .iter()
-                    .map(|stray| {
-                        refusal(&format!("{}: {}", stray.place, stray.reason))
-                    })
-                    .collect::<String>(),
-            failed: !held.strays.is_empty(),
+    }
+    broken.extend(
+        held.strays.iter().map(|stray| {
+            refusal(&format!("{}: {}", stray.place, stray.reason))
+        }),
+    );
+    match (&wanted.name, drawn.is_empty() && broken.is_empty()) {
+        (Some(name), true) => refused(refusal(&format!(
+            "no canvas is called {name} on {subject}"
+        ))),
+        (None, true) => Outcome {
+            output: format!("{subject} has no canvases\n"),
+            ..said_only()
+        },
+        (_, false) => Outcome {
+            output: drawn.join("\n") + &broken.concat(),
+            failed: !broken.is_empty(),
             ..said_only()
         },
     }
+}
+
+pub(crate) fn canvas_named(home: &Snapshot, key: &CanvasKey) -> String {
+    format!(
+        "canvas {} of {}",
+        key.name,
+        subject(home, key.project, &key.issue.to_string())
+    )
 }
 
 const fn said_only() -> Outcome {

@@ -973,7 +973,17 @@ fn listed(
                     for stray in &held.strays {
                         tracing::warn!(target: "home", %issue, place = %stray.place, reason = %stray.reason, "listed the issue without what isn't a canvas");
                     }
-                    (issue, held.canvases)
+                    let canvases = held
+                        .canvases
+                        .into_iter()
+                        .filter_map(|kept| {
+                            kept.inspect_err(|broken| {
+                                tracing::warn!(target: "home", %issue, canvas = %broken.name, error = %broken.error, "listed the issue without a broken canvas");
+                            })
+                            .ok()
+                        })
+                        .collect();
+                    (issue, canvases)
                 })
         })
         .collect()
@@ -1556,7 +1566,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_issue_with_two_canvases_is_served_with_both_and_fetches_each()
+    async fn an_issue_with_two_canvases_and_a_broken_one_is_served_with_the_two_and_fetches_each()
     -> Outcome {
         let scratch = Scratch::new()?;
         let clone = super::clone_of(&scratch.0);
@@ -1585,6 +1595,16 @@ mod tests {
             };
             store.put(&key, &written(at, by)?)?;
         }
+        store.spoil(
+            CanvasKey {
+                project,
+                issue: designed,
+                name: named("broken")?,
+            },
+            CanvasError::Json {
+                reason: String::from("expected value"),
+            },
+        );
         let (shown, watched) = watch::channel(None);
         let mut actor = Actor::new(
             Homing {

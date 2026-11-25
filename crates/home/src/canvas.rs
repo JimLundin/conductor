@@ -27,7 +27,7 @@ pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
 pub use options::{Choice, Options, OptionsError};
 pub use progress::{Bar, Progress, ProgressError, Stretch};
 pub use statechart::{State, Statechart, StatechartError, Transition};
-pub use stray::{Held, Stray, StrayReason};
+pub use stray::{Broken, Held, Stray, StrayReason};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, try_from = "Drawn")]
@@ -79,26 +79,27 @@ impl Canvas {
         decoded::<Drawn>(text).and_then(Self::try_from)
     }
 
-    #[must_use]
-    pub(crate) fn markdown(&self) -> String {
-        core::iter::once(format!("# {}\n", self.title.trim()))
+    pub(crate) fn markdown(&self) -> Result<String, CanvasError> {
+        core::iter::once(Ok(format!("# {}\n", self.title.trim())))
             .chain(self.blocks.iter().map(Block::markdown))
-            .collect::<Vec<String>>()
-            .join("\n")
+            .collect::<Result<Vec<String>, CanvasError>>()
+            .map(|parts| parts.join("\n"))
     }
 }
 
 impl Block {
-    fn markdown(&self) -> String {
-        match self {
+    fn markdown(&self) -> Result<String, CanvasError> {
+        Ok(match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
             Self::Diagram(diagram) => diagram.mermaid(),
-            Self::Statechart(chart) => chart.mermaid(),
+            Self::Statechart(chart) => {
+                chart.mermaid().map_err(CanvasError::Statechart)?
+            }
             Self::Progress(progress) => progress.markdown(),
             Self::Options(options) => options.markdown(),
             Self::Changes(changes) => changes.markdown(),
             Self::Code(code) => format!("{}\n", code.link()),
-        }
+        })
     }
 
     fn check(&self) -> Result<(), CanvasError> {
@@ -177,15 +178,12 @@ fn short<'a>(
         })
 }
 
-fn quoted(label: &str) -> String {
-    format!("\"{}\"", label.trim().replace('"', "#quot;"))
+fn line(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<&str>>().join(" ")
 }
 
-fn wire<T: Serialize>(value: &T) -> String {
-    serde_json::to_value(value)
-        .ok()
-        .and_then(|named| named.as_str().map(String::from))
-        .unwrap_or_default()
+fn quoted(label: &str) -> String {
+    format!("\"{}\"", line(label).replace('"', "#quot;"))
 }
 
 fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {

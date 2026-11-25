@@ -3,7 +3,9 @@ mod memory;
 
 use std::fmt;
 
-use home::canvas::{CanvasEntry, CanvasError, CanvasFile, CanvasKey, Held};
+use home::canvas::{
+    Broken, CanvasEntry, CanvasError, CanvasFile, CanvasKey, Held,
+};
 use home::{IssueId, ProjectId};
 
 pub use contract::{Plant, contract};
@@ -22,7 +24,7 @@ pub trait CanvasStore {
         &self,
         project: &ProjectId,
         issue: &IssueId,
-    ) -> Result<Held<CanvasEntry>, StoreError>;
+    ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError>;
 
     /// # Errors
     ///

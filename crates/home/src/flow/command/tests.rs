@@ -1020,14 +1020,15 @@ fn a_canvas_show_asks_the_store_for_the_named_canvas_or_every_canvas_of_the_issu
 fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
 -> Result<(), Box<dyn core::error::Error>> {
     let kept = |name: &str, title: &str| {
-        Ok::<_, Box<dyn core::error::Error>>((
-            CanvasName::parse(name)?,
-            CanvasFile {
+        Ok::<_, Box<dyn core::error::Error>>(fetched(
+            TASK,
+            name,
+            Ok(Some(CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
                 canvas: why_a_store(title)?,
-            },
-        ))
+            })),
+        )?)
     };
     let one = given(
         &format!("canvas show {TASK} why-a-store"),
@@ -1195,14 +1196,15 @@ fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_stat
     let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
     let shown = given(
         &format!("canvas show {TASK} turn"),
-        Given::Canvases(Ok(held(Vec::from([(
-            CanvasName::parse("turn").map_err(|error| error.to_string())?,
-            CanvasFile {
+        Given::Canvases(Ok(held(Vec::from([fetched(
+            TASK,
+            "turn",
+            Ok(Some(CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
                 canvas,
-            },
-        )])))),
+            })),
+        )?])))),
     );
     assert_eq!(
         (shown.failed, shown.output),
@@ -1245,7 +1247,10 @@ fn a_canvas_show_prints_a_state_by_its_index_with_its_label_quoted() {
         Given::Canvases(Ok(held(
             put.canvases
                 .into_iter()
-                .map(|write| (write.key.name, write.file))
+                .map(|write| Fetched {
+                    key: write.key,
+                    got: Ok(Some(write.file)),
+                })
                 .collect(),
         ))),
     );
@@ -1277,14 +1282,15 @@ fn a_canvas_show_keeps_a_statechart_s_events_and_marked_notes_on_one_line_with_c
     let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
     let shown = given(
         &format!("canvas show {TASK} turn"),
-        Given::Canvases(Ok(held(Vec::from([(
-            CanvasName::parse("turn").map_err(|error| error.to_string())?,
-            CanvasFile {
+        Given::Canvases(Ok(held(Vec::from([fetched(
+            TASK,
+            "turn",
+            Ok(Some(CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
                 canvas,
-            },
-        )])))),
+            })),
+        )?])))),
     );
     assert_eq!(
         (shown.failed, shown.output.as_str()),
@@ -1462,7 +1468,10 @@ fn a_canvas_show_prints_a_diagram_as_one_flowchart_per_step_each_holding_the_ste
         Given::Canvases(Ok(held(
             put.canvases
                 .into_iter()
-                .map(|write| (write.key.name, write.file))
+                .map(|write| Fetched {
+                    key: write.key,
+                    got: Ok(Some(write.file)),
+                })
                 .collect(),
         ))),
     );
@@ -1479,6 +1488,52 @@ fn a_canvas_show_prints_a_diagram_as_one_flowchart_per_step_each_holding_the_ste
              subgraph g0[\"Shell\"]\n        n2[\"Home #quot;folder#quot;\"]\n    end\n    \
              n0 -->|\"puts\"| n1\n    n1 --> n2\n```\n"
         )
+    );
+}
+
+#[test]
+fn a_canvas_show_keeps_a_label_with_a_newline_on_one_mermaid_line() {
+    let shown = |text: &str| {
+        let put = put_canvas(text);
+        given(
+            &format!("canvas show {TASK} design"),
+            Given::Canvases(Ok(held(
+                put.canvases
+                    .into_iter()
+                    .map(|write| Fetched {
+                        key: write.key,
+                        got: Ok(Some(write.file)),
+                    })
+                    .collect(),
+            ))),
+        )
+        .output
+    };
+    let drawn = shown(
+        &diagram(
+            r#"{"id": "core", "label": "Core\nlogic", "step": 1},
+               {"id": "folder", "label": "Folder", "group": "shell", "step": 1}"#,
+            r#"{"from": "core", "to": "folder", "label": "puts\nit", "step": 1}"#,
+        )
+        .replace(r#""label": "Shell""#, r#""label": "Home\nshell""#),
+    );
+    assert_eq!(
+        drawn,
+        "# Design\n\n\
+         ```mermaid\nflowchart LR\n    \
+         n0[\"Core logic\"]\n    \
+         subgraph g0[\"Home shell\"]\n        n1[\"Folder\"]\n    end\n    \
+         n0 -->|\"puts it\"| n1\n```\n"
+    );
+    let charted = shown(&statechart(
+        r#"{"id": "open", "label": "Open\nnow"}, {"id": "done", "label": "Done"}"#,
+        "open",
+        r#"{"from": "open", "to": "done", "event": "land"}"#,
+        "",
+    ));
+    assert!(
+        charted.contains("    state \"Open now\" as s0\n"),
+        "{charted}"
     );
 }
 
@@ -1553,14 +1608,15 @@ fn shown(text: &str) -> Result<Outcome, String> {
     let canvas = Canvas::parse(text).map_err(|error| error.to_string())?;
     Ok(given(
         &format!("canvas show {TASK} stands"),
-        Given::Canvases(Ok(held(Vec::from([(
-            CanvasName::parse("stands").map_err(|error| error.to_string())?,
-            CanvasFile {
+        Given::Canvases(Ok(held(Vec::from([fetched(
+            TASK,
+            "stands",
+            Ok(Some(CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
                 canvas,
-            },
-        )])))),
+            })),
+        )?])))),
     ))
 }
 
@@ -1692,10 +1748,10 @@ fn check_reports_each_canvas_the_store_cant_return_or_that_no_issue_holds()
             true,
             format!(
                 "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
-                 error  home/{TASK}  canvas denied: permission denied\n\
-                 error  home/{TASK}  canvas garbled: not a canvas: missing field `title`\n\
-                 error  home/{TASK}  canvas vanished: the store lists it but returns nothing\n\
-                 error  home/0v29xvc9  canvas orphan: the issue doesn't exist: write the canvas under one that does, or remove it\n\
+                 error  canvas denied of home/{TASK}  permission denied\n\
+                 error  canvas garbled of home/{TASK}  not a canvas: missing field `title`\n\
+                 error  canvas vanished of home/{TASK}  the store lists it but returns nothing\n\
+                 error  canvas orphan of home/0v29xvc9  the issue doesn't exist: write the canvas under one that does, or remove it\n\
                  4 errors, 1 warnings\n"
             )
         )
@@ -1746,28 +1802,23 @@ fn check_reports_a_store_that_cant_list_its_canvases() {
 }
 
 #[test]
-fn a_canvas_show_prints_an_issue_s_valid_canvases_then_reports_what_the_store_skipped()
+fn a_canvas_show_prints_an_issue_s_valid_canvases_then_names_what_it_skipped()
 -> Result<(), String> {
     let shown = given(
         &format!("canvas show {TASK}"),
         Given::Canvases(Ok(Held {
             canvases: Vec::from([
-                (
-                    CanvasName::parse("first").map_err(|e| e.to_string())?,
-                    prose_file()?,
-                ),
-                (
-                    CanvasName::parse("second").map_err(|e| e.to_string())?,
-                    prose_file()?,
-                ),
+                fetched(TASK, "first", Ok(Some(prose_file()?)))?,
+                fetched(
+                    TASK,
+                    "garbled",
+                    Err(String::from("not a canvas: missing field `title`")),
+                )?,
+                fetched(TASK, "second", Ok(Some(prose_file()?)))?,
             ]),
             strays: Vec::from([Stray {
-                place: String::from("over/there/broken"),
-                reason: StrayReason::Invalid(
-                    crate::canvas::CanvasError::Json {
-                        reason: String::from("missing field `title`"),
-                    },
-                ),
+                place: String::from("over/there/notes"),
+                reason: StrayReason::Folder,
             }]),
         })),
     );
@@ -1775,11 +1826,48 @@ fn a_canvas_show_prints_an_issue_s_valid_canvases_then_reports_what_the_store_sk
         (shown.failed, shown.output),
         (
             true,
-            String::from(
+            format!(
                 "# Why a store\n\nThe core decides.\n\n\
                  # Why a store\n\nThe core decides.\n\
-                 home: over/there/broken: not a canvas: missing field `title`\n"
+                 home: canvas garbled of home/{TASK}: not a canvas: missing field `title`\n\
+                 home: over/there/notes: is a folder, and an issue's folder holds only canvases: move it out of the issue\n"
             )
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn check_and_canvas_show_name_a_broken_canvas_the_same_way()
+-> Result<(), String> {
+    let broken = || {
+        fetched(
+            TASK,
+            "garbled",
+            Err(String::from("not a canvas: missing field `title`")),
+        )
+    };
+    let named = format!("canvas garbled of home/{TASK}");
+    let checked = given(
+        "check",
+        Given::EveryCanvas(Ok(held(Vec::from([broken()?])))),
+    );
+    let shown = given(
+        &format!("canvas show {TASK} garbled"),
+        Given::Canvases(Ok(held(Vec::from([broken()?])))),
+    );
+    assert!(
+        checked.output.contains(&format!(
+            "error  {named}  not a canvas: missing field `title`\n"
+        )),
+        "{}",
+        checked.output
+    );
+    assert_eq!(
+        (shown.failed, shown.output),
+        (
+            true,
+            format!("home: {named}: not a canvas: missing field `title`\n")
         )
     );
     Ok(())

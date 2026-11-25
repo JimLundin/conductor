@@ -2,7 +2,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use super::CanvasError;
+use super::{CanvasError, CanvasName};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Held<T> {
@@ -28,8 +28,14 @@ pub struct Stray {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StrayReason {
     Unnamed,
+    Folder,
     NotAnIssue,
-    Invalid(CanvasError),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Broken {
+    pub name: CanvasName,
+    pub error: CanvasError,
 }
 
 impl fmt::Display for StrayReason {
@@ -38,10 +44,12 @@ impl fmt::Display for StrayReason {
             Self::Unnamed => out.write_str(
                 "isn't a canvas: name it in lowercase words joined by `-`, or move it out of the issue",
             ),
+            Self::Folder => out.write_str(
+                "is a folder, and an issue's folder holds only canvases: move it out of the issue",
+            ),
             Self::NotAnIssue => out.write_str(
                 "isn't an issue: keep canvases under an issue's id, or remove it",
             ),
-            Self::Invalid(error) => error.fmt(out),
         }
     }
 }

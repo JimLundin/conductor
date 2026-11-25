@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use home::canvas::{
-    CanvasEntry, CanvasError, CanvasFile, CanvasKey, CanvasName, Held, Stray,
-    StrayReason,
+    Broken, CanvasEntry, CanvasError, CanvasFile, CanvasKey, CanvasName, Held,
+    Stray,
 };
 use home::{IssueId, ProjectId};
 
@@ -21,10 +21,8 @@ struct Folder {
 }
 
 impl Memory {
-    pub fn spoil(&mut self, key: CanvasKey, error: CanvasError) -> String {
-        let place = place(&key);
+    pub fn spoil(&mut self, key: CanvasKey, error: CanvasError) {
         self.folder(&key).canvases.insert(key.name, Err(error));
-        place
     }
 
     pub fn stray(
@@ -50,30 +48,22 @@ impl Memory {
 }
 
 impl Folder {
-    fn listed(&self, project: ProjectId, issue: IssueId) -> Held<CanvasEntry> {
-        let mut held = Held::default();
-        for (name, kept) in &self.canvases {
-            match kept {
-                Ok(file) => {
-                    held.canvases.push(CanvasEntry::of(name.clone(), file));
-                }
-                Err(error) => held.strays.push(Stray {
-                    place: place(&CanvasKey {
-                        project,
-                        issue,
+    fn listed(&self) -> Held<Result<CanvasEntry, Broken>> {
+        Held {
+            canvases: self
+                .canvases
+                .iter()
+                .map(|(name, kept)| match kept {
+                    Ok(file) => Ok(CanvasEntry::of(name.clone(), file)),
+                    Err(error) => Err(Broken {
                         name: name.clone(),
+                        error: error.clone(),
                     }),
-                    reason: StrayReason::Invalid(error.clone()),
-                }),
-            }
+                })
+                .collect(),
+            strays: self.strays.clone(),
         }
-        held.strays.extend(self.strays.iter().cloned());
-        held
     }
-}
-
-fn place(key: &CanvasKey) -> String {
-    format!("{}/{}/{}", key.project, key.issue, key.name)
 }
 
 impl CanvasStore for Memory {
@@ -103,13 +93,11 @@ impl CanvasStore for Memory {
         &self,
         project: &ProjectId,
         issue: &IssueId,
-    ) -> Result<Held<CanvasEntry>, StoreError> {
+    ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError> {
         Ok(self
             .issues
             .get(&(*project, *issue))
-            .map_or_else(Held::default, |folder| {
-                folder.listed(*project, *issue)
-            }))
+            .map_or_else(Held::default, Folder::listed))
     }
 
     fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
@@ -146,25 +134,32 @@ mod tests {
     #[test]
     fn the_in_memory_store_keeps_the_store_contract() {
         assert_eq!(
-            contract(&mut Memory::default(), |memory, plant| match plant {
-                Plant::Broken(key) => memory.spoil(
+            contract(
+                &mut Memory::default(),
+                |memory, key| memory.spoil(
                     key.clone(),
                     CanvasError::Json {
                         reason: String::from("expected value"),
                     },
                 ),
-                Plant::Unnamed { project, issue } => {
-                    planted(
+                |memory, plant| match plant {
+                    Plant::Unnamed { project, issue } => planted(
                         memory,
                         *project,
                         Some(*issue),
                         StrayReason::Unnamed,
-                    )
+                    ),
+                    Plant::Folder { project, issue } => planted(
+                        memory,
+                        *project,
+                        Some(*issue),
+                        StrayReason::Folder,
+                    ),
+                    Plant::NotAnIssue(project) => {
+                        planted(memory, *project, None, StrayReason::NotAnIssue)
+                    }
                 }
-                Plant::NotAnIssue(project) => {
-                    planted(memory, *project, None, StrayReason::NotAnIssue)
-                }
-            }),
+            ),
             Ok(())
         );
     }
@@ -175,7 +170,7 @@ mod tests {
         issue: Option<home::IssueId>,
         reason: StrayReason,
     ) -> String {
-        let place = format!("{project}/{issue:?}/stray");
+        let place = format!("{project}/{issue:?}/{reason:?}");
         memory.stray(
             project,
             issue,

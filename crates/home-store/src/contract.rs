@@ -1,8 +1,8 @@
 use std::fmt::{Debug, Display};
 
 use home::canvas::{
-    Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName, Held, Stray,
-    StrayReason,
+    Block, Broken, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
+    Held, Stray, StrayReason,
 };
 use home::{IssueId, ProjectId};
 
@@ -10,8 +10,8 @@ use crate::{CanvasStore, StoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Plant {
-    Broken(CanvasKey),
     Unnamed { project: ProjectId, issue: IssueId },
+    Folder { project: ProjectId, issue: IssueId },
     NotAnIssue(ProjectId),
 }
 
@@ -20,10 +20,11 @@ pub enum Plant {
 /// The clause the store broke.
 pub fn contract<S: CanvasStore>(
     store: &mut S,
+    spoil: impl FnOnce(&mut S, &CanvasKey),
     plant: impl FnMut(&mut S, &Plant) -> String,
 ) -> Result<(), String> {
     keeps(store)?;
-    reports_strays(store, plant)
+    reports_strays(store, spoil, plant)
 }
 
 fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
@@ -59,11 +60,11 @@ fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
         .map_err(shown)?;
     same(
         "list gives each canvas of the issue by name, with its time and signer",
-        &seen(store.list(&alpha, &one).map_err(shown)?),
+        &seen(listed(store.list(&alpha, &one).map_err(shown)?)),
         &(
             vec![
-                CanvasEntry::of(plan.name.clone(), &third),
-                CanvasEntry::of(design.name.clone(), &second),
+                Ok(CanvasEntry::of(plan.name.clone(), &third)),
+                Ok(CanvasEntry::of(design.name.clone(), &second)),
             ],
             Vec::new(),
         ),
@@ -82,6 +83,7 @@ fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
 
 fn reports_strays<S: CanvasStore>(
     store: &mut S,
+    spoil: impl FnOnce(&mut S, &CanvasKey),
     mut plant: impl FnMut(&mut S, &Plant) -> String,
 ) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
@@ -89,7 +91,7 @@ fn reports_strays<S: CanvasStore>(
     let design = key(alpha, one, "design")?;
     let plan = key(alpha, one, "a-plan")?;
     let broken = key(alpha, one, "broken")?;
-    let spoiled = plant(store, &Plant::Broken(broken.clone()));
+    spoil(store, &broken);
     let unnamed = plant(
         store,
         &Plant::Unnamed {
@@ -97,16 +99,24 @@ fn reports_strays<S: CanvasStore>(
             issue: one,
         },
     );
+    let folder = plant(
+        store,
+        &Plant::Folder {
+            project: alpha,
+            issue: one,
+        },
+    );
     let unissued = plant(store, &Plant::NotAnIssue(alpha));
     same(
-        "list gives an issue's canvases beside what isn't one, with where it is and why",
-        &seen(store.list(&alpha, &one).map_err(shown)?),
+        "list gives an issue's canvases by name, a broken one's too, beside what isn't one, with where it is and why",
+        &seen(listed(store.list(&alpha, &one).map_err(shown)?)),
         &want(
             vec![
-                CanvasEntry::of(plan.name.clone(), &file(3, "third")?),
-                CanvasEntry::of(design.name.clone(), &file(2, "second")?),
+                Ok(CanvasEntry::of(plan.name.clone(), &file(3, "third")?)),
+                Err(broken.name.clone()),
+                Ok(CanvasEntry::of(design.name.clone(), &file(2, "second")?)),
             ],
-            vec![(spoiled, "invalid"), (unnamed.clone(), "unnamed")],
+            vec![(unnamed.clone(), "unnamed"), (folder.clone(), "folder")],
         ),
     )?;
     same(
@@ -120,7 +130,11 @@ fn reports_strays<S: CanvasStore>(
                 key(alpha, two, "design")?,
                 key(beta, one, "design")?,
             ],
-            vec![(unnamed, "unnamed"), (unissued, "not an issue")],
+            vec![
+                (unnamed, "unnamed"),
+                (folder, "folder"),
+                (unissued, "not an issue"),
+            ],
         ),
     )?;
     match store.get(&broken) {
@@ -148,14 +162,27 @@ fn seen<T>(held: Held<T>) -> Seen<T> {
         .map(|Stray { place, reason }| {
             let why = match reason {
                 StrayReason::Unnamed => "unnamed",
+                StrayReason::Folder => "folder",
                 StrayReason::NotAnIssue => "not an issue",
-                StrayReason::Invalid(_) => "invalid",
             };
             (place, why)
         })
         .collect();
     strays.sort();
     (held.canvases, strays)
+}
+
+fn listed(
+    held: Held<Result<CanvasEntry, Broken>>,
+) -> Held<Result<CanvasEntry, CanvasName>> {
+    Held {
+        canvases: held
+            .canvases
+            .into_iter()
+            .map(|kept| kept.map_err(|broken| broken.name))
+            .collect(),
+        strays: held.strays,
+    }
 }
 
 fn key(

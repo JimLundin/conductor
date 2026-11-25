@@ -6,7 +6,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{CanvasError, distinct, quoted, short};
+use super::{CanvasError, distinct, line, quoted, short};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -41,74 +41,73 @@ impl Statechart {
         short(self.states.iter().map(|state| &state.label).chain(
             self.transitions.iter().map(|transition| &transition.event),
         ))?;
-        self.walkable().map_err(CanvasError::Statechart)
+        self.walked().map(drop).map_err(CanvasError::Statechart)
     }
 
-    fn walkable(&self) -> Result<(), StatechartError> {
-        let known = |id: &str| self.index(id).is_some();
-        if !known(&self.start) {
-            return Err(StatechartError::UnknownStart {
+    fn walked(&self) -> Result<Walk<'_>, StatechartError> {
+        let start = self.index(&self.start).ok_or_else(|| {
+            StatechartError::UnknownStart {
                 start: self.start.clone(),
-            });
-        }
-        for transition in &self.transitions {
-            if !known(&transition.from) {
-                return Err(StatechartError::UnknownFrom {
-                    state: transition.from.clone(),
-                });
             }
-            if !known(&transition.to) {
-                return Err(StatechartError::UnknownTo {
-                    state: transition.to.clone(),
-                });
-            }
-        }
-        if let Some(first) =
-            self.path.first().filter(|first| **first != self.start)
-        {
-            return Err(StatechartError::PathStart {
-                start: self.start.clone(),
-                first: first.clone(),
-            });
-        }
-        self.path
+        })?;
+        let steps = self
+            .transitions
             .iter()
-            .zip(self.path.iter().skip(1))
-            .find(|&(from, to)| {
-                !self.transitions.iter().any(|transition| {
+            .map(|transition| {
+                let from = self.index(&transition.from).ok_or_else(|| {
+                    StatechartError::UnknownFrom {
+                        state: transition.from.clone(),
+                    }
+                })?;
+                let to = self.index(&transition.to).ok_or_else(|| {
+                    StatechartError::UnknownTo {
+                        state: transition.to.clone(),
+                    }
+                })?;
+                Ok((from, to, transition.event.as_str()))
+            })
+            .collect::<Result<Vec<Step<'_>>, StatechartError>>()?;
+        let mut path = Vec::new();
+        if let Some(first) = self.path.first() {
+            if *first != self.start {
+                return Err(StatechartError::PathStart {
+                    start: self.start.clone(),
+                    first: first.clone(),
+                });
+            }
+            path.push(start);
+        }
+        for (from, to) in self.path.iter().zip(self.path.iter().skip(1)) {
+            let (_, &(_, at, _)) = self
+                .transitions
+                .iter()
+                .zip(&steps)
+                .find(|(transition, _)| {
                     transition.from == *from && transition.to == *to
                 })
-            })
-            .map_or(Ok(()), |(from, to)| {
-                Err(StatechartError::OffPath {
+                .ok_or_else(|| StatechartError::OffPath {
                     from: from.clone(),
                     to: to.clone(),
-                })
-            })
+                })?;
+            if !path.contains(&at) {
+                path.push(at);
+            }
+        }
+        Ok(Walk { start, steps, path })
     }
 
     fn index(&self, id: &str) -> Option<usize> {
         self.states.iter().position(|state| state.id == id)
     }
 
-    fn named(&self, id: &str) -> String {
-        self.index(id)
-            .map_or_else(String::new, |at| format!("s{at}"))
-    }
-
-    pub(super) fn mermaid(&self) -> String {
+    pub(super) fn mermaid(&self) -> Result<String, StatechartError> {
+        let walk = self.walked()?;
         let states = self.states.iter().enumerate().map(|(at, state)| {
             format!("state {} as s{at}", quoted(&state.label))
         });
-        let start =
-            core::iter::once(format!("[*] --> {}", self.named(&self.start)));
-        let transitions = self.transitions.iter().map(|transition| {
-            format!(
-                "{} --> {} : {}",
-                self.named(&transition.from),
-                self.named(&transition.to),
-                spoken(&transition.event)
-            )
+        let start = core::iter::once(format!("[*] --> s{}", walk.start));
+        let transitions = walk.steps.iter().map(|&(from, to, event)| {
+            format!("s{from} --> s{to} : {}", spoken(event))
         });
         let notes = self.states.iter().enumerate().filter_map(|(at, state)| {
             state.marked.as_ref().map(|reason| {
@@ -122,12 +121,8 @@ impl Statechart {
             .filter(|(_, state)| state.marked.is_some())
             .map(|(at, _)| format!("s{at}"))
             .collect();
-        let mut path: Vec<String> = Vec::new();
-        for id in self.path.iter().map(|id| self.named(id)) {
-            if !path.contains(&id) {
-                path.push(id);
-            }
-        }
+        let path: Vec<String> =
+            walk.path.iter().map(|at| format!("s{at}")).collect();
         let styles = styled(&marked, "marked", "fill:#fde68a,stroke:#b45309")
             .into_iter()
             .chain(styled(&path, "path", "stroke:#2563eb,stroke-width:3px"));
@@ -137,18 +132,23 @@ impl Statechart {
             .chain(notes)
             .chain(styles)
             .collect();
-        format!(
+        Ok(format!(
             "```mermaid\nstateDiagram-v2\n    {}\n```\n",
             lines.join("\n    ")
-        )
+        ))
     }
 }
 
+type Step<'a> = (usize, usize, &'a str);
+
+struct Walk<'a> {
+    start: usize,
+    steps: Vec<Step<'a>>,
+    path: Vec<usize>,
+}
+
 fn spoken(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<&str>>()
-        .join(" ")
-        .replace(':', "#58;")
+    line(text).replace(':', "#58;")
 }
 
 fn styled(ids: &[String], class: &str, style: &str) -> Vec<String> {

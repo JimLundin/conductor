@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::Draws;
-use home::canvas::{CanvasFile, CanvasKey, CanvasName, Held};
+use home::canvas::{CanvasKey, Held};
 use home::flow::PATH;
 use home::flow::command::{
     Asked, Command, Context, Fetched, Given, Need, Source, Wanted, Write,
@@ -72,7 +72,7 @@ fn issues(
 fn fetched(
     store: &dyn CanvasStore,
     wanted: &Wanted,
-) -> Result<Held<(CanvasName, CanvasFile)>, String> {
+) -> Result<Held<Fetched>, String> {
     let (names, strays) = if let Some(name) = &wanted.name {
         (Vec::from([name.clone()]), Vec::new())
     } else {
@@ -80,26 +80,31 @@ fn fetched(
             .list(&wanted.project, &wanted.issue)
             .map_err(|error| error.to_string())?;
         (
-            held.canvases.into_iter().map(|entry| entry.name).collect(),
+            held.canvases
+                .into_iter()
+                .map(|kept| {
+                    kept.map_or_else(|broken| broken.name, |entry| entry.name)
+                })
+                .collect(),
             held.strays,
         )
     };
-    let canvases = names
-        .into_iter()
-        .filter_map(|name| {
-            let key = CanvasKey {
-                project: wanted.project,
-                issue: wanted.issue,
-                name,
-            };
-            store
-                .get(&key)
-                .map(|kept| kept.map(|file| (key.name, file)))
-                .map_err(|error| error.to_string())
-                .transpose()
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    Ok(Held { canvases, strays })
+    Ok(Held {
+        canvases: names
+            .into_iter()
+            .map(|name| {
+                got(
+                    store,
+                    CanvasKey {
+                        project: wanted.project,
+                        issue: wanted.issue,
+                        name,
+                    },
+                )
+            })
+            .collect(),
+        strays,
+    })
 }
 
 fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
@@ -108,16 +113,18 @@ fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
         canvases: held
             .canvases
             .into_iter()
-            .map(|key| {
-                let got = store.get(&key).map_err(|refused| match refused {
-                    StoreError::Invalid { error, .. } => error.to_string(),
-                    StoreError::Unavailable { reason } => reason,
-                });
-                Fetched { key, got }
-            })
+            .map(|key| got(store, key))
             .collect(),
         strays: held.strays,
     })
+}
+
+fn got(store: &dyn CanvasStore, key: CanvasKey) -> Fetched {
+    let got = store.get(&key).map_err(|refused| match refused {
+        StoreError::Invalid { error, .. } => error.to_string(),
+        StoreError::Unavailable { reason } => reason,
+    });
+    Fetched { key, got }
 }
 
 fn stdin() -> Result<String, String> {

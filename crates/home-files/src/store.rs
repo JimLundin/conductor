@@ -3,7 +3,8 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use home::canvas::{
-    CanvasEntry, CanvasFile, CanvasKey, CanvasName, Held, Stray, StrayReason,
+    Broken, CanvasEntry, CanvasFile, CanvasKey, CanvasName, Held, Stray,
+    StrayReason,
 };
 use home::layout::{self, PROJECTS};
 use home::{IssueId, ProjectId};
@@ -73,14 +74,17 @@ impl FolderStore {
         let folder = Self::issue(project, issue);
         let mut held = Held::default();
         for found in self.found(&folder)? {
-            match found
+            let named = found
                 .name
                 .strip_suffix(SUFFIX)
-                .filter(|_| !found.folder)
-                .and_then(|stem| CanvasName::parse(stem).ok())
-            {
-                Some(name) => held.canvases.push(name),
-                None => held.strays.push(Stray {
+                .and_then(|stem| CanvasName::parse(stem).ok());
+            match (found.folder, named) {
+                (false, Some(name)) => held.canvases.push(name),
+                (true, _) => held.strays.push(Stray {
+                    place: format!("{folder}/{}", found.name),
+                    reason: StrayReason::Folder,
+                }),
+                (false, None) => held.strays.push(Stray {
                     place: format!("{folder}/{}", found.name),
                     reason: StrayReason::Unnamed,
                 }),
@@ -136,7 +140,7 @@ impl CanvasStore for FolderStore {
         &self,
         project: &ProjectId,
         issue: &IssueId,
-    ) -> Result<Held<CanvasEntry>, StoreError> {
+    ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError> {
         let named = self.named(*project, *issue)?;
         let mut held = Held {
             canvases: Vec::new(),
@@ -150,7 +154,7 @@ impl CanvasStore for FolderStore {
             };
             match self.get(&key) {
                 Ok(Some(file)) => {
-                    held.canvases.push(CanvasEntry::of(key.name, &file));
+                    held.canvases.push(Ok(CanvasEntry::of(key.name, &file)));
                 }
                 Ok(None) => {
                     return Err(StoreError::Unavailable {
@@ -161,16 +165,14 @@ impl CanvasStore for FolderStore {
                     });
                 }
                 Err(StoreError::Invalid { error, .. }) => {
-                    held.strays.push(Stray {
-                        place: Self::place(&key),
-                        reason: StrayReason::Invalid(error),
-                    });
+                    held.canvases.push(Err(Broken {
+                        name: key.name,
+                        error,
+                    }));
                 }
                 Err(error) => return Err(error),
             }
         }
-        held.strays
-            .sort_by(|one, other| one.place.cmp(&other.place));
         Ok(held)
     }
 
@@ -250,17 +252,28 @@ mod tests {
         assert_eq!(
             home_store::contract(
                 &mut FolderStore::new(scratch.0.clone()),
+                |_, key| spoiled(&root, key),
                 |_, plant| planted(&root, plant)
             ),
             Ok(())
         );
     }
 
+    fn spoiled(root: &std::path::Path, key: &CanvasKey) {
+        let folder = root
+            .join(layout::issues(&key.project))
+            .join(key.issue.to_string());
+        let made = fs::create_dir_all(&folder).and_then(|()| {
+            fs::write(folder.join(format!("{}.json", key.name)), "{}")
+        });
+        assert!(made.is_ok(), "spoiling {key:?}: {made:?}");
+    }
+
     fn planted(root: &std::path::Path, plant: &Plant) -> String {
         let (folder, file) = match plant {
-            Plant::Broken(key) => (
-                format!("{}/{}", layout::issues(&key.project), key.issue),
-                Some(format!("{}.json", key.name)),
+            Plant::Folder { project, issue } => (
+                format!("{}/{issue}/notes.json", layout::issues(project)),
+                None,
             ),
             Plant::Unnamed { project, issue } => (
                 format!("{}/{issue}", layout::issues(project)),
