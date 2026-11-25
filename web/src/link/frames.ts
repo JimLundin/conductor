@@ -1,47 +1,40 @@
 // Frames on the pipe's streams, each one JSON body that the generated schemas encode and decode.
-import { Effect, Schema } from "effect";
-import type { Connection, Stream } from "../pipe.ts";
+import type { Connection, Stream } from "#ui/pipe.ts";
+import { Effect, Predicate, Schema } from "effect";
 
-const described = (error: unknown): string => {
-  if (error instanceof Error) {
+const described: (error: unknown) => string = (error) => {
+  if (Predicate.isError(error)) {
     return error.message;
   }
   return String(error);
 };
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
-const write = <T, E>(
-  schema: Schema.Codec<T, E>,
-  stream: Pick<Stream, "send">,
-  frame: T,
-): Effect.Effect<void, string> =>
-  Schema.encodeEffect(schema)(frame).pipe(
+const write: <Decoded, Encoded>(schema: Schema.Codec<Decoded, Encoded>, stream: Pick<Stream, "send">, frame: Decoded) => Effect.Effect<void, string> = (
+  schema,
+  stream,
+  frame,
+) =>
+  Schema.encodeEffect(Schema.fromJsonString(schema))(frame).pipe(
     Effect.mapError(described),
     Effect.flatMap((json) =>
       Effect.tryPromise({
-        try: () => stream.send(encoder.encode(JSON.stringify(json))),
         catch: described,
+        try: () => stream.send(new TextEncoder().encode(json)),
       }),
     ),
   );
 
-const decode = <T>(schema: Schema.Decoder<T>, frame: Uint8Array): Effect.Effect<T, string> =>
-  Effect.try({
-    try: (): unknown => JSON.parse(decoder.decode(frame)),
-    catch: described,
-  }).pipe(
-    Effect.flatMap((json) => Schema.decodeUnknownEffect(schema)(json)),
+const decode: <Decoded>(schema: Schema.Decoder<Decoded>, frame: Uint8Array) => Effect.Effect<Decoded, string> = (schema, frame) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(new TextDecoder().decode(frame)).pipe(
     Effect.mapError(described),
   );
 
 // The stream's next frame, or undefined once the host finished it.
-const read = <T>(
-  schema: Schema.Decoder<T>,
-  stream: Pick<Stream, "recv">,
-): Effect.Effect<T | undefined, string> =>
-  Effect.tryPromise({ try: () => stream.recv(), catch: described }).pipe(
+const read: <Decoded>(schema: Schema.Decoder<Decoded>, stream: Pick<Stream, "recv">) => Effect.Effect<Decoded | undefined, string> = (
+  schema,
+  stream,
+) =>
+  Effect.tryPromise({ catch: described, try: () => stream.recv() }).pipe(
     Effect.flatMap((frame) => {
       if (frame === undefined) {
         return Effect.succeed(undefined);
@@ -50,16 +43,16 @@ const read = <T>(
     }),
   );
 
-const open = (connection: Connection): Effect.Effect<Stream, string> =>
-  Effect.tryPromise({ try: () => connection.openBi(), catch: described });
+const open: (connection: Connection) => Effect.Effect<Stream, string> = (connection) =>
+  Effect.tryPromise({ catch: described, try: () => connection.openBi() });
 
 // Fails with the reason once the connection closes.
-const closing = (connection: Connection): Effect.Effect<never, string> =>
+const closing: (connection: Connection) => Effect.Effect<never, string> = (connection) =>
   Effect.promise(() => connection.closed()).pipe(
     Effect.flatMap((reason) => Effect.fail(`the connection closed: ${reason}`)),
   );
 
-const close = (connection: Connection): Effect.Effect<void> =>
+const close: (connection: Connection) => Effect.Effect<void> = (connection) =>
   Effect.tryPromise(() => connection.close()).pipe(Effect.ignore);
 
-export { close, closing, described, open, read, write };
+export { close, closing, decode, described, open, read, write };

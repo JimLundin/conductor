@@ -1,10 +1,16 @@
+import { App } from "#ui/app.tsx";
+import { Option } from "effect";
 import type { ReactElement } from "react";
-import { App } from "./app.tsx";
-import type { Store } from "./store.ts";
-import { StoreContext } from "./use-store.ts";
+import { RegistryContext } from "@effect/atom-react";
+import type { Store } from "#ui/store.ts";
+import { StoreContext } from "#ui/use-store.ts";
 
-export const Root = ({ store }: { readonly store: Store }): ReactElement => (
-  <StoreContext value={store}>
-    <App />
-  </StoreContext>
+const Root: ({ store }: { readonly store: Store }) => ReactElement = ({ store }) => (
+  <RegistryContext value={store.registry}>
+    <StoreContext value={Option.some(store)}>
+      <App />
+    </StoreContext>
+  </RegistryContext>
 );
+
+export { Root };

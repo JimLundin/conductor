@@ -1,8 +1,9 @@
 // The browser's transport to a host: iroh compiled to wasm, as crates/web-iroh declares it.
-import type { connect } from "../web-iroh/web_iroh.js";
+import type * as Transport from "#transport";
 
-export type { Connection, Stream } from "../web-iroh/web_iroh.js";
+export type Stream = Pick<Transport.Stream, keyof Transport.Stream>;
+export type Connection = Pick<Transport.Connection, keyof Transport.Connection>;
 
 export interface Pipe {
-  readonly connect: typeof connect;
+  readonly connect: typeof Transport.connect;
 }
