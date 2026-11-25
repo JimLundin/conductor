@@ -81,13 +81,13 @@ struct Exchange {
 
 struct Steps;
 
-type Script<'a, T> =
+type StepScript<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, GitError>> + Send + 'a>>;
 
 /// A workspace workflow. Each response advances it to another operation or
 /// a final result.
 pub struct Plan<'a, T> {
-    script: Script<'a, T>,
+    script: StepScript<'a, T>,
 }
 
 impl<'a, T> Plan<'a, T> {
@@ -109,8 +109,6 @@ impl<'a, T> Plan<'a, T> {
         let mut context = ContextBuilder::from_waker(Waker::noop())
             .ext(&mut exchange)
             .build();
-        // The script only waits on steps, which publish a request before
-        // suspending. No executor or wakeups are involved.
         match self.script.as_mut().poll(&mut context) {
             Poll::Ready(result) => ControlFlow::Break(result),
             Poll::Pending => exchange.step.map_or_else(

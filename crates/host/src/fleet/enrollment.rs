@@ -38,7 +38,6 @@ impl EnrollmentToken {
     }
 }
 
-/// Never print the secret in logs.
 impl fmt::Debug for EnrollmentToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("EnrollmentToken(..)")

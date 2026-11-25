@@ -182,7 +182,6 @@ impl Probing {
     }
 }
 
-/// A CLI that runs.
 #[derive(Debug)]
 struct Cli<S> {
     path: String,
@@ -327,7 +326,6 @@ mod tests {
         }
     }
 
-    /// What each probe of a startup says.
     struct Probes {
         installed: Result<&'static str, String>,
         version: Result<Output, String>,
@@ -346,7 +344,6 @@ mod tests {
         }
     }
 
-    /// Walks a startup through every step.
     fn walk(
         given: Option<&'static str>,
         probes: &Probes,
