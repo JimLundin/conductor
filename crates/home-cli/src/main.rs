@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::Draws;
-use home::canvas::{CanvasFile, CanvasKey, CanvasName};
+use home::canvas::{CanvasFile, CanvasKey, CanvasName, Held};
 use home::flow::PATH;
 use home::flow::command::{
     Asked, Command, Context, Given, Need, Source, Stored, Wanted, Write, asked,
@@ -72,17 +72,19 @@ fn issues(
 fn fetched(
     store: &dyn CanvasStore,
     wanted: &Wanted,
-) -> Result<Vec<(CanvasName, CanvasFile)>, String> {
-    let names = match &wanted.name {
-        Some(name) => Vec::from([name.clone()]),
-        None => store
+) -> Result<Held<(CanvasName, CanvasFile)>, String> {
+    let (names, strays) = if let Some(name) = &wanted.name {
+        (Vec::from([name.clone()]), Vec::new())
+    } else {
+        let held = store
             .list(&wanted.project, &wanted.issue)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(|entry| entry.name)
-            .collect(),
+            .map_err(|error| error.to_string())?;
+        (
+            held.canvases.into_iter().map(|entry| entry.name).collect(),
+            held.strays,
+        )
     };
-    names
+    let canvases = names
         .into_iter()
         .filter_map(|name| {
             let key = CanvasKey {
@@ -96,22 +98,26 @@ fn fetched(
                 .map_err(|error| error.to_string())
                 .transpose()
         })
-        .collect()
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(Held { canvases, strays })
 }
 
-fn every(store: &dyn CanvasStore) -> Result<Vec<Stored>, String> {
-    Ok(store
-        .all()
-        .map_err(|error| error.to_string())?
-        .into_iter()
-        .map(|key| {
-            let got = store.get(&key).map_err(|refused| match refused {
-                StoreError::Invalid { error, .. } => error.to_string(),
-                StoreError::Unavailable { reason } => reason,
-            });
-            Stored { key, got }
-        })
-        .collect())
+fn every(store: &dyn CanvasStore) -> Result<Held<Stored>, String> {
+    let held = store.all().map_err(|error| error.to_string())?;
+    Ok(Held {
+        canvases: held
+            .canvases
+            .into_iter()
+            .map(|key| {
+                let got = store.get(&key).map_err(|refused| match refused {
+                    StoreError::Invalid { error, .. } => error.to_string(),
+                    StoreError::Unavailable { reason } => reason,
+                });
+                Stored { key, got }
+            })
+            .collect(),
+        strays: held.strays,
+    })
 }
 
 fn stdin() -> Result<String, String> {

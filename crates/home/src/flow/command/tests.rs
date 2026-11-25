@@ -10,7 +10,8 @@ use super::{
     stamp, write,
 };
 use crate::canvas::{
-    BadName, Block, Canvas, CanvasFile, CanvasKey, CanvasName,
+    BadName, Block, Canvas, CanvasFile, CanvasKey, CanvasName, Held, Stray,
+    StrayReason,
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
@@ -1033,7 +1034,10 @@ fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
     };
     let one = given(
         &format!("canvas show {TASK} why-a-store"),
-        Given::Canvases(Ok(Vec::from([kept("why-a-store", "Why a store")?]))),
+        Given::Canvases(Ok(held(Vec::from([kept(
+            "why-a-store",
+            "Why a store",
+        )?])))),
     );
     assert_eq!(
         (one.failed, one.output),
@@ -1046,10 +1050,10 @@ fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
     );
     let every = given(
         &format!("canvas show {TASK}"),
-        Given::Canvases(Ok(Vec::from([
+        Given::Canvases(Ok(held(Vec::from([
             kept("first", "First")?,
             kept("second", "Second")?,
-        ]))),
+        ])))),
     );
     assert_eq!(
         every.output,
@@ -1063,7 +1067,7 @@ fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
 fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     let missing = given(
         &format!("canvas show {TASK} gone"),
-        Given::Canvases(Ok(Vec::new())),
+        Given::Canvases(Ok(held(Vec::new()))),
     );
     assert_eq!(
         (missing.failed, missing.output),
@@ -1074,7 +1078,7 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     );
     let none = given(
         &format!("canvas show {TASK}"),
-        Given::Canvases(Ok(Vec::new())),
+        Given::Canvases(Ok(held(Vec::new()))),
     );
     assert_eq!(
         (none.failed, none.output),
@@ -1180,14 +1184,14 @@ fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_stat
     let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
     let shown = given(
         &format!("canvas show {TASK} turn"),
-        Given::Canvases(Ok(Vec::from([(
+        Given::Canvases(Ok(held(Vec::from([(
             CanvasName::parse("turn").map_err(|error| error.to_string())?,
             CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
                 canvas,
             },
-        )]))),
+        )])))),
     );
     assert_eq!(
         (shown.failed, shown.output),
@@ -1322,11 +1326,12 @@ fn a_canvas_show_prints_a_diagram_as_one_flowchart_per_step_each_holding_the_ste
     let put = put_canvas(&text);
     let shown = given(
         &format!("canvas show {TASK} design"),
-        Given::Canvases(Ok(put
-            .canvases
-            .into_iter()
-            .map(|write| (write.key.name, write.file))
-            .collect())),
+        Given::Canvases(Ok(held(
+            put.canvases
+                .into_iter()
+                .map(|write| (write.key.name, write.file))
+                .collect(),
+        ))),
     );
     assert_eq!(
         (shown.failed, shown.output.as_str()),
@@ -1415,14 +1420,14 @@ fn shown(text: &str) -> Result<Outcome, String> {
     let canvas = Canvas::parse(text).map_err(|error| error.to_string())?;
     Ok(given(
         &format!("canvas show {TASK} stands"),
-        Given::Canvases(Ok(Vec::from([(
+        Given::Canvases(Ok(held(Vec::from([(
             CanvasName::parse("stands").map_err(|error| error.to_string())?,
             CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
                 canvas,
             },
-        )]))),
+        )])))),
     ))
 }
 
@@ -1510,6 +1515,13 @@ fn stored(
     })
 }
 
+fn held<T>(canvases: Vec<T>) -> Held<T> {
+    Held {
+        canvases,
+        strays: Vec::new(),
+    }
+}
+
 fn prose_file() -> CanvasFile {
     CanvasFile {
         written: NOW,
@@ -1542,7 +1554,7 @@ fn check_reports_each_canvas_the_store_cant_return_that_breaks_its_rules_or_that
     };
     let checked = given(
         "check",
-        Given::EveryCanvas(Ok(Vec::from([
+        Given::EveryCanvas(Ok(held(Vec::from([
             stored(TASK, "fine", Ok(Some(prose_file())))?,
             stored(TASK, "denied", Err(String::from("permission denied")))?,
             stored(
@@ -1553,7 +1565,7 @@ fn check_reports_each_canvas_the_store_cant_return_that_breaks_its_rules_or_that
             stored(TASK, "turn", Ok(Some(broken)))?,
             stored(TASK, "vanished", Ok(None))?,
             stored("0v29xvc9", "orphan", Ok(Some(prose_file())))?,
-        ]))),
+        ])))),
     );
     assert_eq!(
         (checked.failed, checked.output),
@@ -1578,10 +1590,10 @@ fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
 -> Result<(), String> {
     let checked = given(
         "check",
-        Given::EveryCanvas(Ok(Vec::from([
+        Given::EveryCanvas(Ok(held(Vec::from([
             stored(TASK, "why-a-store", Ok(Some(prose_file())))?,
             stored(SPEC, "design", Ok(Some(prose_file())))?,
-        ]))),
+        ])))),
     );
     assert_eq!(
         (checked.failed, checked.output),
@@ -1604,4 +1616,79 @@ fn check_reports_a_store_that_cant_list_its_canvases() {
         "{}",
         checked.output
     );
+}
+
+#[test]
+fn a_canvas_show_prints_an_issue_s_valid_canvases_then_reports_what_the_store_skipped()
+-> Result<(), String> {
+    let shown = given(
+        &format!("canvas show {TASK}"),
+        Given::Canvases(Ok(Held {
+            canvases: Vec::from([
+                (
+                    CanvasName::parse("first").map_err(|e| e.to_string())?,
+                    prose_file(),
+                ),
+                (
+                    CanvasName::parse("second").map_err(|e| e.to_string())?,
+                    prose_file(),
+                ),
+            ]),
+            strays: Vec::from([Stray {
+                place: String::from("over/there/broken"),
+                reason: StrayReason::Invalid(
+                    crate::canvas::CanvasError::Json {
+                        reason: String::from("missing field `title`"),
+                    },
+                ),
+            }]),
+        })),
+    );
+    assert_eq!(
+        (shown.failed, shown.output),
+        (
+            true,
+            String::from(
+                "# Why a store\n\nThe core decides.\n\n\
+                 # Why a store\n\nThe core decides.\n\
+                 home: over/there/broken: not a canvas: missing field `title`\n"
+            )
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
+{
+    let checked = given(
+        "check",
+        Given::EveryCanvas(Ok(Held {
+            canvases: Vec::from([stored(
+                TASK,
+                "why-a-store",
+                Ok(Some(prose_file())),
+            )?]),
+            strays: Vec::from([
+                Stray {
+                    place: String::from("over/there/Bad Name.json"),
+                    reason: StrayReason::Unnamed,
+                },
+                Stray {
+                    place: String::from("over/not-an-issue"),
+                    reason: StrayReason::NotAnIssue,
+                },
+            ]),
+        })),
+    );
+    assert!(checked.failed);
+    assert!(
+        checked.output.contains(
+            "error  over/there/Bad Name.json  isn't a canvas: name it in lowercase words joined by `-`, or move it out of the issue\n\
+             error  over/not-an-issue  isn't an issue: keep canvases under an issue's id, or remove it\n"
+        ),
+        "{}",
+        checked.output
+    );
+    Ok(())
 }

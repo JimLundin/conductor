@@ -3,26 +3,26 @@ mod memory;
 
 use std::fmt;
 
-use home::canvas::{CanvasEntry, CanvasError, CanvasFile, CanvasKey};
+use home::canvas::{CanvasEntry, CanvasError, CanvasFile, CanvasKey, Held};
 use home::{IssueId, ProjectId};
 
-pub use contract::contract;
+pub use contract::{Plant, contract};
 pub use memory::Memory;
 
 pub trait CanvasStore {
     /// # Errors
     ///
     /// The store cannot be read.
-    fn all(&self) -> Result<Vec<CanvasKey>, StoreError>;
+    fn all(&self) -> Result<Held<CanvasKey>, StoreError>;
 
     /// # Errors
     ///
-    /// The store cannot be read, or holds a file that is not a canvas.
+    /// The store cannot be read.
     fn list(
         &self,
         project: &ProjectId,
         issue: &IssueId,
-    ) -> Result<Vec<CanvasEntry>, StoreError>;
+    ) -> Result<Held<CanvasEntry>, StoreError>;
 
     /// # Errors
     ///

@@ -9,7 +9,7 @@
 
 use alloc::string::ToString;
 
-use crate::canvas::{Canvas, CanvasFile, CanvasKey, CanvasName};
+use crate::canvas::{Canvas, CanvasFile, CanvasKey, CanvasName, Held};
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
 use crate::issue::{
     ChecklistChange, Datum, Entry, Issue, IssueChange, Item, LogEvent,
@@ -162,8 +162,8 @@ pub struct Wanted {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Given {
     Text(Result<String, String>),
-    Canvases(Result<Vec<(CanvasName, CanvasFile)>, String>),
-    EveryCanvas(Result<Vec<Stored>, String>),
+    Canvases(Result<Held<(CanvasName, CanvasFile)>, String>),
+    EveryCanvas(Result<Held<Stored>, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -699,19 +699,36 @@ fn shown(home: &Snapshot, wanted: &Wanted, given: Option<Given>) -> Outcome {
     };
     match (fetched, &wanted.name) {
         (Err(reason), _) => refused(refusal(&reason)),
-        (Ok(none), Some(name)) if none.is_empty() => refused(refusal(
-            &format!("no canvas is called {name} on {subject}"),
-        )),
-        (Ok(none), None) if none.is_empty() => Outcome {
-            output: format!("{subject} has no canvases\n"),
-            ..said_only()
-        },
-        (Ok(kept), _) => Outcome {
-            output: kept
+        (Ok(none), Some(name))
+            if none.canvases.is_empty() && none.strays.is_empty() =>
+        {
+            refused(refusal(&format!(
+                "no canvas is called {name} on {subject}"
+            )))
+        }
+        (Ok(none), None)
+            if none.canvases.is_empty() && none.strays.is_empty() =>
+        {
+            Outcome {
+                output: format!("{subject} has no canvases\n"),
+                ..said_only()
+            }
+        }
+        (Ok(held), _) => Outcome {
+            output: held
+                .canvases
                 .iter()
                 .map(|(_, file)| file.canvas.markdown())
                 .collect::<Vec<String>>()
-                .join("\n"),
+                .join("\n")
+                + &held
+                    .strays
+                    .iter()
+                    .map(|stray| {
+                        refusal(&format!("{}: {}", stray.place, stray.reason))
+                    })
+                    .collect::<String>(),
+            failed: !held.strays.is_empty(),
             ..said_only()
         },
     }
