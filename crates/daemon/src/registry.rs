@@ -172,9 +172,9 @@ impl Registry {
         by: ClientName,
     ) -> Result<SessionResult, Stopped> {
         let placed = self.home.place(at).await?;
-        if let Err(reason) = placed.as_ref().map_or(Ok(()), |placement| {
-            self.home.check_workspaces(placement, &self.workspaces)
-        }) {
+        if let Err(reason) =
+            self.home.check_workspaces(&placed, &self.workspaces).await
+        {
             return Ok(SessionResult::Refused(
                 SessionRefusal::WorkspaceFailure { reason },
             ));

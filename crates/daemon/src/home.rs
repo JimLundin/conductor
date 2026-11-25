@@ -243,21 +243,33 @@ impl HomeClone {
         }
     }
 
-    pub fn check_workspaces(
+    pub async fn check_workspaces(
         &self,
-        placement: &Placement,
+        placed: &Placed,
         workspaces: &crate::Workspaces,
     ) -> Result<(), String> {
-        let Some(id) = placement.project else {
+        let Some((project, directory)) = placed
+            .as_ref()
+            .ok()
+            .and_then(|p| p.project.map(|id| (id, p.directory.clone())))
+        else {
             return Ok(());
         };
-        let catalog = home_files::configuration(&self.clone);
-        let project = catalog
-            .project(&id.to_string())
-            .ok_or_else(|| HomeRefusal::UnknownProject.label())?;
-        workspaces
-            .preflight(&project.backends, &placement.directory)
-            .map_err(|reason| reason.label())
+        let root = self.clone.clone();
+        let workspaces = workspaces.clone();
+        tokio::task::spawn_blocking(move || {
+            let catalog = home_files::configuration(&root);
+            let project = catalog
+                .projects()
+                .iter()
+                .find(|p| p.id == project)
+                .ok_or_else(|| HomeRefusal::UnknownProject.label())?;
+            workspaces
+                .preflight(&project.backends, &directory)
+                .map_err(|reason| reason.label())
+        })
+        .await
+        .map_err(|_| String::from("workspace capability check stopped"))?
     }
 
     /// Readies the issue's branch in its checkout for a session to start
