@@ -19,9 +19,9 @@ const Account = Schema.Union(
   identifier: "Account",
 });
 
-type Alpn = "conductor/46";
+type Alpn = "conductor/48";
 
-const Alpn = Schema.Literal("conductor/46").annotate({
+const Alpn = Schema.Literal("conductor/48").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -148,6 +148,80 @@ const Availability = Schema.Union(
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "Availability" });
+
+type State = { readonly id: string; readonly label: string; readonly marked?: string | null };
+
+const State = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  marked: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+}).annotate({ identifier: "State" });
+
+type Transition = { readonly event: string; readonly from: string; readonly to: string };
+
+const Transition = Schema.Struct({
+  event: Schema.String,
+  from: Schema.String,
+  to: Schema.String,
+}).annotate({ identifier: "Transition" });
+
+type Statechart = {
+  readonly path?: globalThis.ReadonlyArray<string>;
+  readonly start: string;
+  readonly states: globalThis.ReadonlyArray<State>;
+  readonly transitions: globalThis.ReadonlyArray<Transition>;
+};
+
+const Statechart = Schema.Struct({
+  path: Schema.optionalKey(Schema.Array(Schema.String)),
+  start: Schema.String,
+  states: Schema.Array(State),
+  transitions: Schema.Array(Transition),
+}).annotate({ identifier: "Statechart" });
+
+type Block = { readonly prose: { readonly text: string } } | { readonly statechart: Statechart };
+
+const Block = Schema.Union(
+  [
+    Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }),
+    Schema.Struct({ statechart: Statechart }),
+  ],
+  { mode: "oneOf" },
+).annotate({ identifier: "Block" });
+
+type Canvas = { readonly blocks: globalThis.ReadonlyArray<Block>; readonly title: string };
+
+const Canvas = Schema.Struct({ blocks: Schema.Array(Block), title: Schema.String }).annotate({
+  identifier: "Canvas",
+});
+
+type CanvasName = string;
+
+const CanvasName = Schema.String.annotate({ identifier: "CanvasName" });
+
+type CanvasEntry = { readonly by: string; readonly name: CanvasName; readonly written: number };
+
+const CanvasEntry = Schema.Struct({
+  by: Schema.String,
+  name: CanvasName,
+  written: Schema.Number.annotate({ format: "uint64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+}).annotate({ identifier: "CanvasEntry" });
+
+type CanvasFile = { readonly by: string; readonly canvas: Canvas; readonly written: number };
+
+const CanvasFile = Schema.Struct({
+  by: Schema.String,
+  canvas: Canvas,
+  written: Schema.Number.annotate({ format: "uint64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+}).annotate({ identifier: "CanvasFile" });
 
 type FieldKind = "Text" | "Url" | "Secret";
 
@@ -734,7 +808,8 @@ type HomeCommand =
         readonly edit: EditId;
         readonly issue: IssueId;
       };
-    };
+    }
+  | { readonly Canvas: { readonly issue: IssueId; readonly name: CanvasName } };
 
 const HomeCommand = Schema.Union(
   [
@@ -753,6 +828,7 @@ const HomeCommand = Schema.Union(
     Schema.Struct({
       ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueId }),
     }).annotate({ description: "Answers `IssueWritten` once written, like `CreateIssue`." }),
+    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueId, name: CanvasName }) }),
   ],
   { mode: "oneOf" },
 ).annotate({
@@ -928,15 +1004,17 @@ const CommandId = Schema.String.annotate({
 type HomeRefusal =
   | "UnknownProject"
   | "UnknownIssue"
+  | "UnknownCanvas"
   | "NoHome"
   | "NotCheckedOut"
   | "NoRemote"
   | { readonly IssueNotSaved: { readonly reason: string } }
-  | { readonly IssueRefused: { readonly reason: string } };
+  | { readonly IssueRefused: { readonly reason: string } }
+  | { readonly CanvasUnavailable: { readonly reason: string } };
 
 const HomeRefusal = Schema.Union(
   [
-    Schema.Literals(["UnknownProject", "UnknownIssue"]),
+    Schema.Literals(["UnknownProject", "UnknownIssue", "UnknownCanvas"]),
     Schema.Literal("NoHome").annotate({ description: "The host was given no home." }),
     Schema.Literal("NotCheckedOut").annotate({
       description: "The project has no checkout on the host.",
@@ -950,6 +1028,7 @@ const HomeRefusal = Schema.Union(
     Schema.Struct({ IssueRefused: Schema.Struct({ reason: Schema.String }) }).annotate({
       description: "The flow refuses the edit, for this reason, as the `home` command\nline would.",
     }),
+    Schema.Struct({ CanvasUnavailable: Schema.Struct({ reason: Schema.String }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeRefusal" });
@@ -1186,6 +1265,7 @@ type HomeResult =
         readonly warnings: globalThis.ReadonlyArray<string>;
       };
     }
+  | { readonly Canvas: CanvasFile }
   | { readonly Refused: HomeRefusal };
 
 const HomeResult = Schema.Union(
@@ -1197,6 +1277,7 @@ const HomeResult = Schema.Union(
       description:
         "The issue a `CreateIssue` or `ChangeIssue` wrote, and what the\nflow warns of it.",
     }),
+    Schema.Struct({ Canvas: CanvasFile }),
     Schema.Struct({ Refused: HomeRefusal }),
   ],
   { mode: "oneOf" },
@@ -2267,6 +2348,7 @@ const Section = Schema.Struct({
 type Issue = {
   readonly body: string;
   readonly branch: string;
+  readonly canvases: globalThis.ReadonlyArray<CanvasEntry>;
   readonly checklist: globalThis.ReadonlyArray<ChecklistItem>;
   readonly fields: { readonly [x: string]: Datum };
   readonly id: IssueId;
@@ -2285,6 +2367,7 @@ const Issue = Schema.Struct({
     description: "The body before the checklist and the log, as its file has it.",
   }),
   branch: Schema.String.annotate({ description: "The branch its sessions land on." }),
+  canvases: Schema.Array(CanvasEntry),
   checklist: Schema.Array(ChecklistItem).annotate({
     description: "The items of the `## Checklist` section.",
   }),
@@ -2542,6 +2625,11 @@ export {
   Auth,
   AuthToken,
   Availability,
+  Block,
+  Canvas,
+  CanvasEntry,
+  CanvasFile,
+  CanvasName,
   Catalog,
   Change,
   ChecklistChange,
@@ -2655,6 +2743,8 @@ export {
   SnapshotFile,
   Stage,
   StartAt,
+  State,
+  Statechart,
   Status,
   SubagentActivity,
   SubagentEvent,
@@ -2666,6 +2756,7 @@ export {
   ToolKind,
   ToolOutcome,
   ToolPhase,
+  Transition,
   TurnOutcome,
   Welcome,
   WorkingCopy,

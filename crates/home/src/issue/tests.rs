@@ -150,6 +150,7 @@ fn issue() -> Issue {
             text: text("What to build and why."),
         }]),
         branch: format!("issue/{ID}"),
+        canvases: Vec::new(),
         checklist: Vec::from([
             ChecklistItem {
                 done: true,

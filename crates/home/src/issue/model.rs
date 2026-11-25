@@ -14,6 +14,7 @@ use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
+use crate::canvas::CanvasEntry;
 use crate::{IssueId, ProjectId};
 
 /// An issue as the flow reads its file.
@@ -40,6 +41,7 @@ pub struct Issue {
     pub log: Vec<Entry>,
     /// The branch its sessions land on.
     pub branch: String,
+    pub canvases: Vec<CanvasEntry>,
 }
 
 impl Issue {
