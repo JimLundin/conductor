@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the client link's schemas: the JSON Schema link's `schema`
 # example prints, into crates/link/link.schema.json, then the Effect Schemas
-# web/scripts/schemas.ts prints from it into web/src/schemas/, both in
+# web/scripts/schemas.ts prints from it into web/core/src/schemas/, both in
 # the standard's oxfmt format. `tools/schemas.sh [--check]`; with --check, the `schemas`
 # suite, it fails when that changed what is committed, or when the document
 # differs from main's and link::ALPN doesn't.
@@ -14,13 +14,13 @@ document=crates/link/link.schema.json
 cargo run --quiet -p link --example schema >"$document"
 (
 	cd web
-	node scripts/schemas.ts
-	npx -y "oxfmt@$oxfmt" --config "$standards/typescript/.oxfmtrc.json" src/schemas "../$document" >/dev/null
+	npm run --silent --workspace @conductor/schemas generate
+	npx -y "oxfmt@$oxfmt" --config "$standards/typescript/.oxfmtrc.json" core/src/schemas "../$document" >/dev/null
 )
 if [ "${1:-}" = --check ]; then
 	stale=$(
-		git diff --name-only -- "$document" web/src/schemas
-		git ls-files --others --exclude-standard -- "$document" web/src/schemas
+		git diff --name-only -- "$document" web/core/src/schemas
+		git ls-files --others --exclude-standard -- "$document" web/core/src/schemas
 	)
 	if [ -n "$stale" ]; then
 		printf '%s\n' "$stale"
