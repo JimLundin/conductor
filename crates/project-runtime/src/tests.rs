@@ -6,14 +6,16 @@ use home::backend::{
     Selection,
 };
 use home::hosting;
-use home::issue::{Observation, Read, Unreadable};
+use home::issue::{
+    ListPage, Lookup, Observation, Page, ReadFailure, Unreadable,
+};
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, OwnedWorkspace, Prepare,
     Prepared, PreserveAndRemove, Revision, SnapshotAttempt, WorkspaceId,
 };
 
 use super::{
-    Completion, Failure, IssueTracker, Registration, Registry,
+    Completion, Failure, IssueCompletion, IssueTracker, Registration, Registry,
     RepositoryHosting, VersionControl,
 };
 
@@ -47,11 +49,14 @@ fn workspace() -> Prepared {
     }
 }
 
-fn issue() -> Result<Read, String> {
-    Ok(Read {
+fn issue() -> Result<Lookup, String> {
+    Ok(Lookup {
         project: home::ProjectId::new(1),
-        issue: home::IssueId::new("tracker.test", "42")
-            .ok_or("invalid test issue")?,
+        reference: String::from("#42"),
+        expected: Some(
+            home::IssueId::new("tracker.test", "42")
+                .ok_or("invalid test issue")?,
+        ),
     })
 }
 
@@ -109,15 +114,22 @@ impl VersionControl for Scripted {
 }
 
 impl IssueTracker for Scripted {
-    fn read(&self, request: Read) -> Completion<'_, Observation> {
-        self.reply(Observation::invalid(Unreadable {
-            id: request.issue,
-            project: request.project,
-            title: Some(String::from(self.name)),
-            body: None,
-            created: None,
-            reason: String::from("invalid managed label"),
-        }))
+    fn list(&self, _request: ListPage) -> IssueCompletion<'_, Page> {
+        Box::pin(async { Err(ReadFailure::Unavailable) })
+    }
+
+    fn read(&self, request: Lookup) -> IssueCompletion<'_, Observation> {
+        let _sent = self.calls.send(());
+        Box::pin(async move {
+            Ok(Observation::invalid(Unreadable {
+                id: request.expected.ok_or(ReadFailure::Unavailable)?,
+                project: request.project,
+                title: Some(String::from(self.name)),
+                body: None,
+                created: None,
+                reason: String::from("invalid managed label"),
+            }))
+        })
     }
 }
 
@@ -148,7 +160,7 @@ async fn issue_work_without_a_tracker_is_refused_before_dispatch()
     );
     assert_eq!(
         registry.project(&backends).read_issue(issue()?).await,
-        Err(Failure::Refused(Refusal::TrackerNotConfigured))
+        Err(ReadFailure::Refused(Refusal::TrackerNotConfigured))
     );
     Ok(())
 }
@@ -174,7 +186,7 @@ async fn missing_credentials_refuse_issue_work_without_contacting_the_tracker()
     };
     assert_eq!(
         registry.project(&backends).read_issue(issue()?).await,
-        Err(Failure::Refused(Refusal::CredentialMissing {
+        Err(ReadFailure::Refused(Refusal::CredentialMissing {
             backend: Backend::IssueTracker,
             reference: selected.credential
         }))
@@ -339,7 +351,7 @@ async fn binding_one_resource_does_not_authorize_another_resource()
     };
     assert_eq!(
         registry.project(&backends).read_issue(issue()?).await,
-        Err(Failure::Refused(Refusal::BackendUnavailable {
+        Err(ReadFailure::Refused(Refusal::BackendUnavailable {
             backend: Backend::IssueTracker,
             adapter: String::from("issues")
         }))

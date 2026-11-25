@@ -21,6 +21,7 @@ use crate::prelude::*;
 
 pub mod check;
 pub mod command;
+mod coverage;
 pub mod eval;
 pub mod graph;
 pub mod role;

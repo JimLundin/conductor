@@ -1,4 +1,6 @@
+pub mod issues;
 pub mod operations;
+mod storage;
 pub mod transport;
 
 use std::future::Future;
@@ -10,7 +12,7 @@ use home::backend::{
     Selection,
 };
 use home::hosting;
-use home::issue::{Observation, Read};
+use home::issue::{ListPage, Lookup, Observation, Page, ReadFailure};
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
     PreserveAndRemove, Revision,
@@ -44,8 +46,12 @@ pub trait VersionControl: Send + Sync {
     ) -> Completion<'_, vcs::Kept>;
 }
 
+pub type IssueCompletion<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, ReadFailure>> + Send + 'a>>;
+
 pub trait IssueTracker: Send + Sync {
-    fn read(&self, request: Read) -> Completion<'_, Observation>;
+    fn read(&self, request: Lookup) -> IssueCompletion<'_, Observation>;
+    fn list(&self, request: ListPage) -> IssueCompletion<'_, Page>;
 }
 
 pub trait RepositoryHosting: Send + Sync {
@@ -232,13 +238,19 @@ impl Project<'_> {
     /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn read_issue(
         &self,
-        request: Read,
-    ) -> Result<Observation, Failure> {
+        request: Lookup,
+    ) -> Result<Observation, ReadFailure> {
+        let observed = self.tracker()?.read(request.clone()).await?;
+        home::issue::cache::verify(&request, &observed)?;
+        Ok(observed)
+    }
+
+    fn tracker(&self) -> Result<&dyn IssueTracker, ReadFailure> {
         self.registry
-            .preflight(self.backends, Capability::ReadIssues)?;
-        selected(&self.registry.trackers, self.backends.tracker.as_ref())?
-            .read(request)
-            .await
+            .preflight(self.backends, Capability::ReadIssues)
+            .map_err(ReadFailure::Refused)?;
+        selected(&self.registry.trackers, self.backends.tracker.as_ref())
+            .map_err(|_| ReadFailure::Unavailable)
     }
 
     /// # Errors

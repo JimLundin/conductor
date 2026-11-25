@@ -1,4 +1,5 @@
-use std::fs::{File, OpenOptions, TryLockError};
+use crate::storage::{CACHE_BYTES, private};
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use home::issue::EditId;
@@ -9,7 +10,6 @@ const OWNER: TableDefinition<(), [u8; 32]> = TableDefinition::new("owner/1");
 const RECORDS: TableDefinition<u128, &[u8]> =
     TableDefinition::new("operations/1");
 const FILE: &str = "project-operations.redb";
-const CACHE_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -51,7 +51,7 @@ impl Operations {
         let _lease = lock(&path)?;
         let database = Database::builder()
             .set_cache_size(CACHE_BYTES)
-            .create_file(private(&path)?)
+            .create_file(private(&path).map_err(failed)?)
             .map_err(opening)?;
         let write = database.begin_write().map_err(failed)?;
         {
@@ -138,19 +138,8 @@ impl Operations {
     }
 }
 
-fn private(path: &Path) -> Result<File, Error> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.mode(0o600);
-    }
-    options.open(path).map_err(failed)
-}
-
 fn lock(path: &Path) -> Result<File, Error> {
-    let lease = private(&path.with_extension("lock"))?;
+    let lease = private(&path.with_extension("lock")).map_err(failed)?;
     lease.try_lock().map_err(|err| match err {
         TryLockError::WouldBlock => Error::Busy,
         TryLockError::Error(cause) => failed(cause),

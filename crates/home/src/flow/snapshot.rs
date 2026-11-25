@@ -5,7 +5,7 @@ use crate::flow::Flow;
 use crate::issue::{Issue, Observation};
 use crate::{IssueId, ProjectId};
 
-use super::graph::{Graph, Problem, read};
+use super::graph::{Graph, Problem};
 use crate::prelude::*;
 use crate::project::{Listing, Project};
 
@@ -39,7 +39,7 @@ impl Snapshot {
         let mut records = inputs.issues;
         let graph = flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |read_flow| observed(read_flow, &mut records),
+            |read_flow| observed(read_flow, &mut records, true),
         );
         Self {
             flow,
@@ -81,7 +81,7 @@ impl Snapshot {
         records.push(Ok(observation));
         let graph = self.flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |flow| observed(flow, &mut records),
+            |flow| observed(flow, &mut records, true),
         );
         Self {
             records,
@@ -152,13 +152,7 @@ impl Snapshot {
                 .push(observation.clone());
         }
         for records in issues.values_mut() {
-            records.sort_by(|one, other| {
-                one.created()
-                    .is_none()
-                    .cmp(&other.created().is_none())
-                    .then_with(|| one.created().cmp(&other.created()))
-                    .then_with(|| one.id().cmp(other.id()))
-            });
+            records.sort_by(creation_order);
         }
         issues
     }
@@ -227,9 +221,33 @@ fn issues(
         .collect()
 }
 
+pub(crate) fn project_issues(
+    flow: &Flow,
+    records: Vec<Observation>,
+) -> Vec<Observation> {
+    let applicable = super::coverage::applicable(flow, &records);
+    let mut inputs: Vec<_> = records.into_iter().map(Ok).collect();
+    observed(&applicable, &mut inputs, false);
+    let mut evaluated: Vec<_> = inputs.into_iter().flatten().collect();
+    evaluated.sort_by(creation_order);
+    evaluated
+}
+
+fn creation_order(
+    one: &Observation,
+    other: &Observation,
+) -> core::cmp::Ordering {
+    one.created()
+        .is_none()
+        .cmp(&other.created().is_none())
+        .then_with(|| one.created().cmp(&other.created()))
+        .then_with(|| one.id().cmp(other.id()))
+}
+
 fn observed(
     flow: &Flow,
     records: &mut [Result<Observation, Problem>],
+    complete_catalog: bool,
 ) -> Graph {
     for observation in
         records.iter_mut().filter_map(|record| record.as_mut().ok())
@@ -248,7 +266,8 @@ fn observed(
             observation.state = crate::issue::IssueState::Invalid(record);
         }
     }
-    let graph = read(flow, &issues(records));
+    let graph =
+        super::graph::observed(flow, &issues(records), complete_catalog);
     let all: Vec<&Issue> = graph.issues.iter().collect();
     for observation in
         records.iter_mut().filter_map(|record| record.as_mut().ok())

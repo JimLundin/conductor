@@ -37,6 +37,14 @@ impl fmt::Display for Problem {
 /// Validates domain issues and their references against the flow.
 #[must_use]
 pub fn read(flow: &Flow, records: &[Result<Issue, Problem>]) -> Graph {
+    observed(flow, records, true)
+}
+
+pub(super) fn observed(
+    flow: &Flow,
+    records: &[Result<Issue, Problem>],
+    complete_catalog: bool,
+) -> Graph {
     let mut issues = Vec::new();
     let mut problems = Vec::new();
     let mut unread = BTreeSet::new();
@@ -57,7 +65,7 @@ pub fn read(flow: &Flow, records: &[Result<Issue, Problem>]) -> Graph {
     }
     issues.sort_by_key(|issue| issue.id.clone());
     problems.extend(shared(&issues));
-    problems.extend(references(flow, &issues, &unread));
+    problems.extend(references(flow, &issues, &unread, complete_catalog));
     problems.extend(cycles(flow, &issues));
     issues.sort_by(|one, other| {
         one.created
@@ -171,6 +179,7 @@ fn references(
     flow: &Flow,
     issues: &[Issue],
     unread: &BTreeSet<String>,
+    complete_catalog: bool,
 ) -> Vec<Problem> {
     let by_id: BTreeMap<IssueId, &Issue> = issues
         .iter()
@@ -186,7 +195,11 @@ fn references(
                 .map_or(&[][..], |relation| relation.to.as_slice());
             for id in ids {
                 let message = match by_id.get(id) {
-                    None if unread.contains(id.to_string().as_str()) => None,
+                    None if !complete_catalog
+                        || unread.contains(id.to_string().as_str()) =>
+                    {
+                        None
+                    }
                     None => Some(format!("{id} is no issue")),
                     Some(target)
                         if !allowed.is_empty()
