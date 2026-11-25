@@ -3,9 +3,11 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
+use core::num::NonZeroU8;
 
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::de::Error as _;
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::{CanvasError, distinct, quoted, short};
 
@@ -25,7 +27,8 @@ pub struct Node {
     pub label: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
-    pub step: u8,
+    #[serde(deserialize_with = "counted")]
+    pub step: NonZeroU8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -35,7 +38,8 @@ pub struct Edge {
     pub to: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
-    pub step: u8,
+    #[serde(deserialize_with = "counted")]
+    pub step: NonZeroU8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -65,9 +69,6 @@ impl Diagram {
 
     fn numbered(&self) -> Result<(), DiagramError> {
         let steps = self.steps();
-        if steps.contains(&0) {
-            return Err(DiagramError::StepZero);
-        }
         (1..=steps.last().copied().unwrap_or_default())
             .find(|step| !steps.contains(step))
             .map_or(Ok(()), |step| Err(DiagramError::Skipped { step }))
@@ -85,7 +86,7 @@ impl Diagram {
             .map_or(Ok(()), |node| {
                 Err(DiagramError::Alone {
                     node: node.id.clone(),
-                    step: node.step,
+                    step: node.step.get(),
                 })
             })
     }
@@ -131,9 +132,9 @@ impl Diagram {
             return Err(DiagramError::Early {
                 from: edge.from.clone(),
                 to: edge.to.clone(),
-                step: edge.step,
+                step: edge.step.get(),
                 node: node.id.clone(),
-                shown: node.step,
+                shown: node.step.get(),
             });
         }
         self.steps()
@@ -160,8 +161,8 @@ impl Diagram {
     fn steps(&self) -> BTreeSet<u8> {
         self.nodes
             .iter()
-            .map(|node| node.step)
-            .chain(self.edges.iter().map(|edge| edge.step))
+            .map(|node| node.step.get())
+            .chain(self.edges.iter().map(|edge| edge.step.get()))
             .collect()
     }
 
@@ -169,7 +170,7 @@ impl Diagram {
         self.nodes
             .iter()
             .enumerate()
-            .filter(move |(_, node)| node.step <= step)
+            .filter(move |(_, node)| node.step.get() <= step)
     }
 
     fn index(&self, id: &str, step: u8) -> Option<usize> {
@@ -207,7 +208,7 @@ impl Diagram {
         lines.extend(
             self.edges
                 .iter()
-                .filter(|edge| edge.step <= step)
+                .filter(|edge| edge.step.get() <= step)
                 .filter_map(|edge| {
                     let from = self.index(&edge.from, step)?;
                     let to = self.index(&edge.to, step)?;
@@ -222,6 +223,12 @@ impl Diagram {
         lines.push(String::from("```\n"));
         lines.join("\n")
     }
+}
+
+fn counted<'de, D: Deserializer<'de>>(steps: D) -> Result<NonZeroU8, D::Error> {
+    NonZeroU8::new(u8::deserialize(steps)?).ok_or_else(|| {
+        D::Error::custom("a diagram has a step 0: number its steps from 1")
+    })
 }
 
 const MOST_NODES: usize = 6;
@@ -248,7 +255,6 @@ pub enum DiagramError {
         node: String,
         shown: u8,
     },
-    StepZero,
     Skipped {
         step: u8,
     },
@@ -282,10 +288,6 @@ impl fmt::Display for DiagramError {
             } => write!(
                 out,
                 "the edge from `{from}` to `{to}` comes at step {step}, before node `{node}` at step {shown}: move the edge to step {shown} or later"
-            ),
-            Self::StepZero => write!(
-                out,
-                "a diagram has a step 0: number its steps from 1 with no gap"
             ),
             Self::Skipped { step } => write!(
                 out,

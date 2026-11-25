@@ -159,7 +159,7 @@ const Edge = Schema.Struct({
   step: Schema.Number.annotate({ format: "uint8" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
-      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+      Schema.isGreaterThanOrEqualTo(1).annotate({ expected: "a value greater than or equal to 1" }),
     )
     .check(
       Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),
@@ -187,7 +187,7 @@ const Node = Schema.Struct({
   step: Schema.Number.annotate({ format: "uint8" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
-      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+      Schema.isGreaterThanOrEqualTo(1).annotate({ expected: "a value greater than or equal to 1" }),
     )
     .check(
       Schema.isLessThanOrEqualTo(255).annotate({ expected: "a value less than or equal to 255" }),

@@ -570,10 +570,8 @@ pub fn run(
         Command::CanvasShow(wanted) => return shown(home, &wanted, given),
         Command::CanvasSchema => {
             return Outcome {
-                writes: Vec::new(),
-                canvases: Vec::new(),
                 output: Canvas::schema(),
-                failed: false,
+                ..said_only()
             };
         }
         Command::Edit(edit) => edit,

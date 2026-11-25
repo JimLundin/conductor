@@ -1,0 +1,198 @@
+[
+  {
+    "title": "How a session holds the lock",
+    "blocks": [
+      {
+        "prose": {
+          "text": "The lock now lives in the store."
+        }
+      },
+      {
+        "code": {
+          "path": "src/lock.rs"
+        }
+      }
+    ]
+  },
+  {
+    "prose": {
+      "text": "The lock now lives in the store, so two sessions can't both write."
+    }
+  },
+  {
+    "diagram": {
+      "nodes": [
+        {
+          "id": "agent",
+          "label": "the agent",
+          "step": 1
+        },
+        {
+          "id": "put",
+          "label": "home canvas put",
+          "group": "home",
+          "step": 1
+        },
+        {
+          "id": "store",
+          "label": "the canvas store",
+          "group": "home",
+          "step": 2
+        }
+      ],
+      "edges": [
+        {
+          "from": "agent",
+          "to": "put",
+          "label": "sends the JSON",
+          "step": 1
+        },
+        {
+          "from": "put",
+          "to": "store",
+          "step": 2
+        }
+      ],
+      "groups": [
+        {
+          "id": "home",
+          "label": "the home command"
+        }
+      ]
+    }
+  },
+  {
+    "statechart": {
+      "states": [
+        {
+          "id": "open",
+          "label": "open"
+        },
+        {
+          "id": "held",
+          "label": "held",
+          "marked": "only one session at a time"
+        },
+        {
+          "id": "done",
+          "label": "done"
+        }
+      ],
+      "start": "open",
+      "transitions": [
+        {
+          "from": "open",
+          "to": "held",
+          "event": "a session takes it"
+        },
+        {
+          "from": "held",
+          "to": "open",
+          "event": "the session lets go"
+        },
+        {
+          "from": "held",
+          "to": "done",
+          "event": "the write finishes"
+        }
+      ],
+      "path": [
+        "open",
+        "held",
+        "done"
+      ]
+    }
+  },
+  {
+    "options": {
+      "question": "Where does the lock live?",
+      "options": [
+        {
+          "label": "in the store",
+          "gets": "one place to look",
+          "costs": "a round trip per write"
+        },
+        {
+          "label": "in each session",
+          "gets": "no round trip",
+          "costs": "two sessions can both think they hold it"
+        }
+      ],
+      "pick": 0,
+      "why": "A lost write costs more than a round trip."
+    }
+  },
+  {
+    "changes": {
+      "groups": [
+        {
+          "kind": "core",
+          "entries": [
+            {
+              "code": {
+                "path": "src/lock.rs",
+                "lines": [
+                  12,
+                  40
+                ]
+              },
+              "note": "takes the lock before a write",
+              "tag": "race"
+            }
+          ]
+        },
+        {
+          "kind": "mechanical",
+          "entries": [
+            {
+              "code": {
+                "path": "src/lib.rs"
+              },
+              "note": "exports the lock"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "code": {
+      "path": "src/lock.rs",
+      "lines": [
+        12,
+        40
+      ],
+      "commit": "e77b8213"
+    }
+  },
+  {
+    "progress": {
+      "label": "frames matched",
+      "bar": {
+        "count": {
+          "done": 3,
+          "total": 8
+        }
+      }
+    }
+  },
+  {
+    "progress": {
+      "label": "scenes matched",
+      "bar": {
+        "stretches": [
+          {
+            "label": "the opening",
+            "done": 4,
+            "total": 4
+          },
+          {
+            "label": "the chase",
+            "done": 1,
+            "total": 6
+          }
+        ]
+      }
+    }
+  }
+]

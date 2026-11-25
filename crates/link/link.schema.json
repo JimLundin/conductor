@@ -814,7 +814,7 @@
         "step": {
           "format": "uint8",
           "maximum": 255,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer"
         },
         "to": {
@@ -2631,7 +2631,7 @@
         "step": {
           "format": "uint8",
           "maximum": 255,
-          "minimum": 0,
+          "minimum": 1,
           "type": "integer"
         }
       },

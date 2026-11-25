@@ -1092,7 +1092,7 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     );
 }
 
-const BLOCKS: &str = include_str!("blocks.md");
+const BLOCKS: &str = include_str!("blocks.json");
 
 const KINDS: [&str; 7] = [
     "changes",
@@ -1113,20 +1113,18 @@ fn schema() -> Result<serde_json::Value, String> {
 }
 
 fn examples() -> Result<Vec<serde_json::Value>, String> {
-    BLOCKS
-        .split("```json\n")
-        .skip(1)
-        .filter_map(|fenced| fenced.split("```").next())
+    let examples: Vec<serde_json::Value> =
+        serde_json::from_str(BLOCKS).map_err(|error| error.to_string())?;
+    Ok(examples
+        .into_iter()
         .map(|example| {
-            let value: serde_json::Value = serde_json::from_str(example)
-                .map_err(|error| format!("{error}: {example}"))?;
-            Ok(if value.get("title").is_some() {
-                value
+            if example.get("title").is_some() {
+                example
             } else {
-                serde_json::json!({"title": "A block", "blocks": [value]})
-            })
+                serde_json::json!({"title": "A block", "blocks": [example]})
+            }
         })
-        .collect()
+        .collect())
 }
 
 #[test]
@@ -1147,13 +1145,11 @@ fn a_canvas_schema_prints_a_json_schema_with_a_definition_of_each_block_kind()
 }
 
 #[test]
-fn every_example_of_the_explain_skill_s_blocks_fits_the_schema_and_is_put()
+fn the_canvas_schema_and_canvas_put_agree_on_every_example_of_the_explain_skill_s_blocks()
 -> Result<(), String> {
     let validator = jsonschema::validator_for(&schema()?)
         .map_err(|error| error.to_string())?;
-    let examples = examples()?;
-    assert_eq!(examples.len(), 9);
-    for example in examples {
+    for example in examples()? {
         let unfit: Vec<String> = validator
             .iter_errors(&example)
             .map(|error| error.to_string())
@@ -1548,16 +1544,6 @@ fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_gr
         ),
         (
             diagram(
-                &[node("core", "Core", 0), node("store", "Store", 0)]
-                    .join(", "),
-                r#"{"from": "core", "to": "store", "step": 0}"#,
-            ),
-            format!(
-                "home: canvas design of home/{TASK}: a diagram has a step 0: number its steps from 1 with no gap\n"
-            ),
-        ),
-        (
-            diagram(
                 &[
                     node("core", "Core", 1),
                     node("store", "Store", 1),
@@ -1586,6 +1572,36 @@ fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_gr
         ),
     ];
     refuses_each(cases);
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_step_of_0_is_refused_when_decoding_and_says_to_number_steps_from_1()
+ {
+    let text = diagram(
+        &[node("core", "Core", 0), node("store", "Store", 1)].join(", "),
+        r#"{"from": "core", "to": "store", "step": 1}"#,
+    );
+    refuses_each([(
+        text,
+        format!(
+            "home: canvas design of home/{TASK}: not a canvas: a diagram has a step 0: number its steps from 1 at line 1 column 96\n"
+        ),
+    )]);
+}
+
+#[test]
+fn a_canvas_schema_gives_a_diagram_step_a_minimum_of_1() -> Result<(), String> {
+    let schema = schema()?;
+    let steps: Vec<&serde_json::Value> = ["Node", "Edge"]
+        .iter()
+        .map(|part| &schema["$defs"][part]["properties"]["step"]["minimum"])
+        .collect();
+    assert_eq!(
+        steps,
+        [&serde_json::json!(1), &serde_json::json!(1)],
+        "{schema:#}"
+    );
+    Ok(())
 }
 
 fn refuses_each<const N: usize>(cases: [(String, String); N]) {
