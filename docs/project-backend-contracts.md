@@ -1,10 +1,10 @@
 # Issue mapping and project operation contracts
 
-Draft for spec `0v265ymj`, 2026-11-25. The owner has agreed to the backend
-boundaries, online issue writes, direct GitHub edits and a flow independent
-of GitHub. Decision `0v26ayew` selects git2 after the local prototype. This
-document proposes the remaining contracts for sign-off. It does not claim
-that these operations are implemented.
+Signed off by the owner for spec `0v265ymj` on 2026-11-25 at commit
+`fcc220a9`. The approval covers the backend boundaries, issue mapping,
+project operations, recovery and acceptance seams. Decision `0v26ayew`
+selects git2 after the local prototype. These operations remain to be
+implemented; the [task graph](project-backend-tasks.md) defines that work.
 
 The [crate structure](project-backend-structure.md) owns the dependencies.
 The [library research](github-backends.md) and
@@ -14,7 +14,7 @@ to existing code below describe Conductor at `ce97ebcd`.
 ## Standards
 
 The [standards project](https://github.com/JimLundin/standards) is the source
-of the implementation and validation rules. This draft was checked against
+of the implementation and validation rules. This contract was checked against
 its [README at 45c7290e](https://github.com/JimLundin/standards/blob/45c7290e8ee1b3d6ae1b5bde860a889454e6469c/README.md).
 Follow its current declared profiles when building; this reference records
 the design review baseline, not a fork of those rules.

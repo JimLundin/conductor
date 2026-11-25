@@ -45,7 +45,7 @@ A change to an issue that the home has not yet accepted. It remains
 pending while the host is offline or the home cannot be updated. It is
 known by its edit id, which the app mints once and sends again with each
 retry under a new command id, so the home applies it once.
-The backend contract draft replaces this offline-edit behavior with online
+The signed-off backend contract replaces this offline-edit behavior with online
 writes and recovery records for attempted operations.
 
 **Client link**:

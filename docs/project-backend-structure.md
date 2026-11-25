@@ -8,8 +8,9 @@ gix 0.91.0 has no push execution API. The
 [local prototype](experiments/vcs-probe/README.md) record the evidence and
 remaining checks. The interfaces keep both libraries outside the domain.
 
-The [contract draft](project-backend-contracts.md) specifies issue mapping,
-project operations, recovery outcomes and acceptance seams for sign-off.
+The [signed-off contract](project-backend-contracts.md) specifies issue
+mapping, project operations, recovery outcomes and acceptance seams. The
+[task graph](project-backend-tasks.md) assigns the implementation work.
 It references the standards project as the source of implementation and
 validation rules.
 
@@ -36,7 +37,7 @@ and give both CLI and daemon one project operation service.
 | `host` and `daemon` | Core and shell, existing | Own session lifecycle and invoke project operations and version control through the shared service. |
 | `cli` | Binary, existing | Builds `orchestrator`, constructs adapters, supplies credentials and injects the configured service. |
 
-The proposed module layout is:
+The module layout is:
 
 ```text
 crates/
@@ -124,7 +125,7 @@ construction; tokens do not belong in project files.
 
 ## A project operation
 
-The proposed agent commands are `start work`, `publish`, `check` and `land`.
+The project operation names are `start work`, `publish`, `check` and `land`.
 These are operation names, not a committed CLI syntax. The app uses the
 same service. Session lifecycle stays in `host`; project plans coordinate
 issue and repository work and return the context for a session start.
@@ -168,7 +169,7 @@ the structure does not promise that a GitHub UI edit cannot race a write.
 
 GitHub's native relations and fields are used where they fit. The mapping
 for additional flow fields and relations is private to the GitHub adapter.
-The contract draft proposes managed labels, one typed body footer and a
+The contract specifies managed labels, one typed body footer and a
 declared authoritative source for each relation. GitHub's limits do not
 change the domain model.
 

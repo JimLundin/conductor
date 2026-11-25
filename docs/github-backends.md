@@ -1,8 +1,10 @@
 # GitHub issue storage and project operations
 
-Research and proposed design, 2026-11-25. Tracked by Conductor spec
-`0v265ymj`, at `shape`, on branch `github-backends`. This records a proposal,
-not an approved implementation plan.
+Research for Conductor spec `0v265ymj`, 2026-11-25, on branch
+`github-backends`. The owner signed off the
+[implementation contract](project-backend-contracts.md) at `fcc220a9`.
+That contract and its [task graph](project-backend-tasks.md) govern the
+implementation; these notes retain the source findings and earlier options.
 
 The agreed [project structure](project-backend-structure.md) places git2
 and Octocrab behind the version control and tracking interfaces. Decision
@@ -258,11 +260,11 @@ Settled with the owner: replace local Git commands with a Rust library,
 allow direct GitHub issue edits, keep the flow independent of GitHub while
 allowing simplification, and require connectivity for issue changes.
 
-The [contract draft](project-backend-contracts.md) proposes the first project
-operations, field and relation mapping, local-only behavior, credentials,
-concurrent-write handling and acceptance seams for owner sign-off. It also
+The [signed-off contract](project-backend-contracts.md) defines the first
+project operations, field and relation mapping, local-only behavior,
+credentials, concurrent-write handling and acceptance seams. It also
 references the standards project as the implementation and validation
-authority. The current queue remains the proposed landing implementation.
+authority. The current queue is the first landing implementation.
 Decision `0v26ayew` selects git2 and the
 local recovery protocol after the prototype. Production work still needs
 authenticated transport, server rejection and merge/configuration checks,
