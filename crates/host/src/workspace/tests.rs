@@ -335,7 +335,7 @@ fn a_successful_push_reports_only_the_sanitized_push_destination() {
 fn diff_checks_immutable_refs_and_applies_the_patch_budget()
 -> Result<(), GitError> {
     let workspace = workspace();
-    let patch = "a".repeat(Output::CAPTURE - 1);
+    let patch = "a".repeat(Output::CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT - 1);
     let result = run(
         Plan::diff(&workspace, HostSeq(7), CURRENT, PREVIOUS),
         |step| {

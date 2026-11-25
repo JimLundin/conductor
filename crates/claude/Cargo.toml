@@ -9,6 +9,7 @@ publish = false
 agents = { path = "../agents" }
 serde.workspace = true
 serde_json.workspace = true
+ulid = { version = "1.2", default-features = false }
 
 [lints]
 workspace = true

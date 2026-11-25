@@ -14,7 +14,9 @@ use crate::flow::file::{Document, checklist_line, log_line};
 use crate::flow::graph::{self, File, branch_of};
 use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
-use crate::{CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId};
+use crate::{
+    CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId, UnixSecs,
+};
 
 fn read(
     flow: &Flow,
@@ -92,7 +94,7 @@ pub struct Edit {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditData {
     project: ProjectId,
-    at: u64,
+    at: UnixSecs,
     by: String,
     edit: command::Edit,
     was: Vec<Option<Vec<String>>>,
@@ -107,7 +109,7 @@ impl EditData {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Record,
-    Replay { changed: u64 },
+    Replay { changed: UnixSecs },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -329,7 +331,7 @@ fn written(
         },
     );
     let context = command::Context {
-        now_ms: data.at.saturating_mul(1000),
+        now: data.at.millis(),
         by: data.by.clone(),
         mark: Some(String::from(marker)),
     };

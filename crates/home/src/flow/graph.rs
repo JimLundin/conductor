@@ -117,8 +117,7 @@ pub fn parsed(flow: &Flow, file: &File) -> Result<(Issue, Document), Problem> {
                 .map_err(|message| fail(Some(&key), message))?;
             fields.insert(key, datum);
         } else if let Some(relation) = flow.relations.iter().find(|relation| {
-            relation.name == key
-                && (relation.from.is_empty() || relation.from.contains(&kind))
+            relation.name == key && relation.starts_from(&kind)
         }) {
             let ids = targets(relation, value)
                 .map_err(|message| fail(Some(&key), message))?;
@@ -217,18 +216,18 @@ fn references(
     let mut problems = Vec::new();
     for issue in issues {
         for (name, ids) in &issue.links {
-            let allowed = flow
+            let relation = flow
                 .relations
                 .iter()
-                .find(|relation| relation.name == *name)
-                .map_or(&[][..], |relation| relation.to.as_slice());
+                .find(|relation| relation.name == *name);
             for id in ids {
                 let message = match by_id.get(id) {
                     None if unread.contains(id.to_string().as_str()) => None,
                     None => Some(format!("{id} is no issue")),
                     Some(target)
-                        if !allowed.is_empty()
-                            && !allowed.contains(&target.kind) =>
+                        if relation.is_some_and(|declared| {
+                            !declared.reaches(&target.kind)
+                        }) =>
                     {
                         Some(format!(
                             "{id} is a {}, which {name} can't point to",

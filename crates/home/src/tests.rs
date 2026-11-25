@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use crate::{
     Checkout, CheckoutLocation, Cloning, Home, HomeRefusal, HomeSync, Origin,
-    ProjectId,
+    ProjectId, UnixSecs,
 };
 
 use crate::checkout::{
@@ -413,29 +414,29 @@ fn a_sync_succeeds_falls_behind_or_fails_and_keeps_its_last_success() {
     let first = Sync::default();
     assert_eq!(first, Sync::new());
     assert_eq!(first.status, HomeSync::Syncing);
-    let failed = first.after(Err(reason()), false, 10);
+    let failed = first.after(Err(reason()), false, UnixSecs(10));
     assert_eq!(
         failed,
         Sync {
-            synced_secs: None,
-            attempted_secs: Some(10),
+            synced: None,
+            attempted: Some(UnixSecs(10)),
             status: HomeSync::Failed { reason: reason() },
         }
     );
-    let synced = failed.after(Ok(()), true, 20);
+    let synced = failed.after(Ok(()), true, UnixSecs(20));
     assert_eq!(
         synced,
         Sync {
-            synced_secs: Some(20),
-            attempted_secs: Some(20),
+            synced: Some(UnixSecs(20)),
+            attempted: Some(UnixSecs(20)),
             status: HomeSync::Synced,
         }
     );
     assert_eq!(
-        synced.after(Err(reason()), true, 30),
+        synced.after(Err(reason()), true, UnixSecs(30)),
         Sync {
-            synced_secs: Some(20),
-            attempted_secs: Some(30),
+            synced: Some(UnixSecs(20)),
+            attempted: Some(UnixSecs(30)),
             status: HomeSync::Behind { reason: reason() },
         }
     );
@@ -443,13 +444,14 @@ fn a_sync_succeeds_falls_behind_or_fails_and_keeps_its_last_success() {
 
 #[test]
 fn a_read_pulls_first_unless_the_host_tried_within_the_bound() {
-    let tried = Sync::new().after(Ok(()), true, 100);
+    const FRESH: Duration = Duration::from_secs(30);
+    let tried = Sync::new().after(Ok(()), true, UnixSecs(100));
     assert_eq!(
         [
-            Sync::new().due(0, 30),
-            tried.due(129, 30),
-            tried.due(130, 30),
-            tried.due(50, 30),
+            Sync::new().due(UnixSecs(0), FRESH),
+            tried.due(UnixSecs(129), FRESH),
+            tried.due(UnixSecs(130), FRESH),
+            tried.due(UnixSecs(50), FRESH),
         ],
         [true, false, true, false]
     );
@@ -458,7 +460,7 @@ fn a_read_pulls_first_unless_the_host_tried_within_the_bound() {
 fn home(checkouts: &[&str]) -> Home {
     view(
         REMOTE,
-        &Sync::new().after(Ok(()), true, 5),
+        &Sync::new().after(Ok(()), true, UnixSecs(5)),
         &[project("conductor", Some(REMOTE)), project("sop", None)],
         Found {
             checkouts: &BTreeMap::from([(
@@ -483,6 +485,15 @@ fn home(checkouts: &[&str]) -> Home {
 }
 
 #[test]
+fn the_home_sends_its_last_sync_as_synced_secs() {
+    let sent = serde_json::to_value(home(&[])).unwrap_or_default();
+    assert_eq!(
+        (sent.get("synced_secs"), sent.get("synced")),
+        (Some(&serde_json::Value::from(5)), None)
+    );
+}
+
+#[test]
 fn the_view_gives_each_project_its_checkouts_and_its_clone() {
     let shown = home(&["/a", "/b"]);
     assert_eq!(
@@ -492,7 +503,7 @@ fn the_view_gives_each_project_its_checkouts_and_its_clone() {
             &shown.sync,
             shown.unpushed
         ),
-        (REMOTE, Some(5), &HomeSync::Synced, 2)
+        (REMOTE, Some(UnixSecs(5)), &HomeSync::Synced, 2)
     );
     assert_eq!(
         shown.projects,

@@ -157,6 +157,22 @@ pub struct Relation {
     pub reverse: String,
 }
 
+impl Relation {
+    #[must_use]
+    pub fn starts_from(&self, kind: &str) -> bool {
+        any_or_listed(&self.from, kind)
+    }
+
+    #[must_use]
+    pub fn reaches(&self, kind: &str) -> bool {
+        any_or_listed(&self.to, kind)
+    }
+}
+
+fn any_or_listed(kinds: &[String], kind: &str) -> bool {
+    kinds.is_empty() || kinds.iter().any(|listed| listed == kind)
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]

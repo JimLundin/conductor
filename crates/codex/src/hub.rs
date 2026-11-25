@@ -20,17 +20,21 @@ pub struct EarlyEvents {
     overflowed: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Overflowed;
+
 impl EarlyEvents {
+    pub const LIMIT: usize = 4096;
+
     pub fn capture(
         &mut self,
         event: CodexEvent,
         opening: bool,
     ) -> Option<CodexEvent> {
-        const LIMIT: usize = 4096;
         if let CodexEvent::Thread { thread, .. } = &event
             && opening
         {
-            if self.count < LIMIT {
+            if self.count < Self::LIMIT {
                 self.count += 1;
                 self.by_thread
                     .entry(thread.clone())
@@ -45,36 +49,41 @@ impl EarlyEvents {
         }
     }
 
-    #[must_use]
-    pub const fn overflowed(&self) -> bool {
-        self.overflowed
-    }
-
-    pub fn take(&mut self, thread: &ThreadId) -> Vec<CodexEvent> {
+    pub fn open(
+        &mut self,
+        thread: &ThreadId,
+    ) -> Result<Vec<CodexEvent>, Overflowed> {
+        if self.overflowed {
+            return Err(Overflowed);
+        }
         let events = self.by_thread.remove(thread).unwrap_or_default();
         self.count -= events.len();
-        events
+        Ok(events)
+    }
+
+    pub fn settle(&mut self) {
+        *self = Self::default();
     }
 }
 
 #[derive(Debug)]
-pub enum Command<T, M, C> {
-    Thread(T),
-    Models(M),
+pub enum Command<ThreadAsk, ModelsAsk, CredentialReply> {
+    Thread(ThreadAsk),
+    Models(ModelsAsk),
     Credential {
         credential: Option<CodexCredential>,
-        reply: C,
+        reply: CredentialReply,
     },
 }
 
 #[derive(Debug)]
-pub enum Input<T, M, C, R, E> {
-    Command(Command<T, M, C>),
+pub enum Input<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError> {
+    Command(Command<ThreadAsk, ModelsAsk, CredentialReply>),
     Applied(bool),
-    Spawned(Result<(), E>),
+    Spawned(Result<(), SpawnError>),
     Opened {
         thread: ThreadId,
-        route: R,
+        route: Route,
         generation: u64,
     },
     Event(Option<CodexEvent>),
@@ -86,54 +95,54 @@ pub enum Input<T, M, C, R, E> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Ask<T, M> {
-    Thread(T),
-    Models(M),
+pub enum Ask<ThreadAsk, ModelsAsk> {
+    Thread(ThreadAsk),
+    Models(ModelsAsk),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum Effect<T, M, C, R, E> {
+pub enum Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError> {
     Spawn(Option<CodexCredential>),
     SpawnConfigured(Option<CodexCredential>),
-    Open(T),
-    List(M),
-    Fail(Ask<T, M>, E),
+    Open(ThreadAsk),
+    List(ModelsAsk),
+    Fail(Ask<ThreadAsk, ModelsAsk>, SpawnError),
     Route {
         thread: ThreadId,
-        route: R,
+        route: Route,
         routed: Routed,
     },
     Close {
-        route: R,
+        route: Route,
         routed: Routed,
     },
     Stop,
     Lost(Exit),
     Unrouted(CodexEvent),
-    Configured(C),
+    Configured(CredentialReply),
     End,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum State<T, M> {
+enum State<ThreadAsk, ModelsAsk> {
     Down,
     Starting {
-        waiting: Vec<Ask<T, M>>,
+        waiting: Vec<Ask<ThreadAsk, ModelsAsk>>,
         stale: bool,
     },
     Up,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct Hub<T, M, R> {
+pub struct Hub<ThreadAsk, ModelsAsk, Route> {
     credential: Option<CodexCredential>,
     home_configured: bool,
-    state: State<T, M>,
-    routes: BTreeMap<ThreadId, (u64, R)>,
+    state: State<ThreadAsk, ModelsAsk>,
+    routes: BTreeMap<ThreadId, (u64, Route)>,
     children: Children,
 }
 
-impl<T, M, R: Clone> Hub<T, M, R> {
+impl<ThreadAsk, ModelsAsk, Route: Clone> Hub<ThreadAsk, ModelsAsk, Route> {
     #[must_use]
     pub const fn new(credential: Option<CodexCredential>) -> Self {
         Self {
@@ -150,10 +159,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         self.credential.as_ref()
     }
 
-    pub fn step<C, E: Clone>(
+    pub fn step<CredentialReply, SpawnError: Clone>(
         &mut self,
-        input: Input<T, M, C, R, E>,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+        input: Input<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match input {
             Input::Command(Command::Thread(asked)) => {
                 self.ask(Ask::Thread(asked))
@@ -202,7 +212,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn ask<C, E>(&mut self, ask: Ask<T, M>) -> Vec<Effect<T, M, C, R, E>> {
+    fn ask<CredentialReply, SpawnError>(
+        &mut self,
+        ask: Ask<ThreadAsk, ModelsAsk>,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match &mut self.state {
             State::Up => Vec::from([take(ask)]),
             State::Starting { waiting, .. } => {
@@ -219,7 +233,9 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn launch<C, E>(&self) -> Effect<T, M, C, R, E> {
+    fn launch<CredentialReply, SpawnError>(
+        &self,
+    ) -> Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError> {
         if self.home_configured {
             Effect::SpawnConfigured(self.credential.clone())
         } else {
@@ -227,11 +243,12 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn configure<C, E>(
+    fn configure<CredentialReply, SpawnError>(
         &mut self,
         credential: Option<CodexCredential>,
-        reply: C,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+        reply: CredentialReply,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         self.credential = credential;
         self.home_configured = false;
         let mut effects = match &mut self.state {
@@ -253,7 +270,10 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         effects
     }
 
-    fn spawned<C, E>(&mut self) -> Vec<Effect<T, M, C, R, E>> {
+    fn spawned<CredentialReply, SpawnError>(
+        &mut self,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match core::mem::replace(&mut self.state, State::Up) {
             State::Starting {
                 waiting,
@@ -273,10 +293,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn unspawned<C, E: Clone>(
+    fn unspawned<CredentialReply, SpawnError: Clone>(
         &mut self,
-        error: &E,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+        error: &SpawnError,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match core::mem::replace(&mut self.state, State::Down) {
             State::Starting { waiting, .. } => waiting
                 .into_iter()
@@ -286,12 +307,13 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn opened<C, E>(
+    fn opened<CredentialReply, SpawnError>(
         &mut self,
         thread: ThreadId,
-        route: R,
+        route: Route,
         generation: u64,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match self.state {
             State::Up => {
                 self.routes.insert(thread, (generation, route));
@@ -310,11 +332,12 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn route<C, E>(
+    fn route<CredentialReply, SpawnError>(
         &mut self,
         thread: ThreadId,
         notice: ThreadEvent,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match notice {
             ThreadEvent::Child(child) => self
                 .children
@@ -340,11 +363,12 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn route_child<C, E>(
+    fn route_child<CredentialReply, SpawnError>(
         &self,
         root: ThreadId,
         steps: Vec<Step>,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         if steps.is_empty() {
             Vec::new()
         } else {
@@ -352,11 +376,12 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn deliver<C, E>(
+    fn deliver<CredentialReply, SpawnError>(
         &self,
         thread: ThreadId,
         routed: Routed,
-    ) -> Vec<Effect<T, M, C, R, E>> {
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         self.routes
             .get(&thread)
             .map_or_else(Vec::new, |(_, route)| {
@@ -368,7 +393,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             })
     }
 
-    fn exited<C, E>(&mut self, status: Exit) -> Vec<Effect<T, M, C, R, E>> {
+    fn exited<CredentialReply, SpawnError>(
+        &mut self,
+        status: Exit,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         match self.state {
             State::Up => {
                 self.state = State::Down;
@@ -383,7 +412,11 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    fn close_all<C, E>(&mut self, last: &Routed) -> Vec<Effect<T, M, C, R, E>> {
+    fn close_all<CredentialReply, SpawnError>(
+        &mut self,
+        last: &Routed,
+    ) -> Vec<Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>>
+    {
         self.children = Children::new();
         core::mem::take(&mut self.routes)
             .into_values()
@@ -395,7 +428,9 @@ impl<T, M, R: Clone> Hub<T, M, R> {
     }
 }
 
-fn take<T, M, C, R, E>(ask: Ask<T, M>) -> Effect<T, M, C, R, E> {
+fn take<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError>(
+    ask: Ask<ThreadAsk, ModelsAsk>,
+) -> Effect<ThreadAsk, ModelsAsk, CredentialReply, Route, SpawnError> {
     match ask {
         Ask::Thread(asked) => Effect::Open(asked),
         Ask::Models(asked) => Effect::List(asked),
@@ -408,7 +443,9 @@ mod tests {
     use agents::Exit;
     use serde_json::json;
 
-    use super::{Ask, Command, Effect, Hub, Input, Routed};
+    use super::{
+        Ask, Command, EarlyEvents, Effect, Hub, Input, Overflowed, Routed,
+    };
     use crate::{CodexEvent, ThreadEvent, ThreadId, TurnId};
 
     type Step = Effect<u8, char, &'static str, u16, &'static str>;
@@ -696,5 +733,20 @@ mod tests {
         let mut hub = running();
         let seen: Vec<Step> = hub.step(Input::Closed);
         assert_eq!(seen, Vec::from([Effect::End]));
+    }
+
+    #[test]
+    fn early_events_past_the_limit_fail_opens_until_the_batch_settles() {
+        let mut early = EarlyEvents::default();
+        for _ in 0..EarlyEvents::LIMIT {
+            assert_eq!(early.capture(turn("th_1"), true), None);
+        }
+        assert_eq!(early.open(&id("th_2")), Ok(Vec::new()));
+        assert_eq!(early.capture(turn("th_1"), true), None);
+        assert_eq!(early.open(&id("th_1")), Err(Overflowed));
+        assert_eq!(early.open(&id("th_2")), Err(Overflowed));
+        early.settle();
+        assert_eq!(early.capture(turn("th_2"), true), None);
+        assert_eq!(early.open(&id("th_2")), Ok(Vec::from([turn("th_2")])));
     }
 }

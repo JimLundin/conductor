@@ -299,7 +299,7 @@ mod tests {
         };
         log.append(session, question(1)).await?;
         let mut live = log.follow_requests().await?;
-        let replay = log.subscribe(HostSeq(0)).await?.replay;
+        let replay = log.subscribe(HostSeq::BEFORE_FIRST).await?.replay;
         assert_eq!(replay.len(), 1);
         assert!(matches!(
             live.try_recv(),

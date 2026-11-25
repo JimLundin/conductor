@@ -57,9 +57,9 @@ pub(crate) fn offered(
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Launcher<S> {
+pub enum Launcher<Starter> {
     Running {
-        start: S,
+        start: Starter,
         own: OwnSignIn,
         chosen: Option<ModelId>,
         models: Result<Models, String>,
@@ -260,10 +260,10 @@ fn unbriefed(answer: Option<&SessionResult>) -> Option<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Job<S> {
+pub struct Job<Starter> {
     pub id: u64,
     pub instance_id: InstanceId,
-    pub adapter: S,
+    pub adapter: Starter,
     pub credential: Option<Credential>,
 }
 
@@ -283,10 +283,10 @@ pub struct Starting {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Started<S> {
+pub struct Started<Starter> {
     pub id: u64,
     pub instance: InstanceId,
-    pub launcher: Launcher<S>,
+    pub launcher: Launcher<Starter>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -328,55 +328,57 @@ impl Change {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Effect<S, R> {
-    Reply(R, InstanceResult),
+pub enum Effect<Starter, ReplyTo> {
+    Reply(ReplyTo, InstanceResult),
     MoveAside {
         instance: InstanceId,
-        reply: R,
+        reply: ReplyTo,
     },
     Save {
         roster: Roster,
         change: Change,
-        reply: R,
+        reply: ReplyTo,
     },
-    Refresh(Job<S>),
+    Refresh(Job<Starter>),
     Start(Starting),
     Log(Note),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Launch<S> {
-    start: S,
+struct Launch<Starter> {
+    start: Starter,
     choice: Choice,
     offered: Models,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Refresh<S, R> {
+enum Refresh<Starter, ReplyTo> {
     Pending {
         active: u64,
-        latest: Job<S>,
-        replies: Vec<R>,
+        latest: Job<Starter>,
+        replies: Vec<ReplyTo>,
     },
     Starting {
         id: u64,
         refresh_requested: bool,
-        replies: Vec<R>,
+        replies: Vec<ReplyTo>,
     },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Registry<S, H, R> {
+pub struct Registry<Starter, Handle, ReplyTo> {
     roster: Roster,
     unreadable: Option<String>,
-    launchers: BTreeMap<InstanceId, Launcher<S>>,
+    launchers: BTreeMap<InstanceId, Launcher<Starter>>,
     catalog: Catalog,
-    refreshes: BTreeMap<InstanceId, Refresh<S, R>>,
-    sessions: BTreeMap<SessionId, (InstanceId, H)>,
+    refreshes: BTreeMap<InstanceId, Refresh<Starter, ReplyTo>>,
+    sessions: BTreeMap<SessionId, (InstanceId, Handle)>,
     jobs: u64,
 }
 
-impl<S: Clone, H: Clone, R> Registry<S, H, R> {
+impl<Starter: Clone, Handle: Clone, ReplyTo>
+    Registry<Starter, Handle, ReplyTo>
+{
     #[must_use]
     pub fn new(stored: &Stored, catalog: Catalog) -> Self {
         let unreadable = match stored {
@@ -444,7 +446,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         exists: bool,
         model: Option<ModelId>,
         effort: Option<Effort>,
-    ) -> Result<Launch<S>, SessionRefusal> {
+    ) -> Result<Launch<Starter>, SessionRefusal> {
         if !exists {
             return Err(SessionRefusal::NoSuchDirectory);
         }
@@ -465,7 +467,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         session: SessionId,
         instance: InstanceId,
-        handle: H,
+        handle: Handle,
     ) {
         self.sessions.insert(session, (instance, handle));
     }
@@ -473,7 +475,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     pub fn relaunch(
         &self,
         session: SessionId,
-    ) -> Result<(H, S, Models), SessionRefusal> {
+    ) -> Result<(Handle, Starter, Models), SessionRefusal> {
         let (instance, handle) = self
             .sessions
             .get(&session)
@@ -484,7 +486,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     }
 
     #[must_use]
-    pub fn find(&self, session: SessionId) -> Option<H> {
+    pub fn find(&self, session: SessionId) -> Option<Handle> {
         self.sessions
             .get(&session)
             .map(|(_, handle)| handle.clone())
@@ -500,8 +502,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         instance: InstanceId,
         account: Option<Account>,
         running: &BTreeSet<SessionId>,
-        reply: R,
-    ) -> Vec<Effect<S, R>> {
+        reply: ReplyTo,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         if let Some((adoption, roster)) =
             AccountAdoption::named(&instance, account).and_then(|adoption| {
                 adoption.plan(&self.roster).map(|roster| (adoption, roster))
@@ -529,8 +531,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         provider: Provider,
         credential: Credential,
-        reply: R,
-    ) -> Vec<Effect<S, R>> {
+        reply: ReplyTo,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         let named = self
             .catalog
             .of(&provider)
@@ -566,8 +568,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         instance: InstanceId,
         running: &BTreeSet<SessionId>,
-        reply: R,
-    ) -> Vec<Effect<S, R>> {
+        reply: ReplyTo,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         if self.roster.of(&instance).is_none() {
             return Vec::from([refuse(
                 reply,
@@ -610,9 +612,9 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     pub fn moved_aside(
         &mut self,
         instance: InstanceId,
-        reply: R,
+        reply: ReplyTo,
         moved: Result<(), String>,
-    ) -> Vec<Effect<S, R>> {
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         match moved {
             Ok(()) => {
                 self.unreadable = None;
@@ -626,9 +628,9 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         roster: Roster,
         change: Change,
-        reply: R,
+        reply: ReplyTo,
         saved: Result<(), String>,
-    ) -> Vec<Effect<S, R>> {
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         if let Err(reason) = saved {
             return Vec::from([not_saved(reply, reason)]);
         }
@@ -672,7 +674,10 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    pub fn refreshed(&mut self, refreshed: Refreshed) -> Vec<Effect<S, R>> {
+    pub fn refreshed(
+        &mut self,
+        refreshed: Refreshed,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         let Refreshed {
             id,
             instance,
@@ -711,7 +716,10 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }
     }
 
-    pub fn started(&mut self, started: Started<S>) -> Vec<Effect<S, R>> {
+    pub fn started(
+        &mut self,
+        started: Started<Starter>,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         let Started {
             id,
             instance,
@@ -742,8 +750,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &self,
         roster: Roster,
         change: Change,
-        reply: R,
-    ) -> Vec<Effect<S, R>> {
+        reply: ReplyTo,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         Vec::from([match &self.unreadable {
             Some(reason) => not_saved(reply, reason.clone()),
             None => Effect::Save {
@@ -754,7 +762,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         }])
     }
 
-    fn forget(&mut self, instance: &InstanceId) -> Vec<R> {
+    fn forget(&mut self, instance: &InstanceId) -> Vec<ReplyTo> {
         self.launchers.remove(instance);
         match self.refreshes.remove(instance) {
             Some(
@@ -768,8 +776,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     fn launch(
         &mut self,
         instance: InstanceId,
-        replies: Vec<R>,
-    ) -> Vec<Effect<S, R>> {
+        replies: Vec<ReplyTo>,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         let Some(settings) = self.roster.of(&instance).cloned() else {
             return Self::answers(replies);
         };
@@ -785,7 +793,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         instance: InstanceId,
         settings: Instance,
-        replies: Vec<R>,
+        replies: Vec<ReplyTo>,
         mode: Mode,
     ) -> Starting {
         self.jobs = self.jobs.saturating_add(1);
@@ -809,7 +817,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &mut self,
         instance: &InstanceId,
         result: Result<Configuration, String>,
-    ) -> Option<Effect<S, R>> {
+    ) -> Option<Effect<Starter, ReplyTo>> {
         let Launcher::Running { chosen, models, .. } =
             self.launchers.get_mut(instance)?
         else {
@@ -827,8 +835,8 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     fn schedule(
         &mut self,
         instance: InstanceId,
-        asked: Vec<R>,
-    ) -> Vec<Effect<S, R>> {
+        asked: Vec<ReplyTo>,
+    ) -> Vec<Effect<Starter, ReplyTo>> {
         if let Some(Refresh::Starting {
             refresh_requested,
             replies,
@@ -876,11 +884,11 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         run.into_iter().collect()
     }
 
-    const fn answer(reply: R) -> Effect<S, R> {
+    const fn answer(reply: ReplyTo) -> Effect<Starter, ReplyTo> {
         Effect::Reply(reply, InstanceResult::Accepted)
     }
 
-    fn answers(replies: Vec<R>) -> Vec<Effect<S, R>> {
+    fn answers(replies: Vec<ReplyTo>) -> Vec<Effect<Starter, ReplyTo>> {
         replies.into_iter().map(Self::answer).collect()
     }
 
@@ -904,7 +912,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     fn ready(
         &self,
         instance: &InstanceId,
-    ) -> Result<(S, Auth, Models), String> {
+    ) -> Result<(Starter, Auth, Models), String> {
         self.ready_with(
             instance,
             self.roster
@@ -917,7 +925,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
         &self,
         instance: &InstanceId,
         credential: Option<&Credential>,
-    ) -> Result<(S, Auth, Models), String> {
+    ) -> Result<(Starter, Auth, Models), String> {
         match self.refreshes.get(instance) {
             None => Ok(()),
             Some(
@@ -964,7 +972,7 @@ impl<S: Clone, H: Clone, R> Registry<S, H, R> {
     fn launcher_of(
         &self,
         instance: &InstanceId,
-    ) -> Result<&Launcher<S>, String> {
+    ) -> Result<&Launcher<Starter>, String> {
         self.launchers
             .get(instance)
             .ok_or_else(|| format!("this host has no instance {instance}"))
@@ -983,15 +991,24 @@ const fn unavailable(reason: String) -> SessionRefusal {
     SessionRefusal::InstanceUnavailable { reason }
 }
 
-const fn refuse<S, R>(reply: R, refusal: InstanceRefusal) -> Effect<S, R> {
+const fn refuse<Starter, ReplyTo>(
+    reply: ReplyTo,
+    refusal: InstanceRefusal,
+) -> Effect<Starter, ReplyTo> {
     Effect::Reply(reply, InstanceResult::Refused(refusal))
 }
 
-const fn not_saved<S, R>(reply: R, reason: String) -> Effect<S, R> {
+const fn not_saved<Starter, ReplyTo>(
+    reply: ReplyTo,
+    reason: String,
+) -> Effect<Starter, ReplyTo> {
     refuse(reply, InstanceRefusal::CredentialNotSaved { reason })
 }
 
-fn logged<S, R>(note: Note, then: Vec<Effect<S, R>>) -> Vec<Effect<S, R>> {
+fn logged<Starter, ReplyTo>(
+    note: Note,
+    then: Vec<Effect<Starter, ReplyTo>>,
+) -> Vec<Effect<Starter, ReplyTo>> {
     core::iter::once(Effect::Log(note)).chain(then).collect()
 }
 

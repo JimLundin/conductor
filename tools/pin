@@ -168,31 +168,44 @@ def verify_codex_bundle(cosign, version, archive, assets):
     print(f"  cosign verifies {archive.name}")
 
 
+RUST_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+RUST_UNESCAPES = {escaped[1]: plain for plain, escaped in RUST_ESCAPES.items()}
+RUST_STR = r'"((?:[^"\\]|\\.)*)"'
+HASH_ARM = RUST_STR + r' => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),'
+
+
+def rust_str(text):
+    return '"' + "".join(RUST_ESCAPES.get(char, char) for char in text) + '"'
+
+
+def from_rust_str(literal):
+    return re.sub(r"\\(.)", lambda escape: RUST_UNESCAPES.get(escape.group(1), escape.group(0)), literal)
+
+
 def read(provider):
-    """Reads only the Rust shape emitted below (including rustfmt's wrapping)."""
     path = PINS_RS[provider]
     block = re.search(
-        r'pub const VERSION: &str = "([^"\n]+)";\s*'
-        r'pub const VERIFIED: &str =\s*"([^"\\\n]+)";'
+        r'pub const VERSION: &str = ' + RUST_STR + r';\s*'
+        r'pub const VERIFIED: &str =\s*' + RUST_STR + r';'
         r'.*?pub fn sha256\(platform: &str\) -> Option<String> \{'
         r'\s*match platform \{(.*?)\n    \}\n\}', path.read_text(), re.S)
     if block is None:
         fail(f"cannot read the generated pin in {path}")
     version, note, arms = block.groups()
-    entries = re.findall(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', arms)
-    remaining = re.sub(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', '', arms)
+    entries = [(from_rust_str(key), digest) for key, digest in re.findall(HASH_ARM, arms)]
+    remaining = re.sub(HASH_ARM, "", arms)
     if not entries or len(dict(entries)) != len(entries) or remaining.strip() != "_ => None,":
         fail(f"cannot read the generated hashes in {path}")
-    return {"version": version, "verified": note, "sha256": dict(entries)}
+    return {"version": from_rust_str(version), "verified": from_rust_str(note), "sha256": dict(entries)}
 
 
 def write(provider, pin):
     path = PINS_RS[provider]
-    arms = "".join(f'        "{key}" => Some(String::from("{value}")),\n' for key, value in pin["sha256"].items())
+    arms = "".join(f"        {rust_str(key)} => Some(String::from({rust_str(value)})),\n" for key, value in pin["sha256"].items())
     source = (
         "use crate::prelude::*;\n\n"
-        f'pub const VERSION: &str = "{pin["version"]}";\n\n'
-        f'pub const VERIFIED: &str = "{pin["verified"]}";\n\n'
+        f"pub const VERSION: &str = {rust_str(pin['version'])};\n\n"
+        f"pub const VERIFIED: &str = {rust_str(pin['verified'])};\n\n"
         f"#[must_use]\n"
         f"pub fn sha256(platform: &str) -> Option<String> {{\n"
         f"    match platform {{\n{arms}        _ => None,\n    }}\n}}\n"

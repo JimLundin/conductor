@@ -83,7 +83,7 @@ pub fn sandbox(os: &str, tools: bool, kernel_release: &str) -> Sandbox {
     }
 }
 
-const TRANSCRIPTS_KEPT_FOR_DAYS: u32 = 100 * 365;
+const DAYS_SO_CLAUDE_NEVER_SWEEPS_TRANSCRIPTS: u32 = 100 * 365;
 
 const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDECODE",
@@ -154,7 +154,7 @@ pub fn profile() -> Profile {
         config: Config {
             file: String::from("settings.json"),
             contents: format!(
-                "{{\n  \"cleanupPeriodDays\": {TRANSCRIPTS_KEPT_FOR_DAYS}\n}}\n"
+                "{{\n  \"cleanupPeriodDays\": {DAYS_SO_CLAUDE_NEVER_SWEEPS_TRANSCRIPTS}\n}}\n"
             ),
         },
         version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
@@ -168,7 +168,7 @@ pub fn profile() -> Profile {
 pub struct Launch {
     pub home: HomeKind,
     pub credential: Option<ClaudeCredential>,
-    pub project_name: Option<String>,
+    pub project_name: Option<agents::runtime::Session>,
     pub permission_mode: PermissionMode,
     pub resume: Resume,
     pub id: SessionId,
@@ -190,7 +190,12 @@ pub fn session(launch: &Launch) -> Invocation {
         launch
             .project_name
             .iter()
-            .map(|name| Var::set("CLAUDE_CODE_PROJECT_DIR_NAME", name))
+            .map(|session| {
+                Var::set(
+                    "CLAUDE_CODE_PROJECT_DIR_NAME",
+                    &ulid::Ulid(session.0).to_string(),
+                )
+            })
             .collect(),
         credential_env(launch.credential.as_ref()),
         checklist_tools,
@@ -345,7 +350,7 @@ pub const fn unprotected(
 #[cfg(test)]
 mod tests {
     use agents::Effort;
-    use agents::{HomeKind, Invocation, Note, Var};
+    use agents::{HomeKind, Invocation, Note, Var, runtime};
     use serde_json::json;
 
     use super::{
@@ -536,7 +541,9 @@ mod tests {
                 base_url: String::from("https://gateway.example"),
                 token: String::from("secret"),
             }),
-            project_name: Some(String::from("01JC")),
+            project_name: Some(runtime::Session(
+                0x0193_1bf3_5c1e_1ccf_b450_5525_8b83_64fa,
+            )),
             sandbox: Sandbox::Available,
             ..launch(Resume::Fresh)
         };
@@ -558,7 +565,10 @@ mod tests {
                     Var::Home(String::from("CLAUDE_CONFIG_DIR")),
                 ][..],
                 &[
-                    set("CLAUDE_CODE_PROJECT_DIR_NAME", "01JC"),
+                    set(
+                        "CLAUDE_CODE_PROJECT_DIR_NAME",
+                        "01JCDZ6Q0Y3K7V8M2N4P5R6S7T"
+                    ),
                     set("ANTHROPIC_BASE_URL", "https://gateway.example"),
                     set("ANTHROPIC_AUTH_TOKEN", "secret"),
                     set("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),

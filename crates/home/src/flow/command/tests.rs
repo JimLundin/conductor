@@ -2,7 +2,7 @@ use crate::issue::{
     ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, Item, NewIssue,
     Part,
 };
-use crate::{DRAWS, Draws, IssueId, ProjectId};
+use crate::{DRAWS, Draws, IssueId, ProjectId, UnixMillis, UnixSecs};
 
 use super::{
     Asked, CanvasWrite, Command, Context, Edit, Fetched, Given, Local, Need,
@@ -24,8 +24,8 @@ const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
 const FOLDER: &str = "7w85je";
 const SPEC: &str = "0tm7zt01";
 const TASK: &str = "0tm7zx0d";
-const NOW: u64 = 1_795_348_800_000;
-const SECONDS: u64 = NOW / 1000;
+const NOW: UnixMillis = UnixMillis(1_795_348_800_000);
+const SECONDS: UnixSecs = NOW.secs();
 const SEVEN: Draws = [7; DRAWS];
 
 fn words(text: &str) -> Vec<String> {
@@ -99,7 +99,7 @@ fn check(inputs: &Inputs) -> Report {
 
 fn context() -> Context {
     Context {
-        now_ms: NOW,
+        now: NOW,
         by: String::from("laptop·claude"),
         mark: None,
     }
@@ -162,7 +162,7 @@ fn a_new_issue_s_id_sorts_after_every_issue_made_before_it() {
             .iter()
             .all(|issue| Some(issue.id) < fresh)
     );
-    assert!(fresh < super::fresh(&home, SECONDS + 1, &[0; DRAWS]));
+    assert!(fresh < super::fresh(&home, UnixSecs(SECONDS.0 + 1), &[0; DRAWS]));
 }
 
 #[test]
@@ -559,8 +559,8 @@ fn a_stage_or_status_is_moved_not_set() {
 
 #[test]
 fn a_time_is_written_to_the_second_in_utc() {
-    assert_eq!(stamp(NOW), "2026-11-22T12:00:00Z");
-    assert_eq!(stamp(0), "1970-01-01T00:00:00Z");
+    assert_eq!(stamp(SECONDS), "2026-11-22T12:00:00Z");
+    assert_eq!(stamp(UnixSecs(0)), "1970-01-01T00:00:00Z");
 }
 
 #[test]
