@@ -7,8 +7,10 @@ use home::canvas::{
     Block, Canvas, CanvasEntry, CanvasError, CanvasFile, CanvasKey, CanvasName,
 };
 use home::issue::{EditId, Issue, IssueChange, NewIssue};
+use home::project::Project;
+use home::sync::Sync;
 use home::{
-    Home, HomeCommand, HomeRefusal, HomeResult, HomeSync, IssueId, ProjectId,
+    Found, Home, HomeCommand, HomeRefusal, HomeResult, IssueId, ProjectId,
 };
 use home_store::{CanvasStore, Memory, StoreError};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
@@ -22,7 +24,7 @@ use crate::{Command, Hello, Open, Subscribe};
 
 use super::{
     Admission, Stream, admit, canvas_key, device, device_hello, kept_canvas,
-    ledger, operation, stream, with_canvases,
+    ledger, operation, stream,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -279,24 +281,34 @@ fn issue(id: IssueId) -> Issue {
 }
 
 fn a_home() -> Home {
-    Home {
-        remote: String::from("origin"),
-        synced: None,
-        sync: HomeSync::Synced,
-        unpushed: 0,
-        flow: None,
-        projects: Vec::from([home::Project {
+    listed_home(&BTreeMap::new())
+}
+
+fn listed_home(listed: &BTreeMap<IssueId, Vec<CanvasEntry>>) -> Home {
+    home::view(
+        "origin",
+        &Sync::new(),
+        &[Project {
             id: PROJECT,
             name: String::from("conductor"),
             title: String::from("Conductor"),
             remote: None,
+            root: String::new(),
             profiles: Vec::new(),
             provides: Vec::new(),
-            checkouts: Vec::new(),
-            cloning: home::Cloning::Idle,
-            issues: Vec::from([issue(DESIGNED), issue(BARE)]),
-        }]),
-    }
+        }],
+        Found {
+            checkouts: &BTreeMap::new(),
+            cloning: &BTreeMap::new(),
+            flow: None,
+            issues: &BTreeMap::from([(
+                PROJECT,
+                Vec::from([issue(DESIGNED), issue(BARE)]),
+            )]),
+            canvases: listed,
+            unpushed: 0,
+        },
+    )
 }
 
 fn named(text: &str) -> Result<CanvasName, String> {
@@ -311,26 +323,27 @@ fn key(issue: IssueId, name: &str) -> Result<CanvasKey, String> {
     })
 }
 
-fn written(at: u64, by: &str) -> CanvasFile {
-    CanvasFile {
+fn written(at: u64, by: &str) -> Result<CanvasFile, String> {
+    Ok(CanvasFile {
         written: at,
         by: String::from(by),
-        canvas: Canvas {
-            title: format!("By {by}"),
-            blocks: Vec::from([Block::Prose {
+        canvas: Canvas::new(
+            format!("By {by}"),
+            Vec::from([Block::Prose {
                 text: String::from("The host serves it."),
             }]),
-        },
-    }
+        )
+        .map_err(|error| error.to_string())?,
+    })
 }
 
 fn two_canvases() -> Result<Memory, String> {
     let mut store = Memory::default();
     store
-        .put(&key(DESIGNED, "design")?, &written(10, "devbox·claude"))
+        .put(&key(DESIGNED, "design")?, &written(10, "devbox·claude")?)
         .map_err(|error| error.to_string())?;
     store
-        .put(&key(DESIGNED, "a-plan")?, &written(20, "laptop·codex"))
+        .put(&key(DESIGNED, "a-plan")?, &written(20, "laptop·codex")?)
         .map_err(|error| error.to_string())?;
     Ok(store)
 }
@@ -367,7 +380,7 @@ fn served_entries(store: &Memory) -> Result<(), String> {
             ))
         })
         .collect::<Result<BTreeMap<_, _>, String>>()?;
-    let served = with_canvases(a_home(), &listed);
+    let served = listed_home(&listed);
     let canvases = served.projects[0]
         .issues
         .iter()
@@ -418,15 +431,16 @@ fn a_canvas_of_an_issue_the_home_lacks_or_of_no_home_is_refused()
 }
 
 #[test]
-fn a_kept_canvas_is_answered_and_a_missing_one_refused() {
+fn a_kept_canvas_is_answered_and_a_missing_one_refused() -> Result<(), String> {
     assert_eq!(
-        kept_canvas(Ok::<_, StoreError>(Some(written(10, "devbox·claude")))),
-        HomeResult::Canvas(written(10, "devbox·claude"))
+        kept_canvas(Ok::<_, StoreError>(Some(written(10, "devbox·claude")?))),
+        HomeResult::Canvas(written(10, "devbox·claude")?)
     );
     assert_eq!(
         kept_canvas(Ok::<_, StoreError>(None)),
         HomeResult::Refused(HomeRefusal::UnknownCanvas)
     );
+    Ok(())
 }
 
 #[test]

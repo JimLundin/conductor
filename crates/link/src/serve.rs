@@ -5,13 +5,10 @@
 use alloc::string::{String, ToString};
 use core::fmt::Display;
 
-use alloc::collections::BTreeMap;
-use alloc::vec::Vec;
-
 use crate::AuthToken;
 use crate::CommandId;
 use agents::ClientName;
-use home::canvas::{CanvasEntry, CanvasFile, CanvasKey, CanvasName};
+use home::canvas::{CanvasFile, CanvasKey, CanvasName};
 use home::{Home, HomeCommand, HomeRefusal, HomeResult, IssueId};
 use host::fleet::{DeviceHello, FleetCommand, Identity};
 use host::push::PushCommand;
@@ -172,20 +169,6 @@ pub const fn operation(command: &Command) -> &'static str {
             FleetCommand::Admit { .. } => "fleet_admit",
         },
     }
-}
-
-#[must_use]
-pub fn with_canvases(
-    mut home: Home,
-    listed: &BTreeMap<IssueId, Vec<CanvasEntry>>,
-) -> Home {
-    home.projects
-        .iter_mut()
-        .flat_map(|project| project.issues.iter_mut())
-        .for_each(|issue| {
-            issue.canvases = listed.get(&issue.id).cloned().unwrap_or_default();
-        });
-    home
 }
 
 /// # Errors

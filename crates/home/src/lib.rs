@@ -35,6 +35,7 @@ pub use home::{
 pub use id::{DRAWS, Draws, IssueId, ProjectId};
 use serde::{Deserialize, Serialize};
 
+use crate::canvas::CanvasEntry;
 use crate::flow::Flow;
 use crate::issue::Issue;
 use crate::prelude::*;
@@ -89,6 +90,7 @@ pub struct Found<'host> {
     /// The home's flow, when it loads.
     pub flow: Option<&'host Flow>,
     pub issues: &'host BTreeMap<ProjectId, Vec<Issue>>,
+    pub canvases: &'host BTreeMap<IssueId, Vec<CanvasEntry>>,
     /// Issue changes the remote doesn't have yet.
     pub unpushed: u64,
 }
@@ -106,6 +108,7 @@ pub fn view(
         cloning,
         flow,
         issues,
+        canvases,
         unpushed,
     } = found;
     Home {
@@ -131,7 +134,18 @@ pub fn view(
                     .get(&project.id)
                     .cloned()
                     .unwrap_or(Cloning::Idle),
-                issues: issues.get(&project.id).cloned().unwrap_or_default(),
+                issues: issues
+                    .get(&project.id)
+                    .into_iter()
+                    .flatten()
+                    .map(|issue| Issue {
+                        canvases: canvases
+                            .get(&issue.id)
+                            .cloned()
+                            .unwrap_or_default(),
+                        ..issue.clone()
+                    })
+                    .collect(),
             })
             .collect(),
     }

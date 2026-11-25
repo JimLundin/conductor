@@ -185,6 +185,7 @@ fn a_renamed_project_keeps_its_id_and_its_checkouts() {
                 cloning: &BTreeMap::new(),
                 flow: None,
                 issues: &BTreeMap::new(),
+                canvases: &BTreeMap::new(),
                 unpushed: 0,
             },
         )
@@ -369,6 +370,7 @@ fn home_and_project_snapshots_use_credential_free_addresses()
             cloning: &BTreeMap::new(),
             flow: None,
             issues: &BTreeMap::new(),
+            canvases: &BTreeMap::new(),
             unpushed: 0,
         },
     );
@@ -474,6 +476,7 @@ fn home(checkouts: &[&str]) -> Home {
             )]),
             flow: None,
             issues: &BTreeMap::new(),
+            canvases: &BTreeMap::new(),
             unpushed: 2,
         },
     )

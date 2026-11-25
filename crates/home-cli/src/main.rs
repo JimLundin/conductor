@@ -9,8 +9,8 @@ use home::Draws;
 use home::canvas::{CanvasFile, CanvasKey, CanvasName, Held};
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Given, Need, Source, Stored, Wanted, Write, asked,
-    fresh, homeless, run,
+    Asked, Command, Context, Fetched, Given, Need, Source, Wanted, Write,
+    asked, fresh, homeless, run,
 };
 use home::flow::snapshot::Snapshot;
 use home_files::FolderStore;
@@ -102,7 +102,7 @@ fn fetched(
     Ok(Held { canvases, strays })
 }
 
-fn every(store: &dyn CanvasStore) -> Result<Held<Stored>, String> {
+fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
     let held = store.all().map_err(|error| error.to_string())?;
     Ok(Held {
         canvases: held
@@ -113,7 +113,7 @@ fn every(store: &dyn CanvasStore) -> Result<Held<Stored>, String> {
                     StoreError::Invalid { error, .. } => error.to_string(),
                     StoreError::Unavailable { reason } => reason,
                 });
-                Stored { key, got }
+                Fetched { key, got }
             })
             .collect(),
         strays: held.strays,
