@@ -1,5 +1,3 @@
-//! The models a provider's CLI offers and how hard they reason.
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -7,8 +5,6 @@ use alloc::collections::BTreeSet;
 
 use crate::prelude::*;
 
-/// The models a provider's CLI offers on this host, as the CLI lists them
-/// when the host starts, and the one a session gets when it names none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Models {
     pub choices: Vec<ModelChoice>,
@@ -16,7 +12,6 @@ pub struct Models {
 }
 
 impl Models {
-    /// The label of the model picker's first entry, which sends no model.
     #[must_use]
     pub fn default_label(&self) -> String {
         self.default.as_ref().map_or_else(
@@ -31,7 +26,6 @@ impl Models {
         )
     }
 
-    /// The efforts `model` takes (`None`: the default model), lowest first.
     #[must_use]
     pub fn efforts(&self, model: Option<&ModelId>) -> Vec<Effort> {
         model
@@ -40,8 +34,6 @@ impl Models {
             .map_or(Vec::new(), |choice| choice.efforts.clone())
     }
 
-    /// The effort to keep when the model changes to `model`: `effort` if the
-    /// model takes it, else the model's default.
     #[must_use]
     pub fn kept_effort(
         &self,
@@ -70,18 +62,14 @@ pub struct ModelChoice {
     pub id: ModelId,
     pub name: String,
     pub description: String,
-    /// The efforts this model takes, lowest first.
     pub efforts: Vec<Effort>,
 }
 
-/// A model by the name its CLI takes (`haiku`, `gpt-6-luna`).
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
 )]
 pub struct ModelId(pub String);
 
-/// How hard the model reasons: Claude's `--effort`, Codex's
-/// `model_reasoning_effort`. Both CLIs spell the levels the same way.
 #[derive(
     Debug,
     Clone,
@@ -116,7 +104,6 @@ impl Effort {
         }
     }
 
-    /// A level a CLI lists. Any other, such as Codex's `minimal`, is `None`.
     #[must_use]
     pub fn parse(word: &str) -> Option<Self> {
         match word {

@@ -20,7 +20,6 @@ use super::{
     owner, patch, probed, reference, same, subtree, text, turn, utf8, worktree,
 };
 
-/// An operation requested by a workspace plan.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Step {
     Git {
@@ -63,7 +62,6 @@ pub enum Step {
     CloseIndex,
 }
 
-/// The observation made by running a step.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Answer {
     Git(Output),
@@ -84,8 +82,6 @@ struct Steps;
 type StepScript<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, GitError>> + Send + 'a>>;
 
-/// A workspace workflow. Each response advances it to another operation or
-/// a final result.
 pub struct Plan<'a, T> {
     script: StepScript<'a, T>,
 }
@@ -100,7 +96,6 @@ impl<'a, T> Plan<'a, T> {
         }
     }
 
-    /// Start with `None`, then pass the result of each requested step.
     pub fn advance(
         mut self,
         answer: Option<Result<Answer, GitError>>,
@@ -125,7 +120,6 @@ impl<'a, T> Plan<'a, T> {
 }
 
 impl Output {
-    /// Read one byte past the limit, so the capture can report truncation.
     pub const CAPTURE: usize = PATCH_LIMIT + 1;
 }
 

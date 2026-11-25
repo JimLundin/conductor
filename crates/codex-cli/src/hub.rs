@@ -1,9 +1,3 @@
-//! The hub's task, which shares one instance's `codex app-server` among
-//! every Codex thread. [`Hub`] is a handle to it. The task alone owns the
-//! server and the hub's state machine ([`codex::hub::Hub`]): it turns each
-//! command and server event into the machine's inputs and performs its
-//! effects.
-
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -16,7 +10,6 @@ use tokio::task::JoinSet;
 
 use super::server::{CodexServer, CodexThread, Error, ServerOptions};
 
-/// A thread, and its events, which end with the server's exit or stop.
 pub type Thread = (CodexThread, mpsc::Receiver<Routed>);
 
 struct Asked {
@@ -65,15 +58,12 @@ type Input = codex::hub::Input<Asked, Listed, Configured, Route, Arc<Error>>;
 type Effect = codex::hub::Effect<Asked, Listed, Configured, Route, Arc<Error>>;
 type Msg = Command<Asked, Listed, Configured>;
 
-/// A handle to the hub's task. Clone it freely.
 #[derive(Debug, Clone)]
 pub struct Hub {
     inbox: mpsc::Sender<Msg>,
 }
 
 impl Hub {
-    /// Starts the hub's task. The app-server starts with the first thread
-    /// or model listing, with `options`' credential until another is set.
     #[must_use]
     pub fn spawn(options: ServerOptions) -> Self {
         let (inbox, commands) = mpsc::channel(16);
@@ -81,11 +71,6 @@ impl Hub {
         Self { inbox }
     }
 
-    /// Starts a thread, or resumes `resume` from Codex's own history.
-    ///
-    /// # Errors
-    /// Fails when the hub has stopped, the app-server doesn't start, or it
-    /// refuses the thread.
     pub async fn thread(
         &self,
         options: ThreadOptions,
@@ -101,20 +86,10 @@ impl Hub {
         .await?
     }
 
-    /// What `model/list` offers.
-    ///
-    /// # Errors
-    /// Fails when the hub has stopped, or the app-server doesn't start or
-    /// answer.
     pub async fn models(&self) -> Result<Models, Error> {
         self.ask(Command::Models).await?
     }
 
-    /// Runs the next app-server with `credential`. A running one stops, and
-    /// its threads end, saying why.
-    ///
-    /// # Errors
-    /// Fails when the hub has stopped or its private config cannot be updated.
     pub async fn set_credential(
         &self,
         credential: Option<CodexCredential>,

@@ -1,6 +1,3 @@
-//! The decisions of the actor that owns one `claude` process, as a state
-//! machine.
-//!
 use core::convert::Infallible;
 use core::fmt;
 
@@ -14,7 +11,6 @@ use crate::{
     PermissionRequestId, encode, parse_line,
 };
 
-/// What a handle asks of the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CallRequest<R> {
     SendUser {
@@ -32,7 +28,6 @@ pub enum CallRequest<R> {
     },
 }
 
-/// What a line is written for, and so what its outcome decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Then<R> {
     User(R),
@@ -42,7 +37,6 @@ pub enum Then<R> {
         reply: R,
     },
     Answer(R),
-    /// The error reply to a control request of this subtype we don't serve.
     Refusal {
         subtype: String,
     },
@@ -80,8 +74,6 @@ const FAILURE_TEXT: FailureText = FailureText {
     json: "could not encode a message for claude",
 };
 
-/// The session's state: our control requests awaiting a `control_response`,
-/// the `can_use_tool` requests not yet answered, and the sub-agents the process started.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session<R> {
     exited: Option<Exit>,

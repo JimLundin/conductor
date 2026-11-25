@@ -1,14 +1,3 @@
-//! An issue file's layout (docs/home.md §3), known nowhere else: `+++`
-//! TOML front matter, then the body's sections, the `## Checklist` and the
-//! `## Notes` log, each heading read only outside code fences.
-//!
-//! A file is read once into a [`Document`]. The graph takes an issue's
-//! parts from its reading, and its edits change the lines that reading
-//! found, so an edit changes what was read and only that: comments,
-//! sections of a person's own and the order of it all stay as written. A
-//! byte-order mark and Windows line ends read as if absent, and a document
-//! is written without them.
-
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
@@ -18,16 +7,12 @@ use toml_parser::{Source, lexer::TokenKind};
 
 use crate::prelude::*;
 
-/// The keys of an issue's own words in its front matter, beside the
-/// fields and relations the flow declares.
 pub const ID: &str = "id";
 pub const TITLE: &str = "title";
 pub const KIND: &str = "kind";
 pub const STATUS: &str = "status";
 pub const STAGE: &str = "stage";
 
-/// An issue's front matter, read: its own words, each where it is text,
-/// and the rest by key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Front {
     pub id: Option<String>,
@@ -38,7 +23,6 @@ pub struct Front {
     pub rest: Table,
 }
 
-/// An issue file, as its parts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     front: Vec<String>,
@@ -70,11 +54,6 @@ struct Place {
 }
 
 impl Document {
-    /// The document `text` holds.
-    ///
-    /// # Errors
-    ///
-    /// It has no front matter.
     pub fn of(text: &str) -> Result<Self, String> {
         let unix = text
             .strip_prefix('\u{feff}')
@@ -100,8 +79,6 @@ impl Document {
         })
     }
 
-    /// A new issue's document: its front matter's keys with their values
-    /// as TOML, a heading for each of `sections`, and a log of `first`.
     #[must_use]
     pub fn new(
         front: &[(String, String)],
@@ -136,11 +113,6 @@ impl Document {
         self.front.join("\n")
     }
 
-    /// The front matter, read.
-    ///
-    /// # Errors
-    ///
-    /// It isn't TOML.
     pub fn front_matter(&self) -> Result<Front, String> {
         let mut rest = toml::from_str::<Table>(&self.front())
             .map_err(|err| format!("its front matter: {err}"))?;
@@ -160,8 +132,6 @@ impl Document {
         })
     }
 
-    /// The body's sections in order, the text before the first heading as
-    /// one with no heading; the checklist and the log aren't among them.
     #[must_use]
     pub fn sections(&self) -> Vec<Section> {
         let mut sections: Vec<Section> = Vec::new();
@@ -196,7 +166,6 @@ impl Document {
         sections
     }
 
-    /// The body before the checklist and the log, as its lines have it.
     #[must_use]
     pub fn body_text(&self) -> String {
         self.rest
@@ -211,14 +180,11 @@ impl Document {
             .to_owned()
     }
 
-    /// The checklist's items.
     #[must_use]
     pub fn checklist(&self) -> Vec<ChecklistItem> {
         self.items().map(|(_, found)| found).collect()
     }
 
-    /// The log, oldest first: each line, and the lines indented under it
-    /// by two spaces as more of its text.
     #[must_use]
     pub fn log(&self) -> Vec<Entry> {
         let mut log: Vec<Entry> = Vec::new();
@@ -241,9 +207,6 @@ impl Document {
         log
     }
 
-    /// Sets `key` in the front matter to `value`, given as TOML, in its
-    /// place, or after the last value when it has none; a list keeps the
-    /// comments it had.
     pub fn set(&mut self, key: &str, value: &str) -> Option<()> {
         let mut front = self.front();
         let spans =
@@ -274,18 +237,15 @@ impl Document {
         Some(())
     }
 
-    /// The front matter has a comment saying `text`.
     #[must_use]
     pub fn has_comment(&self, text: &str) -> bool {
         self.front.contains(&comment_line(text))
     }
 
-    /// Ends the front matter with a comment saying `text`.
     pub fn comment(&mut self, text: &str) {
         self.front.push(comment_line(text));
     }
 
-    /// Replaces the body before the checklist and the log with `body`.
     pub fn body(&mut self, body: &str) {
         let end = self.body_end();
         let mut lines = Vec::from([String::new()]);
@@ -308,7 +268,6 @@ impl Document {
         );
     }
 
-    /// Checks or unchecks the checklist's item at `index`.
     pub fn check(&mut self, index: usize, done: bool) -> Option<()> {
         let (at, found) = self.items().nth(index)?;
         *self.rest.get_mut(at)? = checklist_line(&ChecklistItem {
@@ -318,14 +277,12 @@ impl Document {
         Some(())
     }
 
-    /// Removes the checklist's item at `index`.
     pub fn remove_item(&mut self, index: usize) -> Option<()> {
         let (at, _) = self.items().nth(index)?;
         self.rest.remove(at);
         Some(())
     }
 
-    /// Adds `entry` to the end of the log.
     pub fn log_entry(&mut self, entry: &Entry) {
         self.append(Part::Notes, None, log_lines(entry));
     }
@@ -410,21 +367,17 @@ impl Document {
     }
 }
 
-/// The front matter's line of a comment saying `text`.
 #[must_use]
 pub fn comment_line(text: &str) -> String {
     format!("# {text}")
 }
 
-/// A checklist item as its line has it.
 #[must_use]
 pub fn checklist_line(item: &ChecklistItem) -> String {
     let mark = if item.done { 'x' } else { ' ' };
     format!("- [{mark}] {}", item.text)
 }
 
-/// An entry as the log has it: `-` and its text, with each further line of
-/// the text indented under it by two spaces.
 #[must_use]
 pub fn log_line(entry: &Entry) -> String {
     log_lines(entry).join("\n")

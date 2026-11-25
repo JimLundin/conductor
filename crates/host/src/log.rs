@@ -1,13 +1,3 @@
-//! The event log's rules (architecture §8).
-//!
-//! Which seq each event takes, which events are stored and which only go
-//! live, and which wait in a command's open transaction until it commits.
-//! Which commands run, wait or answer from their receipt is the client
-//! link's (`link::log`), which opens and commits that transaction.
-//!
-//! The shell owns the database and the channels. It hands [`Log`] what
-//! happened and performs each [`Effect`] in order.
-
 use alloc::collections::BTreeSet;
 use alloc::format;
 use core::mem;
@@ -20,15 +10,8 @@ use crate::session::{EventKind, SessionId};
 
 use crate::prelude::*;
 
-/// The event log's format. A database of another format does not open.
 pub const FORMAT: u32 = 9;
 
-/// Whether a database opens, and whether its format is to be written: a
-/// `created` one takes [`FORMAT`], and one whose `stored` format is another
-/// is refused.
-///
-/// # Errors
-/// Why the database doesn't open.
 pub fn opens(created: bool, stored: Option<u32>) -> Result<bool, String> {
     match (created, stored) {
         (true, _) => Ok(true),
@@ -40,33 +23,24 @@ pub fn opens(created: bool, stored: Option<u32>) -> Result<bool, String> {
     }
 }
 
-/// One write into the open transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Write {
     Event(Event),
     Conversation(SessionId, String),
 }
 
-/// Routing metadata for a newly opened approval or question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FreshRequest {
     pub session: SessionId,
     pub seq: HostSeq,
 }
 
-/// What the shell does next. Without a database, `Open`, `Store` and
-/// `Commit` do nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Open a write transaction.
     Open,
-    /// Write into the open transaction, if there is one.
     Store(Write),
-    /// Commit the open transaction, if there is one.
     Commit,
-    /// Send the event to live clients.
     Publish(Event),
-    /// Announce a newly opened request outside the client event stream.
     RequestOpened(FreshRequest),
 }
 
@@ -77,8 +51,6 @@ pub struct Log {
     open: bool,
 }
 
-/// A streaming delta goes live with the last stored event's seq and is
-/// never stored (see `Output::AssistantDelta`).
 #[must_use]
 pub const fn live_only(kind: &EventKind) -> bool {
     matches!(
@@ -90,7 +62,6 @@ pub const fn live_only(kind: &EventKind) -> bool {
 }
 
 impl Log {
-    /// The log holding the stored `events`.
     #[must_use]
     pub const fn new(events: Vec<Event>) -> Self {
         Self {
@@ -112,8 +83,6 @@ impl Log {
         running
     }
 
-    /// Admission in the session actor also sees the changes it just staged
-    /// for a command whose receipt has yet to commit them.
     #[must_use]
     pub fn current_history(&self, session: SessionId) -> Vec<Event> {
         let mut history = crate::restore::events_of(session, &self.events);
@@ -128,7 +97,6 @@ impl Log {
         history
     }
 
-    /// The stored events after `after`.
     #[must_use]
     pub fn replay(&self, after: HostSeq) -> Vec<Event> {
         self.events
@@ -138,7 +106,6 @@ impl Log {
             .collect()
     }
 
-    /// The last stored event's seq, or 0 before the first.
     #[must_use]
     pub fn head(&self) -> HostSeq {
         self.events
@@ -146,8 +113,6 @@ impl Log {
             .map_or(HostSeq::BEFORE_FIRST, |event| event.seq)
     }
 
-    /// Records an event: stored with the next seq, or live only with the
-    /// last. An open command's events wait for it to commit.
     pub fn append(
         &mut self,
         session: SessionId,
@@ -182,8 +147,6 @@ impl Log {
         (event, effects)
     }
 
-    /// Saves the session's conversation id, in the open command's
-    /// transaction if there is one.
     #[must_use]
     pub fn conversation(&self, session: SessionId, id: String) -> Vec<Effect> {
         let write = Write::Conversation(session, id);
@@ -194,14 +157,11 @@ impl Log {
         }
     }
 
-    /// A command's transaction opens: its events wait for it to commit.
     pub const fn open(&mut self) -> Effect {
         self.open = true;
         Effect::Open
     }
 
-    /// Commits what the open command has staged before changing the
-    /// workspace, and keeps it open in a new transaction.
     pub fn barrier(&mut self) -> Vec<Effect> {
         let mut effects = self.commit();
         if self.open {
@@ -210,8 +170,6 @@ impl Log {
         effects
     }
 
-    /// Commits the transaction and publishes what it staged; the command
-    /// stays open, if one was.
     pub fn commit(&mut self) -> Vec<Effect> {
         let mut effects = Vec::from([Effect::Commit]);
         for event in mem::take(&mut self.staged) {
@@ -220,7 +178,6 @@ impl Log {
         effects
     }
 
-    /// Commits the command's transaction and closes it.
     pub fn close(&mut self) -> Vec<Effect> {
         let effects = self.commit();
         self.open = false;
@@ -248,7 +205,6 @@ fn alone(write: Write) -> Vec<Effect> {
     Vec::from([Effect::Open, Effect::Store(write), Effect::Commit])
 }
 
-/// The host's event cursor. Monotonic per [`Epoch`]; the first event is 1.
 #[derive(
     Debug,
     Clone,
@@ -273,8 +229,6 @@ impl HostSeq {
     }
 }
 
-/// Identifies one incarnation of a host's event log. A cursor from another
-/// epoch is meaningless, so the client starts over from seq 0 (§8).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -284,8 +238,6 @@ pub struct Epoch(
     pub u64,
 );
 
-/// Every event names its session. A stored event has a seq of its own; an
-/// `AssistantDelta` repeats the last one's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Event {
     pub seq: HostSeq,

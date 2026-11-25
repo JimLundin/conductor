@@ -1,8 +1,3 @@
-//! A home read from a folder on disk, as `home::layout` lays it out, the
-//! repositories on this machine as Git describes them, and the home's
-//! skills installed for the user: the one reading and the one install of
-//! each that the `home` command line and the host share.
-
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -15,7 +10,6 @@ use home::flow::snapshot::Snapshot;
 use home::layout::{self, IssueLocation};
 use home::skills;
 
-/// The home whose root is `root`.
 #[must_use]
 pub fn read(root: &Path) -> Snapshot {
     let folders = folders(&root.join(layout::PROJECTS));
@@ -35,8 +29,6 @@ pub fn read(root: &Path) -> Snapshot {
     ))
 }
 
-/// A search root with the folders in it and in each of those that isn't
-/// hidden, so a checkout one level down is found too.
 #[must_use]
 pub fn root(path: &Path) -> Root {
     let mut entries: Vec<String> = folders(path)
@@ -61,8 +53,6 @@ pub fn root(path: &Path) -> Root {
     }
 }
 
-/// The repository at each of `paths` that is the top of one, as
-/// [`checkout::probed`] reads it, Git run with std's processes.
 #[must_use]
 pub fn probes(paths: &[String]) -> Vec<Probe> {
     paths
@@ -82,8 +72,6 @@ fn probe(path: &Path) -> Option<Probe> {
     )
 }
 
-/// What Git printed in `at`, if it succeeded, with no `GIT_` variable of
-/// this process's to point it elsewhere.
 #[must_use]
 pub fn git(at: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
@@ -105,7 +93,6 @@ pub fn git(at: &Path, args: &[&str]) -> Option<String> {
         .and_then(|ran| String::from_utf8(ran.stdout).ok())
 }
 
-/// The names in the folder at `path`, none when it can't be read.
 #[must_use]
 pub fn names(path: &Path) -> Vec<String> {
     entries(path).map(|(name, _)| name).collect()
@@ -147,7 +134,6 @@ fn entries(path: &Path) -> impl Iterator<Item = (String, bool)> {
         })
 }
 
-/// The user's home folder, from `HOME`, else `USERPROFILE`.
 #[must_use]
 pub fn user() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -155,16 +141,6 @@ pub fn user() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Installs the skills of the home at `home` for the user at `user`, and
-/// says what it did.
-///
-/// Each harness's skills folder takes them in place of the copies made
-/// before; a skill installed there some other way is kept, and the home's
-/// skill of its name skipped.
-///
-/// # Errors
-///
-/// A folder couldn't be read, written or removed.
 pub fn install(home: &Path, user: &Path) -> Result<String, String> {
     let source = home.join(skills::SKILLS);
     let offered: Vec<(String, bool)> = folders(&source)

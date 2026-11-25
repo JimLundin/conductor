@@ -1,6 +1,3 @@
-//! Claude events to the agent API's steps. Pure: a provider event in, the
-//! steps the session applies out.
-
 use agents::{
     ClientName, CloseReason, Decision, Output, SubagentId, ToolCallId,
     ToolPhase,

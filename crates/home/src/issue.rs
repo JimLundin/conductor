@@ -1,18 +1,3 @@
-//! An issue's file in the home (docs/home.md §3), where `crate::layout`
-//! puts it, and the changes a host makes to it.
-//!
-//! The file's layout is `crate::flow::file`'s, and the flow's graph
-//! (`crate::flow::graph`) reads issues from it. A change is a
-//! `crate::flow::command::Edit`, written by `crate::flow::command` as the
-//! `home` command line's is, and read back against the flow before it is
-//! kept.
-//!
-//! The host keeps each change as an [`Edit`] until the remote has it, and
-//! when the remote moved on it applies the edit again on top
-//! ([`Edit::replay`]). Then a field someone else changed since stays theirs
-//! unless the edit is newer. Replay recognizes edits it already applied,
-//! even when a separately submitted note has the same text.
-
 use alloc::string::ToString;
 
 use serde::{Deserialize, Serialize};
@@ -98,8 +83,6 @@ fn signer(host: &str, client: &str) -> String {
     format!("{}·{}", word(host), word(client))
 }
 
-/// A change a host made to an issue, kept until the remote has it, by its
-/// edit id.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
     id: EditId,
@@ -359,24 +342,14 @@ fn written(
     }
 }
 
-/// What a session on an issue starts from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Start {
     pub issue: IssueId,
-    /// The project's checkout the session's worktree is made from.
     pub checkout: CheckoutLocation,
-    /// The issue's branch, as a full ref, which the session's is cut from.
     pub branch: String,
-    /// The agent's first message.
     pub brief: String,
 }
 
-/// How a session on issue `id` starts, in its project's first checkout.
-///
-/// # Errors
-///
-/// The host has no home, its home lists no such issue, or the issue's
-/// project has no checkout on the host.
 pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
     let known = home.ok_or(HomeRefusal::NoHome)?;
     let (project, issue) = known
@@ -402,7 +375,6 @@ pub fn start(home: Option<&Home>, id: IssueId) -> Result<Start, HomeRefusal> {
     })
 }
 
-/// Issue `id`'s branch, as a full ref, as the home has it.
 #[must_use]
 pub fn branch(home: Option<&Home>, id: IssueId) -> String {
     let named = home.and_then(|known| {
@@ -467,52 +439,31 @@ fn staged(flow: Option<&Flow>, issue: &Issue) -> String {
     format!("\nIt is at the stage {name}{serving}.\n")
 }
 
-/// The remote's copy of an issue's branch, as the checkout found it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Remote {
-    /// The project has no remote, or its remote has no such branch.
     Absent,
     At(String),
-    /// The remote couldn't be read, for this reason.
     Unreachable(String),
-    /// The ref exists, but the checkout did not obtain it.
     PresentUnfetched(String),
 }
 
-/// Where an issue's branch stands in a checkout, before a session on it
-/// starts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
     pub local: Option<String>,
     pub remote: Remote,
-    /// Where a new issue's branch starts: the remote's default branch,
-    /// else the checkout's `HEAD`.
     pub base: String,
-    /// The local branch is an ancestor of the remote's.
     pub behind: bool,
-    /// The remote's branch is an ancestor of the local one.
     pub ahead: bool,
 }
 
-/// What becomes of the checkout's issue branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Move {
     Keep,
-    /// Point it at `commit`; `old` is where it is, `None` when it's new.
-    Set {
-        commit: String,
-        old: Option<String>,
-    },
-    /// The session can't start from it, for this reason.
+    Set { commit: String, old: Option<String> },
     Refuse(String),
 }
 
 impl Branch {
-    /// The branch follows the remote's, which carries the issue from host
-    /// to host. One with commits of its own the remote lacks stays as it
-    /// is; one whose remote moved on too, or a new one while the remote
-    /// can't be read, would leave the remote's work out, so the session
-    /// doesn't start.
     #[must_use]
     pub fn next(self) -> Move {
         match (self.local, self.remote) {

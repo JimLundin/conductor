@@ -1,5 +1,3 @@
-//! The checklist an agent keeps of its work.
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

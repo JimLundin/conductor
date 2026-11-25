@@ -1,8 +1,3 @@
-//! The stdio boundary. Each app-server stdout line is parsed into the few
-//! JSON-RPC messages we read and mapped into our own types here, and every line
-//! we write is built here. Methods and fields we do not model are ignored or
-//! passed on as `Unknown`.
-
 use alloc::collections::BTreeSet;
 
 use agents::Exit;
@@ -18,17 +13,12 @@ use crate::prelude::*;
 
 pub const INITIALIZE: &str = "initialize";
 
-/// A Codex thread id, as returned by `thread/start` and accepted by `thread/resume`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ThreadId(pub String);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TurnId(pub String);
 
-/// The JSON-RPC id of a server-to-client request we have to answer.
-///
-/// Codex numbers its own requests, so the id is unique per app-server process,
-/// not per thread.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ApprovalId(pub String);
 
@@ -42,7 +32,6 @@ impl ApprovalId {
     }
 }
 
-/// A JSON-RPC id, which Codex sends as a number or a string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum RequestId {
@@ -70,17 +59,13 @@ pub enum Sandbox {
     WorkspaceWrite,
 }
 
-/// Settings for `thread/start` and `thread/resume`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadOptions {
-    /// The thread's working directory, as Codex reads it.
     pub cwd: String,
     pub model: Option<String>,
-    /// Passed as the `model_reasoning_effort` config override.
     pub effort: Option<Effort>,
     pub approval_policy: ApprovalPolicy,
     pub sandbox: Sandbox,
-    /// Given as the thread's developer instructions.
     pub instructions: Option<String>,
 }
 
@@ -104,9 +89,6 @@ struct WireFileChange {
     kind: ChangeKind,
 }
 
-/// What a permissions request asks the sandbox to allow beyond its own.
-/// Codex's own names for special places (`/tmp`, the project roots) are kept
-/// as they read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionAsk {
     Network,
@@ -128,7 +110,6 @@ pub enum ApprovalKind {
         reason: Option<String>,
         asks: Vec<PermissionAsk>,
     },
-    /// `item/tool/requestUserInput`; answer it with [`Decision::Answer`].
     UserInput {
         questions: Vec<Question>,
     },
@@ -198,23 +179,18 @@ pub enum ThreadEvent {
         turn: TurnId,
         outcome: TurnOutcome,
     },
-    /// A piece of an agent message as it streams; `AgentMessage` follows with the whole text.
     AgentDelta {
         turn: TurnId,
         text: String,
     },
-    /// A finished agent message, not a delta.
     AgentMessage {
         turn: TurnId,
         text: String,
     },
-    /// A piece of a reasoning summary as it streams; `Reasoning` follows.
     ReasoningDelta {
         turn: TurnId,
         text: String,
     },
-    /// A finished reasoning item: its summary parts, joined. Empty when the
-    /// model gave none.
     Reasoning {
         turn: TurnId,
         text: String,
@@ -230,22 +206,16 @@ pub enum ThreadEvent {
         item: String,
         kind: ApprovalKind,
     },
-    /// Codex asked for an answer to keep secret (`isSecret`). The host can't
-    /// keep one: answers are logged and replayed to every client. So the
-    /// server actor refused the request, and the turn goes on without it.
     SecretQuestionDeclined {
         turn: TurnId,
     },
-    /// Codex resolved a request we had not answered, so answering it now is an error.
     ApprovalCancelled {
         id: ApprovalId,
     },
-    /// The whole plan, as the model updated it (`turn/plan/updated`).
     PlanUpdated {
         turn: TurnId,
         steps: Vec<ChecklistEntry>,
     },
-    /// What the thread runs its later turns with (`thread/settings/updated`).
     SettingsChanged(ThreadSettings),
     Unknown(Value),
 }
@@ -259,12 +229,10 @@ pub enum CodexEvent {
     Exited {
         status: Exit,
     },
-    /// A frame that names no thread.
     Unknown(Value),
 }
 
 impl CodexEvent {
-    /// Allowlisted information for logs when the hub cannot route an event.
     #[must_use]
     pub const fn diagnostic(&self) -> (&'static str, Option<&ThreadId>) {
         match self {
@@ -306,28 +274,21 @@ impl CodexEvent {
 pub enum Decision {
     Accept,
     AcceptForSession,
-    /// The agent continues the turn without the action.
     Decline,
-    /// The answer to a user-input request, one per question.
     Answer(Vec<Answer>),
 }
 
-/// What an answer to an open request has to look like.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AnswerShape {
     Command,
     FileChange,
-    /// Holds the requested profile, which an accept grants back.
     Permissions(Value),
-    /// Holds the questions' ids, which key the answers.
     UserInput(Vec<String>),
 }
 
-/// What one stdout line means to the server actor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inbound {
     Event(CodexEvent),
-    /// Answer to a request we sent.
     Response {
         id: RequestId,
         outcome: Result<Value, ResponseError>,
@@ -338,20 +299,15 @@ pub enum Inbound {
         shape: AnswerShape,
         event: ThreadEvent,
     },
-    /// `serverRequest/resolved`: Codex no longer waits on this request.
     Resolved {
         thread: ThreadId,
         rpc_id: RequestId,
     },
-    /// A server request we do not serve. It still needs an error reply or the
-    /// turn waits forever.
     Unsupported {
         rpc_id: RequestId,
         method: String,
         event: CodexEvent,
     },
-    /// A user-input request with a secret question, which gets an error
-    /// reply. `event` names no question.
     Declined {
         rpc_id: RequestId,
         event: CodexEvent,
@@ -643,15 +599,12 @@ enum SpecialPlace {
     },
 }
 
-/// Whether Codex refused the operation or sent an inconclusive reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponseError {
     Rejected(String),
     Malformed(&'static str),
 }
 
-/// # Errors
-/// Fails when the line is not JSON.
 pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
     let rpc_id = raw.get("id").and_then(RequestId::read);
@@ -1146,7 +1099,6 @@ fn thread_unknown(raw: Value) -> CodexEvent {
     }
 }
 
-/// A request we originate.
 #[derive(Debug, Clone)]
 pub enum Call {
     Initialize,
@@ -1165,7 +1117,6 @@ pub enum Call {
 }
 
 impl Call {
-    /// `thread/resume` for `resume`, or else `thread/start`.
     #[must_use]
     pub fn open(options: ThreadOptions, resume: Option<ThreadId>) -> Self {
         match resume {
@@ -1268,10 +1219,6 @@ struct SupportedEffort {
     reasoning_effort: String,
 }
 
-/// The models `model/list` offers, without the hidden ones.
-///
-/// # Errors
-/// Fails when `result` is not a model list.
 pub fn models(result: Value) -> serde_json::Result<Models> {
     let list = serde_json::from_value::<ModelList>(result)?;
     let shown = list
@@ -1308,7 +1255,6 @@ struct ThreadResponse {
     reasoning_effort: Option<String>,
 }
 
-/// What `thread/start` and `thread/resume` say the thread runs with.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadSettings {
     pub model: String,
@@ -1326,11 +1272,6 @@ struct InitializeResponse {
     user_agent: String,
 }
 
-/// `thread/start` and `thread/resume` both answer `{thread: {id, ..},
-/// model, reasoningEffort, ..}`.
-///
-/// # Errors
-/// Fails when `result` names no thread and model.
 pub fn thread_started(
     result: Value,
 ) -> serde_json::Result<(ThreadId, ThreadSettings)> {
@@ -1344,45 +1285,26 @@ pub fn thread_started(
     ))
 }
 
-/// # Errors
-/// Fails when `result` names no turn.
 pub fn turn_id(result: Value) -> serde_json::Result<TurnId> {
     let r = serde_json::from_value::<TurnResponse>(result)?;
     Ok(TurnId(r.turn.id))
 }
 
-/// `userAgent` from `initialize`, such as `conductor/0.166.0 (Ubuntu ...)`.
-///
-/// # Errors
-/// Fails when `result` has no `userAgent`.
 pub fn user_agent(result: Value) -> serde_json::Result<String> {
     let r = serde_json::from_value::<InitializeResponse>(result)?;
     Ok(r.user_agent)
 }
 
 pub enum Outbound {
-    Request {
-        id: i64,
-        call: Call,
-    },
+    Request { id: i64, call: Call },
     Initialized,
-    Answer {
-        rpc_id: RequestId,
-        result: Value,
-    },
-    /// Reply to a server request we do not serve.
-    Reject {
-        rpc_id: RequestId,
-        message: String,
-    },
+    Answer { rpc_id: RequestId, result: Value },
+    Reject { rpc_id: RequestId, message: String },
 }
 
-/// Why a decision did not become an answer.
 #[derive(Debug)]
 pub enum AnswerError {
-    /// The decision cannot answer a request of this shape.
     NotApplicable,
-    /// The answer would not encode as JSON.
     Encode(serde_json::Error),
 }
 
@@ -1412,11 +1334,6 @@ enum PlainDecision {
     Decline,
 }
 
-/// The JSON-RPC `result` that answers an open request with `decision`.
-///
-/// # Errors
-/// Fails when `decision` can't answer a request of this shape, or its
-/// answer won't encode.
 pub fn answer(
     shape: &AnswerShape,
     decision: Decision,
@@ -1501,8 +1418,6 @@ struct RpcError {
     message: String,
 }
 
-/// # Errors
-/// Fails when a request's params won't encode.
 pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
         Outbound::Request { id, call } => json!({

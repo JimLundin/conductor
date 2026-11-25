@@ -1,12 +1,8 @@
-//! How a CLI process ended.
-
 use crate::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Exit {
-    /// The exit status, as the platform describes it (`exit status: 1`).
     Status(String),
-    /// Waiting on the killed process failed, with the error it gave.
     Unknown(String),
 }
 

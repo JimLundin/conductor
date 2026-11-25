@@ -1,8 +1,3 @@
-//! The decisions of the actor that owns the host's `codex app-server`, as a
-//! state machine: routing each JSON-RPC response to the call that waits for
-//! it, keeping Codex's open requests until they are answered or withdrawn,
-//! and failing what waits once the server exits.
-//!
 use core::fmt;
 
 use agents::driver::{self, Command, FailureText};
@@ -17,14 +12,12 @@ use crate::{
     encode, parse_line,
 };
 
-/// What a handle asks of the server.
 #[derive(Debug, Clone)]
 pub enum CallRequest<R> {
     Request {
         call: Call,
         reply: R,
     },
-    /// Answers an open approval or user-input request exactly once.
     Respond {
         thread: ThreadId,
         id: ApprovalId,
@@ -33,14 +26,10 @@ pub enum CallRequest<R> {
     },
 }
 
-/// What a line is written for, and so what its outcome decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Then<R> {
-    /// Our request `id`, whose response the caller waits for.
     Request { id: i64, method: String, reply: R },
-    /// The answer to one of Codex's requests.
     Answer(R),
-    /// A line nobody waits for; a failure is logged after this context.
     Logged(String),
 }
 
@@ -99,8 +88,6 @@ struct Open {
     shape: AnswerShape,
 }
 
-/// The server's state: our requests awaiting a response, Codex's requests
-/// awaiting our answer, and how the process ended once it has.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server<R> {
     exited: Option<Exit>,

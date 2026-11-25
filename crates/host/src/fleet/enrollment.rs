@@ -1,5 +1,3 @@
-//! A standalone host's enrollment into a fleet.
-
 use core::fmt;
 
 use schemars::JsonSchema;
@@ -8,12 +6,9 @@ use subtle::ConstantTimeEq;
 
 const TOKEN_LEN: usize = 16;
 
-/// The secret a standalone host requires of the root host that enrolls it
-/// in a fleet.
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EnrollmentToken([u8; TOKEN_LEN]);
 
-/// An enrollment whose token is not the host's.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("wrong enrollment token")]
 pub struct WrongEnrollmentToken {}
@@ -24,12 +19,6 @@ impl EnrollmentToken {
         Self(bytes)
     }
 
-    /// Checks `self` against the host's token in constant time, so the
-    /// time a refusal takes says nothing about the token.
-    ///
-    /// # Errors
-    ///
-    /// [`WrongEnrollmentToken`] when the tokens differ.
     pub fn check(&self, expected: &Self) -> Result<(), WrongEnrollmentToken> {
         match self.0.as_slice().ct_eq(expected.0.as_slice()).unwrap_u8() {
             1 => Ok(()),

@@ -1,12 +1,3 @@
-//! The `home` command line as data: what its words ask for, and what doing
-//! it to the home's issues writes and says.
-//!
-//! The shell reads the files, the clock and some randomness, and writes
-//! what [`run`] returns. Every write, the command line's and the app's
-//! alike, is made by [`write()`], which reads it back against the flow
-//! before it's made: a structural problem or a broken `error` rule refuses
-//! it, and anything softer is written with a warning.
-
 use alloc::string::ToString;
 
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
@@ -27,7 +18,6 @@ use super::role::opening;
 use super::snapshot::Snapshot;
 use crate::prelude::*;
 
-/// What `home` says alone: every command and what it means.
 pub const USAGE: &str = "usage: home <command>, from anywhere in the home
 
   home check
@@ -72,28 +62,18 @@ structural problem or a broken error rule refuses it, and anything softer
 is written with a warning.
 ";
 
-/// What the command line's words ask for: a command on the home's issues,
-/// or one the shell does in the home's folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Asked {
     Flow(Command),
     Local(Local),
 }
 
-/// What the shell does in the home's folder, among its repositories and
-/// skills.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Local {
-    /// `home repos`: each project's checkouts here and their state.
     Status,
-    /// `home repos --verify`: as `home repos`, then each project whose
-    /// head lacks a recorded pass of its profiles.
     Verify,
-    /// `home repos sync`: clones each project not checked out here.
     Sync,
-    /// `home repos scan`: registers each repository no project has.
     Scan,
-    /// `home skills`: installs the home's skills for each harness.
     Skills,
 }
 
@@ -101,19 +81,12 @@ pub enum Local {
 pub enum Command {
     Check,
     Edit(Edit),
-    /// The issue's body becomes the text of the file at `path`, from where
-    /// the command runs, once the shell has read it.
-    BodyFrom {
-        id: IssueId,
-        path: String,
-    },
-    /// Words that make no command, and why.
+    BodyFrom { id: IssueId, path: String },
     Wrong(String),
     Usage,
 }
 
 impl Command {
-    /// The file the shell reads before running it.
     #[must_use]
     pub fn file(&self) -> Option<&str> {
         match self {
@@ -123,13 +96,12 @@ impl Command {
     }
 }
 
-/// An edit to one of the home's issues, the command line's and the app's
-/// alike.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Edit {
-    /// Opens issue `id`.
-    New { id: IssueId, issue: NewIssue },
-    /// Changes to one issue, made in one write.
+    New {
+        id: IssueId,
+        issue: NewIssue,
+    },
     Change {
         id: IssueId,
         changes: Vec<IssueChange>,
@@ -137,7 +109,6 @@ pub enum Edit {
 }
 
 impl Edit {
-    /// The issue it edits.
     #[must_use]
     pub const fn id(&self) -> IssueId {
         match self {
@@ -146,19 +117,13 @@ impl Edit {
     }
 }
 
-/// What the shell knows that the core can't: when it is, and who is
-/// writing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
-    /// Milliseconds since the Unix epoch.
     pub now_ms: u64,
-    /// As the log signs it, `<node>·<harness>`.
     pub by: String,
-    /// A comment the written file's front matter ends with.
     pub mark: Option<String>,
 }
 
-/// An issue file to write, whole.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Write {
     pub project: ProjectId,
@@ -167,14 +132,11 @@ pub struct Write {
 }
 
 impl Write {
-    /// Where it is written, from the home's root.
     #[must_use]
     pub fn path(&self) -> String {
         crate::layout::issue_file(&self.project, &self.stem)
     }
 
-    /// The folder it is written in, from the home's root, made first since
-    /// a project's first issue finds none.
     #[must_use]
     pub fn folder(&self) -> String {
         crate::layout::issues(&self.project)
@@ -189,8 +151,6 @@ pub struct Outcome {
 }
 
 impl Outcome {
-    /// What the command line says once the shell has saved the writes, or
-    /// only why it couldn't, and its exit code.
     #[must_use]
     pub fn ended(&self, saved: Result<(), String>) -> (String, u8) {
         let code = u8::from(self.failed || saved.is_err());
@@ -200,8 +160,6 @@ impl Outcome {
     }
 }
 
-/// What the command line says, and its exit code, where no folder at or
-/// above holds a flow.
 #[must_use]
 pub fn homeless() -> (String, u8) {
     (
@@ -214,8 +172,6 @@ fn refusal(reason: &str) -> String {
     format!("home: {reason}\n")
 }
 
-/// The file an edit writes, `<project name>/<id>` that names it, and what
-/// the flow warns of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Written {
     pub write: Write,
@@ -223,8 +179,6 @@ pub struct Written {
     pub warnings: Vec<String>,
 }
 
-/// The id a new issue made at `now`, in seconds since the Unix epoch,
-/// takes: the first of `draws` that gives one the home has no file of.
 #[must_use]
 pub fn fresh(home: &Snapshot, now_secs: u64, draws: &Draws) -> Option<IssueId> {
     let held: Vec<IssueId> = home
@@ -235,9 +189,6 @@ pub fn fresh(home: &Snapshot, now_secs: u64, draws: &Draws) -> Option<IssueId> {
     IssueId::mint(now_secs, draws, &held)
 }
 
-/// What `args`, after the program's name, ask of `home`: what [`command`]
-/// makes of them, unless they ask for something the shell does in the
-/// home's folder.
 #[must_use]
 pub fn asked(
     args: &[String],
@@ -255,11 +206,6 @@ pub fn asked(
     }
 }
 
-/// The command `args` ask for in `home`, after the program's name.
-///
-/// A project is named by its name or id, each `<field>=<value>` is a value
-/// of the field's type, a list where it takes several, and a new issue
-/// takes the id `fresh`, if there is one.
 #[must_use]
 pub fn command(
     args: &[String],
@@ -470,7 +416,6 @@ fn typed(
     })
 }
 
-/// A value as the command line gives it, a list's comma-separated.
 #[must_use]
 pub fn said(value: &Datum) -> String {
     match value {
@@ -480,8 +425,6 @@ pub fn said(value: &Datum) -> String {
     }
 }
 
-/// What doing `command` to `home` writes and says, given the text of the
-/// file it asked for, if it asked for one.
 #[must_use]
 pub fn run(
     command: Command,
@@ -540,12 +483,6 @@ const fn refused(output: String) -> Outcome {
     }
 }
 
-/// What `edit` writes to `home`'s issues, read back against the flow among
-/// the others.
-///
-/// # Errors
-///
-/// Why the edit can't be made, or what the flow refuses it for.
 pub fn write(
     home: &Snapshot,
     edit: &Edit,
@@ -903,7 +840,6 @@ fn quoted(text: &str) -> String {
     Value::String(text.to_owned()).to_string()
 }
 
-/// `now` as the log writes a time, RFC 3339 in UTC to the second.
 #[must_use]
 pub fn stamp(now_ms: u64) -> String {
     let seconds = now_ms / 1000;

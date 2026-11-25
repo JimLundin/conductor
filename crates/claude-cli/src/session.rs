@@ -1,5 +1,3 @@
-//! The Claude handle and handshake over the shared line-JSON process runner.
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -25,21 +23,15 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(60);
 pub struct ClaudeOptions {
     pub claude_path: PathBuf,
     pub home: Home,
-    /// Passed in the environment; `None` leaves the home's own sign-in.
     pub credential: Option<ClaudeCredential>,
     pub cwd: PathBuf,
     pub model: Option<String>,
-    /// `None` leaves the model's default effort.
     pub effort: Option<Effort>,
     pub permission_mode: PermissionMode,
     pub resume: Resume,
-    /// Conductor's stable session ULID isolates its transcript directory.
     pub project_name: Option<String>,
-    /// `None` leaves the CLI default, which loads user, project and local settings.
     pub setting_sources: Option<Vec<SettingSource>>,
-    /// Appended to the CLI's system prompt.
     pub instructions: Option<String>,
-    /// Append every raw stdout line to this file.
     pub stdout_log: Option<PathBuf>,
     pub versions: VersionPolicy,
 }
@@ -52,10 +44,8 @@ pub enum Error {
     Encode(#[from] serde_json::Error),
     #[error("the claude process has exited")]
     Exited,
-    /// The CLI exited before it answered `initialize`, saying why.
     #[error("claude exited: {0}")]
     Refused(String),
-    /// Only the CLI's exact missing-transcript reason for the requested resume id.
     #[error("claude exited: No conversation found with session ID: {}", .0.0)]
     MissingSession(SessionId),
     #[error("claude rejected {subtype}: {message}")]
@@ -117,12 +107,6 @@ struct Starting {
 }
 
 impl ClaudeSession {
-    /// Starts `claude` and completes the `initialize` handshake. Refuses a CLI
-    /// version outside the supported range unless `VersionPolicy::AllowUntested`.
-    ///
-    /// # Errors
-    /// Fails when the CLI cannot be started, exits or refuses before it
-    /// answers `initialize`, or reports a version the policy refuses.
     pub async fn spawn(
         opts: ClaudeOptions,
     ) -> Result<(Self, mpsc::Receiver<ClaudeEvent>), Error> {
@@ -136,31 +120,21 @@ impl ClaudeSession {
         starting.admit(initialize, opts.versions).await
     }
 
-    /// The models and efforts this CLI offers.
     #[must_use]
     pub const fn models(&self) -> &Models {
         &self.models
     }
 
-    /// The id `--resume` takes, which the CLI prints in every `init`.
     #[must_use]
     pub const fn id(&self) -> &SessionId {
         &self.id
     }
 
-    /// Changes the effort of the CLI's later API requests, in this process
-    /// using `apply_flag_settings`.
-    ///
-    /// # Errors
-    /// Fails when the CLI has exited, does not answer in time or rejects
-    /// the request.
     pub async fn set_effort(&self, effort: Effort) -> Result<(), Error> {
         let _ = self.control(ControlCall::SetEffort(effort)).await?;
         Ok(())
     }
 
-    /// # Errors
-    /// Fails when the CLI has exited or the message cannot be written.
     pub async fn send_user(&self, text: String) -> Result<(), Error> {
         let _ = self
             .commands
@@ -170,19 +144,11 @@ impl ClaudeSession {
         Ok(())
     }
 
-    /// Resolves once the CLI acknowledges; the turn's `result` follows as an event.
-    ///
-    /// # Errors
-    /// Fails when the CLI has exited, does not answer in time or rejects
-    /// the request.
     pub async fn interrupt(&self) -> Result<(), Error> {
         let _ = self.control(ControlCall::Interrupt).await?;
         Ok(())
     }
 
-    /// # Errors
-    /// Fails when the CLI has exited, no request with `id` is open, or the
-    /// answer cannot be written.
     pub async fn respond(
         &self,
         id: PermissionRequestId,
@@ -200,10 +166,6 @@ impl ClaudeSession {
         Ok(())
     }
 
-    /// Closes stdin, waits briefly for a clean exit, then kills.
-    ///
-    /// # Errors
-    /// Fails when the session's actor has already stopped.
     pub async fn shutdown(self) -> Result<Exit, Error> {
         self.commands.shutdown().await.map_err(|_| Error::Exited)
     }
@@ -315,7 +277,6 @@ async fn reason(
     }
 }
 
-/// Whether Claude's command sandbox can run here (`claude::sandbox`).
 #[must_use]
 pub fn sandbox(cwd: &Path) -> Sandbox {
     let kernel_release = if cfg!(target_os = "linux") {

@@ -1,13 +1,3 @@
-//! What a Codex agent does with a session's runtime commands
-//! (`agents::runtime`), as a state machine.
-//!
-//! It decides which thread opens, the app-server requests each command
-//! becomes, and the runtime events each thread event becomes. The thread
-//! runs on the hub's shared app-server.
-//!
-//! `codex-cli` runs it: it turns each command, request outcome and routed
-//! event into an [`Input`], and performs each [`Effect`] in order.
-
 use agents::Step;
 use agents::runtime::{
     Command, Event, Lifecycle, Outcome, Report, Start, Started,
@@ -22,17 +12,14 @@ use crate::{
     TurnId, codex_answer, codex_steps,
 };
 
-/// The thread to open: resumed from Codex's own history, or a new one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Open {
     pub options: ThreadOptions,
     pub resume: Option<ThreadId>,
 }
 
-/// A request on the running thread.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
-    /// Starts a turn, at `effort` if given: it stays the thread's effort.
     SendTurn {
         text: String,
         effort: Option<Effort>,
@@ -45,7 +32,6 @@ pub enum Call {
     },
 }
 
-/// The command a call's outcome answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Then {
     Sent,
@@ -53,32 +39,21 @@ pub enum Then {
     Replied,
 }
 
-/// What happened, as the shell saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     Command(Command),
-    /// How the [`Effect::Open`] went: the thread that opened.
     Opened(Result<ThreadId, String>),
-    /// How the [`Effect::Call`] for `then` went.
     Called {
         then: Then,
         outcome: Result<(), String>,
     },
-    /// The thread's next event, `None` once its events end.
     Event(Option<Routed>),
 }
 
-/// What the shell does next, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Open the thread in place of the running one, if it opens, and report
-    /// [`Input::Opened`].
     Open(Open),
-    /// Make the request on the running thread and report [`Input::Called`].
-    Call {
-        call: Call,
-        then: Then,
-    },
+    Call { call: Call, then: Then },
     Runtime(Report),
 }
 

@@ -21,11 +21,6 @@ use iroh::{Endpoint, EndpointId, RelayMode};
 
 use member::clock;
 
-/// Creates the local fleet root and a passphrase-sealed recovery file.
-///
-/// # Errors
-///
-/// If a fleet already exists, the relay is invalid, or recovery data cannot be stored.
 pub fn initialize(
     data: Option<PathBuf>,
     name: String,
@@ -41,11 +36,6 @@ pub fn initialize(
     Ok(())
 }
 
-/// Signs a browser's public pairing request at the root host.
-///
-/// # Errors
-///
-/// If the pairing request or local root state is invalid.
 pub async fn pair(data: Option<PathBuf>, request: &str) -> anyhow::Result<()> {
     let data_dir = crate::start::data_dir_or_default(data)?;
     let membership = local(&data_dir)?;
@@ -79,11 +69,6 @@ async fn approve(
     })
 }
 
-/// Joins the root named by an invitation using this host's persistent identity.
-///
-/// # Errors
-///
-/// If the invite is invalid or expired, the root is offline, or membership cannot be saved.
 pub async fn join(
     data: Option<PathBuf>,
     text: &str,
@@ -149,11 +134,6 @@ async fn join_bound(
     Ok(())
 }
 
-/// Prints this host's fleet identity and configuration version.
-///
-/// # Errors
-///
-/// If the local membership cannot be read.
 pub async fn status(data: Option<PathBuf>) -> anyhow::Result<()> {
     let data_dir = crate::start::data_dir_or_default(data)?;
     let state = local(&data_dir)?;
@@ -175,11 +155,6 @@ pub async fn status(data: Option<PathBuf>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Revokes a host or device from the root host's stored configuration.
-///
-/// # Errors
-///
-/// If the local root is unavailable or the revocation cannot be recorded.
 pub async fn revoke(data: Option<PathBuf>, node: &str) -> anyhow::Result<()> {
     let data_dir = crate::start::data_dir_or_default(data)?;
     let _exclusive = exclusive(&data_dir)?;
@@ -193,11 +168,6 @@ pub async fn revoke(data: Option<PathBuf>, node: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Reloads the root signing key from its passphrase-sealed backup.
-///
-/// # Errors
-///
-/// If the backup is invalid, the configuration is foreign, or the directory is occupied.
 pub fn restore(
     data: Option<PathBuf>,
     backup: &Path,
@@ -214,11 +184,6 @@ pub fn restore(
     Ok(())
 }
 
-/// Seals this member's signed configuration as a recovery artifact.
-///
-/// # Errors
-///
-/// If membership cannot be read or the export cannot be sealed.
 pub async fn export(
     data: Option<PathBuf>,
     output: &Path,

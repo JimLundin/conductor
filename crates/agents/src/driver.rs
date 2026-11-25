@@ -1,5 +1,3 @@
-//! The data exchanged between a line-JSON process runner and a driver.
-
 use alloc::string::{String, ToString};
 use core::fmt;
 use serde_json::Value;
@@ -39,8 +37,6 @@ pub enum After<S, A> {
 type StopEffect<V, R, S, T, A, F> = Result<Option<Effect<V, R, S, T, A, F>>, A>;
 
 impl<S, A> After<S, A> {
-    /// # Errors
-    /// Returns the protocol action that the driver must complete.
     pub fn stop<V, R, T, F>(
         self,
         exited: Option<&Exit>,
@@ -51,8 +47,6 @@ impl<S, A> After<S, A> {
         }
     }
 
-    /// # Errors
-    /// Returns the protocol action that the driver must complete.
     pub fn complete<V, R, T, F>(
         self,
         exit: &Exit,
@@ -70,11 +64,7 @@ impl<S, A> After<S, A> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Effect<V, R, S, T, A, F> {
-    /// A serialized frame. The runner adds its line terminator.
-    Write {
-        line: String,
-        then: T,
-    },
+    Write { line: String, then: T },
     Emit(V),
     Log(Note),
     Reply(R, Result<Value, F>),

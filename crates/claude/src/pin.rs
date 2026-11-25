@@ -1,5 +1,3 @@
-//! Claude's pinned CLI: which build a platform takes.
-
 use agents::pin::{Package, Pin};
 
 use crate::prelude::*;
@@ -20,8 +18,6 @@ fn platform(os: &str, arch: &str, musl: bool) -> Option<&'static str> {
     })
 }
 
-/// The pinned download of `claude` for the platform the Rust names `os`
-/// and `arch` describe, whose executables end in `exe`.
 #[must_use]
 pub fn pin(os: &str, arch: &str, exe: &str, musl: bool) -> Option<Pin> {
     let platform = platform(os, arch, musl)?;

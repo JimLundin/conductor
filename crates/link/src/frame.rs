@@ -1,12 +1,8 @@
-//! A frame's body on the client link is its JSON, and only the link's own
-//! frames ([`Frame`]) travel in it. `net::wire` frames the body.
-
 use alloc::vec::Vec;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-/// A message that opens or answers a stream on the client link.
 pub trait Frame: Serialize + DeserializeOwned {}
 
 impl Frame for crate::Open {}
@@ -17,20 +13,10 @@ impl Frame for crate::CommandResult {}
 
 impl Frame for crate::Feed {}
 
-/// The frame body of `msg`.
-///
-/// # Errors
-///
-/// When `msg` doesn't serialize.
 pub fn encode<T: Frame>(msg: &T) -> Result<Vec<u8>, serde_json::Error> {
     serde_json::to_vec(msg)
 }
 
-/// The value a frame body holds.
-///
-/// # Errors
-///
-/// When the body is not a `T`.
 pub fn decode<T: Frame>(body: &[u8]) -> Result<T, serde_json::Error> {
     serde_json::from_slice(body)
 }

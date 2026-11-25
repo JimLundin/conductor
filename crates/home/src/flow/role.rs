@@ -1,9 +1,3 @@
-//! What the flow's status roles mean to Conductor.
-//!
-//! Which status a new issue opens in, which issues a session can start
-//! on, and where a session moves its issue: Conductor asks these, never a
-//! role or a status's name.
-
 use crate::issue::Issue;
 
 use super::check::broken;
@@ -18,15 +12,11 @@ fn holding(flow: &Flow, role: Role) -> Option<&str> {
         .map(|status| status.name.as_str())
 }
 
-/// The status a new issue opens in.
 #[must_use]
 pub fn opening(flow: &Flow) -> Option<&str> {
     holding(flow, Role::Idle)
 }
 
-/// Whether a session can start on `issue`, among `issues`: it isn't at
-/// work already, and moving it to the active status breaks none of the
-/// flow's rules.
 #[must_use]
 pub fn can_start(flow: &Flow, issues: &[&Issue], issue: &Issue) -> bool {
     let Some(active) = holding(flow, Role::Active) else {
@@ -46,8 +36,6 @@ pub fn can_start(flow: &Flow, issues: &[&Issue], issue: &Issue) -> bool {
     broken(flow, issues, &after, moving).next().is_none()
 }
 
-/// The status `issue` moves to once a session on it has started, among
-/// `issues`: one that can start becomes active.
 #[must_use]
 pub fn started<'a>(
     flow: &'a Flow,
@@ -59,8 +47,6 @@ pub fn started<'a>(
         .flatten()
 }
 
-/// The status `issue` moves to once a session on it has finished with
-/// work landed on its branch: one not yet built is up for review.
 #[must_use]
 pub fn landed<'a>(flow: &'a Flow, issue: &Issue) -> Option<&'a str> {
     let role = flow.status(&issue.status)?.role;

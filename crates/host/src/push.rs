@@ -1,7 +1,3 @@
-//! Web push: the subscriptions a paired host notifies, which of them it
-//! accepts, and the commands that register one or ask for the key it
-//! signs with.
-
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use core::fmt;
@@ -36,7 +32,6 @@ pub enum PushCommand {
 pub enum PushResult {
     Accepted,
     PublicKey(String),
-    /// The host sends no push.
     Unavailable,
 }
 
@@ -69,7 +64,6 @@ pub fn register(
     Registration::Updated(updated)
 }
 
-/// Accepts endpoints of the Web Push services supported by the app.
 #[must_use]
 pub fn valid(subscription: &PushSubscription) -> bool {
     if subscription.endpoint.len() > 2048

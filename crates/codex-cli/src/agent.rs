@@ -1,7 +1,3 @@
-//! Codex's runtime: one task per session's agent runs the
-//! [`codex::runtime`] machine on a [`Runtime`]'s far end, opening its thread
-//! on the hub's shared app-server and making the requests it decides on.
-
 use std::sync::Arc;
 
 use agents::Configuration;

@@ -1,13 +1,3 @@
-//! What a Claude agent does with a session's runtime commands
-//! (`agents::runtime`), as a state machine.
-//!
-//! It decides which conversation the CLI starts on and which it tries
-//! next, the control calls each command becomes, and the runtime events
-//! each Claude event becomes.
-//!
-//! `claude-cli` runs it: it turns each command, call outcome and Claude
-//! event into an [`Input`], and performs each [`Effect`] in order.
-
 use agents::Effort;
 use agents::Note;
 use agents::runtime::{
@@ -20,15 +10,12 @@ use crate::{
     claude_answer, claude_steps,
 };
 
-/// Why the CLI did not start, and the conversation it found missing if
-/// that is why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Refusal {
     pub message: String,
     pub missing: Option<SessionId>,
 }
 
-/// How to start the CLI for a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Spawn {
     pub session: Session,
@@ -39,7 +26,6 @@ pub struct Spawn {
     pub instructions: Option<String>,
 }
 
-/// A call on the running CLI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Call {
     SetEffort(Effort),
@@ -51,45 +37,30 @@ pub enum Call {
     },
 }
 
-/// What a call's outcome decides.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Then {
-    /// The effort changed for a turn: send its text next.
     Retuned(String),
     Sent,
     Interrupted,
     Replied,
 }
 
-/// What happened, as the shell saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Input {
     Command(Command),
-    /// How the [`Effect::Spawn`] went: the conversation the CLI runs.
     Spawned(Result<SessionId, Refusal>),
-    /// How the [`Effect::Call`] for `then` went.
     Called {
         then: Then,
         outcome: Result<(), String>,
     },
-    /// How the [`Effect::Shutdown`] went.
     ShutDown(Result<(), String>),
-    /// The running CLI's next event, `None` once its events end.
     Event(Option<ClaudeEvent>),
 }
 
-/// What the shell does next, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
-    /// Start the CLI in place of the one running, if it starts, and report
-    /// [`Input::Spawned`].
     Spawn(Spawn),
-    /// Make the call on the running CLI and report [`Input::Called`].
-    Call {
-        call: Call,
-        then: Then,
-    },
-    /// Stop the running CLI and report [`Input::ShutDown`].
+    Call { call: Call, then: Then },
     Shutdown,
     Runtime(Report),
 }

@@ -17,26 +17,18 @@ use crate::prelude::*;
 use crate::session::Choice;
 use crate::workspace::GitError;
 
-/// Where a session starts, and the issue it works on, if any.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placement {
     pub directory: SessionDirectory,
     pub on: Option<home::issue::Start>,
 }
 
-/// A start that the home places: in a project or an issue.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InHome {
     Project(ProjectId),
     Issue(IssueId),
 }
 
-/// The placement of a start that names its directory; any other start
-/// waits on the home.
-///
-/// # Errors
-///
-/// The start is in a project or an issue.
 pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
     match at {
         StartAt::Directory(directory) => Ok(Placement {
@@ -48,13 +40,6 @@ pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
     }
 }
 
-/// The first checkout of a project or an issue's project. The session's
-/// project follows from its worktree's repository, so it isn't kept apart.
-///
-/// # Errors
-///
-/// The host has no home, its home lists no such project or issue, or the
-/// project has no checkout on the host.
 pub fn place_in_home(
     at: InHome,
     home: Option<&Home>,
@@ -128,7 +113,6 @@ pub enum StartEnd {
     Stopped,
 }
 
-/// The completion waits for the home progress update before replying.
 #[derive(Debug)]
 pub struct StartOutcome {
     pub progress: Option<(IssueId, ClientName)>,

@@ -1,9 +1,3 @@
-//! Credentials as data (§6.3). Each provider's plugin describes the kinds
-//! of credential it takes as forms of fields; the app renders those forms,
-//! and a credential travels and is stored as its form's values. The host
-//! checks the values against the form, and the provider's core turns them
-//! into what its CLI needs.
-
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -12,7 +6,6 @@ use alloc::vec::Vec;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Who the provider says an instance signs in as.
 #[derive(
     Debug,
     Clone,
@@ -26,49 +19,28 @@ use serde::{Deserialize, Serialize};
     JsonSchema,
 )]
 pub enum Account {
-    /// The provider's own sign-in before it has named an account: where a
-    /// sign-in runs, and a CLI given on the host's command line, signed in
-    /// however it is. Each provider has one.
     Own,
-    /// As the provider names it: a subscription's email, or what the
-    /// credential's form names, such as a gateway's URL.
     Named(String),
 }
 
-/// How an instance's CLI reaches its model. It names the kind and never
-/// carries a secret: credentials are write-only (§6.3).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Auth {
-    /// A credential the host stores, of this kind, reaching this URL if
-    /// its form has one ([`ProviderInfo::auth`]).
     Stored { kind: String, url: Option<String> },
-    /// The CLI's own sign-in in the instance's private home, from the app
-    /// (`SignInCommand::Start`) or on the host (`orchestrator login <instance>`).
     SignedIn,
-    /// A CLI the host was started with (`--cli <provider>=<path>`),
-    /// which signs in however it does.
     Unmanaged,
 }
 
-/// What a field holds, which says how the app shows it and how the host
-/// checks it.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub enum FieldKind {
     Text,
-    /// A plain `http(s)://host/path`. It is shown to every client and may
-    /// be written into a CLI's config, so it may not hide a secret in
-    /// userinfo, a query or a fragment.
     Url,
-    /// Write-only: the host never shows it again, and no `Debug` prints it.
     Secret,
 }
 
-/// One field of a credential form.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Field {
-    /// The key of its value in a [`Credential`].
     pub id: String,
     pub label: String,
     pub kind: FieldKind,
@@ -76,36 +48,22 @@ pub struct Field {
     pub required: bool,
 }
 
-/// One kind of credential a provider takes, as the form it is entered in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CredentialForm {
-    /// The [`Credential::kind`] of what the form makes.
     pub kind: String,
     pub label: String,
     pub fields: Vec<Field>,
-    /// The id of the field whose value is the account the credential signs
-    /// in as, since the provider's CLI names none for it. It is shown to
-    /// every client, so it is never a secret.
     pub account: String,
-    /// The action label when the host can obtain this credential via sign-in.
     pub setup_sign_in: Option<String>,
 }
 
-/// How a provider the host runs presents itself, as its plugin describes
-/// it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderInfo {
     pub label: String,
-    /// What a new session's form says under the provider when it is
-    /// picked, such as what its agent does without asking.
     pub note: Option<String>,
-    /// The kinds of credential it takes.
     pub credentials: Vec<CredentialForm>,
 }
 
-/// One instance's credential: the values of its kind's form, by field id.
-/// As `SetCredential` carries it and as the host stores it. The instance
-/// it belongs to names the provider.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Credential {
     pub kind: String,
@@ -121,7 +79,6 @@ impl core::fmt::Debug for Credential {
 }
 
 impl Credential {
-    /// The value of the field `id`, empty when there is none.
     #[must_use]
     pub fn value(&self, id: &str) -> &str {
         self.values.get(id).map_or("", String::as_str)
@@ -134,12 +91,6 @@ impl ProviderInfo {
         self.credentials.iter().find(|form| form.kind == kind)
     }
 
-    /// Whether the provider takes `credential`: its kind is one of the
-    /// provider's, and its values fill that form.
-    ///
-    /// # Errors
-    ///
-    /// Why the credential is refused.
     pub fn check(&self, credential: &Credential) -> Result<(), String> {
         self.form(&credential.kind)
             .ok_or_else(|| {
@@ -151,12 +102,6 @@ impl ProviderInfo {
             .check(&credential.values)
     }
 
-    /// The account `credential` signs in as: the value of its form's
-    /// account field.
-    ///
-    /// # Errors
-    ///
-    /// Why the credential is refused, or that its form names no account.
     pub fn account(&self, credential: &Credential) -> Result<Account, String> {
         self.check(credential)?;
         let form = self.form(&credential.kind).ok_or_else(|| {
@@ -180,8 +125,6 @@ impl ProviderInfo {
         Ok(Account::Named(String::from(value)))
     }
 
-    /// What `Welcome` may say about a stored credential: its kind and the
-    /// URL it reaches, never a value of another field.
     #[must_use]
     pub fn auth(&self, credential: &Credential) -> Auth {
         Auth::Stored {
@@ -194,11 +137,6 @@ impl ProviderInfo {
 }
 
 impl CredentialForm {
-    /// Every value is a field's, and every field takes its value.
-    ///
-    /// # Errors
-    ///
-    /// Why the values are refused.
     pub fn check(
         &self,
         values: &BTreeMap<String, String>,
@@ -234,12 +172,6 @@ impl CredentialForm {
 }
 
 impl Field {
-    /// Whether `value` fills the field: a required one isn't empty, and a
-    /// URL is plain `http(s)://host/path`.
-    ///
-    /// # Errors
-    ///
-    /// Why the value is refused.
     pub fn check(&self, value: &str) -> Result<(), String> {
         match (value.is_empty(), self.required, self.kind) {
             (true, true, _) => Err(format!("{} is required", self.label)),

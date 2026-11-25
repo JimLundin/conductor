@@ -1,8 +1,3 @@
-//! Replays recorded `claude` stdout (fixtures/claude) through a real
-//! `ClaudeSession`. A stand-in process prints the recording and then swallows
-//! stdin, so the actor, the boundary mapping and the exactly-once permission
-//! bookkeeping all run against the CLI's real bytes.
-
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]

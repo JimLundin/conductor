@@ -1,5 +1,3 @@
-//! How an agent's turn, and its process, ended.
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -14,14 +12,7 @@ pub enum TurnOutcome {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum CloseReason {
-    FailedToStart {
-        message: String,
-    },
-    Exited {
-        status: String,
-    },
-    /// The host stopped the agent on purpose, for this reason.
-    Stopped {
-        reason: String,
-    },
+    FailedToStart { message: String },
+    Exited { status: String },
+    Stopped { reason: String },
 }

@@ -1,11 +1,8 @@
-//! An agent's tool calls: what each runs, and how it went.
-
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::prelude::*;
 
-/// A tool call's id as the provider gave it (`toolu_…` or a Codex item id).
 #[derive(
     Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -24,7 +21,6 @@ pub enum ToolKind {
     Other { name: String, detail: String },
 }
 
-/// One file a tool call changes, and how.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct FileChange {
     pub path: String,
@@ -35,9 +31,7 @@ pub struct FileChange {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub enum Change {
-    /// The whole file written, new or replaced.
     Write,
-    /// Part of an existing file changed.
     Edit,
     Delete,
 }

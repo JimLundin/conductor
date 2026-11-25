@@ -1,6 +1,3 @@
-//! `orchestrator`'s commands, for the plugins it is handed: start the host,
-//! or sign an instance's CLI in.
-
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -28,7 +25,6 @@ use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin, Settings};
 use tracing::Instrument;
 
-/// The providers a host runs, each by its plugin.
 #[derive(Debug, Clone, Default)]
 pub struct Plugins(
     Arc<BTreeMap<Provider, Plugin>>,
@@ -201,29 +197,15 @@ impl Providers {
     }
 }
 
-/// How `orchestrator host` serves.
 #[derive(Debug, Clone)]
 pub struct Hosting {
-    /// Where the host key lives; `None` takes the OS data dir for
-    /// "conductor".
     pub data_dir: Option<PathBuf>,
-    /// The name clients show for this host.
     pub name: String,
-    /// The web app's URL; the printed join link is this plus
-    /// `#join=<ticket>`.
     pub web_url: String,
-    /// The home's remote; `None` keeps the one the host stored, if any.
     pub home: Option<String>,
-    /// The directories the host looks for project checkouts in.
     pub projects: Vec<PathBuf>,
 }
 
-/// Serves this host's sessions over iroh with `plugins`' providers, and
-/// prints a join ticket. It runs until Ctrl-C.
-///
-/// # Errors
-///
-/// Why the host could not start or stopped.
 pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     let Hosting {
         data_dir: given,
@@ -273,23 +255,15 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     ended
 }
 
-/// Settings for a host on an already bound endpoint.
 #[derive(Debug, Clone)]
 pub struct HostOptions {
-    /// Directory for this host's database, credentials and instance homes.
     pub data_dir: PathBuf,
-    /// Name shown to clients.
     pub name: String,
-    /// Home remote, or `None` to use the stored remote.
     pub home: Option<String>,
-    /// Directories scanned for project checkouts.
     pub projects: Vec<PathBuf>,
-    /// The user's home, whose harness folders take the home's skills after
-    /// each sync; `None` installs none.
     pub user: Option<PathBuf>,
 }
 
-/// A running host.
 pub struct Hosted {
     router: Router,
     log: Log,
@@ -300,11 +274,6 @@ pub struct Hosted {
 }
 
 impl Hosted {
-    /// The ticket a client reaches this host and is admitted by.
-    ///
-    /// # Errors
-    ///
-    /// The endpoint has no home relay.
     pub fn ticket(&self) -> anyhow::Result<Ticket> {
         let endpoint = self.router.endpoint();
         let relay = endpoint
@@ -320,11 +289,6 @@ impl Hosted {
         })
     }
 
-    /// Waits for the stored instances to finish configuring while the host serves.
-    ///
-    /// # Errors
-    ///
-    /// The registry stopped before it published its initial offers.
     pub async fn initialized(&self) -> anyhow::Result<()> {
         self.initialized
             .clone()
@@ -334,11 +298,6 @@ impl Hosted {
         Ok(())
     }
 
-    /// Stops accepting connections, closes the endpoint and closes the event log.
-    ///
-    /// # Errors
-    ///
-    /// The router or event log failed to shut down.
     pub async fn shutdown(self) -> anyhow::Result<()> {
         let Self {
             router,
@@ -354,12 +313,6 @@ impl Hosted {
     }
 }
 
-/// Starts serving on `endpoint` after session recovery. Stored instances may
-/// still be probing. [`Hosted::initialized`] waits for their offers.
-///
-/// # Errors
-///
-/// The host's persistent state could not be opened or recovered.
 pub async fn start(
     endpoint: Endpoint,
     plugins: Plugins,
@@ -610,19 +563,6 @@ async fn run(
     }
 }
 
-/// Signs an instance's CLI in on this terminal, into the instance's
-/// private home, as the app's sign-in does on pipes.
-///
-/// The instance is `provider`'s of `account`, or without one the
-/// provider's own. Once the CLI names the account it signed in as, the home is that
-/// account's instance, as after a sign-in from the app; the host takes it
-/// when it next starts.
-///
-/// # Errors
-///
-/// The host has no such instance, `plugins` has none for its provider,
-/// the install or the sign-in failed, or the store couldn't keep the
-/// account's instance.
 pub async fn login(
     given: Option<PathBuf>,
     plugins: Plugins,
@@ -701,8 +641,6 @@ pub fn data_dir_or_default(
 
 const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
-/// How the CLI's own sign-in check against its private home exited, and
-/// what it printed, if it ran to the end within `SIGN_IN_CHECK`.
 pub async fn sign_in_check(
     mut status: tokio::process::Command,
 ) -> Result<(Option<i32>, String), String> {

@@ -1,10 +1,3 @@
-//! Claude Code's stream-json control protocol (`--input-format stream-json
-//! --permission-prompt-tool stdio`): the few frames we read and write, and
-//! their events mapped into the agent API (`agents`), how its process starts,
-//! what the process actor decides, what the agent decides with a
-//! session's runtime commands, and how its sign-in reads. `claude-cli`
-//! runs the process that speaks it.
-
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -41,5 +34,4 @@ pub use sign_in::{
     sign_in,
 };
 
-/// Claude, as its plugin names it.
 pub const PROVIDER: agents::Provider = agents::Provider::new("claude");

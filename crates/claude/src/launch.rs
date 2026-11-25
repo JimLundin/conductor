@@ -1,7 +1,3 @@
-//! How a `claude` process starts, as data, and what its first answer
-//! decides: its command line, its environment and whether its version
-//! runs.
-
 use agents::Effort;
 use agents::{Config, HomeKind, Invocation, Note, Profile, Reported, Var};
 use serde_json::Value;
@@ -29,12 +25,9 @@ impl SettingSource {
     }
 }
 
-/// Which CLI versions a session agrees to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VersionPolicy {
-    /// Refuse a CLI outside the supported range.
     SupportedOnly,
-    /// Run it anyway, with a warning.
     AllowUntested,
 }
 
@@ -45,7 +38,6 @@ pub enum Resume {
 }
 
 impl Resume {
-    /// The session this run continues as; a fresh one takes a new id.
     #[must_use]
     pub const fn target(&self) -> Option<&SessionId> {
         match self {
@@ -54,8 +46,6 @@ impl Resume {
         }
     }
 
-    /// The session whose transcript `reason`, why the CLI exited at start,
-    /// says is missing. Only the exact requested id permits a fresh start.
     #[must_use]
     pub fn missing(&self, reason: &str) -> Option<SessionId> {
         match self {
@@ -73,18 +63,14 @@ impl Resume {
     }
 }
 
-/// Whether Claude's command sandbox can run on this host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Sandbox {
     Available,
     Missing,
 }
 
-/// What Claude's sandbox needs on `PATH` on Linux and WSL2.
 pub const SANDBOX_TOOLS: &[&str] = &["bwrap", "socat"];
 
-/// Whether Claude's command sandbox runs on this OS and kernel with
-/// all of [`SANDBOX_TOOLS`] on `PATH`. WSL1 lacks the namespaces it needs.
 #[must_use]
 pub fn sandbox(os: &str, tools: bool, kernel_release: &str) -> Sandbox {
     let release = kernel_release.to_ascii_lowercase();
@@ -128,8 +114,6 @@ fn removed(names: &[&str]) -> Vec<Var> {
     names.iter().map(|name| Var::remove(name)).collect()
 }
 
-/// What every run of `claude` gets: its home, and its own updates off,
-/// since the host installs the version it runs.
 #[must_use]
 pub fn cli(home: HomeKind) -> Invocation {
     let own_home = match home {
@@ -151,22 +135,16 @@ pub fn cli(home: HomeKind) -> Invocation {
     )
 }
 
-/// `claude auth status`, which succeeds when `home` is signed in.
 #[must_use]
 pub fn auth_status(home: HomeKind) -> Invocation {
     Invocation::of(cli(home).env, &["auth", "status"])
 }
 
-/// The subscription sign-in, `claude auth login --claudeai`. It stores the
-/// credential in its home itself.
 #[must_use]
 pub fn login(home: HomeKind) -> Invocation {
     Invocation::of(cli(home).env, &["auth", "login", "--claudeai"])
 }
 
-/// Claude Code as the host runs it. Its settings keep transcripts past
-/// Claude Code's default 30-day sweep; Conductor deletes a transcript with
-/// its session (§6.2).
 #[must_use]
 pub fn profile() -> Profile {
     Profile {
@@ -186,31 +164,21 @@ pub fn profile() -> Profile {
     }
 }
 
-/// What a session's `claude` runs with.
 #[derive(Debug, Clone)]
 pub struct Launch {
     pub home: HomeKind,
-    /// `None` leaves the home's own sign-in.
     pub credential: Option<ClaudeCredential>,
-    /// Conductor's stable session ULID isolates its transcript directory.
     pub project_name: Option<String>,
     pub permission_mode: PermissionMode,
     pub resume: Resume,
-    /// The session id the CLI runs as: the resume target, or a new one.
     pub id: SessionId,
     pub model: Option<String>,
-    /// `None` leaves the model's default effort.
     pub effort: Option<Effort>,
-    /// `None` leaves the CLI default, which loads user, project and local
-    /// settings.
     pub setting_sources: Option<Vec<SettingSource>>,
-    /// Appended to the CLI's system prompt.
     pub instructions: Option<String>,
     pub sandbox: Sandbox,
 }
 
-/// The session's `claude --print` over stream-json, with the control
-/// protocol on stdio.
 #[must_use]
 pub fn session(launch: &Launch) -> Invocation {
     let checklist_tools = Vec::from([
@@ -328,8 +296,6 @@ fn resume_args(resume: &Resume, id: &SessionId) -> Vec<String> {
     }
 }
 
-/// Why a CLI exited before it answered `initialize`, if it said: the
-/// `errors` of the first `result` among the `events` it printed.
 #[must_use]
 pub fn reported_refusal(events: Vec<ClaudeEvent>) -> Option<String> {
     events.into_iter().find_map(|event| match event {
@@ -340,11 +306,6 @@ pub fn reported_refusal(events: Vec<ClaudeEvent>) -> Option<String> {
     })
 }
 
-/// Whether the CLI that answered `initialize` runs under `policy`, with
-/// the warning an untested one that runs is logged with.
-///
-/// # Errors
-/// The CLI's version is unsupported or unreported and `policy` refuses it.
 pub fn admit(
     initialize: Value,
     policy: VersionPolicy,
@@ -368,7 +329,6 @@ pub fn admit(
     }
 }
 
-/// Environment credentials can reach Claude's commands without its sandbox.
 #[must_use]
 pub const fn unprotected(
     credential: Option<&ClaudeCredential>,

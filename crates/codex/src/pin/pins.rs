@@ -1,12 +1,9 @@
-//! The pinned codex, written by `tools/pin`. Run it again to change the pin.
-
 use crate::prelude::*;
 
 pub const VERSION: &str = "0.166.0";
 
 pub const VERIFIED: &str = "every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles verify";
 
-/// The SHA-256 of the `codex-package-<triple>.tar.gz` release asset for a target triple.
 #[must_use]
 pub fn sha256(platform: &str) -> Option<String> {
     match platform {

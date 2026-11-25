@@ -1,7 +1,3 @@
-//! The id of a pending issue edit, which the app mints in the issue
-//! command: a retry sends the same edit again under a new command, and the
-//! home applies it once.
-
 use alloc::string::String;
 use core::fmt;
 
@@ -9,18 +5,12 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use ulid::Ulid;
 
-/// 128 random bits, whose text is a ULID's as the `ulid` crate writes it.
-///
-/// A human-readable format writes the text, since JSON's numbers are exact
-/// only to 2^53; others write the number.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, JsonSchema,
 )]
 pub struct EditId(#[schemars(with = "String")] pub u128);
 
 impl EditId {
-    /// The id `text` writes, in either case. The crate drops the bits of a
-    /// first digit above 7, so text that doesn't write back is refused.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         let id = Ulid::from_string(text).ok()?;

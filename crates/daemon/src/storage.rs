@@ -1,4 +1,3 @@
-//! Typed redb tables with postcard values. The log actor owns all writes.
 use anyhow::Context;
 use std::path::Path;
 
@@ -128,7 +127,6 @@ pub fn store_receipt(
     Ok(())
 }
 
-/// Performs one of the event log's writes in `write`.
 pub fn write(
     write: &WriteTransaction,
     what: &host::log::Write,
