@@ -258,10 +258,12 @@ Settled with the owner: replace local Git commands with a Rust library,
 allow direct GitHub issue edits, keep the flow independent of GitHub while
 allowing simplification, and require connectivity for issue changes.
 
-Further decisions include the first project operations to expose, storage
-for arbitrary flow fields, behavior for local-only projects, authentication
-and handling of concurrent remote edits. The current queue remains the
-proposed landing implementation. Decision `0v26ayew` selects git2 and the
+The [contract draft](project-backend-contracts.md) proposes the first project
+operations, field and relation mapping, local-only behavior, credentials,
+concurrent-write handling and acceptance seams for owner sign-off. It also
+references the standards project as the implementation and validation
+authority. The current queue remains the proposed landing implementation.
+Decision `0v26ayew` selects git2 and the
 local recovery protocol after the prototype. Production work still needs
 authenticated transport, server rejection and merge/configuration checks,
 plus coordination with external checkout writers and a cancellation policy.

@@ -8,6 +8,11 @@ gix 0.91.0 has no push execution API. The
 [local prototype](experiments/vcs-probe/README.md) record the evidence and
 remaining checks. The interfaces keep both libraries outside the domain.
 
+The [contract draft](project-backend-contracts.md) specifies issue mapping,
+project operations, recovery outcomes and acceptance seams for sign-off.
+It references the standards project as the source of implementation and
+validation rules.
+
 The owner selected `cli` as the binary crate and `orchestrator` as its
 executable. Task `0v28ftxj` implemented that rename, which landed on main
 at `777610b0`.
@@ -162,9 +167,10 @@ documentation does not establish atomic compare-and-set for issue updates;
 the structure does not promise that a GitHub UI edit cannot race a write.
 
 GitHub's native relations and fields are used where they fit. The mapping
-for additional flow fields and relations is private to the GitHub adapter
-and remains a design decision. GitHub's limits do not change the domain
-model.
+for additional flow fields and relations is private to the GitHub adapter.
+The contract draft proposes managed labels, one typed body footer and a
+declared authoritative source for each relation. GitHub's limits do not
+change the domain model.
 
 ## Moving the current code
 

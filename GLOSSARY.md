@@ -45,6 +45,8 @@ A change to an issue that the home has not yet accepted. It remains
 pending while the host is offline or the home cannot be updated. It is
 known by its edit id, which the app mints once and sends again with each
 retry under a new command id, so the home applies it once.
+The backend contract draft replaces this offline-edit behavior with online
+writes and recovery records for attempted operations.
 
 **Client link**:
 The contract between a host and the app: the frames each side sends on a
@@ -80,3 +82,22 @@ _Avoid_: GitHub backend
 The interface for a hosting service's repository checks, statuses and
 workflow runs.
 _Avoid_: local Git backend
+
+**Issue observation**:
+An issue's observed state or invalid record, with its identity, findings,
+freshness and completeness. An observation does not guarantee that a remote
+writer cannot change the issue next.
+
+**Session integration**:
+Applying a session's recorded work to its issue branch. It does not by
+itself submit that branch to the project's default branch.
+
+**Project landing**:
+Submitting a reviewed issue branch through the project's configured
+landing process and recording its result. Deployment and issue completion
+can have separate outcomes after the code has landed.
+
+**Uncertain issue write**:
+An attempted remote issue change whose result has not been established.
+Its operation record permits reconciliation, not blind resubmission.
+_Avoid_: offline edit
