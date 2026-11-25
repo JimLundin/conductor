@@ -16,8 +16,8 @@ use crate::issue::body::{checklist_line, log_line};
 use crate::prelude::*;
 use crate::{CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId};
 
-mod observation;
 pub mod cache;
+mod observation;
 mod tracking;
 pub use tracking::*;
 pub mod ownership;
@@ -298,7 +298,7 @@ fn written(
     let among =
         current.map_or_else(|| home.clone(), |issue| home.with(issue.clone()));
     let context = command::Context {
-        now: data.at.saturating_mul(1000),
+        now_ms: data.at.saturating_mul(1000),
         by: data.by.clone(),
     };
     match command::plan(&among, &data.edit, &context) {

@@ -743,7 +743,7 @@ fn each_change_is_its_own_commit() {
 fn home(checkouts: Vec<Checkout>, issues: Vec<Issue>) -> Home {
     Home {
         remote: text("file:///home.git"),
-        synced: None,
+        synced_secs: None,
         sync: HomeSync::Synced,
         unpushed: 0,
         flow: Some(Box::new(flow())),
@@ -1752,7 +1752,7 @@ mod as_the_command_line {
             None,
             &home,
             &command::Context {
-                now: NOW * 1000,
+                now_ms: NOW * 1000,
                 by: String::from("laptop·claude"),
             },
         );
@@ -1868,7 +1868,7 @@ mod as_the_command_line {
             .map(String::from)
             .collect();
         let by = command::Context {
-            now: NOW * 1000,
+            now_ms: NOW * 1000,
             by: String::from("laptop·iPhone"),
         };
         let typed = run(

@@ -424,14 +424,16 @@ impl Listing {
     }
 }
 
+const LOCAL_ID_EPOCH_SECS: u64 = 1_767_225_600;
+
 #[must_use]
 pub fn fresh(
     home: &Snapshot,
-    now: u64,
+    now_secs: u64,
     draws: &crate::Draws,
 ) -> Option<IssueId> {
-    let seconds = now
-        .checked_sub(1_767_225_600)
+    let seconds = now_secs
+        .checked_sub(LOCAL_ID_EPOCH_SECS)
         .filter(|seconds| *seconds < (1 << 30))?;
     draws
         .iter()
@@ -483,4 +485,16 @@ fn created(text: &str) -> Option<u64> {
     )
     .ok()?;
     u64::try_from(at.unix_timestamp_nanos() / 1_000_000).ok()
+}
+
+#[cfg(test)]
+mod epoch {
+    #[test]
+    fn local_issue_ids_count_from_the_start_of_2026() {
+        let seconds = super::LOCAL_ID_EPOCH_SECS;
+        assert_eq!(
+            (seconds % 86_400, crate::calendar::civil(seconds / 86_400)),
+            (0, (2026, 1, 1))
+        );
+    }
 }

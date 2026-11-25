@@ -146,7 +146,7 @@ fn check(inputs: &Inputs) -> Report {
 
 fn context() -> Context {
     Context {
-        now: NOW,
+        now_ms: NOW,
         by: String::from("laptop·claude"),
     }
 }

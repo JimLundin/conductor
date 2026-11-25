@@ -534,7 +534,7 @@ impl Actor {
     }
 
     async fn fresh(&mut self) {
-        if self.sync.due(now(), PULL_RETRY_SECONDS) {
+        if self.sync.due(now_secs(), PULL_RETRY_SECONDS) {
             self.refresh().await;
         }
     }
@@ -544,10 +544,11 @@ impl Actor {
             return;
         };
         let outcome = self.bring_up(&remote).await;
-        self.sync =
-            self.sync
-                .clone()
-                .after(outcome, self.destination.is_some(), now());
+        self.sync = self.sync.clone().after(
+            outcome,
+            self.destination.is_some(),
+            now_secs(),
+        );
         if self.destination.is_some() {
             self.install().await;
             self.scan().await;
@@ -669,11 +670,12 @@ impl Actor {
         }
         self.fresh().await;
         self.destination().map_err(IssueError::Retryable)?;
-        let issue = fresh(&self.home, now(), &draws()).ok_or_else(|| {
-            IssueError::Retryable(String::from(
-                "no issue id is free this second",
-            ))
-        })?;
+        let issue =
+            fresh(&self.home, now_secs(), &draws()).ok_or_else(|| {
+                IssueError::Retryable(String::from(
+                    "no issue id is free this second",
+                ))
+            })?;
         let request =
             self.issue_context(edit)
                 .open(issue.clone(), new, &client.0)?;
@@ -748,7 +750,7 @@ impl Actor {
             remote: self.remote.as_deref(),
             home: &self.home,
             host: &self.host,
-            at: now(),
+            at: now_secs(),
             edit,
         }
     }
@@ -1521,7 +1523,7 @@ async fn committed_blob_at(
         .map_err(|err| err.to_string())
 }
 
-fn now() -> u64 {
+fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())

@@ -44,6 +44,8 @@ shadow_same = "deny"
 print_stdout = "deny"
 print_stderr = "deny"
 exit = "deny"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 
 [profile.mutants]
 inherits = "test"

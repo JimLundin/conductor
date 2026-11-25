@@ -897,8 +897,8 @@ against the recorded hash.
    checks each against GitHub's published digest and
    `codex-package_SHA256SUMS`, and verifies the Linux cosign bundles when
    `cosign` is installed. Each writes only its provider's
-   `crates/<provider>/src/pin/pins.rs`, including the verification result in
-   doc comments. Versions, platform hashes and verification provenance stay
+   `crates/<provider>/src/pin/pins.rs`, including the verification result as
+   its `VERIFIED`. Versions, platform hashes and verification provenance stay
    together in compiled Rust values, beside the provider's `pin`, which says
    which build a platform takes.
 2. `orchestrator` compiles the pins in. On start it makes sure the pinned CLI

@@ -35,7 +35,9 @@ fn stored(seq: u64, kind: EventKind) -> Vec<Effect> {
 #[test]
 fn stored_events_take_the_next_seq_and_deltas_repeat_the_last() {
     let mut log = log();
+    assert_eq!(log.head(), HostSeq::BEFORE_FIRST);
     let (ready, effects) = log.append(SessionId(1), EventKind::SessionReady);
+    assert_eq!(ready.seq, HostSeq::BEFORE_FIRST.next());
     assert_eq!(ready, event(1, EventKind::SessionReady));
     assert_eq!(effects, stored(1, EventKind::SessionReady));
     let (streamed, effects) = log.append(SessionId(1), delta("a"));

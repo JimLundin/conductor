@@ -20,7 +20,8 @@ pub struct Home {
     pub remote: String,
     /// When the clone last matched the remote, in seconds since the Unix
     /// epoch on the host's clock.
-    pub synced: Option<u64>,
+    #[serde(rename = "synced")]
+    pub synced_secs: Option<u64>,
     pub sync: HomeSync,
     /// Issue changes the host has made that the remote doesn't have yet.
     pub unpushed: u64,

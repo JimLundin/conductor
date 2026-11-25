@@ -352,14 +352,16 @@ impl Finish {
         }
         effects.push(Effect::Reply(SessionResult::Accepted));
         if running {
-            let after = history.last().map_or(HostSeq(0), |event| event.seq);
+            let after = history
+                .last()
+                .map_or(HostSeq::BEFORE_FIRST, |event| event.seq);
             self.stage = Stage::Asking(assignment, workspace, after);
             effects.extend(order(crate::session::Order::Send {
                 text: String::from(SUMMARY_PROMPT),
                 by,
             }));
         } else {
-            let last = summary(history, self.session, HostSeq(0));
+            let last = summary(history, self.session, HostSeq::BEFORE_FIRST);
             effects.extend(self.read_home(assignment, workspace, last));
         }
         effects

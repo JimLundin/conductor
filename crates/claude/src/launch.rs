@@ -97,6 +97,8 @@ pub fn sandbox(os: &str, tools: bool, kernel_release: &str) -> Sandbox {
     }
 }
 
+const TRANSCRIPTS_KEPT_FOR_DAYS: u32 = 100 * 365;
+
 const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -173,7 +175,9 @@ pub fn profile() -> Profile {
         instructions_file: String::from("CLAUDE.md"),
         config: Config {
             file: String::from("settings.json"),
-            contents: String::from("{\n  \"cleanupPeriodDays\": 36500\n}\n"),
+            contents: format!(
+                "{{\n  \"cleanupPeriodDays\": {TRANSCRIPTS_KEPT_FOR_DAYS}\n}}\n"
+            ),
         },
         version: Invocation::of(cli(HomeKind::Private).env, &["--version"]),
         status: auth_status(HomeKind::Private),

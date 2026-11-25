@@ -8,7 +8,7 @@ const HEADER_LEN: usize = 4;
 
 /// Larger frames are refused, a received one before its body is read.
 /// 16 MiB.
-pub const MAX_FRAME_LEN: usize = 16_777_216;
+pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum WireError {

@@ -3,6 +3,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use alloc::collections::BTreeSet;
+
 use crate::prelude::*;
 
 /// The models a provider's CLI offers on this host, as the CLI lists them
@@ -81,7 +83,16 @@ pub struct ModelId(pub String);
 /// How hard the model reasons: Claude's `--effort`, Codex's
 /// `model_reasoning_effort`. Both CLIs spell the levels the same way.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    JsonSchema,
 )]
 pub enum Effort {
     Low,
@@ -117,6 +128,16 @@ impl Effort {
             "ultra" => Some(Self::Ultra),
             _ => None,
         }
+    }
+
+    #[must_use]
+    pub fn listed<'a>(words: impl IntoIterator<Item = &'a str>) -> Vec<Self> {
+        words
+            .into_iter()
+            .filter_map(Self::parse)
+            .collect::<BTreeSet<Self>>()
+            .into_iter()
+            .collect()
     }
 }
 
@@ -185,6 +206,14 @@ mod tests {
             all.map(Some)
         );
         assert_eq!(Effort::parse("minimal"), None);
+    }
+
+    #[test]
+    fn a_listing_gives_its_known_efforts_lowest_first_once_each() {
+        assert_eq!(
+            Effort::listed(["max", "minimal", "low", "high", "low"]),
+            [Effort::Low, Effort::High, Effort::Max]
+        );
     }
 
     #[test]

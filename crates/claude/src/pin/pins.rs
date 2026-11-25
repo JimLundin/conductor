@@ -2,8 +2,9 @@
 
 use crate::prelude::*;
 
-/// Verified: manifest.json.sig is a good signature by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE; every binary matches the manifest
 pub const VERSION: &str = "2.1.316";
+
+pub const VERIFIED: &str = "manifest.json.sig is a good signature by 31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE; every binary matches the manifest";
 
 /// The SHA-256 of the `claude` binary for a platform named as in Claude's manifest.
 #[must_use]

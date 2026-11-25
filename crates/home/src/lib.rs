@@ -112,7 +112,7 @@ pub fn view(
     } = found;
     Home {
         remote: vcs::remote::display(remote),
-        synced: sync.synced,
+        synced_secs: sync.synced_secs,
         sync: sync.status.clone(),
         unpushed,
         flow: flow.cloned().map(Box::new),

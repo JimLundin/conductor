@@ -2,8 +2,9 @@
 
 use crate::prelude::*;
 
-/// Verified: every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles verify
 pub const VERSION: &str = "0.166.0";
+
+pub const VERIFIED: &str = "every package matches GitHub's published digest and codex-package_SHA256SUMS; the Linux cosign bundles verify";
 
 /// The SHA-256 of the `codex-package-<triple>.tar.gz` release asset for a target triple.
 #[must_use]

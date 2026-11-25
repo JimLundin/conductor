@@ -153,7 +153,7 @@ impl Edit {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Context {
     /// Milliseconds since the Unix epoch.
-    pub now: u64,
+    pub now_ms: u64,
     /// As the log signs it, `<node>·<harness>`.
     pub by: String,
 }
@@ -531,8 +531,8 @@ pub fn plan(
 ) -> Result<Planned, String> {
     let flow = home.flow()?;
     let sign = Signer {
-        at: stamp(context.now),
-        now: context.now,
+        at: stamp(context.now_ms),
+        now_ms: context.now_ms,
         by: context.by.clone(),
     };
     let change = match edit {
@@ -552,7 +552,7 @@ pub fn plan(
 }
 
 struct Signer {
-    now: u64,
+    now_ms: u64,
     at: String,
     by: String,
 }
@@ -642,7 +642,7 @@ fn opened(
     let mut issue = Issue {
         id: id.clone(),
         project: *project,
-        created: Some(sign.now),
+        created: Some(sign.now_ms),
         title,
         kind: kind.clone(),
         status: opening(flow).map_or_else(String::new, String::from),
@@ -963,8 +963,8 @@ fn needs<'a>(text: &'a str, missing: &str) -> Result<&'a str, String> {
 
 /// `now` as the log writes a time, RFC 3339 in UTC to the second.
 #[must_use]
-pub fn stamp(now: u64) -> String {
-    let seconds = now / 1000;
+pub fn stamp(now_ms: u64) -> String {
+    let seconds = now_ms / 1000;
     let (year, month, day) = crate::calendar::civil(seconds / 86_400);
     let of_day = seconds % 86_400;
     format!(
