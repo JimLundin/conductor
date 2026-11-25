@@ -1,30 +1,31 @@
+import { CommandResult, Feed, HelloReply } from "@conductor/core/schemas/index";
+import { Schema } from "effect";
+
 /// <reference types="vite/client" />
 // Recorded host feeds in web/fixtures/feeds/, for tests: each frame a host sent,
-// on which of the test client's connections and streams.
-import { Schema } from "effect";
-import { CommandResult, Feed, HelloReply } from "./schemas/index.ts";
+// On which of the test client's connections and streams.
 
 const scenarioName = /^.*\/(?<name>[^/]+)\.json$/u;
 
-const RecordedFeed = Schema.Array(
-  Schema.Union([
-    Schema.Struct({
-      connection: Schema.Number,
-      stream: Schema.Literal("hello"),
-      frame: HelloReply,
-    }),
-    Schema.Struct({
-      connection: Schema.Number,
-      stream: Schema.Literal("command"),
-      frame: CommandResult,
-    }),
-    Schema.Struct({
-      connection: Schema.Number,
-      stream: Schema.Literal("feed"),
-      frame: Feed,
-    }),
-  ]),
-);
+const hello = Schema.Struct({
+  connection: Schema.Number,
+  frame: HelloReply,
+  stream: Schema.Literal("hello"),
+});
+
+const command = Schema.Struct({
+  connection: Schema.Number,
+  frame: CommandResult,
+  stream: Schema.Literal("command"),
+});
+
+const event = Schema.Struct({
+  connection: Schema.Number,
+  frame: Feed,
+  stream: Schema.Literal("feed"),
+});
+
+const RecordedFeed = Schema.Array(Schema.Union([hello, command, event]));
 
 type RecordedFeed = typeof RecordedFeed.Type;
 
@@ -32,7 +33,7 @@ type RecordedFeed = typeof RecordedFeed.Type;
 const recordedFeeds = (): ReadonlyMap<string, unknown> =>
   new Map(
     Object.entries(
-      import.meta.glob<unknown>("../fixtures/feeds/*.json", {
+      import.meta.glob<unknown>("../../fixtures/feeds/*.json", {
         eager: true,
         import: "default",
       }),

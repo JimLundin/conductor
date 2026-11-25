@@ -38,7 +38,7 @@ command = "cargo clippy --target wasm32-unknown-unknown -p web-iroh --lib"
 tier = "commit"
 packages = ["web-iroh"]
 
-# The app's Effect Schemas in web/src/schemas/, generated from the JSON
+# The app's Effect Schemas in web/core/src/schemas/, generated from the JSON
 # Schema of link's root types (ADR 0002): regenerates them and fails on any
 # difference.
 [[suite]]
@@ -47,7 +47,7 @@ command = "cd web && npm ci --no-fund --no-audit --silent && ../tools/schemas.sh
 tools = ["NODE", "OXFMT"]
 [[suite.when]]
 tier = "commit"
-paths = ["crates/link/**", "web/src/schemas/**", "web/scripts/schemas.ts", "web/package-lock.json", "tools/schemas.sh"]
+paths = ["crates/link/**", "web/core/src/schemas/**", "web/scripts/**", "web/package-lock.json", "tools/schemas.sh"]
 packages = ["link"]
 
 # The web app, under the shared TypeScript standard, which keys and records

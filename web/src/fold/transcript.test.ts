@@ -1,4 +1,4 @@
-import { describe, expect, it } from "@effect/vitest";
+import { Approval, Item, ToolState } from "@conductor/core/fold/transcript";
 import {
   asked,
   created,
@@ -14,12 +14,12 @@ import {
   started,
   withdrawn,
 } from "#ui/test/examples.ts";
+import { describe, expect, it } from "@effect/vitest";
 import { directories, recent } from "@conductor/core/fold/host";
-import { openRequests } from "@conductor/core/fold/offers";
 import { SessionStatus } from "@conductor/core/fold/session";
-import { Approval, Item, ToolState } from "@conductor/core/fold/transcript";
+import { openRequests } from "@conductor/core/fold/offers";
 
-describe("transcript", () => {
+describe("turn and session endings", () => {
   it("the end of a turn or a session stops its tools and withdraws its requests", () => {
     expect.hasAssertions();
     const host = foldEvents([
@@ -34,22 +34,26 @@ describe("transcript", () => {
       [2, exited("1")],
     ]);
     expect(sessionOf(host, id(1)).items).toStrictEqual([
-      asked("toolu_1", 1, ToolState.Stopped(), withdrawn),
+      asked({ approval: withdrawn, call: "toolu_1", request: 1, state: ToolState.Stopped() }),
       Item.Tool({
-        call: "toolu_2",
-        tool: ls,
-        state: ToolState.Finished({ outcome: "Succeeded" }),
         approval: Approval.NotAsked(),
+        call: "toolu_2",
+        state: ToolState.Finished({ outcome: "Succeeded" }),
+        tool: ls,
       }),
       Item.TurnCompleted({ outcome: "Interrupted" }),
     ]);
     expect(sessionOf(host, id(2)).items).toStrictEqual([
-      asked("toolu_3", 3, ToolState.Stopped(), withdrawn),
+      asked({ approval: withdrawn, call: "toolu_3", request: 3, state: ToolState.Stopped() }),
     ]);
-    expect(openRequests(sessionOf(host, id(1)))).toStrictEqual([]);
-    expect(openRequests(sessionOf(host, id(2)))).toStrictEqual([]);
+    const first = sessionOf(host, id(1));
+    const second = sessionOf(host, id(2));
+    expect(openRequests(first)).toStrictEqual([]);
+    expect(openRequests(second)).toStrictEqual([]);
   });
+});
 
+describe("recent activity", () => {
   it("the list puts the latest activity first and suggests each directory once", () => {
     expect.hasAssertions();
     const host = foldEvents([
@@ -62,7 +66,9 @@ describe("transcript", () => {
     expect(recent(host)).toStrictEqual([id(2), id(3), id(1)]);
     expect(directories(host)).toStrictEqual(["/b", "/a"]);
   });
+});
 
+describe("session removal", () => {
   it("a removed session leaves the host with its later events", () => {
     expect.hasAssertions();
     const host = foldEvents([
@@ -73,7 +79,9 @@ describe("transcript", () => {
     ]);
     expect(recent(host)).toStrictEqual([id(2)]);
   });
+});
 
+describe("continued reasoning", () => {
   it("reasoning streams into one item that its text replaces, and a continue shows its close", () => {
     expect.hasAssertions();
     const host = foldEvents([
@@ -88,14 +96,16 @@ describe("transcript", () => {
       [1, "SessionReady"],
     ]);
     expect(sessionOf(host, id(1)).items).toStrictEqual([
-      Item.Reasoning({ text: "Looking.", state: "Done" }),
-      Item.Reasoning({ text: "Again", state: "Done" }),
-      Item.Reply({ text: "Hi", state: "Done" }),
+      Item.Reasoning({ state: "Done", text: "Looking." }),
+      Item.Reasoning({ state: "Done", text: "Again" }),
+      Item.Reply({ state: "Done", text: "Hi" }),
       Item.Continued({ reason: { Exited: { status: "9" } } }),
     ]);
     expect(sessionOf(host, id(1)).status).toStrictEqual(SessionStatus.Idle());
   });
+});
 
+describe("streamed deltas", () => {
   it("a reply and reasoning append every delta", () => {
     expect.hasAssertions();
     const host = foldEvents([
@@ -108,11 +118,13 @@ describe("transcript", () => {
       [1, delta(" six")],
     ]);
     expect(sessionOf(host, id(1)).items).toStrictEqual([
-      Item.Reasoning({ text: "One two three", state: "Done" }),
-      Item.Reply({ text: "Four five six", state: "Streaming" }),
+      Item.Reasoning({ state: "Done", text: "One two three" }),
+      Item.Reply({ state: "Streaming", text: "Four five six" }),
     ]);
   });
+});
 
+describe("closed streaming", () => {
   it("a close settles the reasoning or reply that was streaming", () => {
     expect.hasAssertions();
     const host = foldEvents([
@@ -126,13 +138,15 @@ describe("transcript", () => {
       [2, exited("9")],
     ]);
     expect(sessionOf(host, id(1)).items).toStrictEqual([
-      Item.Reasoning({ text: "Look", state: "Done" }),
+      Item.Reasoning({ state: "Done", text: "Look" }),
     ]);
     expect(sessionOf(host, id(2)).items).toStrictEqual([
-      Item.Reply({ text: "Hel", state: "Done" }),
+      Item.Reply({ state: "Done", text: "Hel" }),
     ]);
   });
+});
 
+describe("model changes", () => {
   it("a model change shows in the header and the transcript", () => {
     expect.hasAssertions();
     const reason = "Model changed to gpt: small is not offered";
@@ -140,15 +154,17 @@ describe("transcript", () => {
       [1, created("/a")],
       [1, "SessionReady"],
       [1, exited("9")],
-      [1, { ModelChanged: { model: "gpt", effort: null, reason } }],
+      [1, { ModelChanged: { effort: null, model: "gpt", reason } }],
     ]);
     expect(sessionOf(host, id(1)).model).toBe("gpt");
     expect(sessionOf(host, id(1)).items).toStrictEqual([Item.ModelChanged({ reason })]);
   });
+});
 
+describe("checklists and effort", () => {
   it("each change replaces the checklist, and the effort follows its last change", () => {
     expect.hasAssertions();
-    const later = [{ text: "write a.txt", status: "Completed" }] as const;
+    const later = [{ status: "Completed", text: "write a.txt" }] as const;
     const host = foldEvents([
       [1, created("/a")],
       [1, "SessionReady"],
@@ -157,8 +173,8 @@ describe("transcript", () => {
         {
           ChecklistChanged: {
             checklist: [
-              { text: "write a.txt", status: "InProgress" },
-              { text: "write b.txt", status: "Pending" },
+              { status: "InProgress", text: "write a.txt" },
+              { status: "Pending", text: "write b.txt" },
             ],
           },
         },

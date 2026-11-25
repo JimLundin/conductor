@@ -1,12 +1,21 @@
-// A session folded from its events.
-import { Data, Match } from "effect";
+import {
+  Approval,
+  Change,
+  Item,
+  RequestState,
+  ToolState,
+  changeItems,
+  hasCall,
+  openApproval,
+  settle,
+  streamedItems,
+} from "#core/fold/transcript";
 import type {
   ChecklistEntry,
   ClientName,
   CloseReason,
   Effort,
   EventKind,
-  SessionDirectory,
   HostSeq,
   InstanceId,
   IssueId,
@@ -14,26 +23,17 @@ import type {
   Output,
   RequestId,
   Resolution,
+  SessionDirectory,
   ToolCallId,
   ToolKind,
   TurnOutcome,
-} from "../schemas/index.ts";
-import { applySubagentEvent, changeSubagents, type Subagent, stopSubagents } from "./subagent.ts";
-import {
-  Approval,
-  Change,
-  changeItems,
-  hasCall,
-  Item,
-  openApproval,
-  type ReplyState,
-  RequestState,
-  type Streamed,
-  settle,
-  streamedItems,
-  ToolState,
-  type Unit,
-} from "./transcript.ts";
+} from "#core/schemas/index";
+import { Data, Match } from "effect";
+import type { ReplyState, Streamed } from "#core/fold/transcript";
+import { applySubagentEvent, changeSubagents, stopSubagents } from "#core/fold/subagent";
+import type { Subagent } from "#core/fold/subagent";
+import type { Unit } from "#core/data";
+// A session folded from its events.
 
 type SessionStatus = Data.TaggedEnum<{
   readonly Starting: Unit;
@@ -45,22 +45,22 @@ type SessionStatus = Data.TaggedEnum<{
 const SessionStatus = Data.taggedEnum<SessionStatus>();
 
 // Where a session on an issue stands with finishing: a message after a finish makes it ready
-// again, while its own summary turn doesn't.
+// Again, while its own summary turn doesn't.
 type FinishState = "Ready" | "Finishing" | "Retrying" | "Done";
 
 interface Session {
   readonly instance: InstanceId;
   readonly directory: SessionDirectory;
-  // What the agent runs with; null is the CLI's own default.
-  readonly model: ModelId | null;
-  readonly effort: Effort | null;
+  // Absent choices use the CLI's own default.
+  readonly model: ModelId | undefined;
+  readonly effort: Effort | undefined;
   readonly status: SessionStatus;
-  readonly issue: IssueId | null;
+  readonly issue: IssueId | undefined;
   readonly finish: FinishState;
-  readonly checklist: readonly ChecklistEntry[];
-  readonly items: readonly Item[];
+  readonly checklist: ReadonlyArray<ChecklistEntry>;
+  readonly items: ReadonlyArray<Item>;
   // The sub-agents its agent started, in the order they started.
-  readonly subagents: readonly Subagent[];
+  readonly subagents: ReadonlyArray<Subagent>;
   // The last stored event that touched it.
   readonly activity: HostSeq;
 }
@@ -70,17 +70,17 @@ type Created = Extract<EventKind, { readonly SessionCreated: unknown }>["Session
 type Step = (session: Session) => Session;
 
 const createdSession = (created: Created, seq: HostSeq): Session => ({
-  instance: created.instance,
-  directory: created.directory,
-  model: created.model,
-  effort: created.effort,
-  status: SessionStatus.Starting(),
-  issue: null,
-  finish: "Ready",
-  checklist: [],
-  items: [],
-  subagents: [],
   activity: seq,
+  checklist: [],
+  directory: created.directory,
+  effort: created.effort ?? undefined,
+  finish: "Ready",
+  instance: created.instance,
+  issue: undefined,
+  items: [],
+  model: created.model ?? undefined,
+  status: SessionStatus.Starting(),
+  subagents: [],
 });
 
 const pushed = (session: Session, item: Item): Session => ({
@@ -96,12 +96,12 @@ const streamed =
   (tag: Streamed, text: string, state: ReplyState): Step =>
   (session) => ({
     ...session,
-    items: streamedItems(session.items, tag, text, state),
+    items: streamedItems(session.items, { state, tag, text }),
   });
 
 // A session that closed and is ready again was continued.
 const ready: Step = (session) =>
-  session.status._tag === "Closed"
+  SessionStatus.$is("Closed")(session.status)
     ? pushed(
         { ...session, status: SessionStatus.Idle() },
         Item.Continued({ reason: session.status.reason }),
@@ -114,10 +114,10 @@ const userMessage =
     pushed(
       {
         ...session,
-        status: SessionStatus.Running(),
         finish: session.finish === "Done" ? "Ready" : session.finish,
+        status: SessionStatus.Running(),
       },
-      Item.User({ text, by }),
+      Item.User({ by, text }),
     );
 
 const turnCompleted =
@@ -134,8 +134,8 @@ const closed =
   (session) => ({
     ...session,
     items: settle(changeItems(session.items, Change.End())),
-    subagents: stopSubagents(session.subagents),
     status: SessionStatus.Closed({ reason }),
+    subagents: stopSubagents(session.subagents),
   });
 
 const resolved =
@@ -155,31 +155,33 @@ const toolStarted =
     pushed(
       session,
       Item.Tool({
-        call,
-        tool,
-        state: ToolState.Running(),
         approval: Approval.NotAsked(),
+        call,
+        state: ToolState.Running(),
+        tool,
       }),
     );
 
 // A request joins its tool call's card; a request for a call never seen started gets a card of
-// its own.
+// Its own.
 const requestOpened =
   (body: Extract<EventKind, { readonly RequestOpened: unknown }>["RequestOpened"]): Step =>
   (session) => {
     const { call, tool } = body;
     const approval = openApproval(body.request, body.reason, body.for_session);
     return hasCall(session.items, call)
-      ? amended(Change.Ask({ call, approval }))(session)
-      : pushed(session, Item.Tool({ call, tool, state: ToolState.Running(), approval }));
+      ? amended(Change.Ask({ approval, call }))(session)
+      : pushed(session, Item.Tool({ approval, call, state: ToolState.Running(), tool }));
   };
 
 const unchanged: Step = (session) => session;
 
+const errorItem = Item.Error;
+
 const errored =
   (message: string): Step =>
   (session) =>
-    pushed(session, Item.Error({ message }));
+    pushed(session, errorItem({ message }));
 
 const output = Match.type<Output>().pipe(
   Match.withReturnType<Step>(),
@@ -215,8 +217,8 @@ const step = Match.type<EventKind>()
     Match.when(
       { QuestionAsked: Match.any },
       ({ QuestionAsked: { request, questions } }) =>
-        (session: Session) =>
-          pushed(session, Item.Question({ request, questions, state: RequestState.Open() })),
+        (session: Session): Session =>
+          pushed(session, Item.Question({ questions, request, state: RequestState.Open() })),
     ),
     Match.when({ RequestResolved: Match.any }, ({ RequestResolved: { request, resolution } }) =>
       resolved(request, resolution),
@@ -225,10 +227,14 @@ const step = Match.type<EventKind>()
       turnCompleted(outcome),
     ),
     Match.when({ Error: Match.any }, ({ Error: { message } }) => errored(message)),
-    Match.when({ Subagent: Match.any }, ({ Subagent: { agent, event } }) => (session: Session) => ({
-      ...session,
-      subagents: applySubagentEvent(session.subagents, agent, event),
-    })),
+    Match.when(
+      { Subagent: Match.any },
+      ({ Subagent: { agent, event } }) =>
+        (session: Session): Session => ({
+          ...session,
+          subagents: applySubagentEvent(session.subagents, agent, event),
+        }),
+    ),
   )
   .pipe(
     Match.when("SessionReady", () => ready),
@@ -236,39 +242,44 @@ const step = Match.type<EventKind>()
     Match.when(
       { ModelChanged: Match.any },
       ({ ModelChanged: { model, effort, reason } }) =>
-        (session: Session) =>
-          pushed({ ...session, model, effort }, Item.ModelChanged({ reason })),
+        (session: Session): Session =>
+          pushed(
+            { ...session, effort: effort ?? undefined, model: model ?? undefined },
+            Item.ModelChanged({ reason }),
+          ),
     ),
     Match.when(
       { ChecklistChanged: Match.any },
       ({ ChecklistChanged: { checklist } }) =>
-        (session: Session) => ({ ...session, checklist }),
+        (session: Session): Session => ({ ...session, checklist }),
     ),
     Match.when(
       { EffortChanged: Match.any },
       ({ EffortChanged: { effort } }) =>
-        (session: Session) => ({ ...session, effort }),
+        (session: Session): Session => ({ ...session, effort: effort ?? undefined }),
     ),
-    Match.when({ OnIssue: Match.any }, ({ OnIssue: { issue } }) => (session: Session) => ({
+    Match.when({ OnIssue: Match.any }, ({ OnIssue: { issue } }) => (session: Session): Session => ({
       ...session,
       issue,
     })),
     Match.when(
       "FinishStarted",
-      () => (session: Session) => pushed({ ...session, finish: "Finishing" }, Item.Finishing()),
+      () =>
+        (session: Session): Session =>
+          pushed({ ...session, finish: "Finishing" }, Item.Finishing()),
     ),
-    Match.when("FinishInterrupted", () => (session: Session) => ({
+    Match.when("FinishInterrupted", () => (session: Session): Session => ({
       ...session,
       finish: session.finish === "Finishing" ? "Retrying" : session.finish,
     })),
     Match.when(
       { SessionFinished: Match.any },
       ({ SessionFinished: { finished } }) =>
-        (session: Session) =>
+        (session: Session): Session =>
           pushed({ ...session, finish: "Done" }, Item.Finished({ finished })),
     ),
     // The thin app shows no workspace, snapshots or native turns; the host creates and removes
-    // sessions.
+    // Sessions.
     Match.when({ WorkspaceCreated: Match.any }, () => unchanged),
     Match.when({ SnapshotRecorded: Match.any }, () => unchanged),
     Match.when({ NativeTurnStarted: Match.any }, () => unchanged),

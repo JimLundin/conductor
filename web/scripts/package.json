@@ -2,8 +2,8 @@
   "name": "@conductor/schemas",
   "private": true,
   "type": "module",
-  "imports": {
-    "#schemas/*": "./*.ts"
+  "scripts": {
+    "generate": "node schemas.ts"
   },
   "dependencies": {
     "@effect/platform-node": "4.1.5",

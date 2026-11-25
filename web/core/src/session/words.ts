@@ -1,6 +1,3 @@
-// How the session screens word what the fold holds.
-import type { Subagent } from "../fold/subagent.ts";
-import type { RequestState, ToolState } from "../fold/transcript.ts";
 import type {
   Answer,
   CloseReason,
@@ -8,7 +5,11 @@ import type {
   Resolution,
   ToolKind,
   TurnOutcome,
-} from "../schemas/index.ts";
+} from "#core/schemas/index";
+import { RequestState, ToolState } from "#core/fold/transcript";
+import type { Subagent } from "#core/fold/subagent";
+import { SubagentStatus } from "#core/fold/subagent";
+// How the session screens word what the fold holds.
 
 const toolName = (tool: ToolKind): string => {
   if ("Command" in tool) {
@@ -21,16 +22,16 @@ const toolName = (tool: ToolKind): string => {
 };
 
 const toolStatus = (state: ToolState): string => {
-  if (state._tag === "Running") {
+  if (ToolState.$is("Running")(state)) {
     return "Running";
   }
-  if (state._tag === "Stopped") {
+  if (ToolState.$is("Stopped")(state)) {
     return "Stopped";
   }
   return state.outcome;
 };
 
-const answered = (answers: readonly Answer[]): string =>
+const answered = (answers: ReadonlyArray<Answer>): string =>
   answers.map((one) => one.join(", ")).join("; ");
 
 const resolutionText = (resolution: Resolution): string => {
@@ -50,13 +51,14 @@ const resolutionText = (resolution: Resolution): string => {
 };
 
 const requestText = (state: RequestState, open: string): string =>
-  state._tag === "Open" ? open : resolutionText(state.resolution);
+  RequestState.$is("Open")(state) ? open : resolutionText(state.resolution);
 
 const subagentStatus = (subagent: Subagent): string => {
-  if (subagent.status._tag === "Ended") {
+  if (SubagentStatus.$is("Ended")(subagent.status)) {
     return subagent.status.outcome;
   }
-  return subagent.status._tag;
+  const { _tag: status } = subagent.status;
+  return status;
 };
 
 const outcomeText = (outcome: TurnOutcome): string => {
@@ -79,18 +81,23 @@ const closeText = (reason: CloseReason): string => {
   return `stopped: ${reason.Stopped.reason}`;
 };
 
+const keptText = (
+  kept: Extract<Finished, { readonly Landed: unknown }>["Landed"]["kept"],
+): string => {
+  if (typeof kept === "string") {
+    return "kept locally";
+  }
+  return "Pushed" in kept
+    ? `pushed to ${kept.Pushed.remote}`
+    : `not pushed: ${kept.PushFailed.reason}`;
+};
+
 const finishedText = (finished: Finished): string => {
   if ("Failed" in finished) {
     return `Finishing failed: ${finished.Failed.reason}`;
   }
   const { commits, kept } = finished.Landed;
-  const where =
-    typeof kept === "string"
-      ? "kept locally"
-      : "Pushed" in kept
-        ? `pushed to ${kept.Pushed.remote}`
-        : `not pushed: ${kept.PushFailed.reason}`;
-  return `Finished: ${commits} commits landed, ${where}`;
+  return `Finished: ${commits} commits landed, ${keptText(kept)}`;
 };
 
 export { closeText, finishedText, outcomeText, requestText, subagentStatus, toolName, toolStatus };

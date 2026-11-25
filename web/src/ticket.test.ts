@@ -1,33 +1,40 @@
-import { Result } from "effect";
+import { TicketError, parseJoin, parseTicket } from "@conductor/core/ticket";
 import { describe, expect, it } from "@effect/vitest";
+import { Result } from "effect";
 import example from "#ticket-example" with { type: "json" };
-import { parseJoin, parseTicket, TicketError } from "@conductor/core/ticket";
 
-describe("ticket", () => {
-  const { text, ticket } = example;
+const { text, ticket } = example;
 
-  it("a ticket reads as the host wrote it", () => {
+describe(parseTicket, () => {
+  it("reads a ticket as the host wrote it", () => {
     expect.hasAssertions();
     expect(parseTicket(text)).toStrictEqual(Result.succeed(ticket));
   });
 
-  it("malformed tickets are refused", () => {
+  it.each([
+    ["not base64!", TicketError.Encoding()],
+    [`${text}==`, TicketError.Encoding()],
+    [text.slice(0, 20), TicketError.Truncated()],
+    [`B${text.slice(1)}`, TicketError.Version({ version: 4 })],
+    ["", TicketError.Truncated()],
+  ] as const)("refuses a malformed ticket %s", (input, error) => {
     expect.hasAssertions();
-    expect(parseTicket("not base64!")).toStrictEqual(Result.fail(TicketError.Encoding()));
-    expect(parseTicket(`${text}==`)).toStrictEqual(Result.fail(TicketError.Encoding()));
-    expect(parseTicket(text.slice(0, 20))).toStrictEqual(Result.fail(TicketError.Truncated()));
-    expect(parseTicket(`B${text.slice(1)}`)).toStrictEqual(
-      Result.fail(TicketError.Version({ version: 4 })),
-    );
-    expect(parseTicket("")).toStrictEqual(Result.fail(TicketError.Truncated()));
+    expect(parseTicket(input)).toStrictEqual(Result.fail(error));
   });
+});
 
-  it("a join link or a bare ticket reads as the ticket, around any whitespace", () => {
+describe(parseJoin, () => {
+  it.each([`  https://jimlundin.github.io/conductor/#join=${text}\n`, text])(
+    "reads a join link or bare ticket %s",
+    (input) => {
+      expect.hasAssertions();
+      expect(parseJoin(input)).toStrictEqual(Result.succeed(ticket));
+    },
+  );
+
+  it("refuses a URL with no join fragment", () => {
     expect.hasAssertions();
-    expect(parseJoin(`  https://jimlundin.github.io/conductor/#join=${text}\n`)).toStrictEqual(
-      Result.succeed(ticket),
-    );
-    expect(parseJoin(text)).toStrictEqual(Result.succeed(ticket));
-    expect(Result.isFailure(parseJoin("https://jimlundin.github.io/conductor/"))).toBe(true);
+    const parsed = parseJoin("https://jimlundin.github.io/conductor/");
+    expect(Result.isFailure(parsed)).toBe(true);
   });
 });

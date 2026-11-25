@@ -1,40 +1,44 @@
-import { Schema } from "effect";
+import { Route, fragmentOf, isJoin, route } from "@conductor/core/route";
 import { describe, expect, it } from "@effect/vitest";
-import { fragmentOf, isJoin, Route, route } from "@conductor/core/route";
+import { Schema } from "effect";
 
-describe("route", () => {
-  it.prop(
-    "with no host paired, every fragment shows pairing",
-    { fragment: Schema.String },
-    ({ fragment }) => route(`#${fragment}`, false)._tag === "Pairing",
+describe(route, () => {
+  it.prop("shows pairing without a paired host", { fragment: Schema.String }, ({ fragment }) =>
+    Route.$is("Pairing")(route(`#${fragment}`, false)),
   );
 
-  it("each screen's fragment names that screen", () => {
-    expect.hasAssertions();
-    const screens = [
-      Route.Pairing(),
-      Route.Sessions(),
-      Route.NewSession({ host: "ab12" }),
+  it.each(["", "#/host/ab12/elsewhere", "#/host//new"])(
+    "shows the sessions for an unknown fragment %s",
+    (fragment) => {
+      expect.hasAssertions();
+      expect(route(fragment, true)).toStrictEqual(Route.Sessions());
+    },
+  );
+});
+
+describe(fragmentOf, () => {
+  it.each([
+    [Route.Pairing(), "#/pair"],
+    [Route.Sessions(), "#/"],
+    [Route.NewSession({ host: "ab12" }), "#/host/ab12/new"],
+    [
       Route.Session({ host: "ab12", session: "01JABCDEFGHJKMNPQRSTVWXYZ0" }),
-    ];
-    for (const screen of screens) {
-      expect(route(fragmentOf(screen), true)).toStrictEqual(screen);
-    }
-    expect(fragmentOf(Route.Session({ host: "ab12", session: "s1" }))).toBe(
-      "#/host/ab12/session/s1",
-    );
-  });
-
-  it("with a host paired, an empty or unknown fragment shows the sessions", () => {
+      "#/host/ab12/session/01JABCDEFGHJKMNPQRSTVWXYZ0",
+    ],
+    [Route.Session({ host: "ab12", session: "s1" }), "#/host/ab12/session/s1"],
+  ] as const)("round-trips a screen as %s", (screen, fragment) => {
     expect.hasAssertions();
-    expect(route("", true)._tag).toBe("Sessions");
-    expect(route("#/host/ab12/elsewhere", true)._tag).toBe("Sessions");
-    expect(route("#/host//new", true)._tag).toBe("Sessions");
+    expect(fragmentOf(screen)).toBe(fragment);
+    expect(route(fragment, true)).toStrictEqual(screen);
   });
+});
 
-  it("a join link's fragment is told apart from a screen's", () => {
+describe(isJoin, () => {
+  it.each([
+    ["#join=AAAA", true],
+    ["#/pair", false],
+  ] as const)("recognizes a join fragment %s as %s", (fragment, expected) => {
     expect.hasAssertions();
-    expect(isJoin("#join=AAAA")).toBe(true);
-    expect(isJoin("#/pair")).toBe(false);
+    expect(isJoin(fragment)).toBe(expected);
   });
 });
