@@ -1,5 +1,5 @@
 import { Array, Option } from "effect";
-import { blank, choosable, effortsOf, startOf } from "@conductor/core/session/start";
+import { blank, choosable, effortsOf, optional, startOf } from "@conductor/core/session/start";
 import { describe, expect, it } from "@effect/vitest";
 import { directory, turnThrough } from "#ui/test/session-events.ts";
 import { newSessionForm } from "#ui/test/new-session.tsx";
@@ -47,7 +47,8 @@ describe("new session choices", () => {
     const choices = choosable(before);
     const { models } = Option.getOrThrow(Array.head(choices));
     expect(models.choices.map((choice) => choice.id)).toStrictEqual(["big", "small"]);
-    expect(effortsOf(models, undefined)).toStrictEqual(["Low", "High"]);
+    const defaultModel = optional(blank.model);
+    expect(effortsOf(models, defaultModel)).toStrictEqual(["Low", "High"]);
   });
 
   it("starts in a project with the selected model and effort", () => {

@@ -1,7 +1,7 @@
+import type { Decision, EventKind } from "@conductor/core/schemas/index";
 import { answer, answersOf, decisions, notice } from "@conductor/core/session/commands";
 import { askedOf, offered } from "#ui/test/session-requests.ts";
 import { button, view } from "#ui/test/session.tsx";
-import type { Decision, EventKind } from "@conductor/core/schemas/index";
 import { describe, expect, it } from "@effect/vitest";
 import { ls, question, started, user } from "#ui/test/examples.ts";
 import { onSession, ready, session, turnThrough } from "#ui/test/session-events.ts";

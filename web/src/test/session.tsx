@@ -1,14 +1,14 @@
 import type { Command } from "@conductor/core/schemas/index";
 import { Effect } from "effect";
-import { expect } from "@effect/vitest";
 import type { Host } from "@conductor/core/fold/host";
 import type { HostLink } from "#ui/link/host.ts";
 import type { Offer } from "@conductor/core/session/commands";
+import { SessionView } from "#ui/session/session-view.tsx";
+import { expect } from "@effect/vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { session } from "#ui/test/session-events.ts";
 import { sessionOf } from "#ui/test/examples.ts";
 import { sessionOffers } from "@conductor/core/session/commands";
-import { SessionView } from "#ui/session/session-view.tsx";
 
 interface Recording {
   readonly send: HostLink["send"];

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { approvalThroughStore } from "#ui/test/session-wiring.tsx";
 import { Effect } from "effect";
+import { approvalThroughStore } from "#ui/test/session-wiring.tsx";
 
 describe("the session route", () => {
   it.effect("shows the store's session and the host's approval answer", () =>

@@ -1,15 +1,15 @@
 import { page, when } from "#ui/test/page.ts";
 import { scenario, serve } from "#ui/test/replay.ts";
 import { Effect } from "effect";
-import { fakeHost } from "#ui/test/fake-pipe.ts";
 import type { Feed } from "@conductor/core/schemas/index";
+import { Root } from "#ui/root.tsx";
+import type { Scope } from "effect";
+import type { Store } from "#ui/store.ts";
+import { fakeHost } from "#ui/test/fake-pipe.ts";
 import { makeStore } from "#ui/store.ts";
 import { openRequests } from "@conductor/core/fold/offers";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Root } from "#ui/root.tsx";
-import type { Scope } from "effect";
 import { sessionOf } from "@conductor/core/store";
-import type { Store } from "#ui/store.ts";
 
 const ticket =
   "AFhmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmZmAQEBAQEBAQEBAQEBAQEBAWh0dHBzOi8vci5leGFtcGxlLw";

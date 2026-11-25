@@ -1,8 +1,8 @@
 import { created, foldEvents, foldUpdates, received } from "#ui/test/examples.ts";
 import type { EventKind } from "@conductor/core/schemas/index";
 import type { Host } from "@conductor/core/fold/host";
-import { recordedFeed } from "#ui/test/recorded-feeds.ts";
 import { Update } from "@conductor/core/link";
+import { recordedFeed } from "#ui/test/recorded-feeds.ts";
 
 const session = "00000000000000000000000001";
 const directory = "/conductor/target/tmp/conductor-e2e-0-approve";
