@@ -7,6 +7,7 @@ import {
   Path,
   Schema,
   SchemaRepresentation,
+  Struct,
 } from "effect";
 import { NodeRuntime, NodeServices } from "@effect/platform-node";
 
@@ -52,7 +53,7 @@ const print = (source: Readonly<JsonSchema.JsonSchema>): string => {
     },
     { closeObjects: true },
   );
-  const document = SchemaRepresentation.toRepresentations(Arr.map(schemas, (schema) => schema.ast));
+  const document = SchemaRepresentation.toRepresentations(Arr.map(schemas, Struct.get("ast")));
   const module = schemaModule();
   const bindings = module.addSchemas(Object.fromEntries(Arr.zip(names, document.representations)), {
     references: document.references,
