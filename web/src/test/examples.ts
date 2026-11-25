@@ -1,49 +1,49 @@
-// Events for the fold's worked examples, ported from the Rust HostView's tests.
-import { isDelta } from "../link/feed.ts";
-import { Update } from "../link/host.ts";
-import type { RecordedFeed } from "../recorded-feeds.ts";
-import type { EventKind, SessionId, SubagentEvent, ToolPhase } from "../schemas/index.ts";
-import { applyUpdate, emptyHost, type Host } from "./host.ts";
-import type { Session } from "./session.ts";
-import { Approval, Item, RequestState, type ToolState } from "./transcript.ts";
+import { Approval, Item, RequestState } from "@conductor/core/fold/transcript";
+import { Array as Arr, Option } from "effect";
+import type { EventKind, SessionId, SubagentEvent, ToolPhase } from "@conductor/core/schemas/index";
+import { Update, isDelta } from "@conductor/core/link";
+import { applyUpdate, emptyHost } from "@conductor/core/fold/host";
+import type { Host } from "@conductor/core/fold/host";
+import type { RecordedFeed } from "#ui/test/recorded-feeds.ts";
+import type { Session } from "@conductor/core/fold/session";
+import type { ToolState } from "@conductor/core/fold/transcript";
 
-type Numbered = readonly (readonly [number, EventKind])[];
+// Events for the fold's worked examples, ported from the Rust HostView's tests.
+
+type Numbered = ReadonlyArray<readonly [number, EventKind]>;
 
 const id = (session: number): SessionId => `0000000000000000000000000${session}`;
 
 // Numbers each session's events as the host does: a delta repeats the last seq.
 const foldEvents = (events: Numbered): Host =>
-  events.reduce<readonly [Host, number]>(
+  Arr.reduce<readonly [number, EventKind], readonly [Host, number]>(
+    events,
+    [emptyHost(), 0],
     ([host, last], [session, kind]) => {
-      const event = { seq: last + 1, session: id(session), kind };
+      const event = { kind, seq: last + 1, session: id(session) };
       const seq = isDelta(event) ? last : event.seq;
       const frame = { Event: { ...event, seq } };
       return [applyUpdate(host, Update.Feed({ frame })), seq];
     },
-    [emptyHost(), 0],
   )[0];
 
 // What one connection of a recorded scenario's test client received, as its link reports it:
-// its welcome, then its feed.
-const received = (feed: RecordedFeed, connection: number): readonly Update[] =>
+// Its welcome, then its feed.
+const received = (feed: RecordedFeed, connection: number): ReadonlyArray<Update> =>
   feed
     .filter((recorded) => recorded.connection === connection)
-    .flatMap((recorded): readonly Update[] => {
+    .flatMap((recorded): ReadonlyArray<Update> => {
       if (recorded.stream === "hello" && "Welcome" in recorded.frame) {
         return [Update.Welcome({ welcome: recorded.frame.Welcome })];
       }
       return recorded.stream === "feed" ? [Update.Feed({ frame: recorded.frame })] : [];
     });
 
-const foldUpdates = (updates: readonly Update[]): Host => updates.reduce(applyUpdate, emptyHost());
+const foldUpdates = (updates: ReadonlyArray<Update>): Host =>
+  Arr.reduce(updates, emptyHost(), applyUpdate);
 
-const sessionOf = (host: Host, session: SessionId): Session => {
-  const found = host.sessions.get(session);
-  if (found === undefined) {
-    throw new Error(`no session ${session}`);
-  }
-  return found;
-};
+const sessionOf = (host: Host, session: SessionId): Session =>
+  Option.getOrThrow(Option.fromNullishOr(host.sessions.get(session)));
 
 const created = (directory: string): EventKind => ({
   SessionCreated: {
@@ -67,11 +67,11 @@ const finished = (call: string): EventKind => ({
 
 const opened = (request: number): EventKind => ({
   RequestOpened: {
-    request,
     call: `toolu_${request}`,
-    tool: ls,
-    reason: null,
     for_session: null,
+    reason: null,
+    request,
+    tool: ls,
   },
 });
 
@@ -84,7 +84,7 @@ const reasoned = (text: string): EventKind => ({
 });
 
 const user = (text: string): EventKind => ({
-  UserMessage: { text, by: "phone" },
+  UserMessage: { by: "phone", text },
 });
 
 const exited = (status: string): EventKind => ({
@@ -93,30 +93,37 @@ const exited = (status: string): EventKind => ({
 
 const question = (request: number): EventKind => ({
   QuestionAsked: {
-    request,
     questions: [
       {
         header: "Color",
-        text: "Which color?",
-        options: [{ label: "Blue", description: "Cool" }],
+        options: [{ description: "Cool", label: "Blue" }],
         selection: "One",
+        text: "Which color?",
       },
     ],
+    request,
   },
 });
 
 // An `ls` card that asked for approval.
-const asked = (call: string, request: number, state: ToolState, approval: RequestState): Item =>
+interface Asked {
+  readonly approval: RequestState;
+  readonly call: string;
+  readonly request: number;
+  readonly state: ToolState;
+}
+
+const asked = ({ approval, call, request, state }: Asked): Item =>
   Item.Tool({
-    call,
-    tool: ls,
-    state,
     approval: Approval.Asked({
+      forSession: undefined,
+      reason: undefined,
       request,
-      reason: null,
-      forSession: null,
       state: approval,
     }),
+    call,
+    state,
+    tool: ls,
   });
 
 const withdrawn = RequestState.Resolved({ resolution: "Withdrawn" });

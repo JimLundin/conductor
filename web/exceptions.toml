@@ -39,3 +39,123 @@ reason = "Effect Codegen emits index signatures for the wire contract maps"
 path = "core/src/schemas/index.ts"
 rule = "lint/eslint/max-lines"
 reason = "Effect Codegen emits the mutually referential wire types in one generated module"
+
+[[exception]]
+path = "src/fold/transcript.test.ts"
+rule = "lint/unicorn/no-null"
+reason = "These assertions exercise nullable fields in the Rust wire contract; the expected payload must contain JSON null"
+
+[[exception]]
+path = "src/fold/subagent.test.ts"
+rule = "lint/unicorn/no-null"
+reason = "These assertions exercise nullable fields in the Rust wire contract; the expected payload must contain JSON null"
+
+[[exception]]
+path = "src/session/new-session.test.tsx"
+rule = "lint/unicorn/no-null"
+reason = "These assertions exercise nullable fields in the Rust wire contract; the expected payload must contain JSON null"
+
+[[exception]]
+path = "vitest.config.ts"
+rule = "lint/import/no-nodejs-modules"
+reason = "Vite requires an absolute filesystem path for the Rust ticket fixture; Node URL conversion preserves Windows and escaped paths"
+
+[[exception]]
+path = "src/test/fake-pipe.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The test passes Effect Queue, Deferred and Ref service handles to their operations; those handles contain stateful library types and their internals are not mutated here"
+
+[[exception]]
+path = "src/test/replay.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The test passes Effect Queue, Deferred and Ref service handles to their operations; those handles contain stateful library types and their internals are not mutated here"
+
+[[exception]]
+path = "src/link.test.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The test passes Effect Queue, Deferred and Ref service handles to their operations; those handles contain stateful library types and their internals are not mutated here"
+
+[[exception]]
+path = "src/test/page.ts"
+rule = "lint/unicorn/no-null"
+reason = "The browser Storage interface returns null for an absent key; this test adapter implements that boundary contract"
+
+[[exception]]
+path = "src/link.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/dial.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/feed.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/host.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/saved.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store/actions.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store/links.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store/methods.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/root.tsx"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/browser.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/frames.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes Schema codecs and transport Uint8Array values to their decoders without mutating them; these library types contain mutable members"
+
+[[exception]]
+path = "src/main.tsx"
+rule = "lint/eslint/no-restricted-globals"
+reason = "The React entry point reads the mount element from document and passes it to createRoot; browser application effects run in atoms"
+
+[[exception]]
+path = "src/test/examples.ts"
+rule = "lint/unicorn/no-null"
+reason = "These fixtures encode the Rust client link's nullable model, effort and request fields as JSON null"
+
+[[exception]]
+path = "knip.json"
+rule = "drift:ignoreDependencies:@stryker-mutator/core"
+reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"
+
+[[exception]]
+path = "knip.json"
+rule = "drift:ignoreDependencies:@stryker-mutator/vitest-runner"
+reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"

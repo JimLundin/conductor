@@ -1,59 +1,29 @@
-// The paired hosts as local storage keeps them: one record per host, under a key holding the
-// format's version and the host's endpoint id in hex, so tabs pair and forget hosts each on
-// their own. Records in any other format, the Dioxus app's included, are set aside unread.
-import { Option, Schema } from "effect";
-import { Ticket } from "./schemas/index.ts";
+import type { HostKey, Saved } from "@conductor/core/saved";
+import { hostKey, restored, savedText, storageKey } from "@conductor/core/saved";
+import { Effect } from "effect";
+import type { KeyValueStore } from "effect/persistence";
 
-// A host's endpoint id in lower-case hex, which keys it in storage and in the page.
-type HostKey = string;
-
-interface Saved {
-  readonly ticket: Ticket;
-  // The name from its last welcome, kept across launches.
-  readonly name: string | null;
-}
-
-const SavedRecord = Schema.fromJsonString(
-  Schema.Struct({ ticket: Ticket, name: Schema.NullOr(Schema.String) }),
-);
-
-const prefix = "conductor.v2.host.";
-const hexRadix = 16;
-const hexDigits = 2;
-
-const hostKey = (ticket: Ticket): HostKey =>
-  ticket.host.map((byte) => byte.toString(hexRadix).padStart(hexDigits, "0")).join("");
-
-const storageKey = (host: HostKey): string => `${prefix}${host}`;
-
-// A record that doesn't decode, or whose ticket names another host than its key, is skipped
-// without discarding its neighbours.
-const restored = (key: string, value: string | null): readonly Saved[] => {
-  if (!key.startsWith(prefix) || value === null) {
-    return [];
-  }
-  return Schema.decodeUnknownOption(SavedRecord)(value).pipe(
-    Option.filter((saved) => storageKey(hostKey(saved.ticket)) === key),
-    Option.match({
-      onNone: (): readonly Saved[] => [],
-      onSome: (saved): readonly Saved[] => [saved],
-    }),
+const restore: (storage: KeyValueStore.KeyValueStore) => Effect.Effect<ReadonlyArray<Saved>> = (
+  storage,
+) =>
+  storage.keys.pipe(
+    Effect.flatMap((keys) =>
+      Effect.forEach(keys, (key) =>
+        storage.get(key).pipe(Effect.map((value) => restored(key, value))),
+      ),
+    ),
+    Effect.map((records) => records.flat()),
+    Effect.orDie,
   );
-};
 
-const keys = (storage: Storage): readonly string[] =>
-  Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? "");
+const save: (storage: KeyValueStore.KeyValueStore, saved: Saved) => Effect.Effect<void> = (
+  storage,
+  saved,
+) => storage.set(storageKey(hostKey(saved.ticket)), savedText(saved)).pipe(Effect.orDie);
 
-// The hosts paired in `storage`.
-const restore = (storage: Storage): readonly Saved[] =>
-  keys(storage).flatMap((key) => restored(key, storage.getItem(key)));
+const unsave: (storage: KeyValueStore.KeyValueStore, host: HostKey) => Effect.Effect<void> = (
+  storage,
+  host,
+) => storage.remove(storageKey(host)).pipe(Effect.orDie);
 
-const save = (storage: Storage, saved: Saved): void => {
-  storage.setItem(storageKey(hostKey(saved.ticket)), Schema.encodeSync(SavedRecord)(saved));
-};
-
-const unsave = (storage: Storage, host: HostKey): void => {
-  storage.removeItem(storageKey(host));
-};
-
-export { type HostKey, hostKey, restore, save, unsave };
+export { restore, save, unsave };
