@@ -1,6 +1,7 @@
 import type { ConfigEnv } from "vitest/config";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+import { fileURLToPath } from "node:url";
 
 // Each mode's property-test runs and seed, and the failures a run ends on.
 // A mode is vitest's --mode; its default, test, is Stryker's, so mutation.
@@ -20,7 +21,13 @@ export default defineConfig(({ mode }: Readonly<ConfigEnv>) => {
   const full = chosen === "full";
   return {
     plugins: [react()],
-    resolve: { tsconfigPaths: true },
+    resolve: {
+      alias: {
+        "#ticket-example": fileURLToPath(
+          new URL("../crates/link/ticket.example.json", import.meta.url),
+        ),
+      },
+    },
     test: {
       bail,
       coverage: { enabled: full, provider: "v8" as const, reporter: ["text"] },
