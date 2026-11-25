@@ -478,3 +478,47 @@ reason = "migrating to Oxlint, spec 0tzedg8h"
 path = "src/schemas.test.ts"
 rule = "lint/vitest/valid-expect"
 reason = "migrating to Oxlint, spec 0tzedg8h"
+
+# Rules the Effect standard brought in, each to be fixed by the migration of
+# spec 0tz0t8ce. The web app is one ui package, so every function of it
+# counts as UI until its decisions move into a core package.
+
+[[exception]]
+path = "src/main.tsx"
+rule = "lint/eslint/no-restricted-globals"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "scripts/schemas.ts"
+rule = "lint/eslint/no-restricted-properties"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "src/link/frames.ts"
+rule = "lint/eslint/no-restricted-properties"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "src/**"
+rule = "lint/oxc/no-async-await"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "src/**"
+rule = "lint/standards/no-throw"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "src/ticket.ts"
+rule = "lint/standards/no-try"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "src/**"
+rule = "shell"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
+
+[[exception]]
+path = "package.json"
+rule = "shell"
+reason = "migrating to the Effect standard, spec 0tz0t8ce"
