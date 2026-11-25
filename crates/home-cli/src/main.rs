@@ -1,16 +1,20 @@
 use std::env;
 use std::fs;
-use std::io::Write as _;
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use home::Draws;
+use home::canvas::{CanvasFile, CanvasKey, CanvasName};
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Write, asked, fresh, homeless, run,
+    Asked, Command, Context, Given, Need, Source, Wanted, Write, asked, fresh,
+    homeless, run,
 };
 use home::flow::snapshot::Snapshot;
+use home_files::FolderStore;
+use home_store::CanvasStore;
 
 mod local;
 
@@ -26,27 +30,80 @@ fn main() -> ExitCode {
 
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
     let snapshot = home_files::read(home);
+    let mut store = FolderStore::new(home.to_path_buf());
     let context = context();
     let fresh = fresh(&snapshot, context.now / 1000, &draws());
     match asked(args, &snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, &snapshot),
-        Asked::Flow(command) => issues(home, command, &snapshot, &context),
+        Asked::Flow(command) => {
+            issues(home, &mut store, command, &snapshot, &context)
+        }
     }
 }
 
 fn issues(
     home: &Path,
+    store: &mut dyn CanvasStore,
     asked: Command,
     snapshot: &Snapshot,
     context: &Context,
 ) -> (String, u8) {
-    let file = asked.file().map(|path| read(Path::new(path)));
-    let outcome = run(asked, file, snapshot, context);
+    let given = asked.needs().map(|need| match need {
+        Need::Read(Source::File(path)) => Given::Text(read(Path::new(&path))),
+        Need::Read(Source::Stdin) => Given::Text(stdin()),
+        Need::Canvases(wanted) => Given::Canvases(fetched(&*store, &wanted)),
+    });
+    let outcome = run(asked, given, snapshot, context);
     let saved = outcome
         .writes
         .iter()
-        .try_for_each(|write| save(home, write));
+        .try_for_each(|write| save(home, write))
+        .and_then(|()| {
+            outcome.canvases.iter().try_for_each(|canvas| {
+                store
+                    .put(&canvas.key, &canvas.file)
+                    .map_err(|error| error.to_string())
+            })
+        });
     outcome.ended(saved)
+}
+
+fn fetched(
+    store: &dyn CanvasStore,
+    wanted: &Wanted,
+) -> Result<Vec<(CanvasName, CanvasFile)>, String> {
+    let names = match &wanted.name {
+        Some(name) => Vec::from([name.clone()]),
+        None => store
+            .list(&wanted.project, &wanted.issue)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(|entry| entry.name)
+            .collect(),
+    };
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let key = CanvasKey {
+                project: wanted.project,
+                issue: wanted.issue,
+                name,
+            };
+            store
+                .get(&key)
+                .map(|kept| kept.map(|file| (key.name, file)))
+                .map_err(|error| error.to_string())
+                .transpose()
+        })
+        .collect()
+}
+
+fn stdin() -> Result<String, String> {
+    let mut text = String::new();
+    io::stdin()
+        .read_to_string(&mut text)
+        .map(|_| text)
+        .map_err(|err| format!("stdin: {err}"))
 }
 
 fn root() -> Option<PathBuf> {

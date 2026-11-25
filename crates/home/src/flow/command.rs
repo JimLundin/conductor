@@ -9,6 +9,7 @@
 
 use alloc::string::ToString;
 
+use crate::canvas::{Canvas, CanvasFile, CanvasKey, CanvasName};
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
 use crate::issue::{
     ChecklistChange, Datum, Entry, Issue, IssueChange, Item, LogEvent,
@@ -53,6 +54,12 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
       Adds an item to the checklist.
   home issue checklist <id> check|uncheck|remove <n>
       Checks, unchecks or removes the checklist's nth item, from 1.
+  home canvas put <id> <name> [--file <path>]
+      Writes the issue's canvas of that name, in place of any written
+      before, from the file's JSON or else stdin's, dated and signed.
+  home canvas show <id> [<name>]
+      Prints the issue's canvas of that name, or every canvas it has, as
+      markdown.
   home repos
       Shows each project's checkouts on this machine and their state.
   home repos --verify
@@ -107,20 +114,53 @@ pub enum Command {
         id: IssueId,
         path: String,
     },
+    CanvasPut {
+        key: CanvasKey,
+        from: Source,
+    },
+    CanvasShow(Wanted),
     /// Words that make no command, and why.
     Wrong(String),
     Usage,
 }
 
 impl Command {
-    /// The file the shell reads before running it.
     #[must_use]
-    pub fn file(&self) -> Option<&str> {
+    pub fn needs(&self) -> Option<Need> {
         match self {
-            Self::BodyFrom { path, .. } => Some(path),
+            Self::BodyFrom { path, .. } => {
+                Some(Need::Read(Source::File(path.clone())))
+            }
+            Self::CanvasPut { from, .. } => Some(Need::Read(from.clone())),
+            Self::CanvasShow(wanted) => Some(Need::Canvases(wanted.clone())),
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    File(String),
+    Stdin,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Need {
+    Read(Source),
+    Canvases(Wanted),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wanted {
+    pub project: ProjectId,
+    pub issue: IssueId,
+    pub name: Option<CanvasName>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Given {
+    Text(Result<String, String>),
+    Canvases(Result<Vec<(CanvasName, CanvasFile)>, String>),
 }
 
 /// An edit to one of the home's issues, the command line's and the app's
@@ -182,8 +222,15 @@ impl Write {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanvasWrite {
+    pub key: CanvasKey,
+    pub file: CanvasFile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outcome {
     pub writes: Vec<Write>,
+    pub canvases: Vec<CanvasWrite>,
     pub output: String,
     pub failed: bool,
 }
@@ -284,6 +331,12 @@ pub fn command(
                 path: (*path).to_owned(),
             })
         }
+        ["canvas", "put", id, name] => putting(home, id, name, Source::Stdin),
+        ["canvas", "put", id, name, "--file", path] => {
+            putting(home, id, name, Source::File((*path).to_owned()))
+        }
+        ["canvas", "show", id] => showing(home, id, None),
+        ["canvas", "show", id, name] => showing(home, id, Some(name)),
         ["issue", "set", id, pairs @ ..] if !pairs.is_empty() => {
             setting_command(home, id, pairs)
         }
@@ -336,6 +389,44 @@ pub fn command(
 
 fn named(word: &str) -> Result<IssueId, String> {
     IssueId::parse(word).ok_or_else(|| format!("no issue is called {word}"))
+}
+
+fn known(home: &Snapshot, word: &str) -> Result<(ProjectId, IssueId), String> {
+    let id = named(word)?;
+    home.issue(id)
+        .map(|issue| (issue.project, id))
+        .ok_or_else(|| format!("no issue is called {word}"))
+}
+
+fn canvas_name(word: &str) -> Result<CanvasName, String> {
+    CanvasName::parse(word).map_err(|bad| bad.to_string())
+}
+
+fn putting(home: &Snapshot, id: &str, name: &str, from: Source) -> Command {
+    known(home, id)
+        .and_then(|(project, issue)| {
+            Ok(Command::CanvasPut {
+                key: CanvasKey {
+                    project,
+                    issue,
+                    name: canvas_name(name)?,
+                },
+                from,
+            })
+        })
+        .unwrap_or_else(Command::Wrong)
+}
+
+fn showing(home: &Snapshot, id: &str, name: Option<&str>) -> Command {
+    known(home, id)
+        .and_then(|(project, issue)| {
+            Ok(Command::CanvasShow(Wanted {
+                project,
+                issue,
+                name: name.map(canvas_name).transpose()?,
+            }))
+        })
+        .unwrap_or_else(Command::Wrong)
 }
 
 fn changing(word: &str, change: IssueChange) -> Command {
@@ -480,12 +571,10 @@ pub fn said(value: &Datum) -> String {
     }
 }
 
-/// What doing `command` to `home` writes and says, given the text of the
-/// file it asked for, if it asked for one.
 #[must_use]
 pub fn run(
     command: Command,
-    file: Option<Result<String, String>>,
+    given: Option<Given>,
     home: &Snapshot,
     context: &Context,
 ) -> Outcome {
@@ -496,19 +585,26 @@ pub fn run(
             let report = check(home);
             return Outcome {
                 writes: Vec::new(),
+                canvases: Vec::new(),
                 output: report.text(),
                 failed: report.failed(),
             };
         }
-        Command::BodyFrom { id, path } => {
-            match file.unwrap_or_else(|| Err(format!("{path} wasn't read"))) {
-                Ok(text) => Edit::Change {
-                    id,
-                    changes: Vec::from([IssueChange::Body(text)]),
-                },
-                Err(reason) => return refused(refusal(&reason)),
-            }
+        Command::BodyFrom { id, path } => match text(given, &path) {
+            Ok(text) => Edit::Change {
+                id,
+                changes: Vec::from([IssueChange::Body(text)]),
+            },
+            Err(reason) => return refused(refusal(&reason)),
+        },
+        Command::CanvasPut { key, from } => {
+            let place = match &from {
+                Source::File(path) => path.as_str(),
+                Source::Stdin => "stdin",
+            };
+            return put(home, key, text(given, place), context);
         }
+        Command::CanvasShow(wanted) => return shown(home, &wanted, given),
         Command::Edit(edit) => edit,
     };
     match write(home, &edit, context) {
@@ -526,6 +622,7 @@ pub fn run(
                     .concat()
             ),
             writes: Vec::from([write]),
+            canvases: Vec::new(),
             failed: false,
         },
         Err(reason) => refused(refusal(&reason)),
@@ -535,8 +632,81 @@ pub fn run(
 const fn refused(output: String) -> Outcome {
     Outcome {
         writes: Vec::new(),
+        canvases: Vec::new(),
         output,
         failed: true,
+    }
+}
+
+fn text(given: Option<Given>, from: &str) -> Result<String, String> {
+    match given {
+        Some(Given::Text(text)) => text,
+        _ => Err(format!("{from} wasn't read")),
+    }
+}
+
+fn put(
+    home: &Snapshot,
+    key: CanvasKey,
+    read: Result<String, String>,
+    context: &Context,
+) -> Outcome {
+    let subject = subject(home, key.project, &key.issue.to_string());
+    let parsed = read.and_then(|text| {
+        Canvas::parse(&text).map_err(|error| {
+            format!("canvas {} of {subject}: {error}", key.name)
+        })
+    });
+    match parsed {
+        Ok(canvas) => Outcome {
+            writes: Vec::new(),
+            output: format!("wrote canvas {} of {subject}\n", key.name),
+            canvases: Vec::from([CanvasWrite {
+                key,
+                file: CanvasFile {
+                    written: context.now,
+                    by: context.by.clone(),
+                    canvas,
+                },
+            }]),
+            failed: false,
+        },
+        Err(reason) => refused(refusal(&reason)),
+    }
+}
+
+fn shown(home: &Snapshot, wanted: &Wanted, given: Option<Given>) -> Outcome {
+    let subject = subject(home, wanted.project, &wanted.issue.to_string());
+    let fetched = match given {
+        Some(Given::Canvases(fetched)) => fetched,
+        _ => Err(format!("the canvases of {subject} weren't fetched")),
+    };
+    match (fetched, &wanted.name) {
+        (Err(reason), _) => refused(refusal(&reason)),
+        (Ok(none), Some(name)) if none.is_empty() => refused(refusal(
+            &format!("no canvas is called {name} on {subject}"),
+        )),
+        (Ok(none), None) if none.is_empty() => Outcome {
+            output: format!("{subject} has no canvases\n"),
+            ..said_only()
+        },
+        (Ok(kept), _) => Outcome {
+            output: kept
+                .iter()
+                .map(|(_, file)| file.canvas.markdown())
+                .collect::<Vec<String>>()
+                .join("\n"),
+            ..said_only()
+        },
+    }
+}
+
+const fn said_only() -> Outcome {
+    Outcome {
+        writes: Vec::new(),
+        canvases: Vec::new(),
+        output: String::new(),
+        failed: false,
     }
 }
 
@@ -603,15 +773,7 @@ fn finished(
 ) -> Result<Written, String> {
     let after = home.with(file.clone());
     let graph = after.graph();
-    let name = home
-        .projects()
-        .iter()
-        .find(|project| project.id == file.project)
-        .map_or_else(
-            || file.project.to_string(),
-            |project| project.name.clone(),
-        );
-    let subject = format!("{name}/{}", file.stem);
+    let subject = subject(home, file.project, &file.stem);
     let mut problems: Vec<String> = graph
         .problems
         .iter()
@@ -655,6 +817,15 @@ fn finished(
             text: file.text,
         },
     })
+}
+
+fn subject(home: &Snapshot, project: ProjectId, stem: &str) -> String {
+    let name = home
+        .projects()
+        .iter()
+        .find(|known| known.id == project)
+        .map_or_else(|| project.to_string(), |known| known.name.clone());
+    format!("{name}/{stem}")
 }
 
 fn opened(

@@ -9,16 +9,12 @@ use home_store::{CanvasStore, StoreError};
 
 const SUFFIX: &str = ".json";
 
-/// The store that keeps canvases in the home's folder, each at
-/// `projects/<project>/issues/<issue>/<name>.json`, so they are committed
-/// and synced with the issues.
 #[derive(Debug, Clone)]
 pub struct FolderStore {
     root: PathBuf,
 }
 
 impl FolderStore {
-    /// The store of the home whose root is `root`.
     #[must_use]
     pub const fn new(root: PathBuf) -> Self {
         Self { root }
