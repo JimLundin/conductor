@@ -68,11 +68,8 @@ pub enum Freshness {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReadStatus {
     pub freshness: Freshness,
-    /// Whether the returned snapshot was completely enumerated or the individual read succeeded.
     pub complete: bool,
-    /// Last successful remote observation in Unix milliseconds.
     pub observed_at: Option<u64>,
-    /// Why the requested refresh did not finish, independently of the returned snapshot.
     pub failure: Option<ReadFailure>,
 }
 

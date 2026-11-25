@@ -15,8 +15,6 @@ fn failure(context: &str, error: &str) -> GitError {
     GitError::failed(context, error)
 }
 
-/// # Errors
-/// The workspace branch is not owned by a session.
 pub fn owner(workspace: &Workspace) -> Result<String, GitError> {
     let session = workspace
         .branch
@@ -32,14 +30,12 @@ pub struct Workspace {
     pub repository: Repository,
     pub original: WorkingCopy,
     pub worktree: Worktree,
-    /// The worktree's copy of the directory the session was started in.
     pub directory: SessionDirectory,
     pub branch: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Snapshot {
-    /// The existing `UserMessage` event for this turn; None for initial/autonomous turns.
     pub turn_start: Option<HostSeq>,
     pub commit: String,
 }

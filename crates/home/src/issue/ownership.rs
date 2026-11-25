@@ -23,8 +23,6 @@ pub enum Conflict {
     MultipleBranches,
 }
 
-/// # Errors
-/// The branch is unowned, has another owner, or has conflicting records.
 pub fn reserve(
     repository: &Repository,
     issue: &IssueId,
@@ -182,8 +180,6 @@ impl Reservation {
         }
     }
 
-    /// # Errors
-    /// The requested branch differs from the recorded branch.
     pub fn requested(&self, branch: &str) -> Result<(), String> {
         if self.owner().branch == branch {
             Ok(())

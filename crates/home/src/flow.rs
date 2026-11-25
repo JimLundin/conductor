@@ -1,14 +1,3 @@
-//! The flow: the home's `docs/agents/flow.toml` (its ADR 0001).
-//!
-//! It declares the kinds of issue and their fields, how issues relate,
-//! their statuses and stages, and the rules they should meet. Nothing here
-//! names a kind, status or stage: this models the vocabulary the flow is
-//! written in, and the flow is data the owner changes without changing
-//! Conductor.
-//!
-//! Lists are arrays of tables, so the flow's order is the order it
-//! declares, and the app shows stages, statuses and kinds in that order.
-
 use alloc::boxed::Box;
 use alloc::string::ToString;
 use core::fmt::Display;
@@ -35,22 +24,8 @@ pub use vocabulary::{
 
 use crate::issue::Datum;
 
-/// Where the flow is, from the home's root.
 pub const PATH: &str = "docs/agents/flow.toml";
 
-/// The flow `text` declares.
-///
-/// Each table is read by serde in the shape the file writes it; the
-/// predicates, whose meaning depends on what the flow declares, are read
-/// here.
-///
-/// # Errors
-///
-/// The first thing it gets wrong, at its path in the file: a key, a value,
-/// a default not of its field's type, a duplicate name, a reference to
-/// something it doesn't declare, a role no status has, a field role on two
-/// fields or on a field of the wrong type, or a move weighed outside a
-/// rule's `when`.
 pub fn load(text: &str) -> Result<Flow, String> {
     let top = At::top();
     let file: File = toml::from_str::<Value>(text)
@@ -265,13 +240,6 @@ fn field(at: &At, entry: FieldEntry) -> Result<Field, String> {
     })
 }
 
-/// Whether `datum` is a value of type `value`, and what it is not when it
-/// isn't.
-///
-/// # Errors
-///
-/// What `datum` is not: one of an enum's values, text, a time, a list of
-/// text, or true or false.
 pub fn admitted(value: &FieldType, datum: &Datum) -> Result<(), String> {
     match (value, datum) {
         (FieldType::Enum(words), Datum::Text(word))

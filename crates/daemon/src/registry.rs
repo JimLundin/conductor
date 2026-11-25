@@ -1,11 +1,3 @@
-//! The registry's actor: the one place a session's start and a `Continue`
-//! are checked, a session is found by its id, the host's instances
-//! change, and an instance signs in from the app.
-//!
-//! Its decisions are `host::registry`'s and `host::sign_in`'s; the actor
-//! keeps the store, the sessions' tasks, the instances' refreshes and
-//! starts and the sign-ins' runs, and performs what the cores decide.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::ops::ControlFlow::{Break, Continue};
@@ -157,13 +149,6 @@ impl Registry {
         Ok((actor.spawn(), initialized))
     }
 
-    /// The caller holds the session command lease. It keeps competing
-    /// starts out until the opening records are committed, including while
-    /// the registry waits for a branch alongside its other requests.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn start(
         &self,
         instance: InstanceId,
@@ -199,15 +184,6 @@ impl Registry {
         Ok(started.result)
     }
 
-    /// The session, its current instance adapter and its offer, for an
-    /// order that may start the agent or is checked against what the
-    /// instance offers: `Continue` and `SetEffort`. The
-    /// session starts its agent itself, so a slow start never blocks the
-    /// registry.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn relaunch(
         &self,
         session: SessionId,
@@ -216,11 +192,6 @@ impl Registry {
             .await
     }
 
-    /// The session with this id, if the registry has it.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn find(
         &self,
         session: SessionId,
@@ -228,22 +199,10 @@ impl Registry {
         self.ask(|reply| RegistryMsg::Find { session, reply }).await
     }
 
-    /// What `Welcome` tells a client the host can run.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn instances(&self) -> Result<(Instances, Catalog), Stopped> {
         self.ask(|reply| RegistryMsg::Instances { reply }).await
     }
 
-    /// Changes the host's instances and acknowledges completion:
-    /// once a changed credential has refreshed its instance, and once an
-    /// added instance's CLI has started.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn configure(
         &self,
         configure: InstanceCommand,
@@ -257,11 +216,6 @@ impl Registry {
         .await
     }
 
-    /// Starts, answers or cancels an instance's sign-in.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn sign_in(
         &self,
         command: SignInCommand,
@@ -270,11 +224,6 @@ impl Registry {
             .await
     }
 
-    /// Captures the sign-ins, offers and their live updates in one registry turn.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the registry has stopped.
     pub async fn watch(&self) -> Result<Watch, Stopped> {
         self.ask(|reply| RegistryMsg::Watch { reply }).await
     }

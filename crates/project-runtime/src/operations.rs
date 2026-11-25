@@ -41,10 +41,6 @@ pub struct Operations {
 }
 
 impl Operations {
-    /// Binds the common CLI and daemon store to the host endpoint identity.
-    ///
-    /// # Errors
-    /// The store is unavailable or already belongs to a different host.
     pub fn bind(data: &Path, owner: [u8; 32]) -> Result<Self, Error> {
         std::fs::create_dir_all(data).map_err(failed)?;
         let path = data.join(FILE);
@@ -69,8 +65,6 @@ impl Operations {
         Ok(Self { path, owner })
     }
 
-    /// # Errors
-    /// The configured host has no readable operation store.
     pub fn open(data: &Path) -> Result<Self, Error> {
         let path = data.join(FILE);
         let _lease = lock(&path)?;
@@ -82,8 +76,6 @@ impl Operations {
         Ok(Self { path, owner })
     }
 
-    /// # Errors
-    /// The OS random number generator failed.
     pub fn handle(&self) -> Result<Handle, Error> {
         let mut bytes = [0; 16];
         getrandom::fill(&mut bytes).map_err(failed)?;
@@ -93,8 +85,6 @@ impl Operations {
         })
     }
 
-    /// # Errors
-    /// The owner is unavailable or the store could not be read.
     pub fn status(&self, handle: Handle) -> Result<Option<Record>, Error> {
         handle.local(self.owner)?;
         let _lease = lock(&self.path)?;
@@ -106,10 +96,6 @@ impl Operations {
         read(&database, handle)
     }
 
-    /// Takes the interprocess lock until the operation is paused, finished or interrupted.
-    ///
-    /// # Errors
-    /// The store is busy, the owner or intent differs, or a new issue edit is offline.
     pub fn begin(
         &self,
         handle: Handle,
@@ -195,10 +181,6 @@ impl Attempt {
         &self.record
     }
 
-    /// Records the attempt before permitting the caller to dispatch its effect.
-    ///
-    /// # Errors
-    /// An earlier step is unverified, the precondition changed, or the store failed.
     pub fn dispatch(
         &mut self,
         step: Step,
@@ -207,10 +189,6 @@ impl Attempt {
         self.replace(self.record.dispatch(step, observed, self.online)?)
     }
 
-    /// Records a step verified by the adapter, including evidence recovered after restart.
-    ///
-    /// # Errors
-    /// The verified step differs from the attempt, or the store failed.
     pub fn confirm(
         &mut self,
         evidence: Confirmed,

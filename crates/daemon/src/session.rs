@@ -1,11 +1,3 @@
-//! One session's actor: it owns the session's agent, so a slow agent call
-//! stalls only its own session.
-//!
-//! The session's decisions are the state machine in [`host::session`]. The
-//! actor turns its orders and its agent's events into an [`Input`], steps
-//! the state machine, and performs each [`Effect`]; a [`Call`]'s outcome is
-//! the next input. The agent is a [`Runtime`], whichever provider runs it.
-
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::path::Path;
@@ -31,7 +23,6 @@ use crate::workspace;
 
 type Performed = Result<Option<Input>, Stopped>;
 
-/// The home and the instruction file already read by this session's CLI.
 #[derive(Debug, Clone)]
 pub struct Told {
     pub workspaces: crate::Workspaces,
@@ -39,7 +30,6 @@ pub struct Told {
     pub instructions_file: Option<String>,
 }
 
-/// A handle to one session's task. Clone it freely.
 #[derive(Debug, Clone)]
 pub struct Session {
     inbox: mpsc::Sender<SessionMsg>,
@@ -83,8 +73,6 @@ struct Actor {
 }
 
 impl Session {
-    /// Starts the session's task, which starts the agent in `directory` and
-    /// logs `SessionReady` or `SessionClosed`.
     #[must_use]
     pub fn spawn(
         id: SessionId,
@@ -134,11 +122,6 @@ impl Session {
         Self { inbox }
     }
 
-    /// Hands the session an order and waits for its answer.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the session has stopped.
     pub async fn order(&self, order: Order) -> Result<SessionResult, Stopped> {
         self.request(Request::Order(order)).await
     }

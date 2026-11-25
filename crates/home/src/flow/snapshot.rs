@@ -9,15 +9,11 @@ use super::graph::{Graph, Problem};
 use crate::prelude::*;
 use crate::project::{Listing, Project};
 
-/// The decoded flow, projects and issue observations.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
-    /// The flow, or why it could not be loaded.
     pub flow: Result<Flow, String>,
-    /// The project catalog and its findings.
     pub projects: Listing,
     pub issues: Vec<Result<Observation, Problem>>,
-    /// Failures reported by the observation source.
     pub unread: Vec<String>,
 }
 
@@ -31,8 +27,6 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// The home `inputs` hold. Its issues are read only when its flow
-    /// loads.
     #[must_use]
     pub fn of(inputs: Inputs) -> Self {
         let flow = inputs.flow;
@@ -50,7 +44,6 @@ impl Snapshot {
         }
     }
 
-    /// A home with nothing in it, for this reason.
     #[must_use]
     pub fn empty(reason: String) -> Self {
         Self {
@@ -90,22 +83,15 @@ impl Snapshot {
         }
     }
 
-    /// The flow, or why it doesn't load.
-    ///
-    /// # Errors
-    ///
-    /// The flow couldn't be read or doesn't load.
     pub fn flow(&self) -> Result<&Flow, &str> {
         self.flow.as_ref().map_err(String::as_str)
     }
 
-    /// The projects it lists, by id.
     #[must_use]
     pub fn projects(&self) -> &[Project] {
         &self.listing.projects
     }
 
-    /// The project called `name`, or whose id it is.
     #[must_use]
     pub fn project(&self, name: &str) -> Option<&Project> {
         let id = ProjectId::parse(name);
@@ -137,7 +123,6 @@ impl Snapshot {
             .find(|observation| observation.id() == id)
     }
 
-    /// Its observations, grouped by project and ordered by creation time.
     #[must_use]
     pub fn issues(&self) -> BTreeMap<ProjectId, Vec<Observation>> {
         let mut issues: BTreeMap<ProjectId, Vec<Observation>> = BTreeMap::new();
@@ -157,19 +142,16 @@ impl Snapshot {
         issues
     }
 
-    /// The project folders that aren't projects, and why.
     #[must_use]
     pub fn listing_problems(&self) -> &[String] {
         &self.listing.problems
     }
 
-    /// Failures reported by the observation source.
     #[must_use]
     pub fn unread(&self) -> &[String] {
         &self.unread
     }
 
-    /// Flow, project and issue observation problems, each naming its subject.
     #[must_use]
     pub fn problems(&self) -> Vec<String> {
         self.flow
@@ -307,8 +289,6 @@ pub enum ResolveIssue {
 }
 
 impl Snapshot {
-    /// # Errors
-    /// The reference lacks project context, is ambiguous, or is unknown.
     pub fn resolve(
         &self,
         project: Option<ProjectId>,

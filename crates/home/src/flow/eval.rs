@@ -1,10 +1,3 @@
-//! Whether an issue meets a predicate, among the other issues, and why not
-//! when it doesn't.
-//!
-//! Evaluation follows the predicate, never the issues: each traversal is
-//! one step along a relation, so it ends however the issues link, cycles
-//! included.
-
 use alloc::boxed::Box;
 
 use crate::IssueId;
@@ -13,44 +6,25 @@ use crate::issue::{Datum, Issue};
 use crate::flow::{Flow, Literal, Predicate, Quantifier};
 use crate::prelude::*;
 
-/// The issue as it was and as it would be, while a move is weighed: an
-/// edit, a session starting on it, or for `home check` the issue standing
-/// where it is.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Move<'a> {
     pub from: Option<&'a Issue>,
     pub to: Option<&'a Issue>,
 }
 
-/// Why a predicate failed: the predicate that didn't hold, on which issue,
-/// and the relations followed to reach it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Failure {
-    /// An atom; or, where nothing smaller decides it, the `not`, the empty
-    /// `any`, the relation that reaches no issue or the move not being
-    /// weighed; for `none`, `not` of the condition an issue reached meets.
     pub predicate: Predicate,
     pub issue: IssueId,
-    /// From the issue evaluated.
     pub path: Vec<Step>,
 }
 
-/// One relation followed, and the issue it reached.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Step {
-    /// The relation, or its reverse.
     pub via: String,
     pub issue: IssueId,
 }
 
-/// Whether `issue` meets `predicate` among `issues`, the issues its
-/// relations can reach.
-///
-/// # Errors
-///
-/// The failure that decides it: for `all`, the first part that fails; for
-/// `any`, the first of the parts, all of which fail; across a relation,
-/// the first issue reached that decides it, or the relation reaching none.
 pub fn holds(
     flow: &Flow,
     issues: &[&Issue],

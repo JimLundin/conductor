@@ -1,7 +1,3 @@
-//! The host daemon behind `orchestrator`. It serves the event log and the
-//! sessions over iroh, and runs each instance through its provider's
-//! [`runtime::Plugin`], knowing no provider by name.
-
 #![feature(context_ext, local_waker)]
 
 mod credentials;

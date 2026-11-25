@@ -11,14 +11,12 @@ use crate::prelude::*;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Graph {
-    /// By creation time, with unknown times last and identity breaking ties.
     pub issues: Vec<Issue>,
     pub problems: Vec<Problem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
-    /// The project that owns the issue record.
     pub project: ProjectId,
     pub record: String,
     pub field: Option<String>,
@@ -34,7 +32,6 @@ impl fmt::Display for Problem {
     }
 }
 
-/// Validates domain issues and their references against the flow.
 #[must_use]
 pub fn read(flow: &Flow, records: &[Result<Issue, Problem>]) -> Graph {
     observed(flow, records, true)
@@ -77,10 +74,6 @@ pub(super) fn observed(
     Graph { issues, problems }
 }
 
-/// Checks the issue values against the flow declarations.
-///
-/// # Errors
-/// A kind, status, stage, field or relation is invalid.
 pub fn validate(flow: &Flow, issue: &Issue) -> Result<(), Problem> {
     let fail = |field: &str, message: String| Problem {
         project: issue.project,
@@ -139,8 +132,6 @@ pub fn validate(flow: &Flow, issue: &Issue) -> Result<(), Problem> {
     Ok(())
 }
 
-/// The branch an issue's sessions land on: its declared branch, else
-/// a stable digest of its qualified identity.
 #[must_use]
 pub fn branch_of(id: &IssueId, declared: Option<&str>) -> String {
     use sha2::{Digest, Sha256};

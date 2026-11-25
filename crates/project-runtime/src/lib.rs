@@ -91,8 +91,6 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// # Errors
-    /// The binding is invalid or already registered.
     pub fn register_version_control(
         &mut self,
         registration: Registration,
@@ -104,8 +102,6 @@ impl Registry {
         Ok(())
     }
 
-    /// # Errors
-    /// The binding is invalid or already registered.
     pub fn register_tracker(
         &mut self,
         registration: Registration,
@@ -117,8 +113,6 @@ impl Registry {
         Ok(())
     }
 
-    /// # Errors
-    /// The binding is invalid or already registered.
     pub fn register_hosting(
         &mut self,
         registration: Registration,
@@ -141,8 +135,6 @@ impl Registry {
             .collect()
     }
 
-    /// # Errors
-    /// The requested operation lacks its selected backend, credential or capability.
     pub fn preflight(
         &self,
         backends: &Backends,
@@ -180,32 +172,24 @@ pub struct Project<'a> {
 }
 
 impl Project<'_> {
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn prepare(&self, request: Prepare) -> Result<Prepared, Failure> {
         self.version_control(Capability::PrepareWorkspace)?
             .prepare(request)
             .await
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn capture(&self, request: Capture) -> Result<Revision, Failure> {
         self.version_control(Capability::CaptureSnapshot)?
             .capture(request)
             .await
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn install(&self, request: Install) -> Result<(), Failure> {
         self.version_control(Capability::InstallSnapshot)?
             .install(request)
             .await
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn compare(
         &self,
         request: Compare,
@@ -215,16 +199,12 @@ impl Project<'_> {
             .await
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn integrate(&self, request: Integrate) -> Result<u64, Failure> {
         self.version_control(Capability::IntegrateSession)?
             .integrate(request)
             .await
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn preserve_and_remove(
         &self,
         request: PreserveAndRemove,
@@ -234,8 +214,6 @@ impl Project<'_> {
             .await
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn read_issue(
         &self,
         request: Lookup,
@@ -253,8 +231,6 @@ impl Project<'_> {
             .map_err(|_| ReadFailure::Unavailable)
     }
 
-    /// # Errors
-    /// Preflight refused the operation or its selected adapter could not complete it.
     pub async fn observe_hosting(
         &self,
         request: hosting::Request,
@@ -292,10 +268,6 @@ fn selected<'a, T: ?Sized>(
 #[cfg(test)]
 mod tests;
 
-/// Resolves the host data directory used by the daemon and project CLI.
-///
-/// # Errors
-/// The platform has no default data directory.
 pub fn data_dir_or_default(
     data: Option<std::path::PathBuf>,
 ) -> std::io::Result<std::path::PathBuf> {

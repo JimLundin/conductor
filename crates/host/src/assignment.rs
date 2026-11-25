@@ -1,6 +1,3 @@
-//! The issue a session works on and the instance whose agent works it, as
-//! the session's log has them (docs/home.md §4).
-
 use alloc::collections::BTreeMap;
 use alloc::format;
 
@@ -12,8 +9,6 @@ use home::IssueId;
 
 use crate::prelude::*;
 
-/// A session on an issue and its instance, which signs the notes the
-/// session writes on the issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assignment {
     pub issue: IssueId,
@@ -21,7 +16,6 @@ pub struct Assignment {
 }
 
 impl Assignment {
-    /// Who signs the session's notes on its issue: its instance.
     #[must_use]
     pub fn signer(&self) -> ClientName {
         let provider = self.instance.provider.name();

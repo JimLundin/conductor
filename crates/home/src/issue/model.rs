@@ -1,5 +1,3 @@
-//! Issue values interpreted by the project's flow.
-
 use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -13,43 +11,31 @@ use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
-/// An issue as the flow reads its record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Issue {
     pub id: IssueId,
     pub project: ProjectId,
-    /// Creation time in Unix milliseconds, or unknown.
     pub created: Option<u64>,
     pub title: String,
     pub kind: String,
     pub status: String,
     pub stage: Option<String>,
-    /// The declared fields it gives, by name.
     pub fields: BTreeMap<String, Datum>,
-    /// The issues each relation from it points to, by relation.
     pub links: BTreeMap<String, Vec<IssueId>>,
-    /// The human body before the checklist and the log.
     pub body: String,
-    /// The body's sections in order, the text before the first heading
-    /// as one with no heading; the checklist and the log aren't among them.
     pub sections: Vec<Section>,
-    /// The items of the `## Checklist` section.
     pub checklist: Vec<ChecklistItem>,
-    /// The `## Notes` section, oldest first.
     pub log: Vec<Entry>,
     pub notes: Vec<Note>,
-    /// The branch its sessions land on.
     pub branch: String,
 }
 
 impl Issue {
-    /// The value of a field it gives as one word or text.
     #[must_use]
     pub fn text(&self, field: &str) -> Option<&str> {
         self.fields.get(field).and_then(Datum::text)
     }
 
-    /// The values of a field it gives as a list.
     #[must_use]
     pub fn texts(&self, field: &str) -> &[String] {
         match self.fields.get(field) {
@@ -61,16 +47,10 @@ impl Issue {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Section {
-    /// Empty for the text before the first heading.
     pub heading: String,
     pub text: String,
 }
 
-/// A field's value.
-///
-/// A human-readable format, as TOML is, writes it as its value: text, a
-/// list of text or a boolean, and reads a time as its text. The client link's
-/// format is not self-describing, so there it is tagged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Datum {
     Text(String),
@@ -79,7 +59,6 @@ pub enum Datum {
 }
 
 impl Datum {
-    /// The value as one word or text.
     #[must_use]
     pub fn text(&self) -> Option<&str> {
         match self {
@@ -189,10 +168,8 @@ impl<'de> Visitor<'de> for Plain {
     }
 }
 
-/// A line of an issue's log.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Entry {
-    /// When and by whom, when the line says so.
     pub at: Option<String>,
     pub by: Option<String>,
     pub event: LogEvent,
@@ -218,8 +195,6 @@ impl fmt::Display for Entry {
 }
 
 impl Entry {
-    /// The entry `line` writes, as `Display` writes it: any line that
-    /// isn't `<time> <who> <event>: <text>` is a note as written.
     #[must_use]
     pub fn of(line: &str) -> Self {
         Self::structured(line).unwrap_or_else(|| Self {
@@ -273,18 +248,14 @@ pub struct ChecklistItem {
     pub text: String,
 }
 
-/// A new issue, as `home issue new` opens one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct NewIssue {
     pub project: ProjectId,
     pub kind: String,
     pub title: String,
-    /// The fields and relations it starts with, each with its value, in
-    /// the order given.
     pub fields: Vec<(String, Datum)>,
 }
 
-/// What a move changes.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
@@ -293,26 +264,19 @@ pub enum Part {
     Status,
 }
 
-/// One change to an issue, as the `home` command line and the app make
-/// it. The home reads the file it writes back against the flow before
-/// keeping it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum IssueChange {
-    /// Changes the stage or status. `signed_off` records the owner's sign-off
-    /// when the destination stage requires it.
     Move {
         part: Part,
         to: String,
         reason: String,
         signed_off: bool,
     },
-    /// A declared field's or relation's value.
     Set {
         field: String,
         value: Datum,
     },
     Title(String),
-    /// A note, which the writer signs and dates.
     Note(String),
     Body(String),
     Checklist(ChecklistChange),
@@ -325,13 +289,9 @@ pub enum ChecklistChange {
     Remove(Item),
 }
 
-/// A checklist item by its place, from 0.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Item {
     pub index: usize,
-    /// The checklist the place was picked from; when the file's has
-    /// changed since, the change is refused. `None` takes the place in
-    /// the file as it is.
     pub seen: Option<Vec<ChecklistItem>>,
 }
 
@@ -339,7 +299,6 @@ pub struct Item {
 pub struct Note {
     pub id: String,
     pub author: String,
-    /// Creation time in Unix milliseconds.
     pub created: u64,
     pub text: String,
 }

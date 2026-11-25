@@ -181,8 +181,6 @@ impl Backends {
         }
     }
 
-    /// # Errors
-    /// A selected backend has an invalid adapter or resource.
     pub fn validate(&self) -> Result<(), Refusal> {
         [
             Backend::VersionControl,
@@ -198,8 +196,6 @@ impl Backends {
 }
 
 impl Selection {
-    /// # Errors
-    /// A selected backend has an invalid adapter or resource.
     pub fn validate(&self, backend: Backend) -> Result<(), Refusal> {
         if !valid_name(&self.adapter)
             || self.resource.trim().is_empty()
@@ -233,8 +229,6 @@ fn valid_name(name: &str) -> bool {
         })
 }
 
-/// # Errors
-/// The operation lacks its backend, credential or capability.
 pub fn preflight<'a>(
     backends: &Backends,
     bindings: &'a [Binding],
@@ -271,8 +265,6 @@ pub fn preflight<'a>(
     Ok(binding)
 }
 
-/// # Errors
-/// The registration is invalid or already bound.
 pub fn register(
     bindings: &[Binding],
     binding: &Binding,

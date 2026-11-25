@@ -1,5 +1,3 @@
-//! Where a CLI keeps its config, credentials and transcripts.
-
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
@@ -7,21 +5,11 @@ use agents::{Config, HomeKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Home {
-    /// The user's own (`~/.claude`, `~/.codex`).
     User,
-    /// A directory of the host's own, passed as `CLAUDE_CONFIG_DIR` or
-    /// `CODEX_HOME`, so the user's homes stay untouched.
     Private(PathBuf),
 }
 
 impl Home {
-    /// The private home of the instance `instance`, at
-    /// `<data_dir>/home/<instance>` (§6.2), created with its provider's
-    /// `config` on first run only, since the CLI edits its own config too.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the directory or the config can't be created.
     pub fn private(
         data_dir: &Path,
         instance: &str,

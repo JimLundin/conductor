@@ -21,33 +21,20 @@ impl Error {
     }
 }
 
-/// The root of the repository a session's worktree is added to, as the
-/// host's OS spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Repository(pub String);
 
-/// The directory of the owner's working copy a session was started in,
-/// which its workspace isolates it from, as the host's OS spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WorkingCopy(pub String);
 
-/// The Git worktree that holds a session's workspace, as the host's OS
-/// spells it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Worktree(pub String);
 
-/// Where a removed session's branch was kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Kept {
-    /// In the checkout only: it has no `origin`.
     Local,
-    Pushed {
-        remote: String,
-    },
-    /// In the checkout only, since the push failed.
-    PushFailed {
-        reason: String,
-    },
+    Pushed { remote: String },
+    PushFailed { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -57,14 +44,11 @@ pub struct SnapshotFile {
     pub patch: FilePatch,
 }
 
-/// What a snapshot did to a file, as Git's diff status says.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub enum DiffChange {
-    /// Added: the whole file is new.
     Write,
-    /// Modified, or any other status.
     Edit,
     Delete,
 }

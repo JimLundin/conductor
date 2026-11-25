@@ -18,10 +18,6 @@ pub struct File {
     pub text: String,
 }
 
-/// Reads one issue document through the domain model and body interpreter.
-///
-/// # Errors
-/// The document cannot be decoded or its issue values fail the flow.
 pub fn decode(
     flow: &Flow,
     file: &File,
@@ -190,10 +186,6 @@ impl Inputs {
 }
 
 impl ReadHome {
-    /// Encodes a planned change using its previously read document.
-    ///
-    /// # Errors
-    /// The project uses a tracker, or the flow or issue document is unavailable or invalid.
     pub fn encode(
         &self,
         change: &crate::flow::command::Change,
@@ -295,10 +287,6 @@ pub fn path(target: &super::Read) -> String {
     crate::layout::issue_file(&target.project, &target.issue.to_string())
 }
 
-/// Encodes a semantic change while preserving the document front matter.
-///
-/// # Errors
-/// A changed issue has no document, or its front matter cannot be updated.
 pub fn encode(
     flow: &Flow,
     change: &crate::flow::command::Change,

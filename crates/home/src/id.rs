@@ -1,5 +1,3 @@
-//! Project ids and tracker-qualified issue identities.
-
 use alloc::borrow::Cow;
 use alloc::string::String;
 use core::fmt;
@@ -13,33 +11,24 @@ const DIGITS: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
 
 const BITS_PER_DIGIT: u32 = 5;
 
-/// How many draws minting one id takes, each tried in turn while it gives
-/// an id the home already has.
 pub const DRAWS: usize = 64;
 
-/// The randomness a shell gives to mint one id, of which each id keeps
-/// the bits it has room for.
 pub type Draws = [u64; DRAWS];
 
 mod qualified;
 pub use qualified::IssueId;
 
-/// A project's id, its folder's name in the home's `projects/`: 6 random
-/// digits. Its name and title may change; its id never does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProjectId(u64);
 
 impl ProjectId {
     const DIGITS: u32 = 6;
 
-    /// The id the draw `random` gives, of which it keeps the bits it has
-    /// room for.
     #[must_use]
     pub const fn new(random: u64) -> Self {
         Self(random & mask(Self::DIGITS * BITS_PER_DIGIT))
     }
 
-    /// The first id of `draws` not `held`, if any.
     #[must_use]
     pub fn mint(draws: &Draws, held: &[Self]) -> Option<Self> {
         draws
@@ -48,7 +37,6 @@ impl ProjectId {
             .find(|id| !held.contains(id))
     }
 
-    /// The id `text` writes, if it is one.
     #[must_use]
     pub fn parse(text: &str) -> Option<Self> {
         read(text, Self::DIGITS).map(Self)

@@ -35,7 +35,6 @@ impl Client {
         Ok(metadata)
     }
 
-    /// Observes read permissions at the configured repository.
     pub async fn inspect(&self, backend: Backend) -> Vec<Observation> {
         let metadata = self.metadata().await;
         let mut observations = Vec::new();
@@ -114,7 +113,6 @@ fn default_branch(repo: &Repository) -> Result<String, AccessError> {
     Ok(utf8_percent_encode(branch, PATH_SEGMENT).to_string())
 }
 
-/// Observes access for the project's selected GitHub tracker and host.
 pub async fn access(data: &Path, backends: &Backends) -> Vec<Observation> {
     let credentials = HostCredentials::new(data);
     let mut found = Vec::new();
@@ -131,10 +129,6 @@ pub async fn access(data: &Path, backends: &Backends) -> Vec<Observation> {
     found
 }
 
-/// Checks the selected project's GitHub endpoints using this host's credentials.
-///
-/// # Errors
-/// The home catalog is invalid or the requested project cannot be found.
 pub async fn project_access(
     catalog: &Path,
     project: &str,

@@ -1,6 +1,3 @@
-//! The model provider in a private home's `config.toml` (§6.3): applies
-//! the edits `codex::config_edits` decides, keeping what Codex wrote there.
-
 use install::Home;
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Seek, Write};
@@ -12,8 +9,6 @@ use toml_edit::{DocumentMut, Item, Table, TableLike, value};
 
 use super::server::Error;
 
-/// Writes `credential`'s provider into `<home>/config.toml`, or takes ours
-/// out for `None`.
 pub fn write(
     home: &Home,
     credential: Option<&CodexCredential>,

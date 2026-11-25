@@ -1,9 +1,3 @@
-//! Whether each project's default branch head has a recorded `commit`
-//! pass of every profile it declares, as `home repos --verify` reports it.
-//!
-//! The shell runs `<profile>/check.sh commit --verify` from the checkout of
-//! the project that provides the profile.
-
 use alloc::collections::BTreeMap;
 use core::fmt;
 
@@ -11,27 +5,21 @@ use super::Placed;
 use crate::prelude::*;
 use vcs::status::Checkout;
 
-/// One `--verify` to run: a profile's, on a project's checkout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verify {
     pub project: String,
     pub profile: String,
-    /// The head's commit, shortened.
     pub commit: String,
     pub checkout: String,
-    /// The checkout of the project providing the profile, whose
-    /// `<profile>/check.sh` runs.
     pub standards: String,
 }
 
-/// A `--verify` to run, or why a project's passes go unchecked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verifying {
     Run(Verify),
     Unchecked(Reason),
 }
 
-/// What a `--verify` printed, and whether it passed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ran {
     pub passed: bool,
@@ -39,32 +27,30 @@ pub struct Ran {
     pub err: String,
 }
 
-/// What `home repos --verify` reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
-    /// No checkout of the project is level with origin's default branch.
     NoLevelCheckout {
         project: String,
         default: Option<String>,
     },
-    /// No project provides the profile.
-    NobodyProvides { project: String, profile: String },
-    /// The project providing the profile has no checkout here.
+    NobodyProvides {
+        project: String,
+        profile: String,
+    },
     ProviderAbsent {
         project: String,
         profile: String,
         provider: String,
     },
-    /// No checkout of a provider is level with origin's default branch, so
-    /// its check.sh would judge by standards origin doesn't hold.
     ProviderOff {
         provider: String,
         path: String,
         default: Option<String>,
     },
-    /// The head lacks a recorded pass of these units.
-    Missing { verify: Verify, units: Vec<String> },
-    /// check.sh failed other than for a missing pass.
+    Missing {
+        verify: Verify,
+        units: Vec<String>,
+    },
     CheckFailed {
         project: String,
         profile: String,
@@ -132,8 +118,6 @@ impl fmt::Display for Reason {
     }
 }
 
-/// The checkouts whose origin default branch [`verifying`] needs: those of
-/// projects that declare or provide profiles.
 #[must_use]
 pub fn asks(placed: &[Placed]) -> Vec<String> {
     placed
@@ -150,18 +134,6 @@ enum Provider<'a> {
     Not(Reason),
 }
 
-/// The `--verify`s `home repos --verify` runs, or why each project's passes
-/// go unchecked.
-///
-/// It runs one per profile of each project with profiles and a checkout
-/// here, on its first checkout level with origin's default branch, from the
-/// first such checkout of the project providing the profile. `--verify`
-/// keys the working tree, so a checkout off that head or with changes says
-/// nothing of the head, and a provider's checkout off it judges by other
-/// standards: while one is, only it is reported. `states` and `defaults`
-/// are by path from the home at `home`, as [`super::placed`] gives them;
-/// `defaults` holds origin's default branch of the checkouts [`asks`]
-/// gives.
 #[must_use]
 pub fn verifying(
     home: &str,
@@ -318,11 +290,6 @@ fn failing(line: &str) -> Option<(&str, &str)> {
 
 const MISSING_PASS_PREFIX: &str = "no recorded pass of ";
 
-/// What `home repos --verify` says of `verify` from how it `ran`.
-///
-/// Nothing when it passed; the units without a recorded pass when those
-/// are all that failed; else that check.sh failed, by its first line on
-/// stderr or, without one, its first failing line.
 #[must_use]
 pub fn verdict(verify: &Verify, ran: &Ran) -> Option<Reason> {
     if ran.passed {

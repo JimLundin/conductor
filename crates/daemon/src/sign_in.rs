@@ -1,14 +1,3 @@
-//! Runs the app's sign-ins.
-//!
-//! Each is the CLI's own sign-in in its instance's home, on pipes, then
-//! its sign-in check and the account the CLI names, then the refresh's
-//! answer. The decisions are
-//! [`host::sign_in`]'s; the registry's actor performs them with [`Runs`]
-//! and hands the core what each run reports.
-//!
-//! Nothing here keeps or logs what a CLI prints or what a person pastes:
-//! a printed line goes to the core, and a code to the CLI's stdin.
-
 use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
@@ -27,9 +16,6 @@ use crate::start::Providers;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{AbortHandle, JoinSet};
 
-/// How an instance's CLI signs its home in: the CLI, the home, the
-/// plugin's description of the sign-in, the CLI's sign-in check, and
-/// where the CLI names the account and how the plugin reads it.
 #[derive(Debug, Clone)]
 pub struct Signing {
     pub program: PathBuf,
@@ -41,9 +27,6 @@ pub struct Signing {
 }
 
 impl Signing {
-    /// # Errors
-    ///
-    /// The CLI's status probe did not exit successfully.
     pub async fn confirm(
         &self,
         login: Login,
@@ -63,13 +46,11 @@ impl Signing {
     }
 }
 
-/// A sign-in that started: how it signs in, and its stdin.
 pub struct Spawned {
     signing: Signing,
     stdin: ChildStdin,
 }
 
-/// What a run tells the registry.
 pub enum Report {
     Spawned(Result<Box<Spawned>, String>),
     Printed(String),
@@ -82,8 +63,6 @@ pub enum Report {
     CredentialCreated(Option<Credential>),
 }
 
-/// The sign-ins' tasks, each running sign-in's stdin and check, and what
-/// they report. Dropping it stops every task, which kills its CLI.
 pub struct Runs {
     tasks: JoinSet<()>,
     aborts: BTreeMap<Key, AbortHandle>,
@@ -114,13 +93,10 @@ impl Default for Runs {
 }
 
 impl Runs {
-    /// The next report of any run.
     pub async fn next(&mut self) -> Option<(Key, Report)> {
         self.reports.recv().await
     }
 
-    /// Starts the sign-in `key` of an instance whose settings are
-    /// `settings`. What earlier runs of the instance left goes.
     pub fn spawn(
         &mut self,
         key: Key,
@@ -166,12 +142,6 @@ impl Runs {
         self.aborts.insert(key, self.tasks.spawn(task));
     }
 
-    /// Keeps what a run that started needs later, and hands back how to
-    /// read its output.
-    ///
-    /// # Errors
-    ///
-    /// Why the run didn't start.
     pub fn started(
         &mut self,
         key: &Key,
@@ -256,8 +226,6 @@ impl Runs {
         self.credential_codes.remove(key);
     }
 
-    /// Runs the CLI's sign-in check against the run's home, and reads
-    /// the account it names.
     pub fn check(
         &mut self,
         key: Key,
@@ -277,7 +245,6 @@ impl Runs {
         }
     }
 
-    /// Reports the refresh's answer once it comes.
     pub fn listen(
         &mut self,
         key: Key,

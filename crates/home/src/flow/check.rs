@@ -1,10 +1,3 @@
-//! `home check`: the home's projects and issues against its flow.
-//!
-//! Structural problems are errors: a flow that doesn't load, a project
-//! file that doesn't read, a profile two projects provide, an issue the
-//! flow can't read. A missing section warns. Each rule reports at its own
-//! severity. The check fails only on errors.
-
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
@@ -27,7 +20,6 @@ use crate::prelude::*;
 )]
 pub struct Finding {
     pub severity: Severity,
-    /// `<project>/<issue>`, when an issue is the subject.
     pub subject: Option<String>,
     pub message: String,
 }
@@ -45,7 +37,6 @@ impl Report {
             .any(|finding| finding.severity == Severity::Error)
     }
 
-    /// One line per finding, then the counts.
     #[must_use]
     pub fn text(&self) -> String {
         let mut lines: Vec<String> = self

@@ -1,7 +1,3 @@
-//! The fleet: its signed membership and configuration, the enrollment
-//! tokens that admit a host, its credential policy and configuration
-//! ordering, and the fleet protocol's framing between hosts ([`frame`]).
-
 mod enrollment;
 pub mod frame;
 mod protocol;

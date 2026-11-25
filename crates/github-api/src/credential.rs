@@ -70,10 +70,6 @@ impl HostCredentials {
         Ok(entry.source)
     }
 
-    /// Opens a client for the repository authorized by the host credential.
-    ///
-    /// # Errors
-    /// The credential is unavailable, invalid, expired, or bound to another repository.
     pub fn connect(&self, selected: &Selection) -> Result<Client, AccessError> {
         if selected.adapter != github::ADAPTER {
             return Err(AccessError::InvalidConfiguration);
@@ -83,10 +79,6 @@ impl HostCredentials {
         Client::new(repository, source, github::mapping::AUTHORITY)
     }
 
-    /// Acquires scoped Git credentials before dispatching a blocking Git operation.
-    ///
-    /// # Errors
-    /// Credentials or the selected transport cannot be used for this repository.
     pub async fn git(
         &self,
         repository: Repository,

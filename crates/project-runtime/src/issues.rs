@@ -56,8 +56,6 @@ impl Project<'_> {
         Scope::new(cache.data, project, selection, cache.flow)
     }
 
-    /// # Errors
-    /// No tracker is configured or the host cache could not be read or updated.
     pub async fn issues(
         &self,
         cache: &IssueCache<'_>,
@@ -115,8 +113,6 @@ impl Project<'_> {
         }
     }
 
-    /// # Errors
-    /// No tracker is configured or the host cache could not be read or updated.
     pub async fn issue(
         &self,
         cache: &IssueCache<'_>,

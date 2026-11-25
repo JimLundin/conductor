@@ -67,8 +67,6 @@ struct File {
     relations: Vec<RelationMapping>,
 }
 
-/// # Errors
-/// The options are malformed or cannot map the declared flow consistently.
 pub fn load(text: &str, flow: &Flow) -> Result<Configuration, String> {
     let file: File =
         toml::from_str(text).map_err(|error| error.message().to_string())?;
@@ -89,10 +87,6 @@ pub struct TrackerMapping<'a> {
     pub mapping: Configuration,
 }
 
-/// Finds a selected project and validates its configuration before contacting GitHub.
-///
-/// # Errors
-/// The project is unknown or its configuration cannot map the issue flow.
 pub fn selected<'a>(
     configuration: &'a home::flow::snapshot::Snapshot,
     name: &str,

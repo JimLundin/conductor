@@ -1,5 +1,3 @@
-//! Codex's pinned CLI: which build a platform takes.
-
 use agents::pin::{Package, Pin};
 
 use crate::prelude::*;
@@ -18,9 +16,6 @@ fn platform(os: &str, arch: &str) -> Option<&'static str> {
     })
 }
 
-/// The pinned download of `codex` for the platform the Rust names `os`
-/// and `arch` describe, whose executables end in `exe`. Its musl builds
-/// run on either libc, so `musl` does not matter.
 #[must_use]
 pub fn pin(os: &str, arch: &str, exe: &str, _musl: bool) -> Option<Pin> {
     let platform = platform(os, arch)?;

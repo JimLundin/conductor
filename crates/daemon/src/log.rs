@@ -1,11 +1,3 @@
-//! The host's event log.
-//!
-//! One task owns it; [`Log`] handles talk to it over a channel, so nothing
-//! is shared behind a lock. The log's rules are [`link::log`] and
-//! [`host::log`]; the task
-//! keeps the database, the channels and the live feed, and performs what
-//! the rules decide.
-
 use crate::storage::{self, Storage};
 use redb::WriteTransaction;
 use std::collections::{HashMap, VecDeque};
@@ -26,8 +18,6 @@ use crate::Stopped;
 
 const LIVE_BUFFER: usize = 1024;
 
-/// What a new subscriber needs: the log after its cursor, and the live feed,
-/// attached in the same actor turn as the replay, so nothing falls between.
 #[derive(Debug)]
 pub struct Subscription {
     pub replay: Vec<Event>,
@@ -179,11 +169,6 @@ impl Log {
         Self::start(Core::new(name, epoch, Vec::new()), None)
     }
 
-    /// Opens the log stored at `path`, creating it if missing.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the database can't be opened or its events don't decode.
     pub fn open(name: String, path: &Path) -> anyhow::Result<Self> {
         let storage = Storage::open(path)?;
         let core = Core::new(name, storage.epoch()?, storage.events()?);
@@ -208,12 +193,6 @@ impl Log {
         Self { inbox }
     }
 
-    /// Acknowledges after the durable write, or after staging in the active
-    /// command's transaction. The command receipt commits its staged events.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the log has stopped.
     pub async fn append(
         &self,
         session: SessionId,
@@ -284,28 +263,14 @@ impl Log {
             .await
     }
 
-    /// Resolves when the log fails or shuts down, so the host stops its
-    /// transport and providers rather than continuing without durable writes.
     pub async fn stopped(&self) {
         self.inbox.closed().await;
     }
 
-    /// Stops accepting writes and releases the database. Stop the transport
-    /// before calling this so no command can be acknowledged afterwards.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the log has already stopped.
     pub async fn shutdown(&self) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Shutdown { reply }).await
     }
 
-    /// The log's head as of now, for a client the registry says can run
-    /// `instances`, with the host's `home`.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the log has stopped.
     pub async fn welcome(
         &self,
         instances: Instances,
@@ -328,11 +293,6 @@ impl Log {
             .await
     }
 
-    /// The events after `after`, then the live feed.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the log has stopped.
     pub async fn subscribe(
         &self,
         after: HostSeq,
@@ -341,12 +301,6 @@ impl Log {
             .await
     }
 
-    /// A client's subscription, or `None` if its cursor is from another
-    /// epoch.
-    ///
-    /// # Errors
-    ///
-    /// Fails if the log has stopped.
     pub async fn resume(
         &self,
         subscribe: Subscribe,

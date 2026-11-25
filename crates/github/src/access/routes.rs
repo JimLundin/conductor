@@ -14,8 +14,6 @@ pub enum Address {
 }
 
 impl Address {
-    /// # Errors
-    /// The locator must name a positive issue number.
     pub fn from_reference(reference: &str) -> Result<Self, ReadFailure> {
         reference
             .strip_prefix('#')
@@ -77,8 +75,6 @@ impl Repository {
             .then_some(Collection::Named)
     }
 
-    /// # Errors
-    /// The destination does not identify an issue within this API.
     pub fn redirect(
         &self,
         endpoint: &str,
@@ -99,8 +95,6 @@ impl Repository {
         })
     }
 
-    /// # Errors
-    /// The record's API URLs disagree with its number or configured repository.
     pub fn verify_record(
         &self,
         endpoint: &str,
@@ -120,8 +114,6 @@ impl Repository {
         Ok(())
     }
 
-    /// # Errors
-    /// The API returned an unexpected continuation or an incomplete result.
     pub fn continuation(
         &self,
         endpoint: &str,
@@ -170,8 +162,6 @@ impl Resolution {
         }
     }
 
-    /// # Errors
-    /// The provider exceeded the redirect bound.
     pub const fn follow(self, address: Address) -> Result<Self, ReadFailure> {
         if self.redirects >= MAX_REDIRECTS {
             return Err(ReadFailure::InvalidResponse);

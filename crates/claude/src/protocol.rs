@@ -1,7 +1,3 @@
-//! The stdio boundary. Each stdout line is parsed into the few frames we read
-//! and mapped into our own types here, and every line we write is built here.
-//! Frames and fields we do not model are ignored or passed on as `Unknown`.
-
 use alloc::collections::BTreeSet;
 
 use agents::Exit;
@@ -15,11 +11,9 @@ use serde_json::Value;
 
 use crate::prelude::*;
 
-/// A Claude session id, as printed in `system/init` and accepted by `--resume`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(pub String);
 
-/// The CLI's `request_id` for a `can_use_tool` request.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PermissionRequestId(pub String);
 
@@ -30,7 +24,6 @@ pub enum PermissionMode {
 }
 
 impl PermissionMode {
-    /// The name `--permission-mode` and `set_permission_mode` take.
     #[must_use]
     pub const fn wire(&self) -> &str {
         match self {
@@ -42,16 +35,10 @@ impl PermissionMode {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionDecision {
-    /// Run the tool with the input the CLI proposed.
     Allow,
-    /// Allow, and add the request's session grant (`for_session`) to the
-    /// session's permissions. A request with no grant is allowed once.
     AllowForSession,
-    /// Answer an `AskUserQuestion` request, one answer per question.
     Answer(Vec<Answer>),
-    Deny {
-        message: String,
-    },
+    Deny { message: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,15 +103,12 @@ pub enum Block {
         content: Value,
         outcome: ToolOutcome,
     },
-    /// A `TodoWrite` call: the whole checklist as the model wrote it.
     Checklist(Vec<ChecklistEntry>),
     Other(Value),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudeEvent {
-    /// The CLI read a user message and began its turn (`system/init`, which
-    /// it prints once per turn with the same `session_id`).
     TurnStarted {
         session_id: SessionId,
     },
@@ -132,14 +116,9 @@ pub enum ClaudeEvent {
         role: Role,
         content: Vec<Block>,
     },
-    /// A piece of assistant text as it streams (`--include-partial-messages`).
-    /// The whole text follows in a `Message`.
     StreamDelta {
         text: String,
     },
-    /// A piece of a thinking block as it streams. The CLI sends its text
-    /// only when it asks the API for summarized thinking (PROTOCOL.md); the
-    /// whole block follows as `Block::Thinking` in a `Message`.
     ThinkingDelta {
         text: String,
     },
@@ -151,21 +130,15 @@ pub enum ClaudeEvent {
         tool_use_id: String,
         for_session: Option<String>,
     },
-    /// A `can_use_tool` request for `AskUserQuestion`. Answer it with
-    /// [`PermissionDecision::Answer`]; the CLI's `PermissionCancelled`
-    /// withdraws it like any request.
     QuestionAsked {
         agent: Option<String>,
         id: PermissionRequestId,
         questions: Vec<Question>,
         tool_use_id: String,
     },
-    /// The CLI withdrew a permission request; answering it is now an error.
     PermissionCancelled {
         id: PermissionRequestId,
     },
-    /// An interrupted turn reports `error_during_execution`; only
-    /// `terminal_reason` (`aborted_streaming`, `aborted_tools`) says why.
     TurnFinished {
         subtype: String,
         outcome: TurnOutcome,
@@ -173,28 +146,22 @@ pub enum ClaudeEvent {
         session_id: SessionId,
         errors: Vec<String>,
     },
-    /// The `Agent` call `tool_use_id` started the sub-agent `agent`
-    /// (`system/task_started` of a `local_agent`).
     SubagentStarted {
         agent: String,
         tool_use_id: String,
         description: String,
         kind: Option<String>,
     },
-    /// A sub-agent's own message, which its `agent_id` names.
     SubagentMessage {
         agent: String,
         role: Role,
         content: Vec<Block>,
     },
-    /// A child entry without `agent_id` can be attributed by its parent call.
     UnidentifiedSubagentMessage {
         parent: String,
         role: Role,
         content: Vec<Block>,
     },
-    /// A task ended (`system/task_notification`). The frame doesn't say
-    /// whether the task is a sub-agent; the session's state does.
     SubagentEnded {
         agent: String,
         outcome: SubagentOutcome,
@@ -206,26 +173,19 @@ pub enum ClaudeEvent {
     Unknown(Value),
 }
 
-/// What one stdout line means to the session actor.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Inbound {
     Event(ClaudeEvent),
-    /// A `can_use_tool` request. The actor keeps `open` for the answer and
-    /// emits `event`, a `PermissionRequested` or a `QuestionAsked`.
     Permission {
         id: PermissionRequestId,
         open: Open,
         parent_tool_use_id: Option<String>,
         event: ClaudeEvent,
     },
-    /// Answer to a control request we sent.
     ControlResponse {
         request_id: String,
         outcome: Result<Value, String>,
     },
-    /// A control request we do not serve (hooks, SDK MCP servers, or a subtype
-    /// we do not know). It must still get an error reply or the
-    /// CLI waits forever.
     UnsupportedControlRequest {
         request_id: String,
         subtype: String,
@@ -327,7 +287,6 @@ enum ControlRequest {
     },
 }
 
-/// What an answer to an open `can_use_tool` request needs.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Open {
     input: Value,
@@ -388,7 +347,6 @@ struct Asked {
     multi_select: Option<bool>,
 }
 
-/// The tool Claude asks the user questions with.
 pub const ASK_USER_QUESTION: &str = "AskUserQuestion";
 
 const TODO_WRITE: &str = "TodoWrite";
@@ -515,8 +473,6 @@ enum ContentBlock {
     },
 }
 
-/// # Errors
-/// Fails when the line is not JSON.
 pub fn parse_line(line: &str) -> serde_json::Result<Inbound> {
     let raw = serde_json::from_str::<Value>(line)?;
     Ok(match serde_json::from_value::<Frame>(raw.clone()) {
@@ -792,15 +748,10 @@ const SUPPORTED_VERSIONS: [&str; 7] = [
     "2.1.316", "2.1.317", "2.1.318", "2.1.319", "2.1.320", "2.1.321", "2.1.322",
 ];
 
-/// Why the CLI's version is not one we support.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnsupportedVersion {
-    /// The `initialize` response names no `claude_code_version`.
     Unreported,
-    Outside {
-        found: String,
-        supported: String,
-    },
+    Outside { found: String, supported: String },
 }
 
 #[derive(Deserialize)]
@@ -823,8 +774,6 @@ struct ModelRow {
     supported_effort_levels: Option<Vec<String>>,
 }
 
-/// The model and effort the CLI runs with, as `get_settings` reports them
-/// in `applied`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Applied {
     pub model: String,
@@ -836,17 +785,12 @@ struct Settings {
     applied: Applied,
 }
 
-/// # Errors
-/// Fails when `settings` has no `applied` model.
 pub fn applied(settings: Value) -> serde_json::Result<Applied> {
     serde_json::from_value::<Settings>(settings).map(|parsed| parsed.applied)
 }
 
 const DEFAULT_ROW: &str = "default";
 
-/// The models an `initialize` response lists. The `default` row is not a
-/// choice of its own: it names the row with the same `resolvedModel` as
-/// the default.
 #[must_use]
 pub fn models(initialize: &Value) -> Models {
     let rows = serde_json::from_value::<InitializeModels>(initialize.clone())
@@ -871,10 +815,11 @@ pub fn models(initialize: &Value) -> Models {
                 name: row.display_name,
                 description: row.description,
                 efforts: Effort::listed(
-                    row.supported_effort_levels
+                    &row.supported_effort_levels
                         .iter()
                         .flatten()
-                        .map(String::as_str),
+                        .map(String::as_str)
+                        .collect::<Vec<_>>(),
                 ),
             })
             .collect(),
@@ -882,10 +827,6 @@ pub fn models(initialize: &Value) -> Models {
     }
 }
 
-/// Checks the `claude_code_version` an `initialize` response reports.
-///
-/// # Errors
-/// Fails when it reports none, or one we have not checked.
 pub fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     let found = serde_json::from_value::<InitializeResponse>(initialize)
         .map_err(|_| UnsupportedVersion::Unreported)?
@@ -900,14 +841,12 @@ pub fn check_version(initialize: Value) -> Result<(), UnsupportedVersion> {
     })
 }
 
-/// A control request we originate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlCall {
     Initialize,
     Interrupt,
     SetPermissionMode(PermissionMode),
     GetSettings,
-    /// `apply_flag_settings` with `effortLevel`.
     SetEffort(Effort),
 }
 
@@ -935,7 +874,6 @@ pub enum Outbound {
         decision: PermissionDecision,
         open: Open,
     },
-    /// Reply to a control request we do not serve.
     ControlError {
         request_id: String,
         message: String,
@@ -1010,8 +948,6 @@ enum Verdict {
     },
 }
 
-/// # Errors
-/// Fails when the answers to a question don't fit its input.
 pub fn encode(msg: Outbound) -> serde_json::Result<String> {
     serde_json::to_string(&match msg {
         Outbound::User(text) => Line::User {

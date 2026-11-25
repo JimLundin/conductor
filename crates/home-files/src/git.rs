@@ -200,8 +200,6 @@ pub fn probed(
     )
 }
 
-/// # Errors
-/// The operation failed or returned invalid repository metadata.
 pub fn reply(request: &Instruction, output: Output) -> Result<Reply, Error> {
     match request {
         Instruction::ProbeRoot | Instruction::CommittedHead => {
@@ -265,8 +263,6 @@ fn checked(output: Output, context: &str) -> Result<Vec<u8>, Error> {
     }
 }
 
-/// # Errors
-/// The operation failed, exceeded its capture limit or returned non-UTF-8 text.
 pub fn text(output: Output, context: &str) -> Result<String, Error> {
     String::from_utf8(checked(output, context)?)
         .map(|text| text.trim_end_matches('\n').to_owned())
@@ -382,8 +378,6 @@ pub fn worktrees(porcelain: &str) -> Vec<vcs::Checkout> {
         .collect()
 }
 
-/// Origin's default branch, from what
-/// `git symbolic-ref --short refs/remotes/origin/HEAD` printed.
 #[must_use]
 pub fn origin_default(symbolic: &str) -> Option<String> {
     symbolic

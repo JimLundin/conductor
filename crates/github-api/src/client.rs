@@ -88,10 +88,6 @@ impl Client {
         }
     }
 
-    /// Acquires the repository's current token before entering blocking Git.
-    ///
-    /// # Errors
-    /// Installation authentication or token refresh failed.
     pub async fn git(
         &self,
     ) -> Result<project_runtime::transport::Credentials, AccessError> {

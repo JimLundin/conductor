@@ -1027,7 +1027,7 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
         original.editable()?.0.log
     );
     let context = command::Context {
-        now: OPENED * 1000,
+        now_ms: OPENED * 1000,
         by: text("laptop·iPhone"),
     };
     for body in [

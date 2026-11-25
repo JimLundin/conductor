@@ -1,13 +1,7 @@
-//! Frames on iroh streams: a frame is a big-endian `u32` body length and
-//! its body. What a body holds is its link's codec (`link::frame`,
-//! `host::fleet::frame`).
-
 use iroh::endpoint::{ReadExactError, RecvStream, SendStream, WriteError};
 
 const HEADER_LEN: usize = 4;
 
-/// Larger frames are refused, a received one before its body is read.
-/// 16 MiB.
 pub const MAX_FRAME_LEN: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
@@ -20,12 +14,6 @@ pub enum WireError {
     TooLarge { length: usize, limit: usize },
 }
 
-/// Writes `body` as one frame.
-///
-/// # Errors
-///
-/// [`WireError::TooLarge`] when `body` exceeds [`MAX_FRAME_LEN`], and
-/// [`WireError::Write`] when the stream fails.
 pub async fn write(
     send: &mut SendStream,
     body: &[u8],
@@ -34,14 +22,6 @@ pub async fn write(
     Ok(send.write_all(body).await?)
 }
 
-/// Reads one frame's body: `Ok(None)` when the peer finished the stream
-/// between frames.
-///
-/// # Errors
-///
-/// [`WireError::TooLarge`] when the header announces more than `limit` or
-/// [`MAX_FRAME_LEN`], before reading the body, and [`WireError::Read`]
-/// when the stream fails or ends inside a frame.
 pub async fn read(
     recv: &mut RecvStream,
     limit: usize,

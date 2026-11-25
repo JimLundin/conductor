@@ -1,13 +1,3 @@
-//! What a restart does to each session the log holds.
-//!
-//! Before the host serves the session again, requests nobody answered are
-//! withdrawn, a turn that was running is interrupted, after a snapshot of
-//! its files when it has a workspace, and an agent that was running is
-//! closed.
-//!
-//! `daemon` performs each [`Step`]: it appends the events and takes the
-//! snapshot.
-
 use alloc::format;
 
 use crate::log::Event;
@@ -21,7 +11,6 @@ use crate::session::Choice;
 use crate::snapshots::Book;
 pub use crate::snapshots::SnapshotPlan;
 
-/// A session the log says was created.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Created {
     pub session: SessionId,
@@ -30,7 +19,6 @@ pub struct Created {
     pub choice: Choice,
 }
 
-/// Every session the log holds, in the order they were created.
 #[must_use]
 pub fn created(history: &[Event]) -> Vec<Created> {
     history
@@ -56,7 +44,6 @@ pub fn created(history: &[Event]) -> Vec<Created> {
         .collect()
 }
 
-/// One session's events.
 #[must_use]
 pub fn events_of(session: SessionId, history: &[Event]) -> Vec<Event> {
     history
@@ -67,8 +54,6 @@ pub fn events_of(session: SessionId, history: &[Event]) -> Vec<Event> {
 }
 
 impl SnapshotPlan {
-    /// What the session records once the snapshot made a commit, or why
-    /// it did not.
     #[must_use]
     pub fn snapshotted(self, commit: Result<String, String>) -> EventKind {
         match commit {
@@ -82,34 +67,23 @@ impl SnapshotPlan {
     }
 }
 
-/// One thing a restart does to a session, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Append(EventKind),
-    /// Commit what the log has staged before the snapshot runs.
     Barrier,
-    /// Snapshot the turn's files, then append what
-    /// [`SnapshotPlan::snapshotted`] says of it.
     Snapshot(SnapshotPlan),
 }
 
-/// What a restart does to a session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recovery {
-    /// The model and effort it runs with now.
     pub choice: Choice,
-    /// A turn started in it, so its conversation was saved.
     pub talked: bool,
     pub withdrawn: Vec<RequestId>,
-    /// A turn was running.
     pub interrupted: bool,
-    /// Pending work to capture before the session can continue.
     pub snapshot: Option<SnapshotPlan>,
-    /// The agent was running.
     pub closed: bool,
 }
 
-/// Why a restart closes a running agent.
 #[must_use]
 pub fn restarted() -> CloseReason {
     CloseReason::Stopped {
@@ -118,8 +92,6 @@ pub fn restarted() -> CloseReason {
 }
 
 impl Recovery {
-    /// What a restart does to the session `created` began, given its
-    /// `events`.
     #[must_use]
     pub fn of(created: Choice, events: &[Event]) -> Self {
         let interrupted = turn_running(events);
@@ -137,8 +109,6 @@ impl Recovery {
         }
     }
 
-    /// What the restart does, in order: withdraw the open requests,
-    /// snapshot and interrupt the running turn, and close the agent.
     #[must_use]
     pub fn steps(&self) -> Vec<Step> {
         let mut steps = self
@@ -168,7 +138,6 @@ impl Recovery {
     }
 }
 
-/// Whether a finish lost its actor before recording its outcome.
 #[must_use]
 pub fn finish_interrupted(events: &[Event]) -> bool {
     events

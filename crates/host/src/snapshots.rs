@@ -1,4 +1,3 @@
-//! Turn records and pending captures reconstructed from session events.
 use crate::log::{Event, HostSeq};
 use crate::prelude::*;
 use crate::session::EventKind;

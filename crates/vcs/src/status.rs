@@ -1,30 +1,20 @@
 use alloc::string::String;
 use core::fmt;
 
-/// Where a checkout stands, from what
-/// `git status --porcelain=v2 --branch` printed in it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Checkout {
-    /// The commit it is at; none before its first.
     pub commit: Option<String>,
-    /// The branch it is on; none when detached.
     pub branch: Option<String>,
     pub upstream: Option<Upstream>,
-    /// How many of its files changed or are untracked.
     pub changed: usize,
 }
 
-/// The branch a checkout's branch tracks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Upstream {
-    /// As `<remote>/<branch>`.
     pub name: String,
-    /// None when the upstream branch is gone.
     pub distance: Option<Distance>,
 }
 
-/// How many commits a branch has that its upstream hasn't, and the other
-/// way round.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Distance {
     pub ahead: u32,
@@ -32,8 +22,6 @@ pub struct Distance {
 }
 
 impl Checkout {
-    /// Whether it is on `default`, level with `origin/<default>`, with
-    /// nothing changed or untracked.
     #[must_use]
     pub fn is_level(&self, default: &str) -> bool {
         self.commit.is_some()

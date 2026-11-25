@@ -1,8 +1,3 @@
-//! Where the credential store's key lives, chosen once when the store is
-//! created: an entry in the OS user's keystore, named by the random account
-//! in `store.key.slot`, or, where no keystore is usable or `store.key.file`
-//! asks for it, the private file `store.key`.
-
 use std::io::ErrorKind;
 use std::path::Path;
 

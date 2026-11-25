@@ -1,12 +1,9 @@
-//! Codex as a host runs it.
-
 use std::sync::Arc;
 
 use runtime::{Instance, Launch, Plugin, Settings};
 
 use super::{hub::Hub, server::ServerOptions};
 
-/// Codex, run as `settings` say.
 #[must_use]
 pub fn plugin(settings: Settings) -> Plugin {
     Plugin {

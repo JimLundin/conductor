@@ -8,21 +8,18 @@ use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
 use crate::{HomeRefusal, IssueId, ProjectId};
 
-/// The issue an operation observes before planning a change.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
     pub project: ProjectId,
     pub issue: IssueId,
 }
 
-/// A local edit ready to observe its issue.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Record {
     id: EditId,
     data: EditData,
 }
 
-/// A semantic issue change and its local commit metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commit {
     pub target: Read,
@@ -33,7 +30,6 @@ pub struct Commit {
     pub email: &'static str,
 }
 
-/// What the decision needs from the clone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoCommit {
     Unchanged,
@@ -41,7 +37,6 @@ pub enum NoCommit {
     Waiting(String),
 }
 
-/// The actions that record an edit locally and attempt to deliver it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordEffect<'a> {
     Persist(Edit),
@@ -53,8 +48,6 @@ pub enum RecordEffect<'a> {
     Scan,
 }
 
-/// An edit ready to record in the clone, and what the flow warns of
-/// what it writes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recorded(Recording, Vec<String>, Option<Commit>);
 
@@ -73,13 +66,6 @@ impl Recorded {
         &self.1
     }
 
-    /// The queue must be saved before writing the clone. A failed commit
-    /// can be retried from the saved edit, so only persistence can reject
-    /// the operation at this point.
-    ///
-    /// # Errors
-    ///
-    /// The edit could not be saved to the queue.
     pub fn next(
         &mut self,
         outcome: Result<(), String>,
@@ -119,7 +105,6 @@ impl Recorded {
     }
 }
 
-/// Kept edits and whether the current branch covers each of them.
 #[derive(Debug, Default)]
 pub struct PendingEdits(Vec<Pending>);
 
@@ -191,8 +176,6 @@ impl PendingEdits {
         can_commit(earlier, &target.issue).then_some(target)
     }
 
-    /// # Errors
-    /// The edit is unchanged, dropped, or waiting for a valid observation.
     pub fn replay(
         &self,
         home: &Snapshot,
@@ -207,7 +190,6 @@ impl PendingEdits {
         self.0[index].covered = covered;
     }
 
-    /// Save this queue before replacing the current one.
     #[must_use]
     pub fn after_push(&self) -> Option<Self> {
         if self.0.iter().all(|pending| !pending.covered) {
@@ -223,7 +205,6 @@ impl PendingEdits {
     }
 }
 
-/// A step in delivering the pending edits to the home remote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
     Push { retry: bool },
@@ -235,14 +216,11 @@ pub enum Delivery {
 }
 
 impl Delivery {
-    /// Starts delivery against the fetched upstream.
     #[must_use]
     pub const fn replay(has_edits: bool) -> Self {
         if has_edits { Self::Reset } else { Self::Done }
     }
 
-    /// The next effect, if any. An initial failed push tries the remote
-    /// once more. A failed reset or replay push ends the attempt.
     #[must_use]
     pub const fn after(self, succeeded: bool) -> Self {
         match (self, succeeded) {
@@ -256,7 +234,6 @@ impl Delivery {
     }
 }
 
-/// The facts shared by requests from the host.
 pub struct Context<'a> {
     pub remote: Option<&'a str>,
     pub home: &'a Snapshot,
@@ -266,11 +243,6 @@ pub struct Context<'a> {
 }
 
 impl Context<'_> {
-    /// Opens issue `issue` as `new` asks, in one of the home's projects.
-    ///
-    /// # Errors
-    ///
-    /// The host has no home, or its home lists no such project.
     pub fn open(
         &self,
         issue: IssueId,
@@ -295,11 +267,6 @@ impl Context<'_> {
         ))
     }
 
-    /// Changes an issue as `home::flow::command` does.
-    ///
-    /// # Errors
-    ///
-    /// The host has no home, or its home lists no such issue.
     pub fn edit(
         &self,
         issue: IssueId,
@@ -352,10 +319,6 @@ impl Record {
         self.data.project
     }
 
-    /// Plans the commit and retained edit against the current observation.
-    ///
-    /// # Errors
-    /// The issue is missing, unreadable, or refused by the flow.
     pub fn decide(
         mut self,
         current: Option<&Observed>,
@@ -425,10 +388,6 @@ impl Edit {
         self.data.read()
     }
 
-    /// Decides whether the edit still applies to the upstream observation, among
-    /// the home's issues.
-    /// # Errors
-    /// The edit is unchanged, dropped, or waiting for a valid observation.
     pub fn replay(
         &self,
         home: &Snapshot,
@@ -467,7 +426,6 @@ impl Edit {
     }
 }
 
-/// A session's updates to its issue, in the order they are attempted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionUpdate {
     Started,
@@ -479,7 +437,6 @@ pub enum SessionUpdate {
 }
 
 impl SessionUpdate {
-    /// A resumed finish uses the original edit id for its note.
     #[must_use]
     pub const fn edit_for(
         change: &IssueChange,
@@ -491,8 +448,6 @@ impl SessionUpdate {
         }
     }
 
-    /// Issues the next change against the current listing. A finish
-    /// consults the listing again after the note has been delivered.
     #[must_use]
     pub fn next(
         &mut self,
@@ -540,7 +495,6 @@ impl SessionUpdate {
     }
 }
 
-/// A Git observation needed to decide how to ready an issue branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteProbe {
     Origin {
@@ -567,8 +521,6 @@ impl RemoteProbe {
         }
     }
 
-    /// Interprets an observation and returns the next one, or the
-    /// remote branch as seen by this checkout.
     #[must_use]
     pub fn after(self, outcome: Result<String, String>) -> Self {
         use super::Remote;

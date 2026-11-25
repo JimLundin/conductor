@@ -1,5 +1,3 @@
-//! Runs the Git and filesystem steps of `host::workspace` plans.
-
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;

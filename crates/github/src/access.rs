@@ -63,8 +63,6 @@ pub struct Repository {
 }
 
 impl Repository {
-    /// # Errors
-    /// The resource must name one GitHub owner and repository.
     pub fn parse(resource: &str) -> Result<Self, AccessError> {
         let (owner, name) = resource
             .split_once('/')

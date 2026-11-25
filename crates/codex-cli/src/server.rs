@@ -1,5 +1,3 @@
-//! The Codex handle and handshake over the shared line-JSON process runner.
-
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -29,11 +27,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 pub struct ServerOptions {
     pub codex_path: PathBuf,
     pub home: Home,
-    /// A private home's model provider; `None` leaves the home's own
-    /// sign-in. Codex takes it at start only, since the key is in its
-    /// environment.
     pub credential: Option<CodexCredential>,
-    /// The app-server's own working directory; each thread sets its `cwd`.
     pub cwd: PathBuf,
 }
 
@@ -62,8 +56,6 @@ pub enum Error {
     UnknownApproval(ApprovalId),
     #[error("approval {} cannot be answered with that decision", .0.0)]
     DecisionNotApplicable(ApprovalId),
-    /// The hub's app-server didn't start, which every ask that waited for
-    /// it shares.
     #[error("{0}")]
     Start(Arc<Self>),
     #[error("the codex hub has stopped")]
@@ -100,15 +92,12 @@ impl From<Failure<std::io::Error>> for Error {
 
 type CommandMsg = CallRequest<line_json::Reply<Error>>;
 
-/// The host's app-server. Cloning yields another handle to the same process.
 #[derive(Clone)]
 pub struct CodexServer {
     commands: Handle<CommandMsg>,
     user_agent: String,
 }
 
-/// A thread on a [`CodexServer`]. Its events arrive on the server's event
-/// stream, tagged with [`CodexThread::id`].
 #[derive(Clone)]
 pub struct CodexThread {
     pub id: ThreadId,
@@ -118,11 +107,6 @@ pub struct CodexThread {
 }
 
 impl CodexServer {
-    /// Starts `codex app-server` and completes the `initialize` handshake.
-    ///
-    /// # Errors
-    /// Fails when the private home cannot be configured, the process cannot
-    /// be started, or it does not complete the handshake.
     pub async fn spawn(
         opts: ServerOptions,
     ) -> Result<(Self, mpsc::Receiver<CodexEvent>), Error> {
@@ -151,18 +135,10 @@ impl CodexServer {
         codex::version(&self.user_agent)
     }
 
-    /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
     pub async fn list_models(&self) -> Result<agents::Models, Error> {
         Ok(models(request(&self.commands, Call::ModelList).await?)?)
     }
 
-    /// Resumes `resume` if given, or else starts a thread.
-    ///
-    /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
     pub async fn open_thread(
         &self,
         opts: ThreadOptions,
@@ -200,22 +176,12 @@ impl CodexServer {
         Ok(())
     }
 
-    /// Closes stdin, waits briefly for a clean exit, then kills.
-    ///
-    /// # Errors
-    /// Fails when the server's actor has already stopped.
     pub async fn shutdown(&self) -> Result<Exit, Error> {
         self.commands.shutdown().await.map_err(|_| Error::Exited)
     }
 }
 
 impl CodexThread {
-    /// Starts a turn, at `effort` if given: it stays the thread's effort
-    /// for later turns. The turn's events follow on the server's stream.
-    ///
-    /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
     pub async fn send_turn(
         &self,
         text: String,
@@ -229,11 +195,6 @@ impl CodexThread {
         Ok(turn_id(request(&self.server.commands, call).await?)?)
     }
 
-    /// Resolves once Codex accepts; `TurnCompleted` follows as an event.
-    ///
-    /// # Errors
-    /// Fails when Codex has exited, does not answer in time, rejects the
-    /// request or answers with something we cannot read.
     pub async fn interrupt(&self, turn: TurnId) -> Result<(), Error> {
         let call = Call::TurnInterrupt {
             thread: self.id.clone(),
@@ -243,11 +204,6 @@ impl CodexThread {
         Ok(())
     }
 
-    /// Answers one of this thread's open approvals exactly once.
-    ///
-    /// # Errors
-    /// Fails when Codex has exited, no approval with `id` is open, or
-    /// `decision` does not fit it.
     pub async fn respond(
         &self,
         id: ApprovalId,

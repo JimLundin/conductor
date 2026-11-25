@@ -1,5 +1,3 @@
-//! Drives the pinned CLI's interactive setup-token flow with a private terminal.
-
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::time::Duration;

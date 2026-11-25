@@ -35,8 +35,6 @@ fn checkout(
     Ok(repo)
 }
 
-/// # Errors
-/// The configured backend cannot perform work in this checkout.
 pub fn register(
     registry: &mut Registry,
     adapter: Arc<dyn VersionControl>,

@@ -8,8 +8,6 @@ use toml_parser::{Source, lexer::TokenKind};
 
 use crate::prelude::*;
 
-/// An issue's front matter, read: its own words, each where it is text,
-/// and the rest by key.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Front {
     pub id: Option<String>,
@@ -20,7 +18,6 @@ pub struct Front {
     pub rest: Table,
 }
 
-/// An issue file, as its parts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Document {
     front: Vec<String>,
@@ -28,11 +25,6 @@ pub struct Document {
 }
 
 impl Document {
-    /// The document `text` holds.
-    ///
-    /// # Errors
-    ///
-    /// It has no front matter.
     pub fn of(text: &str) -> Result<Self, String> {
         let unix = text
             .strip_prefix('\u{feff}')
@@ -78,11 +70,6 @@ impl Document {
         self.front.join("\n")
     }
 
-    /// The front matter, read.
-    ///
-    /// # Errors
-    ///
-    /// It isn't TOML.
     pub fn front_matter(&self) -> Result<Front, String> {
         let mut rest = toml::from_str::<Table>(&self.front())
             .map_err(|err| format!("its front matter: {err}"))?;
@@ -102,9 +89,6 @@ impl Document {
         })
     }
 
-    /// Sets `key` in the front matter to `value`, given as TOML, in its
-    /// place, or after the last value when it has none; a list keeps the
-    /// comments it had.
     pub fn set(&mut self, key: &str, value: &str) -> Option<()> {
         let mut front = self.front();
         let spans =
@@ -143,13 +127,11 @@ impl Document {
             .collect()
     }
 
-    /// Ends the front matter with a comment saying `text`.
     pub fn comment(&mut self, text: &str) {
         self.front.push(comment_line(text));
     }
 }
 
-/// The front matter's line of a comment saying `text`.
 #[must_use]
 pub fn comment_line(text: &str) -> String {
     format!("# {text}")
@@ -191,10 +173,6 @@ fn key_text(key: &str) -> String {
     }
 }
 
-/// Reads the qualified identities of a TOML relation value.
-///
-/// # Errors
-/// An identity is malformed or the value has the wrong cardinality.
 pub fn targets(
     relation: &crate::flow::Relation,
     value: Value,

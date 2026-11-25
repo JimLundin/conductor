@@ -35,7 +35,6 @@ pub struct Unreadable {
     pub project: ProjectId,
     pub title: Option<String>,
     pub body: Option<String>,
-    /// Last-known creation time in Unix milliseconds, or unknown.
     pub created: Option<u64>,
     pub reason: String,
 }
@@ -52,7 +51,6 @@ pub enum IssueState {
 pub struct Observation {
     pub state: IssueState,
     pub locator: Option<Locator>,
-    /// When the source was observed, in Unix milliseconds, or unknown.
     pub observed_at: Option<u64>,
     pub revision: Option<String>,
     pub completeness: Completeness,
@@ -125,8 +123,6 @@ impl Observation {
         }
     }
 
-    /// # Errors
-    /// The record is invalid, unavailable or deleted.
     pub fn editable(&self) -> Result<(&Issue, &Body), String> {
         match &self.state {
             IssueState::Valid { issue, body } => Ok((issue, body)),
@@ -186,8 +182,6 @@ pub enum LocatorConflict {
 }
 
 impl Observation {
-    /// # Errors
-    /// The returned identity changed or its repository is not configured.
     pub fn relocated(
         &self,
         returned: &IssueId,

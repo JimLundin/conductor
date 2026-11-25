@@ -34,7 +34,6 @@ fn host_path(path: Option<&str>) -> Result<String, GitError> {
     }
 }
 
-/// An operation requested by a workspace plan.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Step {
     Repository {
@@ -62,7 +61,6 @@ pub enum Step {
     CloseIndex,
 }
 
-/// The observation made by running a step.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Answer {
     Repository(Result<Reply, GitError>),
@@ -83,8 +81,6 @@ struct Steps;
 type StepScript<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, GitError>> + Send + 'a>>;
 
-/// A workspace workflow. Each response advances it to another operation or
-/// a final result.
 pub struct Plan<'a, T> {
     script: StepScript<'a, T>,
 }
@@ -99,7 +95,6 @@ impl<'a, T> Plan<'a, T> {
         }
     }
 
-    /// Start with `None`, then pass the result of each requested step.
     pub fn advance(
         mut self,
         answer: Option<Result<Answer, GitError>>,

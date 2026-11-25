@@ -8,8 +8,6 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 use serde::{Deserialize, Serialize};
 
-/// # Errors
-/// The tracker returned a different issue or a record for another project.
 pub fn verify(
     request: &Lookup,
     record: &Observation,
@@ -32,8 +30,6 @@ pub struct Scan {
 }
 
 impl Scan {
-    /// # Errors
-    /// The tracker mixed projects, repeated an identity, or returned a continuation loop.
     pub fn append(
         &mut self,
         project: ProjectId,
@@ -78,8 +74,6 @@ struct Seen {
 }
 
 impl Collection {
-    /// # Errors
-    /// A locator in the completed scan identifies different issues.
     pub fn publish(
         &mut self,
         scan: Scan,
@@ -115,8 +109,6 @@ impl Collection {
         Ok(())
     }
 
-    /// # Errors
-    /// A concurrent refresh observed another identity at the requested or returned locator.
     pub fn accept(
         &mut self,
         lookup: &Lookup,
@@ -196,8 +188,6 @@ impl Collection {
         snapshot::project_issues(flow, records)
     }
 
-    /// # Errors
-    /// Multiple known identities claim the same display reference.
     pub fn lookup(
         &self,
         project: ProjectId,

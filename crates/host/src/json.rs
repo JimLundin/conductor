@@ -1,9 +1,3 @@
-//! Where a type's JSON differs from its postcard. JavaScript's numbers are
-//! exact only to 2^53 and JSON keys are only strings, so an
-//! [`crate::log::Epoch`] is its decimal digits, only where
-//! [`Serializer::is_human_readable`], and a map keyed by a struct is a list
-//! of pairs. postcard's bytes stay as they were.
-
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -12,7 +6,6 @@ use core::fmt;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A `u64` as its decimal digits.
 pub mod decimal {
     use super::{
         Deserializer, Serialize, Serializer, String, Visitor, de, fmt,
@@ -65,8 +58,6 @@ pub mod decimal {
     }
 }
 
-/// A map as a list of `[key, value]` pairs, in key order. postcard writes
-/// a map and a list of pairs alike, so its bytes are a map's.
 pub mod pairs {
     use super::{BTreeMap, Deserialize, Deserializer, Serializer, Vec, de};
 
@@ -82,7 +73,6 @@ pub mod pairs {
         out.collect_seq(map)
     }
 
-    /// Refuses a key given twice.
     pub fn deserialize<'de, D, K, V>(
         input: D,
     ) -> Result<BTreeMap<K, V>, D::Error>

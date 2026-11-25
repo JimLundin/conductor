@@ -24,8 +24,6 @@ impl Handle {
         })
     }
 
-    /// # Errors
-    /// The operation belongs to another host.
     pub fn local(self, host: [u8; 32]) -> Result<(), Refusal> {
         (self.owner == host)
             .then_some(())
@@ -47,7 +45,6 @@ impl fmt::Display for Handle {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Intent {
     pub project: ProjectId,
-    /// Fingerprint of the relevant observed preconditions.
     pub expected: String,
     pub work: Work,
 }
@@ -118,8 +115,6 @@ impl Record {
         }
     }
 
-    /// # Errors
-    /// The caller reused the id with a different intent or is offline before a new attempt.
     pub fn resume(
         handle: Handle,
         intent: Intent,
@@ -148,8 +143,6 @@ impl Record {
         &self.progress
     }
 
-    /// # Errors
-    /// The precondition differs from the last verified intermediate state, or a prior dispatch is unresolved.
     pub fn dispatch(
         &self,
         step: Step,
@@ -188,8 +181,6 @@ impl Record {
         })
     }
 
-    /// # Errors
-    /// Only the currently attempted step can be confirmed.
     pub fn confirm(
         &self,
         evidence: Confirmed,

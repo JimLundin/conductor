@@ -1,8 +1,3 @@
-//! Claude Code's subscription sign-in from the app, `claude auth login
-//! --claudeai`, as data. On pipes it prints the URL to open after
-//! `visit:`; the page it opens shows a code, which the CLI reads as a line
-//! on stdin (`PROTOCOL.md`, observed with 2.1.316).
-
 use agents::{Failure, HomeKind, Invocation, Pick, SignIn, Var, Word, plain};
 
 use crate::login;
@@ -102,7 +97,6 @@ pub struct SetupTokenOutput {
 }
 
 impl SetupTokenOutput {
-    /// Pass complete terminal lines so the end of a read cannot truncate the credential.
     #[must_use]
     pub fn line(&mut self, line: &str) -> Option<String> {
         let text = plain(line);

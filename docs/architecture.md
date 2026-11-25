@@ -1719,7 +1719,7 @@ a message can only travel in its link's (`link::frame::Frame`,
 
 | Link | Codec | Encoding | Messages |
 |---|---|---|---|
-| Client and host (`link::ALPN`, `conductor/47`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`link::ALPN`, `conductor/49`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 On a host, the daemon's `serve` and `fleet::wire` pair `net::wire` with

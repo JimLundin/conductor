@@ -1,18 +1,12 @@
-//! How the `codex app-server` starts, as data: its command line, its
-//! environment and the provider in a private home's `config.toml` (§6.3).
-//! Also the version its handshake reports.
-
 use agents::{Config, HomeKind, Invocation, Profile, Reported, Var};
 
 use crate::CodexCredential;
 use crate::prelude::*;
 
 const PROVIDER_ID: &str = "conductor";
-/// The variable our provider's `env_key` names, which carries its key.
 pub const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
 const AUTH_FILE: &str = "auth.json";
 
-/// `codex` with its home.
 #[must_use]
 pub fn cli(home: HomeKind) -> Invocation {
     let env = match home {
@@ -29,21 +23,16 @@ pub fn cli(home: HomeKind) -> Invocation {
     Invocation::of(env, &[])
 }
 
-/// `codex login status`, which succeeds when the home is signed in.
 #[must_use]
 pub fn login_status(home: HomeKind) -> Invocation {
     Invocation::of(cli(home).env, &["login", "status"])
 }
 
-/// The `ChatGPT` sign-in by device code, `codex login --device-auth`. It
-/// stores the credential in its home itself.
 #[must_use]
 pub fn login(home: HomeKind) -> Invocation {
     Invocation::of(cli(home).env, &["login", "--device-auth"])
 }
 
-/// Codex as the host runs it, with its own update check off, since the
-/// host installs the version it runs.
 #[must_use]
 pub fn profile() -> Profile {
     Profile {
@@ -61,8 +50,6 @@ pub fn profile() -> Profile {
     }
 }
 
-/// The app-server on stdio, with the key of `credential`'s provider in its
-/// environment.
 #[must_use]
 pub fn app_server(
     home: HomeKind,
@@ -84,8 +71,6 @@ pub fn app_server(
     )
 }
 
-/// The Codex version in a `userAgent`, whose first segment carries it, as
-/// in `conductor/0.166.0 (...)`.
 #[must_use]
 pub fn version(user_agent: &str) -> Option<&str> {
     user_agent
@@ -95,13 +80,6 @@ pub fn version(user_agent: &str) -> Option<&str> {
         .map(|(_, version)| version)
 }
 
-/// One change to a `config.toml`.
-///
-/// A path names the tables down to its key; a table on the way that is
-/// missing is made with no header of its own, so
-/// `[model_providers.conductor]` is written without a bare
-/// `[model_providers]` above it. An incompatible parent table prevents
-/// setting a key. On removal the key is already absent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
     Remove(Vec<String>),
@@ -109,12 +87,10 @@ pub enum Edit {
         path: Vec<String>,
         value: String,
     },
-    /// A table of these strings, in order.
     Table {
         path: Vec<String>,
         entries: Vec<(String, String)>,
     },
-    /// Removes the table at `path` if it has nothing in it.
     RemoveIfEmpty(Vec<String>),
 }
 
@@ -124,12 +100,6 @@ fn path(keys: &[&str]) -> Vec<String> {
 
 const SHELL_ENV_FILTERS: [&str; 2] = ["shell_environment_policy", "filters"];
 
-/// What puts `credential`'s provider into a private home's `config.toml`,
-/// or takes ours out for `None`.
-///
-/// The home's `model_provider`, `model` and
-/// `[model_providers.conductor]` are Conductor's; everything else Codex
-/// wrote there stays. The key stays out of the file.
 #[must_use]
 pub fn config_edits(credential: Option<&CodexCredential>) -> Vec<Edit> {
     let base = Vec::from([

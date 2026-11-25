@@ -52,11 +52,6 @@ impl Body {
         Self { rest }
     }
 
-    /// The document `text` holds.
-    ///
-    /// # Errors
-    ///
-    /// It has no front matter.
     #[must_use]
     pub fn of(text: &str) -> Self {
         Self {
@@ -71,8 +66,6 @@ impl Body {
             .fold(String::new(), |text, line| format!("{text}{line}\n"))
     }
 
-    /// The body's sections in order, the text before the first heading as
-    /// one with no heading; the checklist and the log aren't among them.
     #[must_use]
     pub fn sections(&self) -> Vec<Section> {
         let mut sections: Vec<Section> = Vec::new();
@@ -107,7 +100,6 @@ impl Body {
         sections
     }
 
-    /// The body before the checklist and the log, as its lines have it.
     #[must_use]
     pub fn body_text(&self) -> String {
         self.rest
@@ -122,14 +114,11 @@ impl Body {
             .to_owned()
     }
 
-    /// The checklist's items.
     #[must_use]
     pub fn checklist(&self) -> Vec<ChecklistItem> {
         self.items().map(|(_, found)| found).collect()
     }
 
-    /// The log, oldest first: each line, and the lines indented under it
-    /// by two spaces as more of its text.
     #[must_use]
     pub fn log(&self) -> Vec<Entry> {
         let mut log: Vec<Entry> = Vec::new();
@@ -152,7 +141,6 @@ impl Body {
         log
     }
 
-    /// Replaces the body before the checklist and the log with `body`.
     pub fn body(&mut self, body: &str) {
         let end = self.body_end();
         let mut lines = Vec::from([String::new()]);
@@ -175,7 +163,6 @@ impl Body {
         );
     }
 
-    /// Checks or unchecks the checklist's item at `index`.
     pub fn check(&mut self, index: usize, done: bool) -> Option<()> {
         let (at, found) = self.items().nth(index)?;
         *self.rest.get_mut(at)? = checklist_line(&ChecklistItem {
@@ -185,14 +172,12 @@ impl Body {
         Some(())
     }
 
-    /// Removes the checklist's item at `index`.
     pub fn remove_item(&mut self, index: usize) -> Option<()> {
         let (at, _) = self.items().nth(index)?;
         self.rest.remove(at);
         Some(())
     }
 
-    /// Adds `entry` to the end of the log.
     pub fn log_entry(&mut self, entry: &Entry) {
         self.append(Part::Notes, None, log_lines(entry));
     }
@@ -277,15 +262,12 @@ impl Body {
     }
 }
 
-/// A checklist item as its line has it.
 #[must_use]
 pub fn checklist_line(item: &ChecklistItem) -> String {
     let mark = if item.done { 'x' } else { ' ' };
     format!("- [{mark}] {}", item.text)
 }
 
-/// An entry as the log has it: `-` and its text, with each further line of
-/// the text indented under it by two spaces.
 #[must_use]
 pub fn log_line(entry: &Entry) -> String {
     log_lines(entry).join("\n")
@@ -368,10 +350,6 @@ fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
     })
 }
 
-/// Splits a final named Markdown fence into its preceding text and contents.
-///
-/// # Errors
-/// A matching block is duplicated, unclosed or followed by nonblank text.
 pub fn footer<'a>(
     text: &'a str,
     info: &str,

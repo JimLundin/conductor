@@ -56,29 +56,26 @@ async fn read(
     let mode = mode(&mut registry, &data, selected.tracker, query.offline);
     let service = registry.project(&selected.project.backends);
     let id = selected.project.id;
-    let (json, found, failure) = match query.reference {
-        Some(reference) => {
-            let read = service
-                .issue(&cache, id, reference, mode)
-                .await
-                .map_err(|err| err.to_string())?;
-            (
-                serde_json::to_string_pretty(&read),
-                read.record.is_some(),
-                read.status.failure,
-            )
-        }
-        None => {
-            let list = service
-                .issues(&cache, id, mode)
-                .await
-                .map_err(|err| err.to_string())?;
-            (
-                serde_json::to_string_pretty(&list),
-                list.status.complete,
-                list.status.failure,
-            )
-        }
+    let (json, found, failure) = if let Some(reference) = query.reference {
+        let read = service
+            .issue(&cache, id, reference, mode)
+            .await
+            .map_err(|err| err.to_string())?;
+        (
+            serde_json::to_string_pretty(&read),
+            read.record.is_some(),
+            read.status.failure,
+        )
+    } else {
+        let list = service
+            .issues(&cache, id, mode)
+            .await
+            .map_err(|err| err.to_string())?;
+        (
+            serde_json::to_string_pretty(&list),
+            list.status.complete,
+            list.status.failure,
+        )
     };
     Ok((
         format!("{}\n", json.map_err(|err| err.to_string())?),

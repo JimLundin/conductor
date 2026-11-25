@@ -1,11 +1,3 @@
-//! The home's decisions (docs/home.md): what a project's `project.toml`
-//! says, which local repositories are a project's checkouts, where the
-//! host's clone of the home stands, and what a host says of it. The home is
-//! fleet-wide data in its own files, read by hosts now and by more of the
-//! fleet as issues and work land, so it is a core of its own rather than
-//! part of `host`'s session machinery. It is pure and `no_std`; `daemon`
-//! runs it.
-
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
@@ -42,8 +34,6 @@ use crate::issue::Observation;
 use crate::prelude::*;
 use crate::sync::Sync;
 
-/// What the host keeps of its home between runs: the remote it was given,
-/// and its checkouts as last found, each by its path with its project.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stored {
     pub remote: Option<String>,
@@ -51,19 +41,16 @@ pub struct Stored {
 }
 
 impl Stored {
-    /// The remote the command line gives, else the one kept.
     #[must_use]
     pub fn remote(&self, given: Option<String>) -> Option<String> {
         given.or_else(|| self.remote.clone())
     }
 
-    /// Every path a checkout was found at, which the next scan probes again.
     #[must_use]
     pub fn known(&self) -> Vec<String> {
         self.checkouts.keys().cloned().collect()
     }
 
-    /// What to keep of a scan's checkouts, with the remote.
     #[must_use]
     pub fn kept(
         remote: Option<String>,
@@ -83,19 +70,15 @@ impl Stored {
     }
 }
 
-/// What the host found of its projects beside what the home lists.
 #[derive(Debug, Clone, Copy)]
 pub struct Found<'host> {
     pub checkouts: &'host BTreeMap<ProjectId, Vec<Checkout>>,
     pub cloning: &'host BTreeMap<ProjectId, Cloning>,
-    /// The home's flow, when it loads.
     pub flow: Option<&'host Flow>,
     pub issues: &'host BTreeMap<ProjectId, Vec<Observation>>,
-    /// Issue changes the remote doesn't have yet.
     pub unpushed: u64,
 }
 
-/// The home as the host reports it.
 #[must_use]
 pub fn view(
     remote: &str,
@@ -139,12 +122,6 @@ pub fn view(
     }
 }
 
-/// Where a session on project `id` starts: its first checkout.
-///
-/// # Errors
-///
-/// The host has no home, its home lists no such project, or the project
-/// has no checkout on the host.
 pub fn first_checkout(
     home: Option<&Home>,
     id: ProjectId,
@@ -162,11 +139,6 @@ pub fn first_checkout(
         .ok_or(HomeRefusal::NotCheckedOut)
 }
 
-/// The remote to clone a project from.
-///
-/// # Errors
-///
-/// The home lists no such project, or it is local only.
 pub fn remote_of(
     projects: &[project::Project],
     id: &ProjectId,
@@ -180,11 +152,6 @@ pub fn remote_of(
         .ok_or(HomeRefusal::NoRemote)
 }
 
-/// A home command runs only on a host given a home.
-///
-/// # Errors
-///
-/// [`HomeRefusal::NoHome`] without a remote.
 pub const fn configured(remote: Option<&str>) -> Result<(), HomeRefusal> {
     match remote {
         Some(_) => Ok(()),
@@ -192,13 +159,11 @@ pub const fn configured(remote: Option<&str>) -> Result<(), HomeRefusal> {
     }
 }
 
-/// A home command's answer once it has run: how it went is in the home.
 #[must_use]
 pub fn answer(done: Result<(), HomeRefusal>) -> HomeResult {
     done.map_or_else(HomeResult::Refused, |()| HomeResult::Accepted)
 }
 
-/// Where a clone of the project stands once `git clone` has ended.
 #[must_use]
 pub fn cloned(outcome: Result<(), String>) -> Cloning {
     outcome.map_or_else(|reason| Cloning::Failed { reason }, |()| Cloning::Idle)

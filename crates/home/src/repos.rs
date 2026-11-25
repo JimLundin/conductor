@@ -1,11 +1,3 @@
-//! The home's projects among the repositories on this machine.
-//!
-//! `home repos` shows which repositories under the home's folder, the home
-//! among them, are each project's checkouts and where they stand; `home
-//! repos sync` clones the missing ones; `home repos scan` registers the
-//! rest and writes the project table of the home's `AGENTS.md`. The shell
-//! lists the folders, runs Git and writes the files.
-
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 use vcs::status::Checkout;
@@ -19,14 +11,10 @@ use crate::prelude::*;
 use crate::project::{Project, parse};
 use vcs::discovery::Probe;
 
-/// The home itself, as a repository's path from the home.
 pub const HOME: &str = ".";
 
 pub mod verify;
 
-/// `probes`, found as the host finds checkouts with the home at `home` as
-/// both a known path and the one root, each by its path from the home: the
-/// home's own as [`HOME`], one outside it as it is.
 #[must_use]
 pub fn local(home: &str, probes: Vec<Probe>) -> Vec<Probe> {
     probes
@@ -50,7 +38,6 @@ fn from_home(home: &str, path: &str) -> String {
         .map_or_else(|| path.to_owned(), str::to_owned)
 }
 
-/// A project and the paths of its checkouts here.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Placed {
     pub name: String,
@@ -60,7 +47,6 @@ pub struct Placed {
     pub provides: Vec<String>,
 }
 
-/// Each project, by name, with its checkouts among `probes`.
 #[must_use]
 pub fn placed(projects: &[Project], probes: &[Probe]) -> Vec<Placed> {
     by_name(projects)
@@ -85,7 +71,6 @@ fn by_name(projects: &[Project]) -> Vec<&Project> {
     sorted
 }
 
-/// Every checkout's path, whose state the shell asks Git for.
 #[must_use]
 pub fn checkouts(placed: &[Placed]) -> Vec<String> {
     placed
@@ -94,8 +79,6 @@ pub fn checkouts(placed: &[Placed]) -> Vec<String> {
         .collect()
 }
 
-/// What `home repos` says: each project's checkouts here and their state,
-/// `None` where Git couldn't tell it.
 #[must_use]
 pub fn report(
     placed: &[Placed],
@@ -131,8 +114,6 @@ pub fn report(
         .collect()
 }
 
-/// Why folders of the home's `projects/` aren't projects, as `home repos`
-/// says it before its report.
 #[must_use]
 pub fn warnings(problems: &[String]) -> String {
     problems
@@ -142,16 +123,12 @@ pub fn warnings(problems: &[String]) -> String {
         .concat()
 }
 
-/// A clone `home repos sync` makes, or why it makes none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fetch {
     pub said: String,
-    /// The remote and the folder from the home it is cloned into.
     pub clone: Option<(String, String)>,
 }
 
-/// What `home repos sync` does: clones each project with a remote and no
-/// checkout here into the home's folder of its name.
 #[must_use]
 pub fn sync(placed: &[Placed]) -> Vec<Fetch> {
     placed
@@ -175,7 +152,6 @@ pub fn sync(placed: &[Placed]) -> Vec<Fetch> {
         .collect()
 }
 
-/// The repositories among `probes` that are no project's checkout.
 #[must_use]
 pub fn unmatched(projects: &[Project], probes: &[Probe]) -> Vec<Probe> {
     probes
@@ -193,7 +169,6 @@ const PROFILE_MARKERS: [(&str, &str); 3] = [
     ("package.json", "typescript"),
 ];
 
-/// The standards profiles a repository follows, by the `names` at its top.
 #[must_use]
 pub fn profiles(names: &[String]) -> Vec<String> {
     PROFILE_MARKERS
@@ -203,8 +178,6 @@ pub fn profiles(names: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// A repository that is no project's checkout, with the names at its top
-/// and the draws for the id it is registered as.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct New {
     pub probe: Probe,
@@ -212,46 +185,27 @@ pub struct New {
     pub draws: Draws,
 }
 
-/// What `home repos scan` reads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scanning {
-    /// The name of the home's folder, which titles the home itself.
     pub home: String,
-    /// The home's projects, whose ids a new project can't take.
     pub projects: Vec<Project>,
     pub new: Vec<New>,
-    /// Why any folder of the home's `projects/` isn't a project.
     pub problems: Vec<String>,
-    /// The text of the home's `AGENTS.md`, or why it couldn't be read.
     pub doc: Result<String, String>,
 }
 
-/// What `home repos scan` writes and says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Scan {
-    /// Each file by its path from the home, with its text.
     pub writes: Vec<(String, String)>,
     pub said: String,
 }
 
-/// The home's file that lists its projects.
 pub const DOC: &str = "AGENTS.md";
 
-/// The line the project table starts at; the rest of it is the table's.
 pub const START: &str = "<!-- repos:start";
 
-/// The line the project table ends at.
 pub const END: &str = "<!-- repos:end -->";
 
-/// What `home repos scan` makes of `scanning`: a `project.toml` for each
-/// new repository, in a folder of a fresh id, and the home's `AGENTS.md`
-/// with its project table of every project.
-///
-/// # Errors
-///
-/// A folder of the home's `projects/` isn't a project, so any repository
-/// might be its; or no draw gives a repository an id the home doesn't
-/// hold.
 pub fn scan(scanning: Scanning) -> Result<Scan, String> {
     let Scanning {
         home,
@@ -353,7 +307,6 @@ fn described(
     Ok((project, text))
 }
 
-/// The project table: each project, by name, with its remote.
 #[must_use]
 pub fn table(projects: &[Project]) -> String {
     let rows = by_name(projects)
@@ -373,8 +326,6 @@ pub fn table(projects: &[Project]) -> String {
     )
 }
 
-/// `doc` with `table` in place of the lines from its [`START`] line to its
-/// [`END`] line.
 #[must_use]
 pub fn regenerated(doc: &str, table: &str) -> String {
     let (text, _) = doc.split_inclusive('\n').fold(
