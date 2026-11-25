@@ -22,7 +22,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/46",
+      "const": "conductor/47",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -58,7 +58,7 @@
         },
         {
           "const": "SignedIn",
-          "description": "The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`conductord login <instance>`).",
+          "description": "The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`orchestrator login <instance>`).",
           "type": "string"
         },
         {

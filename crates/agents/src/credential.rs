@@ -43,7 +43,7 @@ pub enum Auth {
     /// its form has one ([`ProviderInfo::auth`]).
     Stored { kind: String, url: Option<String> },
     /// The CLI's own sign-in in the instance's private home, from the app
-    /// (`SignInCommand::Start`) or on the host (`conductord login <instance>`).
+    /// (`SignInCommand::Start`) or on the host (`orchestrator login <instance>`).
     SignedIn,
     /// A CLI the host was started with (`--cli <provider>=<path>`),
     /// which signs in however it does.

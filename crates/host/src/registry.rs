@@ -58,7 +58,7 @@ pub use instance::{
 /// instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OwnSignIn {
-    /// The private home is signed in, from the app or with `conductord
+    /// The private home is signed in, from the app or with `orchestrator
     /// login <instance>`.
     SignedIn,
     /// A CLI given on the command line, signed in however it is.

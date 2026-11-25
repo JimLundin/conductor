@@ -41,6 +41,6 @@ pub struct Profile {
     /// Where the CLI names the account a sign-in signed its home in as.
     pub account: Reported,
     /// The CLI's own sign-in, which stores the credential in its home:
-    /// from the app, or on the host's terminal (`conductord login`).
+    /// from the app, or on the host's terminal (`orchestrator login`).
     pub sign_in: SignIn,
 }

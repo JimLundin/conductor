@@ -615,6 +615,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "cli"
+version = "0.1.0"
+dependencies = [
+ "agents",
+ "anyhow",
+ "clap",
+ "claude",
+ "claude-cli",
+ "codex",
+ "codex-cli",
+ "daemon",
+ "host",
+ "rpassword",
+ "runtime",
+ "tokio",
+ "tracing-subscriber",
+ "zeroize",
+]
+
+[[package]]
 name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -671,26 +691,6 @@ checksum = "4356eba6976435498d05a311ee9fc486da3bc81c200d3f0d7dd9703b41913f92"
 dependencies = [
  "bytes",
  "memchr",
-]
-
-[[package]]
-name = "conductord"
-version = "0.1.0"
-dependencies = [
- "agents",
- "anyhow",
- "clap",
- "claude",
- "claude-cli",
- "codex",
- "codex-cli",
- "daemon",
- "host",
- "rpassword",
- "runtime",
- "tokio",
- "tracing-subscriber",
- "zeroize",
 ]
 
 [[package]]
