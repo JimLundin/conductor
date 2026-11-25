@@ -1,5 +1,6 @@
 import type { ChangeEventHandler, FunctionComponent } from "react";
 import type { Draft } from "@conductor/core/session/start";
+import type { ValueChange } from "#ui/event.ts";
 import { useCallback } from "react";
 
 interface Props {
@@ -13,7 +14,7 @@ const directory = "A directory instead";
 
 const ProjectField: FunctionComponent<Props> = ({ change, choices, value }) => {
   const selected = useCallback<ChangeEventHandler<HTMLSelectElement>>(
-    (event) => {
+    (event: ValueChange) => {
       change({ project: event.target.value });
     },
     [change],

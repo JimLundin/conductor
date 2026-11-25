@@ -35,12 +35,14 @@ const status: (value: SessionStatus) => Status = SessionStatus.$match({
 });
 
 const header = (session: Session, host: string): Header => ({
-  meta: [
-    { name: "host", text: host },
-    { name: "provider", text: session.instance.provider },
-    { name: "model", text: session.model },
-    { name: "effort", text: session.effort },
-  ].flatMap((entry) =>
+  meta: (
+    [
+      { name: "host", text: host },
+      { name: "provider", text: session.instance.provider },
+      { name: "model", text: session.model },
+      { name: "effort", text: session.effort },
+    ] as const
+  ).flatMap((entry) =>
     typeof entry.text === "string" ? [{ name: entry.name, text: entry.text }] : [],
   ),
   status: status(session.status),

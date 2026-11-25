@@ -1,5 +1,5 @@
 import type { CommandResult, SessionId } from "@conductor/core/schemas/index";
-import type { FunctionComponent, SubmitEventHandler } from "react";
+import type { FunctionComponent, SubmitEvent, SubmitEventHandler } from "react";
 import { start, startDisabled, startedSession } from "@conductor/core/view/start";
 import { useCallback, useState } from "react";
 import type { Draft } from "@conductor/core/session/start";
@@ -46,7 +46,7 @@ const NewSession: FunctionComponent<Props> = ({ hosts, initial, started }) => {
     setDraft({ ...blank, host });
   }, []);
   const submit = useCallback<SubmitEventHandler<HTMLFormElement>>(
-    (event) => {
+    (event: Readonly<Pick<SubmitEvent<HTMLFormElement>, "preventDefault">>) => {
       event.preventDefault();
       if (command !== undefined && paired !== undefined) {
         sending.run(paired.send, command, (result) => {
@@ -70,4 +70,3 @@ const NewSession: FunctionComponent<Props> = ({ hosts, initial, started }) => {
 };
 
 export { NewSession };
-export type { Paired };

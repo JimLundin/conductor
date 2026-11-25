@@ -1,6 +1,7 @@
 import type { ChangeEventHandler, FunctionComponent } from "react";
 import { useCallback, useId } from "react";
 import type { Draft } from "@conductor/core/session/start";
+import type { ValueChange } from "#ui/event.ts";
 
 interface Props {
   readonly change: (next: Partial<Draft>) => void;
@@ -14,7 +15,7 @@ const label = "Directory";
 const DirectoryField: FunctionComponent<Props> = ({ change, shown, suggested, value }) => {
   const listed = useId();
   const selected = useCallback<ChangeEventHandler<HTMLInputElement>>(
-    (event) => {
+    (event: ValueChange) => {
       change({ directory: event.target.value });
     },
     [change],

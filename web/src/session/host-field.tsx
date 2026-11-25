@@ -1,4 +1,5 @@
 import type { ChangeEventHandler, FunctionComponent } from "react";
+import type { ValueChange } from "#ui/event.ts";
 import { useCallback } from "react";
 
 interface Props {
@@ -12,7 +13,7 @@ const choose = "Choose a host";
 
 const HostField: FunctionComponent<Props> = ({ change, hosts, value }) => {
   const selected = useCallback<ChangeEventHandler<HTMLSelectElement>>(
-    (event) => {
+    (event: ValueChange) => {
       change(event.target.value);
     },
     [change],
