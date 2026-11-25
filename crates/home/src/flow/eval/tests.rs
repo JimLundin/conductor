@@ -22,16 +22,11 @@ fn flow() -> Flow {
     })
 }
 
-const NAMES: [&str; 10] = [
-    "spec", "review", "one", "two", "task", "i0", "i1", "i2", "i3", "i4",
-];
-
 fn id(name: &str) -> IssueId {
-    let place = NAMES.iter().position(|known| *known == name);
-    IssueId::new(
-        0,
-        place.map_or(0, |at| u64::try_from(at).unwrap_or_default() + 1),
-    )
+    IssueId {
+        authority: String::from("test"),
+        key: String::from(name),
+    }
 }
 
 fn step(via: &str, name: &str) -> Step {
@@ -47,6 +42,7 @@ fn terminal() -> Predicate {
 
 fn issue(name: &str, kind: &str, status: &str) -> Issue {
     Issue {
+        created: None,
         id: id(name),
         project: ProjectId::new(1),
         title: String::from(name),
@@ -59,6 +55,7 @@ fn issue(name: &str, kind: &str, status: &str) -> Issue {
         sections: Vec::new(),
         checklist: Vec::new(),
         log: Vec::new(),
+        notes: Vec::new(),
         branch: String::new(),
         canvases: Vec::new(),
     }

@@ -3,13 +3,13 @@ use crate::ProjectId;
 use crate::flow::Severity;
 
 use super::{Finding, check as checked};
-use crate::flow::graph::File;
-use crate::flow::snapshot::{Inputs, Snapshot};
+use crate::issue::storage::File;
+use crate::issue::storage::Inputs;
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
-const SPEC: &str = "0tm7zt00";
-const REVIEW: &str = "0tm7zx0c";
+const SPEC: &str = "local~0tm7zt00";
+const REVIEW: &str = "local~0tm7zx0c";
 
 fn project(
     folder: &str,
@@ -34,6 +34,8 @@ fn issue(id: &str, front: &str, body: &str) -> File {
 
 fn inputs(flow: &str, review_status: &str) -> Inputs {
     Inputs {
+        unavailable: Vec::new(),
+        observed_at: None,
         flow: Ok(String::from(flow)),
         projects: Vec::from([project("7r5n23", "conductor", "")]),
         issues: Vec::from([
@@ -56,11 +58,11 @@ fn inputs(flow: &str, review_status: &str) -> Inputs {
 }
 
 fn check(inputs: &Inputs) -> super::Report {
-    checked(&Snapshot::of(inputs.clone()))
+    checked(&crate::issue::storage::snapshot(inputs.clone()))
 }
 
 fn subject(id: &str) -> String {
-    format!("conductor/{id}")
+    format!("conductor/{}", id.strip_prefix("local~").unwrap_or(id))
 }
 
 #[test]
@@ -141,8 +143,8 @@ fn a_flow_that_does_not_load_is_the_only_finding() {
 fn the_text_lists_each_finding_and_the_counts() {
     assert_eq!(
         check(&inputs(FLOW, "done")).text(),
-        format!(
-            "warn   conductor/{REVIEW}  lacks the section \"Verdict\"\n0 errors, 1 warnings\n"
+        String::from(
+            "warn   conductor/0tm7zx0c  lacks the section \"Verdict\"\n0 errors, 1 warnings\n"
         )
     );
 }
@@ -165,7 +167,9 @@ fn two_issue_files_with_one_id_fail_the_check() {
         report.findings.contains(&Finding {
             severity: Severity::Error,
             subject: Some(String::from("other/0tm7zt00")),
-            message: String::from("id: is also the id of 7r5n23/0tm7zt00"),
+            message: String::from(
+                "id: is also the id of 7r5n23/local~0tm7zt00"
+            ),
         }),
         "{}",
         report.text()
@@ -174,8 +178,8 @@ fn two_issue_files_with_one_id_fail_the_check() {
 
 #[test]
 fn an_active_issue_whose_blocker_isn_t_built_warns() {
-    const TASK: &str = "0tm7zy00";
-    const BLOCKER: &str = "0tm7zz00";
+    const TASK: &str = "local~0tm7zy00";
+    const BLOCKER: &str = "local~0tm7zz00";
     let mut home = inputs(FLOW, "done");
     home.issues.extend([
         issue(

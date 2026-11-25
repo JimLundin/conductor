@@ -13,12 +13,12 @@ use crate::registry::{
 use crate::session::{
     EventKind, SessionId, SessionRefusal, SessionResult, StartAt,
 };
-use crate::workspace::{Repository, WorkingCopy, Worktree};
 use agents::{
     Account, Auth, ClientName, CloseReason, Credential, CredentialForm, Effort,
     Field, FieldKind, ModelChoice, ModelId, Models, Provider, ProviderInfo,
 };
 use home::{CheckoutLocation, Home, HomeRefusal, HomeSync, ProjectId};
+use vcs::{Repository, WorkingCopy, Worktree};
 
 use super::{
     AccountAdoption, Change, Effect, InHome, Job, Launch, Launcher, OwnSignIn,
@@ -28,7 +28,7 @@ use super::{
 };
 use crate::Note;
 use crate::session::Choice;
-use crate::workspace::GitError;
+use vcs::Error as GitError;
 
 type Test = Registry<&'static str, u8, &'static str>;
 type Seen = Vec<Effect<&'static str, &'static str>>;
@@ -1185,8 +1185,10 @@ fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
 }
 
 #[test]
-fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
-    let issue = home::IssueId::new(0, 5);
+fn an_instance_has_one_session_on_an_issue_until_it_is_removed()
+-> Result<(), &'static str> {
+    let issue = home::IssueId::new("local", "00000005")
+        .ok_or("invalid fixture identity")?;
     let event = |session: u128, kind: EventKind| Event {
         seq: HostSeq(1),
         session: SessionId(session),
@@ -1209,18 +1211,28 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
         InstanceId::named(Provider::new("claude"), "https://gateway.example");
     let history = Vec::from([
         created(1, own.clone()),
-        event(1, EventKind::OnIssue { issue }),
+        event(
+            1,
+            EventKind::OnIssue {
+                issue: issue.clone(),
+            },
+        ),
         created(2, other.clone()),
     ]);
     assert_refused(
-        start_request().placed(Ok(placement(true)), &history),
+        start_request().placed(Ok(placement(true)?), &history),
         SessionRefusal::IssueTaken {
             session: SessionId(1),
         },
     );
-    assert_eq!(super::on_issue(&history, issue, &other), None);
+    assert_eq!(super::on_issue(&history, &issue, &other), None);
     assert_eq!(
-        super::on_issue(&history, home::IssueId::new(0, 6), &own),
+        super::on_issue(
+            &history,
+            &home::IssueId::new("local", "00000006")
+                .ok_or("invalid fixture identity")?,
+            &own
+        ),
         None
     );
     let removed = [
@@ -1229,12 +1241,13 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed() {
     ]
     .concat();
     assert!(matches!(
-        start_request().placed::<&str, u8>(Ok(placement(true)), &removed),
+        start_request().placed::<&str, u8>(Ok(placement(true)?), &removed),
         Continue(StartStep {
             effect: StartEffect::ReadyBranch(_),
             ..
         })
     ));
+    Ok(())
 }
 
 #[test]
@@ -1272,16 +1285,19 @@ fn start_request() -> super::StartRequest {
     }
 }
 
-fn placement(on_issue: bool) -> super::Placement {
-    super::Placement {
+fn placement(on_issue: bool) -> Result<super::Placement, &'static str> {
+    let issue = home::IssueId::new("local", "00000005")
+        .ok_or("invalid fixture identity")?;
+    Ok(super::Placement {
+        project: None,
         directory: SessionDirectory(text("/src")),
         on: on_issue.then(|| home::issue::Start {
-            issue: home::IssueId::new(0, 5),
+            issue,
             checkout: CheckoutLocation(text("/src")),
             branch: text("refs/heads/issue/5"),
             brief: text("Implement the issue"),
         }),
-    }
+    })
 }
 
 fn home_with(checkouts: &[&str]) -> Home {
@@ -1344,18 +1360,21 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
 }
 
 #[test]
-fn only_a_start_in_a_project_or_an_issue_waits_on_the_home() {
+fn only_a_start_in_a_project_or_an_issue_waits_on_the_home()
+-> Result<(), &'static str> {
     let directory = SessionDirectory(text("/work"));
     let project = ProjectId::new(1);
-    let issue = home::IssueId::new(1, 5);
+    let issue = home::IssueId::new("local", "00000105")
+        .ok_or("invalid fixture identity")?;
     assert_eq!(
         [
             place_without_home(StartAt::Directory(directory.clone())),
             place_without_home(StartAt::Project(project)),
-            place_without_home(StartAt::Issue(issue)),
+            place_without_home(StartAt::Issue(issue.clone())),
         ],
         [
             Ok(super::Placement {
+                project: None,
                 directory,
                 on: None,
             }),
@@ -1363,6 +1382,7 @@ fn only_a_start_in_a_project_or_an_issue_waits_on_the_home() {
             Err(InHome::Issue(issue)),
         ]
     );
+    Ok(())
 }
 
 fn start_workspace() -> crate::workspace::Workspace {
@@ -1387,7 +1407,7 @@ fn at_directory(
     request: super::StartRequest,
     registry: &mut Test,
 ) -> Result<Workflow, &'static str> {
-    let placed = placement(true);
+    let placed = placement(true)?;
     let Continue(StartStep {
         effect: StartEffect::ReadyBranch(branch),
         next,
@@ -1455,7 +1475,7 @@ fn placement_and_branch_failures_end_the_start() -> Result<(), &'static str> {
     let Continue(StartStep {
         effect: StartEffect::ReadyBranch(_),
         next,
-    }) = start_request().placed(Ok(placement(true)), &[])
+    }) = start_request().placed(Ok(placement(true)?), &[])
     else {
         return Err("expected branch readiness");
     };
@@ -1578,7 +1598,8 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
                 effort: None,
             },
             EventKind::OnIssue {
-                issue: home::IssueId::new(0, 5)
+                issue: home::IssueId::new("local", "00000005")
+                    .ok_or("invalid fixture identity")?
             },
         ]
     );
@@ -1631,7 +1652,11 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
     assert_eq!(done.result, SessionResult::Started { session });
     assert_eq!(
         done.progress,
-        Some((home::IssueId::new(0, 5), ClientName(text("phone"))))
+        Some((
+            home::IssueId::new("local", "00000005")
+                .ok_or("invalid fixture identity")?,
+            ClientName(text("phone"))
+        ))
     );
     Ok(())
 }
@@ -1664,7 +1689,7 @@ fn a_plain_start_checks_its_directory_without_an_issue_branch()
     let Continue(StartStep {
         effect: StartEffect::CheckDirectory(path),
         next,
-    }) = start_request().placed(Ok(placement(false)), &[])
+    }) = start_request().placed(Ok(placement(false)?), &[])
     else {
         return Err("expected a directory check");
     };

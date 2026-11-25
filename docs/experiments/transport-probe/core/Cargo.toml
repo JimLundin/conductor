@@ -1,0 +1,16 @@
+[package]
+name = "transport-probe-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Pure credential and wire policy for the Conductor transport prototype"
+repository = "https://github.com/JimLundin/conductor"
+keywords = ["git", "prototype"]
+categories = ["development-tools"]
+
+[package.metadata.standards]
+layer = "core"
+
+[lints]
+workspace = true

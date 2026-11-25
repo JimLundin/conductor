@@ -1,14 +1,15 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
-use core::fmt;
+use vcs::status::Checkout;
 
 use crate::{Draws, ProjectId};
 use serde::Serialize;
 
-use crate::checkout::{Probe, is_checkout};
+use crate::checkout::is_checkout;
 use crate::layout;
 use crate::prelude::*;
 use crate::project::{Project, parse};
+use vcs::discovery::Probe;
 
 pub const HOME: &str = ".";
 
@@ -76,104 +77,6 @@ pub fn checkouts(placed: &[Placed]) -> Vec<String> {
         .iter()
         .flat_map(|project| project.checkouts.iter().cloned())
         .collect()
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Checkout {
-    pub commit: Option<String>,
-    pub branch: Option<String>,
-    pub upstream: Option<Upstream>,
-    pub changed: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Upstream {
-    pub name: String,
-    pub distance: Option<Distance>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Distance {
-    pub ahead: u32,
-    pub behind: u32,
-}
-
-impl Checkout {
-    #[must_use]
-    pub fn parse(porcelain: &str) -> Self {
-        let mut state = Self::default();
-        let mut upstream = None;
-        let mut distance = None;
-        for line in porcelain.lines().filter(|line| !line.is_empty()) {
-            let Some(header) = line.strip_prefix("# ") else {
-                state.changed += 1;
-                continue;
-            };
-            let (key, value) = header.split_once(' ').unwrap_or((header, ""));
-            match key {
-                "branch.oid" if value != "(initial)" => {
-                    state.commit = Some(String::from(value));
-                }
-                "branch.head" if value != "(detached)" => {
-                    state.branch = Some(String::from(value));
-                }
-                "branch.upstream" => upstream = Some(String::from(value)),
-                "branch.ab" => distance = parse_distance(value),
-                _ => {}
-            }
-        }
-        state.upstream = upstream.map(|name| Upstream { name, distance });
-        state
-    }
-
-    #[must_use]
-    pub fn is_level(&self, default: &str) -> bool {
-        self.commit.is_some()
-            && self.changed == 0
-            && self.branch.as_deref() == Some(default)
-            && self.upstream.as_ref().is_some_and(|upstream| {
-                upstream.name.strip_prefix("origin/") == Some(default)
-                    && upstream.distance
-                        == Some(Distance {
-                            ahead: 0,
-                            behind: 0,
-                        })
-            })
-    }
-}
-
-fn parse_distance(ab: &str) -> Option<Distance> {
-    let (ahead, behind) = ab.split_once(' ')?;
-    Some(Distance {
-        ahead: ahead.strip_prefix('+')?.parse().ok()?,
-        behind: behind.strip_prefix('-')?.parse().ok()?,
-    })
-}
-
-impl fmt::Display for Checkout {
-    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.write_str(self.branch.as_deref().unwrap_or("HEAD (no branch)"))?;
-        let Some(upstream) = &self.upstream else {
-            return Ok(());
-        };
-        write!(out, "...{}", upstream.name)?;
-        match upstream.distance {
-            None => out.write_str(" [gone]"),
-            Some(Distance {
-                ahead: 0,
-                behind: 0,
-            }) => Ok(()),
-            Some(Distance { ahead, behind: 0 }) => {
-                write!(out, " [ahead {ahead}]")
-            }
-            Some(Distance { ahead: 0, behind }) => {
-                write!(out, " [behind {behind}]")
-            }
-            Some(Distance { ahead, behind }) => {
-                write!(out, " [ahead {ahead}, behind {behind}]")
-            }
-        }
-    }
 }
 
 #[must_use]

@@ -24,7 +24,7 @@ use host::sign_in::{SignIn, SignInCommand, SignInResult};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-pub const ALPN: &[u8] = b"conductor/49";
+pub const ALPN: &[u8] = b"conductor/50";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum Open {

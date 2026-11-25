@@ -26,11 +26,11 @@ pub fn contract<S: CanvasStore>(
 
 fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
-    let (one, two) = (IssueId::new(1, 0), IssueId::new(2, 0));
-    let design = key(alpha, one, "design")?;
-    let plan = key(alpha, one, "a-plan")?;
-    let other = key(alpha, two, "design")?;
-    let elsewhere = key(beta, one, "design")?;
+    let (one, two) = issues()?;
+    let design = key(alpha, &one, "design")?;
+    let plan = key(alpha, &one, "a-plan")?;
+    let other = key(alpha, &two, "design")?;
+    let elsewhere = key(beta, &one, "design")?;
     same(
         "get of a missing key is none",
         &store.get(&design).map_err(shown)?,
@@ -68,7 +68,7 @@ fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
     )?;
     same(
         "get of a name the issue has no canvas of is none",
-        &store.get(&key(beta, two, "design")?).map_err(shown)?,
+        &store.get(&key(beta, &two, "design")?).map_err(shown)?,
         &None,
     )?;
     same(
@@ -84,23 +84,23 @@ fn reports_strays<S: CanvasStore>(
     mut plant: impl FnMut(&mut S, &Plant) -> String,
 ) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
-    let (one, two) = (IssueId::new(1, 0), IssueId::new(2, 0));
-    let design = key(alpha, one, "design")?;
-    let plan = key(alpha, one, "a-plan")?;
-    let broken = key(alpha, one, "broken")?;
+    let (one, two) = issues()?;
+    let design = key(alpha, &one, "design")?;
+    let plan = key(alpha, &one, "a-plan")?;
+    let broken = key(alpha, &one, "broken")?;
     spoil(store, &broken);
     let unnamed = plant(
         store,
         &Plant::Unnamed {
             project: alpha,
-            issue: one,
+            issue: one.clone(),
         },
     );
     let folder = plant(
         store,
         &Plant::Folder {
             project: alpha,
-            issue: one,
+            issue: one.clone(),
         },
     );
     let unissued = plant(store, &Plant::NotAnIssue(alpha));
@@ -124,8 +124,8 @@ fn reports_strays<S: CanvasStore>(
                 plan,
                 broken.clone(),
                 design,
-                key(alpha, two, "design")?,
-                key(beta, one, "design")?,
+                key(alpha, &two, "design")?,
+                key(beta, &one, "design")?,
             ],
             vec![
                 (unnamed, "unnamed"),
@@ -182,14 +182,20 @@ fn listed(
     }
 }
 
+fn issues() -> Result<(IssueId, IssueId), String> {
+    let one = IssueId::from_reference("00000001").ok_or("first issue")?;
+    let two = IssueId::from_reference("00000002").ok_or("second issue")?;
+    Ok((one, two))
+}
+
 fn key(
     project: ProjectId,
-    issue: IssueId,
+    issue: &IssueId,
     name: &str,
 ) -> Result<CanvasKey, String> {
     Ok(CanvasKey {
         project,
-        issue,
+        issue: issue.clone(),
         name: CanvasName::parse(name).map_err(shown)?,
     })
 }

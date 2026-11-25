@@ -1,8 +1,9 @@
 use alloc::collections::BTreeMap;
 use core::fmt;
 
-use super::{Checkout, Placed};
+use super::Placed;
 use crate::prelude::*;
+use vcs::status::Checkout;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verify {
@@ -126,15 +127,6 @@ pub fn asks(placed: &[Placed]) -> Vec<String> {
         })
         .flat_map(|project| project.checkouts.iter().cloned())
         .collect()
-}
-
-#[must_use]
-pub fn origin_default(symbolic: &str) -> Option<String> {
-    symbolic
-        .trim_end()
-        .strip_prefix("origin/")
-        .filter(|branch| !branch.is_empty())
-        .map(String::from)
 }
 
 enum Provider<'a> {

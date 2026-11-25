@@ -43,7 +43,9 @@ impl Memory {
     }
 
     fn folder(&mut self, key: &CanvasKey) -> &mut Folder {
-        self.issues.entry((key.project, key.issue)).or_default()
+        self.issues
+            .entry((key.project, key.issue.clone()))
+            .or_default()
     }
 }
 
@@ -72,10 +74,10 @@ impl CanvasStore for Memory {
             canvases: self
                 .issues
                 .iter()
-                .flat_map(|(&(project, issue), folder)| {
+                .flat_map(|((project, issue), folder)| {
                     folder.canvases.keys().map(move |name| CanvasKey {
-                        project,
-                        issue,
+                        project: *project,
+                        issue: issue.clone(),
                         name: name.clone(),
                     })
                 })
@@ -96,19 +98,19 @@ impl CanvasStore for Memory {
     ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError> {
         Ok(self
             .issues
-            .get(&(*project, *issue))
+            .get(&(*project, issue.clone()))
             .map_or_else(Held::default, Folder::listed))
     }
 
     fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
         self.issues
-            .get(&(key.project, key.issue))
+            .get(&(key.project, key.issue.clone()))
             .and_then(|folder| folder.canvases.get(&key.name))
             .cloned()
             .transpose()
             .map_err(|error| StoreError::Invalid {
                 key: key.clone(),
-                error,
+                error: Box::new(error),
             })
     }
 
@@ -146,13 +148,13 @@ mod tests {
                     Plant::Unnamed { project, issue } => planted(
                         memory,
                         *project,
-                        Some(*issue),
+                        Some(issue.clone()),
                         StrayReason::Unnamed,
                     ),
                     Plant::Folder { project, issue } => planted(
                         memory,
                         *project,
-                        Some(*issue),
+                        Some(issue.clone()),
                         StrayReason::Folder,
                     ),
                     Plant::NotAnIssue(project) => {

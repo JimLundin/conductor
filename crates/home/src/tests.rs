@@ -5,12 +5,11 @@ use crate::{
     ProjectId,
 };
 
-use crate::checkout::{
-    Probe, Root, candidates, clone_paths, matched, normal, probed,
-};
+use crate::checkout::{Root, candidates, clone_paths, matched};
 use crate::project::{Listing, Project, listed, parse};
 use crate::sync::{Git, Sync, next};
 use crate::{Found, Stored, cloned, first_checkout, remote_of, view};
+use vcs::{discovery::Probe, remote::normal};
 
 const ROOT: &str = "fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5";
 const OTHER: &str = "d2cef7849f3ce7cc16f17979e0acb8c21d9aed2a";
@@ -43,6 +42,7 @@ fn project(name: &str, remote: Option<&str>) -> Project {
         root: String::from(ROOT),
         profiles: Vec::from([String::from("rust")]),
         provides: Vec::new(),
+        backends: crate::backend::Backends::default(),
     }
 }
 
@@ -264,36 +264,6 @@ fn the_host_clones_each_project_into_a_folder_of_its_id() {
 }
 
 #[test]
-fn only_the_top_of_a_repository_with_a_commit_is_probed() {
-    let path = "/home/me/conductor";
-    assert_eq!(
-        [
-            probed(
-                path,
-                Some("/home/me/conductor\n"),
-                Some("a\nb\n"),
-                Some(" url\n")
-            ),
-            probed(path, Some(path), Some("a"), Some("")),
-            probed(path, Some(path), Some("a"), None),
-            probed(path, Some("/home/me"), Some("a"), None),
-            probed(path, None, Some("a"), None),
-            probed(path, Some(path), None, None),
-            probed(path, Some(path), Some(""), None),
-        ],
-        [
-            Some(probe(path, &["a", "b"], Some("url"))),
-            Some(probe(path, &["a"], None)),
-            Some(probe(path, &["a"], None)),
-            None,
-            None,
-            None,
-            None,
-        ]
-    );
-}
-
-#[test]
 fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
     let projects = [
         project("conductor", Some(REMOTE)),
@@ -339,24 +309,6 @@ fn a_checkout_has_the_root_and_the_remote_however_it_is_spelled() {
 }
 
 #[test]
-fn repository_identity_preserves_local_and_network_path_case() {
-    assert_eq!(
-        normal("https://GitHub.com/JimLundin/conductor.git"),
-        normal("git@github.com:JimLundin/conductor")
-    );
-    assert_ne!(
-        normal("https://github.com/JimLundin/conductor.git"),
-        normal("https://github.com/jimlundin/conductor.git")
-    );
-    assert_ne!(normal("/srv/a@Home.git"), normal("/srv/a@home.git"));
-    assert_ne!(normal("/srv/a@Home.git"), normal("/srv/Home.git"));
-    assert_eq!(
-        crate::checkout::display("/srv/a@Home.git"),
-        "/srv/a@Home.git"
-    );
-}
-
-#[test]
 fn home_and_project_snapshots_use_credential_free_addresses()
 -> Result<(), serde_json::Error> {
     let private = "https://synthetic-user:synthetic-password@github.com/JimLundin/conductor.git?access_token=synthetic-query#synthetic-fragment";
@@ -388,9 +340,9 @@ fn home_and_project_snapshots_use_credential_free_addresses()
     );
     assert_eq!(normal(private), normal(REMOTE));
     let local = "/srv/repository?literal#local.git";
-    assert_eq!(crate::checkout::display(local), local);
+    assert_eq!(vcs::remote::display(local), local);
     let file = "file:///srv/repository%3Fliteral%23local.git";
-    assert_eq!(crate::checkout::display(file), file);
+    assert_eq!(vcs::remote::display(file), file);
     let json = serde_json::to_string(&shown)?;
     assert!(json.contains(REMOTE));
     assert!(!json.contains("synthetic-"));

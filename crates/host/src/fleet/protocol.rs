@@ -1,4 +1,5 @@
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::EnrollmentToken;
 use crate::registry::Roster;
 
-pub const ALPN: &[u8] = b"conductor-fleet/4";
+pub const ALPN: &[u8] = b"conductor-fleet/5";
 
 pub type NodeId = [u8; 32];
 
@@ -114,6 +115,35 @@ pub struct Snapshot {
 pub struct Configuration {
     pub snapshot: Snapshot,
     pub instances: Roster,
+    pub project_credentials: BTreeMap<String, ProjectCredential>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProjectCredential(String);
+
+impl ProjectCredential {
+    #[must_use]
+    pub const fn new(entry: String) -> Self {
+        Self(entry)
+    }
+
+    #[must_use]
+    pub fn into_secret(mut self) -> String {
+        core::mem::take(&mut self.0)
+    }
+}
+
+impl fmt::Debug for ProjectCredential {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str("ProjectCredential")
+    }
+}
+
+impl Drop for ProjectCredential {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.0.zeroize();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

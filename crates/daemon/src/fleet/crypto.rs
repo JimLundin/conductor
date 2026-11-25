@@ -13,9 +13,9 @@ use iroh::{PublicKey, SecretKey, Signature};
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
 
-const CONFIGURATION: &[u8] = b"conductor fleet configuration v4";
-const STORE: &[u8] = b"conductor fleet local store v4";
-const BACKUP: &[u8] = b"conductor fleet root backup v4";
+const CONFIGURATION: &[u8] = b"conductor fleet configuration v5";
+const STORE: &[u8] = b"conductor fleet local store v5";
+const BACKUP: &[u8] = b"conductor fleet root backup v5";
 
 pub(super) fn sign_identity(
     key: &SecretKey,
@@ -58,7 +58,7 @@ pub(super) fn sign_config(
     config: Configuration,
 ) -> anyhow::Result<SignedConfiguration> {
     ensure!(
-        postcard::to_stdvec(&config)?.len() <= 200 * 1024,
+        Zeroizing::new(postcard::to_stdvec(&config)?).len() <= 200 * 1024,
         "fleet configuration is too large"
     );
     let signature = sign(key, CONFIGURATION, &config)?;
@@ -87,7 +87,7 @@ fn sign<T: Serialize>(
     domain: &[u8],
     value: &T,
 ) -> anyhow::Result<Vec<u8>> {
-    let bytes = postcard::to_stdvec(&(domain, value))?;
+    let bytes = Zeroizing::new(postcard::to_stdvec(&(domain, value))?);
     Ok(key.sign(&bytes).to_bytes().to_vec())
 }
 
@@ -97,7 +97,7 @@ fn verify<T: Serialize>(
     value: &T,
     signature: &[u8],
 ) -> anyhow::Result<()> {
-    let bytes = postcard::to_stdvec(&(domain, value))?;
+    let bytes = Zeroizing::new(postcard::to_stdvec(&(domain, value))?);
     let signed = Signature::from_bytes(
         signature.try_into().context("invalid signature length")?,
     );
@@ -318,12 +318,13 @@ mod tests {
                 revoked: Vec::new(),
             },
             instances: host::registry::Roster::default(),
+            project_credentials: std::collections::BTreeMap::new(),
         };
         let mut signed = super::sign_config(&key(), config)?;
         super::verify_config(key().public(), &signed)?;
         signed.signature = super::sign(
             &key(),
-            b"conductor fleet configuration v3",
+            b"conductor fleet configuration v4",
             &signed.config,
         )?;
         assert!(super::verify_config(key().public(), &signed).is_err());
@@ -334,7 +335,7 @@ mod tests {
     fn previous_fleet_store_context_is_rejected() -> anyhow::Result<()> {
         let key = [17; 32];
         let old =
-            super::encrypt(&key, b"conductor fleet local store v3", &[7])?;
+            super::encrypt(&key, b"conductor fleet local store v4", &[7])?;
         assert!(super::unseal::<u8>(&key, &old).is_err());
         assert_eq!(super::unseal::<u8>(&key, &super::seal(&key, &7u8)?)?, 7);
         Ok(())
@@ -351,7 +352,7 @@ mod tests {
         let salt = [18; 16];
         let key = super::backup_key(phrase, &salt)?;
         let old =
-            super::encrypt(&key, b"conductor fleet root backup v3", &[7])?;
+            super::encrypt(&key, b"conductor fleet root backup v4", &[7])?;
         std::fs::write(&path, salt.into_iter().chain(old).collect::<Vec<_>>())?;
         assert!(super::recover::<u8>(&path, phrase).is_err());
         let current = directory.path().join("current-backup");

@@ -1,8 +1,8 @@
 use crate::ProjectId;
 use alloc::string::ToString;
 
-use crate::flow::graph::File;
-use crate::flow::snapshot::Inputs;
+use crate::issue::storage::File;
+use crate::issue::storage::Inputs;
 use crate::prelude::*;
 
 pub const PROJECTS: &str = "projects";
@@ -64,24 +64,39 @@ pub fn inputs(
     projects: Vec<(String, Result<String, String>)>,
     issues: Vec<(IssueLocation, Result<String, String>)>,
 ) -> Inputs {
-    let (files, unread) = issues.into_iter().fold(
-        (Vec::new(), Vec::new()),
-        |(mut files, mut unread), (at, read)| {
+    let (files, unavailable, unread) = issues.into_iter().fold(
+        (Vec::new(), Vec::new(), Vec::new()),
+        |(mut files, mut unavailable, mut unread), (at, read)| {
             match read {
                 Ok(text) => files.push(File {
                     project: at.project,
                     stem: at.stem,
                     text,
                 }),
-                Err(reason) => unread.push(format!("{}: {reason}", at.path)),
+                Err(reason) => {
+                    if let Some(id) = crate::IssueId::from_reference(&at.stem) {
+                        unavailable.push(crate::issue::Unreadable {
+                            id,
+                            project: at.project,
+                            title: None,
+                            body: None,
+                            created: None,
+                            reason,
+                        });
+                    } else {
+                        unread.push(format!("{}: {reason}", at.path));
+                    }
+                }
             }
-            (files, unread)
+            (files, unavailable, unread)
         },
     );
     Inputs {
         flow,
         projects,
         issues: files,
+        unavailable,
+        observed_at: None,
         unread,
     }
 }

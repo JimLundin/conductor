@@ -4,13 +4,15 @@ use std::io::{self, Write as _};
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 
-use home::checkout::{self, Probe};
+use home::checkout;
 use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
 use home::repos::verify::{self, Ran, Verify, Verifying};
-use home::repos::{self, Checkout, New, Placed, Scanning};
+use home::repos::{self, New, Placed, Scanning};
 use home_files::git;
+use vcs::discovery::Probe;
+use vcs::status::Checkout;
 
 pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
     match local {
@@ -49,7 +51,7 @@ fn here(root: &Path, home: &Snapshot) -> Here {
                 &root.join(&path),
                 &["status", "--porcelain=v2", "--branch"],
             )
-            .map(|porcelain| Checkout::parse(&porcelain));
+            .map(|porcelain| home_files::git::status(&porcelain));
             (path, state)
         })
         .collect();
@@ -69,7 +71,7 @@ fn verdicts(root: &Path, here: &Here) -> String {
                 &root.join(&path),
                 &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             )?;
-            Some((path, verify::origin_default(&symbolic)?))
+            Some((path, home_files::git::origin_default(&symbolic)?))
         })
         .collect();
     verify::verifying(&shown(root), &here.placed, &here.states, &defaults)

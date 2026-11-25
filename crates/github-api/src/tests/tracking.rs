@@ -1,0 +1,313 @@
+use super::{Exchange, exchanges};
+use crate::{Client, Tracker, credential::Source};
+use github::access::Repository;
+use home::issue::{IssueState, ListPage, Lookup, ReadFailure};
+use home::{IssueId, ProjectId};
+use project_runtime::IssueTracker as _;
+use serde_json::{Value, json};
+
+const FIRST: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=1";
+const SECOND: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=2";
+const NUMBER: &str = "/repos/owner/work/issues/7";
+
+fn reply(path: &'static str, status: u16, body: &Value) -> Exchange {
+    Exchange {
+        path,
+        status,
+        auth: "Bearer fixture",
+        headers: Vec::new(),
+        body: body.to_string(),
+    }
+}
+
+fn with_header(
+    mut step: Exchange,
+    name: &'static str,
+    value: &'static str,
+) -> Exchange {
+    step.headers.push((name, value));
+    step
+}
+
+fn issue(number: u64, id: u64) -> Value {
+    let mut author = json!({"login":"reader","type":"User","id":1,"node_id":"user","site_admin":false,"gravatar_id":""});
+    for field in [
+        "avatar_url",
+        "url",
+        "html_url",
+        "followers_url",
+        "following_url",
+        "gists_url",
+        "starred_url",
+        "subscriptions_url",
+        "organizations_url",
+        "repos_url",
+        "events_url",
+        "received_events_url",
+    ] {
+        author[field] = json!("https://github.com/reader");
+    }
+    json!({
+        "id":id,"node_id":"I_test","url":format!("{{api}}/repos/owner/work/issues/{number}"),
+        "repository_url":"{api}/repos/owner/work","labels_url":"{api}/labels",
+        "comments_url":"{api}/comments","events_url":"{api}/events",
+        "html_url":format!("https://github.com/owner/work/issues/{number}"),
+        "number":number,"state":"open","title":"Native issue","body":"Visible human text",
+        "user":author,"labels":[],"assignees":[],"locked":false,"comments":3,
+        "created_at":"2026-01-01T12:00:00Z","updated_at":"2026-01-02T12:00:00Z"
+    })
+}
+
+fn pull() -> Value {
+    let mut value = issue(7, 901);
+    value["pull_request"] = json!({
+        "url":"{api}/pulls/7", "html_url":"https://github.com/owner/work/pull/7",
+        "diff_url":"{api}/diff","patch_url":"{api}/patch"
+    });
+    value
+}
+
+fn tracker(base: &str) -> anyhow::Result<Tracker> {
+    let client = Client::new(
+        Repository::parse("owner/work")?,
+        &Source::FineGrained {
+            token: "fixture".into(),
+        },
+        base,
+    )?;
+    let flow =
+        home::flow::load(include_str!("../../../home/src/flow/test-flow.toml"))
+            .map_err(anyhow::Error::msg)?;
+    let config =
+        github::configuration::load("", &flow).map_err(anyhow::Error::msg)?;
+    Ok(client.tracker(flow, config))
+}
+
+fn page(continuation: Option<String>) -> ListPage {
+    ListPage {
+        project: ProjectId::new(1),
+        continuation,
+    }
+}
+
+fn lookup(expected: Option<IssueId>) -> Lookup {
+    Lookup {
+        project: ProjectId::new(1),
+        reference: "#7".into(),
+        expected,
+    }
+}
+
+#[tokio::test]
+async fn all_issue_pages_are_authenticated_and_pull_requests_are_excluded()
+-> anyhow::Result<()> {
+    let (base, completed) = exchanges(vec![
+        with_header(
+            reply(FIRST, 200, &json!([pull()])),
+            "link",
+            "<{api}/repositories/88/issues?page=2>; rel=\"next\"",
+        ),
+        reply(SECOND, 200, &json!([issue(9, 802)])),
+        reply(NUMBER, 200, &pull()),
+    ])
+    .await?;
+    let tracker = tracker(&base)?;
+    let first = tracker.list(page(None)).await?;
+    assert_eq!(first.records, []);
+    assert!(first.next.is_some());
+    let second = tracker.list(page(first.next)).await?;
+    assert!(second.next.is_none());
+    let record = &second.records[0];
+    assert_eq!(record.id().key(), "802");
+    assert_eq!(record.id().authority(), base);
+    assert_eq!(
+        record.issue().map(|i| i.title.as_str()),
+        Some("Native issue")
+    );
+    assert_eq!(
+        record.locator.as_ref().map(|l| l.reference.as_str()),
+        Some("#9")
+    );
+    assert!(record.observed_at.is_some());
+    assert_eq!(
+        tracker.read(lookup(None)).await,
+        Err(ReadFailure::Unavailable)
+    );
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn redirects_verify_the_destination_and_rest_identity_before_returning_the_new_number()
+-> anyhow::Result<()> {
+    let moved = || {
+        with_header(
+            reply(NUMBER, 301, &json!({})),
+            "location",
+            "{api}/repositories/88/issues/12",
+        )
+    };
+    let repo = || {
+        reply(
+            "/repos/owner/work",
+            200,
+            &json!({"id":88,"name":"work","full_name":"owner/work","url":"{api}/repos/owner/work"}),
+        )
+    };
+    let resolved = "/repositories/88/issues/12";
+    let (base, completed) = exchanges(vec![
+        moved(),
+        repo(),
+        reply(resolved, 200, &issue(12, 901)),
+        moved(),
+        repo(),
+        reply(resolved, 200, &issue(12, 999)),
+        with_header(
+            reply(NUMBER, 301, &json!({})),
+            "location",
+            "https://elsewhere.example/repos/owner/work/issues/12",
+        ),
+        with_header(
+            reply(NUMBER, 301, &json!({})),
+            "location",
+            "{api}/repos/owner/different/issues/12",
+        ),
+        with_header(
+            reply(NUMBER, 301, &json!({})),
+            "location",
+            "{api}/repositories/99/issues/12",
+        ),
+        repo(),
+    ])
+    .await?;
+    let tracker = tracker(&base)?;
+    let expected = IssueId::new(&base, "901");
+    let record = tracker.read(lookup(expected.clone())).await?;
+    assert_eq!(record.id().key(), "901");
+    assert_eq!(
+        record.locator.as_ref().map(|l| l.reference.as_str()),
+        Some("#12")
+    );
+    for _ in 0..4 {
+        assert_eq!(
+            tracker.read(lookup(expected.clone())).await,
+            Err(ReadFailure::IdentityConflict)
+        );
+    }
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn permission_rate_limits_and_confirmed_deletion_remain_distinct()
+-> anyhow::Result<()> {
+    let error = json!({"message":"fixture response"});
+    let (base, completed) = exchanges(vec![
+        reply(NUMBER, 404, &error),
+        reply(NUMBER, 410, &error),
+        reply(NUMBER, 410, &error),
+        reply(FIRST, 403, &error),
+        with_header(reply(FIRST, 403, &error), "x-ratelimit-remaining", "0"),
+        with_header(reply(FIRST, 403, &error), "retry-after", "30"),
+        reply(
+            FIRST,
+            403,
+            &json!({"message":"You have exceeded a secondary rate limit."}),
+        ),
+        reply(FIRST, 429, &error),
+        reply(FIRST, 401, &error),
+    ])
+    .await?;
+    let tracker = tracker(&base)?;
+    let expected = IssueId::new(&base, "901");
+    assert_eq!(
+        tracker.read(lookup(expected.clone())).await,
+        Err(ReadFailure::Unavailable)
+    );
+    assert!(matches!(
+        tracker.read(lookup(expected)).await?.state,
+        IssueState::Deleted(_)
+    ));
+    assert_eq!(tracker.read(lookup(None)).await, Err(ReadFailure::Deleted));
+    for expected in [
+        ReadFailure::PermissionDenied,
+        ReadFailure::RateLimited,
+        ReadFailure::RateLimited,
+        ReadFailure::RateLimited,
+        ReadFailure::RateLimited,
+        ReadFailure::AuthenticationRefused,
+    ] {
+        assert_eq!(tracker.list(page(None)).await, Err(expected));
+    }
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_foreign_page_or_mismatched_issue_url_cannot_replace_the_project_snapshot()
+-> anyhow::Result<()> {
+    let list = json!([issue(7, 901)]);
+    let foreign = |link| with_header(reply(FIRST, 200, &list), "link", link);
+    let mut wrong_repository = issue(7, 901);
+    wrong_repository["repository_url"] = json!("{api}/repos/owner/transferred");
+    let (base, completed) = exchanges(vec![
+        foreign("<https://elsewhere.example/repos/owner/work/issues?page=2>; rel=\"next\""),
+        foreign("<{api}/repos/elsewhere/work/issues?page=2>; rel=\"next\""),
+        foreign("<{api}/repos/owner/work/issues?page=1>; rel=\"next\""),
+        reply(NUMBER, 200, &wrong_repository),
+        reply(NUMBER, 200, &issue(3,901)),
+    ]).await?;
+    let tracker = tracker(&base)?;
+    for _ in 0..3 {
+        assert_eq!(
+            tracker.list(page(None)).await,
+            Err(ReadFailure::InvalidResponse)
+        );
+    }
+    for _ in 0..2 {
+        assert_eq!(
+            tracker.read(lookup(None)).await,
+            Err(ReadFailure::IdentityConflict)
+        );
+    }
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unrecognized_native_reason_preserves_the_issue_and_its_diagnostic()
+-> anyhow::Result<()> {
+    let mut unusual = issue(7, 901);
+    unusual["state"] = json!("closed");
+    unusual["state_reason"] = json!("future_reason");
+    let (base, completed) =
+        exchanges(vec![reply(NUMBER, 200, &unusual)]).await?;
+    let observed = tracker(&base)?.read(lookup(None)).await?;
+    assert_eq!(observed.id().key(), "901");
+    assert!(
+        matches!(observed.state, IssueState::Invalid(_))
+            || !observed.findings.is_empty()
+    );
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn only_the_issued_display_reference_can_address_an_issue()
+-> anyhow::Result<()> {
+    let (base, completed) = exchanges(Vec::new()).await?;
+    completed.await??;
+    let tracker = tracker(&base)?;
+    for alias in ["7", "#07", "#+7", "#0", "#-7", " #7"] {
+        let request = Lookup {
+            reference: alias.into(),
+            ..lookup(None)
+        };
+        assert_eq!(
+            tracker.read(request).await,
+            Err(ReadFailure::InvalidResponse),
+            "{alias}"
+        );
+    }
+    Ok(())
+}

@@ -1,5 +1,4 @@
 #![cfg_attr(not(test), no_std)]
-#![feature(context_ext, local_waker)]
 
 extern crate alloc;
 

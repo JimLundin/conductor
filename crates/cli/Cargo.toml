@@ -13,6 +13,9 @@ path = "src/main.rs"
 layer = "shell"
 
 [dependencies]
+github-api = { path = "../github-api" }
+project-runtime = { path = "../project-runtime" }
+vcs-git2 = { path = "../vcs-git2" }
 rpassword = "7.4.0"
 zeroize = "1.8.2"
 anyhow.workspace = true

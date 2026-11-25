@@ -8,7 +8,7 @@ pub(crate) use peer::{Protocol, follow_when_enrolled, refresh};
 
 pub use credentials::Sharing;
 pub(crate) use credentials::{configure, follow_credentials, share_credential};
-pub use member::Membership;
+pub use member::{Membership, project_credential};
 pub(crate) type Slot = tokio::sync::watch::Sender<Option<Membership>>;
 
 use std::io::Write;
@@ -166,6 +166,25 @@ pub async fn revoke(data: Option<PathBuf>, node: &str) -> anyhow::Result<()> {
         "Revoked {node}. Rotate the API keys and tokens the fleet shares. For a revoked host signed in to a subscription, sign it out in that provider's account settings."
     )?;
     Ok(())
+}
+
+pub async fn change_project_credential(
+    data: &Path,
+    reference: String,
+    entry: Option<secrecy::SecretString>,
+) -> anyhow::Result<()> {
+    use secrecy::ExposeSecret as _;
+    let name = home::backend::CredentialRef::try_from(reference)
+        .map_err(anyhow::Error::msg)?;
+    ensure!(name.is_fleet(), "expected a fleet credential reference");
+    let _exclusive = exclusive(data)?;
+    let membership = local(data)?;
+    let record = entry.map(|secret| {
+        host::fleet::ProjectCredential::new(secret.expose_secret().to_owned())
+    });
+    membership
+        .change_project_credential(name.into(), record)
+        .await
 }
 
 pub fn restore(

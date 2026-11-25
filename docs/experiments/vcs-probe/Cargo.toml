@@ -1,0 +1,58 @@
+[workspace]
+members = ["core"]
+resolver = "3"
+
+[package]
+name = "vcs-probe"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Disposable repository probes for Conductor's Git adapter decision"
+repository = "https://github.com/JimLundin/conductor"
+keywords = ["git", "prototype"]
+categories = ["development-tools"]
+
+[package.metadata.standards]
+layer = "shell"
+
+[dependencies]
+anyhow = "1.0.104"
+git2 = { version = "=0.21.0", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tempfile = "3.27.0"
+vcs-probe-core = { path = "core" }
+
+[workspace.lints.rust]
+warnings = "deny"
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+cargo = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+allow_attributes = "deny"
+allow_attributes_without_reason = "deny"
+undocumented_unsafe_blocks = "deny"
+shadow_reuse = "deny"
+shadow_same = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+exit = "deny"
+
+[lints]
+workspace = true
+
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

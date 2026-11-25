@@ -16,6 +16,7 @@ use crate::{IssueId, ProjectId};
 pub struct Issue {
     pub id: IssueId,
     pub project: ProjectId,
+    pub created: Option<u64>,
     pub title: String,
     pub kind: String,
     pub status: String,
@@ -26,6 +27,7 @@ pub struct Issue {
     pub sections: Vec<Section>,
     pub checklist: Vec<ChecklistItem>,
     pub log: Vec<Entry>,
+    pub notes: Vec<Note>,
     pub branch: String,
     pub canvases: Vec<CanvasEntry>,
 }
@@ -293,6 +295,14 @@ pub enum ChecklistChange {
 pub struct Item {
     pub index: usize,
     pub seen: Option<Vec<ChecklistItem>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Note {
+    pub id: String,
+    pub author: String,
+    pub created: u64,
+    pub text: String,
 }
 
 #[cfg(test)]

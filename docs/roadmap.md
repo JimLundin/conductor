@@ -182,8 +182,8 @@ What is built and what comes next. Update it in the commit that changes it.
   `HostLink`, the browser e2e and the `headless` example are gone; nothing
   compiles to wasm but `crates/web-iroh`, iroh in the browser as a byte
   pipe to one host through its relay. The client link is JSON (ALPN
-  `conductor/49`, encoded by `link::frame`), with postcard kept between
-  hosts (`conductor-fleet/4`, encoded by `host::fleet::frame`); signed fleet payloads are signed
+  `conductor/50`, encoded by `link::frame`), with postcard kept between
+  hosts (`conductor-fleet/5`, encoded by `host::fleet::frame`); signed fleet payloads are signed
   over their exact JSON bytes and verified before they are parsed. The
   app's Effect Schemas are generated from `link`'s JSON Schema into
   `web/core/src/schemas/` (`tools/schemas.sh`, the `schemas` suite). `web/` is

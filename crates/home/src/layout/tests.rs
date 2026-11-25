@@ -1,7 +1,7 @@
 use crate::ProjectId;
 
 use super::{IssueLocation, inputs, issue_files, issue_stem, project_file};
-use crate::flow::graph::File;
+use crate::issue::storage::File;
 
 fn alpha() -> ProjectId {
     ProjectId::parse("a1b2c3").unwrap_or(ProjectId::new(0))

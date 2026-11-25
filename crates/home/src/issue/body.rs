@@ -1,31 +1,18 @@
-use alloc::collections::BTreeMap;
+use crate::issue::{ChecklistItem, Entry, Section};
+use crate::prelude::*;
 use alloc::string::ToString;
 
-use crate::issue::{ChecklistItem, Entry, Section};
-use toml::{Spanned, Table, Value};
-use toml_parser::{Source, lexer::TokenKind};
-
-use crate::prelude::*;
-
-pub const ID: &str = "id";
-pub const TITLE: &str = "title";
-pub const KIND: &str = "kind";
-pub const STATUS: &str = "status";
-pub const STAGE: &str = "stage";
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Front {
-    pub id: Option<String>,
-    pub title: Option<String>,
-    pub kind: Option<String>,
-    pub status: Option<String>,
-    pub stage: Option<String>,
-    pub rest: Table,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Document {
-    front: Vec<String>,
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(from = "String", into = "String")]
+pub struct Body {
     rest: Vec<String>,
 }
 
@@ -53,83 +40,30 @@ struct Place {
     outside_code_fence: bool,
 }
 
-impl Document {
-    pub fn of(text: &str) -> Result<Self, String> {
-        let unix = text
-            .strip_prefix('\u{feff}')
-            .unwrap_or(text)
-            .replace("\r\n", "\n");
-        let missing = || String::from("it has no +++ front matter");
-        let mut lines = unix.split('\n');
-        if lines.next() != Some("+++") {
-            return Err(missing());
-        }
-        let mut front = Vec::new();
-        loop {
-            match lines.next() {
-                Some("+++") => break,
-                Some(line) => front.push(String::from(line)),
-                None => return Err(missing()),
-            }
-        }
-        let rest = lines.collect::<Vec<&str>>().join("\n");
-        Ok(Self {
-            front,
-            rest: rest.lines().map(String::from).collect(),
-        })
-    }
-
+impl Body {
     #[must_use]
-    pub fn new(
-        front: &[(String, String)],
-        sections: &[String],
-        first: &Entry,
-    ) -> Self {
+    pub fn new(sections: &[String], first: &Entry) -> Self {
         let mut rest = Vec::from([String::new()]);
         for heading in sections {
             rest.extend([format!("## {heading}"), String::new()]);
         }
-        rest.extend([format!("## {}", Part::Notes.heading()), String::new()]);
+        rest.extend([String::from("## Notes"), String::new()]);
         rest.extend(log_lines(first));
+        Self { rest }
+    }
+
+    #[must_use]
+    pub fn of(text: &str) -> Self {
         Self {
-            front: front
-                .iter()
-                .map(|(key, value)| format!("{key} = {value}"))
-                .collect(),
-            rest,
+            rest: text.lines().map(String::from).collect(),
         }
     }
 
     #[must_use]
     pub fn text(&self) -> String {
-        let rest = self
-            .rest
+        self.rest
             .iter()
-            .fold(String::new(), |text, line| format!("{text}{line}\n"));
-        format!("+++\n{}\n+++\n{rest}", self.front.join("\n"))
-    }
-
-    fn front(&self) -> String {
-        self.front.join("\n")
-    }
-
-    pub fn front_matter(&self) -> Result<Front, String> {
-        let mut rest = toml::from_str::<Table>(&self.front())
-            .map_err(|err| format!("its front matter: {err}"))?;
-        let mut word = |key: &str| match rest.remove(key) {
-            Some(Value::String(text)) => Some(text),
-            _ => None,
-        };
-        let (id, title, kind, status, stage) =
-            (word(ID), word(TITLE), word(KIND), word(STATUS), word(STAGE));
-        Ok(Front {
-            id,
-            title,
-            kind,
-            status,
-            stage,
-            rest,
-        })
+            .fold(String::new(), |text, line| format!("{text}{line}\n"))
     }
 
     #[must_use]
@@ -205,45 +139,6 @@ impl Document {
             }
         }
         log
-    }
-
-    pub fn set(&mut self, key: &str, value: &str) -> Option<()> {
-        let mut front = self.front();
-        let spans =
-            toml::from_str::<BTreeMap<String, Spanned<Value>>>(&front).ok()?;
-        if let Some(found) = spans.get(key) {
-            let comments = array_with_comments(front.get(found.span())?, value);
-            front.replace_range(
-                found.span(),
-                comments.as_deref().unwrap_or(value),
-            );
-        } else {
-            let last_value = spans
-                .values()
-                .filter(|item| !item.get_ref().is_table())
-                .map(|item| item.span().end)
-                .max();
-            if let Some(end) = last_value {
-                let at = front
-                    .get(end..)?
-                    .find('\n')
-                    .map_or(front.len(), |offset| end + offset);
-                front.insert_str(at, &format!("\n{key} = {value}"));
-            } else {
-                front.insert_str(0, &format!("{key} = {value}\n"));
-            }
-        }
-        self.front = front.split('\n').map(String::from).collect();
-        Some(())
-    }
-
-    #[must_use]
-    pub fn has_comment(&self, text: &str) -> bool {
-        self.front.contains(&comment_line(text))
-    }
-
-    pub fn comment(&mut self, text: &str) {
-        self.front.push(comment_line(text));
     }
 
     pub fn body(&mut self, body: &str) {
@@ -368,11 +263,6 @@ impl Document {
 }
 
 #[must_use]
-pub fn comment_line(text: &str) -> String {
-    format!("# {text}")
-}
-
-#[must_use]
 pub fn checklist_line(item: &ChecklistItem) -> String {
     let mark = if item.done { 'x' } else { ' ' };
     format!("- [{mark}] {}", item.text)
@@ -414,27 +304,91 @@ fn heading_of(line: &str) -> &str {
     line.strip_prefix("## ").unwrap_or(line).trim()
 }
 
-fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
-    let mut fence = None;
-    rest.iter().map(move |line| {
-        let previously_open = fence.is_some();
+#[derive(Default)]
+struct Fences {
+    open: Option<(u8, usize)>,
+}
+
+enum Line<'a> {
+    Prose,
+    Opening(&'a str),
+    Fenced,
+    Closing,
+}
+
+impl Fences {
+    fn line<'a>(&mut self, line: &'a str) -> Line<'a> {
         if let Some((marker, width, suffix)) = fence_line(line) {
-            match fence {
+            match self.open {
                 Some((open, minimum))
                     if open == marker
                         && width >= minimum
                         && suffix.trim().is_empty() =>
                 {
-                    fence = None;
+                    self.open = None;
+                    return Line::Closing;
                 }
                 None if marker == b'~' || !suffix.contains('`') => {
-                    fence = Some((marker, width));
+                    self.open = Some((marker, width));
+                    return Line::Opening(suffix.trim());
                 }
                 _ => {}
             }
         }
-        (line.as_str(), !previously_open && fence.is_none())
+        if self.open.is_some() {
+            Line::Fenced
+        } else {
+            Line::Prose
+        }
+    }
+}
+
+fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
+    let mut fences = Fences::default();
+    rest.iter().map(move |line| {
+        (line.as_str(), matches!(fences.line(line), Line::Prose))
     })
+}
+
+pub fn footer<'a>(
+    text: &'a str,
+    info: &str,
+) -> Result<Option<(&'a str, &'a str)>, String> {
+    let mut fences = Fences::default();
+    let mut opened = None;
+    let mut closed = None;
+    let mut offset = 0;
+    for raw in text.split_inclusive('\n') {
+        let end = offset + raw.len();
+        match fences.line(raw.trim_end_matches(['\r', '\n'])) {
+            Line::Opening(name) if name == info => {
+                if closed.is_some() {
+                    return Err(format!("duplicate {info} footer"));
+                }
+                opened = Some((offset, end));
+            }
+            Line::Closing => {
+                if let Some((start, contents)) = opened.take() {
+                    closed = Some((start, contents..offset, end));
+                }
+            }
+            _ => {}
+        }
+        offset = end;
+    }
+    if opened.is_some() {
+        return Err(format!("unclosed {info} footer"));
+    }
+    closed
+        .map(|(start, contents, end)| {
+            if !text[end..].trim().is_empty() {
+                return Err(format!(
+                    "the {info} footer must be the final block"
+                ));
+            }
+            Ok((&text[..start], &text[contents]))
+        })
+        .transpose()
 }
 
 fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
@@ -450,26 +404,14 @@ fn fence_line(line: &str) -> Option<(u8, usize, &str)> {
     Some((marker, width, rest.get(width..)?))
 }
 
-fn array_with_comments(previous: &str, value: &str) -> Option<String> {
-    let elements = value.strip_prefix('[')?.strip_suffix(']')?;
-    let source = Source::new(previous);
-    let mut comments = String::new();
-    for token in source
-        .lex()
-        .filter(|token| token.kind() == TokenKind::Comment)
-    {
-        let comment = source.get(token)?;
-        comments.push_str("    ");
-        comments.push_str(comment.as_str());
-        comments.push('\n');
+impl From<String> for Body {
+    fn from(text: String) -> Self {
+        Self::of(&text)
     }
-    if comments.is_empty() {
-        return None;
+}
+
+impl From<Body> for String {
+    fn from(body: Body) -> Self {
+        body.text()
     }
-    if !elements.is_empty() {
-        comments.push_str("    ");
-        comments.push_str(elements);
-        comments.push('\n');
-    }
-    Some(format!("[\n{comments}]"))
 }

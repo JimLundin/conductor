@@ -1,23 +1,44 @@
 use std::collections::BTreeMap;
 
-use super::{
-    Ran, Reason, Verify, Verifying, asks, origin_default, verdict, verifying,
-};
+use super::{Ran, Reason, Verify, Verifying, asks, verdict, verifying};
 use crate::ProjectId;
-use crate::checkout::Probe;
 use crate::project::Project;
-use crate::repos::{Checkout, Placed, placed};
+use crate::repos::{Placed, placed};
+use vcs::discovery::Probe;
+use vcs::status::{Checkout, Distance, Upstream};
 
 const STANDARDS: &str = "5d923acab7b653f45219ab8ee5feeb5b5ddd9318";
 const APP: &str = "6094e296778e04d108490df49fa9a20d4b382c60";
-const LEVEL: &str = "# branch.oid 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\n\
-                     # branch.head main\n\
-                     # branch.upstream origin/main\n\
-                     # branch.ab +0 -0\n";
-const BEHIND: &str = "# branch.oid 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\n\
-                      # branch.head main\n\
-                      # branch.upstream origin/main\n\
-                      # branch.ab +0 -1\n";
+#[derive(Clone, Copy)]
+enum State {
+    Level,
+    Behind,
+    Dirty,
+    Work,
+}
+
+const LEVEL: State = State::Level;
+const BEHIND: State = State::Behind;
+
+fn checkout(state: State) -> Checkout {
+    let branch = if matches!(state, State::Work) {
+        "work"
+    } else {
+        "main"
+    };
+    Checkout {
+        commit: Some(String::from("1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b")),
+        branch: Some(String::from(branch)),
+        upstream: Some(Upstream {
+            name: format!("origin/{branch}"),
+            distance: Some(Distance {
+                ahead: 0,
+                behind: u32::from(matches!(state, State::Behind)),
+            }),
+        }),
+        changed: usize::from(matches!(state, State::Dirty)),
+    }
+}
 
 fn project(id: &str, name: &str, root: &str) -> Project {
     Project {
@@ -28,6 +49,7 @@ fn project(id: &str, name: &str, root: &str) -> Project {
         root: String::from(root),
         profiles: Vec::new(),
         provides: Vec::new(),
+        backends: crate::backend::Backends::default(),
     }
 }
 
@@ -53,11 +75,9 @@ fn home(profiles: &[&str], checkouts: &[&str]) -> Vec<Placed> {
     placed(&[standards, app], &probes)
 }
 
-fn states(of: &[(&str, &str)]) -> BTreeMap<String, Option<Checkout>> {
+fn states(of: &[(&str, State)]) -> BTreeMap<String, Option<Checkout>> {
     of.iter()
-        .map(|(path, porcelain)| {
-            (String::from(*path), Some(Checkout::parse(porcelain)))
-        })
+        .map(|(path, state)| (String::from(*path), Some(checkout(*state))))
         .collect()
 }
 
@@ -107,13 +127,7 @@ fn each_profile_of_a_project_level_at_its_default_head_is_verified_from_the_stan
 
 #[test]
 fn a_project_whose_checkout_is_off_its_default_head_or_changed_is_unchecked() {
-    for state in [
-        BEHIND,
-        "# branch.oid 1a2b\n# branch.head work\n\
-         # branch.upstream origin/work\n# branch.ab +0 -0\n",
-        "# branch.oid 1a2b\n# branch.head main\n\
-         # branch.upstream origin/main\n# branch.ab +0 -0\n? new.py\n",
-    ] {
+    for state in [BEHIND, State::Work, State::Dirty] {
         assert_eq!(
             said(&verifying(
                 "/h",
@@ -129,12 +143,7 @@ fn a_project_whose_checkout_is_off_its_default_head_or_changed_is_unchecked() {
 
 #[test]
 fn a_behind_or_dirty_standards_checkout_gives_only_its_own_line() {
-    for state in [
-        BEHIND,
-        "# branch.oid 1a2b\n# branch.head main\n\
-         # branch.upstream origin/main\n# branch.ab +0 -0\n\
-         1 .M N... 100644 100644 100644 1a2b 1a2b lib.sh\n",
-    ] {
+    for state in [BEHIND, State::Dirty] {
         assert_eq!(
             said(&verifying(
                 "/h",
@@ -211,12 +220,6 @@ fn only_checkouts_of_projects_with_or_providing_profiles_are_asked_their_default
         ["app", "standards"]
     );
     assert_eq!(asks(&home(&[], &[])), [] as [&str; 0]);
-}
-
-#[test]
-fn origin_s_default_branch_reads_from_its_symbolic_ref() {
-    assert_eq!(origin_default("origin/main\n").as_deref(), Some("main"));
-    assert_eq!(origin_default("upstream/main\n"), None);
 }
 
 fn ran(passed: bool, out: &str, err: &str) -> Ran {
