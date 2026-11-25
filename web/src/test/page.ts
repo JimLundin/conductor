@@ -1,32 +1,34 @@
+import { Array as Arr, Effect } from "effect";
+import type { Boundary, Store } from "#ui/store.ts";
+import { KeyValueStore } from "effect/persistence";
+import type { Pipe } from "#ui/pipe.ts";
+import { dialing } from "#ui/test/replay.ts";
+
 // A page for the store in tests: in-memory storage, a fragment the test reads, and a pipe.
-import { Effect } from "effect";
-import { dialing } from "./link/replay.ts";
-import type { Pipe } from "./pipe.ts";
-import type { Boundary, Store } from "./store.ts";
 
 // An in-memory Web Storage, holding `entries` to start with.
-const memoryStorage = (entries: readonly (readonly [string, string])[] = []): Storage => {
+const memoryStorage = (entries: ReadonlyArray<readonly [string, string]> = []): Storage => {
   const items = new Map(entries);
   return {
+    clear: (): void => {
+      items.clear();
+    },
+    getItem: (key: string): string | null => items.get(key) ?? null,
+    key: (index: number): string | null => [...items.keys()][index] ?? null,
     get length(): number {
       return items.size;
-    },
-    key: (index: number): string | null => [...items.keys()][index] ?? null,
-    getItem: (key: string): string | null => items.get(key) ?? null,
-    setItem: (key: string, value: string): void => {
-      items.set(key, value);
     },
     removeItem: (key: string): void => {
       items.delete(key);
     },
-    clear: (): void => {
-      items.clear();
+    setItem: (key: string, value: string): void => {
+      items.set(key, value);
     },
   };
 };
 
-const keysOf = (storage: Storage): readonly string[] =>
-  Array.from({ length: storage.length }, (_, index) => storage.key(index) ?? "");
+const keysOf = (storage: Storage): ReadonlyArray<string> =>
+  storage.length === 0 ? [] : Arr.makeBy(storage.length, (index) => storage.key(index) ?? "");
 
 interface Page {
   readonly boundary: Boundary;
@@ -45,21 +47,29 @@ const page = (
     fragment = next;
   };
   return {
+    at: (): string => fragment,
     boundary: {
-      pipe,
       client: "test-client",
-      storage,
       fragment: (): string => fragment,
       go: move,
+      pipe,
       replace: move,
+      storage: Effect.runSync(
+        Effect.provide(
+          KeyValueStore.KeyValueStore,
+          KeyValueStore.layerStorage(() => storage),
+        ),
+      ),
     },
-    at: (): string => fragment,
   };
 };
 
 // Resolves once `holds` is true of the store.
-const when = (store: Store, holds: (store: Store) => boolean): Effect.Effect<void> =>
-  Effect.callback<void>((resume) => {
+const when: (store: Store, holds: (store: Store) => boolean) => Effect.Effect<void> = (
+  store,
+  holds,
+) =>
+  Effect.callback((resume) => {
     if (holds(store)) {
       resume(Effect.void);
       return;
