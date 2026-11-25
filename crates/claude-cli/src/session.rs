@@ -29,7 +29,7 @@ pub struct ClaudeOptions {
     pub effort: Option<Effort>,
     pub permission_mode: PermissionMode,
     pub resume: Resume,
-    pub project_name: Option<String>,
+    pub project_name: Option<agents::runtime::Session>,
     pub setting_sources: Option<Vec<SettingSource>>,
     pub instructions: Option<String>,
     pub stdout_log: Option<PathBuf>,
@@ -314,7 +314,7 @@ fn command(opts: &ClaudeOptions, id: &SessionId, sandbox: Sandbox) -> Command {
     let launch = Launch {
         home: opts.home.kind(),
         credential: opts.credential.clone(),
-        project_name: opts.project_name.clone(),
+        project_name: opts.project_name,
         permission_mode: opts.permission_mode,
         resume: opts.resume.clone(),
         id: id.clone(),
@@ -392,7 +392,9 @@ mod tests {
                 effort: Some(Effort::XHigh),
                 permission_mode: PermissionMode::Default,
                 resume: Resume::Session(SessionId(String::from("0b1c"))),
-                project_name: Some(String::from("01JCDZ6Q0Y3K7V8M2N4P5R6S7T")),
+                project_name: Some(agents::runtime::Session(
+                    0x0193_1bf3_5c1e_1ccf_b450_5525_8b83_64fa,
+                )),
                 setting_sources: Some(Vec::from([
                     SettingSource::Project,
                     SettingSource::Local,

@@ -91,6 +91,22 @@ pub fn setup_token_code(input: &str) -> Option<&str> {
     .then_some(code)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalLine(String);
+
+impl TerminalLine {
+    #[must_use]
+    pub fn whole(bytes: &[u8]) -> Option<Self> {
+        (bytes.last() == Some(&b'\n'))
+            .then(|| Self(String::from_utf8_lossy(bytes).into_owned()))
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.0
+    }
+}
+
 #[derive(Default)]
 pub struct SetupTokenOutput {
     succeeded: bool,
@@ -98,8 +114,8 @@ pub struct SetupTokenOutput {
 
 impl SetupTokenOutput {
     #[must_use]
-    pub fn line(&mut self, line: &str) -> Option<String> {
-        let text = plain(line);
+    pub fn line(&mut self, line: &TerminalLine) -> Option<String> {
+        let text = plain(line.text());
         self.succeeded |= text
             .contains("Long-lived authentication token created successfully!");
         if !self.succeeded {
@@ -124,7 +140,8 @@ mod tests {
     use agents::{HomeKind, Shown, plain};
 
     use super::{
-        SetupTokenOutput, setup_token_code, setup_token_link, sign_in,
+        SetupTokenOutput, TerminalLine, setup_token_code, setup_token_link,
+        sign_in,
     };
 
     const AUTH_URL: &str = "https://claude.com/cai/oauth/authorize?response_type=code&code_challenge_method=S256&code_challenge=challenge&state=state&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback";
@@ -159,18 +176,33 @@ mod tests {
     #[test]
     fn setup_token_requires_success_and_accepts_only_terminal_text_as_code() {
         let mut output = SetupTokenOutput::default();
+        let mut line = |text: &str| {
+            TerminalLine::whole(format!("{text}\n").as_bytes())
+                .and_then(|line| output.line(&line))
+        };
         let printed = "\x1b[32msk-ant-oat01-synthetic-credential-000\x1b[0m";
-        assert!(output.line(printed).is_none());
+        assert!(line(printed).is_none());
         assert!(
-            output
-                .line("Long-lived authentication token created successfully!")
+            line("Long-lived authentication token created successfully!")
                 .is_none()
         );
-        assert!(output.line("sk-ant-oat01-partial").is_none());
-        assert!(output.line(printed).is_some());
+        assert!(line("sk-ant-oat01-partial").is_none());
+        assert!(line(printed).is_some());
         assert!(setup_token_code(" code#state ").is_some());
         assert!(setup_token_code("code\rstate").is_none());
         assert!(setup_token_code("code\x1b[1m").is_none());
+    }
+
+    #[test]
+    fn a_terminal_line_is_only_read_once_it_ends() {
+        assert_eq!(
+            (
+                TerminalLine::whole(b"sk-ant-oat01-partial"),
+                TerminalLine::whole(b"Visit: link\r\n")
+                    .map(|line| String::from(line.text())),
+            ),
+            (None, Some(String::from("Visit: link\r\n")))
+        );
     }
 
     fn lines(text: &str) -> Vec<String> {

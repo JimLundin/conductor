@@ -30,8 +30,8 @@ pub use protocol::{
     parse_line,
 };
 pub use sign_in::{
-    SetupTokenOutput, setup_token_code, setup_token_link, setup_token_run,
-    sign_in,
+    SetupTokenOutput, TerminalLine, setup_token_code, setup_token_link,
+    setup_token_run, sign_in,
 };
 
 pub const PROVIDER: agents::Provider = agents::Provider::new("claude");

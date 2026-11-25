@@ -120,7 +120,7 @@ impl<'a, T> Plan<'a, T> {
 }
 
 impl Output {
-    pub const CAPTURE: usize = PATCH_LIMIT + 1;
+    pub const CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT: usize = PATCH_LIMIT + 1;
 }
 
 impl GitError {
