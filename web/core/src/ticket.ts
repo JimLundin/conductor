@@ -1,14 +1,15 @@
+import { Data, Result } from "effect";
+import type { Ticket } from "#core/schemas/index";
+import type { Unit } from "#core/data";
 // A ticket's text form, as crates/link/src/ticket.rs writes it: base64url without padding of
 // `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`. The
-// generated schemas carry only its JSON form, so this is the app's one reader of the text.
-import { Data, Result } from "effect";
-import type { Ticket } from "./schemas/index.ts";
+// Generated schemas carry only its JSON form, so this is the app's one reader of the text.
 
 type TicketError = Data.TaggedEnum<{
-  readonly Encoding: Record<never, never>;
-  readonly Truncated: Record<never, never>;
+  readonly Encoding: Unit;
+  readonly Truncated: Unit;
   readonly Version: { readonly version: number };
-  readonly RelayUrl: Record<never, never>;
+  readonly RelayUrl: Unit;
 }>;
 
 const TicketError = Data.taggedEnum<TicketError>();
@@ -21,61 +22,68 @@ const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 const bitsPerDigit = 6;
 const bitsPerByte = 8;
 const digitsPerGroup = 4;
-const byteMask = 0xff;
+const byteValues = 256;
+const binaryRadix = 2;
+const empty = 0;
+const previous = 1;
+const versionLength = 1;
+const missing = -1;
 
 // One group of up to four digits as its bytes, or undefined when a lone digit can't make a
-// byte or the bits after the last byte aren't zero, as the Rust decoder refuses.
-const group = (digits: readonly number[]): readonly number[] | undefined => {
+// Byte or the bits after the last byte aren't zero, as the Rust decoder refuses.
+const group = (digits: ReadonlyArray<number>): ReadonlyArray<number> | undefined => {
   const bits = digits.length * bitsPerDigit;
   const count = Math.floor(bits / bitsPerByte);
   const spare = bits - count * bitsPerByte;
-  const value = digits.reduce((word, digit) => word * 2 ** bitsPerDigit + digit, 0);
-  if (count === 0 || value % 2 ** spare !== 0) {
+  const value = digits.reduce((word, digit) => word * binaryRadix ** bitsPerDigit + digit, empty);
+  if (count === empty || value % binaryRadix ** spare !== empty) {
     return undefined;
   }
-  const word = Math.floor(value / 2 ** spare);
+  const word = Math.floor(value / binaryRadix ** spare);
   return Array.from(
     { length: count },
-    (_, index) => Math.floor(word / 2 ** (bitsPerByte * (count - 1 - index))) & byteMask,
+    (_unused, index) =>
+      Math.floor(word / binaryRadix ** (bitsPerByte * (count - previous - index))) % byteValues,
   );
 };
 
-const unbase64url = (text: string): Uint8Array | undefined => {
-  const digits = [...text].map((character) => alphabet.indexOf(character));
-  if (digits.includes(-1)) {
+const unbase64url = (text: string): ReadonlyArray<number> | undefined => {
+  const digits = text.split("").map((character) => alphabet.indexOf(character));
+  if (digits.includes(missing)) {
     return undefined;
   }
-  const groups = Array.from({ length: Math.ceil(digits.length / digitsPerGroup) }, (_, index) =>
-    group(digits.slice(index * digitsPerGroup, (index + 1) * digitsPerGroup)),
+  const groups = Array.from(
+    { length: Math.ceil(digits.length / digitsPerGroup) },
+    (_unused, index) =>
+      group(digits.slice(index * digitsPerGroup, (index + previous) * digitsPerGroup)),
   );
   if (groups.includes(undefined)) {
     return undefined;
   }
-  return Uint8Array.from(groups.flatMap((bytes) => bytes ?? []));
+  return groups.flatMap((bytes) => bytes ?? []);
 };
 
-const relayOf = (bytes: Uint8Array): string | undefined => {
-  try {
-    const relay = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return URL.canParse(relay) ? relay : undefined;
-  } catch {
-    return undefined;
-  }
+const relayOf = (bytes: ReadonlyArray<number>): string | undefined => {
+  const decoded = Result.try(() =>
+    new TextDecoder("utf-8", { fatal: true }).decode(Uint8Array.from(bytes)),
+  );
+  const relay = Result.getOrUndefined(decoded);
+  return relay !== undefined && URL.canParse(relay) ? relay : undefined;
 };
 
-const fields = (bytes: Uint8Array): Result.Result<Ticket, TicketError> => {
-  const relayAt = 1 + idLength + tokenLength;
+const fields = (bytes: ReadonlyArray<number>): Result.Result<Ticket, TicketError> => {
+  const relayAt = versionLength + idLength + tokenLength;
   if (bytes.length < relayAt) {
     return Result.fail(TicketError.Truncated());
   }
-  const relay = relayOf(bytes.subarray(relayAt));
+  const relay = relayOf(bytes.slice(relayAt));
   if (relay === undefined) {
     return Result.fail(TicketError.RelayUrl());
   }
   return Result.succeed({
-    host: Array.from(bytes.subarray(1, 1 + idLength)),
+    host: bytes.slice(versionLength, versionLength + idLength),
     relay,
-    token: Array.from(bytes.subarray(1 + idLength, relayAt)),
+    token: bytes.slice(versionLength + idLength, relayAt),
   });
 };
 
@@ -101,14 +109,14 @@ const joinMarker = "#join=";
 const parseJoin = (text: string): Result.Result<Ticket, TicketError> => {
   const trimmed = text.trim();
   const at = trimmed.lastIndexOf(joinMarker);
-  return parseTicket(at === -1 ? trimmed : trimmed.slice(at + joinMarker.length));
+  return parseTicket(at === missing ? trimmed : trimmed.slice(at + joinMarker.length));
 };
 
 const describeTicketError = TicketError.$match({
   Encoding: () => "The ticket is not base64url.",
+  RelayUrl: () => "The ticket's relay URL is invalid.",
   Truncated: () => "The ticket is truncated.",
   Version: ({ version: found }) => `Ticket version ${String(found)} is not supported.`,
-  RelayUrl: () => "The ticket's relay URL is invalid.",
 });
 
 export { describeTicketError, joinMarker, parseJoin, parseTicket, TicketError };

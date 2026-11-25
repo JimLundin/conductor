@@ -1,6 +1,6 @@
+import type { ClientName } from "#core/schemas/index";
 // The name the app gives in `Hello`: the kind of device it runs on, so a resolved card can say
-// which device approved.
-import type { ClientName } from "./schemas/index.ts";
+// Which device approved.
 
 interface Device {
   readonly marker: string;
@@ -9,8 +9,8 @@ interface Device {
 }
 
 // Checked in this order: an iPhone's or iPad's user agent also says "Mac OS X", and Android's
-// and ChromeOS's also say "Linux". iPadOS Safari sends a Mac's user agent, so a "Mac" with a
-// touchscreen is an iPad.
+// And ChromeOS's also say "Linux". iPadOS Safari sends a Mac's user agent, so a "Mac" with a
+// Touchscreen is an iPad.
 const devices = [
   { marker: "iPhone", name: "iPhone", touchName: "iPhone" },
   { marker: "iPad", name: "iPad", touchName: "iPad" },
@@ -19,14 +19,18 @@ const devices = [
   { marker: "Windows", name: "Windows", touchName: "Windows" },
   { marker: "Macintosh", name: "Mac", touchName: "iPad" },
   { marker: "Linux", name: "Linux", touchName: "Linux" },
-] as const satisfies readonly Device[];
+] as const satisfies ReadonlyArray<Device>;
 
 // More than one touch point is a touchscreen; a user agent naming no known device is a
 // "Browser".
-export const deviceName = (userAgent: string, touchPoints: number): ClientName => {
+const singleTouch = 1;
+
+const deviceName = (userAgent: string, touchPoints: number): ClientName => {
   const device = devices.find(({ marker }) => userAgent.includes(marker));
   if (device === undefined) {
     return "Browser";
   }
-  return touchPoints > 1 ? device.touchName : device.name;
+  return touchPoints > singleTouch ? device.touchName : device.name;
 };
+
+export { deviceName };
