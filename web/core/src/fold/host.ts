@@ -1,26 +1,26 @@
-// A host's welcome and feed folded into what the views render: the only fold of its events.
-import { isDelta } from "../link/feed.ts";
-import type { Update } from "../link/host.ts";
 import type {
   Catalog,
   Event,
   Feed,
-  SessionDirectory,
   Instances,
   Project,
+  SessionDirectory,
   SessionId,
   Welcome,
-} from "../schemas/index.ts";
-import { applyKind, createdSession, type Session } from "./session.ts";
+} from "#core/schemas/index";
+import { Update, isDelta } from "#core/link";
+import { applyKind, createdSession } from "#core/fold/session";
+import type { Session } from "#core/fold/session";
+// A host's welcome and feed folded into what the views render: the only fold of its events.
 
 interface Host {
-  // Null until the first welcome.
-  readonly name: string | null;
-  readonly catalog: Catalog | null;
+  // Absent until the first welcome.
+  readonly name: string | undefined;
+  readonly catalog: Catalog | undefined;
   readonly instances: Instances;
   // The home's projects, where a new session may start.
-  readonly projects: readonly Project[];
-  readonly sessions: ReadonlyMap<SessionId, Session>;
+  readonly projects: ReadonlyArray<Project>;
+  readonly sessions: Readonly<ReadonlyMap<SessionId, Session>>;
 }
 
 type Sessions = Host["sessions"];
@@ -53,20 +53,20 @@ const applyEvent = (sessions: Sessions, event: Event): Sessions => {
 };
 
 const emptyHost = (): Host => ({
-  name: null,
-  catalog: null,
+  catalog: undefined,
   instances: [],
+  name: undefined,
   projects: [],
   sessions: new Map(),
 });
 
 // A welcome replaces what the host advertises and keeps its sessions: a reconnect catches up
-// after them.
+// After them.
 const applyWelcome = (host: Host, welcome: Welcome): Host => ({
   ...host,
-  name: welcome.host,
   catalog: welcome.catalog,
   instances: welcome.instances,
+  name: welcome.host,
   projects: welcome.home?.projects ?? [],
 });
 
@@ -88,26 +88,23 @@ const applyFeed = (host: Host, feed: Feed): Host => {
 };
 
 // A link status is not part of the host's fold.
-const applyUpdate = (host: Host, update: Update): Host => {
-  switch (update._tag) {
-    case "Reset":
-      return resetHistory(host);
-    case "Welcome":
-      return applyWelcome(host, update.welcome);
-    case "Feed":
-      return applyFeed(host, update.frame);
-    case "Status":
-      return host;
-  }
-};
+const applyUpdate = (host: Host, update: Update): Host =>
+  Update.$match(update, {
+    Feed: ({ frame }) => applyFeed(host, frame),
+    Reset: () => resetHistory(host),
+    Status: () => host,
+    Welcome: ({ welcome }) => applyWelcome(host, welcome),
+  });
 
 // The sessions, the most recently active first.
-const recent = (host: Host): readonly SessionId[] =>
-  [...host.sessions].toSorted(([, a], [, b]) => b.activity - a.activity).map(([id]) => id);
+const recent = (host: Host): ReadonlyArray<SessionId> =>
+  [...host.sessions]
+    .toSorted(([, first], [, second]) => second.activity - first.activity)
+    .map(([id]) => id);
 
 // Each directory a session ran in, once, the most recent first: the suggestions for a new
-// session.
-const directories = (host: Host): readonly SessionDirectory[] => [
+// Session.
+const directories = (host: Host): ReadonlyArray<SessionDirectory> => [
   ...new Set(
     recent(host).flatMap((id) => {
       const session = host.sessions.get(id);

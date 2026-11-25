@@ -1,9 +1,3 @@
-// The commands a session's screen sends, each offered as a button the view only renders.
-import type { SendError } from "../link/command.ts";
-import type { HostLink } from "../link/host.ts";
-import { controls } from "../fold/offers.ts";
-import type { Session } from "../fold/session.ts";
-import type { Approval } from "../fold/transcript.ts";
 import type {
   Answer,
   Command,
@@ -13,9 +7,12 @@ import type {
   RequestId,
   SessionId,
   SessionRefusal,
-} from "../schemas/index.ts";
-
-type Send = HostLink["send"];
+} from "#core/schemas/index";
+import type { Approval } from "#core/fold/transcript";
+import { SendError } from "#core/link";
+import type { Session } from "#core/fold/session";
+import { controls } from "#core/fold/offers";
+// The commands a session's screen sends, each offered as a button the view only renders.
 
 type Tone = "Primary" | "Plain" | "Danger";
 
@@ -31,43 +28,47 @@ const message = (session: SessionId, text: string): Command => ({
   Session: { SendMessage: { session, text } },
 });
 
-const answer = (session: SessionId, request: RequestId, answers: readonly Answer[]): Command => ({
-  Session: { Answer: { session, request, answers } },
+const answer = (
+  session: SessionId,
+  request: RequestId,
+  answers: ReadonlyArray<Answer>,
+): Command => ({
+  Session: { Answer: { answers, request, session } },
 });
 
 const resolve = (session: SessionId, request: RequestId, decision: Decision): Command => ({
-  Session: { Resolve: { session, request, decision } },
+  Session: { Resolve: { decision, request, session } },
 });
 
 // What a session offers besides its composer: stopping a turn, continuing a closed agent and
-// finishing on its issue, exactly as its controls allow.
-const sessionOffers = (id: SessionId, session: Session): readonly Offer[] => {
+// Finishing on its issue, exactly as its controls allow.
+const sessionOffers = (id: SessionId, session: Session): ReadonlyArray<Offer> => {
   const offered = controls(session);
   return [
     ...(offered.interrupt
       ? [
           {
+            body: { Session: { Interrupt: { session: id } } },
             label: "Stop",
             tone: "Danger",
-            body: { Session: { Interrupt: { session: id } } },
           } as const,
         ]
       : []),
     ...(offered.continue
       ? [
           {
+            body: { Session: { Continue: { session: id } } },
             label: "Continue",
             tone: "Primary",
-            body: { Session: { Continue: { session: id } } },
           } as const,
         ]
       : []),
     ...(offered.finish
       ? [
           {
+            body: { Session: { Finish: { session: id } } },
             label: "Finish",
             tone: "Plain",
-            body: { Session: { Finish: { session: id } } },
           } as const,
         ]
       : []),
@@ -75,27 +76,27 @@ const sessionOffers = (id: SessionId, session: Session): readonly Offer[] => {
 };
 
 // The one-tap answers to an approval: approving for the session only when the agent offers it.
-const decisions = (id: SessionId, asked: Asked): readonly Offer[] => [
+const decisions = (id: SessionId, asked: Asked): ReadonlyArray<Offer> => [
   {
+    body: resolve(id, asked.request, "Approve"),
     label: "Approve",
     tone: "Primary",
-    body: resolve(id, asked.request, "Approve"),
   },
-  ...(asked.forSession === null
+  ...(asked.forSession === undefined
     ? []
     : [
         {
+          body: resolve(id, asked.request, "ApproveForSession"),
           label: "Approve for session",
           tone: "Plain",
-          body: resolve(id, asked.request, "ApproveForSession"),
         } as const,
       ]),
-  { label: "Deny", tone: "Danger", body: resolve(id, asked.request, "Deny") },
+  { body: resolve(id, asked.request, "Deny"), label: "Deny", tone: "Danger" },
 ];
 
 // What the person picked for one question.
 interface Picked {
-  readonly labels: readonly string[];
+  readonly labels: ReadonlyArray<string>;
   readonly typed: string;
 }
 
@@ -111,13 +112,16 @@ const toggled = (question: Question, picked: Picked, label: string): Picked => {
 };
 
 // One answer per question in the order asked: the options chosen, then any text typed instead.
-const answersOf = (picks: readonly Picked[]): readonly Answer[] =>
+const answersOf = (picks: ReadonlyArray<Picked>): ReadonlyArray<Answer> =>
   picks.map(({ labels, typed }) => (typed.trim() === "" ? labels : [...labels, typed.trim()]));
+
+const firstLetter = 0;
+const afterFirst = 1;
 
 // Splits a variant's PascalCase name into a sentence.
 const sentence = (name: string): string => {
   const words = name.replaceAll(/(?<lower>[a-z])(?<upper>[A-Z])/gu, "$1 $2");
-  return `${words.charAt(0)}${words.slice(1).toLowerCase()}`;
+  return `${words.charAt(firstLetter)}${words.slice(afterFirst).toLowerCase()}`;
 };
 
 const rejected = (rejection: SessionRefusal): string => {
@@ -133,19 +137,18 @@ const rejected = (rejection: SessionRefusal): string => {
 };
 
 // What the person is told after a command: nothing once the host takes it, since its log shows
-// what follows.
-const notice = (result: CommandResult): string | null =>
+// What follows.
+const notice = (result: CommandResult): string | undefined =>
   "Session" in result && typeof result.Session === "object" && "Refused" in result.Session
     ? `The host refused: ${rejected(result.Session.Refused)}.`
-    : null;
+    : undefined;
 
 const failed = (error: SendError): string =>
-  error._tag === "Wire"
-    ? `The command failed: ${error.reason}.`
-    : {
-        NotConnected: "Not connected to the host.",
-        NoResult: "The host gave no result.",
-      }[error._tag];
+  SendError.$match(error, {
+    NoResult: () => "The host gave no result.",
+    NotConnected: () => "Not connected to the host.",
+    Wire: ({ reason }) => `The command failed: ${reason}.`,
+  });
 
 export {
   answer,
@@ -158,7 +161,6 @@ export {
   notice,
   type Offer,
   type Picked,
-  type Send,
   sessionOffers,
   toggled,
 };
