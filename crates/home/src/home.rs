@@ -9,6 +9,7 @@ use alloc::vec::Vec;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::canvas::{CanvasFile, CanvasName};
 use crate::flow::Flow;
 use crate::issue::{EditId, Issue, IssueChange, NewIssue};
 use crate::{IssueId, ProjectId};
@@ -108,19 +109,28 @@ pub enum HomeCommand {
     /// Clones the project into the host's data dir, for a project with no
     /// checkout here. `Accepted` once it has; how it went is in the
     /// project's `cloning`.
-    Clone { project: ProjectId },
+    Clone {
+        project: ProjectId,
+    },
     /// Opens an issue, as `home issue new` does. Answers `IssueWritten`
     /// once the host has written it to its clone of the home; pushing it
     /// follows, and how that went is in the home's `sync`.
     ///
     /// The app mints `edit` once per edit and sends it again with each
     /// retry, so the home writes the edit once.
-    CreateIssue { edit: EditId, issue: NewIssue },
+    CreateIssue {
+        edit: EditId,
+        issue: NewIssue,
+    },
     /// Answers `IssueWritten` once written, like `CreateIssue`.
     ChangeIssue {
         edit: EditId,
         issue: IssueId,
         change: IssueChange,
+    },
+    Canvas {
+        issue: IssueId,
+        name: CanvasName,
     },
 }
 
@@ -133,6 +143,7 @@ pub enum HomeResult {
         issue: IssueId,
         warnings: Vec<String>,
     },
+    Canvas(CanvasFile),
     Refused(HomeRefusal),
 }
 
@@ -153,6 +164,10 @@ pub enum HomeRefusal {
     /// The flow refuses the edit, for this reason, as the `home` command
     /// line would.
     IssueRefused {
+        reason: String,
+    },
+    UnknownCanvas,
+    CanvasUnavailable {
         reason: String,
     },
 }
@@ -181,6 +196,12 @@ impl HomeRefusal {
                 format!("the issue was not saved: {reason}")
             }
             Self::IssueRefused { reason } => reason.clone(),
+            Self::UnknownCanvas => {
+                String::from("the issue has no canvas of that name")
+            }
+            Self::CanvasUnavailable { reason } => {
+                format!("the canvas can't be read now: {reason}")
+            }
         }
     }
 }

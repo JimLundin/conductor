@@ -4,10 +4,14 @@
 
 use alloc::string::String;
 
+use alloc::collections::BTreeMap;
+use alloc::vec::Vec;
+
 use crate::AuthToken;
 use crate::CommandId;
 use agents::ClientName;
-use home::HomeCommand;
+use home::canvas::{CanvasEntry, CanvasFile, CanvasKey, CanvasName};
+use home::{Home, HomeCommand, HomeRefusal, HomeResult, IssueId};
 use host::fleet::{DeviceHello, FleetCommand, Identity};
 use host::push::PushCommand;
 use host::registry::InstanceCommand;
@@ -107,7 +111,11 @@ pub const fn ledger(command: &Command) -> Option<Kind> {
         | Command::SignIn(_)
         | Command::Push(_)
         | Command::Fleet(_)
-        | Command::Home(HomeCommand::Sync | HomeCommand::Clone { .. }) => None,
+        | Command::Home(
+            HomeCommand::Sync
+            | HomeCommand::Clone { .. }
+            | HomeCommand::Canvas { .. },
+        ) => None,
         Command::Instance(_)
         | Command::Session(SessionCommand::Finish { .. })
         | Command::Home(
@@ -149,6 +157,7 @@ pub const fn operation(command: &Command) -> &'static str {
             HomeCommand::Clone { .. } => "clone_project",
             HomeCommand::CreateIssue { .. } => "create_issue",
             HomeCommand::ChangeIssue { .. } => "change_issue",
+            HomeCommand::Canvas { .. } => "get_canvas",
         },
         Command::Push(asked) => match asked {
             PushCommand::PublicKey => "push_public_key",
@@ -161,6 +170,61 @@ pub const fn operation(command: &Command) -> &'static str {
             FleetCommand::Approve(_) => "fleet_approve",
             FleetCommand::Admit { .. } => "fleet_admit",
         },
+    }
+}
+
+#[must_use]
+pub fn with_canvases(
+    mut home: Home,
+    listed: &BTreeMap<IssueId, Vec<CanvasEntry>>,
+) -> Home {
+    home.projects
+        .iter_mut()
+        .flat_map(|project| project.issues.iter_mut())
+        .for_each(|issue| {
+            issue.canvases = listed.get(&issue.id).cloned().unwrap_or_default();
+        });
+    home
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CanvasLookup {
+    Fetch(CanvasKey),
+    Refused(HomeRefusal),
+}
+
+#[must_use]
+pub fn canvas_lookup(
+    home: Option<&Home>,
+    issue: IssueId,
+    name: CanvasName,
+) -> CanvasLookup {
+    home.map_or(CanvasLookup::Refused(HomeRefusal::NoHome), |known| {
+        known
+            .projects
+            .iter()
+            .find(|project| project.issues.iter().any(|at| at.id == issue))
+            .map_or(
+                CanvasLookup::Refused(HomeRefusal::UnknownIssue),
+                |project| {
+                    CanvasLookup::Fetch(CanvasKey {
+                        project: project.id,
+                        issue,
+                        name,
+                    })
+                },
+            )
+    })
+}
+
+#[must_use]
+pub fn kept_canvas(kept: Result<Option<CanvasFile>, String>) -> HomeResult {
+    match kept {
+        Ok(Some(file)) => HomeResult::Canvas(file),
+        Ok(None) => HomeResult::Refused(HomeRefusal::UnknownCanvas),
+        Err(reason) => {
+            HomeResult::Refused(HomeRefusal::CanvasUnavailable { reason })
+        }
     }
 }
 

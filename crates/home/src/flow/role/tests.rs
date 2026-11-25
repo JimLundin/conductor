@@ -73,6 +73,7 @@ fn issue(id: IssueId, status: &str) -> Issue {
         checklist: Vec::new(),
         log: Vec::new(),
         branch: String::new(),
+        canvases: Vec::new(),
     }
 }
 
