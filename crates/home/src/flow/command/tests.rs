@@ -1089,3 +1089,129 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
         (true, String::from("home: projects: denied\n"))
     );
 }
+
+fn statechart(
+    states: &str,
+    start: &str,
+    transitions: &str,
+    path: &str,
+) -> String {
+    format!(
+        r#"{{"title": "A task's turn", "blocks": [{{"statechart": {{"states": [{states}], "start": "{start}", "transitions": [{transitions}], "path": [{path}]}}}}]}}"#
+    )
+}
+
+const STATES: &str = r#"{"id": "open", "label": "Open"}, {"id": "review", "label": "In review", "marked": "the owner reads it here"}, {"id": "done", "label": "Done"}"#;
+const TRANSITIONS: &str = r#"{"from": "open", "to": "review", "event": "submit"}, {"from": "review", "to": "open", "event": "send back"}, {"from": "review", "to": "done", "event": "land"}"#;
+
+#[test]
+fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_says_what_to_change()
+ {
+    let cases = [
+        (
+            statechart(STATES, "open", TRANSITIONS, r#""done""#),
+            "the path goes from `open` to `done`, but no transition does: add that transition or change the path",
+        ),
+        (
+            statechart(
+                STATES,
+                "open",
+                r#"{"from": "open", "to": "gone", "event": "submit"}"#,
+                "",
+            ),
+            "a transition goes to `gone`, which isn't a state: add the state or change the transition",
+        ),
+        (
+            statechart(
+                STATES,
+                "open",
+                r#"{"from": "gone", "to": "open", "event": "submit"}"#,
+                "",
+            ),
+            "a transition comes from `gone`, which isn't a state: add the state or change the transition",
+        ),
+        (
+            statechart(STATES, "gone", TRANSITIONS, ""),
+            "the statechart starts at `gone`, which isn't a state: add the state or change `start`",
+        ),
+        (
+            statechart(
+                r#"{"id": "open", "label": "Open and waiting for someone to pick it up today"}"#,
+                "open",
+                "",
+                "",
+            ),
+            "the label `Open and waiting for someone to pick it up today` is over eight words: put the detail in prose",
+        ),
+        (
+            statechart(
+                STATES,
+                "open",
+                r#"{"from": "open", "to": "review", "event": "the worker pushes the branch and asks for a review"}"#,
+                "",
+            ),
+            "the label `the worker pushes the branch and asks for a review` is over eight words: put the detail in prose",
+        ),
+    ];
+    for (text, said) in cases {
+        let outcome =
+            given(&format!("canvas put {TASK} turn"), Given::Text(Ok(text)));
+        assert_eq!(
+            (
+                outcome.failed,
+                outcome.output,
+                outcome.writes,
+                outcome.canvases
+            ),
+            (
+                true,
+                format!("home: canvas turn of home/{TASK}: {said}\n"),
+                Vec::new(),
+                Vec::new()
+            )
+        );
+    }
+}
+
+#[test]
+fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_states_and_the_path_styled()
+-> Result<(), String> {
+    let text = statechart(STATES, "open", TRANSITIONS, r#""review", "done""#);
+    let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
+    let shown = given(
+        &format!("canvas show {TASK} turn"),
+        Given::Canvases(Ok(Vec::from([(
+            CanvasName::parse("turn").map_err(|error| error.to_string())?,
+            CanvasFile {
+                written: NOW,
+                by: String::from("laptop·claude"),
+                canvas,
+            },
+        )]))),
+    );
+    assert_eq!(
+        (shown.failed, shown.output),
+        (
+            false,
+            String::from(
+                "# A task's turn\n\n\
+                 ```mermaid\n\
+                 stateDiagram-v2\n    \
+                 state \"Open\" as open\n    \
+                 state \"In review\" as review\n    \
+                 state \"Done\" as done\n    \
+                 [*] --> open\n    \
+                 open --> review : submit\n    \
+                 review --> open : send back\n    \
+                 review --> done : land\n    \
+                 note right of review : the owner reads it here\n    \
+                 classDef marked fill:#fde68a,stroke:#b45309\n    \
+                 class review marked\n    \
+                 classDef path stroke:#2563eb,stroke-width:3px\n    \
+                 class open,review,done path\n\
+                 ```\n"
+            )
+        )
+    );
+    Ok(())
+}
