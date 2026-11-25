@@ -1431,6 +1431,14 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 "home: canvas design of home/{TASK}: the label `the shell does every piece of input and output` is over 8 words: put the detail in prose\n"
             ),
         ),
+    ];
+    refuses_each(cases);
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_group_writes_nothing_and_says_what_to_change()
+ {
+    let cases = [
         (
             diagram(
                 &[
@@ -1490,6 +1498,10 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
             ),
         ),
     ];
+    refuses_each(cases);
+}
+
+fn refuses_each<const N: usize>(cases: [(String, String); N]) {
     for (text, said) in cases {
         let outcome = put_canvas(&text);
         assert_eq!(
