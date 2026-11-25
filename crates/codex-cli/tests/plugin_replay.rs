@@ -13,7 +13,7 @@ use agents::{NativeRequest, Reply, Step};
 use install::Home;
 use runtime::{Instance, Launch, Runtime, Settings};
 
-use support::{TestResult, fake_cli_path, fake_codex_dir, fixture};
+use support::{TestResult, committed_fake_cli_path, fake_codex_dir, fixture};
 
 fn stored_gateway() -> agents::Credential {
     agents::Credential {
@@ -38,7 +38,7 @@ async fn configuring_and_clearing_a_codex_provider_changes_the_key_and_named_def
     )?;
     let plugin = codex_cli::plugin(runtime::Settings::default());
     let instance = (plugin.instance)(runtime::Launch {
-        path: fake_cli_path(),
+        path: committed_fake_cli_path(),
         home: Home::private(&work, "gateway", &plugin.profile.config)?,
         work: work.clone(),
     });
@@ -85,7 +85,7 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
     let home = Home::private(&work, "gateway", &plugin.profile.config)?;
     std::fs::write(work.join("home/gateway/config.toml"), "private-value = [")?;
     let instance = (plugin.instance)(runtime::Launch {
-        path: fake_cli_path(),
+        path: committed_fake_cli_path(),
         home,
         work: work.clone(),
     });
@@ -112,7 +112,7 @@ async fn a_malformed_codex_provider_config_refuses_the_credential_before_discove
 fn instance(work: PathBuf) -> Instance {
     let plugin = codex_cli::plugin(Settings::default());
     (plugin.instance)(Launch {
-        path: fake_cli_path(),
+        path: committed_fake_cli_path(),
         home: Home::User,
         work,
     })

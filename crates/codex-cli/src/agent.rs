@@ -79,7 +79,6 @@ impl Agent<Input, Effect> for Task {
 }
 
 impl Task {
-    /// Opens the thread in place of the running one, if it opens.
     async fn open(&mut self, open: Open) -> Result<ThreadId, String> {
         let (thread, events) = self
             .hub

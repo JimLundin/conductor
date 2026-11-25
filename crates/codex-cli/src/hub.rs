@@ -19,7 +19,6 @@ use super::server::{CodexServer, CodexThread, Error, ServerOptions};
 /// A thread, and its events, which end with the server's exit or stop.
 pub type Thread = (CodexThread, mpsc::Receiver<Routed>);
 
-/// A session's ask for a thread.
 struct Asked {
     options: ThreadOptions,
     resume: Option<ThreadId>,
@@ -137,13 +136,11 @@ impl Hub {
     }
 }
 
-/// The running app-server and its events.
 struct Up {
     server: CodexServer,
     events: mpsc::Receiver<CodexEvent>,
 }
 
-/// Every handle is gone, so the task has ended.
 struct Ended;
 
 struct Task {
@@ -178,7 +175,7 @@ impl Task {
         loop {
             let input = tokio::select! {
                 command = commands.recv() => command.map_or(Input::Closed, Input::Command),
-                event = next_event(self.server.as_mut()) => Input::Event(event),
+                event = next_event_or_pending(self.server.as_mut()) => Input::Event(event),
                 completed = self.opens.join_next(), if !self.opens.is_empty() => {
                     self.opened(completed).await?;
                     continue;
@@ -189,18 +186,19 @@ impl Task {
                     Input::Gone { thread, generation }
                 }
             };
-            self.feed(input).await?;
+            self.apply_input_depth_first(input).await?;
         }
     }
 
-    /// Steps the machine and performs its effects in order, each effect's
-    /// own effects before the next.
-    async fn feed(&mut self, input: Input) -> Result<(), Ended> {
-        let mut effects = self.machine.step(input);
-        effects.reverse();
-        while let Some(effect) = effects.pop() {
-            let more = self.perform(effect).await?;
-            effects.extend(more.into_iter().rev());
+    async fn apply_input_depth_first(
+        &mut self,
+        input: Input,
+    ) -> Result<(), Ended> {
+        let mut effect_stack = self.machine.step(input);
+        effect_stack.reverse();
+        while let Some(effect) = effect_stack.pop() {
+            let followups = self.perform(effect).await?;
+            effect_stack.extend(followups.into_iter().rev());
         }
         Ok(())
     }
@@ -362,7 +360,7 @@ impl Task {
             closing,
             sender,
         ));
-        self.feed(Input::Opened {
+        self.apply_input_depth_first(Input::Opened {
             thread: thread.clone(),
             route: route.clone(),
             generation,
@@ -370,7 +368,11 @@ impl Task {
         .await?;
         for event in early {
             if !route.send(Routed::Codex(event)) {
-                self.feed(Input::Gone { thread, generation }).await?;
+                self.apply_input_depth_first(Input::Gone {
+                    thread,
+                    generation,
+                })
+                .await?;
                 break;
             }
         }
@@ -394,7 +396,6 @@ impl Task {
         }
     }
 
-    /// The machine only asks for the server while one runs.
     fn running(&self) -> Result<CodexServer, Error> {
         self.server
             .as_ref()
@@ -468,9 +469,7 @@ async fn forward(
     Ok(())
 }
 
-/// The running server's next event. With none running, it waits forever,
-/// so the hub only takes commands.
-async fn next_event(server: Option<&mut Up>) -> Option<CodexEvent> {
+async fn next_event_or_pending(server: Option<&mut Up>) -> Option<CodexEvent> {
     match server {
         Some(up) => up.events.recv().await,
         None => std::future::pending().await,
@@ -531,7 +530,7 @@ mod tests {
         let second = event(&paused, "second");
         let other = event(&active, "other");
         for event in [&first, &second, &other] {
-            task.feed(Input::Event(Some(event.clone())))
+            task.apply_input_depth_first(Input::Event(Some(event.clone())))
                 .await
                 .map_err(|_| "stopped")?;
         }
@@ -548,7 +547,7 @@ mod tests {
         let thread = ThreadId(String::from("paused"));
         let (events, queued) = mpsc::channel(1);
         let (terminal, closing) = watch::channel(None);
-        task.feed(Input::Opened {
+        task.apply_input_depth_first(Input::Opened {
             thread: thread.clone(),
             route: Route {
                 events,
@@ -562,7 +561,7 @@ mod tests {
 
         let accepted = event(&thread, "accepted");
         for event in [accepted.clone(), event(&thread, "over capacity")] {
-            task.feed(Input::Event(Some(event)))
+            task.apply_input_depth_first(Input::Event(Some(event)))
                 .await
                 .map_err(|_| "stopped")?;
         }
@@ -604,7 +603,7 @@ mod tests {
         });
         let thread = ThreadId(String::from("opening"));
         let first = event(&thread, "early");
-        task.feed(Input::Event(Some(first.clone())))
+        task.apply_input_depth_first(Input::Event(Some(first.clone())))
             .await
             .map_err(|_| "stopped")?;
         assert!(unblock.send(()).is_ok());
@@ -615,7 +614,7 @@ mod tests {
             .await
             .map_err(|_| "stopped")?;
         let later = event(&thread, "later");
-        task.feed(Input::Event(Some(later.clone())))
+        task.apply_input_depth_first(Input::Event(Some(later.clone())))
             .await
             .map_err(|_| "stopped")?;
         assert_eq!(events.recv().await, Some(Routed::Codex(first)));
@@ -644,7 +643,7 @@ mod tests {
                 .await
                 .ok_or("no relay")?
                 .map_err(|_| "relay failed")?;
-            task.feed(Input::Gone {
+            task.apply_input_depth_first(Input::Gone {
                 thread: gone,
                 generation,
             })
@@ -670,7 +669,7 @@ mod backpressure_tests {
     use install::Home;
     use tokio::sync::oneshot;
 
-    use crate::replay_support::{TestResult, fake_cli_path};
+    use crate::replay_support::{TestResult, committed_fake_cli_path};
 
     use super::{CodexServer, Command, Input, ServerOptions, Task, Up};
 
@@ -686,7 +685,7 @@ mod backpressure_tests {
             .push_str(&"{\"method\":\"conductor/testUnknown\"}\n".repeat(4097));
         std::fs::write(cwd.join("stdout.jsonl"), frames)?;
         let options = ServerOptions {
-            codex_path: fake_cli_path(),
+            codex_path: committed_fake_cli_path(),
             home: Home::User,
             credential: None,
             cwd,
@@ -703,7 +702,7 @@ mod backpressure_tests {
             while events.capacity() > 0 {
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            task.feed(Input::Command(Command::Credential {
+            task.apply_input_depth_first(Input::Command(Command::Credential {
                 credential: Some(codex::CodexCredential::Provider {
                     name: String::from("Test gateway"),
                     base_url: String::from("https://gateway.example"),

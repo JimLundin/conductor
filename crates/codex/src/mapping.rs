@@ -11,8 +11,6 @@ use agents::{
 use crate::prelude::*;
 use crate::{ApprovalKind, CodexEvent, Decision, PermissionAsk, ThreadEvent};
 
-/// Why a Codex question went unasked. Every answer is stored and sent to
-/// every client, so none can be kept secret.
 const SECRET_DECLINED: &str = "Codex asked for an answer it would keep secret. Conductor can't keep answers secret, so it declined the question.";
 
 #[must_use]
@@ -118,10 +116,6 @@ pub fn codex_thread_steps(event: ThreadEvent) -> Vec<Step> {
     }
 }
 
-/// A server request: a question, or an approval with the tool it asks
-/// about, Codex's reason, and what `acceptForSession` allows. Codex takes
-/// `acceptForSession` for a command, though `availableDecisions` omits it,
-/// as a recorded run on 2026-11-12 showed (PROTOCOL.md).
 fn approval_step(
     native: NativeRequest,
     call: ToolCallId,
@@ -145,14 +139,12 @@ fn approval_step(
                 for_session: Some(command),
             }
         }
-        // The request names no paths; the tool card the item started has them.
         ApprovalKind::FileChange { reason } => Step::Open {
             agent: None,
             native,
             call,
             tool: ToolKind::FileChange { files: Vec::new() },
             reason,
-            // No run has recorded a file change approval yet (PROTOCOL.md).
             for_session: None,
         },
         ApprovalKind::Permissions { reason, asks } => {
@@ -213,7 +205,6 @@ mod tests {
         ThreadEvent, ThreadId, TurnId,
     };
 
-    /// The steps one provider event maps to, and the steps it should.
     struct Case {
         got: Vec<Step>,
         want: Vec<Step>,
