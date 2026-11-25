@@ -75,11 +75,6 @@ rule = "lint/eslint/max-statements"
 reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/**"
-rule = "lint/eslint/new-cap"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
 path = "src/ticket.ts"
 rule = "lint/eslint/no-bitwise"
 reason = "migrating to Oxlint, spec 0tzedg8h"
@@ -202,11 +197,6 @@ reason = "migrating to Oxlint, spec 0tzedg8h"
 [[exception]]
 path = "src/link.ts"
 rule = "lint/promise/prefer-await-to-callbacks"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
-path = "src/link.ts"
-rule = "lint/promise/prefer-await-to-then"
 reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
@@ -340,11 +330,6 @@ rule = "lint/typescript/prefer-readonly-parameter-types"
 reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
-path = "src/**"
-rule = "lint/typescript/promise-function-async"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
 path = "src/link/**"
 rule = "lint/unicorn/consistent-function-scoping"
 reason = "migrating to Oxlint, spec 0tzedg8h"
@@ -362,16 +347,6 @@ reason = "migrating to Oxlint, spec 0tzedg8h"
 [[exception]]
 path = "src/**"
 rule = "lint/unicorn/no-array-callback-reference"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
-path = "scripts/schemas.ts"
-rule = "lint/unicorn/no-array-method-this-argument"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
-path = "src/link/**"
-rule = "lint/unicorn/no-array-method-this-argument"
 reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
@@ -457,16 +432,6 @@ reason = "migrating to Oxlint, spec 0tzedg8h"
 [[exception]]
 path = "src/**"
 rule = "lint/vitest/prefer-to-be-falsy"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
-path = "src/**"
-rule = "lint/vitest/prefer-to-be-truthy"
-reason = "migrating to Oxlint, spec 0tzedg8h"
-
-[[exception]]
-path = "profiles/**"
-rule = "lint/vitest/require-hook"
 reason = "migrating to Oxlint, spec 0tzedg8h"
 
 [[exception]]
