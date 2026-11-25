@@ -98,3 +98,15 @@ fn a_canvas_file_with_no_stamp_is_refused() {
         matches!(CanvasFile::parse(text), Err(CanvasError::Json { reason }) if reason.contains("missing field `written`"))
     );
 }
+
+#[test]
+fn a_canvas_file_whose_canvas_breaks_a_drawing_rule_is_refused_as_a_canvas_is()
+{
+    let canvas = r#"{"title": "t", "blocks": [{"statechart": {"states": [{"id": "open", "label": "Open"}], "start": "open", "transitions": [{"from": "open", "to": "gone", "event": "go"}], "path": []}}]}"#;
+    let file = format!(
+        r#"{{"written": 5, "by": "devbox·claude", "canvas": {canvas}}}"#
+    );
+    let refused = CanvasFile::parse(&file);
+    assert!(refused.is_err(), "{refused:?}");
+    assert_eq!(refused.err(), Canvas::parse(canvas).err());
+}

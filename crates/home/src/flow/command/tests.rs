@@ -6,8 +6,8 @@ use crate::{DRAWS, Draws, IssueId, ProjectId};
 
 use super::{
     Asked, CanvasWrite, Command, Context, Edit, Given, Local, Need, Outcome,
-    Source, Wanted, asked as dispatched, command, fresh, homeless, run, stamp,
-    write,
+    Source, Stored, Wanted, asked as dispatched, command, fresh, homeless, run,
+    stamp, write,
 };
 use crate::canvas::{
     BadName, Block, Canvas, CanvasFile, CanvasKey, CanvasName,
@@ -313,7 +313,7 @@ fn a_body_from_a_file_asks_the_shell_for_the_file() {
             path: String::from("why.md"),
         }
     );
-    assert_eq!(asked(&inputs, "check").needs(), None);
+    assert_eq!(asked(&inputs, "check").needs(), Some(Need::EveryCanvas));
 }
 
 #[test]
@@ -1493,4 +1493,115 @@ fn a_canvas_show_prints_changes_as_grouped_lists_with_their_tags_and_code_as_lin
         )
     );
     Ok(())
+}
+
+fn stored(
+    issue: &str,
+    name: &str,
+    got: Result<Option<CanvasFile>, String>,
+) -> Result<Stored, String> {
+    Ok(Stored {
+        key: CanvasKey {
+            project: ProjectId::parse(FOLDER).ok_or("project")?,
+            issue: IssueId::parse(issue).ok_or("issue")?,
+            name: CanvasName::parse(name).map_err(|error| error.to_string())?,
+        },
+        got,
+    })
+}
+
+fn prose_file() -> CanvasFile {
+    CanvasFile {
+        written: NOW,
+        by: String::from("laptop·claude"),
+        canvas: Canvas {
+            title: String::from("Why a store"),
+            blocks: Vec::from([Block::Prose {
+                text: String::from("The core decides."),
+            }]),
+        },
+    }
+}
+
+#[test]
+fn check_reports_each_canvas_the_store_cant_return_that_breaks_its_rules_or_that_no_issue_holds()
+-> Result<(), String> {
+    let mut canvas = Canvas::parse(&statechart(
+        STATES,
+        "open",
+        TRANSITIONS,
+        r#""review", "done""#,
+    ))
+    .map_err(|error| error.to_string())?;
+    if let Some(Block::Statechart(chart)) = canvas.blocks.first_mut() {
+        chart.start = String::from("gone");
+    }
+    let broken = CanvasFile {
+        canvas,
+        ..prose_file()
+    };
+    let checked = given(
+        "check",
+        Given::EveryCanvas(Ok(Vec::from([
+            stored(TASK, "fine", Ok(Some(prose_file())))?,
+            stored(TASK, "denied", Err(String::from("permission denied")))?,
+            stored(
+                TASK,
+                "garbled",
+                Err(String::from("not a canvas: missing field `title`")),
+            )?,
+            stored(TASK, "turn", Ok(Some(broken)))?,
+            stored(TASK, "vanished", Ok(None))?,
+            stored("0v29xvc9", "orphan", Ok(Some(prose_file())))?,
+        ]))),
+    );
+    assert_eq!(
+        (checked.failed, checked.output),
+        (
+            true,
+            format!(
+                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
+                 error  home/{TASK}  canvas denied: permission denied\n\
+                 error  home/{TASK}  canvas garbled: not a canvas: missing field `title`\n\
+                 error  home/{TASK}  canvas turn: the statechart starts at `gone`, which isn't a state: add the state or change `start`\n\
+                 error  home/{TASK}  canvas vanished: the store lists it but returns nothing\n\
+                 error  home/0v29xvc9  canvas orphan: the issue doesn't exist: write the canvas under one that does, or remove it\n\
+                 5 errors, 1 warnings\n"
+            )
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
+-> Result<(), String> {
+    let checked = given(
+        "check",
+        Given::EveryCanvas(Ok(Vec::from([
+            stored(TASK, "why-a-store", Ok(Some(prose_file())))?,
+            stored(SPEC, "design", Ok(Some(prose_file())))?,
+        ]))),
+    );
+    assert_eq!(
+        (checked.failed, checked.output),
+        (false, check(&home()).text())
+    );
+    Ok(())
+}
+
+#[test]
+fn check_reports_a_store_that_cant_list_its_canvases() {
+    let checked = given(
+        "check",
+        Given::EveryCanvas(Err(String::from("projects: denied"))),
+    );
+    assert!(checked.failed);
+    assert!(
+        checked
+            .output
+            .contains("error  canvases: projects: denied\n"),
+        "{}",
+        checked.output
+    );
 }

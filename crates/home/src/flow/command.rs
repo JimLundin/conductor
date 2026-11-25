@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use toml::Value;
 
 use super::PATH;
-use super::check::{Finding, check, of_issue};
+use super::check::{Finding, canvases, check, of_issue};
 use super::eval::Move;
 use super::file::{Document, ID, KIND, STAGE, STATUS, TITLE};
 use super::graph::{File, parsed};
@@ -133,6 +133,7 @@ impl Command {
             }
             Self::CanvasPut { from, .. } => Some(Need::Read(from.clone())),
             Self::CanvasShow(wanted) => Some(Need::Canvases(wanted.clone())),
+            Self::Check => Some(Need::EveryCanvas),
             _ => None,
         }
     }
@@ -148,6 +149,7 @@ pub enum Source {
 pub enum Need {
     Read(Source),
     Canvases(Wanted),
+    EveryCanvas,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -161,6 +163,13 @@ pub struct Wanted {
 pub enum Given {
     Text(Result<String, String>),
     Canvases(Result<Vec<(CanvasName, CanvasFile)>, String>),
+    EveryCanvas(Result<Vec<Stored>, String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stored {
+    pub key: CanvasKey,
+    pub got: Result<Option<CanvasFile>, String>,
 }
 
 /// An edit to one of the home's issues, the command line's and the app's
@@ -582,7 +591,14 @@ pub fn run(
         Command::Usage => return refused(String::from(USAGE)),
         Command::Wrong(reason) => return refused(refusal(&reason)),
         Command::Check => {
-            let report = check(home);
+            let mut report = check(home);
+            report.findings.extend(canvases(
+                home,
+                match given {
+                    Some(Given::EveryCanvas(every)) => every,
+                    _ => Err(String::from("the store's canvases weren't read")),
+                },
+            ));
             return Outcome {
                 writes: Vec::new(),
                 canvases: Vec::new(),
@@ -819,7 +835,11 @@ fn finished(
     })
 }
 
-fn subject(home: &Snapshot, project: ProjectId, stem: &str) -> String {
+pub(crate) fn subject(
+    home: &Snapshot,
+    project: ProjectId,
+    stem: &str,
+) -> String {
     let name = home
         .projects()
         .iter()

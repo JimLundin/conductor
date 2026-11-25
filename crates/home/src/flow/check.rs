@@ -12,6 +12,7 @@ use crate::ProjectId;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use crate::issue::Issue;
 
+use super::command::{Stored, subject};
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -120,6 +121,63 @@ pub fn check(home: &Snapshot) -> Report {
         findings.extend(of_issue(flow, &issues, issue, standing, &subject));
     }
     Report { findings }
+}
+
+#[must_use]
+pub fn canvases(
+    home: &Snapshot,
+    every: Result<Vec<Stored>, String>,
+) -> Vec<Finding> {
+    let kept = match every {
+        Ok(kept) => kept,
+        Err(reason) => {
+            return Vec::from([Finding {
+                severity: Severity::Error,
+                subject: None,
+                message: format!("canvases: {reason}"),
+            }]);
+        }
+    };
+    let graph = home.graph();
+    let held = |stored: &Stored| {
+        graph.issues.iter().any(|issue| {
+            issue.project == stored.key.project && issue.id == stored.key.issue
+        }) || graph.problems.iter().any(|problem| {
+            problem.project == stored.key.project
+                && problem.stem == stored.key.issue.to_string()
+        })
+    };
+    kept.iter()
+        .filter_map(|stored| {
+            let wrong = match &stored.got {
+                Err(reason) => Some(reason.clone()),
+                Ok(None) => {
+                    Some(String::from("the store lists it but returns nothing"))
+                }
+                Ok(Some(file)) => file
+                    .canvas
+                    .check()
+                    .err()
+                    .map(|error| error.to_string())
+                    .or_else(|| {
+                        (!held(stored)).then(|| {
+                            String::from(
+                                "the issue doesn't exist: write the canvas under one that does, or remove it",
+                            )
+                        })
+                    }),
+            };
+            wrong.map(|reason| Finding {
+                severity: Severity::Error,
+                subject: Some(subject(
+                    home,
+                    stored.key.project,
+                    &stored.key.issue.to_string(),
+                )),
+                message: format!("canvas {}: {reason}", stored.key.name),
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn of_issue(
