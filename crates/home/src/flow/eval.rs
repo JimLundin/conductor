@@ -129,9 +129,6 @@ impl Walk<'_> {
         }
     }
 
-    /// Whether the issues reached meet the condition as `quantifier`
-    /// asks; when they don't, the failure on an issue reached, or none
-    /// when none was reached.
     fn across(
         &self,
         issue: &Issue,
@@ -180,8 +177,6 @@ impl Walk<'_> {
         }
     }
 
-    /// The issues one step along `via` from `issue`, forwards along a
-    /// relation or backwards along its reverse.
     fn reached(&self, issue: &Issue, via: &str) -> Vec<&Issue> {
         match self.flow.relation(via) {
             None => Vec::new(),
@@ -229,8 +224,6 @@ impl Walk<'_> {
         }
     }
 
-    /// Whether the field is `value`, or holds it for a list; an issue that
-    /// leaves the field out has its default.
     fn field(&self, issue: &Issue, name: &str, value: &Literal) -> bool {
         let given = issue.fields.get(name).cloned().or_else(|| {
             self.flow

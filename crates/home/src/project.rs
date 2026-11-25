@@ -25,7 +25,6 @@ pub struct Project {
     pub provides: Vec<String>,
 }
 
-/// The file's fields. Others are left for later steps to read.
 #[derive(Deserialize)]
 struct File {
     name: String,
@@ -108,7 +107,6 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
     })
 }
 
-/// A project's id is its folder's name.
 fn slug(folder: &str) -> Result<ProjectId, String> {
     ProjectId::parse(folder).ok_or_else(|| {
         String::from(
@@ -117,7 +115,6 @@ fn slug(folder: &str) -> Result<ProjectId, String> {
     })
 }
 
-/// A commit id: 40 or 64 hex digits, in lower case as Git prints it.
 fn commit(root: String) -> Result<String, String> {
     let hex = root
         .chars()

@@ -13,14 +13,10 @@ fn text(value: &str) -> String {
 
 const FLOW: &str = include_str!("../test-flow.toml");
 
-/// The tests' flow with every status renamed and a second active status
-/// after the first.
 fn renamed() -> Flow {
     renamed_from(FLOW)
 }
 
-/// The flow `written` with every status renamed and a second active
-/// status after the first.
 fn renamed_from(written: &str) -> Flow {
     let mut flow = load(written).unwrap_or_else(|_| Flow {
         default_kind: String::new(),

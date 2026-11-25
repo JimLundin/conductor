@@ -20,7 +20,6 @@ pub struct Root {
     pub entries: Vec<String>,
 }
 
-/// The folders in a root whose repositories are set aside.
 const SET_ASIDE: [&str; 2] = ["_old", "Archives"];
 
 /// The paths to look for checkouts at, each once: the `known` ones, then

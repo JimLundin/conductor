@@ -113,8 +113,6 @@ fn project(own: &Own<'_>, projects: &[Project]) -> String {
     text
 }
 
-/// Where `profile`'s checks are on this host: in the first checkout of the
-/// project that provides it.
 fn profile_line(profile: &str, projects: &[Project]) -> String {
     let provider = projects
         .iter()
