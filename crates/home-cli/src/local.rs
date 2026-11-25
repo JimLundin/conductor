@@ -3,6 +3,7 @@
 //! (`home_files::install`). It lists folders, runs Git and the standards'
 //! `--verify`, and writes files.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
@@ -13,13 +14,17 @@ use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
 use home::repos::verify::{self, Head, Ran, Verify, Verifying};
-use home::repos::{self, New, Scanning};
+use home::repos::{self, New, Placed, Scanning};
 use home_files::git;
 
 /// What doing `local` in the home at `root` says, and its exit code.
 pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
     match local {
-        Local::Status => (status(root, home), 0),
+        Local::Status => (status(home, &here(root, home)), 0),
+        Local::Verify => {
+            let here = here(root, home);
+            (status(home, &here) + &verdicts(root, &here), 0)
+        }
         Local::Sync => sync(root, home.projects()),
         Local::Scan => ended(scan(root, home)),
         Local::Skills => ended(
@@ -36,34 +41,48 @@ fn ended(done: Result<String, String>) -> (String, u8) {
     done.map_or_else(|why| (format!("home: {why}\n"), 1), |said| (said, 0))
 }
 
-fn status(root: &Path, home: &Snapshot) -> String {
+/// The home's projects placed among the repositories here, and the Git
+/// state of each checkout by its path from the home.
+struct Here {
+    placed: Vec<Placed>,
+    states: BTreeMap<String, Option<String>>,
+}
+
+fn here(root: &Path, home: &Snapshot) -> Here {
     let placed = repos::placed(home.projects(), &probes(root));
-    let paths = repos::checkouts(&placed);
-    let states = paths
-        .iter()
+    let states = repos::checkouts(&placed)
+        .into_iter()
         .map(|path| {
             let state =
-                git(&root.join(path), &["status", "--porcelain", "--branch"]);
-            (path.clone(), state)
+                git(&root.join(&path), &["status", "--porcelain", "--branch"]);
+            (path, state)
         })
         .collect();
-    let heads = paths
-        .iter()
+    Here { placed, states }
+}
+
+fn status(home: &Snapshot, here: &Here) -> String {
+    repos::warnings(home.listing_problems())
+        + &repos::report(&here.placed, &here.states)
+}
+
+/// Each project whose head lacks a recorded pass of its profiles, or why
+/// its passes go unchecked.
+fn verdicts(root: &Path, here: &Here) -> String {
+    let heads = here
+        .states
+        .keys()
         .map(|path| (path.clone(), head(&root.join(path))))
         .collect();
-    let verdicts: String =
-        verify::verifying(&shown(root), &placed, &states, &heads)
-            .into_iter()
-            .map(|verifying| match verifying {
-                Verifying::Run(verify) => {
-                    verify::verdict(&verify, verified(&verify).as_ref())
-                }
-                Verifying::Said(said) => said,
-            })
-            .collect();
-    repos::warnings(home.listing_problems())
-        + &repos::report(&placed, &states)
-        + &verdicts
+    verify::verifying(&shown(root), &here.placed, &here.states, &heads)
+        .into_iter()
+        .map(|verifying| match verifying {
+            Verifying::Run(verify) => {
+                verify::verdict(&verify, verified(&verify).as_ref())
+            }
+            Verifying::Said(said) => said,
+        })
+        .collect()
 }
 
 fn head(at: &Path) -> Head {

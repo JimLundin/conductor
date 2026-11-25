@@ -7,7 +7,7 @@ use std::process::Command;
 const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
 
 /// Every command `home` takes, as its usage writes it.
-const COMMANDS: [&str; 13] = [
+const COMMANDS: [&str; 14] = [
     "home check",
     "home issue new <project> <kind> <title> [<field>=<value>...]",
     "home issue move <id> stage|status <to> [--signed-off] [<reason>...]",
@@ -18,6 +18,7 @@ const COMMANDS: [&str; 13] = [
     "home issue checklist <id> add <text>...",
     "home issue checklist <id> check|uncheck|remove <n>",
     "home repos",
+    "home repos --verify",
     "home repos sync",
     "home repos scan",
     "home skills",
