@@ -139,6 +139,12 @@ a clone in `<data>/home-repo`.
 - **Readable directly.** It is plain files in git, so a project's issues
   read in an editor or on GitHub too.
 
+Issue file writes in `crates/daemon/src/home/issue_file.rs` retain every
+ancestor directory handle. On Windows, cap-std operations can resolve a
+handle to a path; the handles deny delete sharing, so those ancestors cannot
+be replaced while an issue file is open. Paths returned by winx keep their
+verbatim drive or UNC prefix unchanged, including `\\?\UNC\` on shares.
+
 ### Project file
 
 ```toml

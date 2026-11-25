@@ -10,9 +10,7 @@ use home::layout::{
 };
 
 pub(super) struct IssueFile {
-    // Windows capability operations may resolve a handle to a path. Retain
-    // every directory handle so their non-delete sharing mode pins the path.
-    directories: Vec<Dir>,
+    ancestor_handles: Vec<Dir>,
     leaf: OsString,
 }
 
@@ -30,19 +28,19 @@ impl IssueFile {
         let parent = clone.parent().ok_or_else(unsafe_path)?;
         let home = Dir::open_ambient_dir(parent, ambient_authority())?;
         let root = open_dir(&home, Path::new(checkout))?;
-        let mut directories = vec![home, root];
+        let mut ancestor_handles = vec![home, root];
         for name in path.parents {
-            let directory = directories.last().ok_or_else(unsafe_path)?;
+            let directory = ancestor_handles.last().ok_or_else(unsafe_path)?;
             let Some(next) = descend(directory, Path::new(name), create)?
             else {
                 return Ok(None);
             };
-            directories.push(next);
+            ancestor_handles.push(next);
         }
-        let directory = directories.last().ok_or_else(unsafe_path)?;
+        let directory = ancestor_handles.last().ok_or_else(unsafe_path)?;
         check_leaf(directory, Path::new(path.leaf))?;
         Ok(Some(Self {
-            directories,
+            ancestor_handles,
             leaf: path.leaf.to_os_string(),
         }))
     }
@@ -82,7 +80,7 @@ impl IssueFile {
     }
 
     fn directory(&self) -> io::Result<&Dir> {
-        self.directories.last().ok_or_else(unsafe_path)
+        self.ancestor_handles.last().ok_or_else(unsafe_path)
     }
 }
 
@@ -198,14 +196,12 @@ mod dir_ops {
 
     use super::{Dir, Path, io, unsafe_path};
 
-    // All ancestors stay open without delete sharing. Resolve the pinned
-    // handle and keep its verbatim prefix, including `\\?\UNC\` on shares.
-    fn directory_path(dir: &Dir) -> io::Result<PathBuf> {
+    fn absolute_handle_path(dir: &Dir) -> io::Result<PathBuf> {
         let file = dir.try_clone()?.into_std_file();
-        absolute(winx::file::get_file_path(&file)?)
+        require_absolute_path(winx::file::get_file_path(&file)?)
     }
 
-    fn absolute(path: PathBuf) -> io::Result<PathBuf> {
+    fn require_absolute_path(path: PathBuf) -> io::Result<PathBuf> {
         if path.is_absolute() {
             Ok(path)
         } else {
@@ -214,7 +210,7 @@ mod dir_ops {
     }
 
     pub(super) fn create(dir: &Dir, leaf: &Path) -> io::Result<()> {
-        std::fs::create_dir(directory_path(dir)?.join(leaf))
+        std::fs::create_dir(absolute_handle_path(dir)?.join(leaf))
     }
 
     pub(super) fn replace(
@@ -222,12 +218,12 @@ mod dir_ops {
         source: &Path,
         target: &Path,
     ) -> io::Result<()> {
-        let parent = directory_path(dir)?;
+        let parent = absolute_handle_path(dir)?;
         std::fs::rename(parent.join(source), parent.join(target))
     }
 
     pub(super) fn remove(dir: &Dir, leaf: &Path) -> io::Result<()> {
-        std::fs::remove_file(directory_path(dir)?.join(leaf))
+        std::fs::remove_file(absolute_handle_path(dir)?.join(leaf))
     }
 
     #[cfg(test)]
@@ -238,9 +234,14 @@ mod dir_ops {
             r"\\?\C:\conductor\home-repo",
             r"\\?\UNC\server\share\home-repo",
         ] {
-            assert_eq!(absolute(PathBuf::from(path))?, PathBuf::from(path));
+            assert_eq!(
+                require_absolute_path(PathBuf::from(path))?,
+                PathBuf::from(path)
+            );
         }
-        assert!(absolute(PathBuf::from(r"UNC\server\share")).is_err());
+        assert!(
+            require_absolute_path(PathBuf::from(r"UNC\server\share")).is_err()
+        );
         Ok(())
     }
 }

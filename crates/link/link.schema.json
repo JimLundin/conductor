@@ -2097,6 +2097,7 @@
       "oneOf": [
         {
           "additionalProperties": false,
+          "description": "Changes the stage or status. `signed_off` records the owner's sign-off\nwhen the destination stage requires it.",
           "properties": {
             "Move": {
               "properties": {
@@ -2107,7 +2108,6 @@
                   "type": "string"
                 },
                 "signed_off": {
-                  "description": "The owner signed off, as entering a stage with a sign-off needs.",
                   "type": "boolean"
                 },
                 "to": {

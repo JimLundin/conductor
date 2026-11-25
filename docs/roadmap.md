@@ -4,6 +4,11 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Comment policy.** Rust and web sources pass the incoming shared comment
+  policy. Public library documentation, safety notes and licence headers stay.
+  The home documentation records Windows filesystem constraints.
+  CLI help is explicit metadata, and generated web schemas have no banner.
+
 - **Branch consolidation and TypeScript standards.** The reviewed frontend
   fixes, profile reporting, message cleanup and Effect rollout are integrated.
   The web app now separates pure core, browser UI and Node schema generation,

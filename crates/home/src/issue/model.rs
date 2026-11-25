@@ -298,6 +298,8 @@ pub enum Part {
 /// keeping it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub enum IssueChange {
+    /// Changes the stage or status. `signed_off` records the owner's sign-off
+    /// when the destination stage requires it.
     Move {
         part: Part,
         to: String,

@@ -700,11 +700,12 @@ const IssueChange = Schema.Union(
       Move: Schema.Struct({
         part: Part,
         reason: Schema.String,
-        signed_off: Schema.Boolean.annotate({
-          description: "The owner signed off, as entering a stage with a sign-off needs.",
-        }),
+        signed_off: Schema.Boolean,
         to: Schema.String,
       }),
+    }).annotate({
+      description:
+        "Changes the stage or status. `signed_off` records the owner's sign-off\nwhen the destination stage requires it.",
     }),
     Schema.Struct({ Set: Schema.Struct({ field: Schema.String, value: Datum }) }).annotate({
       description: "A declared field's or relation's value.",
