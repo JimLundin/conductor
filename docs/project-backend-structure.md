@@ -1,15 +1,16 @@
 # Project backend structure
 
-Structure agreed by the owner for spec `0v265ymj` on 2026-11-25, using gix
-as the proposed version control implementation and Octocrab for GitHub task
-tracking. This agreement covers the boundaries and ownership; it does not
-establish that gix supports every required operation. The
-[library research](github-backends.md) records its incomplete push support
-and the git2 alternative.
+Structure agreed by the owner for spec `0v265ymj` on 2026-11-25. Use git2
+for the first version control implementation and Octocrab for GitHub task
+tracking. Decision `0v26ayew` replaces the provisional gix choice because
+gix 0.91.0 has no push execution API. The
+[library research](github-backends.md) and
+[local prototype](experiments/vcs-probe/README.md) record the evidence and
+remaining checks. The interfaces keep both libraries outside the domain.
 
-The owner also requested a more neutral name for `conductord`, tracked
-separately as task `0v28ftxj`. The tables below use the current name until
-the replacement is selected and implemented.
+The owner selected `cli` as the binary crate and `orchestrator` as its
+executable. Task `0v28ftxj` implemented that rename, which landed on main
+at `777610b0`.
 
 ## Crates and responsibilities
 
@@ -22,13 +23,13 @@ and give both CLI and daemon one project operation service.
 | `home` | Core, existing | Project catalog, issues, relations, flow rules, project operation plans and hosting results. |
 | `vcs` | Core, new | Repository, revision and workspace types; version control requests, results and preservation rules. |
 | `project-runtime` | Shell, new | Backend interfaces, execution of project plans, operation records, cached reads and refresh. |
-| `vcs-gix` | Shell, new | Implements the version control interface through gix. |
+| `vcs-git2` | Shell, new | Implements the version control interface through git2 and libgit2. |
 | `github` | Core, new | Pure GitHub field and relation mapping, including metadata GitHub cannot represent natively. |
 | `github-api` | Shell, new | Implements tracking and hosting interfaces through one Octocrab client. |
 | `home-files` | Shell, existing | Reads home configuration and instructions. Issue storage leaves this crate. |
 | `home-cli` | Binary, existing | Offers the same project operations to terminal users and agents. |
 | `host` and `daemon` | Core and shell, existing | Own session lifecycle and invoke project operations and version control through the shared service. |
-| `conductord` | Binary, existing | Constructs adapters, supplies credentials and injects the configured service. |
+| `cli` | Binary, existing | Builds `orchestrator`, constructs adapters, supplies credentials and injects the configured service. |
 
 The proposed module layout is:
 
@@ -48,7 +49,7 @@ crates/
     backends.rs
     service.rs
     store.rs
-  vcs-gix/src/
+  vcs-git2/src/
     repository.rs
     workspace.rs
     remote.rs
@@ -72,7 +73,7 @@ This keeps I/O traits out of the pure core's data-only API.
 
 | Interface | Operations | Implementation |
 |---|---|---|
-| `VersionControl` | Discover repositories, create workspaces, capture snapshots, compare revisions, integrate changes, fetch and publish branches. | `vcs-gix`, using gix. |
+| `VersionControl` | Discover repositories, create workspaces, capture snapshots, compare revisions, integrate changes, fetch and publish branches. | `vcs-git2`, using git2. |
 | `IssueTracker` | List and read issues, create issues, apply edits, append notes and change relations. | `github-api`, using Octocrab. |
 | `RepositoryHosting` | Read checks, workflow runs and commit statuses; request supported hosted actions. | `github-api`, using the same Octocrab client. |
 
@@ -86,7 +87,7 @@ unsupported, partially applied or uncertain returns that outcome. A missing
 capability is detected before a dependent operation changes state.
 
 The shell converts SDK types at the boundary. It reuses Octocrab's API
-models and gix's repository types instead of defining another wire model.
+models and git2's repository types instead of defining another wire model.
 The `github` core owns only the mapping facts and decisions it needs. It
 does not mirror the GitHub API. This separate pure module keeps provider
 encoding decisions out of both the flow and the I/O shell.
@@ -100,14 +101,14 @@ home -> vcs
 host -> home, vcs
 github -> home
 project-runtime -> home, vcs
-vcs-gix -> project-runtime, vcs, gix
+vcs-git2 -> project-runtime, vcs, git2
 github-api -> project-runtime, github, octocrab
 daemon -> host, project-runtime
 ```
 
-`project-runtime` does not depend on either concrete adapter. `conductord`
-and the `home-cli` binary construct the adapters and pass them to the
-service. Only the two adapter shells depend on gix or Octocrab. `link`
+`project-runtime` does not depend on either concrete adapter. The `cli`
+and `home-cli` binaries construct the adapters and pass them to the
+service. Only the two adapter shells depend on git2 or Octocrab. `link`
 continues to compose domain commands and results; SDK types never reach
 the web app or an agent.
 
@@ -136,6 +137,17 @@ fails, it retries that update without landing again. If the reviewed
 revision changed, the core refuses to reuse the previous approval.
 These recovery rules belong to the operation, not to an SDK retry setting.
 
+Local integration has a separate recovery record. Before changing an
+issue branch, persist the attempt identity, expected head, candidate,
+result count and branch reflog baseline. Lock the branch and receipt while
+observing and acting, and write one reference per step. A matching receipt
+returns the recorded result. A branch containing the candidate permits
+receipt repair without moving the branch. An unchanged expected head and
+reflog permits publication. A rewritten branch or missing evidence requires
+reconciliation. This protocol does not depend on an atomic multi-reference
+transaction. The prototype checks reopened repository handles after each
+completed write; power-loss durability remains unverified.
+
 ## Storage and direct edits
 
 GitHub is authoritative for issues assigned to its tracker. A refresh
@@ -163,15 +175,14 @@ model.
    Keep session policy in `host` and issue branch policy in `home`.
 3. Move shared project I/O out of `daemon::home` and `home-cli::local` into
    `project-runtime`. Both callers receive the same outcomes.
-4. Add the gix and Octocrab implementations behind those contracts. Change
+4. Add the git2 and Octocrab implementations behind those contracts. Change
    the binary construction points and remove the replaced Git subprocess
    and Markdown issue paths.
 
-Keep gix provisional until the required operation set is verified.
-Publication is required by this design and currently has a known coverage
-gap. Do not hide it with a Git subprocess fallback or claim that GitHub's
-ref API transfers missing local commit objects. The same interface can take
-a git2 implementation if that remains the complete-library option. The
-library decision must also cover scratch-index preservation, competing
-branch updates and interrupted landing recovery, as decision `0v26ayew`
-requires.
+Git2 is the first adapter choice, not a production implementation delivered
+by the prototype. It adds libgit2 as a C dependency. Before replacing the
+current backend, verify authenticated HTTPS/SSH, server-side push refusals,
+the required merge and configuration behavior, cancellation, and coordination
+with external checkout writers. Use credential callbacks without a Git or
+GitHub CLI fallback. Keep uncertain outcomes explicit; the local recovery
+probe does not establish universal exactly-once execution.

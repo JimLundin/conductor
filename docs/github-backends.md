@@ -4,10 +4,11 @@ Research and proposed design, 2026-11-25. Tracked by Conductor spec
 `0v265ymj`, at `shape`, on branch `github-backends`. This records a proposal,
 not an approved implementation plan.
 
-The [project structure proposal](project-backend-structure.md) places gix
-and Octocrab behind the version control and tracking interfaces, as the
-owner subsequently requested. Gix remains provisional because of its
-coverage gap; the git2 assessment below remains the alternative.
+The agreed [project structure](project-backend-structure.md) places git2
+and Octocrab behind the version control and tracking interfaces. Decision
+`0v26ayew` selects git2 after the source audit and
+[local prototype](experiments/vcs-probe/README.md). Gix was provisional and
+lacks the push execution API this design requires.
 
 ## What this decides
 
@@ -27,15 +28,26 @@ connectivity; cached issues remain readable offline.
 
 ## Library findings
 
-Primary sources checked on 2026-11-25. These recommendations are based on
-documentation and published source, without a compilation or live API test.
+Primary sources checked on 2026-11-25. The GitHub findings use documentation
+and published source, without a live API test. The standalone git2 prototype
+also checks local behavior; its README records the commands and limits.
 
 | Library | Finding | Recommendation |
 |---|---|---|
 | [Octocrab 0.54.9](https://crates.io/crates/octocrab/0.54.9) | Typed REST operations, including issue relationships, checks and Actions. Published 2026-10-31. | Use for GitHub. |
 | [Octorust 0.10.0](https://docs.rs/crate/octorust/0.10.0/source/) | Generated from GitHub's OpenAPI description. Published 2025-03-12. The released source lacks sub-issue and issue-dependency endpoints. | More custom endpoint code for this use case. |
-| [git2 0.21.0](https://docs.rs/git2/0.21.0/git2/) | Rust bindings to libgit2, including worktrees, indexes, merges, rebases, fetch and push. | Preferred local Git candidate, subject to the landing constraint below. |
-| [gix 0.91.0](https://crates.io/crates/gix/0.91.0) | Pure Rust. The project's [status report](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md) still lists incomplete push support. | Does not cover Conductor's full publication path today. |
+| [git2 0.21.0](https://docs.rs/git2/0.21.0/git2/) | Rust bindings to libgit2, including worktrees, indexes, merges, rebases, fetch and push. | Use as the first local Git adapter, with explicit landing recovery. |
+| [gix 0.91.0](https://crates.io/crates/gix/0.91.0) | Pure Rust. Its published [push module](https://docs.rs/crate/gix/0.91.0/source/src/push.rs) describes configuration and has no push execution API. | Cannot cover the required publication path. |
+
+Gix does support linked-worktree
+[creation](https://docs.rs/crate/gix/0.91.0/source/src/worktree/add.rs) and
+[removal](https://docs.rs/crate/gix/0.91.0/source/src/worktree/remove.rs),
+[tree diffs](https://docs.rs/crate/gix/0.91.0/source/src/repository/diff.rs),
+[in-memory merges](https://docs.rs/crate/gix/0.91.0/source/src/repository/merge.rs)
+and [fetch](https://docs.rs/crate/gix/0.91.0/source/src/remote/connection/fetch/mod.rs).
+The push gap decides against it here. No complete high-level stage-all and
+index-to-tree workflow was identified in the source audit; components exist,
+so this is an unconfirmed convenience path rather than an absent capability.
 
 Octocrab's [issue handler](https://docs.rs/octocrab/0.54.9/octocrab/issues/struct.IssueHandler.html)
 provides issue creation, reading, listing, updates, comments and labels.
@@ -55,20 +67,28 @@ Its GraphQL API accepts serialized queries and typed responses; it does not
 generate query-specific types. The proposed initial GitHub operations have
 REST coverage.
 
-One local Git constraint needs a prototype before committing to the full
-replacement. [git2's Transaction](https://docs.rs/git2/0.21.0/git2/struct.Transaction.html)
+Local landing needs an explicit recovery protocol.
+[Git2's Transaction](https://docs.rs/git2/0.21.0/git2/struct.Transaction.html)
 documents that committing several reference updates is not atomic and can
 partially succeed. Conductor's `LandRefs` currently updates the issue branch
 and landing receipt through `git update-ref`. A replacement must preserve
-recoverable landing, including interruption between ref writes. Choosing
-git2 alone does not establish that behavior.
+recoverable landing, including interruption between ref writes. The
+prototype persists a prepared attempt and observes both refs under locks,
+with one ref write per step. It resumes an unchanged attempt, repairs the
+receipt when the candidate is already in the branch, returns a completed
+receipt, or refuses uncertain history. Reopening after each completed
+write verifies process-level retry behavior. It does not simulate power
+loss or interrupted libgit2 writes.
 
 [Repository](https://docs.rs/git2/0.21.0/git2/struct.Repository.html)
 provides conditional single-ref updates through `reference_matching` and
 in-memory merges through `merge_commits`. Its `set_index` and the
 [index API](https://docs.rs/git2/0.21.0/git2/struct.Index.html) cover scratch
-snapshot construction. The prototype must verify source-index preservation
-and conflict handling against Conductor's required behavior.
+snapshot construction. The prototype verifies that a scratch index captures
+tracked edits and deletions, ignored tracked edits and untracked files while
+preserving the real index, HEAD and source files. It also verifies the
+partial-staging refusal and clean and conflicting merge cases. This does
+not establish parity with every native Git merge strategy or filter.
 
 [Remote::push](https://docs.rs/git2/0.21.0/git2/struct.Remote.html#method.push)
 returning success does not establish that every ref was accepted. The
@@ -123,7 +143,7 @@ front matter and Git commits are not part of that interface.
 
 The local Git backend owns worktrees, snapshots, diffs, branch publication
 and local merges. It will use a Rust library, as the owner requested.
-The git2 candidate brings a C dependency through libgit2. It must also
+The git2 adapter brings a C dependency through libgit2. It must also
 replace Git subprocesses in home synchronization and repository discovery.
 This includes the command syntax in
 [checkout probing](../crates/home/src/checkout.rs) and the generic Git helper
@@ -241,5 +261,7 @@ allowing simplification, and require connectivity for issue changes.
 Further decisions include the first project operations to expose, storage
 for arbitrary flow fields, behavior for local-only projects, authentication
 and handling of concurrent remote edits. The current queue remains the
-proposed landing implementation. Local landing recovery with git2 needs a
-focused prototype before implementation, tracked by decision `0v26ayew`.
+proposed landing implementation. Decision `0v26ayew` selects git2 and the
+local recovery protocol after the prototype. Production work still needs
+authenticated transport, server rejection and merge/configuration checks,
+plus coordination with external checkout writers and a cancellation policy.
