@@ -57,7 +57,7 @@ fn listed() -> Models {
             id: model("big"),
             name: text("Big"),
             description: String::new(),
-            efforts: Vec::from([Effort::Low, Effort::High]),
+            efforts: BTreeSet::from([Effort::Low, Effort::High]),
         }]),
         default: Some(model("big")),
     }

@@ -158,7 +158,7 @@ fn options(shared: &ClaudeInstance, spawn: Spawn) -> ClaudeOptions {
         permission_mode: PermissionMode::Default,
         resume: spawn.resume,
         instructions: spawn.instructions,
-        project_name: Some(ulid::Ulid::from(spawn.session.0).to_string()),
+        project_name: Some(spawn.session),
         setting_sources: Some(Vec::from([
             SettingSource::User,
             SettingSource::Project,

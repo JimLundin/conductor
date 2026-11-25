@@ -9,7 +9,8 @@ pub struct Output {
 }
 
 impl Output {
-    pub const CAPTURE: usize = vcs::plan::PATCH_LIMIT + 1;
+    pub const CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT: usize =
+        vcs::plan::PATCH_LIMIT + 1;
 }
 
 pub struct Command {

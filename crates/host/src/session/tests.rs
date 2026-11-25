@@ -14,6 +14,7 @@ use agents::{
     ToolOutcome, ToolPhase, TurnOutcome,
 };
 use agents::{NativeRequest, NativeTurn, Reply, Step};
+use alloc::collections::BTreeSet;
 use vcs::Kept;
 use vcs::{Repository, WorkingCopy, Worktree};
 
@@ -552,7 +553,7 @@ fn an_effort_the_model_takes_applies_from_the_next_turn() {
             id: ModelId(text("opus")),
             name: text("Opus"),
             description: String::new(),
-            efforts: Vec::from([Effort::Low, Effort::High]),
+            efforts: BTreeSet::from([Effort::Low, Effort::High]),
         }]),
         default: Some(ModelId(text("opus"))),
     };
@@ -963,7 +964,7 @@ fn a_start_keeps_the_chosen_model_only_while_it_is_offered() {
             id: ModelId(text("big")),
             name: text("Big"),
             description: String::new(),
-            efforts: Vec::new(),
+            efforts: BTreeSet::new(),
         }]),
         default: model("house"),
     };

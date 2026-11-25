@@ -113,7 +113,11 @@ async fn execute(
 
 pub async fn text(path: &Path, args: &[&str]) -> Result<String, GitError> {
     executable::text(
-        execute(&mut git(path, args), Output::CAPTURE).await?,
+        execute(
+            &mut git(path, args),
+            Output::CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT,
+        )
+        .await?,
         args.first().copied().unwrap_or("git"),
     )
 }
@@ -311,7 +315,7 @@ impl Runner {
                 failure("writing git update-ref", &error.to_string())
             })?;
             drop(stdin);
-            capture(child, Output::CAPTURE).await
+            capture(child, Output::CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT).await
         })
         .await
         .map_err(|error| {
@@ -344,7 +348,7 @@ impl Runner {
                 .env("GIT_COMMITTER_NAME", "Conductor")
                 .env("GIT_COMMITTER_EMAIL", "conductor@localhost");
         }
-        execute(&mut command, Output::CAPTURE).await
+        execute(&mut command, Output::CAPTURE_ONE_BYTE_PAST_PATCH_LIMIT).await
     }
 
     fn filesystem(step: Step) -> Result<Answer, GitError> {

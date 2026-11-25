@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use agents::Var;
 use agents::{Credential, SignInCode};
+use claude::TerminalLine;
 use install::Home;
 use portable_pty::{
     Child, CommandBuilder, MasterPty, PtySize, native_pty_system,
@@ -30,7 +31,10 @@ pub async fn sign_in(
 ) -> Result<Credential, String> {
     let (_terminal, writer, mut lines) =
         Terminal::open(launch).map_err(String::from)?;
-    let link = find(&mut lines, OPEN_TIMEOUT, claude::setup_token_link).await?;
+    let link = find(&mut lines, OPEN_TIMEOUT, |line| {
+        claude::setup_token_link(line.text())
+    })
+    .await?;
     show.send(link).map_err(|_| String::from(INTERRUPTED))?;
     let SignInCode(returned) = tokio::time::timeout(CODE_TIMEOUT, async {
         loop {
@@ -61,13 +65,13 @@ pub async fn sign_in(
 }
 
 async fn find(
-    lines: &mut mpsc::Receiver<Vec<u8>>,
+    lines: &mut mpsc::Receiver<TerminalLine>,
     timeout: Duration,
-    mut parse: impl FnMut(&str) -> Option<String>,
+    mut parse: impl FnMut(&TerminalLine) -> Option<String>,
 ) -> Result<String, String> {
     tokio::time::timeout(timeout, async {
         while let Some(line) = lines.recv().await {
-            if let Some(value) = parse(&String::from_utf8_lossy(&line)) {
+            if let Some(value) = parse(&line) {
                 return Ok(value);
             }
         }
@@ -82,7 +86,11 @@ struct Terminal {
     master: Option<Box<dyn MasterPty + Send>>,
 }
 
-type TerminalIo = (Terminal, Box<dyn Write + Send>, mpsc::Receiver<Vec<u8>>);
+type TerminalIo = (
+    Terminal,
+    Box<dyn Write + Send>,
+    mpsc::Receiver<TerminalLine>,
+);
 
 impl Terminal {
     fn open(launch: &Launch) -> Result<TerminalIo, &'static str> {
@@ -147,18 +155,16 @@ impl Drop for Terminal {
     }
 }
 
-fn read_lines(terminal_output: impl Read, tx: &mpsc::Sender<Vec<u8>>) {
+fn read_lines(terminal_output: impl Read, tx: &mpsc::Sender<TerminalLine>) {
     let mut reader = BufReader::new(terminal_output);
     loop {
-        let mut line = Vec::new();
-        if reader
-            .by_ref()
-            .take(MAX_LINE)
-            .read_until(b'\n', &mut line)
-            .is_err()
-            || line.last() != Some(&b'\n')
-            || tx.blocking_send(line).is_err()
-        {
+        let mut bytes = Vec::new();
+        let read = reader.by_ref().take(MAX_LINE).read_until(b'\n', &mut bytes);
+        let Some(line) = read.ok().and_then(|_| TerminalLine::whole(&bytes))
+        else {
+            break;
+        };
+        if tx.blocking_send(line).is_err() {
             break;
         }
     }

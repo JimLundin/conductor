@@ -1436,7 +1436,7 @@ pub fn encode(msg: Outbound) -> serde_json::Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use agents::{Answer, Effort, Question, QuestionOption, Selection};
     use serde_json::Value;
@@ -2134,8 +2134,8 @@ mod tests {
                 .map(|choice| (choice.id.0.as_str(), choice.efforts.clone()))
                 .collect::<Vec<_>>(),
             Vec::from([
-                ("gpt-6", Vec::new()),
-                ("gpt-6-luna", Vec::from([Effort::High]))
+                ("gpt-6", BTreeSet::new()),
+                ("gpt-6-luna", BTreeSet::from([Effort::High]))
             ])
         );
         assert_eq!(

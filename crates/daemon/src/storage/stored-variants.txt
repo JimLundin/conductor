@@ -1,0 +1,36 @@
+format 10
+Account: Own Named
+Bar: count stretches
+Block: prose diagram statechart progress options changes code
+Change: Write Edit Delete
+ChecklistStatus: Pending InProgress Completed
+CloseReason: FailedToStart Exited Stopped
+CommandResult: Session Instance SignIn Home Push Fleet
+Decision: Approve ApproveForSession Deny
+DiffChange: Write Edit Delete
+DiffExtent: Complete Truncated
+Effort: Low Medium High XHigh Max Ultra
+EventKind: SessionCreated SessionReady SessionClosed UserMessage Agent RequestOpened QuestionAsked RequestResolved TurnCompleted Error ModelChanged WorkspaceCreated SnapshotRecorded NativeTurnStarted ChecklistChanged EffortChanged Subagent SessionRemoved OnIssue SessionFinished FinishStarted FinishInterrupted
+FilePatch: Text Binary TooLarge Unsupported
+Finished: Landed Failed
+FleetResult: Accepted Status Invite Pairing Unavailable
+HomeRefusal: NoHome UnknownProject NotCheckedOut NoRemote UnknownIssue IssueNotSaved IssueRefused UnknownCanvas CanvasUnavailable
+HomeResult: Accepted IssueWritten Canvas Refused
+InstanceRefusal: CredentialNotSaved InvalidCredential UnknownInstance InstanceInUse FleetUnavailable
+InstanceResult: Accepted Refused
+Kept: Local Pushed PushFailed
+Output: AssistantDelta AssistantMessage ReasoningDelta Reasoning ToolCall Error
+PushResult: Accepted PublicKey Unavailable
+Resolution: Decided Answered Withdrawn
+Selection: One Many
+SessionRefusal: NoSuchDirectory InstanceUnavailable UnknownSession SessionClosed NotOffered TurnInProgress NoTurnRunning UnknownRequest AlreadyResolved WrongReply NotGitRepository SnapshotUnavailable WorkspaceFailure UnknownInstance SessionRemoved Home IssueTaken NotOnIssue AlreadyFinished
+SessionResult: Accepted Started Refused Diff
+SignInRefusal: UnknownInstance InstanceUnavailable SignInRunning NoCodeAsked InvalidCredential CredentialNotSaved InstanceInUse
+SignInResult: Accepted Refused
+SubagentActivity: Message Reasoning ToolCall
+SubagentEvent: Started Activity Ended Kind ChecklistChanged RequestOpened QuestionAsked
+SubagentOutcome: Finished Failed Stopped
+ToolKind: Command FileChange Other
+ToolOutcome: Succeeded Failed Declined
+ToolPhase: Started Finished
+TurnOutcome: Completed Interrupted Failed

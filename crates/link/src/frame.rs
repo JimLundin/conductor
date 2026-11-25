@@ -23,7 +23,7 @@ pub fn decode<T: Frame>(body: &[u8]) -> Result<T, serde_json::Error> {
 
 #[cfg(test)]
 mod tests {
-    use alloc::collections::BTreeMap;
+    use alloc::collections::{BTreeMap, BTreeSet};
 
     use super::{decode, encode};
     use crate::AuthToken;
@@ -66,7 +66,7 @@ mod tests {
                                     id: ModelId(String::from("h")),
                                     name: String::from("H"),
                                     description: String::from("d"),
-                                    efforts: Vec::from([Effort::High]),
+                                    efforts: BTreeSet::from([Effort::High]),
                                 }]),
                                 default: Some(ModelId(String::from("h"))),
                             },

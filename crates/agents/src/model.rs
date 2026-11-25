@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use alloc::collections::BTreeSet;
+use core::cmp::Ordering;
 
 use crate::prelude::*;
 
@@ -27,11 +28,11 @@ impl Models {
     }
 
     #[must_use]
-    pub fn efforts(&self, model: Option<&ModelId>) -> Vec<Effort> {
+    pub fn efforts(&self, model: Option<&ModelId>) -> BTreeSet<Effort> {
         model
             .or(self.default.as_ref())
             .and_then(|id| self.find(id))
-            .map_or(Vec::new(), |choice| choice.efforts.clone())
+            .map_or_else(BTreeSet::new, |choice| choice.efforts.clone())
     }
 
     #[must_use]
@@ -62,7 +63,7 @@ pub struct ModelChoice {
     pub id: ModelId,
     pub name: String,
     pub description: String,
-    pub efforts: Vec<Effort>,
+    pub efforts: BTreeSet<Effort>,
 }
 
 #[derive(
@@ -71,16 +72,7 @@ pub struct ModelChoice {
 pub struct ModelId(pub String);
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
 )]
 pub enum Effort {
     Low,
@@ -91,7 +83,31 @@ pub enum Effort {
     Ultra,
 }
 
+impl Ord for Effort {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+impl PartialOrd for Effort {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl Effort {
+    #[must_use]
+    pub const fn rank(self) -> u8 {
+        match self {
+            Self::Low => 0,
+            Self::Medium => 1,
+            Self::High => 2,
+            Self::XHigh => 3,
+            Self::Max => 4,
+            Self::Ultra => 5,
+        }
+    }
+
     #[must_use]
     pub const fn wire(&self) -> &str {
         match self {
@@ -118,19 +134,15 @@ impl Effort {
     }
 
     #[must_use]
-    pub fn listed(words: &[&str]) -> Vec<Self> {
-        words
-            .iter()
-            .copied()
-            .filter_map(Self::parse)
-            .collect::<BTreeSet<Self>>()
-            .into_iter()
-            .collect()
+    pub fn listed(words: &[&str]) -> BTreeSet<Self> {
+        words.iter().copied().filter_map(Self::parse).collect()
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use alloc::collections::BTreeSet;
+
     use super::{Effort, ModelChoice, ModelId, Models};
 
     #[test]
@@ -141,13 +153,13 @@ mod tests {
                     id: ModelId(String::from("opus")),
                     name: String::from("Opus"),
                     description: String::from("best"),
-                    efforts: Vec::from([Effort::Low, Effort::Max]),
+                    efforts: BTreeSet::from([Effort::Low, Effort::Max]),
                 },
                 ModelChoice {
                     id: ModelId(String::from("haiku")),
                     name: String::from("Haiku"),
                     description: String::from("fast"),
-                    efforts: Vec::from([Effort::High]),
+                    efforts: BTreeSet::from([Effort::High]),
                 },
             ]),
             default: Some(ModelId(String::from("opus"))),
@@ -166,9 +178,9 @@ mod tests {
             (
                 String::from("Default (Opus)"),
                 String::from("Default"),
-                Vec::from([Effort::Low, Effort::Max]),
-                Vec::from([Effort::High]),
-                Vec::new(),
+                BTreeSet::from([Effort::Low, Effort::Max]),
+                BTreeSet::from([Effort::High]),
+                BTreeSet::new(),
                 None,
                 Some(Effort::High),
             )
@@ -199,8 +211,30 @@ mod tests {
     #[test]
     fn a_listing_gives_its_known_efforts_lowest_first_once_each() {
         assert_eq!(
-            Effort::listed(&["max", "minimal", "low", "high", "low"]),
+            Effort::listed(&["max", "minimal", "low", "high", "low"])
+                .into_iter()
+                .collect::<Vec<_>>(),
             [Effort::Low, Effort::High, Effort::Max]
+        );
+    }
+
+    #[test]
+    fn efforts_order_by_rank_from_low_to_ultra() {
+        let ranked = BTreeSet::from([
+            Effort::Ultra,
+            Effort::Max,
+            Effort::XHigh,
+            Effort::High,
+            Effort::Medium,
+            Effort::Low,
+        ]);
+        assert_eq!(
+            ranked.iter().map(Effort::wire).collect::<Vec<_>>(),
+            ["low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(
+            ranked.into_iter().map(Effort::rank).collect::<Vec<_>>(),
+            [0, 1, 2, 3, 4, 5]
         );
     }
 
@@ -210,7 +244,7 @@ mod tests {
             id: ModelId(String::from(id)),
             name: String::from(id),
             description: String::new(),
-            efforts: Vec::new(),
+            efforts: BTreeSet::new(),
         };
         let models = Models {
             choices: Vec::from([choice("opus"), choice("haiku")]),
