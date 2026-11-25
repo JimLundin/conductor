@@ -1,192 +1,73 @@
-// The new-session form: a host, one of its instances, a project or directory, a model and an
-// effort.
-import { type ReactElement, useId, useState } from "react";
-import { directories, type Host } from "../fold/host.ts";
-import type { ModelId, SessionId } from "../schemas/index.ts";
-import type { Send } from "./commands.ts";
-import { useSending } from "./sending.ts";
-import {
-  blank,
-  type Choosable,
-  choosable,
-  type Draft,
-  effortsOf,
-  orNull,
-  startable,
-  startOf,
-} from "./start.ts";
+import type { CommandResult, SessionId } from "@conductor/core/schemas/index";
+import type { FunctionComponent, SubmitEventHandler } from "react";
+import { start, startDisabled, startedSession } from "@conductor/core/view/start";
+import { useCallback, useState } from "react";
+import type { Draft } from "@conductor/core/session/start";
+import type { Host } from "@conductor/core/fold/host";
+import { HostField } from "#ui/session/host-field.tsx";
+import { InstanceFields } from "#ui/session/instance-fields.tsx";
+import { Notice } from "#ui/session/notice.tsx";
+import type { Send } from "#ui/link/host.ts";
+import { blank } from "@conductor/core/session/start";
+import { useSending } from "#ui/session/sending.ts";
 
-// A paired host, by the key its link is kept under.
 interface Paired {
+  readonly host: Host;
   readonly key: string;
   readonly name: string;
-  readonly host: Host;
   readonly send: Send;
 }
 
-const InstanceFields = ({
-  host,
-  chosen,
-  draft,
-  change,
-}: {
-  readonly host: Host;
-  readonly chosen: Choosable | undefined;
-  readonly draft: Draft;
-  readonly change: (next: Partial<Draft>) => void;
-}): ReactElement => {
-  const projects = startable(host);
-  const suggested = directories(host);
-  const models = chosen?.models;
-  const listed = useId();
-  return (
-    <>
-      <label>
-        Agent
-        <select
-          onChange={(event): void =>
-            change({ instance: event.target.value, model: "", effort: "" })
-          }
-          value={draft.instance}
-        >
-          <option value="">Choose an agent</option>
-          {choosable(host).map((one) => (
-            <option key={one.key} value={one.key}>
-              {one.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Project
-        <select
-          onChange={(event): void => change({ project: event.target.value })}
-          value={draft.project}
-        >
-          <option value="">A directory instead</option>
-          {projects.map((project) => (
-            <option key={project.id} value={project.id}>
-              {project.title}
-            </option>
-          ))}
-        </select>
-      </label>
-      {draft.project === "" ? (
-        <label>
-          Directory
-          <input
-            list={listed}
-            onChange={(event): void => change({ directory: event.target.value })}
-            placeholder="A directory on the host"
-            value={draft.directory}
-          />
-          <datalist id={listed}>
-            {suggested.map((path) => (
-              <option key={path} value={path} />
-            ))}
-          </datalist>
-        </label>
-      ) : null}
-      {models === undefined ? null : (
-        <>
-          <label>
-            Model
-            <select
-              onChange={(event): void => change({ model: event.target.value, effort: "" })}
-              value={draft.model}
-            >
-              <option value="">
-                {models.default === null ? "The CLI's default" : `Default (${models.default})`}
-              </option>
-              {models.choices.map((choice) => (
-                <option key={choice.id} value={choice.id}>
-                  {choice.name} · {choice.description}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Effort
-            <select
-              onChange={(event): void => change({ effort: event.target.value })}
-              value={draft.effort}
-            >
-              <option value="">The model's default</option>
-              {effortsOf(models, orNull<ModelId>(draft.model)).map((effort) => (
-                <option key={effort} value={effort}>
-                  {effort}
-                </option>
-              ))}
-            </select>
-          </label>
-        </>
-      )}
-    </>
-  );
+interface Props {
+  readonly hosts: ReadonlyArray<Paired>;
+  readonly initial: string;
+  readonly started: (host: string, session: SessionId) => void;
+}
+
+const title = "New session";
+const startLabel = "Start";
+
+const notifyStarted = (result: CommandResult, host: string, started: Props["started"]): void => {
+  const session = startedSession(result);
+  if (session !== undefined) {
+    started(host, session);
+  }
 };
 
-export const NewSession = ({
-  hosts,
-  initial,
-  started,
-}: {
-  readonly hosts: readonly Paired[];
-  // The host the form opens on.
-  readonly initial: string;
-  // The session the host started, to open it.
-  readonly started: (host: string, session: SessionId) => void;
-}): ReactElement => {
+const NewSession: FunctionComponent<Props> = ({ hosts, initial, started }) => {
   const [draft, setDraft] = useState<Draft>({ ...blank, host: initial });
-  const paired = hosts.find((one) => one.key === draft.host);
+  const paired = hosts.find((host) => host.key === draft.host);
   const sending = useSending();
-  const change = (next: Partial<Draft>): void => setDraft({ ...draft, ...next });
-  const chosen =
-    paired === undefined
-      ? undefined
-      : choosable(paired.host).find((one) => one.key === draft.instance);
-  const start = paired === undefined ? null : startOf(paired.host, draft);
+  const command = start(paired?.host, draft);
+  const change = useCallback((next: Partial<Draft>): void => {
+    setDraft((current) => ({ ...current, ...next }));
+  }, []);
+  const chooseHost = useCallback((host: string): void => {
+    setDraft({ ...blank, host });
+  }, []);
+  const submit = useCallback<SubmitEventHandler<HTMLFormElement>>(
+    (event) => {
+      event.preventDefault();
+      if (command !== undefined && paired !== undefined) {
+        sending.run(paired.send, command, (result) => {
+          notifyStarted(result, paired.key, started);
+        });
+      }
+    },
+    [command, paired, sending, started],
+  );
   return (
-    <form
-      className="start-session"
-      onSubmit={(event): void => {
-        event.preventDefault();
-        if (paired !== undefined && start !== null) {
-          sending.run(paired.send, start, (result) => {
-            if (
-              "Session" in result &&
-              typeof result.Session === "object" &&
-              "Started" in result.Session
-            ) {
-              started(paired.key, result.Session.Started.session);
-            }
-          });
-        }
-      }}
-    >
-      <h1>New session</h1>
-      <label>
-        Host
-        <select
-          onChange={(event): void => setDraft({ ...blank, host: event.target.value })}
-          value={draft.host}
-        >
-          <option value="">Choose a host</option>
-          {hosts.map((one) => (
-            <option key={one.key} value={one.key}>
-              {one.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      {paired === undefined ? null : (
-        <InstanceFields change={change} chosen={chosen} draft={draft} host={paired.host} />
-      )}
-      {sending.notice === null ? null : <p className="notice">{sending.notice}</p>}
-      <button className="primary" disabled={start === null || sending.pending} type="submit">
-        Start
+    <form className="start-session" onSubmit={submit}>
+      <h1>{title}</h1>
+      <HostField change={chooseHost} hosts={hosts} value={draft.host} />
+      <InstanceFields change={change} draft={draft} host={paired?.host} />
+      <Notice tone="notice" text={sending.notice} />
+      <button className="primary" disabled={startDisabled(command, sending.pending)} type="submit">
+        {startLabel}
       </button>
     </form>
   );
 };
 
+export { NewSession };
 export type { Paired };
