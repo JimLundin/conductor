@@ -170,7 +170,11 @@ marker, additional domain fields and metadata-backed relations. Missing
 footer means empty additional data. Duplicate footers, unknown schema or
 duplicated native fields are invalid. The body editor changes human text
 and preserves the footer; field and relation commands change only their
-mapped entries. A create marker stays in the footer for reconciliation.
+mapped entries. A create writes its operation handle to the optional
+top-level `operation` string as `<owner-host>/<operation-id>` and keeps
+it for reconciliation.
+The `[relations]` table holds a qualified issue identity for a single target
+and an array of qualified identities for multiple targets.
 
 Default `parent` and `blocked_by` mappings use GitHub's native sub-issue and
 dependency APIs. A project can instead declare an entire relation to use

@@ -1739,8 +1739,10 @@ dependencies = [
 name = "github"
 version = "0.1.0"
 dependencies = [
+ "data-encoding",
  "home",
  "serde",
+ "sha2 0.11.0",
  "thiserror 2.0.21",
  "toml",
 ]

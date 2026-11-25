@@ -190,3 +190,28 @@ fn key_text(key: &str) -> String {
         Value::String(String::from(key)).to_string()
     }
 }
+
+/// Reads the qualified identities of a TOML relation value.
+///
+/// # Errors
+/// An identity is malformed or the value has the wrong cardinality.
+pub fn targets(
+    relation: &crate::flow::Relation,
+    value: Value,
+) -> Result<Vec<crate::IssueId>, String> {
+    let id = |value: Value| match value {
+        Value::String(name) => crate::IssueId::parse(&name)
+            .ok_or_else(|| format!("{name} is no issue")),
+        _ => Err(String::from("is not a list of ids")),
+    };
+    match (relation.many, value) {
+        (_, Value::String(name)) => {
+            id(Value::String(name)).map(|one| Vec::from([one]))
+        }
+        (true, Value::Array(values)) => values.into_iter().map(id).collect(),
+        (false, Value::Array(_)) => {
+            Err(String::from("points to one issue, not a list"))
+        }
+        _ => Err(String::from("is not an id")),
+    }
+}

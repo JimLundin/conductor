@@ -322,27 +322,95 @@ fn heading_of(line: &str) -> &str {
     line.strip_prefix("## ").unwrap_or(line).trim()
 }
 
-fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
-    let mut fence = None;
-    rest.iter().map(move |line| {
-        let previously_open = fence.is_some();
+#[derive(Default)]
+struct Fences {
+    open: Option<(u8, usize)>,
+}
+
+enum Line<'a> {
+    Prose,
+    Opening(&'a str),
+    Fenced,
+    Closing,
+}
+
+impl Fences {
+    fn line<'a>(&mut self, line: &'a str) -> Line<'a> {
         if let Some((marker, width, suffix)) = fence_line(line) {
-            match fence {
+            match self.open {
                 Some((open, minimum))
                     if open == marker
                         && width >= minimum
                         && suffix.trim().is_empty() =>
                 {
-                    fence = None;
+                    self.open = None;
+                    return Line::Closing;
                 }
                 None if marker == b'~' || !suffix.contains('`') => {
-                    fence = Some((marker, width));
+                    self.open = Some((marker, width));
+                    return Line::Opening(suffix.trim());
                 }
                 _ => {}
             }
         }
-        (line.as_str(), !previously_open && fence.is_none())
+        if self.open.is_some() {
+            Line::Fenced
+        } else {
+            Line::Prose
+        }
+    }
+}
+
+fn markdown(rest: &[String]) -> impl Iterator<Item = (&str, bool)> {
+    let mut fences = Fences::default();
+    rest.iter().map(move |line| {
+        (line.as_str(), matches!(fences.line(line), Line::Prose))
     })
+}
+
+/// Splits a final named Markdown fence into its preceding text and contents.
+///
+/// # Errors
+/// A matching block is duplicated, unclosed or followed by nonblank text.
+pub fn footer<'a>(
+    text: &'a str,
+    info: &str,
+) -> Result<Option<(&'a str, &'a str)>, String> {
+    let mut fences = Fences::default();
+    let mut opened = None;
+    let mut closed = None;
+    let mut offset = 0;
+    for raw in text.split_inclusive('\n') {
+        let end = offset + raw.len();
+        match fences.line(raw.trim_end_matches(['\r', '\n'])) {
+            Line::Opening(name) if name == info => {
+                if closed.is_some() {
+                    return Err(format!("duplicate {info} footer"));
+                }
+                opened = Some((offset, end));
+            }
+            Line::Closing => {
+                if let Some((start, contents)) = opened.take() {
+                    closed = Some((start, contents..offset, end));
+                }
+            }
+            _ => {}
+        }
+        offset = end;
+    }
+    if opened.is_some() {
+        return Err(format!("unclosed {info} footer"));
+    }
+    closed
+        .map(|(start, contents, end)| {
+            if !text[end..].trim().is_empty() {
+                return Err(format!(
+                    "the {info} footer must be the final block"
+                ));
+            }
+            Ok((&text[..start], &text[contents]))
+        })
+        .transpose()
 }
 
 fn fence_line(line: &str) -> Option<(u8, usize, &str)> {

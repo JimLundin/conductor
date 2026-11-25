@@ -1,8 +1,8 @@
-use super::document::Document;
+use super::document::{Document, targets};
 use super::{ID, KIND, STAGE, STATUS, TITLE};
 use crate::flow::graph::{Problem, branch_of};
 use crate::flow::snapshot::{Inputs as DomainInputs, Snapshot};
-use crate::flow::{FieldRole, Flow, Relation};
+use crate::flow::{FieldRole, Flow};
 use crate::issue::{Datum, Issue, Observation};
 use crate::prelude::*;
 use crate::{IssueId, ProjectId};
@@ -120,25 +120,6 @@ fn datum(value: Value) -> Result<Datum, String> {
     let read =
         Datum::deserialize(value).map_err(|err| String::from(err.message()))?;
     Ok(read)
-}
-
-fn targets(relation: &Relation, value: Value) -> Result<Vec<IssueId>, String> {
-    let id = |value: Value| match value {
-        Value::String(name) => {
-            IssueId::parse(&name).ok_or_else(|| format!("{name} is no issue"))
-        }
-        _ => Err(String::from("is not a list of ids")),
-    };
-    match (relation.many, value) {
-        (_, Value::String(name)) => {
-            id(Value::String(name)).map(|one| Vec::from([one]))
-        }
-        (true, Value::Array(values)) => values.into_iter().map(id).collect(),
-        (false, Value::Array(_)) => {
-            Err(String::from("points to one issue, not a list"))
-        }
-        _ => Err(String::from("is not an id")),
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
