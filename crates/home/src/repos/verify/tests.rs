@@ -49,6 +49,7 @@ fn project(id: &str, name: &str, root: &str) -> Project {
         root: String::from(root),
         profiles: Vec::new(),
         provides: Vec::new(),
+        backends: crate::backend::Backends::default(),
     }
 }
 

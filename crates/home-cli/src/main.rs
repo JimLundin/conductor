@@ -12,10 +12,11 @@ use home::flow::command::{Asked, Command, Context, asked, homeless, run};
 use home::issue::storage::File;
 
 mod local;
+mod project;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let root = root();
+    let root = root(&args);
     let (text, code) = root
         .as_deref()
         .map_or_else(homeless, |home| answered(home, &args));
@@ -24,6 +25,9 @@ fn main() -> ExitCode {
 }
 
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
+    if let Some(project) = home::backend::requested(args) {
+        return project::capabilities(home, project);
+    }
     let loaded = home_files::read(home);
     let snapshot = &loaded.snapshot;
     let context = context();
@@ -48,11 +52,20 @@ fn issues(
     outcome.ended(saved)
 }
 
-fn root() -> Option<PathBuf> {
-    env::current_dir()
-        .ok()?
-        .ancestors()
-        .find(|folder| folder.join(PATH).is_file())
+fn root(args: &[String]) -> Option<PathBuf> {
+    root_from(
+        &env::current_dir().ok()?,
+        home::backend::requested(args).is_some(),
+    )
+}
+
+fn root_from(at: &Path, configuration_query: bool) -> Option<PathBuf> {
+    at.ancestors()
+        .find(|folder| {
+            folder.join(PATH).is_file()
+                || (configuration_query
+                    && home_files::has_configuration(folder))
+        })
         .map(Path::to_path_buf)
 }
 
@@ -85,4 +98,38 @@ fn save(root: &Path, write: &File) -> Result<(), String> {
     fs::create_dir_all(root.join(write.folder()))
         .and_then(|()| fs::write(&path, &write.text))
         .map_err(|err| format!("{}: {err}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_configuration_query_finds_its_home_without_issue_flow()
+    -> std::io::Result<()> {
+        let root = std::env::temp_dir()
+            .join(format!("home-config-discovery-{}", std::process::id()));
+        let project = root.join("projects/a1b2c3");
+        std::fs::create_dir_all(&project)?;
+        std::fs::write(
+            project.join("project.toml"),
+            "name = \"local\"\ntitle = \"Local\"\nroot = \"fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5\"\n",
+        )?;
+        let found = super::root_from(&project, true);
+        std::fs::remove_dir_all(&root)?;
+        assert_eq!(found, Some(root));
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_project_configuration_is_found_for_diagnostics()
+    -> std::io::Result<()> {
+        let root = std::env::temp_dir()
+            .join(format!("home-invalid-discovery-{}", std::process::id()));
+        let project = root.join("projects/a1b2c3");
+        std::fs::create_dir_all(&project)?;
+        std::fs::write(project.join("project.toml"), "invalid configuration")?;
+        let found = super::root_from(&project, true);
+        std::fs::remove_dir_all(&root)?;
+        assert_eq!(found, Some(root));
+        Ok(())
+    }
 }

@@ -23,6 +23,7 @@ pub struct Project {
     pub root: String,
     pub profiles: Vec<String>,
     pub provides: Vec<String>,
+    pub backends: crate::backend::Backends,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +36,8 @@ struct File {
     profiles: Vec<String>,
     #[serde(default)]
     provides: Vec<String>,
+    #[serde(default)]
+    backends: crate::backend::Backends,
 }
 
 /// The projects a home lists, by id, and why any of its folders isn't one.
@@ -96,6 +99,9 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
     let id = slug(folder)?;
     let file = toml::from_str::<File>(text)
         .map_err(|err| format!("{PROJECT_FILE}: {err}"))?;
+    file.backends
+        .validate()
+        .map_err(|problem| format!("{PROJECT_FILE}: {problem:?}"))?;
     Ok(Project {
         id,
         name: file.name,
@@ -104,6 +110,7 @@ pub fn parse(folder: &str, text: &str) -> Result<Project, String> {
         root: commit(file.root)?,
         profiles: file.profiles,
         provides: file.provides,
+        backends: file.backends,
     })
 }
 
@@ -122,4 +129,21 @@ fn commit(root: String) -> Result<String, String> {
     (hex && matches!(root.len(), 40 | 64))
         .then_some(root)
         .ok_or_else(|| String::from("root is not a commit id"))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn invalid_backend_references_are_refused_when_reading_project_configuration()
+     {
+        let text = r#"
+name = "local"
+title = "Local"
+root = "fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5"
+[backends.tracker]
+adapter = ""
+resource = "issues"
+"#;
+        assert!(super::parse("a1b2c3", text).is_err());
+    }
 }

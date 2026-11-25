@@ -10,10 +10,12 @@
 
 extern crate alloc;
 
+pub mod backend;
 mod calendar;
 pub mod checkout;
 pub mod flow;
 mod home;
+pub mod hosting;
 mod id;
 pub mod instructions;
 pub mod issue;

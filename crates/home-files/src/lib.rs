@@ -19,29 +19,46 @@ use home::skills;
 
 pub mod git;
 
+#[must_use]
+pub fn has_configuration(root: &Path) -> bool {
+    folders(&root.join(layout::PROJECTS)).iter().any(|folder| {
+        ProjectId::parse(folder).is_some()
+            && root.join(layout::project_file(folder)).is_file()
+    })
+}
+
+#[must_use]
+pub fn configuration(root: &Path) -> home::flow::snapshot::Snapshot {
+    layout::inputs(text(root, PATH), project_files(root), Vec::new())
+        .read()
+        .snapshot
+}
+
 /// The home whose root is `root`.
 #[must_use]
 pub fn read(root: &Path) -> storage::ReadHome {
-    let folders = folders(&root.join(layout::PROJECTS));
-    let mut inputs = layout::inputs(
-        text(root, PATH),
-        folders
-            .iter()
-            .map(|folder| {
-                (folder.clone(), text(root, &layout::project_file(folder)))
-            })
-            .collect(),
-        folders
-            .iter()
-            .filter_map(|folder| ProjectId::parse(folder))
-            .flat_map(|project| issues(root, project))
-            .collect(),
-    );
+    let projects = project_files(root);
+    let records = projects
+        .iter()
+        .filter_map(|(folder, _)| ProjectId::parse(folder))
+        .flat_map(|project| issues(root, project))
+        .collect();
+    let mut inputs = layout::inputs(text(root, PATH), projects, records);
     inputs.observed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
         .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok());
     inputs.read()
+}
+
+fn project_files(root: &Path) -> Vec<(String, Result<String, String>)> {
+    folders(&root.join(layout::PROJECTS))
+        .into_iter()
+        .map(|folder| {
+            let read = text(root, &layout::project_file(&folder));
+            (folder, read)
+        })
+        .collect()
 }
 
 /// A search root with the folders in it and in each of those that isn't
@@ -359,6 +376,30 @@ mod tests {
             "{:?}",
             home.listing_problems()
         );
+        Ok(())
+    }
+
+    #[test]
+    fn configuration_reads_do_not_refresh_issue_records() -> std::io::Result<()>
+    {
+        let scratch = Scratch(
+            std::env::temp_dir()
+                .join(format!("home-configuration-{}", std::process::id())),
+        );
+        let project = scratch.0.join("projects/a1b2c3");
+        fs::create_dir_all(project.join("issues"))?;
+        fs::write(
+            project.join("project.toml"),
+            "name = \"local\"\ntitle = \"Local\"\nroot = \"fc27e50efb661d7ef4a45d3edbe0234ff0a6fbd5\"\n",
+        )?;
+        fs::write(project.join("issues/invalid.md"), "not an issue")?;
+        let flow = scratch.0.join(home::flow::PATH);
+        fs::create_dir_all(flow.parent().unwrap_or(&scratch.0))?;
+        fs::write(flow, include_str!("../../home/src/flow/test-flow.toml"))?;
+        let configuration = super::configuration(&scratch.0);
+        assert_eq!(configuration.projects().len(), 1);
+        assert_eq!(configuration.graph().problems, Vec::new());
+        assert_eq!(configuration.graph().issues, Vec::new());
         Ok(())
     }
 

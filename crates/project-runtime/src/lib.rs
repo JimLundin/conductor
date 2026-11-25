@@ -1,0 +1,271 @@
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::Arc;
+
+use home::backend::{
+    self, Backend, Backends, Binding, Capability, CredentialState, Refusal,
+    Selection,
+};
+use home::hosting;
+use home::issue::{Observation, Read};
+use vcs::command::{
+    Capture, Compare, Comparison, Integrate, Prepare, PreserveAndRemove,
+};
+use vcs::plan::Ownership;
+
+pub type Completion<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, Failure>> + Send + 'a>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Failure {
+    Refused(Refusal),
+    Unavailable,
+}
+
+impl From<Refusal> for Failure {
+    fn from(refusal: Refusal) -> Self {
+        Self::Refused(refusal)
+    }
+}
+
+pub trait VersionControl: Send + Sync {
+    fn prepare(&self, request: Prepare) -> Completion<'_, Ownership>;
+    fn capture(&self, request: Capture) -> Completion<'_, String>;
+    fn compare(&self, request: Compare) -> Completion<'_, Comparison>;
+    fn integrate(&self, request: Integrate) -> Completion<'_, u64>;
+    fn preserve_and_remove(
+        &self,
+        request: PreserveAndRemove,
+    ) -> Completion<'_, vcs::Kept>;
+}
+
+pub trait IssueTracker: Send + Sync {
+    fn read(&self, request: Read) -> Completion<'_, Observation>;
+}
+
+pub trait RepositoryHosting: Send + Sync {
+    fn observe(
+        &self,
+        request: hosting::Request,
+    ) -> Completion<'_, hosting::Report>;
+}
+
+pub struct Registration {
+    pub selection: Selection,
+    pub capabilities: Vec<Capability>,
+    pub credential: CredentialState,
+}
+
+impl Registration {
+    fn binding(self, backend: Backend) -> Binding {
+        Binding {
+            backend,
+            selection: self.selection,
+            capabilities: self.capabilities,
+            credential: self.credential,
+        }
+    }
+}
+
+struct Entry<T: ?Sized> {
+    binding: Binding,
+    adapter: Arc<T>,
+}
+
+#[derive(Default)]
+pub struct Registry {
+    version_control: Vec<Entry<dyn VersionControl>>,
+    trackers: Vec<Entry<dyn IssueTracker>>,
+    hosting: Vec<Entry<dyn RepositoryHosting>>,
+}
+
+impl Registry {
+    /// # Errors
+    /// The binding is invalid or already registered.
+    pub fn register_version_control(
+        &mut self,
+        registration: Registration,
+        adapter: Arc<dyn VersionControl>,
+    ) -> Result<(), Refusal> {
+        let binding = registration.binding(Backend::VersionControl);
+        backend::register(&self.bindings(), &binding)?;
+        self.version_control.push(Entry { binding, adapter });
+        Ok(())
+    }
+
+    /// # Errors
+    /// The binding is invalid or already registered.
+    pub fn register_tracker(
+        &mut self,
+        registration: Registration,
+        adapter: Arc<dyn IssueTracker>,
+    ) -> Result<(), Refusal> {
+        let binding = registration.binding(Backend::IssueTracker);
+        backend::register(&self.bindings(), &binding)?;
+        self.trackers.push(Entry { binding, adapter });
+        Ok(())
+    }
+
+    /// # Errors
+    /// The binding is invalid or already registered.
+    pub fn register_hosting(
+        &mut self,
+        registration: Registration,
+        adapter: Arc<dyn RepositoryHosting>,
+    ) -> Result<(), Refusal> {
+        let binding = registration.binding(Backend::RepositoryHosting);
+        backend::register(&self.bindings(), &binding)?;
+        self.hosting.push(Entry { binding, adapter });
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn bindings(&self) -> Vec<Binding> {
+        self.version_control
+            .iter()
+            .map(|entry| &entry.binding)
+            .chain(self.trackers.iter().map(|entry| &entry.binding))
+            .chain(self.hosting.iter().map(|entry| &entry.binding))
+            .cloned()
+            .collect()
+    }
+
+    /// # Errors
+    /// The requested operation lacks its selected backend, credential or capability.
+    pub fn preflight(
+        &self,
+        backends: &Backends,
+        capability: Capability,
+    ) -> Result<(), Refusal> {
+        backend::preflight(backends, &self.bindings(), capability).map(|_| ())
+    }
+
+    #[must_use]
+    pub fn capabilities(
+        &self,
+        backends: &Backends,
+    ) -> Vec<backend::Availability> {
+        Capability::ALL
+            .into_iter()
+            .map(|capability| backend::Availability {
+                capability,
+                refusal: self.preflight(backends, capability).err(),
+            })
+            .collect()
+    }
+
+    #[must_use]
+    pub const fn project<'a>(&'a self, backends: &'a Backends) -> Project<'a> {
+        Project {
+            registry: self,
+            backends,
+        }
+    }
+}
+
+pub struct Project<'a> {
+    registry: &'a Registry,
+    backends: &'a Backends,
+}
+
+impl Project<'_> {
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn prepare(
+        &self,
+        request: Prepare,
+    ) -> Result<Ownership, Failure> {
+        self.version_control(Capability::PrepareWorkspace)?
+            .prepare(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn capture(&self, request: Capture) -> Result<String, Failure> {
+        self.version_control(Capability::CaptureSnapshot)?
+            .capture(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn compare(
+        &self,
+        request: Compare,
+    ) -> Result<Comparison, Failure> {
+        self.version_control(Capability::CompareSnapshots)?
+            .compare(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn integrate(&self, request: Integrate) -> Result<u64, Failure> {
+        self.version_control(Capability::IntegrateSession)?
+            .integrate(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn preserve_and_remove(
+        &self,
+        request: PreserveAndRemove,
+    ) -> Result<vcs::Kept, Failure> {
+        self.version_control(Capability::PreserveWorkspace)?
+            .preserve_and_remove(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn read_issue(
+        &self,
+        request: Read,
+    ) -> Result<Observation, Failure> {
+        self.registry
+            .preflight(self.backends, Capability::ReadIssues)?;
+        selected(&self.registry.trackers, self.backends.tracker.as_ref())?
+            .read(request)
+            .await
+    }
+
+    /// # Errors
+    /// Preflight refused the operation or its selected adapter could not complete it.
+    pub async fn observe_hosting(
+        &self,
+        request: hosting::Request,
+    ) -> Result<hosting::Report, Failure> {
+        self.registry
+            .preflight(self.backends, request.source.capability())?;
+        selected(&self.registry.hosting, self.backends.hosting.as_ref())?
+            .observe(request)
+            .await
+    }
+
+    fn version_control(
+        &self,
+        capability: Capability,
+    ) -> Result<&dyn VersionControl, Failure> {
+        self.registry.preflight(self.backends, capability)?;
+        selected(
+            &self.registry.version_control,
+            self.backends.version_control.as_ref(),
+        )
+    }
+}
+
+fn selected<'a, T: ?Sized>(
+    entries: &'a [Entry<T>],
+    selection: Option<&Selection>,
+) -> Result<&'a T, Failure> {
+    entries
+        .iter()
+        .find(|entry| Some(&entry.binding.selection) == selection)
+        .map(|entry| entry.adapter.as_ref())
+        .ok_or(Failure::Unavailable)
+}
+
+#[cfg(test)]
+mod tests;

@@ -4,7 +4,8 @@ use std::process::Command;
 
 const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
 
-const COMMANDS: [&str; 14] = [
+const COMMANDS: [&str; 15] = [
+    "home project capabilities <project>",
     "home check",
     "home issue new <project> <kind> <title> [<field>=<value>...]",
     "home issue move <id> stage|status <to> [--signed-off] [<reason>...]",

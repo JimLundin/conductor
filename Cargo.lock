@@ -1504,6 +1504,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "github"
+version = "0.1.0"
+dependencies = [
+ "home",
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "gloo-timers"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,8 +1628,10 @@ name = "home-cli"
 version = "0.1.0"
 dependencies = [
  "getrandom 0.4.3",
+ "github",
  "home",
  "home-files",
+ "project-runtime",
  "vcs",
 ]
 
@@ -3282,6 +3293,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "985e7ec9bb745e6ce6535b544d84d6cd6f7ad8bd711c398938ae983b91a766d9"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "project-runtime"
+version = "0.1.0"
+dependencies = [
+ "home",
+ "tokio",
+ "vcs",
 ]
 
 [[package]]

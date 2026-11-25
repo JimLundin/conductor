@@ -21,6 +21,8 @@ use crate::prelude::*;
 /// What `home` says alone: every command and what it means.
 pub const USAGE: &str = "usage: home <command>, from anywhere in the home
 
+  home project capabilities <project>
+      Validates backend configuration and shows available project operations.
   home check
       Checks every project and issue against the flow; fails only on errors.
   home issue new <project> <kind> <title> [<field>=<value>...]

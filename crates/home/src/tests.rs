@@ -42,6 +42,7 @@ fn project(name: &str, remote: Option<&str>) -> Project {
         root: String::from(ROOT),
         profiles: Vec::from([String::from("rust")]),
         provides: Vec::new(),
+        backends: crate::backend::Backends::default(),
     }
 }
 
