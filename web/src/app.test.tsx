@@ -15,9 +15,10 @@ const ticket =
 const host = `58${"66".repeat(31)}`;
 
 const rendered = (fragment: string, pipe?: Pipe): Effect.Effect<string, never, Scope.Scope> =>
-  makeStore(page(fragment, undefined, pipe).boundary).pipe(
-    Effect.map((store) => renderToStaticMarkup(<Root store={store} />)),
-  );
+  Effect.gen(function* rendering() {
+    const store = yield* makeStore(page(fragment, undefined, pipe).boundary);
+    return renderToStaticMarkup(<Root store={store} />);
+  });
 
 const turn = (): ReturnType<typeof scenario> => scenario("a_claude_turn_streams_asks_and_finishes");
 

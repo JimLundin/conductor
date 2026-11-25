@@ -204,7 +204,10 @@ const finishing = (initial: Host): ReadonlyArray<Host> => {
     "FinishStarted",
     { SessionFinished: { finished: { Failed: { reason: "merge conflict" } } } },
   ];
-  const numbered = events.map((kind, index) => ({ kind, seq: index + 6 }));
+  const numbered = events.map((kind, index): Pick<Event, "kind" | "seq"> => ({
+    kind,
+    seq: index + 6,
+  }));
   return Arr.scan(numbered, initial, (host, { kind, seq }) => then(host, seq, kind));
 };
 
