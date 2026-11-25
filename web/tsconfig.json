@@ -19,8 +19,18 @@
     "noUnusedParameters": true,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "#ticket-example": ["../crates/link/ticket.example.json"]
+    }
   },
-  "include": ["src", "profiles", "scripts", "vite.config.ts", "core/src"],
+  "include": [
+    "src",
+    "scripts",
+    "vite.config.ts",
+    "core/src",
+    "vitest.config.ts",
+    "vitest.setup.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

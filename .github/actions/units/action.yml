@@ -124,6 +124,13 @@ runs:
       with:
         node-version: ${{ env.NODE }}
 
+    - name: Install the TypeScript analysis tool from the standards
+      if: ${{ env.TS_MEASURE != '' }}
+      shell: bash
+      run: |
+        npm ci --prefix "$STANDARDS/typescript/measure" --no-audit --no-fund
+        npm install --global "$STANDARDS/typescript/measure" --no-audit --no-fund
+
     - id: check
       name: Run tools/check.sh step
       shell: bash
