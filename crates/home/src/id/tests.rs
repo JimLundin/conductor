@@ -16,6 +16,17 @@ fn draws(given: &[u64]) -> Draws {
 }
 
 #[test]
+fn the_issue_id_epoch_is_the_first_second_of_2026() {
+    assert_eq!(
+        (
+            IssueId::EPOCH % 86_400,
+            crate::calendar::civil(IssueId::EPOCH / 86_400)
+        ),
+        (0, (2026, 1, 1))
+    );
+}
+
+#[test]
 fn an_issue_id_writes_its_seconds_since_2026_then_its_draw() {
     assert_eq!(
         [
