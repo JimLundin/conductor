@@ -1,6 +1,3 @@
-//! `home repos` and `home skills` run in a home on disk with two
-//! repositories in it.
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -31,7 +28,6 @@ fn git(at: &Path, args: &[&str]) -> std::io::Result<String> {
     Ok(String::from_utf8_lossy(&ran.stdout).trim().to_owned())
 }
 
-/// A repository at `at` with one commit, and its root commit.
 fn repository(at: &Path, file: &str) -> std::io::Result<String> {
     fs::create_dir_all(at)?;
     fs::write(at.join(file), "")?;
