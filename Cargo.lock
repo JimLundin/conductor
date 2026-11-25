@@ -885,7 +885,6 @@ dependencies = [
  "chacha20poly1305",
  "data-encoding",
  "dbus-secret-service",
- "directories",
  "getrandom 0.4.3",
  "home",
  "home-files",
@@ -1640,6 +1639,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "thiserror 2.0.21",
  "time",
  "toml",
  "toml_parser",
@@ -1656,6 +1656,7 @@ dependencies = [
  "home",
  "home-files",
  "project-runtime",
+ "serde_json",
  "vcs",
  "vcs-git2",
 ]
@@ -3359,7 +3360,12 @@ name = "project-runtime"
 version = "0.1.0"
 dependencies = [
  "directories",
+ "getrandom 0.4.3",
  "home",
+ "postcard",
+ "redb",
+ "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "vcs",
 ]

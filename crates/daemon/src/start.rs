@@ -302,9 +302,15 @@ pub struct Hosted {
     initialized: tokio::sync::watch::Receiver<bool>,
     fleet_lock: std::fs::File,
     has_fleet: bool,
+    operations: project_runtime::operations::Operations,
 }
 
 impl Hosted {
+    #[must_use]
+    pub const fn operations(&self) -> &project_runtime::operations::Operations {
+        &self.operations
+    }
+
     /// The ticket a client reaches this host and is admitted by.
     ///
     /// # Errors
@@ -373,6 +379,10 @@ pub async fn start(
 ) -> anyhow::Result<Hosted> {
     let (lock, fleet) = open_fleet(&endpoint, &options.data_dir).await?;
     let has_fleet = fleet.is_some();
+    let operations = project_runtime::operations::Operations::bind(
+        &options.data_dir,
+        *endpoint.id().as_bytes(),
+    )?;
     let data = options.data_dir.clone();
     let (fleet_slot, _) = tokio::sync::watch::channel(fleet);
     let started = assemble(
@@ -405,6 +415,7 @@ pub async fn start(
                 initialized,
                 fleet_lock: lock,
                 has_fleet,
+                operations,
             })
         }
         Err(error) => {

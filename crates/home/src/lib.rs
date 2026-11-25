@@ -20,6 +20,7 @@ mod id;
 pub mod instructions;
 pub mod issue;
 pub mod layout;
+pub mod operations;
 mod prelude;
 pub mod project;
 pub mod repos;

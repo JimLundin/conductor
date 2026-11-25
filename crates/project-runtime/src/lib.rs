@@ -1,3 +1,5 @@
+pub mod operations;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
