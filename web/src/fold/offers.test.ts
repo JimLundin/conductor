@@ -31,7 +31,6 @@ const cases = [
   [[user("hi"), started("toolu_1")], false],
   [[user("hi"), started("toolu_1"), finished("toolu_1")], true],
   [[user("hi"), { TurnCompleted: { outcome: "Completed" } }], false],
-  // An open approval after a parallel tool call finished, and after a commentary reply.
   [[user("hi"), started("toolu_1"), started("toolu_2"), finished("toolu_2"), opened(1)], false],
   [
     [

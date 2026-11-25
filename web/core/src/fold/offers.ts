@@ -2,7 +2,6 @@ import { Data, Match } from "effect";
 import { Item, ToolState, isRequestOpen } from "#core/fold/transcript";
 import type { Session } from "#core/fold/session";
 import { SessionStatus } from "#core/fold/session";
-// What a session offers and shows, decided here so the views only render it.
 
 const noItems = 0;
 const lastItem = -1;
@@ -25,7 +24,6 @@ const ListStatus = Data.taggedEnum<ListStatus>();
 
 type EmptyTranscript = "Starting" | "Ready" | "Closed";
 
-// The approvals and questions waiting on a person, the session's own and then its sub-agents'.
 const openRequests = (session: Session): ReadonlyArray<Item> =>
   [...session.items, ...session.subagents.flatMap((subagent) => subagent.items)].filter((item) =>
     isRequestOpen(item),
@@ -49,7 +47,6 @@ const controls = (session: Session): Controls => {
   };
 };
 
-// The list shows a session's open requests in place of its status.
 const listStatus = (session: Session): ListStatus => {
   const count = openRequests(session).length;
   const { _tag: status } = session.status;
@@ -74,8 +71,6 @@ const isLive = (item: Item | undefined): boolean =>
   (((Item.$is("Reply")(item) || Item.$is("Reasoning")(item)) && item.state === "Streaming") ||
     (Item.$is("Tool")(item) && ToolState.$is("Running")(item.state)));
 
-// A running turn shows it is working, unless it waits on a person or its last item is live
-// Already: a reply or reasoning streaming in, or a tool call running.
 const isWorking = (session: Session): boolean =>
   SessionStatus.$is("Running")(session.status) &&
   openRequests(session).length === noItems &&

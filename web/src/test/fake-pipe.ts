@@ -2,19 +2,13 @@ import type { Connection, Pipe, Stream } from "#ui/pipe.ts";
 import { Deferred, Effect, Option, Queue } from "effect";
 import type { Cause } from "effect";
 
-// An in-memory pipe for tests, where the test plays the host. Its connections and streams are
-// Typed as web-iroh's, so a change to the pipe's declarations breaks the type-check here.
-
-// One direction of a stream: its frames in order, then its end.
 type Frames = Queue.Queue<Uint8Array, Cause.Done>;
 
 type Frame = Parameters<Stream["send"]>[0];
 
-// The host's side of a stream the app opened.
 interface HostStream {
   readonly send: (frame: Frame) => Promise<void>;
   readonly finish: () => void;
-  // The app's next frame, or undefined once the app finished the stream.
   readonly recv: () => Promise<Uint8Array | undefined>;
 }
 
@@ -100,7 +94,6 @@ const fake = (opened: Queue.Queue<HostStream>, closed: Deferred.Deferred<string>
 
 export interface FakeHost {
   readonly pipe: Pipe;
-  // The host's side of the next stream the app opens.
   readonly accept: () => Promise<HostStream>;
   readonly close: (reason: string) => void;
 }

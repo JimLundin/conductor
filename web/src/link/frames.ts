@@ -1,4 +1,3 @@
-// Frames on the pipe's streams, each one JSON body that the generated schemas encode and decode.
 import type { Connection, Stream } from "#ui/pipe.ts";
 import { Effect, Predicate, Schema } from "effect";
 
@@ -32,7 +31,6 @@ const decode: <Decoded>(
     Effect.mapError(described),
   );
 
-// The stream's next frame, or undefined once the host finished it.
 const read: <Decoded>(
   schema: Schema.Decoder<Decoded>,
   stream: Pick<Stream, "recv">,
@@ -49,7 +47,6 @@ const read: <Decoded>(
 const open: (connection: Connection) => Effect.Effect<Stream, string> = (connection) =>
   Effect.tryPromise({ catch: described, try: () => connection.openBi() });
 
-// Fails with the reason once the connection closes.
 const closing: (connection: Connection) => Effect.Effect<never, string> = (connection) =>
   Effect.promise(() => connection.closed()).pipe(
     Effect.flatMap((reason) => Effect.fail(`the connection closed: ${reason}`)),

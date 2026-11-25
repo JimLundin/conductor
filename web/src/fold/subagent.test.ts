@@ -22,7 +22,6 @@ const approved = {
   Decided: { by: "phone", decision: "Approve" },
 } as const satisfies Resolution;
 
-// Two sub-agents: a asks to run a call, and b starts after it.
 const asking = [
   [1, created("/a")],
   [1, "SessionReady"],
@@ -46,8 +45,6 @@ const asking = [
   ],
 ] as const satisfies Numbered;
 
-// The call is approved and a finishes with its report; b still runs a call when the session
-// Closes.
 const closing = [
   [1, { RequestResolved: { request: 1, resolution: approved } }],
   [1, subagentTool("a", "toolu_a1", { Finished: { outcome: "Succeeded" } })],

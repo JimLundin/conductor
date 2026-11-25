@@ -9,7 +9,6 @@ import type {
 import { RequestState, ToolState } from "#core/fold/transcript";
 import type { Subagent } from "#core/fold/subagent";
 import { SubagentStatus } from "#core/fold/subagent";
-// How the session screens word what the fold holds.
 
 const toolName = (tool: ToolKind): string => {
   if ("Command" in tool) {

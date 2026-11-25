@@ -1,9 +1,6 @@
 import { Data, Result } from "effect";
 import type { Ticket } from "#core/schemas/index";
 import type { Unit } from "#core/data";
-// A ticket's text form, as crates/link/src/ticket.rs writes it: base64url without padding of
-// `version (1 byte) | host endpoint id (32) | token (16) | relay url (utf-8, rest)`. The
-// Generated schemas carry only its JSON form, so this is the app's one reader of the text.
 
 type TicketError = Data.TaggedEnum<{
   readonly Encoding: Unit;
@@ -29,21 +26,19 @@ const previous = 1;
 const versionLength = 1;
 const missing = -1;
 
-// One group of up to four digits as its bytes, or undefined when a lone digit can't make a
-// Byte or the bits after the last byte aren't zero, as the Rust decoder refuses.
-const group = (digits: ReadonlyArray<number>): ReadonlyArray<number> | undefined => {
+const decodeDigitGroup = (digits: ReadonlyArray<number>): ReadonlyArray<number> | undefined => {
   const bits = digits.length * bitsPerDigit;
-  const count = Math.floor(bits / bitsPerByte);
-  const spare = bits - count * bitsPerByte;
+  const byteCount = Math.floor(bits / bitsPerByte);
+  const paddingBits = bits - byteCount * bitsPerByte;
   const value = digits.reduce((word, digit) => word * binaryRadix ** bitsPerDigit + digit, empty);
-  if (count === empty || value % binaryRadix ** spare !== empty) {
+  if (byteCount === empty || value % binaryRadix ** paddingBits !== empty) {
     return undefined;
   }
-  const word = Math.floor(value / binaryRadix ** spare);
+  const word = Math.floor(value / binaryRadix ** paddingBits);
   return Array.from(
-    { length: count },
+    { length: byteCount },
     (_unused, index) =>
-      Math.floor(word / binaryRadix ** (bitsPerByte * (count - previous - index))) % byteValues,
+      Math.floor(word / binaryRadix ** (bitsPerByte * (byteCount - previous - index))) % byteValues,
   );
 };
 
@@ -55,7 +50,7 @@ const unbase64url = (text: string): ReadonlyArray<number> | undefined => {
   const groups = Array.from(
     { length: Math.ceil(digits.length / digitsPerGroup) },
     (_unused, index) =>
-      group(digits.slice(index * digitsPerGroup, (index + previous) * digitsPerGroup)),
+      decodeDigitGroup(digits.slice(index * digitsPerGroup, (index + previous) * digitsPerGroup)),
   );
   if (groups.includes(undefined)) {
     return undefined;
@@ -102,10 +97,8 @@ const parseTicket = (text: string): Result.Result<Ticket, TicketError> => {
   return fields(bytes);
 };
 
-// What a join link puts before its ticket; the daemon writes the same in crates/daemon/src/start.rs.
 const joinMarker = "#join=";
 
-// What a person pastes: a whole join link, or the bare ticket.
 const parseJoin = (text: string): Result.Result<Ticket, TicketError> => {
   const trimmed = text.trim();
   const at = trimmed.lastIndexOf(joinMarker);

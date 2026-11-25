@@ -1,4 +1,3 @@
-// A command on its own stream, with its result for the caller.
 import { CommandResult, Open } from "@conductor/core/schemas/index";
 import { closing, described, open, read, write } from "#ui/link/frames.ts";
 import { BrowserCrypto } from "@effect/platform-browser";

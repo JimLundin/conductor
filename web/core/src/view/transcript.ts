@@ -50,12 +50,11 @@ const marker = (item: MarkerItem): Marker =>
 const children = (item: Item, subagents: ReadonlyArray<Subagent>): ReadonlyArray<Subagent> =>
   Item.$is("Tool")(item) ? subagents.filter((subagent) => subagent.call === item.call) : [];
 
-// Transcript positions remain stable while their messages stream.
 const rows = (items: ReadonlyArray<Item>, subagents: ReadonlyArray<Subagent>): ReadonlyArray<Row> =>
-  items.map((item, index) => ({
+  items.map((item, position) => ({
     children: children(item, subagents),
     item,
-    key: String(index),
+    key: String(position),
     style: item._tag.toLowerCase(),
   }));
 

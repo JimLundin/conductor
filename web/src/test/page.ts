@@ -4,9 +4,6 @@ import { KeyValueStore } from "effect/persistence";
 import type { Pipe } from "#ui/pipe.ts";
 import { dialing } from "#ui/test/replay.ts";
 
-// A page for the store in tests: in-memory storage, a fragment the test reads, and a pipe.
-
-// An in-memory Web Storage, holding `entries` to start with.
 const memoryStorage = (entries: ReadonlyArray<readonly [string, string]> = []): Storage => {
   const items = new Map(entries);
   return {
@@ -32,11 +29,9 @@ const keysOf = (storage: Readonly<Storage>): ReadonlyArray<string> =>
 
 interface Page {
   readonly boundary: Boundary;
-  // The fragment the page shows now.
   readonly at: () => string;
 }
 
-// A page at `start`, whose links dial `pipe`; by default one that never connects.
 const page = (
   start: string,
   storage: Readonly<Storage> = memoryStorage(),
@@ -64,7 +59,6 @@ const page = (
   };
 };
 
-// Resolves once `holds` is true of the store.
 const when: (
   store: Pick<Store, "view" | "subscribe">,
   holds: (store: Pick<Store, "view">) => boolean,

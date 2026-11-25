@@ -1,15 +1,10 @@
 import { Option, Schema } from "effect";
 import { Ticket } from "#core/schemas/index";
-// The paired hosts as local storage keeps them: one record per host, under a key holding the
-// Format's version and the host's endpoint id in hex, so tabs pair and forget hosts each on
-// Their own. Records in any other format, the Dioxus app's included, are set aside unread.
 
-// A host's endpoint id in lower-case hex, which keys it in storage and in the page.
 type HostKey = string;
 
 interface Saved {
   readonly ticket: Ticket;
-  // The name from its last welcome, kept across launches.
   readonly name: string | undefined;
 }
 
@@ -26,8 +21,6 @@ const hostKey = (ticket: Ticket): HostKey =>
 
 const storageKey = (host: HostKey): string => `${prefix}${host}`;
 
-// A record that doesn't decode, or whose ticket names another host than its key, is skipped
-// Without discarding its neighbours.
 const restored = (key: string, value: string | undefined): ReadonlyArray<Saved> => {
   if (!key.startsWith(prefix) || value === undefined) {
     return [];

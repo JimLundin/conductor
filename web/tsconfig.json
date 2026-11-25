@@ -19,7 +19,7 @@
     "noUnusedParameters": true,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
-    "types": ["node"],
+    "types": ["node", "vite/client"],
     "paths": {
       "#ticket-example": ["../crates/link/ticket.example.json"]
     }

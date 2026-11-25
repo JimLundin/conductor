@@ -4,10 +4,8 @@ import type { SessionId } from "#core/schemas/index";
 import type { Unit } from "#core/data";
 import { joinMarker } from "#core/ticket";
 
-// The screen a URL fragment names. Pages serves one path, so every screen is a fragment.
 type Route = Data.TaggedEnum<{
   readonly Pairing: Unit;
-  // Every paired host with its sessions: the sidebar, and on a phone the stack's first screen.
   readonly Sessions: Unit;
   readonly NewSession: { readonly host: HostKey };
   readonly Session: { readonly host: HostKey; readonly session: SessionId };
@@ -15,7 +13,6 @@ type Route = Data.TaggedEnum<{
 
 const Route = Data.taggedEnum<Route>();
 
-// Whether the fragment is a join link's, which pairs its ticket instead of naming a screen.
 const isJoin = (fragment: string): boolean => fragment.startsWith(joinMarker);
 
 const pairingParts = 1;
@@ -38,7 +35,6 @@ const screen = (parts: ReadonlyArray<string>): Route => {
   return Route.Sessions();
 };
 
-// With no host paired, every fragment shows pairing; an unknown one shows the sessions.
 const route = (fragment: string, paired: boolean): Route => {
   if (!paired) {
     return Route.Pairing();
