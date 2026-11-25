@@ -11,6 +11,10 @@ use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
+mod diagram;
+
+pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Canvas {
@@ -22,6 +26,7 @@ pub struct Canvas {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
     Prose { text: String },
+    Diagram(Diagram),
 }
 
 impl Canvas {
@@ -29,7 +34,13 @@ impl Canvas {
     ///
     /// The text is not a canvas.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
-        decoded(text)
+        let canvas: Self = decoded(text)?;
+        for block in &canvas.blocks {
+            if let Block::Diagram(diagram) = block {
+                diagram.drawable().map_err(CanvasError::Diagram)?;
+            }
+        }
+        Ok(canvas)
     }
 
     #[must_use]
@@ -46,6 +57,7 @@ impl Block {
     pub fn markdown(&self) -> String {
         match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
+            Self::Diagram(diagram) => diagram.markdown(),
         }
     }
 }
@@ -83,12 +95,14 @@ fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanvasError {
     Json { reason: String },
+    Diagram(DiagramError),
 }
 
 impl fmt::Display for CanvasError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json { reason } => write!(out, "not a canvas: {reason}"),
+            Self::Diagram(error) => error.fmt(out),
         }
     }
 }
