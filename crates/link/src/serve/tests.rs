@@ -10,7 +10,7 @@ use home::issue::{EditId, Issue, IssueChange, NewIssue};
 use home::{
     Home, HomeCommand, HomeRefusal, HomeResult, HomeSync, IssueId, ProjectId,
 };
-use home_store::{CanvasStore, Memory, StoreError};
+use home_store::{CanvasStore, Memory};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
 use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};
@@ -21,8 +21,8 @@ use crate::log::Kind;
 use crate::{Command, Hello, Open, Subscribe};
 
 use super::{
-    Admission, CanvasLookup, Stream, admit, canvas_lookup, device,
-    device_hello, kept_canvas, ledger, operation, stream, with_canvases,
+    Admission, Stream, admit, canvas, device, device_hello, ledger, operation,
+    stream, with_canvases,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -335,48 +335,13 @@ fn two_canvases() -> Result<Memory, String> {
     Ok(store)
 }
 
-struct Failing;
-
-impl CanvasStore for Failing {
-    fn all(&self) -> Result<Vec<CanvasKey>, StoreError> {
-        Err(gone())
-    }
-
-    fn list(
-        &self,
-        _: &ProjectId,
-        _: &IssueId,
-    ) -> Result<Vec<CanvasEntry>, StoreError> {
-        Err(gone())
-    }
-
-    fn get(&self, _: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
-        Err(gone())
-    }
-
-    fn put(&mut self, _: &CanvasKey, _: &CanvasFile) -> Result<(), StoreError> {
-        Err(gone())
-    }
-}
-
-fn gone() -> StoreError {
-    StoreError::Unavailable {
-        reason: String::from("the disk is gone"),
-    }
-}
-
 fn asked(
-    store: &dyn CanvasStore,
+    store: &Memory,
     home: Option<&Home>,
     issue: IssueId,
     name: &str,
 ) -> Result<HomeResult, String> {
-    Ok(match canvas_lookup(home, issue, named(name)?) {
-        CanvasLookup::Fetch(at) => {
-            kept_canvas(store.get(&at).map_err(|error| error.to_string()))
-        }
-        CanvasLookup::Refused(refusal) => HomeResult::Refused(refusal),
-    })
+    Ok(canvas(home, issue, named(name)?, |at| store.get(at)))
 }
 
 #[test]
@@ -453,7 +418,9 @@ fn a_failing_store_leaves_the_canvas_unavailable() -> Result<(), String> {
         reason: String::from("the disk is gone"),
     };
     assert_eq!(
-        asked(&Failing, Some(&a_home()), DESIGNED, "design")?,
+        canvas(Some(&a_home()), DESIGNED, named("design")?, |_| {
+            Err::<Option<CanvasFile>, _>("the disk is gone")
+        }),
         HomeResult::Refused(refusal.clone())
     );
     assert_eq!(
