@@ -7,6 +7,8 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::wordy;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Diagram {
@@ -20,6 +22,7 @@ pub struct Diagram {
 pub struct Node {
     pub id: String,
     pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     pub step: u8,
 }
@@ -29,6 +32,7 @@ pub struct Node {
 pub struct Edge {
     pub from: String,
     pub to: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub step: u8,
 }
@@ -41,7 +45,7 @@ pub struct Group {
 }
 
 impl Diagram {
-    pub(super) fn drawable(&self) -> Result<(), DiagramError> {
+    pub(super) fn check(&self) -> Result<(), DiagramError> {
         if let Some(edge) = self
             .edges
             .iter()
@@ -73,11 +77,10 @@ impl Diagram {
             .iter()
             .map(|node| &node.label)
             .chain(self.edges.iter().filter_map(|edge| edge.label.as_ref()))
-            .find(|label| label.split_whitespace().count() > MOST_WORDS)
+            .find(|label| wordy(label))
         {
             return Err(DiagramError::Wordy {
                 label: label.clone(),
-                words: label.split_whitespace().count(),
             });
         }
         self.steps()
@@ -90,7 +93,7 @@ impl Diagram {
     }
 
     #[must_use]
-    pub fn markdown(&self) -> String {
+    pub fn mermaid(&self) -> String {
         self.steps()
             .into_iter()
             .map(|step| self.flowchart(step))
@@ -170,7 +173,6 @@ impl Diagram {
 }
 
 const MOST_NODES: usize = 6;
-const MOST_WORDS: usize = 8;
 
 fn quoted(label: &str) -> String {
     format!("\"{}\"", label.trim().replace('"', "#quot;"))
@@ -184,7 +186,6 @@ pub enum DiagramError {
     },
     Wordy {
         label: String,
-        words: usize,
     },
     Dangling {
         from: String,
@@ -204,9 +205,9 @@ impl fmt::Display for DiagramError {
                 out,
                 "step {step} of a diagram shows {nodes} nodes, over six: split it into steps or diagrams"
             ),
-            Self::Wordy { label, words } => write!(
+            Self::Wordy { label } => write!(
                 out,
-                "the label `{}` has {words} words, over eight: put the detail in prose",
+                "the label `{}` is over eight words: put the detail in prose",
                 label.trim()
             ),
             Self::Dangling { from, to, missing } => write!(
