@@ -1092,6 +1092,84 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     );
 }
 
+const BLOCKS: &str = include_str!("blocks.md");
+
+const KINDS: [&str; 7] = [
+    "changes",
+    "code",
+    "diagram",
+    "options",
+    "progress",
+    "prose",
+    "statechart",
+];
+
+fn schema() -> Result<serde_json::Value, String> {
+    let outcome = ran(&home(), "canvas schema");
+    if outcome.failed {
+        return Err(outcome.output);
+    }
+    serde_json::from_str(&outcome.output).map_err(|error| error.to_string())
+}
+
+fn examples() -> Result<Vec<serde_json::Value>, String> {
+    BLOCKS
+        .split("```json\n")
+        .skip(1)
+        .filter_map(|fenced| fenced.split("```").next())
+        .map(|example| {
+            let value: serde_json::Value = serde_json::from_str(example)
+                .map_err(|error| format!("{error}: {example}"))?;
+            Ok(if value.get("title").is_some() {
+                value
+            } else {
+                serde_json::json!({"title": "A block", "blocks": [value]})
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn a_canvas_schema_prints_a_json_schema_with_a_definition_of_each_block_kind()
+-> Result<(), String> {
+    let schema = schema()?;
+    let kinds: Vec<&str> = schema["$defs"]["Block"]["oneOf"]
+        .as_array()
+        .ok_or("no Block definition")?
+        .iter()
+        .filter_map(|variant| variant["required"][0].as_str())
+        .collect::<alloc::collections::BTreeSet<&str>>()
+        .into_iter()
+        .collect();
+    assert_eq!(kinds, KINDS, "{schema:#}");
+    assert_eq!(schema["required"], serde_json::json!(["title", "blocks"]));
+    Ok(())
+}
+
+#[test]
+fn every_example_of_the_explain_skill_s_blocks_fits_the_schema_and_is_put()
+-> Result<(), String> {
+    let validator = jsonschema::validator_for(&schema()?)
+        .map_err(|error| error.to_string())?;
+    let examples = examples()?;
+    assert_eq!(examples.len(), 9);
+    for example in examples {
+        let unfit: Vec<String> = validator
+            .iter_errors(&example)
+            .map(|error| error.to_string())
+            .collect();
+        assert_eq!(unfit, Vec::<String>::new(), "{example}");
+        let put = put_canvas(&example.to_string());
+        assert_eq!(
+            (put.failed, put.canvases.len()),
+            (false, 1),
+            "{example}: {}",
+            put.output
+        );
+    }
+    Ok(())
+}
+
 fn statechart(
     states: &str,
     start: &str,
