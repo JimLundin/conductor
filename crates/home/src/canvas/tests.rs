@@ -1,6 +1,6 @@
 use super::{
-    Block, Canvas, CanvasError, CanvasFile, CanvasName, Choice, Options,
-    OptionsError, StatechartError,
+    Block, Canvas, CanvasError, CanvasFile, CanvasName, ChangeKind, Choice,
+    Options, OptionsError, StatechartError, Tag,
 };
 
 fn file() -> Result<CanvasFile, CanvasError> {
@@ -152,4 +152,31 @@ fn decoding_a_canvas_or_a_canvas_file_that_breaks_a_drawing_rule_refuses_it_by_a
         CanvasFile::parse(&file).map_err(|error| error.to_string()),
         Err(String::from(said))
     );
+}
+
+#[test]
+fn a_change_group_s_kind_and_a_change_s_tag_are_written_as_their_words()
+-> Result<(), serde_json::Error> {
+    let kinds: Vec<ChangeKind> =
+        serde_json::from_str(r#"["core", "wiring", "mechanical"]"#)?;
+    let tags: Vec<Tag> =
+        serde_json::from_str(r#"["subtle", "breaking", "race", "perf"]"#)?;
+    assert_eq!(
+        (
+            serde_json::to_string(&kinds)?,
+            serde_json::to_string(&tags)?
+        ),
+        (
+            String::from(r#"["core","wiring","mechanical"]"#),
+            String::from(r#"["subtle","breaking","race","perf"]"#)
+        )
+    );
+    assert_eq!(
+        serde_json::from_str::<ChangeKind>(r#""tests""#)
+            .map_err(|error| error.to_string()),
+        Err(String::from(
+            "unknown variant `tests`, expected one of `core`, `wiring`, `mechanical`"
+        ))
+    );
+    Ok(())
 }

@@ -65,45 +65,48 @@ pub enum Block {
 
 impl Canvas {
     pub fn new(title: String, blocks: Vec<Block>) -> Result<Self, CanvasError> {
-        blocks.iter().try_for_each(Block::check)?;
-        Ok(Self { title, blocks })
+        Ok(Self {
+            title,
+            blocks: blocks
+                .into_iter()
+                .map(Block::checked)
+                .collect::<Result<Vec<Block>, CanvasError>>()?,
+        })
     }
 
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
         decoded::<Drawn>(text).and_then(Self::try_from)
     }
 
-    pub(crate) fn markdown(&self) -> Result<String, CanvasError> {
-        core::iter::once(Ok(format!("# {}\n", self.title.trim())))
+    pub(crate) fn markdown(&self) -> String {
+        core::iter::once(format!("# {}\n", self.title.trim()))
             .chain(self.blocks.iter().map(Block::markdown))
-            .collect::<Result<Vec<String>, CanvasError>>()
-            .map(|parts| parts.join("\n"))
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
 
 impl Block {
-    fn markdown(&self) -> Result<String, CanvasError> {
-        Ok(match self {
+    fn markdown(&self) -> String {
+        match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
             Self::Diagram(diagram) => diagram.mermaid(),
-            Self::Statechart(chart) => {
-                chart.mermaid().map_err(CanvasError::Statechart)?
-            }
+            Self::Statechart(chart) => chart.mermaid(),
             Self::Progress(progress) => progress.markdown(),
             Self::Options(options) => options.markdown(),
             Self::Changes(changes) => changes.markdown(),
             Self::Code(code) => format!("{}\n", code.link()),
-        })
+        }
     }
 
-    fn check(&self) -> Result<(), CanvasError> {
+    fn checked(self) -> Result<Self, CanvasError> {
         match self {
-            Self::Prose { .. } | Self::Code(_) => Ok(()),
-            Self::Diagram(diagram) => diagram.check(),
-            Self::Statechart(chart) => chart.check(),
-            Self::Progress(progress) => progress.check(),
-            Self::Options(options) => options.check(),
-            Self::Changes(changes) => changes.check(),
+            Self::Statechart(chart) => chart.checked().map(Self::Statechart),
+            Self::Prose { .. } | Self::Code(_) => Ok(self),
+            Self::Diagram(ref diagram) => diagram.check().map(|()| self),
+            Self::Progress(ref progress) => progress.check().map(|()| self),
+            Self::Options(ref options) => options.check().map(|()| self),
+            Self::Changes(ref changes) => changes.check().map(|()| self),
         }
     }
 }

@@ -645,16 +645,9 @@ fn shown(home: &Snapshot, wanted: &Wanted, given: Option<Given>) -> Outcome {
     let mut drawn = Vec::new();
     let mut broken = Vec::new();
     for Fetched { key, got } in &held.canvases {
-        match got
-            .as_ref()
-            .map(|kept| kept.as_ref().map(|file| file.canvas.markdown()))
-        {
+        match got {
             Ok(None) => {}
-            Ok(Some(Ok(markdown))) => drawn.push(markdown),
-            Ok(Some(Err(error))) => broken.push(refusal(&format!(
-                "{}: {error}",
-                canvas_named(home, key)
-            ))),
+            Ok(Some(file)) => drawn.push(file.canvas.markdown()),
             Err(reason) => broken.push(refusal(&format!(
                 "{}: {reason}",
                 canvas_named(home, key)

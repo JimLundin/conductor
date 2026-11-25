@@ -16,6 +16,8 @@ pub struct Statechart {
     pub transitions: Vec<Transition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub path: Vec<String>,
+    #[serde(skip)]
+    walk: Walk,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -36,15 +38,16 @@ pub struct Transition {
 }
 
 impl Statechart {
-    pub(super) fn check(&self) -> Result<(), CanvasError> {
+    pub(super) fn checked(self) -> Result<Self, CanvasError> {
         distinct("state", self.states.iter().map(|state| state.id.as_str()))?;
         short(self.states.iter().map(|state| &state.label).chain(
             self.transitions.iter().map(|transition| &transition.event),
         ))?;
-        self.walked().map(drop).map_err(CanvasError::Statechart)
+        let walk = self.walked().map_err(CanvasError::Statechart)?;
+        Ok(Self { walk, ..self })
     }
 
-    fn walked(&self) -> Result<Walk<'_>, StatechartError> {
+    fn walked(&self) -> Result<Walk, StatechartError> {
         let start = self.index(&self.start).ok_or_else(|| {
             StatechartError::UnknownStart {
                 start: self.start.clone(),
@@ -64,9 +67,9 @@ impl Statechart {
                         state: transition.to.clone(),
                     }
                 })?;
-                Ok((from, to, transition.event.as_str()))
+                Ok((from, to))
             })
-            .collect::<Result<Vec<Step<'_>>, StatechartError>>()?;
+            .collect::<Result<Vec<(usize, usize)>, StatechartError>>()?;
         let mut path = Vec::new();
         if let Some(first) = self.path.first() {
             if *first != self.start {
@@ -78,7 +81,7 @@ impl Statechart {
             path.push(start);
         }
         for (from, to) in self.path.iter().zip(self.path.iter().skip(1)) {
-            let (_, &(_, at, _)) = self
+            let (_, &(_, at)) = self
                 .transitions
                 .iter()
                 .zip(&steps)
@@ -100,15 +103,17 @@ impl Statechart {
         self.states.iter().position(|state| state.id == id)
     }
 
-    pub(super) fn mermaid(&self) -> Result<String, StatechartError> {
-        let walk = self.walked()?;
+    pub(super) fn mermaid(&self) -> String {
+        let walk = &self.walk;
         let states = self.states.iter().enumerate().map(|(at, state)| {
             format!("state {} as s{at}", quoted(&state.label))
         });
         let start = core::iter::once(format!("[*] --> s{}", walk.start));
-        let transitions = walk.steps.iter().map(|&(from, to, event)| {
-            format!("s{from} --> s{to} : {}", spoken(event))
-        });
+        let transitions = walk.steps.iter().zip(&self.transitions).map(
+            |(&(from, to), transition)| {
+                format!("s{from} --> s{to} : {}", spoken(&transition.event))
+            },
+        );
         let notes = self.states.iter().enumerate().filter_map(|(at, state)| {
             state.marked.as_ref().map(|reason| {
                 format!("note right of s{at} : {}", spoken(reason))
@@ -132,18 +137,17 @@ impl Statechart {
             .chain(notes)
             .chain(styles)
             .collect();
-        Ok(format!(
+        format!(
             "```mermaid\nstateDiagram-v2\n    {}\n```\n",
             lines.join("\n    ")
-        ))
+        )
     }
 }
 
-type Step<'a> = (usize, usize, &'a str);
-
-struct Walk<'a> {
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Walk {
     start: usize,
-    steps: Vec<Step<'a>>,
+    steps: Vec<(usize, usize)>,
     path: Vec<usize>,
 }
 

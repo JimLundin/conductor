@@ -1,9 +1,10 @@
+use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
 use super::{CanvasError, CodeRef};
@@ -22,33 +23,28 @@ pub struct ChangeGroup {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Serialize,
-    Deserialize,
-    JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
 )]
-#[serde(rename_all = "snake_case")]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum ChangeKind {
     Core,
     Wiring,
     Mechanical,
 }
 
-impl ChangeKind {
-    const fn word(self) -> &'static str {
+impl Worded for ChangeKind {
+    const ALL: &'static [Self] = &[Self::Core, Self::Wiring, Self::Mechanical];
+
+    fn word(self) -> &'static str {
         match self {
             Self::Core => "core",
             Self::Wiring => "wiring",
             Self::Mechanical => "mechanical",
         }
     }
+}
 
+impl ChangeKind {
     const fn heading(self) -> &'static str {
         match self {
             Self::Core => "Core",
@@ -67,10 +63,8 @@ pub struct Change {
     pub tag: Option<Tag>,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(into = "&'static str", try_from = "String")]
 pub enum Tag {
     Subtle,
     Breaking,
@@ -78,8 +72,11 @@ pub enum Tag {
     Perf,
 }
 
-impl Tag {
-    const fn word(self) -> &'static str {
+impl Worded for Tag {
+    const ALL: &'static [Self] =
+        &[Self::Subtle, Self::Breaking, Self::Race, Self::Perf];
+
+    fn word(self) -> &'static str {
         match self {
             Self::Subtle => "subtle",
             Self::Breaking => "breaking",
@@ -88,6 +85,66 @@ impl Tag {
         }
     }
 }
+
+trait Worded: Copy + 'static {
+    const ALL: &'static [Self];
+
+    fn word(self) -> &'static str;
+
+    fn parsed(text: &str) -> Result<Self, String> {
+        Self::ALL
+            .iter()
+            .copied()
+            .find(|known| known.word() == text)
+            .ok_or_else(|| {
+                format!(
+                    "unknown variant `{text}`, expected one of {}",
+                    Self::ALL
+                        .iter()
+                        .map(|known| format!("`{}`", known.word()))
+                        .collect::<Vec<String>>()
+                        .join(", ")
+                )
+            })
+    }
+
+    fn schema() -> Schema {
+        let words: Vec<&str> =
+            Self::ALL.iter().map(|known| known.word()).collect();
+        json_schema!({ "type": "string", "enum": words })
+    }
+}
+
+macro_rules! worded {
+    ($kind:ident) => {
+        impl From<$kind> for &'static str {
+            fn from(kind: $kind) -> Self {
+                kind.word()
+            }
+        }
+
+        impl TryFrom<String> for $kind {
+            type Error = String;
+
+            fn try_from(text: String) -> Result<Self, String> {
+                Self::parsed(&text)
+            }
+        }
+
+        impl JsonSchema for $kind {
+            fn schema_name() -> Cow<'static, str> {
+                Cow::Borrowed(stringify!($kind))
+            }
+
+            fn json_schema(_: &mut SchemaGenerator) -> Schema {
+                Self::schema()
+            }
+        }
+    };
+}
+
+worded!(ChangeKind);
+worded!(Tag);
 
 impl Changes {
     pub(super) fn check(&self) -> Result<(), CanvasError> {
