@@ -19,9 +19,9 @@ const Account = Schema.Union(
   identifier: "Account",
 });
 
-type Alpn = "conductor/46";
+type Alpn = "conductor/47";
 
-const Alpn = Schema.Literal("conductor/46").annotate({
+const Alpn = Schema.Literal("conductor/47").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -52,7 +52,7 @@ const Auth = Schema.Union(
     }),
     Schema.Literal("SignedIn").annotate({
       description:
-        "The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`conductord login <instance>`).",
+        "The CLI's own sign-in in the instance's private home, from the app\n(`SignInCommand::Start`) or on the host (`orchestrator login <instance>`).",
     }),
     Schema.Literal("Unmanaged").annotate({
       description:

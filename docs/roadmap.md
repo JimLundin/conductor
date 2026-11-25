@@ -73,7 +73,7 @@ What is built and what comes next. Update it in the commit that changes it.
 - **The shared Rust standard.** The subset is retired; `tools/check.sh`
   runs the standard's checks. The core crates are `link`,
   `agents`, `claude`, `codex`, `host` and `home`; `net`, `daemon`,
-  `conductord`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`,
+  `cli`, `runtime`, `claude-cli`, `codex-cli`, `install`, `home-cli`,
   `home-files` and `web-iroh` declare themselves the shell.
   `host` holds
   workspace decisions and checklists. The shell still makes about a
@@ -85,7 +85,7 @@ What is built and what comes next. Update it in the commit that changes it.
   forms) plus an adapter for each account. The adapter applies credentials,
   discovers models and starts session agents. Credentials are generic form values the app draws
   from `Welcome.catalog`, checked by their form and read by each
-  provider's core. The binary moved to `crates/conductord`, the one place that wires the
+  provider's core. The binary moved to `crates/cli`, the one place that wires the
   providers, with `--cli <provider>=<path>`, `--model <provider>=<model>`
   and `login` (now per instance, below). The pins in `agents::pin` and
   `Provider` itself are the last places a new provider is listed (Next,
@@ -104,7 +104,7 @@ What is built and what comes next. Update it in the commit that changes it.
   lists the instances by account, takes a credential per provider and
   removes an instance (refused while a session runs on one), and the
   new-session picker lists instances. `--cli` and `--model` are each
-  provider's defaults, and `conductord login <provider> [--account
+  provider's defaults, and `orchestrator login <provider> [--account
   <account>]` signs one in on the host; the app signs one in too. CLI
   pins come from the Conductor release; host model defaults and session
   model choices remain. Per-instance model and CLI settings from the app
@@ -123,11 +123,11 @@ What is built and what comes next. Update it in the commit that changes it.
   plugin constructor. Recorded replays cover Codex session routing and
   approval replies through the shared runtime.
 
-- **Managed CLIs** (#1) (§6.2). `conductord` installs the pinned Claude
+- **Managed CLIs** (#1) (§6.2). `orchestrator` installs the pinned Claude
   Code and Codex into its data dir, checks their hashes and runs only those,
   with private `CLAUDE_CONFIG_DIR` and `CODEX_HOME` and updates off. Gateway
   credentials run them. Subscription
-  sign-in from the app is built (below); `conductord login <instance>`
+  sign-in from the app is built (below); `orchestrator login <instance>`
   remains as the host-terminal fallback.
 
 - **Responsive provider refresh** (#23). Credential saves, model discovery
@@ -173,7 +173,7 @@ What is built and what comes next. Update it in the commit that changes it.
   `claude` and `codex` wire crates map into it and, like `agents`, are pure
   `no_std` cores; process I/O lives in `claude-cli`, `codex-cli` and
   `install`.
-- **Host.** `conductord` serves one host over iroh: a durable redb event log
+- **Host.** `orchestrator` serves one host over iroh: a durable redb event log
   (streaming deltas are live-only), a session actor per agent, one shared
   Codex app-server per Codex instance. Clients reach it over iroh through
   n0's public relays.
@@ -182,7 +182,7 @@ What is built and what comes next. Update it in the commit that changes it.
   `HostLink`, the browser e2e and the `headless` example are gone; nothing
   compiles to wasm but `crates/web-iroh`, iroh in the browser as a byte
   pipe to one host through its relay. The client link is JSON (ALPN
-  `conductor/46`, encoded by `link::frame`), with postcard kept between
+  `conductor/47`, encoded by `link::frame`), with postcard kept between
   hosts (`conductor-fleet/4`, encoded by `host::fleet::frame`); signed fleet payloads are signed
   over their exact JSON bytes and verified before they are parsed. The
   app's Effect Schemas are generated from `link`'s JSON Schema into
@@ -316,7 +316,7 @@ What is built and what comes next. Update it in the commit that changes it.
   lack a receipt (architecture §5.3). *Try:* restart the host mid-session
   and continue from the phone.
 - **Fleet and pairing** (#14, §6.1, §6.4 to §6.6). A fleet root key signs
-  device and host certificates; `conductord join` and *Add host*; a signed
+  device and host certificates; `orchestrator join` and *Add host*; a signed
   fleet config with the roster, API keys and the Claude token, served by
   any host; a per-host Codex ChatGPT sign-in after a join. *Try:* add a
   second host from the phone and run a Claude session on it with the
@@ -344,8 +344,8 @@ Each item ends in something to try. The fleet design is
    settings; the store already keeps both. *Try:* change a gateway
    instance's default model from the phone and start a session on it.
 3. **One place to list a provider.** `Provider` is the name each plugin
-   declares and each provider pins its own CLI, so only `conductord` lists
-   the providers. *Try:* a test plugin registered only in `conductord` runs
+   declares and each provider pins its own CLI, so only `orchestrator` lists
+   the providers. *Try:* a test plugin registered only in `orchestrator` runs
    a session.
 4. **Live checks still owed.** Experiments E2 (one Claude setup token on
    two hosts) and E3 (a second ChatGPT device-code sign-in;

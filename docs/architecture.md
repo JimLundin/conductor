@@ -11,7 +11,7 @@ that owns them; this page explains the shape around them.
 One app that runs and supervises **Claude Code** and **Codex** sessions on
 several of your machines, with no server of ours in the path.
 
-- **Hosts** run `conductord`, which drives the `claude` and `codex` CLIs in
+- **Hosts** run `orchestrator`, which drives the `claude` and `codex` CLIs in
   their native protocols and keeps each host's event log.
 - **The client is one web app** (TypeScript, ADR 0001), served as
   static files from GitHub Pages and installed as an app: Chrome, Edge or
@@ -252,7 +252,7 @@ since a JSON key is only a string; bytes are arrays of integers. Stores and host
 There is no WebRTC upgrade: iroh over n0's relay carries all traffic, and
 that is enough for this app's text-sized traffic.
 
-## 5. The host (`conductord`)
+## 5. The host (`orchestrator`)
 
 ### 5.1 Actors
 
@@ -442,14 +442,14 @@ probes and installs as `host::start` decides, and sends the plugins'
   receipt and how retries share it, the `Welcome` and the catch-up from a
   `Subscribe`. It depends on the domains and `host`; nothing below it
   depends on it. Pure `no_std`.
-- `daemon`: the host behind `conductord`, a library that takes the
+- `daemon`: the host behind `orchestrator`, a library that takes the
   plugins and exposes its start, serve and login functions. It runs
   `link` on each connection.
-- `conductord`: the binary, the one place that names the providers. It
-  parses the command line, builds each provider's plugin with its
+- `cli`: the `orchestrator` binary, the one place that names the providers.
+  It parses the command line, builds each provider's plugin with its
   settings and calls into `daemon`. Its flags are generic:
-  `conductord host [--cli <provider>=<path>]... [--model
-  <provider>=<model>]...`, parsed in `host::start`, and `conductord login
+  `orchestrator host [--cli <provider>=<path>]... [--model
+  <provider>=<model>]...`, parsed in `host::start`, and `orchestrator login
   <provider> [--account <account>]`, which picks the instance of that
   account, or without one the provider's own (`host::registry::picked`).
 - The private Codex hub owns its instance's `codex app-server` and
@@ -663,7 +663,7 @@ standards and issues, cloned on every host. Built so far are home steps
   what the host reports. It is a core of its own rather than part of
   `host`: the home is fleet-wide data in its own files, which issues and
   work will add to, apart from the host's session machinery.
-- **The clone.** `conductord host --home <remote>` gives the host the
+- **The clone.** `orchestrator host --home <remote>` gives the host the
   home, which it stores in `<data>/home.state`, so later starts need no
   flag. One task, `daemon::home::HomeClone`, owns the clone in
   `<data>/home-repo` (`<data>/home` holds the instances' private homes) and
@@ -814,7 +814,7 @@ standards and issues, cloned on every host. Built so far are home steps
 
 The goal is one setup running in several places. Every host runs the
 Claude Code and Codex versions pinned by its Conductor release, installed
-and owned by `conductord`. The fleet shares credentials, except a Codex
+and owned by `orchestrator`. The fleet shares credentials, except a Codex
 ChatGPT login, which each host signs in to once (§6.6). Model defaults are
 local to each host and instance; sessions can choose their own models.
 A host that joins the fleet can run independent sessions without manually
@@ -834,14 +834,14 @@ Today a ticket's random token stands in for a device certificate. The fleet
 replaces it.
 
 - A **fleet root key** (Ed25519) signs `DeviceCert { fleet, device, name,
-  role }`. The role is `Owner` for a browser and `Host` for a `conductord`.
+  role }`. The role is `Owner` for a browser and `Host` for an `orchestrator`.
   Hosts store only the root's public key and check the certificate in
   `Hello` against it, the authenticated iroh node id and the revocation
   list in the fleet config (§6.5).
 - Hosts talk to each other with the same certificates, over iroh, on their
   own ALPN `conductor-fleet/<n>`. Clients never open it.
 - The root key lives on one host, the **root host**. It is the first host,
-  which creates the fleet with `conductord fleet init`. It signs device
+  which creates the fleet with `orchestrator fleet init`. It signs device
   certificates and every fleet config version, and the other hosts hold no
   signing key. `fleet init` also writes the root key once as a
   passphrase-sealed file for the owner to keep, so a lost root host doesn't
@@ -849,7 +849,7 @@ replaces it.
 - A browser keeps its device key as a non-extractable WebCrypto key in
   IndexedDB, and iOS gives a Home Screen app its own storage, so the phone
   pairs from the installed app. The app shows its public key as a QR code
-  and `conductord pair` on the root host signs it. A paired app can approve
+  and `orchestrator pair` on the root host signs it. A paired app can approve
   a new one the same way.
 - Whoever controls the GitHub Pages deploy controls the code the browser
   runs, and from §6.3 on that code carries credentials in flight. Protect
@@ -857,7 +857,7 @@ replaces it.
 
 ### 6.2 The daemon manages its own CLIs
 
-`conductord` installs a pinned version of each CLI into its data dir, checks
+`orchestrator` installs a pinned version of each CLI into its data dir, checks
 it against a recorded hash, and runs only that copy. The user's own `claude`
 and `codex`, their versions and their logins are never used or touched.
 
@@ -901,7 +901,7 @@ against the recorded hash.
    doc comments. Versions, platform hashes and verification provenance stay
    together in compiled Rust values, beside the provider's `pin`, which says
    which build a platform takes.
-2. `conductord` compiles the pins in. On start it makes sure the pinned CLI
+2. `orchestrator` compiles the pins in. On start it makes sure the pinned CLI
    is at `<data>/cli/<provider>/<version>/`: `claude` there, and Codex's
    package unpacked whole, with `bin/codex`. It downloads to a temporary
    file, checks the SHA-256 of that file as written to disk, and renames it
@@ -909,7 +909,7 @@ against the recorded hash.
    first, then the directory is renamed), so a crash leaves either nothing
    or a verified install. It holds a lock on `<data>/cli/<provider>/lock`
    throughout, so a second process on the same data dir, such as
-   `conductord login` during a first start, waits and then finds the CLI
+   `orchestrator login` during a first start, waits and then finds the CLI
    installed. A wrong hash, or a download that fails, makes the provider
    `Unavailable` with the reason, as a missing CLI does today. A connection
    gets 15 s and a stalled download 30 s, so a dead network doesn't hold
@@ -1001,7 +1001,7 @@ Two consequences for how sessions start (§5.2):
   conversation ids: the host stores the CLI's UUID for `--resume`, while the
   ULID gives each Conductor session its own transcript directory.
 
-`conductord` writes `<data>/home/claude/settings.json` (`cleanupPeriodDays`
+`orchestrator` writes `<data>/home/claude/settings.json` (`cleanupPeriodDays`
 36500) and `<data>/home/codex/config.toml` (`check_for_update_on_startup =
 false`) on first run only, because the CLIs edit their own config too. Every
 `claude` it starts gets `DISABLE_UPDATES=1`. In a private home it also loses
@@ -1020,7 +1020,7 @@ private home set, because `codex --version` writes helper binaries into
 `CODEX_HOME/tmp` (observed).
 
 The app signs an instance in (§6.3, *Sign in from the phone*), and
-`conductord login <provider> [--account <account>]` does the same on the
+`orchestrator login <provider> [--account <account>]` does the same on the
 host's terminal: both run the CLI's own sign-in against the instance's
 private home. Both require a successful login and status check before
 resolving the account. If the CLI reports another account, its instance
@@ -1386,12 +1386,12 @@ XChaCha20-Poly1305 under a 32-byte **host key**.
 A host joins with a one-time invite, from either side.
 
 - **From the app.** *Add host* asks the root host for an invite and shows
-  `conductord join <ticket>`. The ticket holds the root host's node id, its
+  `orchestrator join <ticket>`. The ticket holds the root host's node id, its
   home relay and a random 32-byte invite secret that expires after one hour
   and works once. Running the command on the new machine dials the root host
   on `conductor-fleet`, proves the secret, and receives a `Host` certificate
   for its node id and the current fleet config.
-- **From the host.** A `conductord` started with no fleet prints its own
+- **From the host.** An `orchestrator` started with no fleet prints its own
   ticket, as it does today. Scanning it in a paired app sends its node id,
   relay and token to the root host (`FleetCommand::Admit`), which dials the
   new host and admits it the same way; the new host's ticket token is its
@@ -1719,7 +1719,7 @@ a message can only travel in its link's (`link::frame::Frame`,
 
 | Link | Codec | Encoding | Messages |
 |---|---|---|---|
-| Client and host (`link::ALPN`, `conductor/46`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
+| Client and host (`link::ALPN`, `conductor/47`) | `link::frame` | JSON by serde | `Open`, `HelloReply`, `CommandResult`, `Feed` |
 | Host and host (`host::fleet::ALPN`, `conductor-fleet/4`) | `host::fleet::frame` | postcard | `fleet::Request`, `fleet::Reply`, `fleet::SignedConfiguration` |
 
 On a host, the daemon's `serve` and `fleet::wire` pair `net::wire` with

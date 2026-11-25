@@ -1,4 +1,4 @@
-//! `conductord`'s commands, for the plugins it is handed: start the host,
+//! `orchestrator`'s commands, for the plugins it is handed: start the host,
 //! or sign an instance's CLI in.
 
 use std::collections::BTreeMap;
@@ -201,7 +201,7 @@ impl Providers {
     }
 }
 
-/// How `conductord host` serves.
+/// How `orchestrator host` serves.
 #[derive(Debug, Clone)]
 pub struct Hosting {
     /// Where the host key lives; `None` takes the OS data dir for
@@ -254,7 +254,7 @@ pub async fn serve(hosting: Hosting, plugins: Plugins) -> anyhow::Result<()> {
     let announced = if hosted.has_fleet {
         writeln!(
             std::io::stdout().lock(),
-            "Fleet member. Use conductord fleet status to inspect membership."
+            "Fleet member. Use orchestrator fleet status to inspect membership."
         )
         .map_err(anyhow::Error::from)
     } else {

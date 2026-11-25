@@ -81,7 +81,7 @@ Home Screen. The design is in
   `./target`. Never point worktrees at a shared `CARGO_TARGET_DIR`: cargo
   can then silently build one worktree against another branch's sources.
   Find the directory with `tools/target-dir` (for example
-  `"$(tools/target-dir)"/debug/conductord`). Dev builds carry line tables only
+  `"$(tools/target-dir)"/debug/orchestrator`). Dev builds carry line tables only
   (`Cargo.toml` `[profile.dev]`) to keep each `target/` small.
 - **Worktrees are temporary.** Create one per task beside the main
   checkout (`git worktree add ../conductor-<task> -b <branch>`), and remove
@@ -104,18 +104,19 @@ Home Screen. The design is in
   (`claude::PROVIDER`, `codex::PROVIDER`), and each pins its own CLI
   (`claude::pin`, `codex::pin`). `daemon::start` takes a bound endpoint, those plugins
   and the host's options. `daemon::serve` uses the same entry point for
-  `conductord host`. Instances in the stored roster and those added during
+  `orchestrator host`. Instances in the stored roster and those added during
   a run use the same plugin launch path. Credentials are generic form values
   (`agents::Credential`); each provider's core reads its own. Only the
-  binary, `crates/conductord`, wires the providers in. Its flags are
-  `conductord host --cli <provider>=<path> --model <provider>=<model>`
+  binary, `crates/cli`, wires the providers in. Its flags are
+  `orchestrator host --cli <provider>=<path> --model <provider>=<model>`
   (each repeatable, the defaults of that provider's instances), `--home
   <remote>` (the home, `docs/home.md`, stored once given) and `--projects
   <dir>` (repeatable, where it looks for checkouts), and
-  `conductord login <provider> [--account <account>]`, which picks the
+  `orchestrator login <provider> [--account <account>]`, which picks the
   instance of that account, or without one the provider's own; build it
-  with `cargo build -p conductord`. Keep provider-specific code out of `agents`, `daemon`,
-  `host`, `install`, `runtime`, `link` and the web app.
+  with `cargo build -p cli --bin orchestrator`. Install it with
+  `cargo install --locked --path crates/cli`. Keep provider-specific code
+  out of `agents`, `daemon`, `host`, `install`, `runtime`, `link` and the web app.
 - **Instances.** A host runs instances, not providers: each one account
   of a provider, keyed by `InstanceId { provider, account }`, with its own
   credential, private home (`<data>/home/<dir>`), work dir
