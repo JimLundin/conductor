@@ -46,6 +46,10 @@ pending while the host is offline or the home cannot be updated. It is
 known by its edit id, which the app mints once and sends again with each
 retry under a new command id, so the home applies it once.
 
+**Canvas**:
+A structured explanation of an issue's work, written by an agent as typed blocks and stored in the home beside the issue.
+_Avoid_: report, visual, diagram
+
 **Client link**:
 The contract between a host and the app: the frames each side sends on a
 connection, built from the commands, results, refusals and feeds of the
