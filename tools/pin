@@ -30,10 +30,6 @@ PINS_RS = {
     "claude": ROOT / "crates/claude/src/pin/pins.rs",
     "codex": ROOT / "crates/codex/src/pin/pins.rs",
 }
-DOWNLOADS = {
-    "claude": "`claude` binary for a platform named as in Claude's manifest",
-    "codex": "`codex-package-<triple>.tar.gz` release asset for a target triple",
-}
 
 CLAUDE_BASE = "https://downloads.claude.ai/claude-code-releases"
 CLAUDE_KEY = "https://downloads.claude.ai/keys/claude-code.asc"
@@ -176,13 +172,13 @@ def read(provider):
     """Reads only the Rust shape emitted below (including rustfmt's wrapping)."""
     path = PINS_RS[provider]
     block = re.search(
-        r'/// Verified: ([^\n]+)\n'
-        r'pub const VERSION: &str = "([^"\n]+)";'
+        r'pub const VERSION: &str = "([^"\n]+)";\s*'
+        r'pub const VERIFIED: &str =\s*"([^"\\\n]+)";'
         r'.*?pub fn sha256\(platform: &str\) -> Option<String> \{'
         r'\s*match platform \{(.*?)\n    \}\n\}', path.read_text(), re.S)
     if block is None:
         fail(f"cannot read the generated pin in {path}")
-    note, version, arms = block.groups()
+    version, note, arms = block.groups()
     entries = re.findall(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', arms)
     remaining = re.sub(r'"([^"\n]+)" => Some\(String::from\(\s*"([0-9a-f]{64})",?\s*\)\),', '', arms)
     if not entries or len(dict(entries)) != len(entries) or remaining.strip() != "_ => None,":
@@ -194,11 +190,9 @@ def write(provider, pin):
     path = PINS_RS[provider]
     arms = "".join(f'        "{key}" => Some(String::from("{value}")),\n' for key, value in pin["sha256"].items())
     source = (
-        f"//! The pinned {provider}, written by `tools/pin`. Run it again to change the pin.\n\n"
         "use crate::prelude::*;\n\n"
-        f'/// Verified: {pin["verified"]}\n'
         f'pub const VERSION: &str = "{pin["version"]}";\n\n'
-        f"/// The SHA-256 of the {DOWNLOADS[provider]}.\n"
+        f'pub const VERIFIED: &str = "{pin["verified"]}";\n\n'
         f"#[must_use]\n"
         f"pub fn sha256(platform: &str) -> Option<String> {{\n"
         f"    match platform {{\n{arms}        _ => None,\n    }}\n}}\n"
