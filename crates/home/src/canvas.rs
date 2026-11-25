@@ -11,6 +11,10 @@ use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
+mod statechart;
+
+pub use statechart::{State, Statechart, StatechartError, Transition};
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Canvas {
@@ -22,6 +26,7 @@ pub struct Canvas {
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
     Prose { text: String },
+    Statechart(Statechart),
 }
 
 impl Canvas {
@@ -29,7 +34,9 @@ impl Canvas {
     ///
     /// The text is not a canvas.
     pub fn parse(text: &str) -> Result<Self, CanvasError> {
-        decoded(text)
+        let canvas: Self = decoded(text)?;
+        canvas.blocks.iter().try_for_each(Block::check)?;
+        Ok(canvas)
     }
 
     #[must_use]
@@ -46,6 +53,16 @@ impl Block {
     pub fn markdown(&self) -> String {
         match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
+            Self::Statechart(chart) => chart.mermaid(),
+        }
+    }
+
+    fn check(&self) -> Result<(), CanvasError> {
+        match self {
+            Self::Prose { .. } => Ok(()),
+            Self::Statechart(chart) => {
+                chart.check().map_err(CanvasError::Statechart)
+            }
         }
     }
 }
@@ -83,12 +100,14 @@ fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanvasError {
     Json { reason: String },
+    Statechart(StatechartError),
 }
 
 impl fmt::Display for CanvasError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json { reason } => write!(out, "not a canvas: {reason}"),
+            Self::Statechart(error) => error.fmt(out),
         }
     }
 }
