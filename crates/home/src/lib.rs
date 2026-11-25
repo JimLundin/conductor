@@ -11,6 +11,7 @@
 extern crate alloc;
 
 mod calendar;
+pub mod canvas;
 pub mod checkout;
 pub mod flow;
 mod home;
