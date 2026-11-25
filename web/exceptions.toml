@@ -149,3 +149,13 @@ reason = "The React entry point reads the mount element from document and passes
 path = "src/test/examples.ts"
 rule = "lint/unicorn/no-null"
 reason = "These fixtures encode the Rust client link's nullable model, effort and request fields as JSON null"
+
+[[exception]]
+path = "knip.json"
+rule = "drift:ignoreDependencies:@stryker-mutator/core"
+reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"
+
+[[exception]]
+path = "knip.json"
+rule = "drift:ignoreDependencies:@stryker-mutator/vitest-runner"
+reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"
