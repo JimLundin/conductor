@@ -71,7 +71,6 @@ const withUpdate = (host: PairedHost, update: Update): PairedHost => {
   };
 };
 
-// A screen of a host no longer paired shows the sessions instead.
 const shown = (fragment: string, hosts: View["hosts"]): Route => {
   const screen = route(fragment, hosts.size > noHosts);
   if (

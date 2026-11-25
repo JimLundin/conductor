@@ -26,7 +26,6 @@ type SendError = Data.TaggedEnum<{
 }>;
 const SendError = Data.taggedEnum<SendError>();
 
-// A live delta repeats the last stored seq, which may be another session's.
 const isDelta = (event: Event): boolean =>
   typeof event.kind === "object" &&
   "Agent" in event.kind &&

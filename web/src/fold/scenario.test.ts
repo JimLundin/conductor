@@ -57,11 +57,9 @@ const stored = (update: Update): Event | undefined =>
 const at = (updates: ReadonlyArray<Update>, seq: number): number =>
   updates.findIndex((update) => stored(update)?.seq === seq);
 
-// The updates through the stored event at `seq`.
 const through = (updates: ReadonlyArray<Update>, seq: number): ReadonlyArray<Update> =>
   updates.slice(0, at(updates, seq) + 1);
 
-// The updates before the stored event at `seq`.
 const before = (updates: ReadonlyArray<Update>, seq: number): ReadonlyArray<Update> =>
   updates.slice(0, at(updates, seq));
 
@@ -169,8 +167,6 @@ describe("turn controls", () => {
   });
 });
 
-// The feed's sessions never close and aren't on an issue, so these cases extend its frames with
-// The events the host logs when the agent exits and when a session finishes on its issue.
 const then = (host: Host, seq: number, kind: Event["kind"]): Host =>
   applyUpdate(host, Update.Feed({ frame: { Event: { kind, seq, session } } }));
 
@@ -251,8 +247,6 @@ describe("catch-up approvals", () => {
     const elsewhere = received(feed, 1);
     const waiting = theSession(folded(elsewhere));
     expect(openRequests(waiting)).toHaveLength(1);
-    // Connection 0 approves; connection 1 reconnects, and its subscription after seq 8 replays
-    // The stored events that followed, never the live deltas.
     const replay = replayAfterApproval(feed);
     const caughtUp = folded([...elsewhere, welcomeOf(feed), ...replay]);
     expect(openRequests(theSession(caughtUp))).toStrictEqual([]);

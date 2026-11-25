@@ -1,9 +1,5 @@
-/// <reference types="vite/client" />
 import { CommandResult, Feed, HelloReply } from "@conductor/core/schemas/index";
 import { Schema } from "effect";
-
-// Recorded host feeds in web/fixtures/feeds/, for tests: each frame a host sent,
-// On which of the test client's connections and streams.
 
 const scenarioName = /^.*\/(?<name>[^/]+)\.json$/u;
 
@@ -29,7 +25,6 @@ const RecordedFeed = Schema.Array(Schema.Union([hello, command, event]));
 
 type RecordedFeed = typeof RecordedFeed.Type;
 
-// Each feed's JSON by its scenario's name.
 const recordedFeeds = (): ReadonlyMap<string, unknown> =>
   new Map(
     Object.entries(

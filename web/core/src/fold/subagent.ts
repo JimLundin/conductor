@@ -19,18 +19,15 @@ import type {
 } from "#core/schemas/index";
 import { Data, Match } from "effect";
 import type { Unit } from "#core/data";
-// A session's sub-agents: children with no session of their own, whose events are its.
 
 type SubagentStatus = Data.TaggedEnum<{
   readonly Running: Unit;
   readonly Ended: { readonly outcome: SubagentOutcome };
-  // The session closed while it ran.
   readonly Stopped: Unit;
 }>;
 
 const SubagentStatus = Data.taggedEnum<SubagentStatus>();
 
-// A sub-agent, shown under the tool call that started it.
 interface Subagent {
   readonly id: SubagentId;
   readonly call: ToolCallId;
@@ -38,7 +35,6 @@ interface Subagent {
   readonly kind: string | undefined;
   readonly checklist: ReadonlyArray<ChecklistEntry>;
   readonly status: SubagentStatus;
-  // Its own transcript, whose last reply is its report.
   readonly items: ReadonlyArray<Item>;
 }
 
@@ -53,7 +49,6 @@ const pushed = (subagent: Subagent, item: Item): Subagent => ({
   items: [...subagent.items, item],
 });
 
-// Its tool calls still running stop with it, and its report ends its transcript.
 const ended = (subagent: Subagent, status: SubagentStatus, summary?: string): Subagent => {
   const stopped = {
     ...subagent,
@@ -85,7 +80,6 @@ const toolStarted = (subagent: Subagent, call: ToolCallId, tool: ToolKind): Suba
         }),
       );
 
-// Its transcript holds only finished items: a sub-agent's text arrives whole.
 const did = Match.type<SubagentActivity>().pipe(
   Match.withReturnType<Update>(),
   Match.when(
@@ -117,8 +111,6 @@ const did = Match.type<SubagentActivity>().pipe(
   Match.exhaustive,
 );
 
-// A request joins its tool call's card; a request for a call never seen started gets a card of
-// Its own.
 const asked =
   (call: ToolCallId, tool: ToolKind, approval: Approval): Update =>
   (subagent) =>
@@ -159,7 +151,6 @@ const update = Match.type<Exclude<SubagentEvent, { readonly Started: unknown }>>
   Match.exhaustive,
 );
 
-// A sub-agent the agent resumes runs again under its id, after what it did before.
 const started = (
   subagents: Subagents,
   id: SubagentId,
@@ -182,7 +173,6 @@ const started = (
         },
       ];
 
-// Events of a sub-agent never seen started are dropped.
 const applySubagentEvent = (
   subagents: Subagents,
   id: SubagentId,

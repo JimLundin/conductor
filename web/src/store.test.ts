@@ -10,12 +10,11 @@ import { fakeHost } from "#ui/test/fake-pipe.ts";
 import { makeStore } from "#ui/store.ts";
 import { sessionsOf } from "@conductor/core/store";
 
-// The ticket link writes as its worked example, and the host it names.
 const exampleTicket = example.text;
 const exampleHost = `58${"66".repeat(31)}`;
 const exampleRecord = `conductor.v2.host.${exampleHost}`;
+const renewedTokenPrefix = { end: 48, start: 44, text: "AgIC" } as const;
 
-// The Dioxus app's test ticket, a host on the n0 relay.
 const otherTicket =
   "AOr1251Bb2p0aTNfacOjGWA_ymOblEoyognrqD1bXfA_j1NbKmHUzEVqXP2oBgk2pGh0dHBzOi8vZXVjMS0xLnJlbGF5Lm4wLmlyb2gubGluay4v";
 
@@ -100,8 +99,7 @@ describe("replaced tickets", () => {
     Effect.gen(function* verify4() {
       const storage = memoryStorage();
       const welcome = yield* turn().welcome(1);
-      // The same host with another token: bytes 33 to 35 are the token's first three.
-      const renewed = `${exampleTicket.slice(0, 44)}AgIC${exampleTicket.slice(48)}`;
+      const renewed = `${exampleTicket.slice(0, renewedTokenPrefix.start)}${renewedTokenPrefix.text}${exampleTicket.slice(renewedTokenPrefix.end)}`;
       const view = yield* Effect.scoped(
         Effect.gen(function* again() {
           const host = yield* Effect.tryPromise(fakeHost);

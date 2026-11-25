@@ -58,8 +58,7 @@ const traced = (host: FakeHost): Effect.Effect<DialTrace, never, Scope.Scope> =>
     return { linked, times: (): ReadonlyArray<number> => at };
   });
 
-// Every jitter draws 0.75, which stretches a delay by 1.1 within its 0.8 to 1.2.
-const drawing = {
+const upperQuartileRandom = {
   nextDoubleUnsafe: (): number => 0.75,
   nextIntUnsafe: (): number => 0,
 } as const satisfies Random.Random;
@@ -82,7 +81,7 @@ describe("reconnect delays", () => {
             yield* until(linked, inState("Disconnected"));
             yield* TestClock.adjust(275);
             return times();
-          }).pipe(Effect.provideService(Random.Random, drawing)),
+          }).pipe(Effect.provideService(Random.Random, upperQuartileRandom)),
         );
         expect(dials.slice(1).map((time, index) => time - (dials[index] ?? 0))).toStrictEqual([
           275, 550, 1100, 2200, 4400, 8800, 11_000, 275,

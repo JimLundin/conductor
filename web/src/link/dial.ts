@@ -1,4 +1,3 @@
-// Dials a host through its relay, and once more beside a dial that stalls.
 import type { Connection, Pipe } from "#ui/pipe.ts";
 import type { Duration, Scope } from "effect";
 import { Effect, Exit, Option, Ref } from "effect";
@@ -6,7 +5,6 @@ import { close, described } from "#ui/link/frames.ts";
 import { Alpn } from "@conductor/core/schemas/index";
 import type { Ticket } from "@conductor/core/schemas/index";
 
-// A relay connection can stall for seconds while a fresh one is up in well under a second.
 const hedgeAfter: Duration.Input = "1500 millis";
 
 const alpn: () => Uint8Array = () => new TextEncoder().encode(Alpn.literal);
@@ -37,7 +35,6 @@ const closeUnless =
     return close(connection);
   };
 
-// Closes each dial's connection but the winner's, once it connects.
 const discard: (dials: Dials, winner: Connection | undefined) => Effect.Effect<void> = (
   dials,
   winner,
@@ -54,7 +51,6 @@ const discard: (dials: Dials, winner: Connection | undefined) => Effect.Effect<v
     Effect.asVoid,
   );
 
-// The first dial, or the first of it and a fresh one if it hasn't connected by `hedgeAfter`.
 const race: (pipe: Pipe, ticket: Ticket, dials: Dials) => Effect.Effect<Connection, string> = (
   pipe,
   ticket,
@@ -76,7 +72,6 @@ const winnerOf: (exit: Exit.Exit<Connection, string>) => Connection | undefined 
     onSuccess: (connection: Connection): Connection | undefined => connection,
   });
 
-// A connection to the host that the scope closes.
 const connect: (pipe: Pipe, ticket: Ticket) => Effect.Effect<Connection, string, Scope.Scope> = (
   pipe,
   ticket,

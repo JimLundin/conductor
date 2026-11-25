@@ -7,7 +7,6 @@ declare module "vitest" {
   }
 }
 
-// Property tests take the runs and seed of the mode from vitest.config.ts.
 beforeAll(() => {
   configureGlobal({ check: inject("arbitrary") });
 });

@@ -1,5 +1,3 @@
-// One client's link to one host over the pipe (architecture §7). Each paired host has its own,
-// And all run at once.
 import type { Access, Host, HostLink } from "#ui/link/host.ts";
 import type {
   ClientName,
@@ -74,7 +72,6 @@ const greeted: (host: Host, connection: Connection) => Effect.Effect<never, stri
     return yield* subscribe(host, connection, welcome);
   });
 
-// One connection, from its dial until it ends.
 const session: (host: Host) => Effect.Effect<never, string> = (host) =>
   Effect.scoped(
     Effect.gen(function* connecting() {
@@ -90,7 +87,6 @@ const disconnected: (host: Host, error?: string) => Effect.Effect<void> = (host,
     Effect.andThen(publish(host, { error, state: "Disconnected" })),
   );
 
-// Whether the connection that ended had gone live, which starts the backoff over.
 interface Dropped {
   readonly live: boolean;
 }
@@ -111,8 +107,6 @@ const dropped: (host: Host) => Effect.Effect<never, Dropped> = (host) =>
 const delayAfter: (failures: number) => Duration.Duration = (failures) =>
   Duration.min(Duration.times(backoffFloor, backoffFactor ** failures), backoffCeiling);
 
-// Exponential from the floor to the ceiling, jittered so many clients don't retry in step, and
-// From the floor again after a connection that went live.
 const backoff: Schedule.Schedule<Duration.Duration, Dropped> = Schedule.fromStep(
   Effect.sync(() => {
     let failures = firstFailure;
@@ -159,8 +153,6 @@ const send =
       Effect.flatMap((access) => sendOn(access, body)),
     );
 
-// Starts a link to the host `ticket` names, greeting as `client`, from a fresh cursor. It runs
-// Until its scope closes, which closes its connection.
 const link: (
   pipe: Pipe,
   ticket: Ticket,

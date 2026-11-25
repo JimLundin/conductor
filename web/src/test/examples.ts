@@ -8,13 +8,10 @@ import type { RecordedFeed } from "#ui/test/recorded-feeds.ts";
 import type { Session } from "@conductor/core/fold/session";
 import type { ToolState } from "@conductor/core/fold/transcript";
 
-// Events for the fold's worked examples, ported from the Rust HostView's tests.
-
 type Numbered = ReadonlyArray<readonly [number, EventKind]>;
 
 const id = (session: number): SessionId => `0000000000000000000000000${session}`;
 
-// Numbers each session's events as the host does: a delta repeats the last seq.
 const foldEvents = (events: Numbered): Host =>
   Arr.reduce<readonly [number, EventKind], readonly [Host, number]>(
     events,
@@ -27,8 +24,6 @@ const foldEvents = (events: Numbered): Host =>
     },
   )[0];
 
-// What one connection of a recorded scenario's test client received, as its link reports it:
-// Its welcome, then its feed.
 const received = (feed: RecordedFeed, connection: number): ReadonlyArray<Update> =>
   feed
     .filter((recorded) => recorded.connection === connection)
@@ -105,7 +100,6 @@ const question = (request: number): EventKind => ({
   },
 });
 
-// An `ls` card that asked for approval.
 interface Asked {
   readonly approval: RequestState;
   readonly call: string;

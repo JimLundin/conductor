@@ -11,14 +11,11 @@ import type {
 import { Update, isDelta } from "#core/link";
 import { applyKind, createdSession } from "#core/fold/session";
 import type { Session } from "#core/fold/session";
-// A host's welcome and feed folded into what the views render: the only fold of its events.
 
 interface Host {
-  // Absent until the first welcome.
   readonly name: string | undefined;
   readonly catalog: Catalog | undefined;
   readonly instances: Instances;
-  // The home's projects, where a new session may start.
   readonly projects: ReadonlyArray<Project>;
   readonly sessions: Readonly<ReadonlyMap<SessionId, Session>>;
 }
@@ -41,7 +38,6 @@ const applied = (sessions: Sessions, event: Event): Sessions => {
   );
 };
 
-// An event for a session never seen created is dropped, and a removed session is gone.
 const applyEvent = (sessions: Sessions, event: Event): Sessions => {
   const { kind } = event;
   if (typeof kind === "object" && "SessionCreated" in kind) {
@@ -61,8 +57,6 @@ const emptyHost = (): Host => ({
   sessions: new Map(),
 });
 
-// A welcome replaces what the host advertises and keeps its sessions: a reconnect catches up
-// After them.
 const applyWelcome = (host: Host, welcome: Welcome): Host => ({
   ...host,
   catalog: welcome.catalog,
@@ -71,10 +65,8 @@ const applyWelcome = (host: Host, welcome: Welcome): Host => ({
   projects: welcome.home?.projects ?? [],
 });
 
-// The link resets a host's history on a fresh cursor or a new epoch, before the replay.
 const resetHistory = (host: Host): Host => ({ ...host, sessions: new Map() });
 
-// Sign-ins and the home's issues and flow are not part of the thin app.
 const applyFeed = (host: Host, feed: Feed): Host => {
   if ("Event" in feed) {
     return { ...host, sessions: applyEvent(host.sessions, feed.Event) };
@@ -88,7 +80,6 @@ const applyFeed = (host: Host, feed: Feed): Host => {
   return host;
 };
 
-// A link status is not part of the host's fold.
 const applyUpdate = (host: Host, update: Update): Host =>
   Update.$match(update, {
     Feed: ({ frame }) => applyFeed(host, frame),
@@ -97,7 +88,6 @@ const applyUpdate = (host: Host, update: Update): Host =>
     Welcome: ({ welcome }) => applyWelcome(host, welcome),
   });
 
-// The sessions, the most recently active first.
 const recent = (host: Host): ReadonlyArray<SessionId> =>
   [...host.sessions]
     .toSorted(
@@ -105,8 +95,6 @@ const recent = (host: Host): ReadonlyArray<SessionId> =>
     )
     .map(([id]: SessionEntry) => id);
 
-// Each directory a session ran in, once, the most recent first: the suggestions for a new
-// Session.
 const directories = (host: Host): ReadonlyArray<SessionDirectory> => [
   ...new Set(
     recent(host).flatMap((id) => {

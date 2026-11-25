@@ -33,7 +33,6 @@ import type { ReplyState, Streamed } from "#core/fold/transcript";
 import { applySubagentEvent, changeSubagents, stopSubagents } from "#core/fold/subagent";
 import type { Subagent } from "#core/fold/subagent";
 import type { Unit } from "#core/data";
-// A session folded from its events.
 
 type SessionStatus = Data.TaggedEnum<{
   readonly Starting: Unit;
@@ -44,14 +43,11 @@ type SessionStatus = Data.TaggedEnum<{
 
 const SessionStatus = Data.taggedEnum<SessionStatus>();
 
-// Where a session on an issue stands with finishing: a message after a finish makes it ready
-// Again, while its own summary turn doesn't.
 type FinishState = "Ready" | "Finishing" | "Retrying" | "Done";
 
 interface Session {
   readonly instance: InstanceId;
   readonly directory: SessionDirectory;
-  // Absent choices use the CLI's own default.
   readonly model: ModelId | undefined;
   readonly effort: Effort | undefined;
   readonly status: SessionStatus;
@@ -59,9 +55,7 @@ interface Session {
   readonly finish: FinishState;
   readonly checklist: ReadonlyArray<ChecklistEntry>;
   readonly items: ReadonlyArray<Item>;
-  // The sub-agents its agent started, in the order they started.
   readonly subagents: ReadonlyArray<Subagent>;
-  // The last stored event that touched it.
   readonly activity: HostSeq;
 }
 
@@ -99,7 +93,6 @@ const streamed =
     items: streamedItems(session.items, { state, tag, text }),
   });
 
-// A session that closed and is ready again was continued.
 const ready: Step = (session) =>
   SessionStatus.$is("Closed")(session.status)
     ? pushed(
@@ -128,7 +121,6 @@ const turnCompleted =
       Item.TurnCompleted({ outcome }),
     );
 
-// Nothing still running will finish, and nothing still open will be answered.
 const closed =
   (reason: CloseReason): Step =>
   (session) => ({
@@ -162,8 +154,6 @@ const toolStarted =
       }),
     );
 
-// A request joins its tool call's card; a request for a call never seen started gets a card of
-// Its own.
 const requestOpened =
   (body: Extract<EventKind, { readonly RequestOpened: unknown }>["RequestOpened"]): Step =>
   (session) => {
@@ -278,8 +268,6 @@ const step = Match.type<EventKind>()
         (session: Session): Session =>
           pushed({ ...session, finish: "Done" }, Item.Finished({ finished })),
     ),
-    // The thin app shows no workspace, snapshots or native turns; the host creates and removes
-    // Sessions.
     Match.when({ WorkspaceCreated: Match.any }, () => unchanged),
     Match.when({ SnapshotRecorded: Match.any }, () => unchanged),
     Match.when({ NativeTurnStarted: Match.any }, () => unchanged),

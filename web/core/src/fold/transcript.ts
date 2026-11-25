@@ -12,15 +12,12 @@ import type {
 } from "#core/schemas/index";
 import { Data } from "effect";
 import type { Unit } from "#core/data";
-// A transcript's items, and the changes later events make to earlier ones.
 
-// A reply or reasoning streams until its final text arrives or something else follows it.
 type ReplyState = "Streaming" | "Done";
 
 type ToolState = Data.TaggedEnum<{
   readonly Running: Unit;
   readonly Finished: { readonly outcome: ToolOutcome };
-  // The turn or the session ended before the call finished.
   readonly Stopped: Unit;
 }>;
 
@@ -37,9 +34,7 @@ type Approval = Data.TaggedEnum<{
   readonly NotAsked: Unit;
   readonly Asked: {
     readonly request: RequestId;
-    // The agent's own words for why it asks.
     readonly reason: string | undefined;
-    // What approving for the session allows, when the agent offers it.
     readonly forSession: string | undefined;
     readonly state: RequestState;
   };
@@ -50,9 +45,7 @@ const Approval = Data.taggedEnum<Approval>();
 type Item = Data.TaggedEnum<{
   readonly User: { readonly text: string; readonly by: ClientName };
   readonly Reply: { readonly text: string; readonly state: ReplyState };
-  // The agent's reasoning, as its provider summarizes it.
   readonly Reasoning: { readonly text: string; readonly state: ReplyState };
-  // A tool card: the call, with the approval it asked for.
   readonly Tool: {
     readonly call: ToolCallId;
     readonly tool: ToolKind;
@@ -65,10 +58,8 @@ type Item = Data.TaggedEnum<{
     readonly state: RequestState;
   };
   readonly TurnCompleted: { readonly outcome: TurnOutcome };
-  // The agent started again after it had closed for this reason.
   readonly Continued: { readonly reason: CloseReason };
   readonly ModelChanged: { readonly reason: string };
-  // Finishing the session on its issue began.
   readonly Finishing: Unit;
   readonly Finished: { readonly finished: Finished };
   readonly Error: { readonly message: string };
@@ -76,7 +67,6 @@ type Item = Data.TaggedEnum<{
 
 const Item = Data.taggedEnum<Item>();
 
-// An in-place change to earlier items: asking, resolving and finishing are one map over them.
 type Change = Data.TaggedEnum<{
   readonly Ask: { readonly call: ToolCallId; readonly approval: Approval };
   readonly Resolve: {
@@ -84,8 +74,6 @@ type Change = Data.TaggedEnum<{
     readonly resolution: Resolution;
   };
   readonly Finish: { readonly call: ToolCallId; readonly outcome: ToolOutcome };
-  // The host ended the turn or the session: nothing still running will finish, and nothing
-  // Still open will be answered.
   readonly End: Unit;
 }>;
 
@@ -146,7 +134,6 @@ const itemChanged =
 const changeItems = (items: ReadonlyArray<Item>, next: Change): ReadonlyArray<Item> =>
   items.map(itemChanged(next));
 
-// The item, done streaming: something else follows it.
 const settled = (item: Item): Item => {
   if (Item.$is("Reply")(item)) {
     return Item.Reply({ state: "Done", text: item.text });
@@ -161,14 +148,11 @@ const firstItem = 0;
 const lastItem = -1;
 const lastOffset = 1;
 
-// Settles the last item.
 const settle = (items: ReadonlyArray<Item>): ReadonlyArray<Item> =>
   items.map((item, index) => (index === items.length - lastOffset ? settled(item) : item));
 
 type Streamed = "Reply" | "Reasoning";
 
-// A delta joins the reply or reasoning still streaming; the final text replaces it, so a client
-// That missed the deltas shows the same text.
 interface Fragment {
   readonly state: ReplyState;
   readonly tag: Streamed;

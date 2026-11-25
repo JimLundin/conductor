@@ -12,7 +12,6 @@ import type { Approval } from "#core/fold/transcript";
 import { SendError } from "#core/link";
 import type { Session } from "#core/fold/session";
 import { controls } from "#core/fold/offers";
-// The commands a session's screen sends, each offered as a button the view only renders.
 
 type Tone = "Primary" | "Plain" | "Danger";
 
@@ -40,8 +39,6 @@ const resolve = (session: SessionId, request: RequestId, decision: Decision): Co
   Session: { Resolve: { decision, request, session } },
 });
 
-// What a session offers besides its composer: stopping a turn, continuing a closed agent and
-// Finishing on its issue, exactly as its controls allow.
 const sessionOffers = (id: SessionId, session: Session): ReadonlyArray<Offer> => {
   const offered = controls(session);
   return [
@@ -75,7 +72,6 @@ const sessionOffers = (id: SessionId, session: Session): ReadonlyArray<Offer> =>
   ];
 };
 
-// The one-tap answers to an approval: approving for the session only when the agent offers it.
 const decisions = (id: SessionId, asked: Asked): ReadonlyArray<Offer> => [
   {
     body: resolve(id, asked.request, "Approve"),
@@ -94,7 +90,6 @@ const decisions = (id: SessionId, asked: Asked): ReadonlyArray<Offer> => [
   { body: resolve(id, asked.request, "Deny"), label: "Deny", tone: "Danger" },
 ];
 
-// What the person picked for one question.
 interface Picked {
   readonly labels: ReadonlyArray<string>;
   readonly typed: string;
@@ -111,14 +106,12 @@ const toggled = (question: Question, picked: Picked, label: string): Picked => {
     : { ...picked, labels: [...picked.labels, label] };
 };
 
-// One answer per question in the order asked: the options chosen, then any text typed instead.
 const answersOf = (picks: ReadonlyArray<Picked>): ReadonlyArray<Answer> =>
   picks.map(({ labels, typed }) => (typed.trim() === "" ? labels : [...labels, typed.trim()]));
 
 const firstLetter = 0;
 const afterFirst = 1;
 
-// Splits a variant's PascalCase name into a sentence.
 const sentence = (name: string): string => {
   const words = name.replaceAll(/(?<lower>[a-z])(?<upper>[A-Z])/gu, "$1 $2");
   return `${words.charAt(firstLetter)}${words.slice(afterFirst).toLowerCase()}`;
@@ -136,8 +129,6 @@ const rejected = (rejection: SessionRefusal): string => {
     .join("; ");
 };
 
-// What the person is told after a command: nothing once the host takes it, since its log shows
-// What follows.
 const notice = (result: CommandResult): string | undefined =>
   "Session" in result && typeof result.Session === "object" && "Refused" in result.Session
     ? `The host refused: ${rejected(result.Session.Refused)}.`

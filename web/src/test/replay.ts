@@ -11,11 +11,8 @@ import type { RecordedFeed } from "#ui/test/recorded-feeds.ts";
 import type { Scope } from "effect";
 import { recordedFeed } from "#ui/test/recorded-feeds.ts";
 
-// The recorded host feeds, and a fake host that replays one to a link over the fake pipe.
-
 type Entry = RecordedFeed[number];
 
-// A command as the app sent it: its id and what it asks.
 type Sent = Extract<Open, { readonly Command: unknown }>["Command"];
 
 interface Scenario {
@@ -69,16 +66,13 @@ const scenarioOf = (entries: ReadonlyArray<Entry>): Scenario => {
   };
 };
 
-// The recorded feed `name`, by its connections.
 const scenario = (name: string): Scenario => scenarioOf(recordedFeed(name));
 
-// The frames a host would replay: every stored event, and no live-only delta.
 const isDeltaFrame = (frame: Feed): boolean => "Event" in frame && isDelta(frame.Event);
 
 const stored = (frames: ReadonlyArray<Feed>): ReadonlyArray<Feed> =>
   frames.filter((frame) => "Event" in frame && !isDeltaFrame(frame));
 
-// The seq of each stored event in `updates`, in order.
 const events = (updates: ReadonlyArray<Update>): ReadonlyArray<number> =>
   updates.flatMap((update) => {
     if (Update.$is("Feed")(update) && "Event" in update.frame && !isDeltaFrame(update.frame)) {
@@ -87,7 +81,6 @@ const events = (updates: ReadonlyArray<Update>): ReadonlyArray<number> =>
     return [];
   });
 
-// Each status's state in `updates`, in order.
 const states = (updates: ReadonlyArray<Update>): ReadonlyArray<LinkState> =>
   updates.flatMap((update) => {
     if (Update.$is("Status")(update)) {
@@ -96,7 +89,6 @@ const states = (updates: ReadonlyArray<Update>): ReadonlyArray<LinkState> =>
     return [];
   });
 
-// Each delta in `updates`, in order.
 const deltas = (updates: ReadonlyArray<Update>): ReadonlyArray<Feed> =>
   updates.flatMap((update) => {
     if (Update.$is("Feed")(update) && isDeltaFrame(update.frame)) {
@@ -105,11 +97,9 @@ const deltas = (updates: ReadonlyArray<Update>): ReadonlyArray<Feed> =>
     return [];
   });
 
-// A ticket naming no real host, for the fake pipe.
 const endpointBytes = 32;
 const tokenBytes = 16;
 
-// A ticket naming no real host, for the fake pipe.
 const ticket: Ticket = {
   host: Array.from({ length: endpointBytes }, () => 1),
   relay: "https://relay.example/",
@@ -120,7 +110,6 @@ const client = "test-client";
 
 type HostStream = Awaited<ReturnType<FakeHost["accept"]>>;
 
-// What the app asked the host for.
 interface Served {
   readonly subscribes: Ref.Ref<ReadonlyArray<Subscribe>>;
   readonly commands: Ref.Ref<ReadonlyArray<Sent>>;
@@ -130,12 +119,9 @@ interface Replay {
   readonly reply: HelloReply;
   readonly feed: ReadonlyArray<Feed>;
   readonly results: ReadonlyArray<CommandResult>;
-  // The frames each command's result is followed by on the subscription, in the order of the
-  // Commands, as the host's log answers a command.
   readonly answers?: ReadonlyArray<ReadonlyArray<Feed>>;
 }
 
-// What the host has left to say: the next results and answers, and where its feed goes.
 interface Script {
   readonly results: Ref.Ref<ReadonlyArray<CommandResult>>;
   readonly answers: Ref.Ref<ReadonlyArray<ReadonlyArray<Feed>>>;
@@ -189,8 +175,6 @@ const answer =
       Effect.orDie,
     );
 
-// Plays one connection of a host: `reply` to the hello, `feed` on each subscription, and the
-// Next of `results` to each command, followed on the feed by the next of `answers`.
 const serve = (host: FakeHost, replay: Replay): Effect.Effect<Served, never, Scope.Scope> =>
   Effect.gen(function* serving() {
     const served: Served = {
@@ -213,7 +197,6 @@ const serve = (host: FakeHost, replay: Replay): Effect.Effect<Served, never, Sco
 const reach = (host: FakeHost): Promise<Connection> =>
   host.pipe.connect(new Uint8Array(), "", new Uint8Array());
 
-// A pipe whose each connect is the next of `dials`, and then one that never connects.
 const stalled = (): Promise<Connection> => Effect.runPromise(Effect.never);
 
 const dialing = (dials: ReadonlyArray<() => Promise<Connection>>): Pipe => {
@@ -223,11 +206,9 @@ const dialing = (dials: ReadonlyArray<() => Promise<Connection>>): Pipe => {
   };
 };
 
-// A pipe whose each connect reaches the next of `hosts`.
 const hosts = (fakes: ReadonlyArray<FakeHost>): Pipe =>
   dialing(fakes.map((fake) => (): Promise<Connection> => reach(fake)));
 
-// The link's updates up to and including the first that `isLast` picks.
 const until = (
   linked: HostLink,
   isLast: (update: Update) => boolean,
@@ -238,7 +219,6 @@ const until = (
     Effect.map((updates) => [...updates]),
   );
 
-// The link's updates up to and including its `count`th feed frame.
 const throughFeed = (linked: HostLink, count: number): Effect.Effect<ReadonlyArray<Update>> =>
   Effect.suspend(() => {
     let seen = 0;
