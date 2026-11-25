@@ -23,6 +23,8 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
 
   home project capabilities <project>
       Validates backend configuration and shows available project operations.
+  home project operation-status <handle> [--data-dir <dir>]
+      Shows the operation, its confirmed steps and any step awaiting evidence.
   home check
       Checks every project and issue against the flow; fails only on errors.
   home issue new <project> <kind> <title> [<field>=<value>...]

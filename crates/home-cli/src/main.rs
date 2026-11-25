@@ -12,14 +12,16 @@ use home::flow::command::{Asked, Command, Context, asked, homeless, run};
 use home::issue::storage::File;
 
 mod local;
+mod operations;
 mod project;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    let root = root(&args);
-    let (text, code) = root
-        .as_deref()
-        .map_or_else(homeless, |home| answered(home, &args));
+    let (text, code) = operations::status(&args).unwrap_or_else(|| {
+        root(&args)
+            .as_deref()
+            .map_or_else(homeless, |home| answered(home, &args))
+    });
     let _written = std::io::stdout().lock().write_all(text.as_bytes());
     ExitCode::from(code)
 }

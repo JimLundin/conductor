@@ -6,6 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+thiserror.workspace = true
 data-encoding.workspace = true
 sha2 = { version = "0.11.0", default-features = false }
 time = { version = "0.3.55", default-features = false, features = ["parsing"] }

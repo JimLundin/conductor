@@ -1,3 +1,5 @@
+pub mod operations;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -269,3 +271,24 @@ fn selected<'a, T: ?Sized>(
 
 #[cfg(test)]
 mod tests;
+
+/// Resolves the host data directory used by the daemon and project CLI.
+///
+/// # Errors
+/// The platform has no default data directory.
+pub fn data_dir_or_default(
+    data: Option<std::path::PathBuf>,
+) -> std::io::Result<std::path::PathBuf> {
+    data.map_or_else(
+        || {
+            directories::ProjectDirs::from("", "", "conductor")
+                .map(|dirs| dirs.data_dir().to_owned())
+                .ok_or_else(|| {
+                    std::io::Error::other(
+                        "no home directory to put the data dir in",
+                    )
+                })
+        },
+        Ok,
+    )
+}

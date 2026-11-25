@@ -18,7 +18,7 @@ cap-std = "4.0.2"
 # The credential store's cipher (§6.3), XChaCha20-Poly1305.
 chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
 data-encoding.workspace = true
-directories = "6.0.0"
+project-runtime = { path = "../project-runtime" }
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
 net = { path = "../net" }
