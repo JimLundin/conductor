@@ -1,0 +1,172 @@
+# Project backend structure
+
+Proposed structure for spec `0v265ymj`, using gix for version control and
+Octocrab for GitHub task tracking. This names the boundaries and ownership;
+it does not establish that gix supports every required operation. The
+[library research](github-backends.md) records its incomplete push support
+and the git2 alternative.
+
+## Crates and responsibilities
+
+Keep the current pure core and shell pattern. Extend `home` as the owner
+of project work, extract version control from the session implementation,
+and give both CLI and daemon one project operation service.
+
+| Crate | Layer | Responsibility |
+|---|---|---|
+| `home` | Core, existing | Project catalog, issues, relations, flow rules, project operation plans and hosting results. |
+| `vcs` | Core, new | Repository, revision and workspace types; version control requests, results and preservation rules. |
+| `project-runtime` | Shell, new | Backend interfaces, execution of project plans, operation records, cached reads and refresh. |
+| `vcs-gix` | Shell, new | Implements the version control interface through gix. |
+| `github` | Core, new | Pure GitHub field and relation mapping, including metadata GitHub cannot represent natively. |
+| `github-api` | Shell, new | Implements tracking and hosting interfaces through one Octocrab client. |
+| `home-files` | Shell, existing | Reads home configuration and instructions. Issue storage leaves this crate. |
+| `home-cli` | Binary, existing | Offers the same project operations to terminal users and agents. |
+| `host` and `daemon` | Core and shell, existing | Own session lifecycle and invoke project operations and version control through the shared service. |
+| `conductord` | Binary, existing | Constructs adapters, supplies credentials and injects the configured service. |
+
+The proposed module layout is:
+
+```text
+crates/
+  home/src/
+    project.rs
+    issue/
+    flow/
+    operations/
+    hosting.rs
+  vcs/src/
+    model.rs
+    command.rs
+    plan.rs
+  project-runtime/src/
+    backends.rs
+    service.rs
+    store.rs
+  vcs-gix/src/
+    repository.rs
+    workspace.rs
+    remote.rs
+  github/src/
+    mapping.rs
+  github-api/src/
+    client.rs
+    tracking.rs
+    hosting.rs
+```
+
+`home` continues to own the issue vocabulary, including specs, tasks,
+decisions and bugs. There is no second task model alongside `Issue`.
+The existing `runtime` crate remains the agent runtime.
+
+## Interfaces
+
+`project-runtime::backends` owns the effectful Rust interfaces. Requests,
+results and refusals belong to the domain core that gives them meaning.
+This keeps I/O traits out of the pure core's data-only API.
+
+| Interface | Operations | Implementation |
+|---|---|---|
+| `VersionControl` | Discover repositories, create workspaces, capture snapshots, compare revisions, integrate changes, fetch and publish branches. | `vcs-gix`, using gix. |
+| `IssueTracker` | List and read issues, create issues, apply edits, append notes and change relations. | `github-api`, using Octocrab. |
+| `RepositoryHosting` | Read checks, workflow runs and commit statuses; request supported hosted actions. | `github-api`, using the same Octocrab client. |
+
+Checks and Actions belong to the hosting interface. A project operation
+can use all three interfaces, while a tracker replacement only needs to
+implement `IssueTracker`.
+
+Methods accept domain values such as an issue edit or branch publication,
+never arbitrary Git arguments, API paths or JSON. An operation that is
+unsupported, partially applied or uncertain returns that outcome. A missing
+capability is detected before a dependent operation changes state.
+
+The shell converts SDK types at the boundary. It reuses Octocrab's API
+models and gix's repository types instead of defining another wire model.
+The `github` core owns only the mapping facts and decisions it needs. It
+does not mirror the GitHub API. This separate pure module keeps provider
+encoding decisions out of both the flow and the I/O shell.
+
+## Dependencies and construction
+
+The domain dependencies point inward:
+
+```text
+home -> vcs
+host -> home, vcs
+github -> home
+project-runtime -> home, vcs
+vcs-gix -> project-runtime, vcs, gix
+github-api -> project-runtime, github, octocrab
+daemon -> host, project-runtime
+```
+
+`project-runtime` does not depend on either concrete adapter. `conductord`
+and the `home-cli` binary construct the adapters and pass them to the
+service. Only the two adapter shells depend on gix or Octocrab. `link`
+continues to compose domain commands and results; SDK types never reach
+the web app or an agent.
+
+Backend selection is per project. Its version control, tracker and hosting
+configuration are separate, so a Git repository does not require a GitHub
+tracker. Host credentials are referenced by configuration and supplied at
+construction; tokens do not belong in project files.
+
+## A project operation
+
+The proposed agent commands are `start work`, `publish`, `check` and `land`.
+These are operation names, not a committed CLI syntax. The app uses the
+same service. Session lifecycle stays in `host`; project plans coordinate
+issue and repository work and return the context for a session start.
+
+For `land`, the core reads the issue and required review and sign-off
+facts, then plans publication of the reviewed revision to the project's
+queue ref. The runtime records the operation and executes publication
+through `VersionControl`. It observes the existing queue's commit status
+through `RepositoryHosting`. Once landing is confirmed, `IssueTracker`
+records the result and the core chooses the appropriate flow transition.
+
+If publication succeeds but the reply is lost, the service reads the
+remote ref before retrying. If landing succeeds but updating the issue
+fails, it retries that update without landing again. If the reviewed
+revision changed, the core refuses to reuse the previous approval.
+These recovery rules belong to the operation, not to an SDK retry setting.
+
+## Storage and direct edits
+
+GitHub is authoritative for issues assigned to its tracker. A refresh
+reads GitHub, applies the adapter mapping and validates the resulting
+domain issues against the flow. Invalid direct edits remain visible with
+their problems, and affected project operations are refused.
+
+Cached issues remain readable offline. Issue edits require connectivity.
+The service retains receipts for uncertain or partially completed remote
+operations, but it does not accept a queue of offline edits. Current API
+documentation does not establish atomic compare-and-set for issue updates;
+the structure does not promise that a GitHub UI edit cannot race a write.
+
+GitHub's native relations and fields are used where they fit. The mapping
+for additional flow fields and relations is private to the GitHub adapter
+and remains a design decision. GitHub's limits do not change the domain
+model.
+
+## Moving the current code
+
+1. Replace file-shaped issue inputs and writes in `home` with domain issue
+   snapshots and changes. Keep its flow interpreter and rule evaluation.
+2. Move repository facts, Git command planning and preservation decisions
+   out of `host::workspace` and the home repository helpers into `vcs`.
+   Keep session policy in `host` and issue branch policy in `home`.
+3. Move shared project I/O out of `daemon::home` and `home-cli::local` into
+   `project-runtime`. Both callers receive the same outcomes.
+4. Add the gix and Octocrab implementations behind those contracts. Change
+   the binary construction points and remove the replaced Git subprocess
+   and Markdown issue paths.
+
+Keep gix provisional until the required operation set is verified.
+Publication is required by this design and currently has a known coverage
+gap. Do not hide it with a Git subprocess fallback or claim that GitHub's
+ref API transfers missing local commit objects. The same interface can take
+a git2 implementation if that remains the complete-library option. The
+library decision must also cover scratch-index preservation, competing
+branch updates and interrupted landing recovery, as decision `0v26ayew`
+requires.

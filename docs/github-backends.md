@@ -4,6 +4,11 @@ Research and proposed design, 2026-11-25. Tracked by Conductor spec
 `0v265ymj`, at `shape`, on branch `github-backends`. This records a proposal,
 not an approved implementation plan.
 
+The [project structure proposal](project-backend-structure.md) places gix
+and Octocrab behind the version control and tracking interfaces, as the
+owner subsequently requested. Gix remains provisional because of its
+coverage gap; the git2 assessment below remains the alternative.
+
 ## What this decides
 
 Use an existing Rust GitHub client behind Conductor's issue and repository
