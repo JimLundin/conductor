@@ -173,7 +173,7 @@ What is built and what comes next. Update it in the commit that changes it.
   hosts (`conductor-fleet/4`, encoded by `host::fleet::frame`); signed fleet payloads are signed
   over their exact JSON bytes and verified before they are parsed. The
   app's Effect Schemas are generated from `link`'s JSON Schema into
-  `web/src/schemas/` (`tools/schemas.sh`, the `schemas` suite). `web/` is
+  `web/core/src/schemas/` (`tools/schemas.sh`, the `schemas` suite). `web/` is
   Vite, React and Effect: a link per paired host that walks to Live,
   reconnects with a jittered backoff and resubscribes after its cursor;
   the one fold of a host's events; and the thin app: pair hosts by join

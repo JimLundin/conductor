@@ -1741,7 +1741,7 @@ v2`, `conductor fleet snapshot v2`). A browser certificate is
 then parses them, so nothing is re-encoded to be verified, and a payload
 that differs by one byte is refused.
 
-### 7.3 Generated schemas (`web/src/schemas/`)
+### 7.3 Generated schemas (`web/core/src/schemas/`)
 
 The Rust types are the only definition of the client link's types
 (ADR 0002, ADR 0003):
@@ -1754,10 +1754,10 @@ The Rust types are the only definition of the client link's types
    `Alpn`.
 2. `web/scripts/schemas.ts` reads that document with Effect's
    `JsonSchema`, `SchemaRepresentation` (objects closed) and `Codegen`, and
-   writes `web/src/schemas/index.ts`, one Effect Schema per definition.
+   writes `web/core/src/schemas/index.ts`, one Effect Schema per definition.
 3. `tools/schemas.sh` runs both and formats their output with oxfmt.
    `tools/schemas.sh --check`, the `schemas` suite, then fails when
-   `crates/link/link.schema.json` or `web/src/schemas/` differs from what is
+   `crates/link/link.schema.json` or `web/core/src/schemas/` differs from what is
    committed or holds an untracked file, and when the document differs
    from main's while `link::ALPN` doesn't. `link` names no path in `web/`;
    the web app pulls the schema.
