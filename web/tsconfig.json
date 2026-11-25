@@ -21,6 +21,6 @@
     "allowUnusedLabels": false,
     "types": ["node"]
   },
-  "include": ["src", "profiles", "scripts", "vite.config.ts"],
+  "include": ["src", "profiles", "scripts", "vite.config.ts", "core/src"],
   "exclude": ["node_modules", "dist"]
 }

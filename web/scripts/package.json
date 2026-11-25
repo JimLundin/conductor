@@ -1,0 +1,18 @@
+{
+  "name": "@conductor/schemas",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#schemas/*": "./*.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.5",
+    "effect": "4.1.5"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "standards": {
+    "layer": "shell"
+  }
+}
