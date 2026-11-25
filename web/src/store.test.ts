@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { keysOf, memoryStorage, page, when } from "#ui/test/page.ts";
 import { scenario, serve } from "#ui/test/replay.ts";
 import { Route } from "@conductor/core/route";
+import type { Store } from "#ui/store.ts";
 import { TicketError } from "@conductor/core/ticket";
 import example from "#ticket-example" with { type: "json" };
 import { fakeHost } from "#ui/test/fake-pipe.ts";
@@ -28,7 +29,7 @@ describe("join links", () => {
         const storage = memoryStorage();
         const { boundary, at } = page(`#join=${exampleTicket}`, storage);
         const view = yield* Effect.scoped(
-          makeStore(boundary).pipe(Effect.map((store) => store.view())),
+          makeStore(boundary).pipe(Effect.map((store: Pick<Store, "view">) => store.view())),
         );
         expect([...view.hosts.keys()]).toStrictEqual([exampleHost]);
         expect(view.route).toStrictEqual(Route.Sessions());
@@ -85,7 +86,7 @@ describe("restored pairing", () => {
         );
         const restored = yield* Effect.scoped(
           makeStore(page("", storage).boundary).pipe(
-            Effect.map((store) => store.view().hosts.get(exampleHost)),
+            Effect.map((store: Pick<Store, "view">) => store.view().hosts.get(exampleHost)),
           ),
         );
         expect(restored?.saved).toBe(welcome.host);
@@ -138,7 +139,9 @@ describe("obsolete pairing", () => {
         [`conductor.name.${exampleHost}`, "desk"],
       ]);
       const view = yield* Effect.scoped(
-        makeStore(page("", storage).boundary).pipe(Effect.map((store) => store.view())),
+        makeStore(page("", storage).boundary).pipe(
+          Effect.map((store: Pick<Store, "view">) => store.view()),
+        ),
       );
       expect(view.hosts.size).toBe(0);
       expect(view.route).toStrictEqual(Route.Pairing());
@@ -152,7 +155,7 @@ describe("malformed pairing", () => {
       const storage = memoryStorage();
       const view = yield* Effect.scoped(
         makeStore(page("#join=not base64!", storage).boundary).pipe(
-          Effect.map((store) => store.view()),
+          Effect.map((store: Pick<Store, "view">) => store.view()),
         ),
       );
       expect(view.hosts.size).toBe(0);

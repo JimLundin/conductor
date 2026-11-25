@@ -37,7 +37,10 @@ const recordedFeeds = (): ReadonlyMap<string, unknown> =>
         eager: true,
         import: "default",
       }),
-    ).map(([path, feed]) => [path.replace(scenarioName, "$<name>"), feed]),
+    ).map(([path, feed]: readonly [string, unknown]) => [
+      path.replace(scenarioName, "$<name>"),
+      feed,
+    ]),
   );
 
 const recordedFeed = (scenario: string): RecordedFeed =>
