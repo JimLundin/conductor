@@ -20,6 +20,8 @@ use crate::project::{Project, parse};
 /// The home itself, as a repository's path from the home.
 pub const HOME: &str = ".";
 
+pub mod verify;
+
 /// `probes`, found as the host finds checkouts with the home at `home` as
 /// both a known path and the one root, each by its path from the home: the
 /// home's own as [`HOME`], one outside it as it is.
@@ -52,6 +54,8 @@ pub struct Placed {
     pub name: String,
     pub remote: Option<String>,
     pub checkouts: Vec<String>,
+    pub profiles: Vec<String>,
+    pub provides: Vec<String>,
 }
 
 /// Each project, by name, with its checkouts among `probes`.
@@ -62,6 +66,8 @@ pub fn placed(projects: &[Project], probes: &[Probe]) -> Vec<Placed> {
         .map(|project| Placed {
             name: project.name.clone(),
             remote: project.remote.clone(),
+            profiles: project.profiles.clone(),
+            provides: project.provides.clone(),
             checkouts: probes
                 .iter()
                 .filter(|probe| is_checkout(project, probe))

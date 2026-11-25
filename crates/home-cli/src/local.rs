@@ -1,16 +1,18 @@
 //! `home repos` and `home skills`: the home's projects among the
 //! repositories on this machine, and its skills installed for the user
-//! (`home_files::install`). It lists folders, runs Git, and writes files.
+//! (`home_files::install`). It lists folders, runs Git and the standards'
+//! `--verify`, and writes files.
 
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 
 use home::checkout::{self, Probe};
 use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
+use home::repos::verify::{self, Head, Ran, Verify, Verifying};
 use home::repos::{self, New, Scanning};
 use home_files::git;
 
@@ -36,15 +38,58 @@ fn ended(done: Result<String, String>) -> (String, u8) {
 
 fn status(root: &Path, home: &Snapshot) -> String {
     let placed = repos::placed(home.projects(), &probes(root));
-    let states = repos::checkouts(&placed)
-        .into_iter()
+    let paths = repos::checkouts(&placed);
+    let states = paths
+        .iter()
         .map(|path| {
             let state =
-                git(&root.join(&path), &["status", "--porcelain", "--branch"]);
-            (path, state)
+                git(&root.join(path), &["status", "--porcelain", "--branch"]);
+            (path.clone(), state)
         })
         .collect();
-    repos::warnings(home.listing_problems()) + &repos::report(&placed, &states)
+    let heads = paths
+        .iter()
+        .map(|path| (path.clone(), head(&root.join(path))))
+        .collect();
+    let verdicts: String =
+        verify::verifying(&shown(root), &placed, &states, &heads)
+            .into_iter()
+            .map(|verifying| match verifying {
+                Verifying::Run(verify) => {
+                    verify::verdict(&verify, verified(&verify).as_ref())
+                }
+                Verifying::Said(said) => said,
+            })
+            .collect();
+    repos::warnings(home.listing_problems())
+        + &repos::report(&placed, &states)
+        + &verdicts
+}
+
+fn head(at: &Path) -> Head {
+    Head {
+        commit: git(at, &["rev-parse", "--short", "HEAD"]),
+        default: git(
+            at,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        ),
+    }
+}
+
+/// `<profile>/check.sh commit --verify` from the standards' checkout, which
+/// runs no check.
+fn verified(verify: &Verify) -> Option<Ran> {
+    Command::new("bash")
+        .arg(format!("{}/check.sh", verify.profile))
+        .args(["commit", "--verify", &verify.checkout])
+        .current_dir(&verify.standards)
+        .stdin(Stdio::null())
+        .output()
+        .ok()
+        .map(|output| Ran {
+            passed: output.status.success(),
+            out: String::from_utf8_lossy(&output.stdout).into_owned(),
+        })
 }
 
 /// Clones each project with no checkout here, saying each as it goes, so
@@ -104,13 +149,20 @@ fn scan(root: &Path, home: &Snapshot) -> Result<String, String> {
 /// Each repository in the home, the home among them, found as the host
 /// finds checkouts with the home as its one root.
 fn probes(root: &Path) -> Vec<Probe> {
-    let home = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let shown = home.to_string_lossy().into_owned();
+    let shown = shown(root);
     let paths = checkout::candidates(
-        &[home_files::root(&home)],
+        &[home_files::root(Path::new(&shown))],
         std::slice::from_ref(&shown),
     );
     repos::local(&shown, home_files::probes(&paths))
+}
+
+/// The home's folder as the host finds it, its links resolved.
+fn shown(root: &Path) -> String {
+    fs::canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn read(path: &Path) -> Result<String, String> {
