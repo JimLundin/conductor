@@ -80,7 +80,7 @@ impl HostCredentials {
         }
         let repository = Repository::parse(&selected.resource)?;
         let source = self.resolve(&repository, selected.credential.as_ref())?;
-        Client::new(repository, source, "https://api.github.com")
+        Client::new(repository, source, github::mapping::AUTHORITY)
     }
 
     /// Acquires scoped Git credentials before dispatching a blocking Git operation.
@@ -96,7 +96,7 @@ impl HostCredentials {
         if let Source::SshAgent { host_key } = source {
             return ssh(&repository, &host_key);
         }
-        Client::new(repository, source, "https://api.github.com")?
+        Client::new(repository, source, github::mapping::AUTHORITY)?
             .git()
             .await
     }

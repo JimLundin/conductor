@@ -167,3 +167,26 @@ pub fn report(observations: &[Observation]) -> String {
     }
     out
 }
+
+pub mod routes;
+
+#[must_use]
+pub const fn read_failure(error: AccessError) -> home::issue::ReadFailure {
+    use home::issue::ReadFailure;
+    match error {
+        AccessError::InvalidConfiguration => ReadFailure::InvalidConfiguration,
+        AccessError::CredentialMissing => ReadFailure::CredentialMissing,
+        AccessError::Expired => ReadFailure::CredentialExpired,
+        AccessError::CredentialStoreUnavailable => {
+            ReadFailure::CredentialStoreUnavailable
+        }
+        AccessError::AuthenticationRefused => {
+            ReadFailure::AuthenticationRefused
+        }
+        AccessError::PermissionDenied => ReadFailure::PermissionDenied,
+        AccessError::RateLimited => ReadFailure::RateLimited,
+        AccessError::RepositoryUnavailable | AccessError::RequestFailed => {
+            ReadFailure::Unavailable
+        }
+    }
+}

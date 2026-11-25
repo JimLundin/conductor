@@ -75,7 +75,8 @@ use hyper::{
 };
 use hyper_util::rt::TokioIo;
 use secrecy::SecretString;
-use std::convert::Infallible;
+
+mod tracking;
 
 type Reply = (u16, &'static str);
 const META: &str = r#"{"id":7,"name":"work","full_name":"owner/work","url":"https://api.github.com/repos/owner/work","private":true,"default_branch":"main"}"#;
@@ -83,18 +84,77 @@ const META: &str = r#"{"id":7,"name":"work","full_name":"owner/work","url":"http
 async fn server(
     expected: Vec<(&'static str, &'static str, Reply)>,
 ) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
+    exchanges(
+        expected
+            .into_iter()
+            .map(|(path, auth, (status, body))| Exchange {
+                path,
+                auth,
+                status,
+                body: body.to_owned(),
+                headers: Vec::new(),
+            })
+            .collect(),
+    )
+    .await
+}
+
+struct Exchange {
+    path: &'static str,
+    auth: &'static str,
+    status: u16,
+    body: String,
+    headers: Vec<(&'static str, &'static str)>,
+}
+
+async fn exchanges(
+    expected: Vec<Exchange>,
+) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let url = format!("http://{}", listener.local_addr()?);
+    let base = url.clone();
     let task = tokio::spawn(async move {
-        for (path, auth, (status, response)) in expected {
+        for Exchange {
+            path,
+            auth,
+            status,
+            body: response,
+            headers,
+        } in expected
+        {
+            let mut reply = Response::new(Full::new(Bytes::from(
+                response.replace("{api}", &base),
+            )));
+            *reply.status_mut() = hyper::StatusCode::from_u16(status)?;
+            reply.headers_mut().insert(
+                hyper::header::CONNECTION,
+                hyper::header::HeaderValue::from_static("close"),
+            );
+            for (name, value) in headers {
+                reply.headers_mut().insert(
+                    name,
+                    hyper::header::HeaderValue::try_from(
+                        value.replace("{api}", &base),
+                    )?,
+                );
+            }
             let (socket, _) = tokio::time::timeout(
                 std::time::Duration::from_secs(10),
                 listener.accept(),
             )
             .await??;
-            let serve =
-                service_fn(move |request: Request<Incoming>| async move {
-                    assert_eq!(request.uri().path(), path);
+            let serve = service_fn(move |request: Request<Incoming>| {
+                let result = reply.clone();
+                async move {
+                    check_target(request.uri(), path);
+                    assert_eq!(
+                        request.method(),
+                        if path.contains("/access_tokens") {
+                            "POST"
+                        } else {
+                            "GET"
+                        }
+                    );
                     assert!(
                         request
                             .headers()
@@ -116,17 +176,9 @@ async fn server(
                             Some(vec![String::from("work")])
                         );
                     }
-                    let mut result = Response::new(Full::new(
-                        Bytes::from_static(response.as_bytes()),
-                    ));
-                    *result.status_mut() =
-                        hyper::StatusCode::from_u16(status).unwrap_or_default();
-                    result.headers_mut().insert(
-                        hyper::header::CONNECTION,
-                        hyper::header::HeaderValue::from_static("close"),
-                    );
-                    Ok::<_, Infallible>(result)
-                });
+                    Ok::<_, std::convert::Infallible>(result)
+                }
+            });
             http1::Builder::new()
                 .serve_connection(TokioIo::new(socket), serve)
                 .await?;
@@ -134,6 +186,24 @@ async fn server(
         Ok(())
     });
     Ok((url, task))
+}
+
+fn check_target(uri: &hyper::Uri, target: &str) {
+    fn parameters(query: &str) -> Vec<&str> {
+        let mut parts = query.split('&').collect::<Vec<_>>();
+        parts.sort_unstable();
+        parts
+    }
+
+    if let Some((path, query)) = target.split_once('?') {
+        assert_eq!(uri.path(), path);
+        assert_eq!(
+            parameters(uri.query().unwrap_or_default()),
+            parameters(query)
+        );
+    } else {
+        assert_eq!(uri.path(), target);
+    }
 }
 
 #[derive(serde::Deserialize)]

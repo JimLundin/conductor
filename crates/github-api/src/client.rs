@@ -12,6 +12,7 @@ use crate::credential::{Source, token};
 
 pub struct Client {
     pub(crate) repository: Repository,
+    pub(crate) endpoint: String,
     pub(crate) reader: Octocrab,
     pub(crate) kind: TokenKind,
     personal: Option<SecretString>,
@@ -72,6 +73,7 @@ impl Client {
             }
         };
         Ok(Self {
+            endpoint: endpoint.to_owned(),
             repository,
             reader,
             kind,
@@ -129,5 +131,9 @@ pub fn classify(error: octocrab::Error) -> AccessError {
         .and_then(|h| h.get("x-ratelimit-remaining"))
         .is_some_and(|value| value == "0");
     let retry_after = headers.is_some_and(|h| h.contains_key("retry-after"));
-    AccessError::response(source.status_code.as_u16(), exhausted, retry_after)
+    AccessError::response(
+        source.status_code.as_u16(),
+        exhausted,
+        retry_after || source.message.contains("secondary rate limit"),
+    )
 }

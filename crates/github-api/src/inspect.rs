@@ -18,7 +18,7 @@ const PATH_SEGMENT: &AsciiSet = &CONTROLS
     .add(b'\\');
 
 impl Client {
-    async fn metadata(&self) -> Result<Repository, AccessError> {
+    pub(crate) async fn metadata(&self) -> Result<Repository, AccessError> {
         let metadata = self
             .reader
             .repos(self.repository.owner(), self.repository.name())
@@ -142,7 +142,7 @@ pub async fn project_access(
 ) -> Result<(String, u8), String> {
     let configuration = home_files::configuration(catalog);
     let selected = github::configuration::selected(&configuration, project)?;
-    let observed = access(data, &selected.backends).await;
+    let observed = access(data, &selected.project.backends).await;
     let code = u8::from(observed.iter().any(|read| read.result.is_err()));
     Ok((github::access::report(&observed), code))
 }
