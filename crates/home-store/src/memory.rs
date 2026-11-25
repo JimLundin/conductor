@@ -49,6 +49,29 @@ impl Memory {
     }
 }
 
+impl Folder {
+    fn listed(&self, project: ProjectId, issue: IssueId) -> Held<CanvasEntry> {
+        let mut held = Held::default();
+        for (name, kept) in &self.canvases {
+            match kept {
+                Ok(file) => {
+                    held.canvases.push(CanvasEntry::of(name.clone(), file));
+                }
+                Err(error) => held.strays.push(Stray {
+                    place: place(&CanvasKey {
+                        project,
+                        issue,
+                        name: name.clone(),
+                    }),
+                    reason: StrayReason::Invalid(error.clone()),
+                }),
+            }
+        }
+        held.strays.extend(self.strays.iter().cloned());
+        held
+    }
+}
+
 fn place(key: &CanvasKey) -> String {
     format!("{}/{}/{}", key.project, key.issue, key.name)
 }
@@ -81,27 +104,12 @@ impl CanvasStore for Memory {
         project: &ProjectId,
         issue: &IssueId,
     ) -> Result<Held<CanvasEntry>, StoreError> {
-        let mut held = Held::default();
-        let Some(folder) = self.issues.get(&(*project, *issue)) else {
-            return Ok(held);
-        };
-        for (name, kept) in &folder.canvases {
-            match kept {
-                Ok(file) => {
-                    held.canvases.push(CanvasEntry::of(name.clone(), file));
-                }
-                Err(error) => held.strays.push(Stray {
-                    place: place(&CanvasKey {
-                        project: *project,
-                        issue: *issue,
-                        name: name.clone(),
-                    }),
-                    reason: StrayReason::Invalid(error.clone()),
-                }),
-            }
-        }
-        held.strays.extend(folder.strays.iter().cloned());
-        Ok(held)
+        Ok(self
+            .issues
+            .get(&(*project, *issue))
+            .map_or_else(Held::default, |folder| {
+                folder.listed(*project, *issue)
+            }))
     }
 
     fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
