@@ -55,3 +55,28 @@ _Avoid_: protocol, proto, wire
 **Fleet protocol**:
 The contract between hosts in one fleet, and the signed data they exchange.
 _Avoid_: protocol, proto
+
+## Project operations and backends
+
+These terms describe the direction chosen in spec `0v265ymj`. The
+backends are not implemented yet.
+
+**Project operation**:
+A request to act on a project's work, such as publishing a branch or
+landing reviewed changes. Its rules belong to Conductor; its Git and
+repository hosting actions belong to the backends it uses.
+_Avoid_: raw command, stage
+
+**Issue backend**:
+The interface between the issue model and the store that holds its records.
+_Avoid_: issue file store
+
+**Local Git backend**:
+The interface for a host's repositories, worktrees, commits and remote
+publication.
+_Avoid_: GitHub backend
+
+**Repository hosting backend**:
+The interface for a hosting service's repository checks, statuses and
+workflow runs.
+_Avoid_: local Git backend
