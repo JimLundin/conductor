@@ -1,5 +1,11 @@
-import { expect, test } from "vitest";
-import type { EventKind, Resolution } from "../schemas/index.ts";
+import type { EventKind, Resolution } from "@conductor/core/schemas/index";
+import {
+  ListStatus,
+  emptyTranscript,
+  isWorking,
+  listStatus,
+  openRequests,
+} from "@conductor/core/fold/offers";
 import {
   created,
   delta,
@@ -12,9 +18,9 @@ import {
   started,
   user,
   withdrawn,
-} from "./examples.ts";
-import { emptyTranscript, isWorking, ListStatus, listStatus, openRequests } from "./offers.ts";
-import { RequestState } from "./transcript.ts";
+} from "#ui/test/examples.ts";
+import { describe, expect, it } from "@effect/vitest";
+import { RequestState } from "@conductor/core/fold/transcript";
 
 const cases = [
   [[], false],
@@ -36,63 +42,72 @@ const cases = [
     ],
     false,
   ],
-] as const satisfies readonly (readonly [readonly EventKind[], boolean])[];
+] as const satisfies ReadonlyArray<readonly [ReadonlyArray<EventKind>, boolean]>;
 
-test.each(cases)(
-  "a running turn shows it is working until something live ends the transcript (%j)",
-  (events, shown) => {
-    const host = foldEvents(
-      [created("/a"), "SessionReady" as const, ...events].map((kind) => [1, kind] as const),
-    );
-    expect(isWorking(sessionOf(host, id(1)))).toBe(shown);
-  },
-);
-
-test("the list shows the open requests in place of the session's status", () => {
-  const host = foldEvents([
-    [1, created("/a")],
-    [1, opened(1)],
-    [1, opened(2)],
-    [1, opened(3)],
-    [1, { RequestResolved: { request: 2, resolution: "Withdrawn" } }],
-    [2, created("/b")],
-  ]);
-  expect(listStatus(sessionOf(host, id(1)))).toStrictEqual(ListStatus.Requests({ count: 2 }));
-  expect(listStatus(sessionOf(host, id(2)))).toStrictEqual(
-    ListStatus.Session({ status: "Starting" }),
+describe("working status", () => {
+  it.each(cases)(
+    "a running turn shows it is working until something live ends the transcript (%j)",
+    (events, shown) => {
+      expect.hasAssertions();
+      const host = foldEvents(
+        [created("/a"), "SessionReady" as const, ...events].map((kind) => [1, kind] as const),
+      );
+      const session = sessionOf(host, id(1));
+      expect(isWorking(session)).toBe(shown);
+    },
   );
-  expect(emptyTranscript(sessionOf(host, id(2)))).toBe("Starting");
-  expect(emptyTranscript(sessionOf(host, id(1)))).toBeNull();
 });
 
-test("a question waits on a person until answered or the turn ends", () => {
-  const answered: Resolution = {
-    Answered: { answers: [["Blue"]], by: "phone" },
-  };
-  const open = foldEvents([
-    [1, created("/a")],
-    [1, "SessionReady"],
-    [1, user("ask me")],
-    [1, question(1)],
-    [1, question(2)],
-    [1, opened(3)],
-  ]);
-  expect(openRequests(sessionOf(open, id(1)))).toHaveLength(3);
-  expect(isWorking(sessionOf(open, id(1)))).toBe(false);
-  const later = foldEvents([
-    [1, created("/a")],
-    [1, question(1)],
-    [1, question(2)],
-    [1, { RequestResolved: { request: 1, resolution: answered } }],
-    [1, { TurnCompleted: { outcome: "Interrupted" } }],
-  ]);
-  expect(
-    sessionOf(later, id(1)).items.flatMap((item) =>
-      item._tag === "Question" ? [[item.request, item.state]] : [],
-    ),
-  ).toStrictEqual([
-    [1, RequestState.Resolved({ resolution: answered })],
-    [2, withdrawn],
-  ]);
-  expect(openRequests(sessionOf(later, id(1)))).toStrictEqual([]);
+describe("session list status", () => {
+  it("the list shows the open requests in place of the session's status", () => {
+    expect.hasAssertions();
+    const host = foldEvents([
+      [1, created("/a")],
+      [1, opened(1)],
+      [1, opened(2)],
+      [1, opened(3)],
+      [1, { RequestResolved: { request: 2, resolution: "Withdrawn" } }],
+      [2, created("/b")],
+    ]);
+    const first = sessionOf(host, id(1));
+    const second = sessionOf(host, id(2));
+    expect(listStatus(first)).toStrictEqual(ListStatus.Requests({ count: 2 }));
+    expect(listStatus(second)).toStrictEqual(ListStatus.Session({ status: "Starting" }));
+    expect(emptyTranscript(second)).toBe("Starting");
+    expect(emptyTranscript(first)).toBeUndefined();
+  });
+});
+
+describe("question lifecycle", () => {
+  it("a question waits on a person until answered or the turn ends", () => {
+    expect.hasAssertions();
+    const answered: Resolution = {
+      Answered: { answers: [["Blue"]], by: "phone" },
+    };
+    const open = foldEvents([
+      [1, created("/a")],
+      [1, "SessionReady"],
+      [1, user("ask me")],
+      [1, question(1)],
+      [1, question(2)],
+      [1, opened(3)],
+    ]);
+    const pending = sessionOf(open, id(1));
+    expect(openRequests(pending)).toHaveLength(3);
+    expect(isWorking(pending)).toBe(false);
+    const later = foldEvents([
+      [1, created("/a")],
+      [1, question(1)],
+      [1, question(2)],
+      [1, { RequestResolved: { request: 1, resolution: answered } }],
+      [1, { TurnCompleted: { outcome: "Interrupted" } }],
+    ]);
+    const settled = sessionOf(later, id(1));
+    expect(settled.items).toMatchObject([
+      { request: 1, state: RequestState.Resolved({ resolution: answered }) },
+      { request: 2, state: withdrawn },
+      { outcome: "Interrupted" },
+    ]);
+    expect(openRequests(settled)).toStrictEqual([]);
+  });
 });
