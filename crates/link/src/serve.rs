@@ -2,7 +2,8 @@
 //! admitted, what each later stream may carry, which commands keep a
 //! receipt, and what each command is called in the host's log lines.
 
-use alloc::string::String;
+use alloc::string::{String, ToString};
+use core::fmt::Display;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -187,44 +188,37 @@ pub fn with_canvases(
     home
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CanvasLookup {
-    Fetch(CanvasKey),
-    Refused(HomeRefusal),
-}
-
-#[must_use]
-pub fn canvas_lookup(
+/// # Errors
+///
+/// The host has no home, or the home has no such issue.
+pub fn canvas_key(
     home: Option<&Home>,
     issue: IssueId,
     name: CanvasName,
-) -> CanvasLookup {
-    home.map_or(CanvasLookup::Refused(HomeRefusal::NoHome), |known| {
-        known
-            .projects
-            .iter()
-            .find(|project| project.issues.iter().any(|at| at.id == issue))
-            .map_or(
-                CanvasLookup::Refused(HomeRefusal::UnknownIssue),
-                |project| {
-                    CanvasLookup::Fetch(CanvasKey {
-                        project: project.id,
-                        issue,
-                        name,
-                    })
-                },
-            )
+) -> Result<CanvasKey, HomeRefusal> {
+    let known = home.ok_or(HomeRefusal::NoHome)?;
+    let project = known
+        .projects
+        .iter()
+        .find(|project| project.issues.iter().any(|at| at.id == issue))
+        .ok_or(HomeRefusal::UnknownIssue)?;
+    Ok(CanvasKey {
+        project: project.id,
+        issue,
+        name,
     })
 }
 
 #[must_use]
-pub fn kept_canvas(kept: Result<Option<CanvasFile>, String>) -> HomeResult {
+pub fn kept_canvas<E: Display>(
+    kept: Result<Option<CanvasFile>, E>,
+) -> HomeResult {
     match kept {
         Ok(Some(file)) => HomeResult::Canvas(file),
         Ok(None) => HomeResult::Refused(HomeRefusal::UnknownCanvas),
-        Err(reason) => {
-            HomeResult::Refused(HomeRefusal::CanvasUnavailable { reason })
-        }
+        Err(error) => HomeResult::Refused(HomeRefusal::CanvasUnavailable {
+            reason: error.to_string(),
+        }),
     }
 }
 

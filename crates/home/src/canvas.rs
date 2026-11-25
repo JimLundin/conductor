@@ -7,7 +7,6 @@ use core::fmt;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::{self, DeserializeOwned, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
@@ -247,14 +246,8 @@ impl JsonSchema for CanvasName {
         Cow::Borrowed("CanvasName")
     }
 
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        Schema::from(Map::from_iter([
-            (String::from("type"), Value::from("string")),
-            (
-                String::from("pattern"),
-                Value::from("^[a-z0-9]+(-[a-z0-9]+)*$"),
-            ),
-        ]))
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        String::json_schema(generator)
     }
 }
 
