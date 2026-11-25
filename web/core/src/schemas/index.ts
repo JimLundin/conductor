@@ -151,23 +151,13 @@ const Availability = Schema.Union(
 
 type Block = { readonly prose: { readonly text: string } };
 
-const Block = Schema.Union(
-  [
-    Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }).annotate({
-      description: "Short markdown.",
-    }),
-  ],
-  { mode: "oneOf" },
-).annotate({
-  description:
-    "One part of a canvas, written in JSON as an object of one field named\nby its kind.",
-  identifier: "Block",
-});
+const Block = Schema.Union([Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) })], {
+  mode: "oneOf",
+}).annotate({ identifier: "Block" });
 
 type Canvas = { readonly blocks: globalThis.ReadonlyArray<Block>; readonly title: string };
 
 const Canvas = Schema.Struct({ blocks: Schema.Array(Block), title: Schema.String }).annotate({
-  description: "An explanation of an issue's work, as its writer gives it.",
   identifier: "Canvas",
 });
 
@@ -185,36 +175,24 @@ type CanvasEntry = { readonly by: string; readonly name: CanvasName; readonly wr
 const CanvasEntry = Schema.Struct({
   by: Schema.String,
   name: CanvasName,
-  written: Schema.Number.annotate({
-    description: "Milliseconds since the Unix epoch.",
-    format: "uint64",
-  })
+  written: Schema.Number.annotate({ format: "uint64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
-}).annotate({
-  description: "What an issue's list of canvases says of one.",
-  identifier: "CanvasEntry",
-});
+}).annotate({ identifier: "CanvasEntry" });
 
 type CanvasFile = { readonly by: string; readonly canvas: Canvas; readonly written: number };
 
 const CanvasFile = Schema.Struct({
-  by: Schema.String.annotate({ description: "As the log signs it, `<node>·<harness>`." }),
+  by: Schema.String,
   canvas: Canvas,
-  written: Schema.Number.annotate({
-    description: "Milliseconds since the Unix epoch.",
-    format: "uint64",
-  })
+  written: Schema.Number.annotate({ format: "uint64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
-}).annotate({
-  description: "A canvas as it is kept: stamped with when it was written and by whom.",
-  identifier: "CanvasFile",
-});
+}).annotate({ identifier: "CanvasFile" });
 
 type FieldKind = "Text" | "Url" | "Secret";
 

@@ -121,11 +121,9 @@
       ]
     },
     "Block": {
-      "description": "One part of a canvas, written in JSON as an object of one field named\nby its kind.",
       "oneOf": [
         {
           "additionalProperties": false,
-          "description": "Short markdown.",
           "properties": {
             "prose": {
               "additionalProperties": false,
@@ -145,7 +143,6 @@
     },
     "Canvas": {
       "additionalProperties": false,
-      "description": "An explanation of an issue's work, as its writer gives it.",
       "properties": {
         "blocks": {
           "items": {
@@ -161,7 +158,6 @@
       "type": "object"
     },
     "CanvasEntry": {
-      "description": "What an issue's list of canvases says of one.",
       "properties": {
         "by": {
           "type": "string"
@@ -170,7 +166,6 @@
           "$ref": "#/$defs/CanvasName"
         },
         "written": {
-          "description": "Milliseconds since the Unix epoch.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
@@ -181,17 +176,14 @@
     },
     "CanvasFile": {
       "additionalProperties": false,
-      "description": "A canvas as it is kept: stamped with when it was written and by whom.",
       "properties": {
         "by": {
-          "description": "As the log signs it, `<node>·<harness>`.",
           "type": "string"
         },
         "canvas": {
           "$ref": "#/$defs/Canvas"
         },
         "written": {
-          "description": "Milliseconds since the Unix epoch.",
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
