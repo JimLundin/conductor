@@ -29,7 +29,6 @@ use crate::home::HomeClone;
 use crate::log::{Log, Subscription};
 use crate::workspace;
 
-/// What a performed effect hands back: the next input, after a call.
 type Performed = Result<Option<Input>, Stopped>;
 
 /// The home and the instruction file already read by this session's CLI.
@@ -65,11 +64,9 @@ struct FinishRun {
     landing: Option<(HostSeq, Option<u64>)>,
 }
 
-/// What the actor takes next.
 enum Happening {
     Request(SessionMsg),
     Agent(Event),
-    /// Every handle was dropped, or the agent's runtime has gone.
     Closed,
 }
 
@@ -78,13 +75,9 @@ struct Actor {
     inbox: mpsc::Receiver<SessionMsg>,
     runtime: Option<Runtime>,
     told: Told,
-    /// Where the session was created, which places it in its project.
     created: SessionDirectory,
-    /// The agent's steps that arrived while the actor waited on a call;
-    /// it takes them once it has taken the call's outcome.
-    held: VecDeque<Step>,
+    steps_before_outcome: VecDeque<Step>,
     log: Log,
-    /// Where the order being performed is answered.
     reply: Option<oneshot::Sender<SessionResult>>,
 }
 
@@ -113,8 +106,6 @@ impl Session {
         session
     }
 
-    /// Restores the conversation from the log. A session recovered during
-    /// bootstrap takes its runtime from its first accepted relaunch.
     pub(crate) fn restore(
         id: SessionId,
         directory: SessionDirectory,
@@ -134,7 +125,7 @@ impl Session {
             runtime,
             told,
             created,
-            held: VecDeque::new(),
+            steps_before_outcome: VecDeque::new(),
             log,
             reply: None,
         };
@@ -218,8 +209,6 @@ impl Actor {
         }
     }
 
-    /// Steps the session with what happened, then with each step the agent
-    /// reported while the session waited on it.
     async fn on(
         &mut self,
         core: Core,
@@ -257,7 +246,7 @@ impl Actor {
         input: Input,
     ) -> Result<Core, Stopped> {
         let mut now = self.drive(core, input).await?;
-        while let Some(step) = self.held.pop_front() {
+        while let Some(step) = self.steps_before_outcome.pop_front() {
             now = self.drive(now, Input::Step(step)).await?;
         }
         Ok(now)
@@ -300,7 +289,8 @@ impl Actor {
                 ))
             }
             FinishEffect::NextEvent => {
-                let (stepped, input) = self.summary_event(core, watch).await?;
+                let (stepped, input) =
+                    self.serve_until_summary_event(core, watch).await?;
                 Ok((stepped, Some(input)))
             }
             other => Ok((core, self.perform_finish(other, watch).await?)),
@@ -404,9 +394,7 @@ impl Actor {
         .await)
     }
 
-    // A concurrent command can stage summary events in its transaction.
-    // Keep taking orders so its receipt can publish those events.
-    async fn summary_event(
+    async fn serve_until_summary_event(
         &mut self,
         mut core: Core,
         watch: &mut FinishRun,
@@ -441,8 +429,6 @@ impl Actor {
         }
     }
 
-    /// Steps the session with `input`, and again with each call's outcome,
-    /// until it waits for nothing.
     async fn drive(
         &mut self,
         core: Core,
@@ -504,8 +490,6 @@ impl Actor {
         Ok(Some(input))
     }
 
-    /// Sends the agent `command` and waits for its outcome. A start takes
-    /// the session's instructions as the home has them now.
     async fn ask(&mut self, command: Command) -> Outcome {
         let instructed = self.instructed(command);
         let unanswered = instructed.failed("the agent's runtime has stopped");
@@ -534,13 +518,11 @@ impl Actor {
         }
     }
 
-    /// The outcome the agent reports next. The steps it reports before it
-    /// wait until the session has taken the outcome.
     async fn outcome(&mut self) -> Option<Outcome> {
         loop {
             match self.runtime.as_mut()?.events.recv().await? {
                 Event::Outcome(outcome) => break Some(outcome),
-                Event::Step(step) => self.held.push_back(step),
+                Event::Step(step) => self.steps_before_outcome.push_back(step),
             }
         }
     }

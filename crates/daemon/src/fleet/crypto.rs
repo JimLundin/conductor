@@ -24,7 +24,6 @@ pub(super) fn sign_identity(
     sign_payload(key, identity)
 }
 
-/// `value` as JSON, signed by `key` over its domain then those bytes.
 fn sign_payload<T: host::fleet::Payload>(
     key: &SecretKey,
     value: &T,
@@ -34,8 +33,6 @@ fn sign_payload<T: host::fleet::Payload>(
     Ok(Signed::new(payload, signature))
 }
 
-/// The value `signed` holds, parsed only once its signature by `key`
-/// verifies over the bytes it carries.
 pub(super) fn open<T: host::fleet::Payload>(
     key: PublicKey,
     signed: &Signed<T>,
@@ -226,7 +223,6 @@ mod tests {
         SecretKey::from_bytes(&[3; 32])
     }
 
-    /// The same payload with one byte changed, here a letter of the name.
     fn changed(payload: &[u8], from: &[u8], to: u8) -> anyhow::Result<Vec<u8>> {
         let at = payload
             .windows(from.len())

@@ -586,16 +586,19 @@ fn an_unversioned_adoption_journal_is_refused_and_kept() -> anyhow::Result<()> {
     let to = InstanceId::named(Provider::new("codex"), "signed-in");
     data.put("home", &from, "signed-in files")?;
     let journal = data.0.join("adoption");
-    // The journal as it was kept before it had a format: the adoption, then
-    // home staged from its source and work absent.
-    let previous = postcard::to_stdvec(&(adoption(&from, &to), [1u8, 0]))?;
-    fs::write(&journal, &previous)?;
+    let home_from_source = 1u8;
+    let work_absent = 0;
+    let unversioned = postcard::to_stdvec(&(
+        adoption(&from, &to),
+        [home_from_source, work_absent],
+    ))?;
+    fs::write(&journal, &unversioned)?;
 
     let refused = Store::open(&data.0, Catalog::default())
         .err()
         .ok_or_else(|| anyhow::anyhow!("an unversioned journal opened"))?;
     assert!(format!("{refused:#}").contains("is in an older format"));
-    assert_eq!(fs::read(&journal)?, previous);
+    assert_eq!(fs::read(&journal)?, unversioned);
     assert_eq!(
         fs::read_to_string(data.private("home", &from).join("marker"))?,
         "signed-in files"
