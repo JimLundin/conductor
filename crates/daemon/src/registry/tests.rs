@@ -318,7 +318,7 @@ async fn a_cancelled_refresh_settles_its_availability_and_waiter()
             channel,
         },
     );
-    fx.actor.perform(effects);
+    fx.actor.perform_depth_first(effects);
     assert_eq!(
         fx.actor.offers.borrow().availability(&fx.source),
         Some(&Availability::Unavailable {
