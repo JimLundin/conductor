@@ -15,8 +15,8 @@ cargo run --quiet -p link --example schema >"$document"
 (
 	cd web
 	npm run --silent --workspace @conductor/schemas generate
-	npx -y "oxfmt@$oxfmt" --config "$standards/typescript/.oxfmtrc.json" core/src/schemas "../$document" >/dev/null
 )
+npx -y "oxfmt@$oxfmt" --config "$standards/typescript/.oxfmtrc.json" web/core/src/schemas "$document" >/dev/null
 if [ "${1:-}" = --check ]; then
 	stale=$(
 		git diff --name-only -- "$document" web/core/src/schemas

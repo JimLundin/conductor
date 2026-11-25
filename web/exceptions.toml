@@ -39,3 +39,43 @@ reason = "Effect Codegen emits index signatures for the wire contract maps"
 path = "core/src/schemas/index.ts"
 rule = "lint/eslint/max-lines"
 reason = "Effect Codegen emits the mutually referential wire types in one generated module"
+
+[[exception]]
+path = "src/fold/transcript.test.ts"
+rule = "lint/unicorn/no-null"
+reason = "These assertions exercise nullable fields in the Rust wire contract; the expected payload must contain JSON null"
+
+[[exception]]
+path = "src/fold/subagent.test.ts"
+rule = "lint/unicorn/no-null"
+reason = "These assertions exercise nullable fields in the Rust wire contract; the expected payload must contain JSON null"
+
+[[exception]]
+path = "src/session/new-session.test.tsx"
+rule = "lint/unicorn/no-null"
+reason = "These assertions exercise nullable fields in the Rust wire contract; the expected payload must contain JSON null"
+
+[[exception]]
+path = "vitest.config.ts"
+rule = "lint/import/no-nodejs-modules"
+reason = "Vite requires an absolute filesystem path for the Rust ticket fixture; Node URL conversion preserves Windows and escaped paths"
+
+[[exception]]
+path = "src/test/fake-pipe.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The test passes Effect Queue, Deferred and Ref service handles to their operations; those handles contain stateful library types and their internals are not mutated here"
+
+[[exception]]
+path = "src/test/replay.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The test passes Effect Queue, Deferred and Ref service handles to their operations; those handles contain stateful library types and their internals are not mutated here"
+
+[[exception]]
+path = "src/link.test.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "The test passes Effect Queue, Deferred and Ref service handles to their operations; those handles contain stateful library types and their internals are not mutated here"
+
+[[exception]]
+path = "src/test/page.ts"
+rule = "lint/unicorn/no-null"
+reason = "The browser Storage interface returns null for an absent key; this test adapter implements that boundary contract"
