@@ -1,8 +1,7 @@
-//! A home read from a folder on disk, as `home::layout` lays it out, its
-//! canvases kept in that folder, the repositories on this machine as Git
-//! describes them, and the home's skills installed for the user: the one
-//! reading and the one install of each that the `home` command line and
-//! the host share.
+//! A home read from a folder on disk, as `home::layout` lays it out, the
+//! repositories on this machine as Git describes them, and the home's
+//! skills installed for the user: the one reading and the one install of
+//! each that the `home` command line and the host share.
 
 use std::fs;
 use std::io;

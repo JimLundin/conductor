@@ -5,7 +5,6 @@ use home::{IssueId, ProjectId};
 
 use crate::{CanvasStore, StoreError};
 
-/// A store that keeps canvases in memory for as long as it lives.
 #[derive(Debug, Default)]
 pub struct Memory(BTreeMap<CanvasKey, CanvasFile>);
 
