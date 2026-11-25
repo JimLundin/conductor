@@ -97,8 +97,6 @@ pub fn sandbox(os: &str, tools: bool, kernel_release: &str) -> Sandbox {
     }
 }
 
-/// The variables a parent Claude Code session sets. They are removed so the CLI
-/// starts as its own session even when Conductor runs inside one.
 const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
@@ -113,9 +111,6 @@ const PARENT_SESSION_VARS: &[&str] = &[
     "CLAUDE_EFFORT",
 ];
 
-/// What the host's own environment may carry that would take a private home
-/// off its own sign-in: credentials, which take precedence over it, the
-/// cloud providers and another endpoint, and another home.
 const INHERITED_LOGIN: &[&str] = &[
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_AUTH_TOKEN",
@@ -214,9 +209,7 @@ pub struct Launch {
 /// protocol on stdio.
 #[must_use]
 pub fn session(launch: &Launch) -> Invocation {
-    // `TodoWrite`, the checklist the host keeps, rather than the
-    // task tools that would take its place (PROTOCOL.md).
-    let tasks = Vec::from([
+    let checklist_tools = Vec::from([
         Var::set("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),
         Var::set("CLAUDE_CODE_ENABLE_TASKS", "0"),
     ]);
@@ -228,8 +221,8 @@ pub fn session(launch: &Launch) -> Invocation {
             .map(|name| Var::set("CLAUDE_CODE_PROJECT_DIR_NAME", name))
             .collect(),
         credential_env(launch.credential.as_ref()),
-        tasks,
-        scrub(launch.credential.as_ref(), launch.sandbox),
+        checklist_tools,
+        sandboxed_subprocess_scrub(launch.credential.as_ref(), launch.sandbox),
     ]
     .concat();
     Invocation {
@@ -256,10 +249,10 @@ fn credential_env(credential: Option<&ClaudeCredential>) -> Vec<Var> {
     }
 }
 
-/// The scrub keeps credentials out of the commands, hooks and MCP servers
-/// Claude starts, and Claude itself still uses them. On Linux it runs every
-/// command in Claude's sandbox, so it is set only where that runs.
-fn scrub(credential: Option<&ClaudeCredential>, sandbox: Sandbox) -> Vec<Var> {
+fn sandboxed_subprocess_scrub(
+    credential: Option<&ClaudeCredential>,
+    sandbox: Sandbox,
+) -> Vec<Var> {
     match (credential, sandbox) {
         (Some(_), Sandbox::Available) => {
             Vec::from([Var::set("CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "1")])
@@ -310,9 +303,6 @@ fn session_args(launch: &Launch) -> Vec<String> {
             .chain(sources)
             .chain(instructions)
             .collect(),
-        // A hidden flag. The text arrives only where the CLI also sends
-        // experimental betas, which `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`
-        // turns off (PROTOCOL.md).
         strings(&[
             "--replay-user-messages",
             "--include-partial-messages",
@@ -325,7 +315,6 @@ fn session_args(launch: &Launch) -> Vec<String> {
     .concat()
 }
 
-/// One argument each, so an id that starts with `-` is not read as a flag.
 fn resume_args(resume: &Resume, id: &SessionId) -> Vec<String> {
     match resume {
         Resume::Fresh => strings(&["--session-id", &id.0]),

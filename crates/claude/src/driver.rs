@@ -84,15 +84,10 @@ const FAILURE_TEXT: FailureText = FailureText {
 /// the `can_use_tool` requests not yet answered, and the sub-agents the process started.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Session<R> {
-    /// How the process ended, once it has.
     exited: Option<Exit>,
-    /// Our control requests by `request_id`, with who waits for each.
     pending: BTreeMap<String, (ControlCall, R)>,
-    /// What an answer to each open `can_use_tool` request needs.
     open: BTreeMap<PermissionRequestId, Open>,
     next_request: u64,
-    /// Every task the CLI reported as a sub-agent. A task's end doesn't
-    /// say what the task was.
     subagents: BTreeMap<String, String>,
     subagent_tools: BTreeMap<String, String>,
 }
@@ -204,9 +199,6 @@ impl<R> Session<R> {
         }
     }
 
-    /// Tracks the turn's last message, which its result carries, the
-    /// requests the CLI withdraws, and the sub-agents. The end of a task that
-    /// is no sub-agent, such as a background command, is `Unknown`.
     fn event(&mut self, received: ClaudeEvent) -> ClaudeEvent {
         match received {
             ClaudeEvent::PermissionCancelled { id } => {
@@ -400,7 +392,6 @@ impl<R> Session<R> {
             .collect()
     }
 
-    /// Fails everything still waiting on the process.
     fn stopped<S, E>(
         &mut self,
         exit: &Exit,
@@ -420,7 +411,6 @@ impl<R> Session<R> {
     }
 }
 
-/// A write for `then` that could not happen.
 fn failed<R, S, E: fmt::Display>(
     then: Then<R>,
     failure: Failure<E>,

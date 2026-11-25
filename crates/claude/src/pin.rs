@@ -6,8 +6,6 @@ use crate::prelude::*;
 
 pub mod pins;
 
-/// The platform in Claude's `manifest.json` for the one the Rust names
-/// `os` and `arch` describe, with musl libc when `musl`.
 fn platform(os: &str, arch: &str, musl: bool) -> Option<&'static str> {
     Some(match (os, arch, musl) {
         ("linux", "x86_64", true) => "linux-x64-musl",
@@ -131,8 +129,6 @@ mod tests {
         );
     }
 
-    /// Every Claude version the fixtures in `fixtures/claude` were
-    /// recorded at.
     fn recorded() -> Result<BTreeSet<String>, std::io::Error> {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/claude");

@@ -168,8 +168,6 @@ mod tests {
 
     use super::{ClaudeCredential, account, credential, info};
 
-    /// `claude auth status` with an API key and signed out, as 2.1.316
-    /// printed them, and with a subscription, as its binary writes it.
     #[test]
     fn a_subscription_s_account_is_its_email_and_a_key_names_none() {
         assert_eq!(
