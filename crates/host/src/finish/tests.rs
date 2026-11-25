@@ -350,7 +350,7 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
             Effect::Emit(EventKind::FinishStarted),
             Effect::Reply(SessionResult::Accepted),
             Effect::Order(Order::Send {
-                text: text(super::SUMMARY),
+                text: text(super::SUMMARY_PROMPT),
                 by: client()
             }),
         ]
@@ -384,7 +384,7 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
             done(7),
             reply(8, "after"),
         ]))),
-        [Effect::Order(Order::Stop(text(super::FINISHED)))]
+        [Effect::Order(Order::Stop(text(super::FINISHED_REASON)))]
     );
     assert_eq!(
         finish.step(Input::Ordered(Some(SessionResult::Accepted))),
@@ -452,7 +452,7 @@ fn a_finish_that_cannot_ask_or_stop_only_notes_the_failure() {
     );
     assert_eq!(
         finish.step(Input::Events(Vec::from([reply(5, "summary"), closed]))),
-        [Effect::Order(Order::Stop(text(super::FINISHED)))]
+        [Effect::Order(Order::Stop(text(super::FINISHED_REASON)))]
     );
     let refusal = SessionRefusal::TurnInProgress;
     let reason = format!("stopping the agent: {}", refusal.label());

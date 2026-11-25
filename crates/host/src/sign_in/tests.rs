@@ -411,7 +411,7 @@ fn output_before_the_link_is_kept_only_so_far() {
     let _ = sign_ins.start(id(), Some(settings()));
     let _ = sign_ins.spawned(&key(1), Ok(pasted()));
     let _ = sign_ins.printed(&key(1), "visit:");
-    for _ in 0..super::KEPT {
+    for _ in 0..super::OUTPUT_LINE_LIMIT {
         let _ = sign_ins.printed(&key(1), "noise");
     }
     assert_eq!(
