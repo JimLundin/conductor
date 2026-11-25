@@ -10,7 +10,7 @@ use home::issue::{EditId, Issue, IssueChange, NewIssue};
 use home::{
     Home, HomeCommand, HomeRefusal, HomeResult, HomeSync, IssueId, ProjectId,
 };
-use home_store::{CanvasStore, Memory};
+use home_store::{CanvasStore, Memory, StoreError};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
 use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};
@@ -21,8 +21,8 @@ use crate::log::Kind;
 use crate::{Command, Hello, Open, Subscribe};
 
 use super::{
-    Admission, Stream, admit, canvas, device, device_hello, ledger, operation,
-    stream, with_canvases,
+    Admission, Stream, admit, canvas_key, device, device_hello, kept_canvas,
+    ledger, operation, stream, with_canvases,
 };
 
 const TOKEN: AuthToken = AuthToken::from_bytes([7; 16]);
@@ -335,15 +335,6 @@ fn two_canvases() -> Result<Memory, String> {
     Ok(store)
 }
 
-fn asked(
-    store: &Memory,
-    home: Option<&Home>,
-    issue: IssueId,
-    name: &str,
-) -> Result<HomeResult, String> {
-    Ok(canvas(home, issue, named(name)?, |at| store.get(at)))
-}
-
 #[test]
 fn an_issue_with_two_canvases_is_served_with_both_entries() -> Result<(), String>
 {
@@ -382,52 +373,55 @@ fn an_issue_with_two_canvases_is_served_with_both_entries() -> Result<(), String
 }
 
 #[test]
-fn a_canvas_command_answers_the_issues_canvas_of_that_name()
+fn a_canvas_of_a_known_issue_is_keyed_by_the_issues_project()
 -> Result<(), String> {
     assert_eq!(
-        asked(&two_canvases()?, Some(&a_home()), DESIGNED, "design")?,
+        canvas_key(Some(&a_home()), DESIGNED, named("design")?),
+        Ok(key(DESIGNED, "design")?)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_of_an_issue_the_home_lacks_or_of_no_home_is_refused()
+-> Result<(), String> {
+    assert_eq!(
+        [
+            canvas_key(Some(&a_home()), IssueId::new(3, 0), named("design")?),
+            canvas_key(None, DESIGNED, named("design")?),
+        ],
+        [Err(HomeRefusal::UnknownIssue), Err(HomeRefusal::NoHome),]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_kept_canvas_is_answered_and_a_missing_one_refused() {
+    assert_eq!(
+        kept_canvas(Ok::<_, StoreError>(Some(written(10, "devbox·claude")))),
         HomeResult::Canvas(written(10, "devbox·claude"))
     );
-    Ok(())
-}
-
-#[test]
-fn a_canvas_the_issue_lacks_or_an_issue_the_home_lacks_is_refused()
--> Result<(), String> {
-    let store = two_canvases()?;
-    let home = a_home();
-    let refused = [
-        asked(&store, Some(&home), BARE, "design")?,
-        asked(&store, Some(&home), IssueId::new(3, 0), "design")?,
-        asked(&store, None, DESIGNED, "design")?,
-    ];
     assert_eq!(
-        refused,
-        [
-            HomeResult::Refused(HomeRefusal::UnknownCanvas),
-            HomeResult::Refused(HomeRefusal::UnknownIssue),
-            HomeResult::Refused(HomeRefusal::NoHome),
-        ]
+        kept_canvas(Ok::<_, StoreError>(None)),
+        HomeResult::Refused(HomeRefusal::UnknownCanvas)
     );
-    Ok(())
 }
 
 #[test]
-fn a_failing_store_leaves_the_canvas_unavailable() -> Result<(), String> {
+fn a_failing_store_leaves_the_canvas_unavailable() {
     let refusal = HomeRefusal::CanvasUnavailable {
         reason: String::from("the disk is gone"),
     };
     assert_eq!(
-        canvas(Some(&a_home()), DESIGNED, named("design")?, |_| {
-            Err::<Option<CanvasFile>, _>("the disk is gone")
-        }),
+        kept_canvas::<StoreError>(Err(StoreError::Unavailable {
+            reason: String::from("the disk is gone"),
+        })),
         HomeResult::Refused(refusal.clone())
     );
     assert_eq!(
         refusal.label(),
         "the canvas can't be read now: the disk is gone"
     );
-    Ok(())
 }
 
 #[test]

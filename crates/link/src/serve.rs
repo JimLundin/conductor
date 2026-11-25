@@ -188,29 +188,32 @@ pub fn with_canvases(
     home
 }
 
-#[must_use]
-pub fn canvas<E: Display>(
+/// # Errors
+///
+/// The host has no home, or the home has no such issue.
+pub fn canvas_key(
     home: Option<&Home>,
     issue: IssueId,
     name: CanvasName,
-    get: impl FnOnce(&CanvasKey) -> Result<Option<CanvasFile>, E>,
-) -> HomeResult {
-    let Some(known) = home else {
-        return HomeResult::Refused(HomeRefusal::NoHome);
-    };
-    let Some(project) = known
+) -> Result<CanvasKey, HomeRefusal> {
+    let known = home.ok_or(HomeRefusal::NoHome)?;
+    let project = known
         .projects
         .iter()
         .find(|project| project.issues.iter().any(|at| at.id == issue))
-    else {
-        return HomeResult::Refused(HomeRefusal::UnknownIssue);
-    };
-    let key = CanvasKey {
+        .ok_or(HomeRefusal::UnknownIssue)?;
+    Ok(CanvasKey {
         project: project.id,
         issue,
         name,
-    };
-    match get(&key) {
+    })
+}
+
+#[must_use]
+pub fn kept_canvas<E: Display>(
+    kept: Result<Option<CanvasFile>, E>,
+) -> HomeResult {
+    match kept {
         Ok(Some(file)) => HomeResult::Canvas(file),
         Ok(None) => HomeResult::Refused(HomeRefusal::UnknownCanvas),
         Err(error) => HomeResult::Refused(HomeRefusal::CanvasUnavailable {

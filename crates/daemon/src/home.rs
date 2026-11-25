@@ -503,9 +503,10 @@ impl Actor {
     }
 
     fn canvas(&self, issue: IssueId, name: CanvasName) -> HomeResult {
-        link::serve::canvas(self.shown.borrow().as_ref(), issue, name, |key| {
-            self.canvases.get(key)
-        })
+        link::serve::canvas_key(self.shown.borrow().as_ref(), issue, name)
+            .map_or_else(HomeResult::Refused, |key| {
+                link::serve::kept_canvas(self.canvases.get(&key))
+            })
     }
 
     async fn pull_now(&mut self) -> HomeResult {
@@ -1628,6 +1629,10 @@ mod tests {
         assert_eq!(
             actor.canvas(designed, named("missing")?),
             HomeResult::Refused(HomeRefusal::UnknownCanvas)
+        );
+        assert_eq!(
+            actor.canvas(IssueId::new(3, 0), named("design")?),
+            HomeResult::Refused(HomeRefusal::UnknownIssue)
         );
         Ok(())
     }
