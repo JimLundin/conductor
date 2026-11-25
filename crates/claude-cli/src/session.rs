@@ -107,11 +107,9 @@ type CommandMsg = CallRequest<line_json::Reply<Error>>;
 pub struct ClaudeSession {
     commands: Handle<CommandMsg>,
     id: SessionId,
-    /// What the `initialize` response lists.
     models: Models,
 }
 
-/// A session whose process runs, before it has answered `initialize`.
 struct Starting {
     session: ClaudeSession,
     events: mpsc::Receiver<ClaudeEvent>,
@@ -222,7 +220,6 @@ impl ClaudeSession {
     }
 }
 
-/// Starts the process and its actor.
 fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
     let stdout_log = line_json::stdout_log(opts.stdout_log.as_deref())?;
     let mut driver = Session::default();
@@ -250,7 +247,6 @@ fn start(opts: &ClaudeOptions, id: SessionId) -> Result<Starting, Error> {
 }
 
 impl Starting {
-    /// The `initialize` answer, or why the CLI exited before it gave one.
     async fn initialize(&mut self, resume: &Resume) -> Result<Value, Error> {
         let answer = self.session.control(ControlCall::Initialize).await;
         self.unless_exited(answer, resume).await
@@ -267,8 +263,6 @@ impl Starting {
         }
     }
 
-    /// Why a CLI exited before it answered `initialize`: the `errors` of the
-    /// `result` it printed, else its last stderr line.
     async fn refusal(&mut self, resume: &Resume) -> Error {
         let events = std::iter::from_fn(|| self.events.try_recv().ok())
             .collect::<Vec<ClaudeEvent>>();
@@ -390,7 +384,6 @@ mod tests {
     };
     use install::Home;
 
-    /// The variables the resume test checks, as the command sets them.
     fn checked_env(
         std: &std::process::Command,
     ) -> Result<Vec<(&str, Option<&str>)>, &'static str> {

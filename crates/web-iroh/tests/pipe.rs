@@ -6,6 +6,8 @@ use net::wire::WireError;
 use web_iroh::{Connection, PipeError};
 
 const ALPN: &[u8] = b"pipe-test/0";
+const OPENING_BODY: &[u8] = b"open";
+const OPENING_FRAME_LEN: usize = size_of::<u32>() + OPENING_BODY.len();
 
 type TestResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -17,7 +19,6 @@ async fn endpoint() -> TestResult<Endpoint> {
         .await?)
 }
 
-/// The host's endpoint, its side of the connection, and the pipe's.
 async fn pair() -> TestResult<(Endpoint, iroh::endpoint::Connection, Connection)>
 {
     let host = endpoint().await?;
@@ -34,14 +35,13 @@ async fn pair() -> TestResult<(Endpoint, iroh::endpoint::Connection, Connection)
     Ok((host, accepted?, dialled?))
 }
 
-/// The host's side of a stream the pipe opened with an 8-byte frame.
 async fn opened(
     accepted: &iroh::endpoint::Connection,
     pipe: &web_iroh::Stream,
 ) -> TestResult<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
-    pipe.send(b"open".to_vec()).await?;
+    pipe.send(OPENING_BODY.to_vec()).await?;
     let (send, mut recv) = accepted.accept_bi().await?;
-    let mut opening = [0u8; 8];
+    let mut opening = [0u8; OPENING_FRAME_LEN];
     recv.read_exact(&mut opening).await?;
     Ok((send, recv))
 }

@@ -98,10 +98,6 @@ pub fn claude_steps(event: ClaudeEvent) -> Vec<Step> {
     }
 }
 
-/// A question's `AskUserQuestion` call is not shown as a tool call: its
-/// `QuestionAsked` shows it. Nor is a `TodoWrite` call: the session's checklist
-/// show it. Their results then finish a call no client saw start, which a
-/// client ignores.
 fn claude_block(role: Role, block: Block) -> Option<Step> {
     match (role, block) {
         (Role::Assistant, Block::Text(text)) => {
@@ -173,8 +169,6 @@ mod tests {
         Role, parse_line,
     };
 
-    /// `probe-subagent-todo.jsonl`: the main agent ran one sub-agent, which
-    /// called `TodoWrite` twice and reported "ok".
     const PROBE: &str =
         include_str!("../../../fixtures/claude/probe-subagent-todo.jsonl");
 
@@ -308,7 +302,6 @@ mod tests {
         );
     }
 
-    /// The steps one provider event maps to, and the steps it should.
     struct Case {
         got: Vec<Step>,
         want: Vec<Step>,

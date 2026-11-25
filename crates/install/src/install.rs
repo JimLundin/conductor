@@ -17,12 +17,9 @@ use agents::pin::{Mismatch, Package, Pin};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-/// A connection that takes longer than this is to a dead network.
-const CONNECT: Duration = Duration::from_secs(15);
-/// A download that sends nothing for this long has stalled.
-const STALL: Duration = Duration::from_secs(30);
-/// How often a process waiting for another's install checks the lock.
-const LOCK_POLL: Duration = Duration::from_millis(200);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const READ_STALL_TIMEOUT: Duration = Duration::from_secs(30);
+const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const READ_BUFFER: usize = 1_048_576;
 
 #[derive(Debug, thiserror::Error)]
@@ -84,8 +81,6 @@ pub async fn install(
     put(cli, pin, &data_dir.join("cli").join(cli)).await
 }
 
-/// Installs `pin` in `parent`, holding `parent`'s lock throughout. An
-/// installed binary was verified when it was put there.
 async fn put(
     name: &str,
     pin: Pin,
@@ -96,7 +91,6 @@ async fn put(
     ensure(name, pin, parent, lock).await
 }
 
-/// Takes `parent`'s lock, which is held until the file is dropped.
 async fn lock(parent: &Path) -> Result<File, InstallError> {
     std::fs::create_dir_all(parent).map_err(|error| io(parent, error))?;
     let lock_path = parent.join("lock");
@@ -106,7 +100,6 @@ async fn lock(parent: &Path) -> Result<File, InstallError> {
     Ok(lock)
 }
 
-/// Where the binary is, installing it first if it isn't there.
 async fn ensure(
     name: &str,
     pin: Pin,
@@ -123,7 +116,6 @@ async fn ensure(
     }
 }
 
-/// Downloads `pin`, verifies it and puts it in place.
 async fn download(
     name: &str,
     pin: Pin,
@@ -151,8 +143,6 @@ async fn download(
     Ok(binary)
 }
 
-/// Downloads `pin` to `download`, and removes it again unless it is the
-/// pinned build.
 async fn fetch_verified(
     pin: &Pin,
     download: &Path,
@@ -182,8 +172,6 @@ fn presence(path: &Path) -> Presence {
     }
 }
 
-/// Waits until this process holds the lock on `lock`. Dropping the file
-/// releases it.
 async fn hold(lock: &File, path: &Path) -> Result<(), InstallError> {
     loop {
         match attempt(lock).await {
@@ -194,19 +182,16 @@ async fn hold(lock: &File, path: &Path) -> Result<(), InstallError> {
     }
 }
 
-/// Tries the lock once, and waits a little before reporting it busy.
 async fn attempt(lock: &File) -> Result<(), TryLockError> {
     match lock.try_lock() {
         Err(TryLockError::WouldBlock) => {
-            tokio::time::sleep(LOCK_POLL).await;
+            tokio::time::sleep(LOCK_POLL_INTERVAL).await;
             Err(TryLockError::WouldBlock)
         }
         tried => tried,
     }
 }
 
-/// Removes everything in `parent` but the lock and the `keep` version: older
-/// versions, and downloads and unpacks a crash left behind.
 fn remove_others(parent: &Path, keep: &str) -> Result<(), InstallError> {
     let others = std::fs::read_dir(parent)
         .map_err(|error| io(parent, error))?
@@ -229,8 +214,6 @@ fn remove(path: &Path) -> Result<(), InstallError> {
         .map_err(|error| io(path, error))
 }
 
-/// Moves the verified download into place as `dir`, with the binary at
-/// `binary`.
 async fn unpack(
     package: &Package,
     download: PathBuf,
@@ -261,20 +244,16 @@ async fn extract_archive(
     lock: File,
     extractor: Command,
 ) -> Result<(), InstallError> {
-    // The caller can drop this future. The worker owns the lock until tar is
-    // reaped, even when the caller's Tokio runtime is shutting down.
-    let (caller, cancelled) = mpsc::channel();
+    let (cancel_on_drop, cancelled) = mpsc::channel();
     let result = tokio::task::spawn_blocking(move || {
-        let _lock = lock;
+        let _install_lock_until_extractor_exits = lock;
         unpack_archive(&download, &dir, extractor, &cancelled)
     })
     .await?;
-    drop(caller);
+    drop(cancel_on_drop);
     result
 }
 
-/// Unpacks the archive at `download` into `dir`, through a staging
-/// directory so `dir` appears whole.
 fn unpack_archive(
     download: &Path,
     dir: &Path,
@@ -293,7 +272,7 @@ fn unpack_archive(
     let status = extractor_status(&mut child, cancelled)
         .map_err(|error| io(download, error))?;
     match status.code() {
-        Some(0) => place(&staging, download, dir),
+        Some(0) => replace_incomplete_install(&staging, download, dir),
         _ => Err(InstallError::Unpack {
             archive: download.display().to_string(),
             status: status.to_string(),
@@ -315,7 +294,7 @@ fn extractor_status(
                 return Err(error);
             }
         }
-        if cancelled.recv_timeout(LOCK_POLL)
+        if cancelled.recv_timeout(LOCK_POLL_INTERVAL)
             == Err(RecvTimeoutError::Disconnected)
         {
             let _ = child.kill();
@@ -340,35 +319,29 @@ fn tar() -> std::io::Result<Command> {
     }
 }
 
-/// Renames the unpacked `staging` to `dir` and drops the download.
-fn place(
+fn replace_incomplete_install(
     staging: &Path,
     download: &Path,
     dir: &Path,
 ) -> Result<(), InstallError> {
-    // An earlier run may have left the directory without its binary.
     let _ = std::fs::remove_dir_all(dir);
     std::fs::rename(staging, dir).map_err(|error| io(dir, error))?;
     std::fs::remove_file(download).map_err(|error| io(download, error))
 }
 
-/// Streams `url` into the file at `to`.
 async fn fetch(url: &str, to: &Path) -> Result<(), InstallError> {
     let (response, file) = open(url, to).await?;
     drain(response, file, to).await
 }
 
-/// The response to a GET of `url`, and the file at `to` it goes into.
 async fn open(
     url: &str,
     to: &Path,
 ) -> Result<(reqwest::Response, tokio::fs::File), InstallError> {
-    // reqwest is built without a crypto provider, as iroh builds it; this
-    // is the same ring provider iroh uses.
     let _ = rustls::crypto::ring::default_provider().install_default();
     let response = reqwest::Client::builder()
-        .connect_timeout(CONNECT)
-        .read_timeout(STALL)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_STALL_TIMEOUT)
         .build()?
         .get(url)
         .send()
@@ -380,7 +353,6 @@ async fn open(
     Ok((response, file))
 }
 
-/// Writes each chunk of the body to the file, then syncs it.
 async fn drain(
     mut response: reqwest::Response,
     mut file: tokio::fs::File,
@@ -399,8 +371,6 @@ async fn write_body(
     Ok(())
 }
 
-/// Writes the body's next chunk to the file, and says whether there was
-/// one.
 async fn copy_chunk(
     response: &mut reqwest::Response,
     file: &mut tokio::fs::File,
@@ -413,7 +383,6 @@ async fn copy_chunk(
     Ok(chunk.is_some())
 }
 
-/// The SHA-256 of the file at `path` as it is on disk, in hex.
 async fn sha256(path: &Path) -> Result<String, InstallError> {
     let path_error = |error| io(path, error);
     let file = tokio::fs::File::open(path).await.map_err(path_error)?;
@@ -442,7 +411,6 @@ async fn digest(
     }
 }
 
-/// Adds `chunk` to the hash and returns its length.
 fn absorb(hash: &mut Sha256, chunk: &[u8]) -> usize {
     hash.update(chunk);
     chunk.len()
@@ -480,14 +448,11 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
     }
 
-    /// The test binary: 8 MiB of sevens, sent in 64 KiB pieces with a pause
-    /// between them, so two downloads would overlap.
-    const PIECES: usize = 128;
-    const PIECE: usize = 65536;
-    const SEVENS: &str =
+    const DOWNLOAD_PIECES: usize = 128;
+    const PIECE_BYTES: usize = 65536;
+    const SEVENS_SHA256: &str =
         "15d3670274ee9cc36af50fee9e6d49164c9eec2228d48fe29e4f313aa3784a91";
 
-    /// Answers every connection with the test binary.
     async fn serve(listener: TcpListener) -> std::io::Result<()> {
         loop {
             match listener.accept().await {
@@ -504,17 +469,20 @@ mod tests {
         let _ = stream.read(&mut request).await?;
         let head = format!(
             "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            PIECES.saturating_mul(PIECE)
+            DOWNLOAD_PIECES.saturating_mul(PIECE_BYTES)
         );
         stream.write_all(head.as_bytes()).await?;
-        let piece = std::iter::repeat_n(7u8, PIECE).collect::<Vec<u8>>();
-        for piece in std::iter::repeat_n(&piece, PIECES) {
-            send(&mut stream, piece).await?;
+        let piece = std::iter::repeat_n(7u8, PIECE_BYTES).collect::<Vec<u8>>();
+        for piece in std::iter::repeat_n(&piece, DOWNLOAD_PIECES) {
+            send_throttled(&mut stream, piece).await?;
         }
         stream.shutdown().await
     }
 
-    async fn send(stream: &mut TcpStream, piece: &[u8]) -> std::io::Result<()> {
+    async fn send_throttled(
+        stream: &mut TcpStream,
+        piece: &[u8],
+    ) -> std::io::Result<()> {
         stream.write_all(piece).await?;
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
         Ok(())
@@ -524,14 +492,12 @@ mod tests {
         Pin {
             version: String::from("1.0.0"),
             url: String::from(url),
-            sha256: String::from(SEVENS),
+            sha256: String::from(SEVENS_SHA256),
             package: Package::Binary,
             binary: String::from("tool"),
         }
     }
 
-    /// Two processes starting on one data dir: the second waits for the
-    /// first's install and finds it, and an older version is removed.
     #[tokio::test]
     async fn two_installs_at_once_both_end_with_the_verified_binary()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -566,7 +532,7 @@ mod tests {
         );
         assert_eq!(
             sha256(&binary).await.map_err(|error| error.to_string()),
-            Ok(String::from(SEVENS))
+            Ok(String::from(SEVENS_SHA256))
         );
         assert_eq!(
             left,

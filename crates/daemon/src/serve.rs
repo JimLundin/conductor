@@ -45,7 +45,6 @@ pub struct Conductor {
     log: Log,
     registry: Registry,
     home: HomeClone,
-    /// Standalone clients present the token from the host ticket.
     token: AuthToken,
     handshakes: Arc<Semaphore>,
     push: Option<crate::push::Push>,
@@ -81,23 +80,13 @@ struct Authenticated {
     certificate: Option<host::fleet::Certificate>,
 }
 
-/// What a subscription does next.
 enum Upcoming {
     Frame(Frame),
-    /// Nothing to send: the home changed to none.
     Quiet,
-    /// The client fell behind or the log or the registry stopped: end the
-    /// stream, and the client resubscribes from its cursor.
     Resubscribe,
-    /// The connection is gone.
     Gone,
 }
 
-/// A gap-free subscription (architecture §8): the replay and the sign-ins
-/// running, then the live feed and the sign-ins' steps. The log attaches
-/// its feed in the same turn as it takes the replay, and the registry its
-/// steps in the turn it lists the sign-ins, so neither overlaps or leaves
-/// a gap.
 struct Feed {
     send: SendStream,
     first: std::vec::IntoIter<Frame>,
@@ -288,8 +277,6 @@ impl Conductor {
         }
     }
 
-    /// Answers the connection's first stream. Returns the client's name, or
-    /// `None` if it was refused.
     async fn authenticate(
         &self,
         conn: &Connection,
@@ -318,9 +305,7 @@ impl Conductor {
             }
             Admission::Refused { reason } => {
                 write(&mut send, &HelloReply::Refused { reason }).await?;
-                send.finish()?;
-                // Let the refusal reach the client before the close does.
-                let _ = send.stopped().await;
+                finish_and_wait_for_delivery(&mut send).await?;
                 Ok(None)
             }
         }
@@ -392,7 +377,6 @@ impl Conductor {
         Ok(())
     }
 
-    /// Runs the command or returns its receipt when it has completed.
     async fn run(
         &self,
         id: CommandId,
@@ -566,7 +550,6 @@ impl Conductor {
                 tracing::info!(?result, "subscription ended");
                 result
             }
-            // A cursor from another epoch is refused by closing the stream.
             None => Ok(send.finish()?),
         }
     }
@@ -598,15 +581,20 @@ impl Feed {
                     Upcoming::Resubscribe,
                     |()| self.home.borrow_and_update().clone().map_or(Upcoming::Quiet, |home| Upcoming::Frame(Frame::Home(home))),
                 ),
-                // Without this, an idle feed would outlive its connection.
                 _ = conn.closed() => Upcoming::Gone,
             }
         }
     }
 }
 
-/// A live frame, or a resubscribe if the subscriber fell behind or the
-/// sender stopped.
+async fn finish_and_wait_for_delivery(
+    send: &mut SendStream,
+) -> Result<(), StreamError> {
+    send.finish()?;
+    let _ = send.stopped().await;
+    Ok(())
+}
+
 fn upcoming(next: Result<Frame, broadcast::error::RecvError>) -> Upcoming {
     next.map_or(Upcoming::Resubscribe, Upcoming::Frame)
 }

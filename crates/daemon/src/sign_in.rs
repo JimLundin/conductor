@@ -304,8 +304,6 @@ async fn submit(
     .map_err(|err| format!("the sign-in code could not be submitted: {err}"))
 }
 
-/// Resolves how the instance signs in, runs the sign-in, and reports it
-/// started, each line it prints and how it ended.
 async fn run(
     key: Key,
     providers: Providers,

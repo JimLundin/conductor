@@ -17,6 +17,8 @@ use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 use crate::process;
 use crate::runner::{self, End};
 
+const SHUTDOWN_SLOT: usize = 1;
+
 pub type Reply<E> = oneshot::Sender<Result<Value, E>>;
 type Waiter = oneshot::Sender<Exit>;
 type Event<C, T, A> = Input<C, T, Waiter, A, io::Error>;
@@ -166,8 +168,7 @@ where
     ));
 
     let (events_tx, events) = mpsc::channel(options.events);
-    // Calls use at most all but one slot, leaving room for a shutdown.
-    let (mailbox_tx, mailbox) = mpsc::channel(options.commands + 1);
+    let (mailbox_tx, mailbox) = mpsc::channel(options.commands + SHUTDOWN_SLOT);
     let calls = Arc::new(Semaphore::new(options.commands));
     let (closing_tx, closing) = watch::channel(());
     let runner = Runner {
@@ -188,7 +189,7 @@ where
         mailbox,
         calls: calls.clone(),
         closing,
-        interrupted: false,
+        io_stopped: false,
     };
     tokio::spawn(runner::run(runner, step));
     Ok(Started {
@@ -263,7 +264,7 @@ struct Runner<C, V> {
     calls: Arc<Semaphore>,
     closing: watch::Receiver<()>,
     log_note: fn(&Note),
-    interrupted: bool,
+    io_stopped: bool,
 }
 
 impl<C, V, E, T, A, P> runner::Runner<Event<C, T, A>, Action<V, E, T, A, P>>
@@ -279,7 +280,7 @@ where
     async fn next(&mut self) -> Option<Event<C, T, A>> {
         Some(tokio::select! {
             biased;
-            line = read(self.process.as_mut()), if !self.interrupted => Input::Read(line),
+            line = read(self.process.as_mut()), if !self.io_stopped => Input::Read(line),
             command = self.mailbox.recv() => match command {
                 Some(call @ DriverCommand::Call(_)) => {
                     self.calls.add_permits(1);
@@ -297,7 +298,7 @@ where
     ) -> Result<Option<Event<C, T, A>>, End> {
         match effect {
             Effect::Write { line, then } => {
-                let outcome = self.write(&line).await;
+                let outcome = self.write_until_shutdown(&line).await;
                 Ok(Some(Input::Wrote { then, outcome }))
             }
             Effect::Emit(event) => {
@@ -334,28 +335,26 @@ impl<C, V> Runner<C, V> {
     async fn emit(&mut self, event: V) {
         if let Err(mpsc::error::TrySendError::Full(queued)) =
             self.events.try_send(event)
-            && !self.interrupted
+            && !self.io_stopped
         {
             tokio::select! {
                 biased;
-                _ = self.closing.changed() => self.interrupted = true,
+                _ = self.closing.changed() => self.io_stopped = true,
                 _ = self.events.send(queued) => {}
             }
         }
     }
 
-    async fn write(&mut self, line: &str) -> io::Result<()> {
+    async fn write_until_shutdown(&mut self, line: &str) -> io::Result<()> {
         let process = self.process.as_mut().ok_or(io::ErrorKind::BrokenPipe)?;
-        if self.interrupted {
+        if self.io_stopped {
             return Err(io::ErrorKind::BrokenPipe.into());
         }
-        // A partially written line cannot be retried. Report the interrupted
-        // write before delivering shutdown and never write to the pipe again.
         tokio::select! {
             biased;
             result = process::write_line(&mut process.stdin, line) => result,
             _ = self.closing.changed() => {
-                self.interrupted = true;
+                self.io_stopped = true;
                 Err(io::ErrorKind::BrokenPipe.into())
             }
         }

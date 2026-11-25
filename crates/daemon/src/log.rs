@@ -24,8 +24,6 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 
 use crate::Stopped;
 
-/// A subscriber this far behind the live feed is dropped and resubscribes
-/// from its cursor (architecture §8).
 const LIVE_BUFFER: usize = 1024;
 
 /// What a new subscriber needs: the log after its cursor, and the live feed,
@@ -146,13 +144,18 @@ enum Follow {
 struct LogActor {
     inbox: mpsc::WeakSender<LogMsg>,
     core: Core,
-    // Drop a pending transaction before its database: redb waits for transactions.
     transaction: Option<WriteTransaction>,
     storage: Option<Storage>,
     begins: HashMap<Lease, oneshot::Sender<BeginCommand>>,
     finishes: HashMap<Lease, oneshot::Sender<()>>,
     live: broadcast::Sender<Event>,
     requests: broadcast::Sender<FreshRequest>,
+}
+
+impl Drop for LogActor {
+    fn drop(&mut self) {
+        drop(self.transaction.take());
+    }
 }
 
 impl Log {
@@ -233,8 +236,6 @@ impl Log {
         .await
     }
 
-    /// Commits pending events before external workspace changes.
-    /// Keeps the command active, but commits its explicit recovery state now.
     pub(crate) async fn barrier(&self) -> Result<(), Stopped> {
         self.ask(|reply| LogMsg::Barrier { reply }).await
     }
@@ -320,7 +321,6 @@ impl Log {
         .await
     }
 
-    /// New approval and question events as they commit.
     pub(crate) async fn follow_requests(
         &self,
     ) -> Result<broadcast::Receiver<FreshRequest>, Stopped> {

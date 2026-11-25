@@ -6,8 +6,6 @@ use crate::prelude::*;
 
 pub mod pins;
 
-/// Codex's target triple for the platform the Rust names `os` and `arch`
-/// describe. Its Linux builds are musl, which runs on either libc.
 fn platform(os: &str, arch: &str) -> Option<&'static str> {
     Some(match (os, arch) {
         ("linux", "x86_64") => "x86_64-unknown-linux-musl",
@@ -123,8 +121,6 @@ mod tests {
         );
     }
 
-    /// Every Codex version the fixtures in `fixtures/codex` were recorded
-    /// at, from the user agent its server reports.
     fn recorded() -> Result<BTreeSet<String>, std::io::Error> {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/codex");

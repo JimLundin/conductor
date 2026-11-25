@@ -1,8 +1,3 @@
-//! `home repos` and `home skills`: the home's projects among the
-//! repositories on this machine, and its skills installed for the user
-//! (`home_files::install`). It lists folders, runs Git and the standards'
-//! `--verify`, and writes files.
-
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
@@ -17,7 +12,6 @@ use home::repos::verify::{self, Ran, Verify, Verifying};
 use home::repos::{self, Checkout, New, Placed, Scanning};
 use home_files::git;
 
-/// What doing `local` in the home at `root` says, and its exit code.
 pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
     match local {
         Local::Status => (status(home, &here(root, home)), 0),
@@ -41,8 +35,6 @@ fn ended(done: Result<String, String>) -> (String, u8) {
     done.map_or_else(|why| (format!("home: {why}\n"), 1), |said| (said, 0))
 }
 
-/// The home's projects placed among the repositories here, and the Git
-/// state of each checkout by its path from the home.
 struct Here {
     placed: Vec<Placed>,
     states: BTreeMap<String, Option<Checkout>>,
@@ -69,8 +61,6 @@ fn status(home: &Snapshot, here: &Here) -> String {
         + &repos::report(&here.placed, &here.states)
 }
 
-/// Each project whose head lacks a recorded pass of its profiles, or why
-/// its passes go unchecked.
 fn verdicts(root: &Path, here: &Here) -> String {
     let defaults = verify::asks(&here.placed)
         .into_iter()
@@ -94,8 +84,6 @@ fn verdicts(root: &Path, here: &Here) -> String {
         .collect()
 }
 
-/// `<profile>/check.sh commit --verify` from the standards' checkout, which
-/// runs no check.
 fn verified(verify: &Verify) -> Ran {
     Command::new("bash")
         .arg(format!("{}/check.sh", verify.profile))
@@ -117,8 +105,6 @@ fn verified(verify: &Verify) -> Ran {
         )
 }
 
-/// Clones each project with no checkout here, saying each as it goes, so
-/// Git's own output follows it.
 fn sync(root: &Path, projects: &[Project]) -> (String, u8) {
     let failures: Vec<String> =
         repos::sync(&repos::placed(projects, &probes(root)))
@@ -171,8 +157,6 @@ fn scan(root: &Path, home: &Snapshot) -> Result<String, String> {
     Ok(done.said)
 }
 
-/// Each repository in the home, the home among them, found as the host
-/// finds checkouts with the home as its one root.
 fn probes(root: &Path) -> Vec<Probe> {
     let shown = shown(root);
     let paths = checkout::candidates(
@@ -182,7 +166,6 @@ fn probes(root: &Path) -> Vec<Probe> {
     repos::local(&shown, home_files::probes(&paths))
 }
 
-/// The home's folder as the host finds it, its links resolved.
 fn shown(root: &Path) -> String {
     fs::canonicalize(root)
         .unwrap_or_else(|_| root.to_path_buf())

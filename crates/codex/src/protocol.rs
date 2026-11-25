@@ -84,7 +84,6 @@ pub struct ThreadOptions {
     pub instructions: Option<String>,
 }
 
-/// The two item notification methods on the provider wire.
 #[derive(Debug, Clone, Copy)]
 enum ItemPhase {
     Started,
@@ -228,7 +227,6 @@ pub enum ThreadEvent {
     ApprovalRequested {
         id: ApprovalId,
         turn: TurnId,
-        /// The item the request is about, as in its `ToolCall` event.
         item: String,
         kind: ApprovalKind,
     },
@@ -360,7 +358,6 @@ pub enum Inbound {
     },
 }
 
-/// The server requests we serve, by `method`, with what each asks.
 #[derive(Deserialize)]
 #[serde(tag = "method", content = "params")]
 enum ServerRequest {
@@ -381,8 +378,6 @@ enum ServerRequest {
     UserInput { questions: Vec<WireQuestion> },
 }
 
-/// A user-input question. Codex lets every question take typed text
-/// (`isOther`), and offers no multiple choice.
 #[derive(Deserialize)]
 struct WireQuestion {
     id: String,
@@ -393,7 +388,6 @@ struct WireQuestion {
     is_secret: Option<bool>,
 }
 
-/// Where a server request belongs, common to every request we serve.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Target {
@@ -405,7 +399,6 @@ struct Target {
     item: String,
 }
 
-/// The notifications we map, by `method`.
 #[derive(Deserialize)]
 #[serde(tag = "method", content = "params")]
 enum Notification {
@@ -541,7 +534,6 @@ struct TurnError {
     message: String,
 }
 
-/// The item types we map; any other makes its notification `Unknown`.
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum ThreadItem {
@@ -579,7 +571,6 @@ enum ThreadItem {
     },
 }
 
-/// What a permissions request asks for, as far as we show it.
 #[derive(Serialize, Deserialize)]
 struct PermissionProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -693,14 +684,11 @@ fn response(raw: &Value) -> Result<Value, ResponseError> {
     }
 }
 
-/// What we do with a server request we read.
 enum Served {
     Asked(Asked),
-    /// A user-input request with a secret question, which we decline.
     Secret,
 }
 
-/// A server request we serve, before it is tagged with its id.
 struct Asked {
     shape: AnswerShape,
     kind: ApprovalKind,
@@ -744,7 +732,6 @@ fn permission_asks(profile: &PermissionProfile) -> Vec<PermissionAsk> {
         .collect()
 }
 
-/// The places a profile asks `access` to, in its plain lists and its entries.
 fn listed(
     plain: Option<&[String]>,
     entries: Option<&[FileSystemEntry]>,
@@ -863,8 +850,6 @@ fn asked(request: ServerRequest) -> serde_json::Result<Asked> {
     })
 }
 
-/// A request whose method we don't serve, or whose params don't fit, still
-/// gets an error reply.
 fn request(
     rpc_id: RequestId,
     method: String,
@@ -1147,8 +1132,6 @@ fn tool_event(
     }
 }
 
-/// A frame with a `params.threadId` belongs to that thread even when we do
-/// not map it.
 fn thread_unknown(raw: Value) -> CodexEvent {
     let thread = raw
         .pointer("/params/threadId")
@@ -1221,8 +1204,6 @@ impl Call {
                 text,
                 effort,
             } => {
-                // An array in json! expands to vec!, whose Box the core
-                // refuses; Vec::from builds the same array.
                 let input = Value::Array(Vec::from([
                     json!({"type": "text", "text": text}),
                 ]));
@@ -1239,7 +1220,6 @@ impl Call {
     }
 }
 
-// Custom providers need reasoning summaries enabled explicitly.
 fn thread_params(resume: Option<&ThreadId>, opts: &ThreadOptions) -> Value {
     let mut params = json!({
         "approvalPolicy": opts.approval_policy,
@@ -1406,7 +1386,6 @@ pub enum AnswerError {
     Encode(serde_json::Error),
 }
 
-/// What `permissions/requestApproval` grants back, and for how long.
 #[derive(Serialize)]
 struct PermissionGrant {
     permissions: Value,
@@ -1420,7 +1399,6 @@ enum GrantScope {
     Session,
 }
 
-/// The answer to a command or file change approval.
 #[derive(Serialize)]
 struct PlainAnswer {
     decision: PlainDecision,
@@ -1496,7 +1474,6 @@ const fn plain(decision: &Decision) -> Result<PlainDecision, AnswerError> {
     }
 }
 
-/// The answer to a user-input request: each question's id to its answers.
 #[derive(Serialize)]
 struct UserInputAnswer {
     answers: BTreeMap<String, QuestionAnswer>,
@@ -1507,7 +1484,6 @@ struct QuestionAnswer {
     answers: Vec<String>,
 }
 
-/// Declining a permissions request grants an empty profile.
 #[derive(Serialize)]
 struct NoPermissions {
     permissions: Value,
@@ -1517,7 +1493,6 @@ fn encoded<T: Serialize>(answer: T) -> Result<Value, AnswerError> {
     serde_json::to_value(answer).map_err(AnswerError::Encode)
 }
 
-/// JSON-RPC "method not found".
 const METHOD_NOT_FOUND: i64 = 32_601_i64.wrapping_neg();
 
 #[derive(Serialize, Deserialize)]
@@ -1791,7 +1766,6 @@ mod tests {
         Ok(())
     }
 
-    /// Recorded from codex-cli 0.166.0 (probe, 2026-11-12).
     const USER_INPUT: &str = r#"{"method": "item/tool/requestUserInput", "id": 0, "params": {"threadId": "th_1", "turnId": "tu_1", "itemId": "call_1", "questions": [{"id": "preferred_color", "header": "Color", "question": "Which color do you prefer?", "isOther": true, "isSecret": false, "options": [{"label": "Red", "description": "Choose Red."}, {"label": "Blue", "description": "Choose Blue."}]}], "isBlocking": false, "autoResolutionMs": null}}"#;
 
     #[test]

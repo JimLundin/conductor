@@ -46,7 +46,6 @@ use crate::session::{Order, Session, Told};
 use crate::sign_in::{Report, Runs};
 use crate::start::Providers;
 
-/// A subscriber this far behind the sign-ins is dropped and resubscribes.
 const SIGN_IN_BUFFER: usize = 64;
 
 pub struct Watch {
@@ -147,7 +146,9 @@ impl Registry {
         let (ready, initialized) = watch::channel(false);
         let mut actor =
             RegistryActor::new(log, store, core, providers, home, ready);
-        actor.perform(starts.into_iter().map(Effect::Start).collect());
+        actor.perform_depth_first(
+            starts.into_iter().map(Effect::Start).collect(),
+        );
         actor.restore().await?;
         Ok((actor.spawn(), initialized))
     }
@@ -346,11 +347,11 @@ impl RegistryActor {
         match msg {
             RegistryMsg::Refreshed(result) => {
                 let effects = self.core.refreshed(result);
-                self.perform(effects);
+                self.perform_depth_first(effects);
             }
             RegistryMsg::Started(result) => {
                 let effects = self.core.started(result);
-                self.perform(effects);
+                self.perform_depth_first(effects);
             }
             RegistryMsg::Start {
                 request,
@@ -393,7 +394,7 @@ impl RegistryActor {
                 reply,
             } => {
                 let effects = self.configure(configure, id, reply).await?;
-                self.perform(effects);
+                self.perform_depth_first(effects);
             }
             RegistryMsg::SignIn { command, reply } => {
                 let (result, effects) = self.sign_in_command(command).await?;
@@ -564,7 +565,7 @@ impl RegistryActor {
                 vec![Effect::Reply(reply, InstanceResult::Refused(reason))]
             }
         };
-        self.perform(effects);
+        self.perform_depth_first(effects);
         self.runs.listen(key, answer);
         Ok(())
     }
@@ -610,7 +611,7 @@ impl RegistryActor {
         let effects =
             self.core
                 .saved(roster, Change::SignedIn(account), reply, Ok(()));
-        self.perform(effects);
+        self.perform_depth_first(effects);
         let resumed = run.is_some();
         if let Some(key) = run {
             self.runs.listen(key, answer);
@@ -618,7 +619,6 @@ impl RegistryActor {
         Ok(resumed)
     }
 
-    /// Hands the sign-ins' core what a run reported.
     fn reported(&mut self, key: &Key, report: Report) -> Vec<SignInEffect> {
         match report {
             Report::Spawned(spawned) => {
@@ -707,7 +707,7 @@ impl RegistryActor {
                     &running,
                     reply,
                 );
-                self.perform(effects);
+                self.perform_depth_first(effects);
                 self.runs.listen(key, answer);
             }
             SignInEffect::Publish(step) => self.publish_sign_in(step),
@@ -765,9 +765,7 @@ impl RegistryActor {
         })
     }
 
-    /// Performs the effects in order, each effect's own effects before the
-    /// next.
-    fn perform(&mut self, mut effects: Vec<Effect>) {
+    fn perform_depth_first(&mut self, mut effects: Vec<Effect>) {
         effects.reverse();
         while let Some(effect) = effects.pop() {
             let more = self.effect(effect);
@@ -869,8 +867,6 @@ impl RegistryActor {
         Ok(())
     }
 
-    /// Recovers the session from the restart, then keeps it, its agent
-    /// not running.
     async fn restore_session(
         &mut self,
         created: Created,
@@ -911,7 +907,6 @@ impl RegistryActor {
         }
     }
 
-    /// The conversation the host saved for a session a turn started in.
     async fn conversation(
         &self,
         id: SessionId,
@@ -1099,9 +1094,6 @@ async fn start(providers: &Providers, starting: Starting) -> Started<Instance> {
     }
 }
 
-/// Sends a session on an issue the issue's brief, once its agent has
-/// started, in a task of its own so the registry doesn't wait for the
-/// agent.
 fn brief_issue(
     session: Session,
     log: Log,
@@ -1118,7 +1110,6 @@ fn brief_issue(
     });
 }
 
-/// Performs what a restart does to the session.
 async fn recover(
     log: &Log,
     id: SessionId,

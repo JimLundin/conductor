@@ -19,7 +19,6 @@ const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
 const FOLDER: &str = "7w85je";
 const SPEC: &str = "0tm7zt01";
 const TASK: &str = "0tm7zx0d";
-/// 2026-11-22T12:00:00Z.
 const NOW: u64 = 1_795_348_800_000;
 const SECONDS: u64 = NOW / 1000;
 const SEVEN: Draws = [7; DRAWS];
@@ -64,7 +63,6 @@ fn home() -> Inputs {
     }
 }
 
-/// The draws `given`, the last of them repeated to the end.
 fn draws(given: &[u64]) -> Draws {
     core::array::from_fn(|at| {
         given.get(at).or_else(|| given.last()).copied().unwrap_or(0)
@@ -75,13 +73,11 @@ fn id(stem: &str) -> IssueId {
     IssueId::parse(stem).unwrap_or(IssueId::new(0, 0))
 }
 
-/// What the command line `line` asks of the home `inputs` holds.
 fn asked(inputs: &Inputs, line: &str) -> Command {
     let home = Snapshot::of(inputs.clone());
     command(&words(line), &home, fresh(&home, SECONDS, &SEVEN))
 }
 
-/// What saying `line` to the home `inputs` holds writes and says.
 fn ran(inputs: &Inputs, line: &str) -> Outcome {
     let home = Snapshot::of(inputs.clone());
     run(
@@ -104,7 +100,6 @@ fn context() -> Context {
     }
 }
 
-/// The home with `outcome`'s writes made.
 fn after(inputs: &Inputs, outcome: &Outcome) -> Inputs {
     let mut issues: Vec<File> = inputs
         .issues
@@ -619,7 +614,6 @@ fn a_note_of_several_lines_is_indented_under_its_first() {
     ));
 }
 
-/// The home with the task's file holding `text`.
 fn with_task(text: &str) -> Inputs {
     let mut inputs = home();
     for file in &mut inputs.issues {
@@ -638,7 +632,6 @@ fn task_text() -> String {
         .map_or_else(String::new, |file| file.text.clone())
 }
 
-/// The issue `text` holds as the graph reads it, filed as `stem`.
 fn graph_reads(stem: &str, text: &str) -> Result<Issue, String> {
     let flow = load(FLOW)?;
     one(
@@ -652,8 +645,6 @@ fn graph_reads(stem: &str, text: &str) -> Result<Issue, String> {
     .map_err(|problem| problem.message)
 }
 
-/// What `home check` says of the home with the task's file holding `text`,
-/// what the graph reads of the task, and what a note on it writes.
 fn read_and_written(
     text_of_task: &str,
 ) -> (String, Result<Issue, String>, String) {
@@ -762,7 +753,6 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
     Ok(())
 }
 
-/// The tests' home with `from` in its flow replaced by `to`.
 fn home_with(from: &str, to: &str) -> Inputs {
     assert!(FLOW.contains(from), "the flow has no {from:?}");
     Inputs {

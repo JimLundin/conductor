@@ -144,7 +144,6 @@ fn blocks(content: &[Block]) -> String {
         .join(", ")
 }
 
-/// An unmapped frame's `type/subtype`.
 fn frame(v: &Value) -> String {
     format!(
         "{}/{}",
@@ -153,7 +152,6 @@ fn frame(v: &Value) -> String {
     )
 }
 
-/// The `type` of a recorded stdout line.
 fn frame_type(line: &str) -> serde_json::Result<Option<String>> {
     Ok(serde_json::from_str::<Value>(line)?
         .get("type")
@@ -161,26 +159,17 @@ fn frame_type(line: &str) -> serde_json::Result<Option<String>> {
         .map(str::to_owned))
 }
 
-/// Whether a replay has reached the event it reads until.
 enum Progress {
     Playing,
     Done,
 }
 
-/// The event a replay reads until.
 enum Until {
-    /// The next permission request, left for the test to answer.
     Permission,
-    /// The next `StreamDelta`.
     Delta,
-    /// This many turns have finished since the session began.
     Turns(usize),
 }
 
-/// Reads a session's events, answering the n-th permission request with
-/// `decisions[n]` and leaving the rest open, as the live run did before
-/// interrupting. Unmapped frames are tallied by `type/subtype` instead of
-/// listed, since stream events dominate the recording.
 struct Replay {
     session: ClaudeSession,
     events: mpsc::Receiver<ClaudeEvent>,
@@ -188,7 +177,6 @@ struct Replay {
     until: Until,
     finished: usize,
     seen: Vec<String>,
-    /// The deltas since the last other event, recorded as one line.
     deltas: Option<Vec<String>>,
     unknown: BTreeMap<String, usize>,
     ids: Vec<PermissionRequestId>,
@@ -266,7 +254,6 @@ impl Replay {
         Ok(())
     }
 
-    /// Records a line, after one for the deltas that came before it.
     fn record(&mut self, line: String) {
         if let Some(deltas) = self.deltas.take() {
             self.seen.push(format!("streams {deltas:?}"));
@@ -285,8 +272,6 @@ impl Replay {
     }
 }
 
-/// What a replay saw, and what answering each permission id again returned
-/// once the recording had played out.
 struct Replayed {
     events: Vec<String>,
     unknown: BTreeMap<String, usize>,
@@ -397,7 +382,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
     assert_eq!(
         replayed.events,
         [
-            // 1: approve a Write. Only text streams; tool input stays Unknown.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/a.txt\", change: Write }] }",
             "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/a.txt\", change: Write }] } for \"toolu_bdrk_011tLLSAecKzNjYWMVcNwMfD\"",
@@ -405,7 +389,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             "streams [\"I\", \" created `a.txt` in\", \" `/tmp/s1\", \"-scratch` with the content\", \" `hello from s1`.\"]",
             "assistant: text \"I created `a.txt` in `/tmp/s1-scratch` with the content `hello from s1`.\"",
             "finished success Completed Some(\"completed\")",
-            // 2: deny a Write.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/b.txt\", change: Write }] }",
             "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/b.txt\", change: Write }] } for \"toolu_bdrk_01WAz64VUtaiJZHcy71oavyx\"",
@@ -413,7 +396,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             "streams [\"The write to\", \" `\", \"b.txt` was denied\", \" \", \"(\\\"The user does not want b.\", \"txt.\\\"\", \"), so I did not retry and\", \" no file was created.\"]",
             "assistant: text \"The write to `b.txt` was denied (\\\"The user does not want b.txt.\\\"), so I did not retry and no file was created.\"",
             "finished success Completed Some(\"completed\")",
-            // 3: interrupt as the turn starts, then a normal turn.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "user: text \"[Request interrupted by user]\"",
             "finished error_during_execution Interrupted Some(\"aborted_streaming\")",
@@ -421,7 +403,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
             "finished success Completed Some(\"completed\")",
-            // 3c: interrupt on the first delta; the cut-off message repeats it.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"1\"]",
             "assistant: text \"1\"",
@@ -431,7 +412,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
             "finished success Completed Some(\"completed\")",
-            // 3d: interrupt right after sending; this time the CLI ran the turn.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "streams [\"1\\n2\\n3\\n4\", \"\\n5\\n6\\n7\\n8\", \"\\n9\\n10\\n11\\n12\", \"\\n13\\n14\\n15\\n16\", \"\\n17\\n18\\n19\\n20\", \"\\n21\\n22\\n23\\n24\", \"\\n25\\n26\\n27\\n28\", \"\\n29\\n30\\n31\\n32\", \"\\n33\\n34\\n35\\n36\", \"\\n37\\n38\\n39\\n40\", \"\\n41\\n42\\n43\\n44\", \"\\n45\\n46\\n47\\n48\", \"\\n49\\n50\\n51\\n52\", \"\\n53\\n54\\n55\\n56\", \"\\n57\\n58\\n59\\n60\", \"\\n61\\n62\\n63\\n64\", \"\\n65\\n66\\n67\\n68\", \"\\n69\\n70\\n71\\n72\", \"\\n73\\n74\\n75\\n76\", \"\\n77\\n78\\n79\\n80\", \"\\n81\\n82\\n83\\n84\", \"\\n85\\n86\\n87\\n88\", \"\\n89\\n90\\n91\\n92\", \"\\n93\\n94\\n95\\n96\", \"\\n97\\n98\\n99\\n100\", \"\\n101\\n102\\n103\\n104\", \"\\n105\\n106\\n107\\n108\", \"\\n109\\n110\\n111\\n112\", \"\\n113\\n114\\n115\\n116\", \"\\n117\\n118\\n119\\n120\", \"\\n121\\n122\\n123\\n124\", \"\\n125\\n126\\n127\\n128\", \"\\n129\\n130\\n131\\n132\", \"\\n133\\n134\\n135\\n136\", \"\\n137\\n138\\n139\\n140\", \"\\n141\\n142\\n143\\n144\", \"\\n145\\n146\\n147\\n148\", \"\\n149\\n150\\n151\\n152\", \"\\n153\\n154\\n155\\n156\", \"\\n157\\n158\\n159\\n160\", \"\\n161\\n162\\n163\\n164\", \"\\n165\\n166\\n167\\n168\", \"\\n169\\n170\\n171\\n172\", \"\\n173\\n174\\n175\\n176\", \"\\n177\\n178\\n179\\n180\", \"\\n181\\n182\\n183\\n184\", \"\\n185\\n186\\n187\\n188\", \"\\n189\\n190\\n191\\n192\", \"\\n193\\n194\\n195\\n196\", \"\\n197\\n198\\n199\\n200\"]",
             "assistant: text \"1\\n2\\n3\\n4\\n5\\n6\\n7\\n8\\n9\\n10\\n11\\n12\\n13\\n14\\n15\\n16\\n17\\n18\\n19\\n20\\n21\\n22\\n23\\n24\\n25\\n26\\n27\\n28\\n29\\n30\\n31\\n32\\n33\\n34\\n35\\n36\\n37\\n38\\n39\\n40\\n41\\n42\\n43\\n44\\n45\\n46\\n47\\n48\\n49\\n50\\n51\\n52\\n53\\n54\\n55\\n56\\n57\\n58\\n59\\n60\\n61\\n62\\n63\\n64\\n65\\n66\\n67\\n68\\n69\\n70\\n71\\n72\\n73\\n74\\n75\\n76\\n77\\n78\\n79\\n80\\n81\\n82\\n83\\n84\\n85\\n86\\n87\\n88\\n89\\n90\\n91\\n92\\n93\\n94\\n95\\n96\\n97\\n98\\n99\\n100\\n101\\n102\\n103\\n104\\n105\\n106\\n107\\n108\\n109\\n110\\n111\\n112\\n113\\n114\\n115\\n116\\n117\\n118\\n119\\n120\\n121\\n122\\n123\\n124\\n125\\n126\\n127\\n128\\n129\\n130\\n131\\n132\\n133\\n134\\n135\\n136\\n137\\n138\\n139\\n140\\n141\\n142\\n143\\n144\\n145\\n146\\n147\\n148\\n149\\n150\\n151\\n152\\n153\\n154\\n155\\n156\\n157\\n158\\n159\\n160\\n161\\n162\\n163\\n164\\n165\\n166\\n167\\n168\\n169\\n170\\n171\\n172\\n173\\n174\\n175\\n176\\n177\\n178\\n179\\n180\\n181\\n182\\n183\\n184\\n185\\n186\\n187\\n188\\n189\\n190\\n191\\n192\\n193\\n194\\n195\\n196\\n197\\n198\\n199\\n200\"",
@@ -440,7 +420,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             "streams [\"pong\"]",
             "assistant: text \"pong\"",
             "finished success Completed Some(\"completed\")",
-            // 3b: interrupt with a permission request open; the CLI withdraws it.
             "turn_started 03ef5463-f8da-4412-a8bd-0371a11cce56",
             "assistant: tool_use Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/d.txt\", change: Write }] }",
             "permission Write FileChange { files: [FileChange { path: \"/tmp/s1-scratch/d.txt\", change: Write }] } for \"toolu_bdrk_01KEnaUr83k9BPcLoGpArHUq\"",
@@ -457,8 +436,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
             ("system/status".to_owned(), 11),
         ])
     );
-    // a.txt and b.txt were answered above and d.txt was withdrawn by the CLI,
-    // so none of them can be answered now.
     assert_eq!(
         replayed.second,
         [
@@ -472,7 +449,6 @@ async fn approve_deny_interrupt_recording() -> TestResult<()> {
 
 #[tokio::test]
 async fn resume_and_accept_edits_recording() -> TestResult<()> {
-    // acceptEdits must not ask, so no permission request may reach `second`.
     let replayed =
         replay("session2-resume-accept-edits.jsonl", Vec::new()).await?;
     assert_eq!(
@@ -501,9 +477,6 @@ async fn resume_and_accept_edits_recording() -> TestResult<()> {
     Ok(())
 }
 
-/// A probe of the pinned CLI with `--thinking-display summarized` and
-/// experimental betas on, through a proxy that dropped the one request field
-/// the owner's gateway refuses (Claude PROTOCOL.md).
 #[tokio::test]
 async fn summarized_thinking_recording() -> TestResult<()> {
     let replayed = replay("probe-thinking.jsonl", Vec::new()).await?;
@@ -546,9 +519,6 @@ async fn summarized_thinking_recording() -> TestResult<()> {
     Ok(())
 }
 
-/// Three `TodoWrite` calls, each the whole checklist, and no permission
-/// request for any; then a turn after the effort changed. The recording's
-/// answers to that turn's control requests play unasked here.
 #[tokio::test]
 async fn checklist_and_effort_recording() -> TestResult<()> {
     let replayed =
@@ -589,8 +559,6 @@ async fn checklist_and_effort_recording() -> TestResult<()> {
     Ok(())
 }
 
-/// `apply_flag_settings` with `effortLevel`, then
-/// `get_settings`, answered as the pinned CLI answered them.
 #[tokio::test]
 async fn the_effort_is_set_in_the_running_process() -> TestResult<()> {
     let recorded =
@@ -636,9 +604,6 @@ async fn the_effort_is_set_in_the_running_process() -> TestResult<()> {
     Ok(())
 }
 
-/// A probe: the main agent runs a subagent, whose frames carry its
-/// `agent_id`, from its start to its end. Its two `TodoWrite` calls are its
-/// own, not the session's checklist.
 #[tokio::test]
 async fn a_subagent_runs_inside_the_session_from_start_to_end() -> TestResult<()>
 {
@@ -696,9 +661,6 @@ async fn questions_and_session_approval_recording() -> TestResult<()> {
         Vec::from([PermissionDecision::AllowForSession]),
     )
     .await?;
-    // 7 a question answered, 8 a command allowed for the session and run
-    // again without a request, 9 a question the interrupt withdrew. Nothing
-    // answers a question here, as the recording doesn't wait for it.
     assert_eq!(
         replayed.events,
         [
@@ -740,15 +702,12 @@ async fn questions_and_session_approval_recording() -> TestResult<()> {
     Ok(())
 }
 
-/// Writes `lines` to a fresh recording and returns its path.
 fn recording(name: &str, lines: &[&str]) -> TestResult<PathBuf> {
     let path = test_dir(name)?.join("recording.jsonl");
     std::fs::write(&path, format!("{}\n", lines.join("\n")))?;
     Ok(path)
 }
 
-/// A real `result` line, so the test knows when the actor has handled every
-/// line before it.
 fn recorded_result() -> TestResult<String> {
     let recorded =
         std::fs::read_to_string(fixture("session2-resume-accept-edits.jsonl"))?;
@@ -805,9 +764,6 @@ async fn unknown_control_request_gets_an_error_reply() -> TestResult<()> {
     Ok(())
 }
 
-/// The pinned CLI's answer to `--resume` with no transcript in its home:
-/// one `result` on stdout and the same text on stderr, then exit 1, with no
-/// answer to `initialize`.
 #[tokio::test]
 async fn a_resume_with_no_transcript_fails_with_the_clis_reason()
 -> TestResult<()> {
@@ -867,8 +823,6 @@ async fn missing_requested_resume_target_has_a_typed_recovery_error()
     Ok(())
 }
 
-/// A CLI that prints no `result`, as one without a flag we pass, fails
-/// with its last stderr line.
 #[tokio::test]
 async fn a_cli_that_exits_at_start_fails_with_its_last_stderr_line()
 -> TestResult<()> {
@@ -958,10 +912,8 @@ async fn allow_untested_version_runs_it_anyway() -> TestResult<()> {
     Ok(())
 }
 
-/// How long a gated stand-in must stay silent to count as waiting.
 const QUIET: Duration = Duration::from_millis(300);
 
-/// An event that arrives within `QUIET`, if any.
 async fn early(events: &mut mpsc::Receiver<ClaudeEvent>) -> Option<String> {
     tokio::time::timeout(QUIET, events.recv())
         .await
@@ -970,7 +922,6 @@ async fn early(events: &mut mpsc::Receiver<ClaudeEvent>) -> Option<String> {
         .map(|event| summary(&event))
 }
 
-/// A session on an e2e recording, before its first user message.
 async fn gated(name: &str) -> TestResult<Replay> {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/e2e")
@@ -1039,8 +990,6 @@ async fn deny_interrupt_recording_waits_for_each_answer_and_the_interrupt()
     r.until(Until::Turns(1)).await?;
     assert_eq!(early(&mut r.events).await, None);
 
-    // The ack waits for our interrupt; had it come first, `interrupt` would
-    // time out on an ack it never matched.
     r.session.send_user(String::from("count")).await?;
     r.until(Until::Delta).await?;
     r.session.interrupt().await?;
@@ -1119,7 +1068,6 @@ async fn gateway_scrubs_its_subprocess_environment_when_linux_has_both_tools()
         let cwd = dir.join(case);
         std::fs::create_dir(&cwd)?;
         std::fs::write(cwd.join("stdout.jsonl"), VERSIONLESS_CLI)?;
-        // Each test process gets its own PATH, including the launched CLI.
         let output = tokio::process::Command::new(std::env::current_exe()?)
             .args(["--exact", test])
             .current_dir(&cwd)

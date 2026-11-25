@@ -4,10 +4,8 @@ use crate::flow::{
 
 use super::load;
 
-/// A copy of the home's `docs/agents/flow.toml`.
 const FLOW: &str = include_str!("test-flow.toml");
 
-/// The flow with `from` replaced by `to`, which it must contain.
 fn edited(from: &str, to: &str) -> Result<super::Flow, String> {
     assert!(FLOW.contains(from), "the flow has no {from:?}");
     load(&FLOW.replacen(from, to, 1))

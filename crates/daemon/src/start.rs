@@ -69,7 +69,6 @@ impl Plugins {
         })
     }
 
-    /// How each provider presents itself, as its plugin says.
     #[must_use]
     fn catalog(&self) -> Catalog {
         Catalog(
@@ -374,8 +373,6 @@ pub async fn start(
         assemble(plugins, options, fleet_slot.clone(), endpoint.clone()).await;
     match started {
         Ok((conductor, log, token, initialized)) => {
-            // A standalone host enrolls with its ticket's token, so the
-            // owner admits it to a fleet by its ticket.
             let protocol = crate::fleet::Protocol::new(
                 fleet_slot.clone(),
                 data,
@@ -492,8 +489,6 @@ async fn assemble(
     Ok((conductor, log, token, initialized))
 }
 
-/// An instance's plugin, home and work dir, and its settings over the
-/// provider's.
 struct Prepared {
     plugin: Plugin,
     settings: Settings,
@@ -547,7 +542,6 @@ async fn provider_program(
     }
 }
 
-/// Installs the build of the plugin's CLI that it pins.
 async fn install(plugin: &Plugin, data_dir: &Path) -> Result<PathBuf, String> {
     let pin = (plugin.pin)().map_err(|err| err.to_string())?;
     install::install(plugin.profile.provider.name(), pin, data_dir)
@@ -555,8 +549,6 @@ async fn install(plugin: &Plugin, data_dir: &Path) -> Result<PathBuf, String> {
         .map_err(|err| err.to_string())
 }
 
-/// Runs each step of `host::start` for the instance's CLI: the one its
-/// settings give, or else the pinned one installed into the data dir.
 async fn run(
     prepared: Prepared,
     data_dir: &Path,
@@ -707,8 +699,6 @@ pub fn data_dir_or_default(
     }
 }
 
-/// How long the sign-in check may take before the host counts the home
-/// as signed out.
 const SIGN_IN_CHECK: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// How the CLI's own sign-in check against its private home exited, and
@@ -729,7 +719,6 @@ pub async fn sign_in_check(
         .map_err(|err| err.to_string())
 }
 
-/// How the CLI's `--version` run exited.
 async fn version(cli: tokio::process::Command) -> Result<Output, String> {
     version_within(cli, std::time::Duration::from_secs(15)).await
 }
@@ -749,8 +738,6 @@ async fn version_within(
         .map_err(|err| err.to_string())
 }
 
-/// Prints the ticket, the join link and its QR code, and writes the code as
-/// an image to the data dir.
 fn announce(
     data_dir: &Path,
     web_url: &str,
@@ -770,17 +757,7 @@ fn announce(
     writeln!(out, "join:     {join}")?;
     match qrcode::QrCode::new(&join) {
         Ok(code) => {
-            // Terminals usually draw light glyphs on a dark background, so swap
-            // the module colours; phone cameras often refuse inverted codes.
-            writeln!(
-                out,
-                "{}",
-                code.render::<Dense1x2>()
-                    .dark_color(Dense1x2::Light)
-                    .light_color(Dense1x2::Dark)
-                    .quiet_zone(true)
-                    .build()
-            )?;
+            writeln!(out, "{}", dark_terminal_qr(&code))?;
             let svg_path = data_dir.join("join-qr.svg");
             let image =
                 code.render::<svg::Color>().min_dimensions(512, 512).build();
@@ -799,6 +776,14 @@ fn announce(
         }
     }
     Ok(())
+}
+
+fn dark_terminal_qr(code: &qrcode::QrCode) -> String {
+    code.render::<Dense1x2>()
+        .dark_color(Dense1x2::Light)
+        .light_color(Dense1x2::Dark)
+        .quiet_zone(true)
+        .build()
 }
 
 #[cfg(all(test, unix))]

@@ -268,7 +268,7 @@ impl Store {
     ) -> anyhow::Result<Roster> {
         let roster = match replay {
             AdoptionReplay::Install(next) => {
-                adoption.move_directories(&self.dir)?;
+                adoption.resume_directory_moves(&self.dir)?;
                 self.save(&next)?;
                 next
             }

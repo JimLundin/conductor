@@ -181,11 +181,6 @@ impl CodexServer {
         })
     }
 
-    /// Answers an open approval or user-input request exactly once.
-    ///
-    /// # Errors
-    /// Fails when Codex has exited, no approval with `id` is open, or
-    /// `decision` does not fit it.
     async fn respond(
         &self,
         thread: ThreadId,
@@ -262,7 +257,6 @@ impl CodexThread {
     }
 }
 
-/// Sends `call` to the actor and waits for Codex's answer.
 async fn request(
     commands: &Handle<CommandMsg>,
     call: Call,

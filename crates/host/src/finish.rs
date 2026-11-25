@@ -20,29 +20,18 @@ use crate::assignment::{Assigned, Assignment};
 use crate::prelude::*;
 use crate::workspace::kept;
 
-/// What the agent of a session being finished is asked, as its last turn.
-const SUMMARY: &str = "Conductor is finishing this session. In a few sentences, sum up what you did on the issue and what is left, as a note for whoever picks it up next. Make no more changes.";
+const SUMMARY_PROMPT: &str = "Conductor is finishing this session. In a few sentences, sum up what you did on the issue and what is left, as a note for whoever picks it up next. Make no more changes.";
 
-/// Why the agent of a finished session stops.
-const FINISHED: &str = "the session was finished";
+const FINISHED_REASON: &str = "the session was finished";
 
-/// A session that can finish, as its log has it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Finishing {
     retry: bool,
     assignment: Assignment,
     workspace: Workspace,
-    /// Its agent runs, so it is asked for a summary first.
     running: bool,
 }
 
-/// Whether `session` can finish after `history`: it is on an issue, has a
-/// workspace, isn't removed, runs no turn, and has done something since
-/// it last finished. A session still starting counts as running.
-///
-/// # Errors
-///
-/// Why it can't.
 fn finishing(
     history: &[Event],
     session: SessionId,
@@ -97,9 +86,6 @@ fn finishing(
     })
 }
 
-/// The summary for the issue's notes: the session's last reply after
-/// `after`, the seq the summary turn started after, or its last reply of
-/// all when its agent had stopped.
 #[must_use]
 fn summary(
     events: &[Event],
@@ -119,7 +105,6 @@ fn summary(
         .filter(|text| !text.trim().is_empty())
 }
 
-/// Whether the summary turn has ended, by the event the log stored.
 #[must_use]
 fn turn_ended(event: &Event, session: SessionId) -> bool {
     event.session == session
@@ -129,8 +114,6 @@ fn turn_ended(event: &Event, session: SessionId) -> bool {
         )
 }
 
-/// What finishing did: the commits that landed, or why none did, and the
-/// push of the issue's branch.
 #[must_use]
 fn finished(
     landed: Result<u64, String>,
@@ -145,7 +128,6 @@ fn finished(
     }
 }
 
-/// The commits that landed, for moving the issue on.
 #[must_use]
 const fn landed(finished: &Finished) -> u64 {
     match finished {
@@ -154,16 +136,11 @@ const fn landed(finished: &Finished) -> u64 {
     }
 }
 
-/// How long the agent has to sum up before finishing gives up, in
-/// seconds.
-const PATIENCE: u64 = 600;
+const SUMMARY_TIMEOUT_SECONDS: u64 = 600;
 
-/// Why finishing landed nothing when the summary turn didn't end in time.
 const IMPATIENT: &str =
     "the agent didn't sum up within 10 minutes, so it was interrupted";
 
-/// Why finishing landed nothing when the agent wasn't asked or stopped:
-/// a turn got in first.
 #[must_use]
 fn interrupted(what: &str, answer: Option<&SessionResult>) -> Option<String> {
     match answer {
@@ -376,7 +353,7 @@ impl Finish {
             let after = history.last().map_or(HostSeq(0), |event| event.seq);
             self.stage = Stage::Asking(assignment, workspace, after);
             effects.extend(order(crate::session::Order::Send {
-                text: String::from(SUMMARY),
+                text: String::from(SUMMARY_PROMPT),
                 by,
             }));
         } else {
@@ -399,7 +376,7 @@ impl Finish {
         self.stage = Stage::Watching(assignment, workspace, after, None);
         Vec::from([Effect::Watch {
             after,
-            seconds: PATIENCE,
+            seconds: SUMMARY_TIMEOUT_SECONDS,
         }])
     }
 
@@ -435,7 +412,7 @@ impl Finish {
             if turn_ended(event, self.session) {
                 self.stage = Stage::Stopping(assignment, workspace, last);
                 return order(crate::session::Order::Stop(String::from(
-                    FINISHED,
+                    FINISHED_REASON,
                 )));
             }
             if let EventKind::Agent(Output::AssistantMessage { text }) =

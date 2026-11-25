@@ -8,10 +8,6 @@ pub fn fixture(name: &str) -> PathBuf {
         .join(name)
 }
 
-/// A working directory for `tests/fake-codex.sh`, which plays the recording
-/// found there. The script is committed, not written here: executing a file
-/// another test thread may have just written fails with "Text file busy" when
-/// a concurrent fork still holds it open.
 pub fn fake_codex_dir(fixture: &Path, replay: &str) -> TestResult<PathBuf> {
     let stem = fixture
         .file_stem()
@@ -31,6 +27,6 @@ pub fn fake_codex_dir(fixture: &Path, replay: &str) -> TestResult<PathBuf> {
     Ok(dir)
 }
 
-pub fn fake_cli_path() -> PathBuf {
+pub fn committed_fake_cli_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fake-codex.sh")
 }

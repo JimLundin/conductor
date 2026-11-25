@@ -1,8 +1,3 @@
-//! `home`: the home's command line (`home::flow::command`), run from
-//! anywhere in the home. It reads the home's files, the clock and some
-//! randomness, and writes the issues the command returns; `home repos` and
-//! `home skills` are in [`local`].
-
 use std::env;
 use std::fs;
 use std::io::Write as _;
@@ -29,7 +24,6 @@ fn main() -> ExitCode {
     ExitCode::from(code)
 }
 
-/// What `args` ask of the home at `home`, done.
 fn answered(home: &Path, args: &[String]) -> (String, u8) {
     let snapshot = home_files::read(home);
     let context = context();
@@ -40,7 +34,6 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     }
 }
 
-/// The flow's `command`, on the home's issues.
 fn issues(
     home: &Path,
     asked: Command,
@@ -56,7 +49,6 @@ fn issues(
     outcome.ended(saved)
 }
 
-/// The nearest folder at or above this one that holds the flow.
 fn root() -> Option<PathBuf> {
     env::current_dir()
         .ok()?
@@ -65,8 +57,6 @@ fn root() -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// Now, and who signs the log: `HOME_BY`, else this host's name and
-/// `cli`.
 fn context() -> Context {
     let host = env::var("COMPUTERNAME")
         .or_else(|_| env::var("HOSTNAME"))
@@ -84,7 +74,6 @@ fn context() -> Context {
     }
 }
 
-/// The randomness a new issue's or project's id is minted with.
 fn draws() -> Draws {
     core::array::from_fn(|_| getrandom::u64().unwrap_or_default())
 }

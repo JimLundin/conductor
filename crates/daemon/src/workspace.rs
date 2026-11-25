@@ -462,9 +462,6 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        // This directory was created exclusively by us. Removing it also
-        // handles a lock left by a cancelled Git subprocess; never follows
-        // symlinks and never traverses the repository's working files.
         if let Err(error) = std::fs::remove_dir_all(&self.path) {
             tracing::warn!(
                 "removing snapshot scratch {}: {error}",
@@ -494,6 +491,10 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    fn prevent_repository_discovery(path: &Path) -> std::io::Result<()> {
+        std::fs::write(path.join(".git"), "gitdir: missing-repository\n")
     }
 
     async fn repository() -> Result<Repository, Box<dyn std::error::Error>> {
@@ -800,8 +801,6 @@ mod tests {
         Ok(())
     }
 
-    /// A session's workspace on `issue`, a branch at the source's HEAD,
-    /// and a commit on the issue's branch that touches `file`.
     async fn diverged(
         repo: &Repository,
         file: &str,
@@ -906,7 +905,6 @@ mod tests {
         Ok(())
     }
 
-    /// A file name that isn't UTF-8 makes the diff fail.
     #[cfg(unix)]
     async fn assert_invalid_name_fails(
         workspace: &Workspace,
@@ -940,8 +938,6 @@ mod tests {
         Ok(())
     }
 
-    /// The source checkout's index and head, after staging, editing and
-    /// adding files and a hook that fails any checkout there.
     async fn dirty_source(
         repo: &Repository,
     ) -> Result<(Vec<u8>, String), Box<dyn std::error::Error>> {
@@ -968,7 +964,6 @@ mod tests {
         Ok((source_index, source_head))
     }
 
-    /// The source checkout is as `dirty_source` left it.
     async fn assert_source_untouched(
         repo: &Repository,
         source_index: &[u8],
@@ -1155,8 +1150,7 @@ mod tests {
         let repo = repository().await?;
         let plain = repo.root.join("plain");
         std::fs::create_dir(&plain)?;
-        // TMPDIR can be inside another checkout; prevent ancestor discovery.
-        std::fs::write(plain.join(".git"), "gitdir: missing-repository\n")?;
+        prevent_repository_discovery(&plain)?;
         assert_eq!(
             matches!(
                 create(&repo.data, &host(&plain)?, SessionId(1), None).await,

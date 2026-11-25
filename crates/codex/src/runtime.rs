@@ -163,8 +163,6 @@ impl Runtime {
     }
 }
 
-/// The thread a start opens, with Paseo's preset: Codex asks before it
-/// leaves the workspace.
 fn open(start: Start) -> Open {
     Open {
         resume: start.conversation.map(ThreadId),

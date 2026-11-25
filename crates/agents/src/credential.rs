@@ -112,7 +112,6 @@ pub struct Credential {
     pub values: BTreeMap<String, String>,
 }
 
-/// Shows only the kind, so no value reaches a log.
 impl core::fmt::Debug for Credential {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Credential")

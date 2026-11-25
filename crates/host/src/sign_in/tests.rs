@@ -24,7 +24,6 @@ fn key(run: u64) -> Key {
     }
 }
 
-/// A sign-in whose page gives a code to paste back.
 fn pasted() -> Flow {
     Flow {
         run: Invocation::default(),
@@ -41,7 +40,6 @@ fn pasted() -> Flow {
     }
 }
 
-/// A sign-in by a code the person enters on the page.
 fn device() -> Flow {
     Flow {
         code: Some(Pick {
@@ -78,7 +76,6 @@ fn code() -> SignInCode {
     SignInCode(String::from("pasted#code"))
 }
 
-/// A sign-in running `flow` as run 1, its link printed.
 fn shown(flow: Flow) -> SignIns {
     let mut sign_ins = SignIns::default();
     let _ = sign_ins.start(id(), Some(settings()));
