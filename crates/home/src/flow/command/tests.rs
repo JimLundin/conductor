@@ -5,13 +5,13 @@ use crate::issue::{
 use crate::{DRAWS, Draws, IssueId, ProjectId};
 
 use super::{
-    Asked, CanvasWrite, Command, Context, Edit, Given, Local, Need, Outcome,
-    Source, Stored, Wanted, asked as dispatched, command, fresh, homeless, run,
-    stamp, write,
+    Asked, CanvasWrite, Command, Context, Edit, Fetched, Given, Local, Need,
+    Outcome, Source, Wanted, asked as dispatched, command, fresh, homeless,
+    run, stamp, write,
 };
 use crate::canvas::{
-    BadName, Block, Canvas, CanvasFile, CanvasKey, CanvasName, Held, Stray,
-    StrayReason,
+    BadName, Block, Canvas, CanvasError, CanvasFile, CanvasKey, CanvasName,
+    Held, Stray, StrayReason,
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::file::log_line;
@@ -864,13 +864,13 @@ fn canvas_key(name: &str) -> Result<CanvasKey, BadName> {
     })
 }
 
-fn why_a_store() -> Canvas {
-    Canvas {
-        title: String::from("Why a store"),
-        blocks: Vec::from([Block::Prose {
+fn why_a_store(title: &str) -> Result<Canvas, CanvasError> {
+    Canvas::new(
+        String::from(title),
+        Vec::from([Block::Prose {
             text: String::from("The core decides; the store **keeps**."),
         }]),
-    }
+    )
 }
 
 fn given(line: &str, supplied: Given) -> Outcome {
@@ -906,7 +906,7 @@ fn a_canvas_put_reads_its_json_from_the_file_or_else_from_stdin()
 
 #[test]
 fn a_canvas_put_on_an_issue_writes_the_canvas_under_its_key_stamped_with_when_and_by_whom()
--> Result<(), BadName> {
+-> Result<(), Box<dyn core::error::Error>> {
     let outcome = given(
         &format!("canvas put {TASK} why-a-store"),
         Given::Text(Ok(String::from(PROSE))),
@@ -921,7 +921,7 @@ fn a_canvas_put_on_an_issue_writes_the_canvas_under_its_key_stamped_with_when_an
                 file: CanvasFile {
                     written: NOW,
                     by: String::from("laptop·claude"),
-                    canvas: why_a_store(),
+                    canvas: why_a_store("Why a store")?,
                 },
             }])
         )
@@ -1018,17 +1018,14 @@ fn a_canvas_show_asks_the_store_for_the_named_canvas_or_every_canvas_of_the_issu
 
 #[test]
 fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
--> Result<(), BadName> {
+-> Result<(), Box<dyn core::error::Error>> {
     let kept = |name: &str, title: &str| {
-        Ok::<_, BadName>((
+        Ok::<_, Box<dyn core::error::Error>>((
             CanvasName::parse(name)?,
             CanvasFile {
                 written: NOW,
                 by: String::from("laptop·claude"),
-                canvas: Canvas {
-                    title: String::from(title),
-                    ..why_a_store()
-                },
+                canvas: why_a_store(title)?,
             },
         ))
     };
@@ -1266,6 +1263,47 @@ fn a_canvas_show_prints_a_state_by_its_index_with_its_label_quoted() {
              ```\n"
         )
     );
+}
+
+#[test]
+fn a_canvas_show_keeps_a_statechart_s_events_and_marked_notes_on_one_line_with_colons_escaped()
+-> Result<(), String> {
+    let text = statechart(
+        r#"{"id": "open", "label": "Open", "marked": "the owner:\nreads it"}, {"id": "done", "label": "Done"}"#,
+        "open",
+        r#"{"from": "open", "to": "done", "event": "land:\nnow"}"#,
+        "",
+    );
+    let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
+    let shown = given(
+        &format!("canvas show {TASK} turn"),
+        Given::Canvases(Ok(held(Vec::from([(
+            CanvasName::parse("turn").map_err(|error| error.to_string())?,
+            CanvasFile {
+                written: NOW,
+                by: String::from("laptop·claude"),
+                canvas,
+            },
+        )])))),
+    );
+    assert_eq!(
+        (shown.failed, shown.output.as_str()),
+        (
+            false,
+            "# A task's turn\n\n\
+             ```mermaid\n\
+             stateDiagram-v2\n    \
+             state \"Open\" as s0\n    \
+             state \"Done\" as s1\n    \
+             [*] --> s0\n    \
+             s0 --> s1 : land#58; now\n    \
+             note right of s0 : the owner#58; reads it\n    \
+             classDef marked fill:#fde68a,stroke:#b45309\n    \
+             class s0 marked\n\
+             ```\n"
+        )
+    );
+    Ok(())
 }
 
 #[test]
@@ -1595,12 +1633,12 @@ fn a_canvas_show_prints_changes_as_grouped_lists_with_their_tags_and_code_as_lin
     Ok(())
 }
 
-fn stored(
+fn fetched(
     issue: &str,
     name: &str,
     got: Result<Option<CanvasFile>, String>,
-) -> Result<Stored, String> {
-    Ok(Stored {
+) -> Result<Fetched, String> {
+    Ok(Fetched {
         key: CanvasKey {
             project: ProjectId::parse(FOLDER).ok_or("project")?,
             issue: IssueId::parse(issue).ok_or("issue")?,
@@ -1617,17 +1655,18 @@ fn held<T>(canvases: Vec<T>) -> Held<T> {
     }
 }
 
-fn prose_file() -> CanvasFile {
-    CanvasFile {
+fn prose_file() -> Result<CanvasFile, String> {
+    Ok(CanvasFile {
         written: NOW,
         by: String::from("laptop·claude"),
-        canvas: Canvas {
-            title: String::from("Why a store"),
-            blocks: Vec::from([Block::Prose {
+        canvas: Canvas::new(
+            String::from("Why a store"),
+            Vec::from([Block::Prose {
                 text: String::from("The core decides."),
             }]),
-        },
-    }
+        )
+        .map_err(|error| error.to_string())?,
+    })
 }
 
 #[test]
@@ -1636,15 +1675,15 @@ fn check_reports_each_canvas_the_store_cant_return_or_that_no_issue_holds()
     let checked = given(
         "check",
         Given::EveryCanvas(Ok(held(Vec::from([
-            stored(TASK, "fine", Ok(Some(prose_file())))?,
-            stored(TASK, "denied", Err(String::from("permission denied")))?,
-            stored(
+            fetched(TASK, "fine", Ok(Some(prose_file()?)))?,
+            fetched(TASK, "denied", Err(String::from("permission denied")))?,
+            fetched(
                 TASK,
                 "garbled",
                 Err(String::from("not a canvas: missing field `title`")),
             )?,
-            stored(TASK, "vanished", Ok(None))?,
-            stored("0v29xvc9", "orphan", Ok(Some(prose_file())))?,
+            fetched(TASK, "vanished", Ok(None))?,
+            fetched("0v29xvc9", "orphan", Ok(Some(prose_file()?)))?,
         ])))),
     );
     assert_eq!(
@@ -1670,13 +1709,19 @@ fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
     let checked = given(
         "check",
         Given::EveryCanvas(Ok(held(Vec::from([
-            stored(TASK, "why-a-store", Ok(Some(prose_file())))?,
-            stored(SPEC, "design", Ok(Some(prose_file())))?,
+            fetched(TASK, "why-a-store", Ok(Some(prose_file()?)))?,
+            fetched(SPEC, "design", Ok(Some(prose_file()?)))?,
         ])))),
     );
     assert_eq!(
         (checked.failed, checked.output),
-        (false, check(&home()).text())
+        (
+            false,
+            format!(
+                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
+                 0 errors, 1 warnings\n"
+            )
+        )
     );
     Ok(())
 }
@@ -1687,13 +1732,16 @@ fn check_reports_a_store_that_cant_list_its_canvases() {
         "check",
         Given::EveryCanvas(Err(String::from("projects: denied"))),
     );
-    assert!(checked.failed);
-    assert!(
-        checked
-            .output
-            .contains("error  canvases: projects: denied\n"),
-        "{}",
-        checked.output
+    assert_eq!(
+        (checked.failed, checked.output),
+        (
+            true,
+            format!(
+                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
+                 error  canvases: projects: denied\n\
+                 1 errors, 1 warnings\n"
+            )
+        )
     );
 }
 
@@ -1706,11 +1754,11 @@ fn a_canvas_show_prints_an_issue_s_valid_canvases_then_reports_what_the_store_sk
             canvases: Vec::from([
                 (
                     CanvasName::parse("first").map_err(|e| e.to_string())?,
-                    prose_file(),
+                    prose_file()?,
                 ),
                 (
                     CanvasName::parse("second").map_err(|e| e.to_string())?,
-                    prose_file(),
+                    prose_file()?,
                 ),
             ]),
             strays: Vec::from([Stray {
@@ -1743,10 +1791,10 @@ fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
     let checked = given(
         "check",
         Given::EveryCanvas(Ok(Held {
-            canvases: Vec::from([stored(
+            canvases: Vec::from([fetched(
                 TASK,
                 "why-a-store",
-                Ok(Some(prose_file())),
+                Ok(Some(prose_file()?)),
             )?]),
             strays: Vec::from([
                 Stray {

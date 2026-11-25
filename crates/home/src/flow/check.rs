@@ -13,7 +13,7 @@ use crate::canvas::Held;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use crate::issue::Issue;
 
-use super::command::{Stored, subject};
+use super::command::{Fetched, subject};
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -127,7 +127,7 @@ pub fn check(home: &Snapshot) -> Report {
 #[must_use]
 pub fn canvases(
     home: &Snapshot,
-    every: Result<Held<Stored>, String>,
+    every: Result<Held<Fetched>, String>,
 ) -> Vec<Finding> {
     let kept = match every {
         Ok(kept) => kept,
@@ -140,12 +140,13 @@ pub fn canvases(
         }
     };
     let graph = home.graph();
-    let held = |stored: &Stored| {
+    let held = |fetched: &Fetched| {
         graph.issues.iter().any(|issue| {
-            issue.project == stored.key.project && issue.id == stored.key.issue
+            issue.project == fetched.key.project
+                && issue.id == fetched.key.issue
         }) || graph.problems.iter().any(|problem| {
-            problem.project == stored.key.project
-                && problem.stem == stored.key.issue.to_string()
+            problem.project == fetched.key.project
+                && problem.stem == fetched.key.issue.to_string()
         })
     };
     let strays = kept.strays.iter().map(|stray| Finding {
@@ -155,13 +156,13 @@ pub fn canvases(
     });
     kept.canvases
         .iter()
-        .filter_map(|stored| {
-            let wrong = match &stored.got {
+        .filter_map(|fetched| {
+            let wrong = match &fetched.got {
                 Err(reason) => Some(reason.clone()),
                 Ok(None) => {
                     Some(String::from("the store lists it but returns nothing"))
                 }
-                Ok(Some(_)) => (!held(stored)).then(|| {
+                Ok(Some(_)) => (!held(fetched)).then(|| {
                     String::from(
                         "the issue doesn't exist: write the canvas under one that does, or remove it",
                     )
@@ -171,10 +172,10 @@ pub fn canvases(
                 severity: Severity::Error,
                 subject: Some(subject(
                     home,
-                    stored.key.project,
-                    &stored.key.issue.to_string(),
+                    fetched.key.project,
+                    &fetched.key.issue.to_string(),
                 )),
-                message: format!("canvas {}: {reason}", stored.key.name),
+                message: format!("canvas {}: {reason}", fetched.key.name),
             })
         })
         .chain(strays)

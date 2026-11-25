@@ -38,21 +38,21 @@ fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
         &store.get(&design).map_err(shown)?,
         &None,
     )?;
-    let first = file(1, "first");
+    let first = file(1, "first")?;
     store.put(&design, &first).map_err(shown)?;
     same(
         "get returns what put kept",
         &store.get(&design).map_err(shown)?,
         &Some(first),
     )?;
-    let second = file(2, "second");
+    let second = file(2, "second")?;
     store.put(&design, &second).map_err(shown)?;
     same(
         "put again under a key replaces what it kept",
         &store.get(&design).map_err(shown)?,
         &Some(second.clone()),
     )?;
-    let third = file(3, "third");
+    let third = file(3, "third")?;
     [&plan, &other, &elsewhere]
         .into_iter()
         .try_for_each(|at| store.put(at, &third))
@@ -103,8 +103,8 @@ fn reports_strays<S: CanvasStore>(
         &seen(store.list(&alpha, &one).map_err(shown)?),
         &want(
             vec![
-                CanvasEntry::of(plan.name.clone(), &file(3, "third")),
-                CanvasEntry::of(design.name.clone(), &file(2, "second")),
+                CanvasEntry::of(plan.name.clone(), &file(3, "third")?),
+                CanvasEntry::of(design.name.clone(), &file(2, "second")?),
             ],
             vec![(spoiled, "invalid"), (unnamed.clone(), "unnamed")],
         ),
@@ -170,17 +170,18 @@ fn key(
     })
 }
 
-fn file(written: u64, text: &str) -> CanvasFile {
-    CanvasFile {
+fn file(written: u64, text: &str) -> Result<CanvasFile, String> {
+    Ok(CanvasFile {
         written,
         by: format!("host·{text}"),
-        canvas: Canvas {
-            title: format!("The {text} canvas"),
-            blocks: vec![Block::Prose {
+        canvas: Canvas::new(
+            format!("The {text} canvas"),
+            vec![Block::Prose {
                 text: text.to_owned(),
             }],
-        },
-    }
+        )
+        .map_err(shown)?,
+    })
 }
 
 fn same<T: PartialEq + Debug>(

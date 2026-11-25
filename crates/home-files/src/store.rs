@@ -286,12 +286,12 @@ mod tests {
         let file = CanvasFile {
             written: 5,
             by: String::from("devbox·claude"),
-            canvas: Canvas {
-                title: String::from("t"),
-                blocks: vec![Block::Prose {
+            canvas: Canvas::new(
+                String::from("t"),
+                vec![Block::Prose {
                     text: String::from("x"),
                 }],
-            },
+            )?,
         };
         FolderStore::new(scratch.0.clone()).put(&key("design-tree")?, &file)?;
         let kept = fs::read_to_string(

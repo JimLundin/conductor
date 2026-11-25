@@ -6,7 +6,13 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::CodeRef;
+use super::{CanvasError, CodeRef, wire};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Changes {
+    pub groups: Vec<ChangeGroup>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -54,71 +60,56 @@ pub enum Tag {
     Perf,
 }
 
-impl ChangeKind {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Core => "core",
-            Self::Wiring => "wiring",
-            Self::Mechanical => "mechanical",
-        }
+impl Changes {
+    pub(super) fn check(&self) -> Result<(), CanvasError> {
+        self.groups
+            .windows(2)
+            .find_map(|pair| match pair {
+                [before, after] if after.kind == before.kind => {
+                    Some(ChangesError::Twice { kind: after.kind })
+                }
+                [before, after] if after.kind < before.kind => {
+                    Some(ChangesError::OutOfOrder {
+                        kind: after.kind,
+                        after: before.kind,
+                    })
+                }
+                _ => None,
+            })
+            .map_or(Ok(()), |error| Err(CanvasError::Changes(error)))
     }
 
-    const fn heading(self) -> &'static str {
-        match self {
-            Self::Core => "Core",
-            Self::Wiring => "Wiring",
-            Self::Mechanical => "Mechanical",
-        }
+    pub(super) fn markdown(&self) -> String {
+        self.groups
+            .iter()
+            .map(|group| {
+                let entries: Vec<String> = group
+                    .entries
+                    .iter()
+                    .map(|change| {
+                        let tag = change.tag.map_or_else(String::new, |tag| {
+                            format!(" ({})", wire(&tag))
+                        });
+                        format!(
+                            "- {}: {}{tag}\n",
+                            change.code.link(),
+                            change.note
+                        )
+                    })
+                    .collect();
+                format!("**{}**\n\n{}", heading(group.kind), entries.concat())
+            })
+            .collect::<Vec<String>>()
+            .join("\n")
     }
 }
 
-impl Tag {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Subtle => "subtle",
-            Self::Breaking => "breaking",
-            Self::Race => "race",
-            Self::Perf => "perf",
-        }
-    }
-}
-
-pub(super) fn check(groups: &[ChangeGroup]) -> Result<(), ChangesError> {
-    groups
-        .windows(2)
-        .find_map(|pair| match pair {
-            [before, after] if after.kind == before.kind => {
-                Some(ChangesError::Twice { kind: after.kind })
-            }
-            [before, after] if after.kind < before.kind => {
-                Some(ChangesError::OutOfOrder {
-                    kind: after.kind,
-                    after: before.kind,
-                })
-            }
-            _ => None,
-        })
-        .map_or(Ok(()), Err)
-}
-
-pub(super) fn markdown(groups: &[ChangeGroup]) -> String {
-    groups
-        .iter()
-        .map(|group| {
-            let entries: Vec<String> = group
-                .entries
-                .iter()
-                .map(|change| {
-                    let tag = change.tag.map_or_else(String::new, |tag| {
-                        format!(" ({})", tag.name())
-                    });
-                    format!("- {}: {}{tag}\n", change.code.link(), change.note)
-                })
-                .collect();
-            format!("**{}**\n\n{}", group.kind.heading(), entries.concat())
-        })
-        .collect::<Vec<String>>()
-        .join("\n")
+fn heading(kind: ChangeKind) -> String {
+    let name = wire(&kind);
+    let mut letters = name.chars();
+    letters.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(letters).collect()
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,13 +124,13 @@ impl fmt::Display for ChangesError {
             Self::OutOfOrder { kind, after } => write!(
                 out,
                 "the `{}` group comes after `{}`: order the groups core, wiring, mechanical",
-                kind.name(),
-                after.name()
+                wire(kind),
+                wire(after)
             ),
             Self::Twice { kind } => write!(
                 out,
                 "the `{}` group comes twice: merge them into one",
-                kind.name()
+                wire(kind)
             ),
         }
     }

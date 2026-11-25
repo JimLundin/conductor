@@ -163,11 +163,11 @@ pub struct Wanted {
 pub enum Given {
     Text(Result<String, String>),
     Canvases(Result<Held<(CanvasName, CanvasFile)>, String>),
-    EveryCanvas(Result<Held<Stored>, String>),
+    EveryCanvas(Result<Held<Fetched>, String>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Stored {
+pub struct Fetched {
     pub key: CanvasKey,
     pub got: Result<Option<CanvasFile>, String>,
 }

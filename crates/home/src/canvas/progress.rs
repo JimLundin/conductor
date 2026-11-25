@@ -6,6 +6,15 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::CanvasError;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Progress {
+    pub label: String,
+    pub bar: Bar,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Bar {
@@ -23,40 +32,43 @@ pub struct Stretch {
 
 const CELLS: u64 = 10;
 
-pub(super) fn check(label: &str, bar: &Bar) -> Result<(), ProgressError> {
-    let over = |label: &str, done: u64, total: u64| {
-        (done > total).then(|| ProgressError::OverTotal {
-            label: String::from(label),
-            done,
-            total,
-        })
-    };
-    let found = match bar {
-        Bar::Count { done, total } => over(label, *done, *total),
-        Bar::Stretches(stretches) => stretches.iter().find_map(|stretch| {
-            over(&stretch.label, stretch.done, stretch.total)
-        }),
-    };
-    found.map_or(Ok(()), Err)
-}
+impl Progress {
+    pub(super) fn check(&self) -> Result<(), CanvasError> {
+        let over = |label: &str, done: u64, total: u64| {
+            (done > total).then(|| ProgressError::OverTotal {
+                label: String::from(label),
+                done,
+                total,
+            })
+        };
+        let found = match &self.bar {
+            Bar::Count { done, total } => over(&self.label, *done, *total),
+            Bar::Stretches(stretches) => stretches.iter().find_map(|stretch| {
+                over(&stretch.label, stretch.done, stretch.total)
+            }),
+        };
+        found.map_or(Ok(()), |error| Err(CanvasError::Progress(error)))
+    }
 
-pub(super) fn markdown(label: &str, bar: &Bar) -> String {
-    match bar {
-        Bar::Count { done, total } => {
-            format!("**{label}** {}\n", drawn(*done, *total))
-        }
-        Bar::Stretches(stretches) => {
-            let lines: Vec<String> = stretches
-                .iter()
-                .map(|stretch| {
-                    format!(
-                        "- {} {}\n",
-                        stretch.label,
-                        drawn(stretch.done, stretch.total)
-                    )
-                })
-                .collect();
-            format!("**{label}**\n\n{}", lines.concat())
+    pub(super) fn markdown(&self) -> String {
+        let label = &self.label;
+        match &self.bar {
+            Bar::Count { done, total } => {
+                format!("**{label}** {}\n", drawn(*done, *total))
+            }
+            Bar::Stretches(stretches) => {
+                let lines: Vec<String> = stretches
+                    .iter()
+                    .map(|stretch| {
+                        format!(
+                            "- {} {}\n",
+                            stretch.label,
+                            drawn(stretch.done, stretch.total)
+                        )
+                    })
+                    .collect();
+                format!("**{label}**\n\n{}", lines.concat())
+            }
         }
     }
 }

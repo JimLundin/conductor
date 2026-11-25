@@ -284,6 +284,12 @@ const Statechart = Schema.Struct({
   transitions: Schema.Array(Transition),
 }).annotate({ identifier: "Statechart" });
 
+type Progress = { readonly bar: Bar; readonly label: string };
+
+const Progress = Schema.Struct({ bar: Bar, label: Schema.String }).annotate({
+  identifier: "Progress",
+});
+
 type Choice = { readonly costs: string; readonly gets: string; readonly label: string };
 
 const Choice = Schema.Struct({
@@ -291,6 +297,24 @@ const Choice = Schema.Struct({
   gets: Schema.String,
   label: Schema.String,
 }).annotate({ identifier: "Choice" });
+
+type Options = {
+  readonly options: globalThis.ReadonlyArray<Choice>;
+  readonly pick: number;
+  readonly question: string;
+  readonly why: string;
+};
+
+const Options = Schema.Struct({
+  options: Schema.Array(Choice),
+  pick: Schema.Number.annotate({ format: "uint" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+  question: Schema.String,
+  why: Schema.String,
+}).annotate({ identifier: "Options" });
 
 type CodeRef = {
   readonly commit?: string | null;
@@ -351,20 +375,19 @@ const ChangeGroup = Schema.Struct({ entries: Schema.Array(Change), kind: ChangeK
   identifier: "ChangeGroup",
 });
 
+type Changes = { readonly groups: globalThis.ReadonlyArray<ChangeGroup> };
+
+const Changes = Schema.Struct({ groups: Schema.Array(ChangeGroup) }).annotate({
+  identifier: "Changes",
+});
+
 type Block =
   | { readonly prose: { readonly text: string } }
   | { readonly diagram: Diagram }
   | { readonly statechart: Statechart }
-  | { readonly progress: { readonly bar: Bar; readonly label: string } }
-  | {
-      readonly options: {
-        readonly options: globalThis.ReadonlyArray<Choice>;
-        readonly pick: number;
-        readonly question: string;
-        readonly why: string;
-      };
-    }
-  | { readonly changes: { readonly groups: globalThis.ReadonlyArray<ChangeGroup> } }
+  | { readonly progress: Progress }
+  | { readonly options: Options }
+  | { readonly changes: Changes }
   | { readonly code: CodeRef };
 
 const Block = Schema.Union(
@@ -372,22 +395,9 @@ const Block = Schema.Union(
     Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }),
     Schema.Struct({ diagram: Diagram }),
     Schema.Struct({ statechart: Statechart }),
-    Schema.Struct({ progress: Schema.Struct({ bar: Bar, label: Schema.String }) }),
-    Schema.Struct({
-      options: Schema.Struct({
-        options: Schema.Array(Choice),
-        pick: Schema.Number.annotate({ format: "uint" })
-          .check(Schema.isInt().annotate({ expected: "an integer" }))
-          .check(
-            Schema.isGreaterThanOrEqualTo(0).annotate({
-              expected: "a value greater than or equal to 0",
-            }),
-          ),
-        question: Schema.String,
-        why: Schema.String,
-      }),
-    }),
-    Schema.Struct({ changes: Schema.Struct({ groups: Schema.Array(ChangeGroup) }) }),
+    Schema.Struct({ progress: Progress }),
+    Schema.Struct({ options: Options }),
+    Schema.Struct({ changes: Changes }),
     Schema.Struct({ code: CodeRef }),
   ],
   { mode: "oneOf" },
@@ -2840,6 +2850,7 @@ export {
   Change2,
   ChangeGroup,
   ChangeKind,
+  Changes,
   ChecklistChange,
   ChecklistEntry,
   ChecklistItem,
@@ -2914,12 +2925,14 @@ export {
   NewIssue,
   Node,
   Open,
+  Options,
   Origin,
   Output,
   PairRequest,
   Pairing,
   Part,
   Predicate,
+  Progress,
   Project,
   ProjectId,
   Provider,

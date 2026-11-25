@@ -19,19 +19,21 @@ mod progress;
 mod statechart;
 mod stray;
 
-pub use changes::{Change, ChangeGroup, ChangeKind, ChangesError, Tag};
+pub use changes::{
+    Change, ChangeGroup, ChangeKind, Changes, ChangesError, Tag,
+};
 pub use code::CodeRef;
 pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
-pub use options::{Choice, OptionsError};
-pub use progress::{Bar, ProgressError, Stretch};
+pub use options::{Choice, Options, OptionsError};
+pub use progress::{Bar, Progress, ProgressError, Stretch};
 pub use statechart::{State, Statechart, StatechartError, Transition};
 pub use stray::{Held, Stray, StrayReason};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, try_from = "Drawn")]
 pub struct Canvas {
-    pub title: String,
-    pub blocks: Vec<Block>,
+    title: String,
+    blocks: Vec<Block>,
 }
 
 #[derive(Deserialize, JsonSchema)]
@@ -45,39 +47,31 @@ impl TryFrom<Drawn> for Canvas {
     type Error = CanvasError;
 
     fn try_from(drawn: Drawn) -> Result<Self, CanvasError> {
-        drawn.blocks.iter().try_for_each(Block::check)?;
-        Ok(Self {
-            title: drawn.title,
-            blocks: drawn.blocks,
-        })
+        Self::new(drawn.title, drawn.blocks)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
-    Prose {
-        text: String,
-    },
+    Prose { text: String },
     Diagram(Diagram),
     Statechart(Statechart),
-    Progress {
-        label: String,
-        bar: Bar,
-    },
-    Options {
-        question: String,
-        options: Vec<Choice>,
-        pick: usize,
-        why: String,
-    },
-    Changes {
-        groups: Vec<ChangeGroup>,
-    },
+    Progress(Progress),
+    Options(Options),
+    Changes(Changes),
     Code(CodeRef),
 }
 
 impl Canvas {
+    /// # Errors
+    ///
+    /// A block breaks a drawing rule.
+    pub fn new(title: String, blocks: Vec<Block>) -> Result<Self, CanvasError> {
+        blocks.iter().try_for_each(Block::check)?;
+        Ok(Self { title, blocks })
+    }
+
     /// # Errors
     ///
     /// The text is not a canvas.
@@ -100,14 +94,9 @@ impl Block {
             Self::Prose { text } => format!("{}\n", text.trim()),
             Self::Diagram(diagram) => diagram.mermaid(),
             Self::Statechart(chart) => chart.mermaid(),
-            Self::Progress { label, bar } => progress::markdown(label, bar),
-            Self::Options {
-                question,
-                options,
-                pick,
-                why,
-            } => options::markdown(question, options, *pick, why),
-            Self::Changes { groups } => changes::markdown(groups),
+            Self::Progress(progress) => progress.markdown(),
+            Self::Options(options) => options.markdown(),
+            Self::Changes(changes) => changes.markdown(),
             Self::Code(code) => format!("{}\n", code.link()),
         }
     }
@@ -117,19 +106,9 @@ impl Block {
             Self::Prose { .. } | Self::Code(_) => Ok(()),
             Self::Diagram(diagram) => diagram.check(),
             Self::Statechart(chart) => chart.check(),
-            Self::Progress { label, bar } => {
-                progress::check(label, bar).map_err(CanvasError::Progress)
-            }
-            Self::Options {
-                question,
-                options,
-                pick,
-                ..
-            } => options::check(question, options, *pick)
-                .map_err(CanvasError::Options),
-            Self::Changes { groups } => {
-                changes::check(groups).map_err(CanvasError::Changes)
-            }
+            Self::Progress(progress) => progress.check(),
+            Self::Options(options) => options.check(),
+            Self::Changes(changes) => changes.check(),
         }
     }
 }
@@ -200,6 +179,13 @@ fn short<'a>(
 
 fn quoted(label: &str) -> String {
     format!("\"{}\"", label.trim().replace('"', "#quot;"))
+}
+
+fn wire<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|named| named.as_str().map(String::from))
+        .unwrap_or_default()
 }
 
 fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {

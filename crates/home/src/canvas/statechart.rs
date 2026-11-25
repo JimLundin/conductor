@@ -107,14 +107,13 @@ impl Statechart {
                 "{} --> {} : {}",
                 self.named(&transition.from),
                 self.named(&transition.to),
-                transition.event
+                spoken(&transition.event)
             )
         });
         let notes = self.states.iter().enumerate().filter_map(|(at, state)| {
-            state
-                .marked
-                .as_ref()
-                .map(|reason| format!("note right of s{at} : {reason}"))
+            state.marked.as_ref().map(|reason| {
+                format!("note right of s{at} : {}", spoken(reason))
+            })
         });
         let marked: Vec<String> = self
             .states
@@ -143,6 +142,13 @@ impl Statechart {
             lines.join("\n    ")
         )
     }
+}
+
+fn spoken(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<&str>>()
+        .join(" ")
+        .replace(':', "#58;")
 }
 
 fn styled(ids: &[String], class: &str, style: &str) -> Vec<String> {

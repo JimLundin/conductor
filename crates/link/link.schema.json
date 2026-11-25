@@ -204,17 +204,7 @@
           "additionalProperties": false,
           "properties": {
             "progress": {
-              "additionalProperties": false,
-              "properties": {
-                "bar": {
-                  "$ref": "#/$defs/Bar"
-                },
-                "label": {
-                  "type": "string"
-                }
-              },
-              "required": ["label", "bar"],
-              "type": "object"
+              "$ref": "#/$defs/Progress"
             }
           },
           "required": ["progress"],
@@ -224,28 +214,7 @@
           "additionalProperties": false,
           "properties": {
             "options": {
-              "additionalProperties": false,
-              "properties": {
-                "options": {
-                  "items": {
-                    "$ref": "#/$defs/Choice"
-                  },
-                  "type": "array"
-                },
-                "pick": {
-                  "format": "uint",
-                  "minimum": 0,
-                  "type": "integer"
-                },
-                "question": {
-                  "type": "string"
-                },
-                "why": {
-                  "type": "string"
-                }
-              },
-              "required": ["question", "options", "pick", "why"],
-              "type": "object"
+              "$ref": "#/$defs/Options"
             }
           },
           "required": ["options"],
@@ -255,17 +224,7 @@
           "additionalProperties": false,
           "properties": {
             "changes": {
-              "additionalProperties": false,
-              "properties": {
-                "groups": {
-                  "items": {
-                    "$ref": "#/$defs/ChangeGroup"
-                  },
-                  "type": "array"
-                }
-              },
-              "required": ["groups"],
-              "type": "object"
+              "$ref": "#/$defs/Changes"
             }
           },
           "required": ["changes"],
@@ -404,6 +363,19 @@
     "ChangeKind": {
       "enum": ["core", "wiring", "mechanical"],
       "type": "string"
+    },
+    "Changes": {
+      "additionalProperties": false,
+      "properties": {
+        "groups": {
+          "items": {
+            "$ref": "#/$defs/ChangeGroup"
+          },
+          "type": "array"
+        }
+      },
+      "required": ["groups"],
+      "type": "object"
     },
     "ChecklistChange": {
       "oneOf": [
@@ -2936,6 +2908,30 @@
         }
       ]
     },
+    "Options": {
+      "additionalProperties": false,
+      "properties": {
+        "options": {
+          "items": {
+            "$ref": "#/$defs/Choice"
+          },
+          "type": "array"
+        },
+        "pick": {
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "question": {
+          "type": "string"
+        },
+        "why": {
+          "type": "string"
+        }
+      },
+      "required": ["question", "options", "pick", "why"],
+      "type": "object"
+    },
     "Origin": {
       "oneOf": [
         {
@@ -3253,6 +3249,19 @@
           "type": "object"
         }
       ]
+    },
+    "Progress": {
+      "additionalProperties": false,
+      "properties": {
+        "bar": {
+          "$ref": "#/$defs/Bar"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": ["label", "bar"],
+      "type": "object"
     },
     "Project": {
       "description": "A project as the home describes it, and its checkouts on this host.",

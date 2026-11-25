@@ -935,21 +935,19 @@ impl Actor {
     fn publish(&self) {
         self.shown
             .send_replace(self.remote.as_deref().map(|remote| {
-                link::serve::with_canvases(
-                    home::view(
-                        remote,
-                        &self.sync,
-                        self.home.projects(),
-                        Found {
-                            checkouts: &self.found,
-                            cloning: &self.cloning,
-                            flow: self.home.flow().ok(),
-                            issues: &self.home.issues(),
-                            unpushed: u64::try_from(self.edits.count())
-                                .unwrap_or(u64::MAX),
-                        },
-                    ),
-                    &self.listed,
+                home::view(
+                    remote,
+                    &self.sync,
+                    self.home.projects(),
+                    Found {
+                        checkouts: &self.found,
+                        cloning: &self.cloning,
+                        flow: self.home.flow().ok(),
+                        issues: &self.home.issues(),
+                        canvases: &self.listed,
+                        unpushed: u64::try_from(self.edits.count())
+                            .unwrap_or(u64::MAX),
+                    },
                 )
             }));
     }
@@ -1477,7 +1475,8 @@ fn home(result: HomeResult) -> Completion {
 mod tests {
     use super::{Actor, Destination, Homing, clone, remote_branch, run, text};
     use home::canvas::{
-        Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
+        Block, Canvas, CanvasEntry, CanvasError, CanvasFile, CanvasKey,
+        CanvasName,
     };
     use home::issue::Remote;
     use home::{HomeRefusal, HomeResult, IssueId, ProjectId};
@@ -1533,17 +1532,17 @@ mod tests {
     const DESIGNED: &str = "0v2n8dbb";
     const BARE: &str = "0v2n8dbc";
 
-    fn written(at: u64, by: &str) -> CanvasFile {
-        CanvasFile {
+    fn written(at: u64, by: &str) -> Result<CanvasFile, CanvasError> {
+        Ok(CanvasFile {
             written: at,
             by: by.to_owned(),
-            canvas: Canvas {
-                title: format!("By {by}"),
-                blocks: Vec::from([Block::Prose {
+            canvas: Canvas::new(
+                format!("By {by}"),
+                Vec::from([Block::Prose {
                     text: String::from("The host serves it."),
                 }]),
-            },
-        }
+            )?,
+        })
     }
 
     fn an_issue(issues: &Path, id: &str) -> std::io::Result<()> {
@@ -1584,7 +1583,7 @@ mod tests {
                 issue: designed,
                 name: named(name)?,
             };
-            store.put(&key, &written(at, by))?;
+            store.put(&key, &written(at, by)?)?;
         }
         let (shown, watched) = watch::channel(None);
         let mut actor = Actor::new(
@@ -1629,7 +1628,7 @@ mod tests {
         );
         assert_eq!(
             actor.canvas(designed, named("a-plan")?),
-            HomeResult::Canvas(written(20, "laptop·codex"))
+            HomeResult::Canvas(written(20, "laptop·codex")?)
         );
         assert_eq!(
             actor.canvas(designed, named("missing")?),
