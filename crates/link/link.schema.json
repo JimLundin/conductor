@@ -120,6 +120,47 @@
         }
       ]
     },
+    "Bar": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "additionalProperties": false,
+              "properties": {
+                "done": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "total": {
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": ["done", "total"],
+              "type": "object"
+            }
+          },
+          "required": ["count"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "stretches": {
+              "items": {
+                "$ref": "#/$defs/Stretch"
+              },
+              "type": "array"
+            }
+          },
+          "required": ["stretches"],
+          "type": "object"
+        }
+      ]
+    },
     "Block": {
       "oneOf": [
         {
@@ -147,6 +188,87 @@
             }
           },
           "required": ["statechart"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "progress": {
+              "additionalProperties": false,
+              "properties": {
+                "bar": {
+                  "$ref": "#/$defs/Bar"
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": ["label", "bar"],
+              "type": "object"
+            }
+          },
+          "required": ["progress"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "options": {
+              "additionalProperties": false,
+              "properties": {
+                "options": {
+                  "items": {
+                    "$ref": "#/$defs/Choice"
+                  },
+                  "type": "array"
+                },
+                "pick": {
+                  "format": "uint",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "question": {
+                  "type": "string"
+                },
+                "why": {
+                  "type": "string"
+                }
+              },
+              "required": ["question", "options", "pick", "why"],
+              "type": "object"
+            }
+          },
+          "required": ["options"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "changes": {
+              "additionalProperties": false,
+              "properties": {
+                "groups": {
+                  "items": {
+                    "$ref": "#/$defs/ChangeGroup"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": ["groups"],
+              "type": "object"
+            }
+          },
+          "required": ["changes"],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "code": {
+              "$ref": "#/$defs/CodeRef"
+            }
+          },
+          "required": ["code"],
           "type": "object"
         }
       ]
@@ -214,6 +336,29 @@
       "type": "object"
     },
     "Change": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "$ref": "#/$defs/CodeRef"
+        },
+        "note": {
+          "type": "string"
+        },
+        "tag": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tag"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": ["code", "note"],
+      "type": "object"
+    },
+    "Change2": {
       "oneOf": [
         {
           "enum": ["Delete"],
@@ -230,6 +375,26 @@
           "type": "string"
         }
       ]
+    },
+    "ChangeGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "$ref": "#/$defs/Change"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/ChangeKind"
+        }
+      },
+      "required": ["kind", "entries"],
+      "type": "object"
+    },
+    "ChangeKind": {
+      "enum": ["core", "wiring", "mechanical"],
+      "type": "string"
     },
     "ChecklistChange": {
       "oneOf": [
@@ -319,6 +484,22 @@
       "description": "Where a project is checked out on a host, as the host's OS spells it.\nOnly the host reads it: a browser on a phone can't know a Windows\npath's rules.",
       "type": "string"
     },
+    "Choice": {
+      "additionalProperties": false,
+      "properties": {
+        "costs": {
+          "type": "string"
+        },
+        "gets": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": ["label", "gets", "costs"],
+      "type": "object"
+    },
     "ClientName": {
       "description": "The name a client gave when it connected: who answered a request, or\nsent a message.",
       "type": "string"
@@ -400,6 +581,36 @@
           "type": "object"
         }
       ]
+    },
+    "CodeRef": {
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "type": ["string", "null"]
+        },
+        "lines": {
+          "maxItems": 2,
+          "minItems": 2,
+          "prefixItems": [
+            {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          ],
+          "type": ["array", "null"]
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": ["path"],
+      "type": "object"
     },
     "Command": {
       "description": "A command, in the domain it acts on.",
@@ -1264,7 +1475,7 @@
       "description": "One file a tool call changes, and how.",
       "properties": {
         "change": {
-          "$ref": "#/$defs/Change"
+          "$ref": "#/$defs/Change2"
         },
         "path": {
           "type": "string"
@@ -4207,6 +4418,26 @@
       "required": ["name", "role", "colour"],
       "type": "object"
     },
+    "Stretch": {
+      "additionalProperties": false,
+      "properties": {
+        "done": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "label": {
+          "type": "string"
+        },
+        "total": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": ["label", "done", "total"],
+      "type": "object"
+    },
     "SubagentActivity": {
       "description": "One entry of a sub-agent's own transcript.",
       "oneOf": [
@@ -4422,6 +4653,10 @@
       },
       "required": ["epoch", "after_seq"],
       "type": "object"
+    },
+    "Tag": {
+      "enum": ["subtle", "breaking", "race", "perf"],
+      "type": "string"
     },
     "Ticket": {
       "properties": {
