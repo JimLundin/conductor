@@ -40,9 +40,16 @@ pub struct Transition {
 impl Statechart {
     pub(super) fn checked(self) -> Result<Self, CanvasError> {
         distinct("state", self.states.iter().map(|state| state.id.as_str()))?;
-        short(self.states.iter().map(|state| &state.label).chain(
-            self.transitions.iter().map(|transition| &transition.event),
-        ))?;
+        short(
+            self.states
+                .iter()
+                .flat_map(|state| {
+                    core::iter::once(&state.label).chain(&state.marked)
+                })
+                .chain(
+                    self.transitions.iter().map(|transition| &transition.event),
+                ),
+        )?;
         let walk = self.walked().map_err(CanvasError::Statechart)?;
         Ok(Self { walk, ..self })
     }
