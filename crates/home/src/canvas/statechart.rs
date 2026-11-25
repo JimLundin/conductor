@@ -6,7 +6,7 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::wordy;
+use super::{repeated, wordy};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +38,13 @@ pub struct Transition {
 impl Statechart {
     pub(super) fn check(&self) -> Result<(), StatechartError> {
         let known = |id: &str| self.states.iter().any(|state| state.id == id);
+        if let Some(id) =
+            repeated(self.states.iter().map(|state| state.id.as_str()))
+        {
+            return Err(StatechartError::Twice {
+                id: String::from(id),
+            });
+        }
         self.states
             .iter()
             .map(|state| &state.label)
@@ -149,6 +156,7 @@ pub enum StatechartError {
     UnknownFrom { state: String },
     UnknownTo { state: String },
     OffPath { from: String, to: String },
+    Twice { id: String },
 }
 
 impl fmt::Display for StatechartError {
@@ -173,6 +181,10 @@ impl fmt::Display for StatechartError {
             Self::OffPath { from, to } => write!(
                 out,
                 "the path goes from `{from}` to `{to}`, but no transition does: add that transition or change the path"
+            ),
+            Self::Twice { id } => write!(
+                out,
+                "two states are called `{id}`: give each state its own id"
             ),
         }
     }

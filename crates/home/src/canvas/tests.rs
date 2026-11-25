@@ -110,3 +110,32 @@ fn a_canvas_file_whose_canvas_breaks_a_drawing_rule_is_refused_as_a_canvas_is()
     assert!(refused.is_err(), "{refused:?}");
     assert_eq!(refused.err(), Canvas::parse(canvas).err());
 }
+
+const CROWDED: &str = r#"{"title": "t", "blocks": [{"diagram": {"nodes": [{"id": "a", "label": "A", "step": 1}, {"id": "a", "label": "B", "step": 1}], "edges": [], "groups": []}}]}"#;
+
+#[test]
+fn decoding_a_canvas_or_a_canvas_file_that_breaks_a_drawing_rule_refuses_it_by_any_path()
+ {
+    let said = "two nodes are called `a`: give each node its own id";
+    let file = format!(
+        r#"{{"written": 5, "by": "devbox·claude", "canvas": {CROWDED}}}"#
+    );
+    let decodes = [
+        serde_json::from_str::<Canvas>(CROWDED).map(|_| ()),
+        serde_json::from_str::<CanvasFile>(&file).map(|_| ()),
+        serde_json::from_str::<serde_json::Value>(&file)
+            .and_then(serde_json::from_value::<CanvasFile>)
+            .map(|_| ()),
+    ];
+    for decoded in decodes {
+        let shown = decoded.map_err(|error| error.to_string());
+        assert!(
+            shown.as_ref().is_err_and(|reason| reason.contains(said)),
+            "{shown:?}"
+        );
+    }
+    assert_eq!(
+        CanvasFile::parse(&file).map_err(|error| error.to_string()),
+        Err(String::from(said))
+    );
+}
