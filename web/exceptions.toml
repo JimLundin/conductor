@@ -79,3 +79,73 @@ reason = "The test passes Effect Queue, Deferred and Ref service handles to thei
 path = "src/test/page.ts"
 rule = "lint/unicorn/no-null"
 reason = "The browser Storage interface returns null for an absent key; this test adapter implements that boundary contract"
+
+[[exception]]
+path = "src/link.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/dial.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/feed.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/host.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/saved.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store/actions.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store/links.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/store/methods.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/root.tsx"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/browser.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes stateful Effect service handles to library operations; it does not mutate their internal fields, which the library types expose as mutable"
+
+[[exception]]
+path = "src/link/frames.ts"
+rule = "lint/typescript/prefer-readonly-parameter-types"
+reason = "This boundary passes Schema codecs and transport Uint8Array values to their decoders without mutating them; these library types contain mutable members"
+
+[[exception]]
+path = "src/main.tsx"
+rule = "lint/eslint/no-restricted-globals"
+reason = "The React entry point reads the mount element from document and passes it to createRoot; browser application effects run in atoms"
+
+[[exception]]
+path = "src/test/examples.ts"
+rule = "lint/unicorn/no-null"
+reason = "These fixtures encode the Rust client link's nullable model, effort and request fields as JSON null"
