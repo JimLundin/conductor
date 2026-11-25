@@ -55,6 +55,9 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
       Checks, unchecks or removes the checklist's nth item, from 1.
   home repos
       Shows each project's checkouts on this machine and their state.
+  home repos --verify
+      Shows the same, then each project whose default branch head lacks a
+      recorded pass of its profiles, with the command that runs them.
   home repos sync
       Clones each project with a remote and no checkout here.
   home repos scan
@@ -83,6 +86,9 @@ pub enum Asked {
 pub enum Local {
     /// `home repos`: each project's checkouts here and their state.
     Status,
+    /// `home repos --verify`: as `home repos`, then each project whose
+    /// head lacks a recorded pass of its profiles.
+    Verify,
     /// `home repos sync`: clones each project not checked out here.
     Sync,
     /// `home repos scan`: registers each repository no project has.
@@ -242,6 +248,7 @@ pub fn asked(
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["repos"] => Asked::Local(Local::Status),
+        ["repos", "--verify"] => Asked::Local(Local::Verify),
         ["repos", "sync"] => Asked::Local(Local::Sync),
         ["repos", "scan"] => Asked::Local(Local::Scan),
         ["skills"] => Asked::Local(Local::Skills),

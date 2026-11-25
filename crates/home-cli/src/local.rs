@@ -1,23 +1,30 @@
 //! `home repos` and `home skills`: the home's projects among the
 //! repositories on this machine, and its skills installed for the user
-//! (`home_files::install`). It lists folders, runs Git, and writes files.
+//! (`home_files::install`). It lists folders, runs Git and the standards'
+//! `--verify`, and writes files.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 
 use home::checkout::{self, Probe};
 use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
-use home::repos::{self, New, Scanning};
+use home::repos::verify::{self, Ran, Verify, Verifying};
+use home::repos::{self, Checkout, New, Placed, Scanning};
 use home_files::git;
 
 /// What doing `local` in the home at `root` says, and its exit code.
 pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
     match local {
-        Local::Status => (status(root, home), 0),
+        Local::Status => (status(home, &here(root, home)), 0),
+        Local::Verify => {
+            let here = here(root, home);
+            (status(home, &here) + &verdicts(root, &here), 0)
+        }
         Local::Sync => sync(root, home.projects()),
         Local::Scan => ended(scan(root, home)),
         Local::Skills => ended(
@@ -34,17 +41,80 @@ fn ended(done: Result<String, String>) -> (String, u8) {
     done.map_or_else(|why| (format!("home: {why}\n"), 1), |said| (said, 0))
 }
 
-fn status(root: &Path, home: &Snapshot) -> String {
+/// The home's projects placed among the repositories here, and the Git
+/// state of each checkout by its path from the home.
+struct Here {
+    placed: Vec<Placed>,
+    states: BTreeMap<String, Option<Checkout>>,
+}
+
+fn here(root: &Path, home: &Snapshot) -> Here {
     let placed = repos::placed(home.projects(), &probes(root));
     let states = repos::checkouts(&placed)
         .into_iter()
         .map(|path| {
-            let state =
-                git(&root.join(&path), &["status", "--porcelain", "--branch"]);
+            let state = git(
+                &root.join(&path),
+                &["status", "--porcelain=v2", "--branch"],
+            )
+            .map(|porcelain| Checkout::parse(&porcelain));
             (path, state)
         })
         .collect();
-    repos::warnings(home.listing_problems()) + &repos::report(&placed, &states)
+    Here { placed, states }
+}
+
+fn status(home: &Snapshot, here: &Here) -> String {
+    repos::warnings(home.listing_problems())
+        + &repos::report(&here.placed, &here.states)
+}
+
+/// Each project whose head lacks a recorded pass of its profiles, or why
+/// its passes go unchecked.
+fn verdicts(root: &Path, here: &Here) -> String {
+    let defaults = verify::asks(&here.placed)
+        .into_iter()
+        .filter_map(|path| {
+            let symbolic = git(
+                &root.join(&path),
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            )?;
+            Some((path, verify::origin_default(&symbolic)?))
+        })
+        .collect();
+    verify::verifying(&shown(root), &here.placed, &here.states, &defaults)
+        .into_iter()
+        .filter_map(|verifying| match verifying {
+            Verifying::Run(verify) => {
+                verify::verdict(&verify, &verified(&verify))
+            }
+            Verifying::Unchecked(reason) => Some(reason),
+        })
+        .map(|reason| reason.to_string())
+        .collect()
+}
+
+/// `<profile>/check.sh commit --verify` from the standards' checkout, which
+/// runs no check.
+fn verified(verify: &Verify) -> Ran {
+    Command::new("bash")
+        .arg(format!("{}/check.sh", verify.profile))
+        .args(["commit", "--verify", &verify.checkout])
+        .current_dir(&verify.standards)
+        .stdin(Stdio::null())
+        .output()
+        .map_or_else(
+            |err| Ran {
+                passed: false,
+                out: String::new(),
+                err: format!("bash: {err}"),
+            },
+            |output| Ran {
+                passed: output.status.success(),
+                out: String::from_utf8_lossy(&output.stdout).into_owned(),
+                err: String::from_utf8_lossy(&output.stderr).into_owned(),
+            },
+        )
 }
 
 /// Clones each project with no checkout here, saying each as it goes, so
@@ -104,13 +174,20 @@ fn scan(root: &Path, home: &Snapshot) -> Result<String, String> {
 /// Each repository in the home, the home among them, found as the host
 /// finds checkouts with the home as its one root.
 fn probes(root: &Path) -> Vec<Probe> {
-    let home = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let shown = home.to_string_lossy().into_owned();
+    let shown = shown(root);
     let paths = checkout::candidates(
-        &[home_files::root(&home)],
+        &[home_files::root(Path::new(&shown))],
         std::slice::from_ref(&shown),
     );
     repos::local(&shown, home_files::probes(&paths))
+}
+
+/// The home's folder as the host finds it, its links resolved.
+fn shown(root: &Path) -> String {
+    fs::canonicalize(root)
+        .unwrap_or_else(|_| root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn read(path: &Path) -> Result<String, String> {

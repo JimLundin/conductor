@@ -847,9 +847,11 @@ fn repos_and_skills_are_done_in_the_home_s_folder_and_the_rest_on_its_issues() {
     let home = Snapshot::of(home());
     let local = |line: &str| dispatched(&words(line), &home, None);
     assert_eq!(local("repos"), Asked::Local(Local::Status));
+    assert_eq!(local("repos --verify"), Asked::Local(Local::Verify));
     assert_eq!(local("repos sync"), Asked::Local(Local::Sync));
     assert_eq!(local("repos scan"), Asked::Local(Local::Scan));
     assert_eq!(local("skills"), Asked::Local(Local::Skills));
     assert_eq!(local("repos wipe"), Asked::Flow(Command::Usage));
+    assert_eq!(local("repos sync --verify"), Asked::Flow(Command::Usage));
     assert_eq!(local("check"), Asked::Flow(Command::Check));
 }

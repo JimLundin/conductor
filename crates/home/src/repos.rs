@@ -8,6 +8,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
+use core::fmt;
 
 use crate::{Draws, ProjectId};
 use serde::Serialize;
@@ -19,6 +20,8 @@ use crate::project::{Project, parse};
 
 /// The home itself, as a repository's path from the home.
 pub const HOME: &str = ".";
+
+pub mod verify;
 
 /// `probes`, found as the host finds checkouts with the home at `home` as
 /// both a known path and the one root, each by its path from the home: the
@@ -52,6 +55,8 @@ pub struct Placed {
     pub name: String,
     pub remote: Option<String>,
     pub checkouts: Vec<String>,
+    pub profiles: Vec<String>,
+    pub provides: Vec<String>,
 }
 
 /// Each project, by name, with its checkouts among `probes`.
@@ -62,6 +67,8 @@ pub fn placed(projects: &[Project], probes: &[Probe]) -> Vec<Placed> {
         .map(|project| Placed {
             name: project.name.clone(),
             remote: project.remote.clone(),
+            profiles: project.profiles.clone(),
+            provides: project.provides.clone(),
             checkouts: probes
                 .iter()
                 .filter(|probe| is_checkout(project, probe))
@@ -86,13 +93,126 @@ pub fn checkouts(placed: &[Placed]) -> Vec<String> {
         .collect()
 }
 
+/// Where a checkout stands, from what
+/// `git status --porcelain=v2 --branch` printed in it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Checkout {
+    /// The commit it is at; none before its first.
+    pub commit: Option<String>,
+    /// The branch it is on; none when detached.
+    pub branch: Option<String>,
+    pub upstream: Option<Upstream>,
+    /// How many of its files changed or are untracked.
+    pub changed: usize,
+}
+
+/// The branch a checkout's branch tracks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Upstream {
+    /// As `<remote>/<branch>`.
+    pub name: String,
+    /// None when the upstream branch is gone.
+    pub distance: Option<Distance>,
+}
+
+/// How many commits a branch has that its upstream hasn't, and the other
+/// way round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Distance {
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+impl Checkout {
+    /// The state `porcelain` gives, as `git status --porcelain=v2 --branch`
+    /// prints it.
+    #[must_use]
+    pub fn parse(porcelain: &str) -> Self {
+        let mut state = Self::default();
+        let mut upstream = None;
+        let mut distance = None;
+        for line in porcelain.lines().filter(|line| !line.is_empty()) {
+            let Some(header) = line.strip_prefix("# ") else {
+                state.changed += 1;
+                continue;
+            };
+            let (key, value) = header.split_once(' ').unwrap_or((header, ""));
+            match key {
+                "branch.oid" if value != "(initial)" => {
+                    state.commit = Some(String::from(value));
+                }
+                "branch.head" if value != "(detached)" => {
+                    state.branch = Some(String::from(value));
+                }
+                "branch.upstream" => upstream = Some(String::from(value)),
+                "branch.ab" => distance = parse_distance(value),
+                _ => {}
+            }
+        }
+        state.upstream = upstream.map(|name| Upstream { name, distance });
+        state
+    }
+
+    /// Whether it is on `default`, level with `origin/<default>`, with
+    /// nothing changed or untracked.
+    #[must_use]
+    pub fn is_level(&self, default: &str) -> bool {
+        self.commit.is_some()
+            && self.changed == 0
+            && self.branch.as_deref() == Some(default)
+            && self.upstream.as_ref().is_some_and(|upstream| {
+                upstream.name.strip_prefix("origin/") == Some(default)
+                    && upstream.distance
+                        == Some(Distance {
+                            ahead: 0,
+                            behind: 0,
+                        })
+            })
+    }
+}
+
+fn parse_distance(ab: &str) -> Option<Distance> {
+    let (ahead, behind) = ab.split_once(' ')?;
+    Some(Distance {
+        ahead: ahead.strip_prefix('+')?.parse().ok()?,
+        behind: behind.strip_prefix('-')?.parse().ok()?,
+    })
+}
+
+/// Its branch and how far it is from its upstream, as
+/// `git status --short --branch` says them.
+impl fmt::Display for Checkout {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        out.write_str(self.branch.as_deref().unwrap_or("HEAD (no branch)"))?;
+        let Some(upstream) = &self.upstream else {
+            return Ok(());
+        };
+        write!(out, "...{}", upstream.name)?;
+        match upstream.distance {
+            None => out.write_str(" [gone]"),
+            Some(Distance {
+                ahead: 0,
+                behind: 0,
+            }) => Ok(()),
+            Some(Distance { ahead, behind: 0 }) => {
+                write!(out, " [ahead {ahead}]")
+            }
+            Some(Distance { ahead: 0, behind }) => {
+                write!(out, " [behind {behind}]")
+            }
+            Some(Distance { ahead, behind }) => {
+                write!(out, " [ahead {ahead}, behind {behind}]")
+            }
+        }
+    }
+}
+
 /// What `home repos` says: each project's checkouts here and their state,
-/// from what `git status --porcelain --branch` printed in each, `None`
-/// where it failed.
+/// `None` where Git couldn't tell it.
 #[must_use]
 pub fn report(
     placed: &[Placed],
-    states: &BTreeMap<String, Option<String>>,
+    states: &BTreeMap<String, Option<Checkout>>,
 ) -> String {
     placed
         .iter()
@@ -103,9 +223,14 @@ pub fn report(
                 .iter()
                 .map(|path| {
                     let state =
-                        states.get(path).cloned().flatten().map_or_else(
+                        states.get(path).and_then(Option::as_ref).map_or_else(
                             || String::from("git status failed"),
-                            |porcelain| state(&porcelain),
+                            |state| match state.changed {
+                                0 => state.to_string(),
+                                changed => {
+                                    format!("{state}  [{changed} changed]")
+                                }
+                            },
                         );
                     format!("{name:<22} {path}: {state}\n")
                 })
@@ -117,20 +242,6 @@ pub fn report(
             }
         })
         .collect()
-}
-
-/// A checkout's branch, how far it is from its upstream, and how many of
-/// its files changed.
-fn state(porcelain: &str) -> String {
-    let mut lines = porcelain.lines();
-    let head = lines.next().unwrap_or_default();
-    let branch = head.strip_prefix("## ").unwrap_or(head);
-    let changed = lines.filter(|line| !line.is_empty()).count();
-    if changed == 0 {
-        String::from(branch)
-    } else {
-        format!("{branch}  [{changed} changed]")
-    }
 }
 
 /// Why folders of the home's `projects/` aren't projects, as `home repos`
