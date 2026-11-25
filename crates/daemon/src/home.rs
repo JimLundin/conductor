@@ -44,14 +44,12 @@ use home::{
     IssueId, ProjectId,
 };
 use home::{Found, Stored};
-use home_files::FolderStore;
 use home_store::CanvasStore;
 use host::registry::InHome;
 use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
-use link::serve::CanvasLookup;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -63,7 +61,6 @@ const PULL_INTERVAL: Duration = Duration::from_secs(300);
 const PULL_RETRY_SECONDS: u64 = 30;
 
 /// Where the host keeps its home, and where it looks for checkouts.
-#[derive(Debug, Clone)]
 pub struct Homing {
     /// The host's name, which signs the notes it writes.
     pub host: String,
@@ -76,6 +73,7 @@ pub struct Homing {
     /// The user's home, whose harness folders take the home's skills each
     /// time the clone moves; `None` installs none.
     pub user: Option<PathBuf>,
+    pub canvases: Box<dyn CanvasStore + Send + core::marker::Sync>,
 }
 
 #[derive(Debug, Clone)]
@@ -344,6 +342,7 @@ impl Actor {
             remote,
             roots,
             user,
+            canvases,
         } = homing;
         let stored_at = data_dir.join("home.state");
         let stored: Stored = load(&stored_at);
@@ -352,7 +351,7 @@ impl Actor {
         let _ = std::fs::create_dir_all(&clones);
         Self {
             clone: clone_of(&data_dir),
-            canvases: Box::new(FolderStore::new(clone_of(&data_dir))),
+            canvases,
             listed: BTreeMap::new(),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
@@ -504,13 +503,10 @@ impl Actor {
     }
 
     fn canvas(&self, issue: IssueId, name: CanvasName) -> HomeResult {
-        let shown = self.shown.borrow();
-        match link::serve::canvas_lookup(shown.as_ref(), issue, name) {
-            CanvasLookup::Fetch(key) => link::serve::kept_canvas(
-                self.canvases.get(&key).map_err(|error| error.to_string()),
-            ),
-            CanvasLookup::Refused(refusal) => HomeResult::Refused(refusal),
-        }
+        link::serve::canvas_key(self.shown.borrow().as_ref(), issue, name)
+            .map_or_else(HomeResult::Refused, |key| {
+                link::serve::kept_canvas(self.canvases.get(&key))
+            })
     }
 
     async fn pull_now(&mut self) -> HomeResult {
@@ -1340,7 +1336,7 @@ async fn probe(path: &str) -> Option<Probe> {
     )
 }
 
-fn clone_of(data_dir: &Path) -> PathBuf {
+pub fn clone_of(data_dir: &Path) -> PathBuf {
     data_dir.join("home-repo")
 }
 
@@ -1475,7 +1471,12 @@ fn home(result: HomeResult) -> Completion {
 #[cfg(test)]
 mod tests {
     use super::{Actor, Destination, Homing, clone, remote_branch, run, text};
+    use home::canvas::{
+        Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
+    };
     use home::issue::Remote;
+    use home::{HomeRefusal, HomeResult, IssueId, ProjectId};
+    use home_store::{CanvasStore, Memory};
     use std::path::{Path, PathBuf};
     use tokio::sync::watch;
 
@@ -1519,6 +1520,120 @@ mod tests {
             ],
         )
         .await?;
+        Ok(())
+    }
+
+    const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
+    const PROJECT: &str = "7w85je";
+    const DESIGNED: &str = "0v2n8dbb";
+    const BARE: &str = "0v2n8dbc";
+
+    fn written(at: u64, by: &str) -> CanvasFile {
+        CanvasFile {
+            written: at,
+            by: by.to_owned(),
+            canvas: Canvas {
+                title: format!("By {by}"),
+                blocks: Vec::from([Block::Prose {
+                    text: String::from("The host serves it."),
+                }]),
+            },
+        }
+    }
+
+    fn an_issue(issues: &Path, id: &str) -> std::io::Result<()> {
+        std::fs::write(
+            issues.join(format!("{id}.md")),
+            format!(
+                "+++\nid = \"{id}\"\ntitle = \"Draw it\"\nkind = \"task\"\n\
+                 status = \"open\"\ncreated = 2026-11-25T12:00:00Z\n+++\n"
+            ),
+        )
+    }
+
+    #[tokio::test]
+    async fn an_issue_with_two_canvases_is_served_with_both_and_fetches_each()
+    -> Outcome {
+        let scratch = Scratch::new()?;
+        let clone = super::clone_of(&scratch.0);
+        let issues = clone.join("projects").join(PROJECT).join("issues");
+        std::fs::create_dir_all(&issues)?;
+        std::fs::create_dir_all(clone.join("docs/agents"))?;
+        std::fs::write(clone.join("docs/agents/flow.toml"), FLOW)?;
+        std::fs::write(
+            clone.join("projects").join(PROJECT).join("project.toml"),
+            "name = \"conductor\"\ntitle = \"Conductor\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n",
+        )?;
+        an_issue(&issues, DESIGNED)?;
+        an_issue(&issues, BARE)?;
+        let project = ProjectId::parse(PROJECT).ok_or("project id")?;
+        let designed = IssueId::parse(DESIGNED).ok_or("issue id")?;
+        let named = |name: &str| CanvasName::parse(name);
+        let mut store = Memory::default();
+        for (name, at, by) in [
+            ("design", 10, "devbox·claude"),
+            ("a-plan", 20, "laptop·codex"),
+        ] {
+            let key = CanvasKey {
+                project,
+                issue: designed,
+                name: named(name)?,
+            };
+            store.put(&key, &written(at, by))?;
+        }
+        let (shown, watched) = watch::channel(None);
+        let mut actor = Actor::new(
+            Homing {
+                host: String::from("Tests"),
+                data_dir: scratch.0.clone(),
+                remote: Some(String::from("origin")),
+                roots: Vec::new(),
+                user: None,
+                canvases: Box::new(store),
+            },
+            shown,
+        );
+        actor.scan().await;
+        let served = watched.borrow().clone().ok_or("no home was shown")?;
+        let canvases = served
+            .projects
+            .iter()
+            .flat_map(|project| project.issues.iter())
+            .map(|issue| (issue.id.to_string(), issue.canvases.clone()))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            canvases,
+            [
+                (
+                    DESIGNED.to_owned(),
+                    Vec::from([
+                        CanvasEntry {
+                            name: named("a-plan")?,
+                            written: 20,
+                            by: String::from("laptop·codex"),
+                        },
+                        CanvasEntry {
+                            name: named("design")?,
+                            written: 10,
+                            by: String::from("devbox·claude"),
+                        },
+                    ])
+                ),
+                (BARE.to_owned(), Vec::new()),
+            ]
+        );
+        assert_eq!(
+            actor.canvas(designed, named("a-plan")?),
+            HomeResult::Canvas(written(20, "laptop·codex"))
+        );
+        assert_eq!(
+            actor.canvas(designed, named("missing")?),
+            HomeResult::Refused(HomeRefusal::UnknownCanvas)
+        );
+        assert_eq!(
+            actor.canvas(IssueId::new(3, 0), named("design")?),
+            HomeResult::Refused(HomeRefusal::UnknownIssue)
+        );
         Ok(())
     }
 
@@ -1580,6 +1695,7 @@ mod tests {
                 remote: Some(other_url.to_owned()),
                 roots: Vec::new(),
                 user: None,
+                canvases: Box::new(Memory::default()),
             },
             shown,
         );

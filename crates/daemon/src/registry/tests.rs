@@ -138,6 +138,7 @@ impl Fixture {
             remote: None,
             roots: Vec::new(),
             user: None,
+            canvases: Box::new(home_store::Memory::default()),
         });
         let (initialized, _) = watch::channel(false);
         let mut actor =
