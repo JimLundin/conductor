@@ -19,11 +19,12 @@
     "noUnusedParameters": true,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
-    "types": ["node", "vite/client"],
+    "types": ["node"],
     "paths": {
       "#ticket-example": ["../crates/link/ticket.example.json"]
     }
   },
+  "files": ["node_modules/vite/client.d.ts"],
   "include": [
     "src",
     "scripts",
