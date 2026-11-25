@@ -1,29 +1,21 @@
 //! Whether each project's default branch head has a recorded `commit`
-//! pass of every profile it declares, as `home repos` reports it.
+//! pass of every profile it declares, as `home repos --verify` reports it.
 //!
-//! The shell runs `<profile>/check.sh commit --verify` from the checkout of the
-//! project that provides the profile.
+//! The shell runs `<profile>/check.sh commit --verify` from the checkout of
+//! the project that provides the profile.
 
 use alloc::collections::BTreeMap;
+use core::fmt;
 
-use super::Placed;
+use super::{Checkout, Placed};
 use crate::prelude::*;
-
-/// What Git printed of a checkout's head.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Head {
-    /// `git rev-parse --short HEAD`.
-    pub commit: Option<String>,
-    /// `git symbolic-ref --short refs/remotes/origin/HEAD`, as
-    /// `origin/<branch>`.
-    pub default: Option<String>,
-}
 
 /// One `--verify` to run: a profile's, on a project's checkout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Verify {
     pub project: String,
     pub profile: String,
+    /// The head's commit, shortened.
     pub commit: String,
     pub checkout: String,
     /// The checkout of the project providing the profile, whose
@@ -31,11 +23,11 @@ pub struct Verify {
     pub standards: String,
 }
 
-/// A `--verify` to run, or why one isn't.
+/// A `--verify` to run, or why a project's passes go unchecked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Verifying {
     Run(Verify),
-    Said(String),
+    Unchecked(Reason),
 }
 
 /// What a `--verify` printed, and whether it passed.
@@ -43,92 +35,283 @@ pub enum Verifying {
 pub struct Ran {
     pub passed: bool,
     pub out: String,
+    pub err: String,
 }
 
-/// The `--verify`s `home repos` runs.
+/// What `home repos --verify` reports.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reason {
+    /// No checkout of the project is level with origin's default branch.
+    NoLevelCheckout {
+        project: String,
+        default: Option<String>,
+    },
+    /// No project provides the profile.
+    NobodyProvides { project: String, profile: String },
+    /// The project providing the profile has no checkout here.
+    ProviderAbsent {
+        project: String,
+        profile: String,
+        provider: String,
+    },
+    /// No checkout of a provider is level with origin's default branch, so
+    /// its check.sh would judge by standards origin doesn't hold.
+    ProviderOff {
+        provider: String,
+        path: String,
+        default: Option<String>,
+    },
+    /// The head lacks a recorded pass of these units.
+    Missing { verify: Verify, units: Vec<String> },
+    /// check.sh failed other than for a missing pass.
+    CheckFailed {
+        project: String,
+        profile: String,
+        why: String,
+    },
+}
+
+impl fmt::Display for Reason {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let at = |default: &Option<String>| {
+            default.as_ref().map_or_else(
+                || String::from("origin's default branch"),
+                |branch| format!("origin/{branch}"),
+            )
+        };
+        match self {
+            Self::NoLevelCheckout { project, default } => writeln!(
+                out,
+                "{project}: no checkout clean at {}, so its recorded passes \
+                 go unchecked",
+                at(default)
+            ),
+            Self::NobodyProvides { project, profile } => writeln!(
+                out,
+                "{project}: nobody provides {profile}, so its recorded \
+                 passes go unchecked"
+            ),
+            Self::ProviderAbsent {
+                project,
+                profile,
+                provider,
+            } => writeln!(
+                out,
+                "{project}: {provider} isn't checked out here, so its \
+                 {profile} passes go unchecked"
+            ),
+            Self::ProviderOff {
+                provider,
+                path,
+                default,
+            } => writeln!(
+                out,
+                "{provider} at {path} isn't clean at {}; fix: bring it level \
+                 with origin",
+                at(default)
+            ),
+            Self::Missing { verify, units } => writeln!(
+                out,
+                "{}: no recorded `commit` pass for {} at {} ({}); fix: run \
+                 `{}/check.sh commit {}` from {}",
+                verify.project,
+                verify.profile,
+                verify.commit,
+                units.join(", "),
+                verify.profile,
+                verify.checkout,
+                verify.standards
+            ),
+            Self::CheckFailed {
+                project,
+                profile,
+                why,
+            } => writeln!(out, "{project}: {profile}/check.sh failed: {why}"),
+        }
+    }
+}
+
+/// The checkouts whose origin default branch [`verifying`] needs: those of
+/// projects that declare or provide profiles.
+#[must_use]
+pub fn asks(placed: &[Placed]) -> Vec<String> {
+    placed
+        .iter()
+        .filter(|project| {
+            !project.profiles.is_empty() || !project.provides.is_empty()
+        })
+        .flat_map(|project| project.checkouts.iter().cloned())
+        .collect()
+}
+
+/// Origin's default branch, from what
+/// `git symbolic-ref --short refs/remotes/origin/HEAD` printed.
+#[must_use]
+pub fn origin_default(symbolic: &str) -> Option<String> {
+    symbolic
+        .trim_end()
+        .strip_prefix("origin/")
+        .filter(|branch| !branch.is_empty())
+        .map(String::from)
+}
+
+/// Where a profile's check.sh runs from, or why it can't.
+enum Provider<'a> {
+    At(&'a str),
+    Not(Reason),
+}
+
+/// The `--verify`s `home repos --verify` runs, or why each project's passes
+/// go unchecked.
 ///
 /// It runs one per profile of each project with profiles and a checkout
-/// here, on its first checkout that is clean at its default branch's head,
-/// from the first checkout of the project providing the profile. `--verify`
-/// keys the working tree, so a checkout
-/// off that head or with changes says nothing of the head. Paths are from
-/// the home at `home`, as [`super::placed`] gives them.
+/// here, on its first checkout level with origin's default branch, from the
+/// first such checkout of the project providing the profile. `--verify`
+/// keys the working tree, so a checkout off that head or with changes says
+/// nothing of the head, and a provider's checkout off it judges by other
+/// standards: while one is, only it is reported. `states` and `defaults`
+/// are by path from the home at `home`, as [`super::placed`] gives them;
+/// `defaults` holds origin's default branch of the checkouts [`asks`]
+/// gives.
 #[must_use]
 pub fn verifying(
     home: &str,
     placed: &[Placed],
-    states: &BTreeMap<String, Option<String>>,
-    heads: &BTreeMap<String, Head>,
+    states: &BTreeMap<String, Option<Checkout>>,
+    defaults: &BTreeMap<String, String>,
 ) -> Vec<Verifying> {
-    placed
+    let verified: Vec<&Placed> = placed
         .iter()
         .filter(|project| {
             !project.profiles.is_empty() && !project.checkouts.is_empty()
         })
+        .collect();
+    let off: Vec<Verifying> = providers(placed, &verified)
+        .filter(|provider| level(provider, states, defaults).is_none())
+        .map(|provider| {
+            Verifying::Unchecked(Reason::ProviderOff {
+                provider: provider.name.clone(),
+                path: joined(
+                    home,
+                    provider
+                        .checkouts
+                        .first()
+                        .map_or(super::HOME, String::as_str),
+                ),
+                default: default_of(provider, defaults),
+            })
+        })
+        .collect();
+    if !off.is_empty() {
+        return off;
+    }
+    verified
+        .into_iter()
         .flat_map(|project| {
             let name = &project.name;
-            let at_head = project.checkouts.iter().find_map(|path| {
-                at_head(states.get(path)?.as_deref()?, heads.get(path)?)
-                    .map(|commit| (path, commit))
-            });
-            let Some((path, commit)) = at_head else {
-                let default = project
-                    .checkouts
-                    .iter()
-                    .find_map(|path| heads.get(path)?.default.as_deref())
-                    .map_or("its default branch", str::trim_end);
-                return Vec::from([Verifying::Said(format!(
-                    "{name}: no checkout clean at {default}, so its \
-                     recorded passes go unchecked\n"
-                ))]);
+            let Some((path, commit)) = level(project, states, defaults) else {
+                return Vec::from([Verifying::Unchecked(
+                    Reason::NoLevelCheckout {
+                        project: name.clone(),
+                        default: default_of(project, defaults),
+                    },
+                )]);
             };
             project
                 .profiles
                 .iter()
                 .map(|profile| {
-                    provider(placed, profile).map_or_else(
-                        || {
-                            Verifying::Said(format!(
-                                "{name}: no project checked out here provides \
-                                 {profile}, so its recorded passes go \
-                                 unchecked\n"
-                            ))
-                        },
-                        |standards| {
-                            Verifying::Run(Verify {
-                                project: name.clone(),
-                                profile: profile.clone(),
-                                commit: commit.clone(),
-                                checkout: joined(home, path),
-                                standards: joined(home, standards),
-                            })
-                        },
-                    )
+                    match provider(placed, name, profile, states, defaults) {
+                        Provider::Not(reason) => Verifying::Unchecked(reason),
+                        Provider::At(standards) => Verifying::Run(Verify {
+                            project: name.clone(),
+                            profile: profile.clone(),
+                            commit: String::from(
+                                commit.get(..7).unwrap_or(commit),
+                            ),
+                            checkout: joined(home, path),
+                            standards: joined(home, standards),
+                        }),
+                    }
                 })
                 .collect()
         })
         .collect()
 }
 
-/// The commit a checkout is at, if it is on its default branch, level with
-/// origin's, with nothing changed or untracked, from what
-/// `git status --porcelain --branch` printed in it.
-fn at_head(porcelain: &str, head: &Head) -> Option<String> {
-    let default = head.default.as_deref()?.trim_end();
-    let (_, branch) = default.split_once('/')?;
-    let mut lines = porcelain.lines().filter(|line| !line.is_empty());
-    let level = lines.next() == Some(&format!("## {branch}...{default}"));
-    (level && lines.next().is_none())
-        .then(|| head.commit.as_deref().map(str::trim_end).map(String::from))
-        .flatten()
+/// A project's first checkout level with origin's default branch, and its
+/// commit.
+fn level<'a>(
+    project: &'a Placed,
+    states: &'a BTreeMap<String, Option<Checkout>>,
+    defaults: &BTreeMap<String, String>,
+) -> Option<(&'a str, &'a str)> {
+    project.checkouts.iter().find_map(|path| {
+        let state = states.get(path)?.as_ref()?;
+        state
+            .is_level(defaults.get(path)?)
+            .then_some((path.as_str(), state.commit.as_deref()?))
+    })
 }
 
-/// The first checkout of the project providing `profile`.
-fn provider<'a>(placed: &'a [Placed], profile: &str) -> Option<&'a String> {
-    placed
+fn default_of(
+    project: &Placed,
+    defaults: &BTreeMap<String, String>,
+) -> Option<String> {
+    project
+        .checkouts
         .iter()
-        .filter(|project| project.provides.iter().any(|name| name == profile))
-        .find_map(|project| project.checkouts.first())
+        .find_map(|path| defaults.get(path))
+        .cloned()
+}
+
+/// The checked-out projects providing a profile `verified` declare.
+fn providers<'a>(
+    placed: &'a [Placed],
+    verified: &[&Placed],
+) -> impl Iterator<Item = &'a Placed> {
+    let declared: Vec<String> = verified
+        .iter()
+        .flat_map(|project| project.profiles.iter().cloned())
+        .collect();
+    placed.iter().filter(move |project| {
+        !project.checkouts.is_empty()
+            && project.provides.iter().any(|name| declared.contains(name))
+    })
+}
+
+/// The level checkout of the first checked-out project providing `profile`.
+fn provider<'a>(
+    placed: &'a [Placed],
+    project: &str,
+    profile: &str,
+    states: &'a BTreeMap<String, Option<Checkout>>,
+    defaults: &BTreeMap<String, String>,
+) -> Provider<'a> {
+    let mut providing = placed
+        .iter()
+        .filter(|candidate| {
+            candidate.provides.iter().any(|name| name == profile)
+        })
+        .peekable();
+    let Some(first) = providing.peek().copied() else {
+        return Provider::Not(Reason::NobodyProvides {
+            project: String::from(project),
+            profile: String::from(profile),
+        });
+    };
+    providing
+        .find_map(|candidate| level(candidate, states, defaults))
+        .map_or_else(
+            || {
+                Provider::Not(Reason::ProviderAbsent {
+                    project: String::from(project),
+                    profile: String::from(profile),
+                    provider: first.name.clone(),
+                })
+            },
+            |(path, _)| Provider::At(path),
+        )
 }
 
 /// A path from the home at `home` as a path anywhere.
@@ -142,42 +325,62 @@ fn joined(home: &str, path: &str) -> String {
     }
 }
 
-/// What `home repos` says of `verify` from how it `ran`, `None` where it
-/// couldn't run: nothing when it passed, else the units without a recorded
-/// pass and the command that runs them.
+/// The text after a summary line's unit and status, when its status is
+/// `FAIL`, with the unit.
+fn failing(line: &str) -> Option<(&str, &str)> {
+    let mut words = line.split_whitespace();
+    let unit = words.next()?;
+    let rest = line.trim_start().strip_prefix(unit)?.trim_start();
+    Some((unit, rest.strip_prefix("FAIL")?.trim_start()))
+}
+
+/// How check.sh's `--verify` starts the line of a unit it fails for having
+/// no recorded pass of a scope.
+const MISSING: &str = "no recorded pass of ";
+
+/// What `home repos --verify` says of `verify` from how it `ran`.
+///
+/// Nothing when it passed; the units without a recorded pass when those
+/// are all that failed; else that check.sh failed, by its first line on
+/// stderr or, without one, its first failing line.
 #[must_use]
-pub fn verdict(verify: &Verify, ran: Option<&Ran>) -> String {
-    let Verify {
-        project,
-        profile,
-        commit,
-        checkout,
-        standards,
-    } = verify;
-    let units = ran.map_or_else(Vec::new, |printed| {
-        printed.out.lines().fold(Vec::new(), |mut units, line| {
-            let mut words = line.split_whitespace();
-            let unit = words.next().unwrap_or_default();
-            if words.next() == Some("FAIL") && !units.contains(&unit) {
-                units.push(unit);
+pub fn verdict(verify: &Verify, ran: &Ran) -> Option<Reason> {
+    if ran.passed {
+        return None;
+    }
+    let failed: Vec<(&str, &str)> =
+        ran.out.lines().filter_map(failing).collect();
+    if !failed.is_empty()
+        && failed.iter().all(|(_, why)| why.starts_with(MISSING))
+    {
+        let units = failed.iter().fold(Vec::new(), |mut units, (unit, _)| {
+            if !units.iter().any(|named: &String| named == unit) {
+                units.push(String::from(*unit));
             }
             units
-        })
-    });
-    match (ran.is_some_and(|printed| printed.passed), units.is_empty()) {
-        (true, _) => String::new(),
-        (false, true) => format!(
-            "{project}: verifying {profile} at {commit} failed without \
-             naming a unit; see `{profile}/check.sh commit --verify \
-             {checkout}` from {standards}\n"
-        ),
-        (false, false) => format!(
-            "{project}: no recorded `commit` pass for {profile} at {commit} \
-             ({}); fix: run `{profile}/check.sh commit {checkout}` from \
-             {standards}\n",
-            units.join(", ")
-        ),
+        });
+        return Some(Reason::Missing {
+            verify: verify.clone(),
+            units,
+        });
     }
+    let first_failing = || {
+        ran.out.lines().find(|line| {
+            failing(line).is_some_and(|(_, why)| !why.starts_with(MISSING))
+        })
+    };
+    let why = ran
+        .err
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .or_else(first_failing)
+        .unwrap_or("it exited without saying why");
+    Some(Reason::CheckFailed {
+        project: verify.project.clone(),
+        profile: verify.profile.clone(),
+        why: String::from(why.trim_end()),
+    })
 }
 
 #[cfg(test)]

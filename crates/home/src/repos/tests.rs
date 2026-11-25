@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use crate::{Draws, ProjectId};
 
 use super::{
-    Fetch, New, Scanning, local, placed, profiles, regenerated, report, scan,
-    sync, table, unmatched, warnings,
+    Checkout, Distance, Fetch, New, Scanning, Upstream, local, placed,
+    profiles, regenerated, report, scan, sync, table, unmatched, warnings,
 };
 use crate::checkout::Probe;
 use crate::project::{Project, parse};
@@ -98,14 +98,99 @@ fn the_report_gives_each_checkout_s_branch_and_changes_by_project_name() {
     let found = placed(&projects, &[repository("alpha", ROOT, None)]);
     let states = BTreeMap::from([(
         String::from("alpha"),
-        Some(String::from(
-            "## main...origin/main [ahead 1]\n M a.rs\n?? b.rs\n",
+        Some(Checkout::parse(
+            "# branch.oid 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\n\
+             # branch.head main\n\
+             # branch.upstream origin/main\n\
+             # branch.ab +1 -0\n\
+             1 .M N... 100644 100644 100644 1a2b 1a2b a.rs\n\
+             ? b.rs\n",
         )),
     )]);
     assert_eq!(
         report(&found, &states),
         "alpha                  alpha: main...origin/main [ahead 1]  [2 changed]\n\
          zeta                   not checked out here\n"
+    );
+}
+
+#[test]
+fn a_checkout_s_state_reads_its_commit_branch_upstream_distance_and_changes() {
+    assert_eq!(
+        Checkout::parse(
+            "# branch.oid 1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b\n\
+             # branch.head main\n\
+             # branch.upstream origin/main\n\
+             # branch.ab +2 -3\n\
+             ? b.rs\n",
+        ),
+        Checkout {
+            commit: Some(String::from(
+                "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
+            )),
+            branch: Some(String::from("main")),
+            upstream: Some(Upstream {
+                name: String::from("origin/main"),
+                distance: Some(Distance {
+                    ahead: 2,
+                    behind: 3
+                }),
+            }),
+            changed: 1,
+        }
+    );
+}
+
+#[test]
+fn a_detached_checkout_without_commits_or_upstream_has_none_of_them() {
+    let state =
+        Checkout::parse("# branch.oid (initial)\n# branch.head (detached)\n");
+    assert_eq!(state, Checkout::default());
+}
+
+#[test]
+fn only_a_clean_checkout_on_the_default_branch_level_with_origin_is_level() {
+    let level = "# branch.oid 1a2b3c4d\n# branch.head main\n\
+                 # branch.upstream origin/main\n# branch.ab +0 -0\n";
+    assert!(Checkout::parse(level).is_level("main"));
+    for off in [
+        "# branch.oid 1a2b3c4d\n# branch.head main\n\
+         # branch.upstream origin/main\n# branch.ab +0 -1\n",
+        "# branch.oid 1a2b3c4d\n# branch.head main\n\
+         # branch.upstream origin/main\n",
+        "# branch.oid 1a2b3c4d\n# branch.head work\n\
+         # branch.upstream origin/work\n# branch.ab +0 -0\n",
+        "# branch.oid 1a2b3c4d\n# branch.head main\n\
+         # branch.upstream fork/main\n# branch.ab +0 -0\n",
+        "# branch.oid 1a2b3c4d\n# branch.head main\n\
+         # branch.upstream origin/main\n# branch.ab +0 -0\n? new.py\n",
+    ] {
+        assert!(!Checkout::parse(off).is_level("main"), "{off}");
+    }
+    assert!(!Checkout::parse(level).is_level("trunk"));
+}
+
+#[test]
+fn a_checkout_s_state_reads_as_git_s_short_status_branch_line() {
+    let said = |porcelain: &str| Checkout::parse(porcelain).to_string();
+    assert_eq!(
+        said(
+            "# branch.oid 1a\n# branch.head main\n\
+              # branch.upstream origin/main\n# branch.ab +1 -2\n"
+        ),
+        "main...origin/main [ahead 1, behind 2]"
+    );
+    assert_eq!(
+        said(
+            "# branch.oid 1a\n# branch.head main\n\
+              # branch.upstream origin/main\n"
+        ),
+        "main...origin/main [gone]"
+    );
+    assert_eq!(said("# branch.oid 1a\n# branch.head main\n"), "main");
+    assert_eq!(
+        said("# branch.oid 1a\n# branch.head (detached)\n"),
+        "HEAD (no branch)"
     );
 }
 

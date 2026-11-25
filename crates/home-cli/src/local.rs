@@ -13,8 +13,8 @@ use home::checkout::{self, Probe};
 use home::flow::command::Local;
 use home::flow::snapshot::Snapshot;
 use home::project::Project;
-use home::repos::verify::{self, Head, Ran, Verify, Verifying};
-use home::repos::{self, New, Placed, Scanning};
+use home::repos::verify::{self, Ran, Verify, Verifying};
+use home::repos::{self, Checkout, New, Placed, Scanning};
 use home_files::git;
 
 /// What doing `local` in the home at `root` says, and its exit code.
@@ -45,7 +45,7 @@ fn ended(done: Result<String, String>) -> (String, u8) {
 /// state of each checkout by its path from the home.
 struct Here {
     placed: Vec<Placed>,
-    states: BTreeMap<String, Option<String>>,
+    states: BTreeMap<String, Option<Checkout>>,
 }
 
 fn here(root: &Path, home: &Snapshot) -> Here {
@@ -53,8 +53,11 @@ fn here(root: &Path, home: &Snapshot) -> Here {
     let states = repos::checkouts(&placed)
         .into_iter()
         .map(|path| {
-            let state =
-                git(&root.join(&path), &["status", "--porcelain", "--branch"]);
+            let state = git(
+                &root.join(&path),
+                &["status", "--porcelain=v2", "--branch"],
+            )
+            .map(|porcelain| Checkout::parse(&porcelain));
             (path, state)
         })
         .collect();
@@ -69,46 +72,49 @@ fn status(home: &Snapshot, here: &Here) -> String {
 /// Each project whose head lacks a recorded pass of its profiles, or why
 /// its passes go unchecked.
 fn verdicts(root: &Path, here: &Here) -> String {
-    let heads = here
-        .states
-        .keys()
-        .map(|path| (path.clone(), head(&root.join(path))))
-        .collect();
-    verify::verifying(&shown(root), &here.placed, &here.states, &heads)
+    let defaults = verify::asks(&here.placed)
         .into_iter()
-        .map(|verifying| match verifying {
-            Verifying::Run(verify) => {
-                verify::verdict(&verify, verified(&verify).as_ref())
-            }
-            Verifying::Said(said) => said,
+        .filter_map(|path| {
+            let symbolic = git(
+                &root.join(&path),
+                &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            )?;
+            Some((path, verify::origin_default(&symbolic)?))
         })
+        .collect();
+    verify::verifying(&shown(root), &here.placed, &here.states, &defaults)
+        .into_iter()
+        .filter_map(|verifying| match verifying {
+            Verifying::Run(verify) => {
+                verify::verdict(&verify, &verified(&verify))
+            }
+            Verifying::Unchecked(reason) => Some(reason),
+        })
+        .map(|reason| reason.to_string())
         .collect()
-}
-
-fn head(at: &Path) -> Head {
-    Head {
-        commit: git(at, &["rev-parse", "--short", "HEAD"]),
-        default: git(
-            at,
-            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-        ),
-    }
 }
 
 /// `<profile>/check.sh commit --verify` from the standards' checkout, which
 /// runs no check.
-fn verified(verify: &Verify) -> Option<Ran> {
+fn verified(verify: &Verify) -> Ran {
     Command::new("bash")
         .arg(format!("{}/check.sh", verify.profile))
         .args(["commit", "--verify", &verify.checkout])
         .current_dir(&verify.standards)
         .stdin(Stdio::null())
         .output()
-        .ok()
-        .map(|output| Ran {
-            passed: output.status.success(),
-            out: String::from_utf8_lossy(&output.stdout).into_owned(),
-        })
+        .map_or_else(
+            |err| Ran {
+                passed: false,
+                out: String::new(),
+                err: format!("bash: {err}"),
+            },
+            |output| Ran {
+                passed: output.status.success(),
+                out: String::from_utf8_lossy(&output.stdout).into_owned(),
+                err: String::from_utf8_lossy(&output.stderr).into_owned(),
+            },
+        )
 }
 
 /// Clones each project with no checkout here, saying each as it goes, so
