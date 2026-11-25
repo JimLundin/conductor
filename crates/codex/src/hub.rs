@@ -166,10 +166,7 @@ pub enum Effect<T, M, C, R, E> {
 
 #[derive(Debug, PartialEq, Eq)]
 enum State<T, M> {
-    /// No server runs: none has started yet, or the last one has gone.
     Down,
-    /// A server is starting, and these asks wait for it. A `stale` one
-    /// started before the credential changed.
     Starting {
         waiting: Vec<Ask<T, M>>,
         stale: bool,
@@ -258,7 +255,6 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    /// Takes the ask on the running server, or waits for one to start.
     fn ask<C, E>(&mut self, ask: Ask<T, M>) -> Vec<Effect<T, M, C, R, E>> {
         match &mut self.state {
             State::Up => Vec::from([take(ask)]),
@@ -284,8 +280,6 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    /// Keeps the credential for the next server. A running one stops, and
-    /// its threads close, saying why; a starting one restarts once up.
     fn configure<C, E>(
         &mut self,
         credential: Option<CodexCredential>,
@@ -312,8 +306,6 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         effects
     }
 
-    /// Takes the waiting asks on the new server, unless it started with an
-    /// old credential, when it is replaced first.
     fn spawned<C, E>(&mut self) -> Vec<Effect<T, M, C, R, E>> {
         match core::mem::replace(&mut self.state, State::Up) {
             State::Starting {
@@ -347,8 +339,6 @@ impl<T, M, R: Clone> Hub<T, M, R> {
         }
     }
 
-    /// Routes the thread's events from now on. A thread opened on a server
-    /// that has gone gets the exit at once.
     fn opened<C, E>(
         &mut self,
         thread: ThreadId,
@@ -431,7 +421,6 @@ impl<T, M, R: Clone> Hub<T, M, R> {
             })
     }
 
-    /// Forgets the server and tells every thread it has gone.
     fn exited<C, E>(&mut self, status: Exit) -> Vec<Effect<T, M, C, R, E>> {
         match self.state {
             State::Up => {
@@ -459,7 +448,6 @@ impl<T, M, R: Clone> Hub<T, M, R> {
     }
 }
 
-/// What the running server does for an ask.
 fn take<T, M, C, R, E>(ask: Ask<T, M>) -> Effect<T, M, C, R, E> {
     match ask {
         Ask::Thread(asked) => Effect::Open(asked),
@@ -536,7 +524,6 @@ mod tests {
         Routed::Codex(CodexEvent::Exited { status: exit() })
     }
 
-    /// A hub whose server runs threads `th_1` on route 1 and `th_2` on 2.
     fn running() -> Hub<u8, char, u16> {
         let mut hub = Hub::new(None);
         let _ = walk(

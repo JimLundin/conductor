@@ -7,11 +7,9 @@ use agents::{Config, HomeKind, Invocation, Profile, Reported, Var};
 use crate::CodexCredential;
 use crate::prelude::*;
 
-/// Our provider's id in `model_providers`.
 const PROVIDER_ID: &str = "conductor";
 /// The variable our provider's `env_key` names, which carries its key.
 pub const KEY_VAR: &str = "CONDUCTOR_CODEX_KEY";
-/// Where a signed-in home keeps its sign-in, which names its account.
 const AUTH_FILE: &str = "auth.json";
 
 /// `codex` with its home.
@@ -124,11 +122,7 @@ fn path(keys: &[&str]) -> Vec<String> {
     keys.iter().copied().map(String::from).collect()
 }
 
-/// `shell_environment_policy.filters`, where our exclude keeps the key out
-/// of every command Codex runs. Codex 0.166 passes variables named like a
-/// key to them by default (`ignore_default_excludes` defaults to true in
-/// `config/src/shell_environment_policy.rs`).
-const FILTERS: [&str; 2] = ["shell_environment_policy", "filters"];
+const SHELL_ENV_FILTERS: [&str; 2] = ["shell_environment_policy", "filters"];
 
 /// What puts `credential`'s provider into a private home's `config.toml`,
 /// or takes ours out for `None`.
@@ -161,9 +155,12 @@ pub fn config_edits(credential: Option<&CodexCredential>) -> Vec<Edit> {
         }
         None => Vec::from([
             Edit::Remove(path(&["model_providers", PROVIDER_ID])),
-            Edit::Remove(path(&[FILTERS[0], FILTERS[1], KEY_VAR])),
-            // Ours was its only filter: a bare header would be left.
-            Edit::RemoveIfEmpty(path(&FILTERS)),
+            Edit::Remove(path(&[
+                SHELL_ENV_FILTERS[0],
+                SHELL_ENV_FILTERS[1],
+                KEY_VAR,
+            ])),
+            Edit::RemoveIfEmpty(path(&SHELL_ENV_FILTERS)),
         ]),
     };
     [base, ours].concat()
@@ -183,7 +180,7 @@ fn provider_edits(name: &str, base_url: &str) -> Vec<Edit> {
             .into(),
         },
         Edit::Set {
-            path: path(&[FILTERS[0], FILTERS[1], KEY_VAR]),
+            path: path(&[SHELL_ENV_FILTERS[0], SHELL_ENV_FILTERS[1], KEY_VAR]),
             value: String::from("exclude"),
         },
         Edit::Set {

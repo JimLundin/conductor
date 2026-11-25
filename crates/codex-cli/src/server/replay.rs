@@ -22,7 +22,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 
 use crate::replay_support::{
-    TestResult, fake_cli_path, fake_codex_dir, fixture,
+    TestResult, committed_fake_cli_path, fake_codex_dir, fixture,
 };
 
 use super::{CodexServer, CodexThread, Error, ServerOptions};
@@ -38,53 +38,39 @@ fn opts() -> ThreadOptions {
     }
 }
 
-/// What the recorder reads events until.
 enum Goal {
-    /// The turn completes. Every event must belong to its thread, and every
-    /// approval is answered with `decision`.
     Turn {
         thread: CodexThread,
         turn: TurnId,
         decision: Decision,
     },
-    /// Every turn in `Recorder::open` completes.
-    Turns,
-    /// The app-server exits.
+    AllOpenTurns,
     Exit,
 }
 
-/// Whether a turn interrupts itself after its first output.
 enum Interrupt {
     Never,
     AfterFirstOutput,
-    /// Leaves the first request open and interrupts the turn instead.
     OnRequest,
     Sent,
 }
 
-/// Whether the recorder has reached its goal.
 enum Progress {
     Playing,
     Done,
 }
 
-/// Collects the event stream as readable lines. Thread ids become `A`, `B`,
-/// ... in order of first appearance; unmapped frames are tallied by method
-/// instead of listed, since deltas and status frames dominate the stream.
 struct Recorder {
     server: CodexServer,
     cwd: PathBuf,
     events: mpsc::Receiver<CodexEvent>,
     goal: Goal,
     interrupt: Interrupt,
-    /// The turns `Goal::Turns` waits on, by thread.
     open: HashMap<ThreadId, TurnId>,
     names: HashMap<ThreadId, char>,
     seen: Vec<String>,
-    /// Each thread's deltas since its last other event, recorded as one line.
     deltas: HashMap<ThreadId, Vec<String>>,
     unknown: BTreeMap<String, usize>,
-    /// Every approval id answered so far.
     answered: Vec<(ThreadId, ApprovalId)>,
 }
 
@@ -119,7 +105,7 @@ impl Recorder {
         Ok(match (&self.goal, received) {
             (Goal::Exit, CodexEvent::Exited { .. }) => Progress::Done,
             (
-                Goal::Turns,
+                Goal::AllOpenTurns,
                 CodexEvent::Thread {
                     thread,
                     event: ThreadEvent::TurnCompleted { turn, .. },
@@ -177,7 +163,7 @@ impl Recorder {
                     _ => Progress::Playing,
                 }
             }
-            (Goal::Exit | Goal::Turns | Goal::Turn { .. }, _) => {
+            (Goal::Exit | Goal::AllOpenTurns | Goal::Turn { .. }, _) => {
                 Progress::Playing
             }
         })
@@ -305,7 +291,7 @@ fn outcome_name(outcome: &TurnOutcome) -> String {
 async fn spawn(name: &str) -> TestResult<Recorder> {
     let cwd = fake_codex_dir(&fixture(name), "driver")?;
     let (server, events) = CodexServer::spawn(ServerOptions {
-        codex_path: fake_cli_path(),
+        codex_path: committed_fake_cli_path(),
         home: Home::User,
         credential: None,
         cwd: cwd.clone(),
@@ -333,7 +319,6 @@ fn captured(cwd: &Path) -> TestResult<Vec<Value>> {
         .collect::<Result<Vec<_>, _>>()?)
 }
 
-/// Starts a turn on `thread` and records it until it completes.
 async fn turn(
     rec: &mut Recorder,
     thread: &CodexThread,
@@ -396,7 +381,7 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     )
     .await?;
     rec.open = HashMap::from([(b.id.clone(), tb), (c.id.clone(), tc)]);
-    rec.until(Goal::Turns, Interrupt::Never).await?;
+    rec.until(Goal::AllOpenTurns, Interrupt::Never).await?;
 
     let again = n0_future::stream::iter(rec.answered.clone())
         .then(|(thread, id)| answer_again(&server, thread, id))
@@ -405,7 +390,7 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
     assert_eq!(server.shutdown().await?.describe(), "exit status: 0");
     rec.until(Goal::Exit, Interrupt::Never).await?;
 
-    assert_eq!(rec.seen, SERVER1_SEEN);
+    assert_eq!(rec.seen, APPROVE_DECLINE_INTERRUPT_AND_TWO_THREADS);
     let replies = captured(&rec.cwd)?
         .into_iter()
         .filter(|line| line.get("id").is_some() && line.get("method").is_none())
@@ -424,17 +409,12 @@ async fn approve_decline_interrupt_and_two_threads() -> TestResult<()> {
             "no open approval with id integer:1",
         ]
     );
-    // Item kinds we do not map (userMessage), reasoning and agentMessage
-    // starts stay Unknown, alongside the frames §7.2 does not ask for.
-    assert_eq!(rec.unknown, server1_unknown());
+    assert_eq!(rec.unknown, server1_unmapped_method_counts());
     Ok(())
 }
 
-/// What `approve_decline_interrupt_and_two_threads` records.
-const SERVER1_SEEN: &[&str] = &[
+const APPROVE_DECLINE_INTERRUPT_AND_TWO_THREADS: &[&str] = &[
     "A started",
-    // 1: approve. The first write fails in the read-only sandbox
-    // without asking; the retry asks.
     "A turn started",
     "A streams [\"I\", \"’ll\", \" create\", \" the\", \" requested\", \" file\", \" with\", \" exactly\", \" that\", \" content\", \".\"]",
     "A says \"I’ll create the requested file with exactly that content.\"",
@@ -447,7 +427,6 @@ const SERVER1_SEEN: &[&str] = &[
     "A streams [\"Created\", \" `\", \"a\", \".txt\", \"`\", \" containing\", \" exactly\", \" `\", \"hello\", \" from\", \" s\", \"2\", \"`.\"]",
     "A says \"Created `a.txt` containing exactly `hello from s2`.\"",
     "A turn completed",
-    // 2: decline.
     "A turn started",
     "A reasons \"\"",
     "A streams [\"I\", \"’ll\", \" request\", \" permission\", \" to\", \" write\", \" `\", \"b\", \".txt\", \"`;\", \" if\", \" it\", \"’s\", \" declined\", \",\", \" I\", \"’ll stop\", \".\"]",
@@ -458,7 +437,6 @@ const SERVER1_SEEN: &[&str] = &[
     "A streams [\"The\", \" request\", \" to\", \" create\", \" `\", \"b\", \".txt\", \"`\", \" was\", \" declined\", \".\"]",
     "A says \"The request to create `b.txt` was declined.\"",
     "A turn completed",
-    // 3: interrupt after the first output, then a normal turn.
     "A turn started",
     "A streams [\"starting\"]",
     "A says \"starting\"",
@@ -467,7 +445,6 @@ const SERVER1_SEEN: &[&str] = &[
     "A streams [\"pong\"]",
     "A says \"pong\"",
     "A turn completed",
-    // 4: two threads with turns in flight on one process.
     "B started",
     "C started",
     "C turn started",
@@ -481,7 +458,7 @@ const SERVER1_SEEN: &[&str] = &[
     "exited exit status: 0",
 ];
 
-fn server1_unknown() -> BTreeMap<String, usize> {
+fn server1_unmapped_method_counts() -> BTreeMap<String, usize> {
     BTreeMap::from([
         ("account/rateLimits/updated".to_owned(), 9),
         ("hook/completed".to_owned(), 3),
@@ -522,7 +499,6 @@ async fn resume_in_a_new_process() -> TestResult<()> {
     assert_eq!(
         rec.seen,
         [
-            // `thread/resume` sends no `thread/started`.
             "A turn started",
             "A streams [\"a\", \".txt\"]",
             "A says \"a.txt\"",
@@ -534,9 +510,6 @@ async fn resume_in_a_new_process() -> TestResult<()> {
     Ok(())
 }
 
-/// A thread started with a chosen effort, which Codex reports back, and a
-/// turn that reasons. The recording goes on to a turn killed mid-run, which
-/// waits here for a `turn/start` nobody sends.
 #[tokio::test]
 async fn chosen_effort_and_reasoning() -> TestResult<()> {
     let mut rec = spawn("server4-chosen-killed.jsonl").await?;
@@ -587,8 +560,6 @@ async fn chosen_effort_and_reasoning() -> TestResult<()> {
     Ok(())
 }
 
-/// Three plan updates, each the whole plan, and a turn started at `high`,
-/// which Codex reports as the thread's effort.
 #[tokio::test]
 async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
     let mut rec = spawn("server8-plan-effort.jsonl").await?;
@@ -649,9 +620,6 @@ async fn plan_and_effort_changed_with_the_turn() -> TestResult<()> {
     Ok(())
 }
 
-/// The recording holds the question's `serverRequest/resolved` until our
-/// answer, so a change to the question's shape in a later pin fails here, as
-/// does a lost feature `warning`.
 #[tokio::test]
 async fn questions_and_accept_for_session() -> TestResult<()> {
     let mut rec = spawn("server3-questions.jsonl").await?;
@@ -732,7 +700,6 @@ fn first_thread_id(fixture: &Path) -> TestResult<String> {
         .to_owned())
 }
 
-/// Each refusal recording has its own directory, even when tests run together.
 fn refusal_options(name: &str, recording: &str) -> TestResult<ServerOptions> {
     let cwd = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/tmp")
@@ -741,7 +708,7 @@ fn refusal_options(name: &str, recording: &str) -> TestResult<ServerOptions> {
     std::fs::create_dir_all(&cwd)?;
     std::fs::write(cwd.join("stdout.jsonl"), recording)?;
     Ok(ServerOptions {
-        codex_path: fake_cli_path(),
+        codex_path: committed_fake_cli_path(),
         home: Home::User,
         credential: None,
         cwd,
@@ -827,7 +794,6 @@ async fn thread_refusal(
         _ => Error::Command(format!("unexpected test method {method}")),
     };
     assert_eq!(error.to_string(), expected);
-    // A later request must retain the same stderr reason after the actor exits.
     if let Error::Refused(_) = error {
         assert_eq!(
             server

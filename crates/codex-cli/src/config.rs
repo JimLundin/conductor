@@ -23,7 +23,7 @@ pub fn write(
     };
     let path = dir.join("config.toml");
     let failed = |err| Error::Command(format!("{}: {err}", path.display()));
-    let text = read(&path).map_err(failed)?;
+    let text = read_or_empty(&path).map_err(failed)?;
     let config = with_provider(&text, credential).map_err(|reason| {
         Error::Command(format!("{}: {reason}", path.display()))
     })?;
@@ -57,8 +57,7 @@ fn replace(
     Ok(())
 }
 
-/// The file's text; a home with none yet has an empty one.
-fn read(path: &Path) -> std::io::Result<String> {
+fn read_or_empty(path: &Path) -> std::io::Result<String> {
     match std::fs::read_to_string(path) {
         Err(err) if err.kind() == ErrorKind::NotFound => Ok(String::new()),
         read => read,
@@ -81,21 +80,23 @@ fn with_provider(
 fn apply(root: &mut Table, edit: Edit) -> Result<(), String> {
     match edit {
         Edit::Remove(path) => {
-            let _ = at(root, &path, false, |table, key| {
+            let _ = edit_nested_key(root, &path, false, |table, key| {
                 table.remove(key);
             });
             Ok(())
         }
         Edit::Set { path, value: text } => {
-            at(root, &path, true, |table, key| {
+            edit_nested_key(root, &path, true, |table, key| {
                 table.insert(key, value(text));
             })
         }
-        Edit::Table { path, entries } => at(root, &path, true, |table, key| {
-            table.insert(key, Item::Table(entries.into_iter().collect()));
-        }),
+        Edit::Table { path, entries } => {
+            edit_nested_key(root, &path, true, |table, key| {
+                table.insert(key, Item::Table(entries.into_iter().collect()));
+            })
+        }
         Edit::RemoveIfEmpty(path) => {
-            let _ = at(root, &path, false, |table, key| {
+            let _ = edit_nested_key(root, &path, false, |table, key| {
                 if table
                     .get(key)
                     .and_then(Item::as_table_like)
@@ -109,9 +110,7 @@ fn apply(root: &mut Table, edit: Edit) -> Result<(), String> {
     }
 }
 
-/// Runs `change` on the table that holds the last key of `path`, if every
-/// table on the way is one.
-fn at(
+fn edit_nested_key(
     root: &mut dyn TableLike,
     path: &[String],
     create: bool,

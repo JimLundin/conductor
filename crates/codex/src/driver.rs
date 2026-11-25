@@ -92,7 +92,6 @@ const FAILURE_TEXT: FailureText = FailureText {
     json: "could not encode or decode a codex message",
 };
 
-/// A Codex request we have not answered yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Open {
     rpc_id: RequestId,
@@ -105,9 +104,7 @@ struct Open {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Server<R> {
     exited: Option<Exit>,
-    /// The server's last stderr line once it has exited, which says why.
     refusal: Option<String>,
-    /// Our requests by JSON-RPC id, with their method and who waits.
     pending: BTreeMap<i64, (String, R)>,
     open: BTreeMap<(ThreadId, ApprovalId), Open>,
     next_id: i64,
@@ -133,7 +130,7 @@ impl<R> Server<R> {
         match input {
             Input::Read(Ok(Some(line))) => self.line(&line),
             Input::Read(Ok(None)) => self.stop(After::Nothing),
-            Input::Read(Err(error)) => logged(
+            Input::Read(Err(error)) => prepend_log(
                 Note::Unreadable {
                     provider: crate::PROVIDER,
                     error,
@@ -186,7 +183,7 @@ impl<R> Server<R> {
                 Vec::from([Effect::Emit(CodexEvent::Thread { thread, event })])
             }
             Inbound::Resolved { thread, rpc_id } => {
-                self.resolved(thread, &rpc_id)
+                self.cancel_if_unanswered(thread, &rpc_id)
             }
             Inbound::Unsupported {
                 rpc_id,
@@ -194,7 +191,7 @@ impl<R> Server<R> {
                 event,
             } => {
                 let message = format!("conductor does not handle {method}");
-                logged(
+                prepend_log(
                     Note::Unsupported {
                         provider: crate::PROVIDER,
                         request: method.clone(),
@@ -207,7 +204,7 @@ impl<R> Server<R> {
                     ),
                 )
             }
-            Inbound::Declined { rpc_id, event } => logged(
+            Inbound::Declined { rpc_id, event } => prepend_log(
                 Note::SecretDeclined {
                     provider: crate::PROVIDER,
                 },
@@ -221,9 +218,7 @@ impl<R> Server<R> {
         }
     }
 
-    /// Codex also resolves requests we answered; only an unanswered one
-    /// means Codex withdrew it.
-    fn resolved<S, E>(
+    fn cancel_if_unanswered<S, E>(
         &mut self,
         thread: ThreadId,
         rpc_id: &RequestId,
@@ -238,8 +233,6 @@ impl<R> Server<R> {
         }
     }
 
-    /// Answers a request we don't serve with an error, which it needs or
-    /// the turn waits forever, then passes on its event.
     fn reject<S, E: fmt::Display>(
         &self,
         rpc_id: RequestId,
@@ -317,15 +310,13 @@ impl<R> Server<R> {
                 )]),
                 Some(open) => {
                     let answered = answer(&open.shape, decision);
-                    self.settle(id, open, answered, reply)
+                    self.answer_or_reopen(id, open, answered, reply)
                 }
             },
         }
     }
 
-    /// Sends the answer, or puts the approval back when the decision didn't
-    /// fit.
-    fn settle<S, E: fmt::Display>(
+    fn answer_or_reopen<S, E: fmt::Display>(
         &mut self,
         id: ApprovalId,
         open: Open,
@@ -333,7 +324,7 @@ impl<R> Server<R> {
         reply: R,
     ) -> Vec<Effect<R, S, E>> {
         match answered {
-            Ok(result) => logged(
+            Ok(result) => prepend_log(
                 Note::Answering {
                     provider: crate::PROVIDER,
                     approval: id.0,
@@ -366,7 +357,7 @@ impl<R> Server<R> {
         then: Then<R>,
     ) -> Vec<Effect<R, S, E>> {
         match (&self.exited, encode(msg)) {
-            (Some(_), _) => failed(then, self.gone()),
+            (Some(_), _) => failed(then, self.exit_failure()),
             (None, Ok(line)) => Vec::from([Effect::Write { line, then }]),
             (None, Err(error)) => failed(then, Failure::Json(error)),
         }
@@ -382,7 +373,6 @@ impl<R> Server<R> {
                 self.pending.insert(id, (method, reply));
                 Vec::new()
             }
-            // The server can't take requests: stop it, and say why.
             (Then::Request { reply, .. }, Err(error)) => {
                 Vec::from([Effect::Stop(After::Protocol((reply, error)))])
             }
@@ -394,8 +384,7 @@ impl<R> Server<R> {
         }
     }
 
-    /// Why a call fails once the server has exited.
-    fn gone<E>(&self) -> Failure<E> {
+    fn exit_failure<E>(&self) -> Failure<E> {
         self.refusal
             .clone()
             .map_or(Failure::Exited, Failure::Refused)
@@ -407,7 +396,6 @@ impl<R> Server<R> {
             .collect()
     }
 
-    /// Fails everything still waiting on the process.
     fn stopped<S, E>(
         &mut self,
         exit: &Exit,
@@ -420,7 +408,7 @@ impl<R> Server<R> {
         let pending = core::mem::take(&mut self.pending);
         pending
             .into_values()
-            .map(|(_, reply)| Effect::Reply(reply, Err(self.gone())))
+            .map(|(_, reply)| Effect::Reply(reply, Err(self.exit_failure())))
             .chain([Effect::Emit(CodexEvent::Exited {
                 status: exit.clone(),
             })])
@@ -445,7 +433,6 @@ impl<R> Server<R> {
     }
 }
 
-/// A write for `then` that could not happen.
 fn failed<R, S, E: fmt::Display>(
     then: Then<R>,
     failure: Failure<E>,
@@ -462,8 +449,7 @@ fn failed<R, S, E: fmt::Display>(
     }
 }
 
-/// `note`, then `effects`.
-fn logged<R, S, E>(
+fn prepend_log<R, S, E>(
     note: Note,
     effects: Vec<Effect<R, S, E>>,
 ) -> Vec<Effect<R, S, E>> {
@@ -884,7 +870,8 @@ mod tests {
         };
         let failure = serde_json::to_value(BTreeMap::from([((1, 2), 0)]))
             .map_or_else(AnswerError::Encode, |_| AnswerError::NotApplicable);
-        let first: Vec<Step> = server.settle(id.clone(), open, Err(failure), 1);
+        let first: Vec<Step> =
+            server.answer_or_reopen(id.clone(), open, Err(failure), 1);
         let again: Vec<Step> =
             server.step(Input::Command(Command::Call(CallRequest::Respond {
                 thread: ThreadId(String::from("th_1")),
