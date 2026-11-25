@@ -1216,6 +1216,134 @@ fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_stat
     Ok(())
 }
 
+fn put_canvas(text: &str) -> Outcome {
+    given(
+        &format!("canvas put {TASK} design"),
+        Given::Text(Ok(String::from(text))),
+    )
+}
+
+fn diagram(nodes: &str, edges: &str) -> String {
+    format!(
+        r#"{{"title": "Design", "blocks": [{{"diagram": {{"nodes": [{nodes}], "edges": [{edges}], "groups": [{{"id": "shell", "label": "Shell"}}]}}}}]}}"#
+    )
+}
+
+fn node(id: &str, label: &str, step: u8) -> String {
+    format!(r#"{{"id": "{id}", "label": "{label}", "step": {step}}}"#)
+}
+
+#[test]
+fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_what_to_change()
+ {
+    let seven = (1..=7)
+        .map(|at| node(&format!("n{at}"), "Part", if at < 4 { 1 } else { 2 }))
+        .collect::<Vec<String>>()
+        .join(", ");
+    let cases = [
+        (
+            diagram(&seven, ""),
+            format!(
+                "home: canvas design of home/{TASK}: step 2 of a diagram shows 7 nodes, over six: split it into steps or diagrams\n"
+            ),
+        ),
+        (
+            diagram(
+                &node(
+                    "core",
+                    "the core decides what every store keeps and how",
+                    1,
+                ),
+                "",
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: the label `the core decides what every store keeps and how` is over eight words: put the detail in prose\n"
+            ),
+        ),
+        (
+            diagram(
+                &[node("core", "Core", 1), node("store", "Store", 1)]
+                    .join(", "),
+                r#"{"from": "core", "to": "store", "label": "this edge label runs on for nine whole words", "step": 1}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: the label `this edge label runs on for nine whole words` is over eight words: put the detail in prose\n"
+            ),
+        ),
+        (
+            diagram(
+                &node("core", "Core", 1),
+                r#"{"from": "core", "to": "store", "step": 1}"#,
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: an edge runs from `core` to `store`, but the diagram has no node `store`: add the node or drop the edge\n"
+            ),
+        ),
+        (
+            diagram(
+                r#"{"id": "folder", "label": "Folder", "group": "core", "step": 1}"#,
+                "",
+            ),
+            format!(
+                "home: canvas design of home/{TASK}: node `folder` is in group `core`, but the diagram has no group `core`: add the group or take the node out of it\n"
+            ),
+        ),
+    ];
+    for (text, said) in cases {
+        let outcome = put_canvas(&text);
+        assert_eq!(
+            (
+                outcome.failed,
+                outcome.output,
+                outcome.writes,
+                outcome.canvases
+            ),
+            (true, said, Vec::new(), Vec::new()),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn a_canvas_show_prints_a_diagram_as_one_flowchart_per_step_each_holding_the_steps_before()
+ {
+    let text = diagram(
+        &[
+            node("core", "Core", 1),
+            node("store", "Store", 1),
+            String::from(
+                r#"{"id": "folder", "label": "Home \"folder\"", "group": "shell", "step": 2}"#,
+            ),
+        ]
+        .join(", "),
+        r#"{"from": "core", "to": "store", "label": "puts", "step": 1},
+           {"from": "store", "to": "folder", "step": 2}"#,
+    );
+    let put = put_canvas(&text);
+    let shown = given(
+        &format!("canvas show {TASK} design"),
+        Given::Canvases(Ok(put
+            .canvases
+            .into_iter()
+            .map(|write| (write.key.name, write.file))
+            .collect())),
+    );
+    assert_eq!(
+        (shown.failed, shown.output.as_str()),
+        (
+            false,
+            "# Design\n\n\
+             ```mermaid\nflowchart LR\n    \
+             n0[\"Core\"]\n    n1[\"Store\"]\n    \
+             n0 -->|\"puts\"| n1\n```\n\n\
+             ```mermaid\nflowchart LR\n    \
+             n0[\"Core\"]\n    n1[\"Store\"]\n    \
+             subgraph g0[\"Shell\"]\n        n2[\"Home #quot;folder#quot;\"]\n    end\n    \
+             n0 -->|\"puts\"| n1\n    n1 --> n2\n```\n"
+        )
+    );
+}
+
 fn blocks(blocks: &str) -> String {
     format!(r#"{{"title": "Where it stands", "blocks": [{blocks}]}}"#)
 }

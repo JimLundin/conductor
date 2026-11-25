@@ -6,6 +6,8 @@ use core::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::wordy;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Statechart {
@@ -33,8 +35,6 @@ pub struct Transition {
     pub event: String,
 }
 
-const MOST_WORDS: usize = 8;
-
 impl Statechart {
     pub(super) fn check(&self) -> Result<(), StatechartError> {
         let known = |id: &str| self.states.iter().any(|state| state.id == id);
@@ -42,7 +42,7 @@ impl Statechart {
             .iter()
             .map(|state| &state.label)
             .chain(self.transitions.iter().map(|transition| &transition.event))
-            .find(|label| label.split_whitespace().count() > MOST_WORDS)
+            .find(|label| wordy(label))
             .map_or(Ok(()), |label| {
                 Err(StatechartError::LongLabel {
                     label: label.clone(),

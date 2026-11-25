@@ -13,12 +13,14 @@ use crate::{IssueId, ProjectId};
 
 mod changes;
 mod code;
+mod diagram;
 mod options;
 mod progress;
 mod statechart;
 
 pub use changes::{Change, ChangeGroup, ChangeKind, ChangesError, Tag};
 pub use code::CodeRef;
+pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
 pub use options::{Choice, OptionsError};
 pub use progress::{Bar, ProgressError, Stretch};
 pub use statechart::{State, Statechart, StatechartError, Transition};
@@ -36,6 +38,7 @@ pub enum Block {
     Prose {
         text: String,
     },
+    Diagram(Diagram),
     Statechart(Statechart),
     Progress {
         label: String,
@@ -77,6 +80,7 @@ impl Block {
     pub fn markdown(&self) -> String {
         match self {
             Self::Prose { text } => format!("{}\n", text.trim()),
+            Self::Diagram(diagram) => diagram.mermaid(),
             Self::Statechart(chart) => chart.mermaid(),
             Self::Progress { label, bar } => progress::markdown(label, bar),
             Self::Options {
@@ -93,6 +97,9 @@ impl Block {
     fn check(&self) -> Result<(), CanvasError> {
         match self {
             Self::Prose { .. } | Self::Code(_) => Ok(()),
+            Self::Diagram(diagram) => {
+                diagram.check().map_err(CanvasError::Diagram)
+            }
             Self::Statechart(chart) => {
                 chart.check().map_err(CanvasError::Statechart)
             }
@@ -137,6 +144,12 @@ impl CanvasFile {
     }
 }
 
+const MOST_WORDS: usize = 8;
+
+fn wordy(label: &str) -> bool {
+    label.split_whitespace().count() > MOST_WORDS
+}
+
 fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
     serde_json::from_str(text).map_err(|error| CanvasError::Json {
         reason: error.to_string(),
@@ -146,6 +159,7 @@ fn decoded<T: DeserializeOwned>(text: &str) -> Result<T, CanvasError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CanvasError {
     Json { reason: String },
+    Diagram(DiagramError),
     Statechart(StatechartError),
     Progress(ProgressError),
     Options(OptionsError),
@@ -156,6 +170,7 @@ impl fmt::Display for CanvasError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Json { reason } => write!(out, "not a canvas: {reason}"),
+            Self::Diagram(error) => error.fmt(out),
             Self::Statechart(error) => error.fmt(out),
             Self::Progress(error) => error.fmt(out),
             Self::Options(error) => error.fmt(out),
