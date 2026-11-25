@@ -1343,3 +1343,154 @@ fn a_canvas_show_prints_a_diagram_as_one_flowchart_per_step_each_holding_the_ste
         )
     );
 }
+
+fn blocks(blocks: &str) -> String {
+    format!(r#"{{"title": "Where it stands", "blocks": [{blocks}]}}"#)
+}
+
+const CHOICES: &str = r#"[{"label": "Home folder", "gets": "history in git", "costs": "a sync per write"}, {"label": "Database", "gets": "queries", "costs": "a server to run"}]"#;
+
+#[test]
+fn a_canvas_put_with_more_done_than_total_a_pick_past_the_options_or_groups_out_of_order_writes_nothing_and_says_what_to_change()
+ {
+    let cases = [
+        (
+            blocks(
+                r#"{"progress": {"label": "Build", "bar": {"count": {"done": 6, "total": 5}}}}"#,
+            ),
+            "`Build` has 6 done of 5: make `done` at most `total`",
+        ),
+        (
+            blocks(
+                r#"{"progress": {"label": "Movie", "bar": {"stretches": [{"label": "Opening", "done": 3, "total": 3}, {"label": "Middle", "done": 5, "total": 4}]}}}"#,
+            ),
+            "`Middle` has 5 done of 4: make `done` at most `total`",
+        ),
+        (
+            blocks(&format!(
+                r#"{{"options": {{"question": "Where?", "options": {CHOICES}, "pick": 2, "why": "it syncs"}}}}"#
+            )),
+            "`pick` is 2, past the last of 2 options: pick one from 0 to 1",
+        ),
+        (
+            blocks(
+                r#"{"options": {"question": "Where?", "options": [], "pick": 0, "why": "it syncs"}}"#,
+            ),
+            "`Where?` has no options: add the choices the pick is made from",
+        ),
+        (
+            blocks(
+                r#"{"changes": {"groups": [{"kind": "wiring", "entries": []}, {"kind": "core", "entries": []}]}}"#,
+            ),
+            "the `core` group comes after `wiring`: order the groups core, wiring, mechanical",
+        ),
+        (
+            blocks(
+                r#"{"changes": {"groups": [{"kind": "core", "entries": []}, {"kind": "core", "entries": []}]}}"#,
+            ),
+            "the `core` group comes twice: merge them into one",
+        ),
+    ];
+    for (text, said) in cases {
+        let outcome =
+            given(&format!("canvas put {TASK} stands"), Given::Text(Ok(text)));
+        assert_eq!(
+            (
+                outcome.failed,
+                outcome.output,
+                outcome.writes,
+                outcome.canvases
+            ),
+            (
+                true,
+                format!("home: canvas stands of home/{TASK}: {said}\n"),
+                Vec::new(),
+                Vec::new()
+            )
+        );
+    }
+}
+
+fn shown(text: &str) -> Result<Outcome, String> {
+    let canvas = Canvas::parse(text).map_err(|error| error.to_string())?;
+    Ok(given(
+        &format!("canvas show {TASK} stands"),
+        Given::Canvases(Ok(Vec::from([(
+            CanvasName::parse("stands").map_err(|error| error.to_string())?,
+            CanvasFile {
+                written: NOW,
+                by: String::from("laptop·claude"),
+                canvas,
+            },
+        )]))),
+    ))
+}
+
+#[test]
+fn a_canvas_show_prints_progress_as_text_bars_with_one_line_per_stretch()
+-> Result<(), String> {
+    let outcome = shown(&blocks(
+        r#"{"progress": {"label": "Build", "bar": {"count": {"done": 4, "total": 10}}}}, {"progress": {"label": "Movie", "bar": {"stretches": [{"label": "Opening", "done": 3, "total": 3}, {"label": "Middle", "done": 2, "total": 4}, {"label": "End", "done": 0, "total": 5}]}}}"#,
+    ))?;
+    assert_eq!(
+        (outcome.failed, outcome.output),
+        (
+            false,
+            String::from(
+                "# Where it stands\n\n\
+                 **Build** `████░░░░░░` 4/10\n\n\
+                 **Movie**\n\n\
+                 - Opening `██████████` 3/3\n\
+                 - Middle `█████░░░░░` 2/4\n\
+                 - End `░░░░░░░░░░` 0/5\n"
+            )
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_show_prints_options_as_a_list_with_the_pick_marked_and_why()
+-> Result<(), String> {
+    let outcome = shown(&blocks(&format!(
+        r#"{{"options": {{"question": "Where do canvases live?", "options": {CHOICES}, "pick": 0, "why": "it syncs with the issues"}}}}"#
+    )))?;
+    assert_eq!(
+        (outcome.failed, outcome.output),
+        (
+            false,
+            String::from(
+                "# Where it stands\n\n\
+                 **Where do canvases live?**\n\n\
+                 - **Home folder** (picked): gets history in git; costs a sync per write\n\
+                 - **Database**: gets queries; costs a server to run\n\n\
+                 Picked **Home folder**: it syncs with the issues\n"
+            )
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn a_canvas_show_prints_changes_as_grouped_lists_with_their_tags_and_code_as_links()
+-> Result<(), String> {
+    let outcome = shown(&blocks(
+        r#"{"changes": {"groups": [{"kind": "core", "entries": [{"code": {"path": "crates/home/src/canvas.rs", "lines": [10, 20]}, "note": "the block type", "tag": "breaking"}, {"code": {"path": "crates/home/src/canvas/progress.rs"}, "note": "the bar"}]}, {"kind": "mechanical", "entries": [{"code": {"path": "crates/home/src/lib.rs", "lines": [3, 3], "commit": "d4a1e852"}, "note": "the export", "tag": "subtle"}]}]}}, {"code": {"path": "crates/home/src/canvas.rs", "lines": [30, 41]}}"#,
+    ))?;
+    assert_eq!(
+        (outcome.failed, outcome.output),
+        (
+            false,
+            String::from(
+                "# Where it stands\n\n\
+                 **Core**\n\n\
+                 - [crates/home/src/canvas.rs:10-20](crates/home/src/canvas.rs#L10-L20): the block type (breaking)\n\
+                 - [crates/home/src/canvas/progress.rs](crates/home/src/canvas/progress.rs): the bar\n\n\
+                 **Mechanical**\n\n\
+                 - [crates/home/src/lib.rs:3 at d4a1e852](crates/home/src/lib.rs#L3): the export (subtle)\n\n\
+                 [crates/home/src/canvas.rs:30-41](crates/home/src/canvas.rs#L30-L41)\n"
+            )
+        )
+    );
+    Ok(())
+}

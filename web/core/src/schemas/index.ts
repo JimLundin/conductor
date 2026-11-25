@@ -149,6 +149,51 @@ const Availability = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "Availability" });
 
+type Stretch = { readonly done: number; readonly label: string; readonly total: number };
+
+const Stretch = Schema.Struct({
+  done: Schema.Number.annotate({ format: "uint64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+  label: Schema.String,
+  total: Schema.Number.annotate({ format: "uint64" })
+    .check(Schema.isInt().annotate({ expected: "an integer" }))
+    .check(
+      Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
+    ),
+}).annotate({ identifier: "Stretch" });
+
+type Bar =
+  | { readonly count: { readonly done: number; readonly total: number } }
+  | { readonly stretches: globalThis.ReadonlyArray<Stretch> };
+
+const Bar = Schema.Union(
+  [
+    Schema.Struct({
+      count: Schema.Struct({
+        done: Schema.Number.annotate({ format: "uint64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        total: Schema.Number.annotate({ format: "uint64" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+      }),
+    }),
+    Schema.Struct({ stretches: Schema.Array(Stretch) }),
+  ],
+  { mode: "oneOf" },
+).annotate({ identifier: "Bar" });
+
 type Edge = {
   readonly from: string;
   readonly label?: string | null;
@@ -239,16 +284,111 @@ const Statechart = Schema.Struct({
   transitions: Schema.Array(Transition),
 }).annotate({ identifier: "Statechart" });
 
+type Choice = { readonly costs: string; readonly gets: string; readonly label: string };
+
+const Choice = Schema.Struct({
+  costs: Schema.String,
+  gets: Schema.String,
+  label: Schema.String,
+}).annotate({ identifier: "Choice" });
+
+type CodeRef = {
+  readonly commit?: string | null;
+  readonly lines?: readonly [number, number] | null;
+  readonly path: string;
+};
+
+const CodeRef = Schema.Struct({
+  commit: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
+  lines: Schema.optionalKey(
+    Schema.Union([
+      Schema.Tuple([
+        Schema.Number.annotate({ format: "uint32" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        Schema.Number.annotate({ format: "uint32" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+      ]),
+      Schema.Null,
+    ]),
+  ),
+  path: Schema.String,
+}).annotate({ identifier: "CodeRef" });
+
+type Tag = "subtle" | "breaking" | "race" | "perf";
+
+const Tag = Schema.Literals(["subtle", "breaking", "race", "perf"]).annotate({ identifier: "Tag" });
+
+type Change = { readonly code: CodeRef; readonly note: string; readonly tag?: Tag | null };
+
+const Change = Schema.Struct({
+  code: CodeRef,
+  note: Schema.String,
+  tag: Schema.optionalKey(Schema.Union([Tag, Schema.Null])),
+}).annotate({ identifier: "Change" });
+
+type ChangeKind = "core" | "wiring" | "mechanical";
+
+const ChangeKind = Schema.Literals(["core", "wiring", "mechanical"]).annotate({
+  identifier: "ChangeKind",
+});
+
+type ChangeGroup = {
+  readonly entries: globalThis.ReadonlyArray<Change>;
+  readonly kind: ChangeKind;
+};
+
+const ChangeGroup = Schema.Struct({ entries: Schema.Array(Change), kind: ChangeKind }).annotate({
+  identifier: "ChangeGroup",
+});
+
 type Block =
   | { readonly prose: { readonly text: string } }
   | { readonly diagram: Diagram }
-  | { readonly statechart: Statechart };
+  | { readonly statechart: Statechart }
+  | { readonly progress: { readonly bar: Bar; readonly label: string } }
+  | {
+      readonly options: {
+        readonly options: globalThis.ReadonlyArray<Choice>;
+        readonly pick: number;
+        readonly question: string;
+        readonly why: string;
+      };
+    }
+  | { readonly changes: { readonly groups: globalThis.ReadonlyArray<ChangeGroup> } }
+  | { readonly code: CodeRef };
 
 const Block = Schema.Union(
   [
     Schema.Struct({ prose: Schema.Struct({ text: Schema.String }) }),
     Schema.Struct({ diagram: Diagram }),
     Schema.Struct({ statechart: Statechart }),
+    Schema.Struct({ progress: Schema.Struct({ bar: Bar, label: Schema.String }) }),
+    Schema.Struct({
+      options: Schema.Struct({
+        options: Schema.Array(Choice),
+        pick: Schema.Number.annotate({ format: "uint" })
+          .check(Schema.isInt().annotate({ expected: "an integer" }))
+          .check(
+            Schema.isGreaterThanOrEqualTo(0).annotate({
+              expected: "a value greater than or equal to 0",
+            }),
+          ),
+        question: Schema.String,
+        why: Schema.String,
+      }),
+    }),
+    Schema.Struct({ changes: Schema.Struct({ groups: Schema.Array(ChangeGroup) }) }),
+    Schema.Struct({ code: CodeRef }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "Block" });
@@ -373,16 +513,16 @@ const Catalog = Schema.Record(Schema.String, ProviderInfo).annotate({
   identifier: "Catalog",
 });
 
-type Change = "Delete" | "Write" | "Edit";
+type Change2 = "Delete" | "Write" | "Edit";
 
-const Change = Schema.Union(
+const Change2 = Schema.Union(
   [
     Schema.Literal("Delete"),
     Schema.Literal("Write").annotate({ description: "The whole file written, new or replaced." }),
     Schema.Literal("Edit").annotate({ description: "Part of an existing file changed." }),
   ],
   { mode: "oneOf" },
-).annotate({ identifier: "Change" });
+).annotate({ identifier: "Change2" });
 
 type ChecklistItem = { readonly done: boolean; readonly text: string };
 
@@ -1598,9 +1738,9 @@ const ToolCallId = Schema.String.annotate({
   identifier: "ToolCallId",
 });
 
-type FileChange = { readonly change: Change; readonly path: string };
+type FileChange = { readonly change: Change2; readonly path: string };
 
-const FileChange = Schema.Struct({ change: Change, path: Schema.String }).annotate({
+const FileChange = Schema.Struct({ change: Change2, path: Schema.String }).annotate({
   description: "One file a tool call changes, and how.",
   identifier: "FileChange",
 });
@@ -2689,6 +2829,7 @@ export {
   Auth,
   AuthToken,
   Availability,
+  Bar,
   Block,
   Canvas,
   CanvasEntry,
@@ -2696,15 +2837,20 @@ export {
   CanvasName,
   Catalog,
   Change,
+  Change2,
+  ChangeGroup,
+  ChangeKind,
   ChecklistChange,
   ChecklistEntry,
   ChecklistItem,
   ChecklistStatus,
   Checkout,
   CheckoutLocation,
+  Choice,
   ClientName,
   Cloning,
   CloseReason,
+  CodeRef,
   Command,
   CommandId,
   CommandResult,
@@ -2814,11 +2960,13 @@ export {
   State,
   Statechart,
   Status,
+  Stretch,
   SubagentActivity,
   SubagentEvent,
   SubagentId,
   SubagentOutcome,
   Subscribe,
+  Tag,
   Ticket,
   ToolCallId,
   ToolKind,

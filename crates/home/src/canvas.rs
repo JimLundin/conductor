@@ -11,10 +11,18 @@ use serde_json::{Map, Value};
 
 use crate::{IssueId, ProjectId};
 
+mod changes;
+mod code;
 mod diagram;
+mod options;
+mod progress;
 mod statechart;
 
+pub use changes::{Change, ChangeGroup, ChangeKind, ChangesError, Tag};
+pub use code::CodeRef;
 pub use diagram::{Diagram, DiagramError, Edge, Group, Node};
+pub use options::{Choice, OptionsError};
+pub use progress::{Bar, ProgressError, Stretch};
 pub use statechart::{State, Statechart, StatechartError, Transition};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -27,9 +35,25 @@ pub struct Canvas {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Block {
-    Prose { text: String },
+    Prose {
+        text: String,
+    },
     Diagram(Diagram),
     Statechart(Statechart),
+    Progress {
+        label: String,
+        bar: Bar,
+    },
+    Options {
+        question: String,
+        options: Vec<Choice>,
+        pick: usize,
+        why: String,
+    },
+    Changes {
+        groups: Vec<ChangeGroup>,
+    },
+    Code(CodeRef),
 }
 
 impl Canvas {
@@ -58,17 +82,39 @@ impl Block {
             Self::Prose { text } => format!("{}\n", text.trim()),
             Self::Diagram(diagram) => diagram.mermaid(),
             Self::Statechart(chart) => chart.mermaid(),
+            Self::Progress { label, bar } => progress::markdown(label, bar),
+            Self::Options {
+                question,
+                options,
+                pick,
+                why,
+            } => options::markdown(question, options, *pick, why),
+            Self::Changes { groups } => changes::markdown(groups),
+            Self::Code(code) => format!("{}\n", code.link()),
         }
     }
 
     fn check(&self) -> Result<(), CanvasError> {
         match self {
-            Self::Prose { .. } => Ok(()),
+            Self::Prose { .. } | Self::Code(_) => Ok(()),
             Self::Diagram(diagram) => {
                 diagram.check().map_err(CanvasError::Diagram)
             }
             Self::Statechart(chart) => {
                 chart.check().map_err(CanvasError::Statechart)
+            }
+            Self::Progress { label, bar } => {
+                progress::check(label, bar).map_err(CanvasError::Progress)
+            }
+            Self::Options {
+                question,
+                options,
+                pick,
+                ..
+            } => options::check(question, options, *pick)
+                .map_err(CanvasError::Options),
+            Self::Changes { groups } => {
+                changes::check(groups).map_err(CanvasError::Changes)
             }
         }
     }
@@ -115,6 +161,9 @@ pub enum CanvasError {
     Json { reason: String },
     Diagram(DiagramError),
     Statechart(StatechartError),
+    Progress(ProgressError),
+    Options(OptionsError),
+    Changes(ChangesError),
 }
 
 impl fmt::Display for CanvasError {
@@ -123,6 +172,9 @@ impl fmt::Display for CanvasError {
             Self::Json { reason } => write!(out, "not a canvas: {reason}"),
             Self::Diagram(error) => error.fmt(out),
             Self::Statechart(error) => error.fmt(out),
+            Self::Progress(error) => error.fmt(out),
+            Self::Options(error) => error.fmt(out),
+            Self::Changes(error) => error.fmt(out),
         }
     }
 }
