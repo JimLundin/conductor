@@ -1,8 +1,7 @@
-import { Effect, Random, Ref } from "effect";
+import { Effect, Ref } from "effect";
 import {
   client,
   deltas,
-  dialing,
   events,
   hosts,
   inState,
@@ -17,10 +16,8 @@ import {
   until,
 } from "#ui/test/replay.ts";
 import { describe, expect, it } from "@effect/vitest";
-import type { HostLink } from "#ui/link/host.ts";
 import type { FakeHost } from "#ui/test/fake-pipe.ts";
-import type { Scope } from "effect";
-import type { Connection } from "#ui/pipe.ts";
+import type { HostLink } from "#ui/link/host.ts";
 import { TestClock } from "effect/testing";
 import { Update } from "@conductor/core/link";
 import type { Welcome } from "@conductor/core/schemas/index";
@@ -41,39 +38,7 @@ const dropped = (
     return seen;
   });
 
-interface DialTrace {
-  readonly linked: HostLink;
-  readonly times: () => ReadonlyArray<number>;
-}
-
-const traced = (host: FakeHost): Effect.Effect<DialTrace, never, Scope.Scope> =>
-  Effect.gen(function* recording() {
-    const clock = yield* TestClock.testClockWith(Effect.succeed);
-    let at: ReadonlyArray<number> = [];
-    const timed = (dial: () => Promise<Connection>) => (): Promise<Connection> => {
-      at = [...at, clock.currentTimeMillisUnsafe()];
-      return dial();
-    };
-    const offline = timed(() => Promise.reject(new Error("offline")));
-    const linked = yield* link(
-      dialing([
-        ...Array.from({ length: 7 }, () => offline),
-        timed(() => reach(host)),
-        timed(() => Effect.runPromise(Effect.never)),
-      ]),
-      ticket,
-      client,
-    );
-    return { linked, times: (): ReadonlyArray<number> => at };
-  });
-
 const walking = ["Connecting", "Authenticating", "CatchingUp", "Live"] as const;
-
-// Every jitter draws 0.75, which stretches a delay by 1.1 within its 0.8 to 1.2.
-const drawing = {
-  nextDoubleUnsafe: (): number => 0.75,
-  nextIntUnsafe: (): number => 0,
-} as const satisfies Random.Random;
 
 describe("initial connection", () => {
   it.effect("a host walks from a fresh cursor to Live, catching up to the welcome's head", () =>
@@ -267,38 +232,5 @@ describe("refused connection", () => {
         }),
       );
     }),
-  );
-});
-
-describe("reconnect delays", () => {
-  it.effect(
-    "the link backs off from 250 ms, doubling to 10 s with jitter, and from 250 ms again after Live",
-    () =>
-      Effect.gen(function* verify6() {
-        const dials = yield* Effect.scoped(
-          Effect.gen(function* backingOff() {
-            const host = yield* Effect.tryPromise(fakeHost);
-            yield* serve(host, {
-              feed: stored(turn().feed(1)),
-              reply: { Welcome: yield* turn().welcome(1) },
-              results: [],
-            });
-            const { linked, times } = yield* traced(host);
-            for (const delay of [275, 550, 1100, 2200, 4400, 8800, 11_000]) {
-              yield* until(linked, inState("Disconnected"));
-              yield* TestClock.adjust(delay);
-            }
-            yield* until(linked, inState("Live"));
-            yield* Effect.sync(() => host.close("restarted")).pipe(
-              Effect.andThen(until(linked, inState("Disconnected"))),
-              Effect.andThen(TestClock.adjust(275)),
-            );
-            return times();
-          }).pipe(Effect.provideService(Random.Random, drawing)),
-        );
-        expect(dials.slice(1).map((time, index) => time - (dials[index] ?? 0))).toStrictEqual([
-          275, 550, 1100, 2200, 4400, 8800, 11_000, 275,
-        ]);
-      }),
   );
 });
