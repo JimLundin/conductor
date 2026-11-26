@@ -182,6 +182,26 @@ impl Log {
         Self::start(Core::new(name, epoch, Vec::new()), None)
     }
 
+    #[cfg(test)]
+    pub(crate) fn observe_history_reads(
+        &self,
+    ) -> (Self, tokio::sync::watch::Receiver<usize>) {
+        let (count, reads) = tokio::sync::watch::channel(0);
+        let (inbox, mut messages) = mpsc::channel(64);
+        let log = self.clone();
+        tokio::spawn(async move {
+            while let Some(message) = messages.recv().await {
+                if matches!(message, LogMsg::History { .. }) {
+                    count.send_modify(|reads| *reads += 1);
+                }
+                if log.inbox.send(message).await.is_err() {
+                    break;
+                }
+            }
+        });
+        (Self { inbox }, reads)
+    }
+
     pub fn open(name: String, path: &Path) -> anyhow::Result<Self> {
         let storage = Storage::open(path)?;
         let core = Core::new(name, storage.epoch()?, storage.events()?);

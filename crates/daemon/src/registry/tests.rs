@@ -359,3 +359,5 @@ async fn a_cancelled_refresh_settles_its_availability_and_waiter()
     assert_eq!(current, offers);
     Ok(())
 }
+
+mod restore;

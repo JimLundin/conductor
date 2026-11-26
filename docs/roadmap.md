@@ -4,6 +4,10 @@ What is built and what comes next. Update it in the commit that changes it.
 
 ## Built
 
+- **Provider-started turns.** The app shows Running when a provider starts a
+  turn. Finish refuses while the turn is active. On restart the registry reads
+  the full host log once and interrupts each turn that was still active.
+
 - **Comment policy.** Rust and web sources pass the incoming shared comment
   policy. Public library documentation, safety notes and licence headers stay.
   The home documentation records Windows filesystem constraints.

@@ -1,3 +1,4 @@
+use alloc::collections::BTreeMap;
 use alloc::format;
 
 use crate::log::Event;
@@ -19,18 +20,21 @@ pub struct Created {
     pub choice: Choice,
 }
 
-#[must_use]
-pub fn created(history: &[Event]) -> Vec<Created> {
-    history
-        .iter()
-        .filter_map(|event| match &event.kind {
-            EventKind::SessionCreated {
-                instance,
-                directory,
-                model,
-                effort,
-                ..
-            } => Some(Created {
+pub fn histories(
+    history: Vec<Event>,
+) -> impl Iterator<Item = (Created, Vec<Event>)> {
+    let mut created = Vec::new();
+    let mut sessions = BTreeMap::<SessionId, Vec<Event>>::new();
+    for event in history {
+        if let EventKind::SessionCreated {
+            instance,
+            directory,
+            model,
+            effort,
+            ..
+        } = &event.kind
+        {
+            created.push(Created {
                 session: event.session,
                 instance: instance.clone(),
                 directory: directory.clone(),
@@ -38,10 +42,14 @@ pub fn created(history: &[Event]) -> Vec<Created> {
                     model: model.clone(),
                     effort: *effort,
                 },
-            }),
-            _ => None,
-        })
-        .collect()
+            });
+        }
+        sessions.entry(event.session).or_default().push(event);
+    }
+    created.into_iter().filter_map(move |session| {
+        let events = sessions.remove(&session.session)?;
+        Some((session, events))
+    })
 }
 
 #[must_use]
@@ -78,10 +86,7 @@ pub enum Step {
 pub struct Recovery {
     pub choice: Choice,
     pub talked: bool,
-    pub withdrawn: Vec<RequestId>,
-    pub interrupted: bool,
-    pub snapshot: Option<SnapshotPlan>,
-    pub closed: bool,
+    pub steps: Vec<Step>,
 }
 
 #[must_use]
@@ -94,52 +99,46 @@ pub fn restarted() -> CloseReason {
 impl Recovery {
     #[must_use]
     pub fn of(created: Choice, events: &[Event]) -> Self {
-        let interrupted = turn_running(events.iter());
         Self {
             choice: replay_choice(created, events),
             talked: events.iter().any(|event| {
                 matches!(event.kind, EventKind::UserMessage { .. })
             }),
-            withdrawn: open_requests(events),
-            interrupted,
-            snapshot: interrupted
-                .then(|| Book::replay(events).plan_snapshot())
-                .flatten(),
-            closed: agent_running(events),
+            steps: recovery_steps(events),
         }
-    }
-
-    #[must_use]
-    pub fn steps(&self) -> Vec<Step> {
-        let mut steps = self
-            .withdrawn
-            .iter()
-            .map(|request| {
-                Step::Append(EventKind::RequestResolved {
-                    request: *request,
-                    resolution: Resolution::Withdrawn,
-                })
-            })
-            .collect::<Vec<Step>>();
-        if self.interrupted {
-            if let Some(turn) = &self.snapshot {
-                steps.extend([Step::Barrier, Step::Snapshot(turn.clone())]);
-            }
-            steps.push(Step::Append(EventKind::TurnCompleted {
-                outcome: TurnOutcome::Interrupted,
-            }));
-        }
-        if self.closed {
-            steps.push(Step::Append(EventKind::SessionClosed {
-                reason: restarted(),
-            }));
-        }
-        steps
     }
 }
 
-#[must_use]
-pub fn finish_interrupted(events: &[Event]) -> bool {
+fn recovery_steps(events: &[Event]) -> Vec<Step> {
+    let mut steps = open_requests(events)
+        .into_iter()
+        .map(|request| {
+            Step::Append(EventKind::RequestResolved {
+                request,
+                resolution: Resolution::Withdrawn,
+            })
+        })
+        .collect::<Vec<_>>();
+    if turn_running(events.iter()) {
+        if let Some(turn) = Book::replay(events).plan_snapshot() {
+            steps.extend([Step::Barrier, Step::Snapshot(turn)]);
+        }
+        steps.push(Step::Append(EventKind::TurnCompleted {
+            outcome: TurnOutcome::Interrupted,
+        }));
+    }
+    if agent_running(events) {
+        steps.push(Step::Append(EventKind::SessionClosed {
+            reason: restarted(),
+        }));
+    }
+    if finish_interrupted(events) {
+        steps.push(Step::Append(EventKind::FinishInterrupted));
+    }
+    steps
+}
+
+pub(crate) fn finish_interrupted(events: &[Event]) -> bool {
     events
         .iter()
         .fold(crate::finish::FinishState::Ready, |state, event| {
@@ -221,7 +220,7 @@ mod tests {
     };
     use vcs::{Repository, WorkingCopy, Worktree};
 
-    use super::{Created, Recovery, SnapshotPlan, Step, created, events_of};
+    use super::{Created, Recovery, SnapshotPlan, Step, histories};
     use crate::session::Choice;
 
     fn event(seq: u64, session: u128, kind: EventKind) -> Event {
@@ -295,15 +294,16 @@ mod tests {
             model: None,
             effort: None,
         };
+        let sessions = histories(history).collect::<Vec<_>>();
         assert_eq!(
-            created(&history)
-                .into_iter()
-                .map(|created| created.session)
+            sessions
+                .iter()
+                .map(|(created, _)| created.session)
                 .collect::<Vec<_>>(),
             [SessionId(1), SessionId(2)]
         );
         assert_eq!(
-            created(&history).first(),
+            sessions.first().map(|(created, _)| created),
             Some(&Created {
                 session: SessionId(1),
                 instance: InstanceId::named(
@@ -315,17 +315,14 @@ mod tests {
             })
         );
         assert_eq!(
-            Recovery::of(choice, &events_of(SessionId(1), &history)),
+            Recovery::of(choice, &sessions[0].1),
             Recovery {
                 choice: Choice {
                     model: None,
                     effort: Some(agents::Effort::High),
                 },
                 talked: true,
-                withdrawn: Vec::from([RequestId(2)]),
-                interrupted: true,
-                snapshot: None,
-                closed: true,
+                steps: Vec::from([withdrawn(2), interrupted(), closed()]),
             }
         );
     }
@@ -352,39 +349,55 @@ mod tests {
         })
     }
 
+    fn interrupted() -> Step {
+        Step::Append(EventKind::TurnCompleted {
+            outcome: TurnOutcome::Interrupted,
+        })
+    }
+
+    fn closed() -> Step {
+        Step::Append(EventKind::SessionClosed {
+            reason: super::restarted(),
+        })
+    }
+
     #[test]
     fn a_restart_withdraws_snapshots_interrupts_and_closes_in_order() {
-        let recovery = |snapshot, closed| Recovery {
-            choice: Choice {
-                model: None,
-                effort: None,
-            },
-            talked: true,
-            withdrawn: Vec::from([RequestId(2), RequestId(3)]),
-            interrupted: true,
-            snapshot,
-            closed,
+        let history = [
+            event(1, 1, started()),
+            event(
+                2,
+                1,
+                EventKind::WorkspaceCreated {
+                    workspace: turn().workspace,
+                },
+            ),
+            event(3, 1, EventKind::FinishStarted),
+            event(
+                9,
+                1,
+                EventKind::UserMessage {
+                    text: String::from("summarize"),
+                    by: ClientName(String::from("phone")),
+                },
+            ),
+            event(10, 1, opened(2)),
+            event(11, 1, opened(3)),
+        ];
+        let choice = Choice {
+            model: None,
+            effort: None,
         };
-        let interrupted = Step::Append(EventKind::TurnCompleted {
-            outcome: TurnOutcome::Interrupted,
-        });
         assert_eq!(
+            Recovery::of(choice, &history).steps,
             [
-                recovery(Some(turn()), true).steps(),
-                recovery(None, false).steps()
-            ],
-            [
-                Vec::from([
-                    withdrawn(2),
-                    withdrawn(3),
-                    Step::Barrier,
-                    Step::Snapshot(turn()),
-                    interrupted.clone(),
-                    Step::Append(EventKind::SessionClosed {
-                        reason: super::restarted(),
-                    }),
-                ]),
-                Vec::from([withdrawn(2), withdrawn(3), interrupted]),
+                withdrawn(2),
+                withdrawn(3),
+                Step::Barrier,
+                Step::Snapshot(turn()),
+                interrupted(),
+                closed(),
+                Step::Append(EventKind::FinishInterrupted),
             ]
         );
     }
@@ -449,27 +462,29 @@ mod tests {
             ),
             event(6, 1, user),
         ]);
-        let recovery = |snapshot: Option<SnapshotPlan>| Recovery {
+        let recovery = |steps| Recovery {
             choice: Choice {
                 model: Some(ModelId(String::from("small"))),
                 effort: Some(Effort::Low),
             },
             talked: true,
-            withdrawn: Vec::new(),
-            interrupted: snapshot.is_some(),
-            snapshot,
-            closed: true,
+            steps,
         };
         let none = Choice {
             model: None,
             effort: None,
         };
-        let interrupted = recovery(Some(SnapshotPlan {
-            turn_start: Some(HostSeq(6)),
-            attempt: vcs::command::SnapshotAttempt(String::from("turn-6")),
-            ..turn()
-        }));
-        assert_eq!(Recovery::of(none.clone(), &history), interrupted);
+        let active = recovery(Vec::from([
+            Step::Barrier,
+            Step::Snapshot(SnapshotPlan {
+                turn_start: Some(HostSeq(6)),
+                attempt: vcs::command::SnapshotAttempt(String::from("turn-6")),
+                ..turn()
+            }),
+            interrupted(),
+            closed(),
+        ]));
+        assert_eq!(Recovery::of(none.clone(), &history), active);
         history.push(event(
             7,
             1,
@@ -477,7 +492,7 @@ mod tests {
                 turn_start: Some(HostSeq(6)),
             },
         ));
-        assert_eq!(Recovery::of(none.clone(), &history), interrupted);
+        assert_eq!(Recovery::of(none.clone(), &history), active);
         history.push(event(
             8,
             1,
@@ -485,7 +500,10 @@ mod tests {
                 outcome: TurnOutcome::Completed,
             },
         ));
-        assert_eq!(Recovery::of(none, &history), recovery(None));
+        assert_eq!(
+            Recovery::of(none, &history),
+            recovery(Vec::from([closed()]))
+        );
     }
 
     #[test]
@@ -507,14 +525,10 @@ mod tests {
         assert_eq!(
             Recovery::of(choice.clone(), &events),
             Recovery {
-                choice: choice.clone(),
+                choice,
                 talked: false,
-                withdrawn: Vec::new(),
-                interrupted: false,
-                snapshot: None,
-                closed: false,
+                steps: Vec::new(),
             }
         );
-        assert_eq!(Recovery::of(choice, &events).steps(), Vec::new());
     }
 }

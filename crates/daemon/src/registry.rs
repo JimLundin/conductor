@@ -9,7 +9,7 @@ use host::registry::{
     StartReport, StartRequest, StartSession, StartStep, Started, Starting,
     brief_sent,
 };
-use host::restore::{Created, Recovery, Step, events_of};
+use host::restore::{Created, Recovery, Step};
 
 use agents::{ClientName, Credential, Effort, ModelId, Models, Provider};
 use home::HomeRefusal;
@@ -828,8 +828,8 @@ impl RegistryActor {
 
     async fn restore(&mut self) -> Result<(), Stopped> {
         let history = self.log.history().await?;
-        for created in host::restore::created(&history) {
-            self.restore_session(created, &history).await?;
+        for (created, events) in host::restore::histories(history) {
+            self.restore_session(created, events).await?;
         }
         Ok(())
     }
@@ -837,7 +837,7 @@ impl RegistryActor {
     async fn restore_session(
         &mut self,
         created: Created,
-        history: &[Event],
+        mut events: Vec<Event>,
     ) -> Result<(), Stopped> {
         let Created {
             session: id,
@@ -845,14 +845,9 @@ impl RegistryActor {
             directory,
             choice,
         } = created;
-        let events = events_of(id, history);
         let recovery = Recovery::of(choice, &events);
         let conversation = self.conversation(id, recovery.talked).await?;
-        recover(&self.workspaces, &self.log, id, recovery.steps()).await?;
-        if host::restore::finish_interrupted(&events) {
-            self.log.append(id, EventKind::FinishInterrupted).await?;
-        }
-        let recovered = events_of(id, &self.log.history().await?);
+        self.recover(id, recovery.steps, &mut events).await?;
         let told = self.told(&instance.provider);
         let session = Session::restore(
             id,
@@ -860,10 +855,37 @@ impl RegistryActor {
             recovery.choice,
             told,
             (None, conversation),
-            &recovered,
+            &events,
             self.log.clone(),
         );
         self.core.admit(id, instance, session);
+        Ok(())
+    }
+
+    async fn recover(
+        &self,
+        id: SessionId,
+        steps: Vec<Step>,
+        events: &mut Vec<Event>,
+    ) -> Result<(), Stopped> {
+        for step in steps {
+            let kind = match step {
+                Step::Append(kind) => kind,
+                Step::Barrier => {
+                    self.log.barrier().await?;
+                    continue;
+                }
+                Step::Snapshot(turn) => {
+                    let snapshot = self
+                        .workspaces
+                        .snapshot(&turn.workspace, id, turn.attempt.clone())
+                        .await
+                        .map_err(|err| err.to_string());
+                    turn.snapshotted(snapshot)
+                }
+            };
+            events.push(self.log.record(id, kind).await?);
+        }
         Ok(())
     }
 
@@ -1081,28 +1103,6 @@ fn brief_issue(
             let _ = log.append(id, event).await;
         }
     });
-}
-
-async fn recover(
-    workspaces: &crate::Workspaces,
-    log: &Log,
-    id: SessionId,
-    steps: Vec<Step>,
-) -> Result<(), Stopped> {
-    for step in steps {
-        match step {
-            Step::Append(kind) => log.append(id, kind).await?,
-            Step::Barrier => log.barrier().await?,
-            Step::Snapshot(turn) => {
-                let snapshot = workspaces
-                    .snapshot(&turn.workspace, id, turn.attempt.clone())
-                    .await
-                    .map_err(|err| err.to_string());
-                log.append(id, turn.snapshotted(snapshot)).await?;
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
