@@ -35,9 +35,10 @@ fn finishing(
     let mut workspace = None;
     let mut removed = false;
     let mut running = false;
-    let mut turning = false;
     let mut finish = FinishState::Ready;
-    for event in history.iter().filter(|event| event.session == session) {
+    let events = history.iter().filter(|event| event.session == session);
+    let turning = crate::restore::turn_running(events.clone());
+    for event in events {
         if let Some(active) = crate::restore::agent_activity(&event.kind) {
             running = active;
         }
@@ -46,9 +47,6 @@ fn finishing(
                 workspace = Some(made.clone());
             }
             EventKind::SessionRemoved { .. } => removed = true,
-            EventKind::UserMessage { .. } => turning = true,
-            EventKind::TurnCompleted { .. }
-            | EventKind::SessionClosed { .. } => turning = false,
             _ => {}
         }
         finish = finish.after(&event.kind);
@@ -102,11 +100,7 @@ fn summary(
 
 #[must_use]
 fn turn_ended(event: &Event, session: SessionId) -> bool {
-    event.session == session
-        && matches!(
-            event.kind,
-            EventKind::TurnCompleted { .. } | EventKind::SessionClosed { .. }
-        )
+    event.session == session && event.kind.turn_activity() == Some(false)
 }
 
 #[must_use]

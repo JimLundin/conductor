@@ -845,10 +845,8 @@ impl Session {
         };
         self.conversation = self.agent.conversation();
         let saved = self.conversation.clone().map(Effect::Conversation);
-        let started = self.book.workspace().is_some().then(|| {
-            self.snapshot_event(EventKind::NativeTurnStarted {
-                turn_start: self.turn_start,
-            })
+        let started = self.snapshot_event(EventKind::NativeTurnStarted {
+            turn_start: self.turn_start,
         });
         let before =
             mem::replace(&mut self.turn, Turn::Running(native.clone()));
@@ -866,7 +864,7 @@ impl Session {
             | Turn::Idle
             | Turn::Running(_) => Vec::new(),
         };
-        join(join(saved, started), held)
+        join(saved.into_iter().chain([started]), held)
     }
 
     fn clean(&mut self) -> Vec<Effect> {

@@ -94,7 +94,7 @@ pub fn restarted() -> CloseReason {
 impl Recovery {
     #[must_use]
     pub fn of(created: Choice, events: &[Event]) -> Self {
-        let interrupted = turn_running(events);
+        let interrupted = turn_running(events.iter());
         Self {
             choice: replay_choice(created, events),
             talked: events.iter().any(|event| {
@@ -163,17 +163,12 @@ fn open_requests(events: &[Event]) -> Vec<RequestId> {
         .collect()
 }
 
-fn turn_running(events: &[Event]) -> bool {
+pub(crate) fn turn_running<'a>(
+    events: impl DoubleEndedIterator<Item = &'a Event>,
+) -> bool {
     events
-        .iter()
         .rev()
-        .find_map(|event| match &event.kind {
-            EventKind::UserMessage { .. }
-            | EventKind::NativeTurnStarted { .. } => Some(true),
-            EventKind::TurnCompleted { .. }
-            | EventKind::SessionClosed { .. } => Some(false),
-            _ => None,
-        })
+        .find_map(|event| event.kind.turn_activity())
         .unwrap_or(false)
 }
 
@@ -423,7 +418,7 @@ mod tests {
             text: String::from("edit"),
             by: ClientName(String::from("phone")),
         };
-        let running = Vec::from([
+        let mut history = Vec::from([
             event(1, 1, started()),
             event(
                 2,
@@ -454,17 +449,6 @@ mod tests {
             ),
             event(6, 1, user),
         ]);
-        let finished = running
-            .iter()
-            .cloned()
-            .chain([event(
-                7,
-                1,
-                EventKind::TurnCompleted {
-                    outcome: TurnOutcome::Completed,
-                },
-            )])
-            .collect::<Vec<Event>>();
         let recovery = |snapshot: Option<SnapshotPlan>| Recovery {
             choice: Choice {
                 model: Some(ModelId(String::from("small"))),
@@ -480,22 +464,28 @@ mod tests {
             model: None,
             effort: None,
         };
-        assert_eq!(
-            [
-                Recovery::of(none.clone(), &running),
-                Recovery::of(none, &finished),
-            ],
-            [
-                recovery(Some(SnapshotPlan {
-                    turn_start: Some(HostSeq(6)),
-                    attempt: vcs::command::SnapshotAttempt(String::from(
-                        "turn-6"
-                    )),
-                    ..turn()
-                })),
-                recovery(None),
-            ]
-        );
+        let interrupted = recovery(Some(SnapshotPlan {
+            turn_start: Some(HostSeq(6)),
+            attempt: vcs::command::SnapshotAttempt(String::from("turn-6")),
+            ..turn()
+        }));
+        assert_eq!(Recovery::of(none.clone(), &history), interrupted);
+        history.push(event(
+            7,
+            1,
+            EventKind::NativeTurnStarted {
+                turn_start: Some(HostSeq(6)),
+            },
+        ));
+        assert_eq!(Recovery::of(none.clone(), &history), interrupted);
+        history.push(event(
+            8,
+            1,
+            EventKind::TurnCompleted {
+                outcome: TurnOutcome::Completed,
+            },
+        ));
+        assert_eq!(Recovery::of(none, &history), recovery(None));
     }
 
     #[test]

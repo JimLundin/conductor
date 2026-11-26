@@ -304,6 +304,18 @@ pub enum EventKind {
 }
 
 impl EventKind {
+    pub(crate) const fn turn_activity(&self) -> Option<bool> {
+        match self {
+            Self::UserMessage { .. } | Self::NativeTurnStarted { .. } => {
+                Some(true)
+            }
+            Self::TurnCompleted { .. } | Self::SessionClosed { .. } => {
+                Some(false)
+            }
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub const fn opened_request(&self) -> Option<RequestId> {
         match self {

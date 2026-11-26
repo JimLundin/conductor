@@ -118,6 +118,12 @@ fn turn_started() -> Input {
     Input::Step(Step::TurnStarted(NativeTurn(text("conv"))))
 }
 
+fn turn_after_message(seq: u64) -> Effect {
+    Effect::Emit(EventKind::NativeTurnStarted {
+        turn_start: Some(HostSeq(seq)),
+    })
+}
+
 fn turn_ended() -> Input {
     Input::Step(Step::TurnEnded(TurnOutcome::Completed))
 }
@@ -140,9 +146,9 @@ fn refuse(refusal: SessionRefusal) -> Effect {
     Effect::Reply(SessionResult::Refused(refusal))
 }
 
-fn ready() -> Session {
+fn ready(history: &[Event]) -> Session {
     expect(
-        restored(&[], None),
+        restored(history, None),
         Vec::from([
             (start(), Vec::from([launching("/work", None)])),
             (
@@ -159,12 +165,12 @@ fn ready() -> Session {
 
 fn running() -> Session {
     expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (sent(), Vec::from([saved(), accepted()])),
-            (turn_started(), Vec::from([saved()])),
+            (turn_started(), Vec::from([saved(), turn_after_message(4)])),
         ]),
     )
 }
@@ -191,9 +197,27 @@ fn reply(request: u64, reply: Reply, by: &str) -> Input {
 }
 
 #[test]
+fn a_provider_started_turn_is_recorded_with_or_without_a_workspace() {
+    for history in [&in_workspace()[..], &[]] {
+        let _ = expect(
+            ready(history),
+            Vec::from([(
+                turn_started(),
+                Vec::from([
+                    saved(),
+                    Effect::Emit(EventKind::NativeTurnStarted {
+                        turn_start: None,
+                    }),
+                ]),
+            )]),
+        );
+    }
+}
+
+#[test]
 fn a_turn_runs_from_the_message_to_its_end() {
     let _ = expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (send("hi"), Vec::from([record("hi")])),
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
@@ -202,7 +226,7 @@ fn a_turn_runs_from_the_message_to_its_end() {
                 send("again"),
                 Vec::from([refuse(SessionRefusal::TurnInProgress)]),
             ),
-            (turn_started(), Vec::from([saved()])),
+            (turn_started(), Vec::from([saved(), turn_after_message(4)])),
             (turn_ended(), Vec::from([completed()])),
             (send("next"), Vec::from([record("next")])),
         ]),
@@ -239,15 +263,7 @@ fn a_message_the_agent_never_got_fails_the_turn() {
             (send("again"), Vec::from([record("again")])),
             (Input::Recorded(HostSeq(7)), Vec::from([sending("again")])),
             (sent(), Vec::from([saved(), accepted()])),
-            (
-                turn_started(),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::NativeTurnStarted {
-                        turn_start: Some(HostSeq(7)),
-                    }),
-                ]),
-            ),
+            (turn_started(), Vec::from([saved(), turn_after_message(7)])),
             (
                 turn_ended(),
                 Vec::from([
@@ -506,7 +522,7 @@ fn an_interrupt_before_the_turn_starts_waits_for_it() {
         Input::Agent(Outcome::Interrupted(outcome))
     };
     let _ = expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (
                 interrupt(),
@@ -528,6 +544,7 @@ fn an_interrupt_before_the_turn_starts_waits_for_it() {
                 turn_started(),
                 Vec::from([
                     saved(),
+                    turn_after_message(4),
                     Effect::Trace(
                         "the turn started: sending the held interrupt",
                     ),
@@ -559,7 +576,7 @@ fn an_effort_the_model_takes_applies_from_the_next_turn() {
     };
     let set = |effort| Input::Order(Order::Effort(effort, offered.clone()));
     let _ = expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (
                 set(Effort::High),
@@ -604,7 +621,7 @@ fn an_effort_the_model_takes_applies_from_the_next_turn() {
                 })]),
             ),
             (sent(), Vec::from([saved(), accepted()])),
-            (turn_started(), Vec::from([saved()])),
+            (turn_started(), Vec::from([saved(), turn_after_message(4)])),
             (turn_ended(), Vec::from([completed()])),
             (send("later"), Vec::from([record("later")])),
             (Input::Recorded(HostSeq(8)), Vec::from([sending("later")])),
@@ -758,7 +775,7 @@ fn main_and_child_checklists_replace_their_own_ordered_snapshots() {
         })
     };
     let _ = expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (
                 Input::Step(Step::Checklist(first.clone())),
@@ -1035,15 +1052,7 @@ fn a_turn_whose_snapshot_fails_still_ends_and_logs_why() {
             (Input::Recorded(HostSeq(4)), Vec::from([sending("hi")])),
             (sent(), Vec::from([saved(), accepted()])),
             (start(), Vec::from([accepted()])),
-            (
-                turn_started(),
-                Vec::from([
-                    saved(),
-                    Effect::Emit(EventKind::NativeTurnStarted {
-                        turn_start: Some(HostSeq(4)),
-                    }),
-                ]),
-            ),
+            (turn_started(), Vec::from([saved(), turn_after_message(4)])),
             (start(), Vec::from([accepted()])),
             (
                 turn_ended(),
@@ -1277,7 +1286,7 @@ fn a_failed_shutdown_keeps_the_agent_and_workspace_available_for_retry() {
         ])
     };
     let _ = expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (stop(), Vec::from([agent(Command::Shutdown)])),
             (failed(), no_shutdown()),
@@ -1292,7 +1301,7 @@ fn a_failed_shutdown_keeps_the_agent_and_workspace_available_for_retry() {
 fn a_stop_closes_the_session_between_turns() {
     let stop = || Input::Order(Order::Stop(text("finished")));
     let _ = expect(
-        ready(),
+        ready(&[]),
         Vec::from([
             (stop(), Vec::from([agent(Command::Shutdown)])),
             (

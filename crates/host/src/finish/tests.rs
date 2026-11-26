@@ -1,5 +1,5 @@
 use crate::finish::Finished;
-use crate::log::{Event, HostSeq};
+use crate::log::{Event, HostSeq, Log};
 use crate::registry::InstanceId;
 use crate::session::SessionDirectory;
 use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
@@ -438,12 +438,54 @@ fn a_running_finish_records_acceptance_before_asking_and_recovers_a_lagged_watch
 #[test]
 fn an_active_turn_is_rejected_before_logging_or_asking()
 -> Result<(), &'static str> {
+    let accepted = and(started()?, Vec::from([user(5)]));
+    let native = event(
+        6,
+        EventKind::NativeTurnStarted {
+            turn_start: Some(HostSeq(5)),
+        },
+    );
+    for history in [accepted.clone(), and(accepted, Vec::from([native]))] {
+        let (mut finish, _) = Finish::new(SESSION, client());
+        assert_eq!(
+            finish.step(Input::History(history)),
+            [Effect::Reply(SessionResult::Refused(
+                SessionRefusal::TurnInProgress
+            ))]
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_provider_started_turn_refuses_finish_while_staged_and_after_commit()
+-> Result<(), &'static str> {
+    let mut log = Log::new(started()?);
+    let _ = log.open();
+    let _ =
+        log.append(SESSION, EventKind::NativeTurnStarted { turn_start: None });
+    let staged = log.current_history(SESSION);
+    let _ = log.close();
+    for history in [staged, log.current_history(SESSION)] {
+        let (mut finish, _) = Finish::new(SESSION, client());
+        assert_eq!(
+            finish.step(Input::History(history)),
+            [Effect::Reply(SessionResult::Refused(
+                SessionRefusal::TurnInProgress
+            ))]
+        );
+    }
+    let _ = log.append(
+        SESSION,
+        EventKind::TurnCompleted {
+            outcome: TurnOutcome::Completed,
+        },
+    );
     let (mut finish, _) = Finish::new(SESSION, client());
-    assert_eq!(
-        finish.step(Input::History(and(started()?, Vec::from([user(5)])))),
-        [Effect::Reply(SessionResult::Refused(
-            SessionRefusal::TurnInProgress
-        ))]
+    assert!(
+        finish
+            .step(Input::History(log.current_history(SESSION)))
+            .contains(&Effect::Reply(SessionResult::Accepted))
     );
     Ok(())
 }
