@@ -1,0 +1,100 @@
+{
+  "title": "How Conductor reads a session's turn history",
+  "blocks": [
+    {
+      "diagram": {
+        "nodes": [
+          {
+            "id": "log",
+            "label": "Host event log",
+            "step": 1
+          },
+          {
+            "id": "registry",
+            "label": "Daemon registry",
+            "step": 1
+          },
+          {
+            "id": "history",
+            "label": "Host session history",
+            "step": 2
+          },
+          {
+            "id": "finish",
+            "label": "Finish",
+            "step": 3
+          },
+          {
+            "id": "app",
+            "label": "App session fold",
+            "step": 4
+          }
+        ],
+        "edges": [
+          {
+            "from": "log",
+            "to": "registry",
+            "label": "one startup read",
+            "step": 1
+          },
+          {
+            "from": "registry",
+            "to": "history",
+            "label": "events by session",
+            "step": 2
+          },
+          {
+            "from": "history",
+            "to": "registry",
+            "label": "recovery steps",
+            "step": 2
+          },
+          {
+            "from": "history",
+            "to": "finish",
+            "label": "turn state",
+            "step": 3
+          },
+          {
+            "from": "log",
+            "to": "app",
+            "label": "live or replay",
+            "step": 4
+          }
+        ]
+      }
+    },
+    {
+      "statechart": {
+        "states": [
+          {
+            "id": "idle",
+            "label": "No active turn"
+          },
+          {
+            "id": "active",
+            "label": "Turn active"
+          }
+        ],
+        "start": "idle",
+        "transitions": [
+          {
+            "from": "idle",
+            "to": "active",
+            "event": "User message or provider start"
+          },
+          {
+            "from": "active",
+            "to": "idle",
+            "event": "Turn completes or session closes"
+          }
+        ],
+        "path": [
+          "idle",
+          "active",
+          "idle"
+        ]
+      }
+    }
+  ]
+}
