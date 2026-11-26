@@ -195,12 +195,12 @@ What is built and what comes next. Update it in the commit that changes it.
   reconnects with a jittered backoff and resubscribes after its cursor;
   the one fold of a host's events; and the thin app: pair hosts by join
   link or ticket and forget one, a session list per host with its link
-  state, start a session on a host and instance in a project or directory,
+  state, start a session in a project, issue or Git directory,
   and a session's live transcript with tool cards, where you send, approve
   or deny, answer, stop, continue and finish. Pages builds `web/` with npm.
   The app's Vitest tests replay recorded host feeds in
   `web/fixtures/feeds/`. The screens in this list that the thin app
-  lacks (turn diffs, *Projects*, issues, credentials and sign-ins, fleet
+  lacks (turn diffs, project and issue editing, credential editing and sign-ins, fleet
   invites, *Remove*, checklists, Web Push) are Next, item 6; their *Try*
   steps wait for it. *Try:* add the app from Pages to the iPhone's Home
   Screen, pair two hosts and run a session on each
@@ -211,7 +211,7 @@ What is built and what comes next. Update it in the commit that changes it.
   to each at once. Earlier records are set aside, and those hosts are
   paired again. The list groups sessions by host under each one's name and
   link state, *Hosts* pairs by a join link or ticket and forgets a host,
-  and a new session picks a host, then one of its instances. Pairing a
+  and the start form lists eligible agent accounts with their hosts. Pairing a
   host again replaces its ticket.
 - **The home and its projects** (home steps 3 and 4, architecture §5.4).
   The home repository `JimLundin/home` lists each project in
@@ -366,7 +366,7 @@ Each item ends in something to try. The fleet design is
    the workspace required. *Try:* the host tests build every session with
    its workspace, and that e2e test is gone.
 6. **The rest of the app.** The thin app lacks the Dioxus app's turn
-   diffs, *Projects* and issues, credentials and sign-ins, fleet invites
+   diffs, project and issue editing, credential editing and sign-ins, fleet invites
    and browser device identity, *Remove*, checklists and Web Push; the host
    serves them all already. Bring each back in `web/` as its own spec,
    after T3 Code's designs, with its check in `docs/manual-acceptance.md`.

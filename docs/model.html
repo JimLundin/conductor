@@ -1,239 +1,51 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Conductor: the application model</title>
-<style>
-  :root {
-    --ink: #1d2433; --muted: #5d6677; --line: #8a93a6; --paper: #f6f4ef; --card: #fff; --rule: #ece8df;
-    --fleet: #6b5bd6; --home: #1f8a5b; --host: #c27a12; --log: #2f6fd1; --binary: #8a5a3c;
-    --built: #1f8a5b; --partly: #c27a12; --planned: #8a93a6;
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--paper); }
-  header, section { max-width: 1240px; margin: 0 auto; padding: 0 24px; }
-  header { padding-top: 28px; }
-  h1 { margin: 0 0 4px; font-size: 22px; }
-  h2 { font-size: 16px; margin: 32px 0 10px; }
-  .lede { color: var(--muted); margin: 0 0 16px; max-width: 86ch; }
-  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: 12.5px; color: var(--muted); }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-  .assoc-key { width: 16px; height: 12px; border: 1.5px dashed var(--muted); border-radius: 3px; display: inline-block; }
-  #canvas { position: relative; max-width: 1240px; margin: 0 auto; padding: 64px 24px 40px; }
-  #grid { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 80px 110px; align-items: start; }
-  svg#wires { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; overflow: visible; }
-
-  .entity { background: var(--card); border: 1px solid #d8d4cb; border-top: 4px solid var(--c); border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,.06); overflow: hidden; }
-  .entity.assoc { background: #fbfaf7; border: 1.5px dashed var(--c); }
-  .entity header { padding: 9px 12px 6px; max-width: none; }
-  .entity h3 { margin: 0; font-size: 16px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-  .entity .what { font-size: 12.5px; color: var(--muted); margin-top: 1px; }
-  .entity .where { font-size: 10.5px; color: var(--c); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; margin-top: 3px; }
-  .status { font: 600 10.5px/1 system-ui; padding: 3px 6px; border-radius: 10px; color: #fff; background: var(--s); white-space: nowrap; }
-
-  table.props { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-  table.props td { padding: 3px 12px; border-top: 1px solid var(--rule); vertical-align: top; }
-  table.props td.key { width: 34px; padding-right: 0; font: 600 9.5px/18px ui-monospace, monospace; color: var(--muted); }
-  table.props td.key.pk { color: var(--c); }
-  table.props td.name { font-weight: 600; white-space: nowrap; }
-  table.props td.type { font: 12px/18px ui-monospace, monospace; color: #3b4a6b; text-align: right; }
-  .part { margin: 6px 10px 10px; border: 1px solid var(--rule); border-left: 3px solid var(--c); border-radius: 5px; background: #fcfbf8; }
-  .part .title { font-size: 11px; font-weight: 600; color: var(--muted); padding: 4px 8px 2px; text-transform: uppercase; letter-spacing: .04em; }
-  .part table.props td { padding: 2px 8px; }
-
-  .card { font: 600 12px/1 ui-monospace, monospace; fill: var(--ink); paint-order: stroke; stroke: var(--paper); stroke-width: 5px; }
-  .name { font: italic 11.5px/1 system-ui; fill: var(--muted); paint-order: stroke; stroke: var(--paper); stroke-width: 5px; }
-
-  table.list { border-collapse: collapse; width: 100%; background: var(--card); font-size: 13px; }
-  table.list th, table.list td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--rule); vertical-align: top; }
-  table.list th { background: #efebe2; font-weight: 600; }
-  code { font: 12px ui-monospace, monospace; background: #efebe2; padding: 1px 4px; border-radius: 3px; }
-  .notes li { margin: 4px 0; }
-  footer { max-width: 1240px; margin: 24px auto 40px; padding: 0 24px; color: var(--muted); font-size: 12px; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conductor session model</title>
+  <style>
+    :root { color-scheme: light dark; font: 100%/1.5 system-ui, sans-serif; }
+    body { max-inline-size: 48rem; margin: auto; padding: 2rem 1rem; }
+    h1, h2, h3 { line-height: 1.2; }
+    article, details { padding: 1rem 1.25rem; border: 1px solid GrayText; border-radius: .6rem; }
+    article h2, details h3 { margin-block: 0 .5rem; }
+    p { margin-block: .5rem; }
+    .work { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr)); gap: .75rem; }
+    .session { grid-column: 1 / -1; border-inline-start: .3rem solid Highlight; }
+    details { margin-block: 1.5rem; }
+    summary { cursor: pointer; font-weight: 600; }
+    dt { font-weight: 600; margin-block-start: .75rem; }
+    dd { margin-inline-start: 0; }
+  </style>
 </head>
 <body>
-<header>
-  <h1>Conductor: the application model</h1>
-  <p class="lede">Six entities from the domain, and two relations that carry data of their own (dashed). Each entity lists its properties with their types: <code>PK</code> marks the key (several <code>PK</code> rows make one composite key), <code>UK</code> another unique property, <code>FK</code> a reference, and boxed tables are parts that exist only inside their owner. Line ends show cardinality.</p>
-  <div class="legend">
-    <span><i class="swatch" style="background:var(--fleet)"></i>fleet config (signed)</span>
-    <span><i class="swatch" style="background:var(--home)"></i>home repo (git, shared)</span>
-    <span><i class="swatch" style="background:var(--host)"></i>a node's store</span>
-    <span><i class="swatch" style="background:var(--log)"></i>a node's log</span>
-    <span><i class="swatch" style="background:var(--binary)"></i>the binary</span>
-    <span><i class="assoc-key"></i>relation with data</span>
-    <span><i class="dot" style="background:var(--built)"></i>built</span>
-    <span><i class="dot" style="background:var(--partly)"></i>partly built</span>
-    <span><i class="dot" style="background:var(--planned)"></i>planned</span>
-  </div>
-</header>
-
-<div id="canvas">
-  <svg id="wires" aria-hidden="true"></svg>
-  <div id="grid"></div>
-</div>
-
-<section>
-  <h2>Relationships</h2>
-  <table class="list" id="relations"><thead><tr><th>From</th><th>To</th><th>Cardinality</th><th>Meaning</th></tr></thead><tbody></tbody></table>
-
-  <h2>Value types</h2>
-  <table class="list">
-    <thead><tr><th>Type</th><th>Values</th></tr></thead>
-    <tbody>
-      <tr><td><code>NodeId</code></td><td>a node's public key (32 bytes)</td></tr>
-      <tr><td><code>IssueId</code></td><td>8 base 32 digits: the seconds since 2026 then 2 random, unique across every node</td></tr>
-      <tr><td><code>ProjectId</code></td><td>6 random base 32 digits</td></tr>
-      <tr><td><code>HarnessId</code></td><td><code>claude</code> | <code>codex</code>: one per harness plugin</td></tr>
-      <tr><td><code>IssueStatus</code></td><td><code>Open</code> | <code>Ready</code> | <code>InProgress</code> | <code>Review</code> | <code>Done</code> | <code>Dropped</code></td></tr>
-      <tr><td><code>SessionStatus</code></td><td><code>Starting</code> | <code>Idle</code> | <code>Running</code> | <code>Closed(reason)</code></td></tr>
-      <tr><td><code>Effort</code></td><td><code>Low</code> | <code>Medium</code> | <code>High</code> | …, as the provider offers</td></tr>
-      <tr><td><code>Account</code></td><td>the account a credential belongs to, as the harness and its provider name it: a subscription's signed-in account, an API key's or gateway's own identity</td></tr>
-      <tr><td><code>Credential</code></td><td>a form kind and its field values, as the harness describes them</td></tr>
-      <tr><td><code>Path</code>, <code>Branch</code>, <code>Commit</code></td><td>a path on a node, a git branch name, a git commit id</td></tr>
-    </tbody>
-  </table>
-
-  <h2>Why it's shaped this way</h2>
-  <ul class="notes">
-    <li><b>A session owns its workspace.</b> The workspace is what a session needs to work on its issue: a checkout of the project on the instance's node, on the session's own branch. It is made when the session starts and removed with the session.</li>
-    <li><b>Each turn records a snapshot commit</b> on the session's branch. Unchanged turns may share a commit, and per-turn diffs compare consecutive recorded snapshots.</li>
-    <li><b>A harness is shared</b> by every instance of it; it comes with the binary as plugin data. An instance is one harness on one node with one account, so a node can run the same harness on two accounts, e.g. a subscription and an API key.</li>
-    <li><b>A session is an instance working on an issue</b>, at most one per pair, so two sessions of one instance never race on one issue. The harness's own id for the conversation is the harness's bookkeeping, kept by its plugin in the session's workspace, not part of the model.</li>
-    <li><b>None of the owner's own names is a key.</b> Projects are keyed by ids that never change, so they can be renamed; nodes by their public key. An instance's account is named by its harness and provider, not by the owner, so it is a stable part of the instance's key.</li>
-    <li><b>A project's root commit is unique to it</b> and is how a node recognises its copy whatever the remote or path; it is not the key, because a fork or a templated repository shares it. Its default branch is git's, not the model's.</li>
-    <li><b>A session has its own branch</b>, cut from its issue's branch, because a branch can be checked out in only one place. What a session does reaches the issue by landing its branch on the issue's branch.</li>
-    <li><b>A session is keyed by its issue and its instance</b>; its node and project follow from those, so nothing can disagree.</li>
-    <li><b>Sub-agents are part of a session</b>, like a tool call, so they can't point at another issue. <b>There are no sub-issues.</b></li>
-    <li><b>A node has at most one copy of a project</b>; workspaces are made from it. The home never records where a node keeps it: a node finds it by root commit and remote.</li>
-    <li><b>Pairing and Copy invent no ids</b>: each is keyed by what it relates.</li>
-  </ul>
-
-  <h2>Rules the structure doesn't show</h2>
-  <ul class="notes">
-    <li>Every session belongs to an issue; a quick, unplanned session gets an issue made for it.</li>
-    <li>A session's instance runs on a node that has a copy of its issue's project.</li>
-    <li>Continuing an issue starts a new session from its branch and notes. Select Finish and check that the issue branch was pushed before continuing its landed work on another node with a project checkout.</li>
-  </ul>
-</section>
-<footer>Source of truth: <code>docs/home.md</code>. Keep this page in step with it.</footer>
-
-<script>
-const S = { fleet: "--fleet", home: "--home", host: "--host", log: "--log", binary: "--binary" };
-const where = { fleet: "fleet config", home: "home repo", host: "a node's store", log: "a node's log", binary: "the binary (plugin data)" };
-const tint = { built: "var(--built)", "partly built": "var(--partly)", planned: "var(--planned)" };
-
-// Each property: [key, name, type]. key is "PK", "FK" or "".
-// Each part: [title, [properties]].
-const items = [
-  { id: "Harness", col: 1, row: 1, store: "binary", status: "built", what: "an agent harness: Claude Code, Codex",
-    props: [["PK","id","HarnessId"],["","name","String"],["","version","Version"]],
-    parts: [["credential form *", [["","kind","String"],["","label","String"],["","fields","List<Field>"]]]] },
-  { id: "Instance", col: 2, row: 1, store: "host", status: "built", what: "a harness set up on a node, with one account",
-    props: [["PK","node","NodeId"],["PK","harness","HarnessId"],["PK","account","Account (named by the provider)"],
-            ["","credential","Option<Credential>"],["","model","Option<ModelId>"],["","cli","Option<Path>"]] },
-  { id: "Node", col: 3, row: 1, store: "fleet", status: "partly built", what: "a machine: runs agents, drives others, or both",
-    props: [["PK","id","NodeId"],["","name","String"],["","relay","Url"],["","ticket","Ticket"]] },
-  { id: "Session", col: 2, row: 2, store: "log", status: "built", what: "an instance's agent session on an issue",
-    props: [["PK","issue","IssueId"],["PK","instance","(NodeId, HarnessId, Account)"],
-            ["","status","SessionStatus"],["","model","Option<ModelId>"],["","effort","Option<Effort>"]],
-    parts: [["workspace", [["","path","Path"],["","branch","Branch"],["","base","Commit"]]],
-            ["transcript", [["","events","List<Event>"],["","checklist","List<ChecklistEntry>"],["","requests","List<Request>"],["","sub-agents","List<SubAgent>"]]]] },
-  { id: "Copy", col: 3, row: 2, store: "host", status: "built", what: "a node's copy of a project", assoc: true,
-    props: [["PK","node","NodeId"],["PK","project","ProjectId"],["","path","Path"]] },
-  { id: "Issue", col: 2, row: 3, store: "home", status: "built", what: "a unit of work in a project",
-    props: [["PK","id","IssueId"],["FK","project","ProjectId"],["","title","String"],["","body","Markdown"],
-            ["","status","IssueStatus"],["","priority","Priority"],["","labels","List<String>"],["","branch","Branch"]],
-    parts: [["note *", [["","at","Time"],["","author","String"],["","text","Markdown"]]],
-            ["checklist item *", [["","text","String"],["","done","bool"]]]] },
-  { id: "Project", col: 3, row: 3, store: "home", status: "built", what: "a repository",
-    props: [["PK","id","ProjectId"],["UK","name","String"],["","title","String"],["UK","root","Commit"],["","remote","Option<Url>"],["","profiles","List<String>"]] },
-];
-
-const relations = [
-  ["Harness", "Instance", "1", "*", "the harness an instance runs"],
-  ["Node", "Instance", "1", "*", "the instances a node runs"],
-  ["Node", "Node", "*", "*", "Pairing (node, node): any paired node may drive any other", "loop"],
-  ["Node", "Copy", "1", "*", "the projects a node has a copy of"],
-  ["Copy", "Project", "*", "1", ""],
-  ["Project", "Issue", "1", "*", "the work in a project"],
-  ["Issue", "Session", "1", "*", "its attempts: every agent session on it"],
-  ["Instance", "Session", "1", "*", "at most one session per instance on an issue"],
-];
-
-function rows(props) {
-  return `<table class="props">${props.map(([k, n, t]) =>
-    `<tr><td class="key ${k === "PK" || k === "UK" ? "pk" : ""}">${k}</td><td class="name">${n}</td><td class="type">${t.replace(/</g, "&lt;")}</td></tr>`).join("")}</table>`;
-}
-
-const grid = document.getElementById("grid");
-for (const it of items) {
-  const el = document.createElement("article");
-  el.className = it.assoc ? "entity assoc" : "entity"; el.id = it.id;
-  el.style.gridColumn = it.col; el.style.gridRow = it.row;
-  el.style.setProperty("--c", `var(${S[it.store]})`);
-  el.innerHTML =
-    `<header><h3>${it.id}<span class="status" style="--s:${tint[it.status]}">${it.status}</span></h3>` +
-    `<div class="what">${it.what}</div><div class="where">${it.assoc ? "relation · " : ""}${where[it.store]}</div></header>` +
-    rows(it.props) +
-    (it.parts || []).map(([title, props]) => `<div class="part"><div class="title">${title}</div>${rows(props)}</div>`).join("");
-  grid.appendChild(el);
-}
-
-const body = document.querySelector("#relations tbody");
-for (const [a, b, ca, cb, meaning] of relations) {
-  const tr = document.createElement("tr");
-  tr.innerHTML = `<td>${a}</td><td>${b}</td><td><code>${ca}</code> : <code>${cb}</code></td><td>${meaning}</td>`;
-  body.appendChild(tr);
-}
-
-const svg = document.getElementById("wires");
-const NS = "http://www.w3.org/2000/svg";
-function add(tag, attrs, text) {
-  const el = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
-  if (text !== undefined) el.textContent = text;
-  svg.appendChild(el);
-}
-function box(id) {
-  const c = document.getElementById("canvas").getBoundingClientRect();
-  const r = document.getElementById(id).getBoundingClientRect();
-  return { x: r.left - c.left, y: r.top - c.top, w: r.width, h: r.height,
-           cx: r.left - c.left + r.width / 2, cy: r.top - c.top + Math.min(r.height / 2, 90) };
-}
-function edge(b, tx, ty) {
-  const dx = tx - b.cx, dy = ty - b.cy;
-  const hx = b.w / 2, hy = dy < 0 ? b.cy - b.y : b.y + b.h - b.cy;
-  const s = Math.min(dx ? hx / Math.abs(dx) : Infinity, dy ? hy / Math.abs(dy) : Infinity);
-  return { x: b.cx + dx * s, y: b.cy + dy * s };
-}
-function end(p, q, text) {
-  const len = Math.hypot(q.x - p.x, q.y - p.y) || 1, ux = (q.x - p.x) / len, uy = (q.y - p.y) / len;
-  add("text", { x: p.x + ux * 18 - uy * 11, y: p.y + uy * 18 + ux * 11 + 4, class: "card", "text-anchor": "middle" }, text);
-}
-function draw() {
-  svg.replaceChildren();
-  for (const [a, b, ca, cb, meaning, style] of relations) {
-    const A = box(a);
-    if (style === "loop") {
-      const x1 = A.x + A.w * 0.35, x2 = A.x + A.w * 0.65, y = A.y;
-      add("path", { d: `M ${x1} ${y} v -34 H ${x2} v 34`, fill: "none", stroke: "var(--line)", "stroke-width": 1.5 });
-      add("text", { x: x1 - 8, y: y - 10, class: "card", "text-anchor": "end" }, ca);
-      add("text", { x: x2 + 8, y: y - 10, class: "card" }, cb);
-      add("text", { x: (x1 + x2) / 2, y: y - 42, class: "name", "text-anchor": "middle" }, "Pairing (node, node)");
-      continue;
-    }
-    const B = box(b), p = edge(A, B.cx, B.cy), q = edge(B, A.cx, A.cy);
-    add("line", { x1: p.x, y1: p.y, x2: q.x, y2: q.y, stroke: "var(--line)", "stroke-width": 1.5 });
-    end(p, q, ca); end(q, p, cb);
-  }
-}
-draw();
-addEventListener("resize", draw);
-</script>
+  <main>
+    <h1>Conductor session model</h1>
+    <div class="work">
+      <article class="session">
+        <h2>Session</h2>
+        <p>A conversation with one agent account on one host. Each session has its own ID, workspace and transcript.</p>
+        <p>Start in a Git directory, choose a project, or open an issue. The host takes a snapshot of the workspace before the agent starts and after each turn.</p>
+      </article>
+      <article>
+        <h2>Project</h2>
+        <p>A repository you work in. A project start uses a checkout on the chosen host. You can work in the project without opening an issue.</p>
+      </article>
+      <article>
+        <h2>Issue</h2>
+        <p>A piece of work in a project. Starting on an issue gives the agent its brief and branch. Its notes and published branch let another session pick up the work on a different host.</p>
+      </article>
+    </div>
+    <details>
+      <summary>Host setup</summary>
+      <dl>
+        <dt>Pairing</dt><dd>Pair a device with a host to see its sessions and send it commands.</dd>
+        <dt>Agent accounts</dt><dd>Each host runs the provider CLI with the selected account's credentials. Available accounts and models can differ between hosts.</dd>
+        <dt>Checkout paths</dt><dd>Each host finds its local copies of projects. A session gets an isolated worktree from a checkout.</dd>
+      </dl>
+    </details>
+    <a href="home.md">Projects, issues and sessions across hosts</a>
+  </main>
 </body>
 </html>

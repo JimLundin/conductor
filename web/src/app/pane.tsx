@@ -6,10 +6,13 @@ import { Route } from "@conductor/core/route";
 import { SessionPane } from "#ui/app/session-pane.tsx";
 
 const shown = Route.$match({
-  NewSession: ({ host }) => <NewSessionPane host={host} />,
+  NewSession: ({ host }) => <NewSessionPane directoryHost={host} key={host} />,
   Pairing: () => <Pairing />,
   Session: ({ host, session }) => <SessionPane host={host} session={session} />,
   Sessions: () => <Chosen />,
+  Work: ({ project, issue }) => (
+    <NewSessionPane project={project} issue={issue} key={JSON.stringify([project, issue])} />
+  ),
 });
 
 const Pane: FunctionComponent<{ readonly route: Route }> = ({ route }) => shown(route);

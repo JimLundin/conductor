@@ -10,12 +10,12 @@ interface Props {
 }
 
 const label = "Project";
-const directory = "A directory instead";
+const directory = "Git directory";
 
 const ProjectField: FunctionComponent<Props> = ({ change, choices, value }) => {
   const selected = useCallback<ChangeEventHandler<HTMLSelectElement>>(
     (event: ValueChange) => {
-      change({ project: event.target.value });
+      change({ agent: "", effort: "", issue: "", model: "", project: event.target.value });
     },
     [change],
   );
@@ -24,6 +24,9 @@ const ProjectField: FunctionComponent<Props> = ({ change, choices, value }) => {
       {label}
       <select onChange={selected} value={value}>
         <option value="">{directory}</option>
+        {value !== "" && !choices.some((one) => one.id === value) ? (
+          <option value={value}>{value}</option>
+        ) : undefined}
         {choices.map((choice) => (
           <option key={choice.id} value={choice.id}>
             {choice.title}

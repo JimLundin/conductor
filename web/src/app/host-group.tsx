@@ -7,7 +7,7 @@ import { nameOf } from "@conductor/core/store";
 import { newSessionHref } from "@conductor/core/view/app";
 import { useSessions } from "#ui/use-store.ts";
 
-const start = "New session";
+const start = "Start in directory";
 const empty = "No sessions yet.";
 const none = 0;
 

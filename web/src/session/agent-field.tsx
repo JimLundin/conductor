@@ -9,13 +9,13 @@ interface Props {
   readonly value: string;
 }
 
-const label = "Agent";
+const label = "Agent and host";
 const choose = "Choose an agent";
 
 const AgentField: FunctionComponent<Props> = ({ change, choices, value }) => {
   const selected = useCallback<ChangeEventHandler<HTMLSelectElement>>(
     (event: ValueChange) => {
-      change({ effort: "", instance: event.target.value, model: "" });
+      change({ agent: event.target.value, effort: "", model: "" });
     },
     [change],
   );

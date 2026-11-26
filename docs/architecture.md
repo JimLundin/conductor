@@ -1876,17 +1876,20 @@ imports use `#ui/<path>` and `#transport` names the generated wasm pipe.
   Restoring a saved pairing starts its connection without rewriting the
   record. Storage failures reach the store as typed outcomes.
 - **Routes** (`web/core/src/route.ts`). The screen is the URL fragment, so Pages
-  serves one path: `#/pair`, `#/` (the sessions), `#/host/<host>/new` and
+  serves one path. Use `#/pair` for setup, `#/` for the list, `#/new` for a session,
+  `#/project/<project>` or `#/project/<project>/issue/<issue>` for project work,
+  `#/host/<host>/new` for a directory on one host, and
   `#/host/<host>/session/<id>`. With no host paired every fragment shows
   pairing, and an unknown one shows the sessions.
 - **Screens** (`web/src/app.tsx`, `web/src/session/`):
   - The sidebar: each host under its name and link state, with its last
     error, its sessions most recently active first, each with its open
-    requests or its status, and *New session*.
+    requests or its status. Projects list their issues and link to the start form.
   - Pairing: the join link or ticket field and each paired host with its
-    link state and *Forget*.
-  - New session: a host, one of its instances, one of its projects or a
-    directory, a model and an effort.
+    link state, accounts, checkout paths and *Forget*.
+  - A new session starts in a Git directory, a project, or an issue. The app
+    offers available accounts on connected hosts with the selected work. A
+    single choice appears on the start button. Model and effort are optional.
   - A session: its live transcript with tool cards and sub-agents under
     their call, a dock of its open approvals and questions with one-tap
     answers, and the composer with *Stop*, *Continue* and *Finish* where

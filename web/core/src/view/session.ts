@@ -1,5 +1,6 @@
 import type { Session } from "@conductor/core/fold/session";
 import { SessionStatus } from "@conductor/core/fold/session";
+import { agentLabel } from "#core/session/start";
 import { closeText } from "@conductor/core/session/words";
 import { controls } from "@conductor/core/fold/offers";
 
@@ -38,7 +39,7 @@ const header = (session: Session, host: string): Header => ({
   meta: (
     [
       { name: "host", text: host },
-      { name: "provider", text: session.instance.provider },
+      { name: "provider", text: agentLabel(session.instance.provider, session.instance) },
       { name: "model", text: session.model },
       { name: "effort", text: session.effort },
     ] as const

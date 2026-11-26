@@ -1,8 +1,8 @@
 # The home: projects, issues and sessions across the fleet
 
-Status: design, decisions in §9; §8 says what is built. `docs/model.html`
-draws §2. It extends the fleet plan (architecture §6) with what the fleet
-works *on*.
+The home organizes the projects and issues that sessions work on.
+The [session model](model.html) illustrates their relationships. Sections
+8 and 9 record the original build order and design decisions.
 
 The issue model below is being replaced by the home's flow: kinds,
 statuses, stages and rules declared as data in the home's
@@ -29,86 +29,41 @@ picks up from the branch and the notes.
 
 ## 2. The model
 
-The model names the entities from the domain and how they relate. Nothing
-that can be renamed is a key: entities are keyed by ids that never change,
-and names are ordinary properties, unique where a person refers to them by
-name. Commands and the app take names and look up the id. The rule is for
-the owner's own data: an instance's account is named by its provider, not
-by the owner, so it is part of the instance's key.
+A session is a conversation with an agent on one host. It has its own
+ID, workspace and transcript. Start a session in a Git directory, in a
+project with a checkout on the host, or on an issue in that project.
 
-### 2.1 Entities
+| Work | What it owns |
+|---|---|
+| Project | A repository and its issues. Each host discovers its own checkouts. |
+| Issue | Work that can span sessions. Its branch and notes carry work between hosts and provider accounts. |
+| Session | One agent conversation on one host and provider account, with an isolated worktree and a transcript. |
 
-| Entity | Key | Properties | Parts | Stored in |
-|---|---|---|---|---|
-| Node | `NodeId` (its public key) | name, relay, ticket | home sync state | fleet config |
-| Harness | `HarnessId` (`claude`, `codex`) | name, pinned version | credential forms | the binary (plugin data) |
-| Instance | (node, harness, account) | credential, model, CLI path | | a node's store |
-| Project | 6 random base 32 digits | name (unique), title, root commit (unique), remote, profiles | | home `projects/<id>/project.toml` |
-| Issue | 8 base 32 digits: 6 of time, 2 random | project, title, body, status, priority, labels, branch | notes, checklist | home `projects/<project>/issues/<id>.md` |
-| Session | (issue, instance) | status, model, effort | workspace, transcript | a node's log |
+A directory or project start leaves the session's issue unset. An issue
+start uses the issue branch and sends its brief to the agent. A host
+can have one session assigned to an issue for each provider account.
+Removing that session frees the assignment. Continuing a closed session
+uses the same conversation. Starting on the same issue elsewhere creates
+a new session with its own transcript.
 
-Two relations carry data of their own and are keyed by what they join:
+Each workspace has a session branch. Its initial snapshot and each
+completed turn's snapshot record commits on that branch. Unchanged
+turns can share a commit. Finishing an issue session integrates its
+work into the issue branch and records the summary. Sub-agents, requests
+and agent checklists belong to the session transcript.
 
-| Relation | Key | Properties | Stored in |
-|---|---|---|---|
-| Pairing | (node, node) | | fleet config |
-| Copy | (node, project) | path on the node | a node's store |
+### Host setup
 
-### 2.2 Relationships
+Pairing identifies which hosts the app can reach. On each host, an
+instance is a provider and an account with its own credentials, available
+models and CLI settings. A project checkout path belongs to the host.
+The home identifies the project across hosts by its project ID.
 
-- Node `1` – `*` Instance; Harness `1` – `*` Instance.
-- Node `*` – `*` Node, through Pairing: any paired node may drive any other.
-- Node `*` – `*` Project, through Copy: a node has at most one copy of a
-  project.
-- Project `1` – `*` Issue.
-- Issue `1` – `*` Session, and Instance `1` – `*` Session: a session is one
-  instance working on one issue, at most one per pair, so two sessions of
-  one instance never race on an issue.
+### Lifecycles
 
-A session's node and project follow from its instance and issue, so they
-are never stored and can't disagree.
-
-### 2.3 Parts
-
-- **A session's workspace** is what it needs to work on its issue: a git
-  worktree of the node's copy of the project, on the session's own branch
-  cut from the issue's branch (a branch is checked out in one place at a
-  time). It is made when the session starts and removed with the session;
-  what the session did reaches the issue by landing its branch on the
-  issue's branch. The initial state and each turn's snapshot record a
-  commit on the session's branch. An unchanged turn may reuse the same
-  commit; per-turn diffs compare consecutive recorded snapshots.
-- **A session's transcript** holds its events, checklist, requests and
-  sub-agents. A sub-agent is something an agent does inside its session,
-  like a tool call, so it can't belong to another issue.
-- **The harness's own id for the conversation** (Claude's session id,
-  Codex's thread id) is its plugin's bookkeeping, kept in the session's
-  workspace, not part of the model.
-- **An issue's notes** are an append-only list, its checklist a list of
-  items. There are no sub-issues: work is broken down by a checklist or by
-  several issues.
-
-### 2.4 Rules the structure doesn't show
-
-- Every session belongs to an issue; a quick, unplanned session gets an
-  issue made for it.
-- A session's instance runs on a node that has a copy of its issue's
-  project.
-- Continuing on another instance or node is a new session on the same
-  issue, starting from the issue's branch and notes, not from an earlier
-  transcript.
-- The home never records where a node keeps anything: a node finds its copy
-  of a project by root commit and remote. The root commit identifies the
-  copy but isn't the key, since a fork or a templated repository shares it.
-
-### 2.5 Lifecycles
-
-```
-Issue    as the home's flow declares (docs/agents/flow.toml); by role:
-         idle ─► startable ─► active ─► review ─► terminal
-            └───────────────────────────────────► dropped
-Session  starting ─► idle ⇄ running ─► closed ─► removed (with its workspace)
-```
+The home's flow declares the stages and statuses an issue can move through.
+A session starts, becomes idle and runs turns. After it closes, the owner
+can continue the conversation or remove the session and its workspace.
 
 ## 3. The home repository
 
@@ -187,9 +142,9 @@ role has none, and the branch is then `issue/<id>`.
 
 ## 4. Flows
 
-**Start a session on an issue.** In the app: pick an issue, then a node,
-then one of its instances. The node needs a checkout of the project. Clone
-or otherwise provide one before starting a session. The node creates the
+**Start a session on an issue.** Open the issue in the app and start a session.
+When several host and account combinations qualify, choose one.
+The node needs a checkout of the project. The node creates the
 session's workspace from the issue branch and gives the agent the issue's
 text, checklist, notes and instructions for finishing.
 
@@ -260,9 +215,9 @@ call that started each, a description, its own transcript and status.
 
 - **Several nodes.** The app keeps every paired node and shows each one's
   sessions, instances and availability. Done.
-- **Projects and issues.** A projects view with each project's issues by
-  status; an issue shows its checklist, notes and sessions, with *Start a
-  session* and *Continue elsewhere*.
+- **Projects and issues.** Expand a project in the sidebar to open an issue or
+  start a session in the project. An issue shows its brief and offers the
+  accounts that can start a session on it.
 - **Renaming.** Projects and nodes are renamed, a project by an edit of
   its `project.toml`; a rename changes only the name, never what refers to
   it. An instance isn't renamed: it is its account.
@@ -282,7 +237,7 @@ call that started each, a description, its own transcript and status.
    (architecture §5.4).
 7. Sessions on issues: start, finish, continue elsewhere, with the
    session's branch cut from the issue's and each turn recording a commit
-   (§2.3). Done (architecture §5.3, §5.4). See §4 for the checkout
+   (§2). Done (architecture §5.3, §5.4). See §4 for the checkout
    and publication prerequisites. Unchanged turns may share a commit;
    finishing lands the session's branch on the issue's branch.
 8. Standards and instructions composed into sessions. Done (§5).

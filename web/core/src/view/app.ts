@@ -1,11 +1,13 @@
+import type { Auth, ProviderInfo, SessionId } from "@conductor/core/schemas/index";
 import { ListStatus, listStatus } from "@conductor/core/fold/offers";
 import { Route, fragmentOf } from "@conductor/core/route";
+import type { Host } from "@conductor/core/fold/host";
 import type { HostKey } from "@conductor/core/saved";
 import type { LinkState } from "@conductor/core/link";
 import type { PairedHost } from "@conductor/core/store";
 import type { Session } from "@conductor/core/fold/session";
-import type { SessionId } from "@conductor/core/schemas/index";
 import type { TicketError } from "@conductor/core/ticket";
+import { agentLabel } from "@conductor/core/session/start";
 import { describeTicketError } from "@conductor/core/ticket";
 import { nameOf } from "@conductor/core/store";
 
@@ -49,16 +51,50 @@ const sessionRow = (session: Session, route: Route, address: Address): Row => {
   };
 };
 
+const credentialLabel = (auth: Auth, provider: ProviderInfo | undefined): string => {
+  if (auth === "SignedIn") {
+    return "Signed in";
+  }
+  if (auth === "Unmanaged") {
+    return "CLI-managed credentials";
+  }
+  return (
+    provider?.credentials.find((form) => form.kind === auth.Stored.kind)?.label ?? auth.Stored.kind
+  );
+};
+
+interface AccountSetup {
+  readonly auth: string;
+  readonly key: string;
+  readonly label: string;
+}
+
+const accountSetup = (host: Host): ReadonlyArray<AccountSetup> =>
+  host.instances.map(([instance, { availability }]) => {
+    const provider = host.catalog?.[instance.provider];
+    return {
+      auth:
+        "Available" in availability
+          ? credentialLabel(availability.Available.auth, provider)
+          : availability.Unavailable.reason,
+      key: JSON.stringify([instance.provider, instance.account]),
+      label: agentLabel(provider?.label ?? instance.provider, instance),
+    };
+  });
+
 const pairingNotice = (notice: TicketError | undefined): string | undefined =>
   notice === undefined ? undefined : describeTicketError(notice);
 const hostName = (key: HostKey, host: PairedHost | undefined): string =>
   host === undefined ? key : nameOf(host);
 
+const workHref = (project = "", issue = ""): string => fragmentOf(Route.Work({ issue, project }));
 const sessionsHref = fragmentOf(Route.Sessions());
 const pairingHref = fragmentOf(Route.Pairing());
 const newSessionHref = (host: HostKey): string => fragmentOf(Route.NewSession({ host }));
 
 export {
+  workHref,
+  accountSetup,
   hostName,
   linkStates,
   newSessionHref,

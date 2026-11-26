@@ -1,5 +1,6 @@
 import { HostOperation, operationText } from "@conductor/core/pairing";
 import type { FunctionComponent } from "react";
+import { HostSetup } from "#ui/app/host-setup.tsx";
 import { LinkStatus } from "#ui/app/link-status.tsx";
 import { Notice } from "#ui/session/notice.tsx";
 import type { PairedHost } from "@conductor/core/store";
@@ -37,6 +38,7 @@ const PairedRow: FunctionComponent<{ readonly host: PairedHost }> = ({ host }) =
       <button className="forget" disabled={pending} onClick={remove} type="button">
         {forget}
       </button>
+      <HostSetup host={host} />
     </li>
   );
 };

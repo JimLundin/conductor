@@ -10,17 +10,16 @@ interface Props {
   readonly fields: Fields;
 }
 
-const ModelFields: FunctionComponent<Props> = ({ change, draft, fields: shown }) =>
-  shown.models === undefined ? undefined : (
-    <>
-      <ModelField
-        change={change}
-        choices={shown.models.choices}
-        defaultLabel={shown.modelDefault}
-        value={draft.model}
-      />
-      <EffortField change={change} choices={shown.efforts} value={draft.effort} />
-    </>
-  );
+const ModelFields: FunctionComponent<Props> = ({ change, draft, fields: shown }) => (
+  <>
+    <ModelField
+      change={change}
+      choices={shown.models.choices}
+      defaultLabel={shown.modelDefault}
+      value={draft.model}
+    />
+    <EffortField change={change} choices={shown.efforts} value={draft.effort} />
+  </>
+);
 
 export { ModelFields };

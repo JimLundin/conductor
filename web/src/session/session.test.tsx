@@ -2,6 +2,7 @@ import { button, view } from "#ui/test/session.tsx";
 import {
   created,
   foldEvents,
+  sessionOf,
   started,
   subagentStarted,
   subagentTool,
@@ -19,6 +20,17 @@ describe("a session message", () => {
     expect(message(session, "create a.txt")).toStrictEqual({
       Session: { SendMessage: { session, text: "create a.txt" } },
     });
+  });
+
+  it("names the account in the session header", () => {
+    expect.hasAssertions();
+    const host = turnThrough(4);
+    const record = {
+      ...sessionOf(host, session),
+      instance: { account: { Named: "work" }, provider: "claude" },
+    };
+    const sessions = new Map([[session, record]]);
+    expect(view({ ...host, sessions })).toContain("claude (work)");
   });
 
   it("shows the message and tool card while waiting for approval", () => {

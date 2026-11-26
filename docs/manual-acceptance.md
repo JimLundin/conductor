@@ -24,7 +24,7 @@ ticket:
 | Install | Open the app from Pages in Safari and add it to the Home Screen. Open it from there. |
 | Pair by join link | Open the first host's join link. The host appears in the list under its name and reaches **Live**. |
 | Pair by ticket | Tap **Hosts**, paste the second host's ticket and tap **Pair**. Both hosts are listed, each with its link state. |
-| Start a session | On each host, tap **New session**, choose an agent and a project or directory, and tap **Start**. The session opens and shows in its host's list. |
+| Start a session | Open a project or issue. With one eligible account, tap the button naming its agent and host. With two, choose an account and check that the same issue stays selected. The session opens on the chosen host. For a directory, tap **Start in directory** on its host. |
 | Send | Send a message. The reply streams into the transcript. |
 | Approve | Ask for a change that needs approval. Tap **Approve** on the request; it shows as approved and the tool card runs. |
 | Answer | Ask the agent to ask you a question. Pick an option and tap **Answer**; it shows as answered. |

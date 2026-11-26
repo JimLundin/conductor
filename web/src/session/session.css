@@ -396,3 +396,15 @@
     animation: none;
   }
 }
+
+.issue-brief {
+  max-block-size: 12rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.start-session details[open] label {
+  margin-block-start: 0.75rem;
+}

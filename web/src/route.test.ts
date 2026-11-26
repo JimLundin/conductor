@@ -20,6 +20,12 @@ describe(fragmentOf, () => {
   it.each([
     [Route.Pairing(), "#/pair"],
     [Route.Sessions(), "#/"],
+    [Route.Work({ issue: "", project: "" }), "#/new"],
+    [Route.Work({ issue: "", project: "hyn162" }), "#/project/hyn162"],
+    [
+      Route.Work({ issue: "github%2Forg~42", project: "hyn162" }),
+      "#/project/hyn162/issue/github%2Forg~42",
+    ],
     [Route.NewSession({ host: "ab12" }), "#/host/ab12/new"],
     [
       Route.Session({ host: "ab12", session: "01JABCDEFGHJKMNPQRSTVWXYZ0" }),
