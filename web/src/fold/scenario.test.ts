@@ -3,7 +3,7 @@ import { Array as Arr, Option } from "effect";
 import { Update, isDelta } from "@conductor/core/link";
 import { controls, openRequests } from "@conductor/core/fold/offers";
 import { describe, expect, it } from "@effect/vitest";
-import { foldUpdates as folded, received, sessionOf } from "#ui/test/examples.ts";
+import { foldUpdates as folded, providerStart, received, sessionOf } from "#ui/test/examples.ts";
 import type { Event } from "@conductor/core/schemas/index";
 import type { Host } from "@conductor/core/fold/host";
 import type { RecordedFeed } from "#ui/test/recorded-feeds.ts";
@@ -167,8 +167,11 @@ describe("turn controls", () => {
   });
 });
 
+const eventUpdate = (seq: number, kind: Event["kind"]): Update =>
+  Update.Feed({ frame: { Event: { kind, seq, session } } });
+
 const then = (host: Host, seq: number, kind: Event["kind"]): Host =>
-  applyUpdate(host, Update.Feed({ frame: { Event: { kind, seq, session } } }));
+  applyUpdate(host, eventUpdate(seq, kind));
 
 describe("continuation controls", () => {
   it("continue is offered once the scenario's session closes, and gone once it is ready again", () => {
@@ -208,6 +211,24 @@ const finishing = (initial: Host): ReadonlyArray<Host> => {
 };
 
 describe("finishing controls", () => {
+  it("a provider-started turn offers Interrupt live and on replay until completion", () => {
+    expect.hasAssertions();
+    const ready = [
+      ...through(received(recordedFeed(scenario), 0), 4),
+      eventUpdate(5, { OnIssue: { issue: "local~0twr04e5" } }),
+    ];
+    const start = eventUpdate(6, providerStart);
+    const running = theSession(applyUpdate(folded(ready), start));
+    expect(running.status).toStrictEqual(SessionStatus.Running());
+    expect(controls(running)).toMatchObject({ composer: "Busy", finish: false, interrupt: true });
+    expect(theSession(folded([...ready, start]))).toStrictEqual(running);
+    const completed = theSession(
+      then(folded([...ready, start]), 7, { TurnCompleted: { outcome: "Completed" } }),
+    );
+    expect(completed.status).toStrictEqual(SessionStatus.Idle());
+    expect(controls(completed)).toMatchObject({ composer: "Open", finish: true, interrupt: false });
+  });
+
   it("offers finish only while an issue session can finish", () => {
     expect.hasAssertions();
     const updates = received(recordedFeed(scenario), 0);

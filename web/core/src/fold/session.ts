@@ -228,6 +228,10 @@ const step = Match.type<EventKind>()
   )
   .pipe(
     Match.when("SessionReady", () => ready),
+    Match.when({ NativeTurnStarted: Match.any }, () => (session: Session): Session => ({
+      ...session,
+      status: SessionStatus.Running(),
+    })),
     Match.when({ SessionClosed: Match.any }, ({ SessionClosed: { reason } }) => closed(reason)),
     Match.when(
       { ModelChanged: Match.any },
@@ -270,7 +274,6 @@ const step = Match.type<EventKind>()
     ),
     Match.when({ WorkspaceCreated: Match.any }, () => unchanged),
     Match.when({ SnapshotRecorded: Match.any }, () => unchanged),
-    Match.when({ NativeTurnStarted: Match.any }, () => unchanged),
     Match.when({ SessionCreated: Match.any }, () => unchanged),
     Match.when({ SessionRemoved: Match.any }, () => unchanged),
     Match.exhaustive,

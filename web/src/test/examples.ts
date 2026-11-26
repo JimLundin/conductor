@@ -50,6 +50,8 @@ const created = (directory: string): EventKind => ({
   },
 });
 
+const providerStart = { NativeTurnStarted: { turn_start: null } } as const satisfies EventKind;
+
 const ls = { Command: { command: "ls" } } as const;
 
 const started = (call: string): EventKind => ({
@@ -144,6 +146,7 @@ export {
   ls,
   type Numbered,
   opened,
+  providerStart,
   question,
   reasoned,
   received,
