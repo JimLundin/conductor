@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 const COMMENTS: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("canvas-comments/1");
+    TableDefinition::new("canvas-comments/2");
 const CREATES: TableDefinition<&[u8], &[u8]> =
     TableDefinition::new("canvas-creates/1");
 const FILE: &str = "github-canvases.redb";

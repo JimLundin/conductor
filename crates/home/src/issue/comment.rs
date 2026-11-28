@@ -9,6 +9,7 @@ pub struct Comment {
     pub id: String,
     pub url: String,
     pub body: String,
+    pub created: UnixMillis,
     pub updated: UnixMillis,
 }
 

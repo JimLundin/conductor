@@ -23,7 +23,7 @@ pub enum WriteError {
     #[error(transparent)]
     Operation(#[from] Error),
     #[error(
-        "the outcome of operation {0} is unknown; retry it to look for its marker"
+        "the outcome of operation {0} is unknown: the tracker shows no sign of it yet; rerun the same command once the tracker's list catches up"
     )]
     Unknown(Handle),
     #[error(

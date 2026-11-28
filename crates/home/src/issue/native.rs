@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::IssueId;
 use crate::prelude::*;
+use crate::{IssueId, UnixMillis};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeIssue {
@@ -24,6 +24,12 @@ pub struct IssueCreate {
 pub struct Opened {
     pub id: IssueId,
     pub native: NativeIssue,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Openings {
+    pub found: Vec<Opened>,
+    pub newest: Option<UnixMillis>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

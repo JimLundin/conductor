@@ -24,7 +24,7 @@ pub use comment::*;
 mod relation;
 pub use relation::*;
 mod native;
-pub use native::{IssueCreate, IssueWrite, NativeIssue, Opened};
+pub use native::{IssueCreate, IssueWrite, NativeIssue, Opened, Openings};
 mod observation;
 mod tracking;
 pub use tracking::*;

@@ -20,7 +20,7 @@ use home::flow::command::{Change, Mutation};
 use home::hosting;
 use home::issue::{
     self, Comment, CommentWrite, IssueCreate, IssueWrite, ListPage, Lookup,
-    NativeIssue, Observation, Opened, Page, ReadFailure, Relating,
+    NativeIssue, Observation, Openings, Page, ReadFailure, Relating,
     RelationChange, RelationStep, SendFailure, Unrelatable,
 };
 use home::operations::Handle;
@@ -105,7 +105,7 @@ pub trait IssueTracker: Send + Sync {
         &self,
         project: ProjectId,
         handle: Handle,
-    ) -> IssueCompletion<'_, Vec<Opened>>;
+    ) -> IssueCompletion<'_, Openings>;
     fn logged(&self, entry: &issue::Entry, handle: Handle) -> String;
     fn plan_relation(
         &self,

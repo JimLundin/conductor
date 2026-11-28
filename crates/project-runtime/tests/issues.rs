@@ -115,7 +115,7 @@ impl IssueTracker for Script {
         &self,
         _: home::ProjectId,
         _: home::operations::Handle,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Opened>> {
+    ) -> project_runtime::IssueCompletion<'_, home::issue::Openings> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
     }
     fn logged(
@@ -433,7 +433,7 @@ impl IssueTracker for SlowFirst {
         &self,
         _: home::ProjectId,
         _: home::operations::Handle,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Opened>> {
+    ) -> project_runtime::IssueCompletion<'_, home::issue::Openings> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
     }
     fn logged(

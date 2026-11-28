@@ -1,6 +1,6 @@
 use home::IssueId;
 use home::flow::command::Change;
-use home::issue::{IssueCreate, Lookup, Opened, SendFailure};
+use home::issue::{IssueCreate, Lookup, Opened, Openings, SendFailure};
 use home::operations::{Handle, Intent, Opening};
 
 use crate::operations::{Attempt, Operations};
@@ -103,10 +103,13 @@ async fn verify(
         .native(issue.clone())
         .await
         .map_err(|_| WriteError::Unknown(handle))?;
-    let found = [Opened {
-        id: issue.id,
-        native,
-    }];
+    let found = Openings {
+        found: Vec::from([Opened {
+            id: issue.id,
+            native,
+        }]),
+        newest: None,
+    };
     match attempt.opened(&found, false)? {
         Opening::Settled(id) => Ok(id),
         Opening::Send(_) | Opening::Unknown => Err(WriteError::Unknown(handle)),

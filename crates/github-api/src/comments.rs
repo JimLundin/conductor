@@ -163,6 +163,7 @@ fn observe(comment: issues::Comment) -> Result<Comment, ReadFailure> {
     Ok(Comment {
         id: comment.id.to_string(),
         url: comment.html_url.to_string(),
+        created: millis(comment.created_at.timestamp_millis())?,
         updated: millis(
             comment
                 .updated_at

@@ -561,6 +561,7 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
                         "https://github.com/owner/standards/issues/146#issuecomment-7",
                     ),
                     body,
+                    created: UnixMillis(10),
                     updated: UnixMillis(10),
                 },
             })?;
