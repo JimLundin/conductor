@@ -2653,3 +2653,42 @@ fn a_fresh_issue_show_the_tracker_lacks_lists_its_tracker_once()
     );
     Ok(())
 }
+
+#[test]
+fn a_write_commits_only_the_canvases_its_home_keeps()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = crate::issue::storage::snapshot(two_trackers());
+    let markdown = canvas_key("why")?;
+    let tracked = CanvasKey {
+        project: ProjectId::parse(TRACKED).ok_or("tracked project")?,
+        issue: id(TRACKER_ID),
+        name: CanvasName::parse("why")?,
+    };
+    let file = CanvasFile {
+        written: NOW,
+        by: String::from("laptop·claude"),
+        canvas: why_a_store("Why a store")?,
+    };
+    let outcome = super::Outcome {
+        changes: Vec::new(),
+        canvases: [&markdown, &tracked]
+            .map(|key| CanvasWrite {
+                key: key.clone(),
+                file: file.clone(),
+            })
+            .into(),
+        message: Some(String::from("Write canvas why")),
+        output: String::new(),
+        failed: false,
+    };
+    assert_eq!(
+        outcome.home_canvases(&home).collect::<Vec<_>>(),
+        Vec::from([&markdown])
+    );
+    assert_eq!(outcome.commit_message(&[]), None);
+    assert_eq!(
+        outcome.commit_message(&[String::from("why.json")]),
+        Some("Write canvas why")
+    );
+    Ok(())
+}

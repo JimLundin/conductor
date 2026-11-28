@@ -13,7 +13,6 @@ use home::flow::command::{
     asked, homeless, run,
 };
 use home::issue::storage::{File, ReadHome};
-use home::tracker::{self, Tracker};
 use home::{Draws, UnixMillis};
 use home_files::FolderStore;
 use home_store::{CanvasStore, StoreError};
@@ -109,37 +108,20 @@ fn kept(
         .map(File::path)
         .chain(
             outcome
-                .canvases
-                .iter()
-                .filter(|canvas| {
-                    matches!(
-                        tracker::select(&loaded.snapshot, canvas.key.project),
-                        Some(Tracker::Markdown)
-                    )
-                })
-                .map(|canvas| FolderStore::place(&canvas.key)),
+                .home_canvases(&loaded.snapshot)
+                .map(FolderStore::place),
         )
         .collect();
-    let record = match outcome.message.as_deref() {
-        Some(subject) if !places.is_empty() => Some((
-            vcs_git2::record::open(home).map_err(|error| {
-                format!("opening the home's repository: {error}")
-            })?,
-            subject,
-        )),
-        _ => None,
-    };
+    let record = outcome
+        .commit_message(&places)
+        .map(|subject| opened(home).map(|repository| (repository, subject)))
+        .transpose()?;
     let before = places
         .iter()
         .map(|place| prior(home, place))
         .collect::<Result<Vec<Prior>, String>>()?;
-    files
-        .iter()
-        .try_for_each(|file| save(home, file))
-        .and_then(|()| trackers.put(&outcome.canvases))
-        .and_then(|put| {
-            let paths: Vec<String> =
-                files.iter().map(File::path).chain(put).collect();
+    written(home, trackers, outcome, &files)
+        .and_then(|paths| {
             record.map_or(Ok(()), |(repository, subject)| {
                 repository
                     .commit(&paths, &context.by, subject)
@@ -147,14 +129,30 @@ fn kept(
                     .map_err(|error| format!("committing the home: {error}"))
             })
         })
-        .map_err(|failed| {
-            match before.iter().try_for_each(|kept| restore(home, kept)) {
-                Ok(()) => failed,
-                Err(undone) => {
-                    format!("{failed}; restoring the home: {undone}")
-                }
-            }
-        })
+        .map_err(|failed| restored(home, &before, failed))
+}
+
+fn opened(home: &Path) -> Result<vcs_git2::record::Home, String> {
+    vcs_git2::record::open(home)
+        .map_err(|error| format!("opening the home's repository: {error}"))
+}
+
+fn written(
+    home: &Path,
+    trackers: &mut Trackers,
+    outcome: &Outcome,
+    files: &[File],
+) -> Result<Vec<String>, String> {
+    files.iter().try_for_each(|file| save(home, file))?;
+    let put = trackers.put(&outcome.canvases)?;
+    Ok(files.iter().map(File::path).chain(put).collect())
+}
+
+fn restored(home: &Path, before: &[Prior], failed: String) -> String {
+    match before.iter().try_for_each(|kept| restore(home, kept)) {
+        Ok(()) => failed,
+        Err(undone) => format!("{failed}; restoring the home: {undone}"),
+    }
 }
 
 struct Prior {
