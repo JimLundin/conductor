@@ -158,14 +158,6 @@ struct Prior {
 
 fn prior(root: &Path, place: &str) -> Result<Prior, String> {
     let path = root.join(place);
-    let made = Path::new(place)
-        .ancestors()
-        .skip(1)
-        .take_while(|folder| {
-            !folder.as_os_str().is_empty() && !root.join(folder).exists()
-        })
-        .last()
-        .map(|folder| root.join(folder));
     match fs::read(&path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -174,8 +166,19 @@ fn prior(root: &Path, place: &str) -> Result<Prior, String> {
     .map(|bytes| Prior {
         place: place.to_owned(),
         bytes,
-        made,
+        made: made(root, place),
     })
+}
+
+fn made(root: &Path, place: &str) -> Option<PathBuf> {
+    Path::new(place)
+        .ancestors()
+        .skip(1)
+        .take_while(|folder| {
+            !folder.as_os_str().is_empty() && !root.join(folder).exists()
+        })
+        .last()
+        .map(|folder| root.join(folder))
 }
 
 fn restore(root: &Path, prior: &Prior) -> Result<(), String> {
