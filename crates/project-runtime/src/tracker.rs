@@ -118,7 +118,21 @@ impl Trackers {
         match self.selected(key.project)? {
             Selected::Markdown => Ok(home.reading(key)),
             Selected::Configured(configured) => {
-                configured.look(&self.data, home, key).await
+                configured.look(&self.data, home, key, false).await
+            }
+            Selected::Unbuilt(reason) => Err(reason.clone()),
+        }
+    }
+
+    pub async fn read(
+        &self,
+        home: &Snapshot,
+        key: &IssueKey,
+    ) -> Result<IssueReading, String> {
+        match self.selected(key.project)? {
+            Selected::Markdown => Ok(home.reading(key)),
+            Selected::Configured(configured) => {
+                configured.look(&self.data, home, key, true).await
             }
             Selected::Unbuilt(reason) => Err(reason.clone()),
         }
@@ -210,20 +224,32 @@ impl Configured {
             .map_err(ReadFailure::Refused)
     }
 
+    fn mode(&self, registry: &mut Registry, fresh: bool) -> ReadMode {
+        if fresh {
+            self.register(registry)
+                .map_or_else(ReadMode::Failed, |()| ReadMode::Refresh)
+        } else {
+            ReadMode::Cached
+        }
+    }
+
     async fn look(
         &self,
         data: &Path,
         home: &Snapshot,
         key: &IssueKey,
+        fresh: bool,
     ) -> Result<IssueReading, String> {
+        let mut registry = Registry::default();
+        let mode = self.mode(&mut registry, fresh);
         let cache = IssueCache::new(data, home.flow()?);
         let lookup = Lookup {
             project: key.project,
             id: key.id.clone(),
         };
-        Registry::default()
+        registry
             .project(&self.backends)
-            .issue(&cache, lookup, ReadMode::Cached)
+            .issue(&cache, lookup, mode)
             .await
             .map_err(|error| error.to_string())
     }
@@ -236,12 +262,7 @@ impl Configured {
         offline: bool,
     ) -> Result<IssueListing, String> {
         let mut registry = Registry::default();
-        let mode = if offline {
-            ReadMode::Cached
-        } else {
-            self.register(&mut registry)
-                .map_or_else(ReadMode::Failed, |()| ReadMode::Refresh)
-        };
+        let mode = self.mode(&mut registry, !offline);
         let refreshing = matches!(mode, ReadMode::Refresh);
         let cache = IssueCache::new(data, home.flow()?);
         let listing = registry
