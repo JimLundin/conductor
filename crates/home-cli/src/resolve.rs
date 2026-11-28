@@ -7,7 +7,7 @@ use home::flow::command::{Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::ReadHome;
-use home::issue::{IssueListing, IssueReading};
+use home::issue::{Freshness, IssueListing, IssueReading, ReadStatus};
 use home::project::Project;
 use home::{IssueKey, ProjectId};
 use home_files::FolderStore;
@@ -35,6 +35,12 @@ impl Trackers {
         );
         trackers.follow(&loaded.snapshot);
         Ok(Self { loaded, trackers })
+    }
+
+    pub fn catalog(&mut self) -> Result<(), String> {
+        let home = self.loaded.snapshot.clone();
+        self.loaded.snapshot = run(cataloged(&self.trackers, home))?;
+        Ok(())
     }
 
     pub const fn loaded(&self) -> &ReadHome {
@@ -159,6 +165,26 @@ pub fn connect(
     project: &Project,
 ) -> Result<Connection, String> {
     github_api::connect(data, home, project, daemon::fleet::project_credential)
+}
+
+async fn cataloged(trackers: &tracker::Trackers, home: Snapshot) -> Snapshot {
+    let mut held = home.clone();
+    for project in home.projects() {
+        let listing = trackers
+            .listing(&home, project.id, true)
+            .await
+            .unwrap_or_else(|_| IssueListing {
+                records: Vec::new(),
+                status: ReadStatus {
+                    freshness: Freshness::Unknown,
+                    complete: false,
+                    observed_at: None,
+                    failure: None,
+                },
+            });
+        held = held.cataloged(project.id, listing);
+    }
+    held
 }
 
 fn run<F: Future>(future: F) -> Result<F::Output, String> {

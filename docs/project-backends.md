@@ -91,6 +91,12 @@ relations follow its create the same way. A GitHub issue's revision covers
 its title, body, labels and state, not its native relations: a relation
 write reads those afresh before each step.
 
+Before it plans a write, the CLI takes each project's issues from its
+tracker's listing: the home's files for a Markdown project, and the cached
+listing for a tracker. A relation target is checked only against a listing
+that is complete, so a target in a tracker that was never listed, or whose
+last listing failed, is left unchecked.
+
 Repository hosting declares statuses, checks and workflows separately.
 Access to statuses does not imply access to required checks. Hosted-result
 requests retain their exact revision. Workspace methods use `vcs` values

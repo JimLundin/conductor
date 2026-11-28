@@ -13,7 +13,7 @@ use super::graph::{Graph, Problem};
 use crate::canvas::CanvasKey;
 use crate::prelude::*;
 use crate::project::{Listing, Project};
-use crate::tracker::{Ids, Issuers, Tracker};
+use crate::tracker::{Ids, Issuers};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
@@ -32,6 +32,7 @@ pub struct Snapshot {
     unread: Vec<String>,
     graph: Graph,
     ids: Ids,
+    partial: BTreeSet<ProjectId>,
 }
 
 impl Snapshot {
@@ -39,14 +40,9 @@ impl Snapshot {
     pub fn of(inputs: Inputs) -> Self {
         let flow = inputs.flow;
         let mut records = inputs.issues;
-        let tracked = tracked(&inputs.projects.projects);
         let graph = flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |read_flow| {
-                observed(read_flow, &mut records, &|project| {
-                    !tracked.contains(&project)
-                })
-            },
+            |read_flow| observed(read_flow, &mut records, &|_| true),
         );
         let ids = inputs.issuers.ids(&inputs.projects.projects);
         Self {
@@ -56,6 +52,7 @@ impl Snapshot {
             unread: inputs.unread,
             graph,
             ids,
+            partial: BTreeSet::new(),
         }
     }
 
@@ -68,6 +65,7 @@ impl Snapshot {
             unread: Vec::new(),
             graph: Graph::default(),
             ids: Ids::default(),
+            partial: BTreeSet::new(),
         }
     }
 
@@ -88,18 +86,47 @@ impl Snapshot {
             .cloned()
             .collect();
         records.push(Ok(observation));
-        let tracked = tracked(self.projects());
+        self.holding(records, self.partial.clone())
+    }
+
+    #[must_use]
+    pub fn cataloged(&self, project: ProjectId, listing: IssueListing) -> Self {
+        let mut records: Vec<Result<Observation, Problem>> = self
+            .records
+            .iter()
+            .filter(|record| match record {
+                Ok(other) => other.project() != project,
+                Err(problem) => problem.project != project,
+            })
+            .cloned()
+            .collect();
+        records.extend(listing.records.into_iter().map(Ok));
+        let mut partial = self.partial.clone();
+        if listing.status.complete {
+            partial.remove(&project);
+        } else {
+            partial.insert(project);
+        }
+        self.holding(records, partial)
+    }
+
+    fn holding(
+        &self,
+        mut records: Vec<Result<Observation, Problem>>,
+        partial: BTreeSet<ProjectId>,
+    ) -> Self {
         let graph = self.flow.as_ref().map_or_else(
             |_| Graph::default(),
             |flow| {
                 observed(flow, &mut records, &|project| {
-                    !tracked.contains(&project)
+                    !partial.contains(&project)
                 })
             },
         );
         Self {
             records,
             graph,
+            partial,
             ..self.clone()
         }
     }
@@ -341,16 +368,6 @@ fn creation_order(
         .cmp(&other.created().is_none())
         .then_with(|| one.created().cmp(&other.created()))
         .then_with(|| one.id().cmp(other.id()))
-}
-
-fn tracked(projects: &[Project]) -> Vec<ProjectId> {
-    projects
-        .iter()
-        .filter(|project| {
-            matches!(crate::tracker::of(project), Tracker::Configured(_))
-        })
-        .map(|project| project.id)
-        .collect()
 }
 
 fn observed(

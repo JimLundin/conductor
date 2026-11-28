@@ -779,3 +779,32 @@ fn issue_set_parent_on_a_github_issue_makes_it_a_sub_issue_and_writes_no_footer(
     assert_eq!(home.issue()?.body, "Words\n");
     Ok(())
 }
+
+#[test]
+fn issue_set_parent_to_an_issue_missing_from_a_complete_cached_listing_is_refused()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("missing-parent", &[], "Words\n")?;
+    let loaded = home_files::read(&home.root, github::ISSUERS);
+    let project = loaded.snapshot.project("standards").ok_or("project")?.id;
+    let trackers = Trackers::new(
+        &home.root,
+        loaded,
+        Some(home.root.join("data")),
+        connect,
+    )?;
+    let listing = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(trackers.listing(project, false))?;
+    assert!(listing.status.complete, "{listing:?}");
+    home.requests();
+    let (said, code) =
+        home.home(&["issue", "set", "standards", "146", "parent=999"])?;
+    assert!(said.contains("999 is no issue"), "{said}");
+    assert_eq!(code, 1);
+    assert!(home.requests().iter().all(|request| {
+        ["connect", "list", "read", "native"].contains(&request.as_str())
+    }),);
+    assert_eq!(parents(&home.root.join("data")), BTreeMap::new());
+    Ok(())
+}

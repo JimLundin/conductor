@@ -72,6 +72,9 @@ fn issues(
     asked: Command,
     context: &Context,
 ) -> (String, u8) {
+    if let Err(reason) = trackers.catalog() {
+        return (format!("home: {reason}\n"), 1);
+    }
     let store = trackers.stores();
     let given = asked.needs().map(|need| match need {
         Need::Read(Source::File(path)) => Given::Text(read(Path::new(&path))),
