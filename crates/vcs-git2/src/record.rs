@@ -5,6 +5,8 @@ use git2::{
     Commit, Index, IndexAddOption, IndexEntry, Oid, Repository, Signature,
 };
 
+const EMAIL: &str = "home@conductor.invalid";
+
 pub struct Home {
     repo: Repository,
     prefix: PathBuf,
@@ -97,12 +99,7 @@ impl Home {
         author: &str,
         message: &str,
     ) -> anyhow::Result<String> {
-        let email = self
-            .repo
-            .config()
-            .and_then(|config| config.get_string("user.email"))
-            .unwrap_or_default();
-        let signature = Signature::now(author, &email)?;
+        let signature = Signature::now(author, EMAIL)?;
         let parents: Vec<&Commit<'_>> = parent.into_iter().collect();
         let oid = self.repo.commit(
             Some("HEAD"),

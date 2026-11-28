@@ -35,6 +35,9 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
     let ran = Command::new(env!("CARGO_BIN_EXE_home"))
         .args(["issue", "new", "home", "bug", "First"])
         .current_dir(&home.0)
+        .env("HOME", &home.0)
+        .env("XDG_CONFIG_HOME", &home.0)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .output()?;
     let said = String::from_utf8_lossy(&ran.stdout);
     assert!(ran.status.success(), "{said}");

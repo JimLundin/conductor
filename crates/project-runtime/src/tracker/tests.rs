@@ -262,6 +262,73 @@ fn all_lists_the_built_projects_canvases_and_reports_an_unbuilt_project_on_its_o
     Ok(())
 }
 
+struct Unreachable;
+
+impl Unreachable {
+    fn failed<T>() -> Result<T, StoreError> {
+        Err(StoreError::Unavailable {
+            reason: String::from("GitHub is unreachable"),
+        })
+    }
+}
+
+impl CanvasStore for Unreachable {
+    fn all(&self) -> Result<Held<CanvasKey>, StoreError> {
+        Self::failed()
+    }
+
+    fn list(
+        &self,
+        _: &ProjectId,
+        _: &IssueId,
+    ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError> {
+        Self::failed()
+    }
+
+    fn get(&self, _: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
+        Self::failed()
+    }
+
+    fn put<'a>(
+        &'a mut self,
+        _: &'a CanvasKey,
+        _: &'a CanvasFile,
+    ) -> Putting<'a> {
+        Box::pin(async { Self::failed() })
+    }
+}
+
+impl TrackerStore for Unreachable {
+    fn refresh<'a>(&'a self, _: &'a IssueListing) -> Refreshing<'a> {
+        Box::pin(async { Err(ReadFailure::Unavailable) })
+    }
+}
+
+#[test]
+fn all_lists_the_markdown_canvases_and_reports_a_tracker_whose_store_fails_on_its_own()
+-> Result<(), String> {
+    let mut home_store = Memory::default();
+    let homed = key(MARKDOWN, "0tm7aaaa")?;
+    home_store.keep(&homed, &file()?);
+    let trackers = followed(Box::new(home_store), |_, _, _| {
+        Ok(Connection {
+            canvases: Box::new(Unreachable),
+            connector: Arc::new(Offline),
+        })
+    });
+    assert_eq!(
+        trackers.all(),
+        Ok(Held {
+            canvases: Vec::from([homed]),
+            strays: Vec::new(),
+            unavailable: Vec::from([String::from(
+                "the tracker of standards: GitHub is unreachable"
+            )]),
+        })
+    );
+    Ok(())
+}
+
 struct Empty;
 
 impl IssueTracker for Empty {

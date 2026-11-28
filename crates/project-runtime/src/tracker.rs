@@ -50,9 +50,23 @@ pub struct Connection {
 pub type Connect = fn(&Path, &Snapshot, &Project) -> Result<Connection, String>;
 
 struct Configured {
+    name: String,
     backends: Backends,
     canvases: Box<dyn TrackerStore>,
     connector: Arc<dyn Connector>,
+}
+
+impl Configured {
+    fn held(&self) -> Held<CanvasKey> {
+        self.canvases.all().unwrap_or_else(|error| Held {
+            canvases: Vec::new(),
+            strays: Vec::new(),
+            unavailable: Vec::from([format!(
+                "the tracker of {}: {error}",
+                self.name
+            )]),
+        })
+    }
 }
 
 enum Selected {
@@ -100,6 +114,7 @@ impl Trackers {
                 match (self.connect)(&self.data, home, tracked) {
                     Ok(connection) => {
                         Selected::Configured(Box::new(Configured {
+                            name: tracked.name.clone(),
                             backends: tracked.backends.clone(),
                             canvases: connection.canvases,
                             connector: connection.connector,
@@ -429,9 +444,10 @@ impl CanvasStore for Trackers {
             match selected {
                 Selected::Markdown => {}
                 Selected::Configured(configured) => {
-                    let kept = configured.canvases.all()?;
+                    let kept = configured.held();
                     held.canvases.extend(kept.canvases);
                     held.strays.extend(kept.strays);
+                    held.unavailable.extend(kept.unavailable);
                 }
                 Selected::Unbuilt(reason) => {
                     held.unavailable.push(reason.clone());
