@@ -413,3 +413,48 @@ fn fingerprints_follow_native_relations() -> Result<(), String> {
     assert_ne!(read(blocked, "")?.revision, original);
     Ok(())
 }
+
+#[test]
+fn a_footer_relation_write_keeps_the_prose_the_fields_and_the_other_relations()
+-> Result<(), String> {
+    let flow = home::flow::load(include_str!(
+        "../../../home/src/flow/test-flow.toml"
+    ))?;
+    let mut input = record()?;
+    input.body = String::from(
+        "Read me\n\n```project-data\nschema = 1\n[fields]\nbranch = 'kept'\n[relations]\nparent = 'hyn162/146'\n```\n",
+    );
+    let here = ProjectId::new(71);
+    let elsewhere = IssueKey::named("hyn162/147", here).ok_or("no key")?;
+    let plan = relate::plan(
+        &flow,
+        here,
+        &input,
+        &home::issue::RelationChange {
+            relation: String::from("blocked_by"),
+            targets: Vec::from([elsewhere.clone()]),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(plan.changes, []);
+    let step = plan.footer.ok_or("no footer step")?;
+    let Some(relate::Request::Body(body)) =
+        relate::Request::decode(&step.request)
+    else {
+        return Err(String::from("not a body write"));
+    };
+    input.body = body;
+    let observed = read(input, "")?;
+    let (issue, prose) = observed.editable()?;
+    assert_eq!(prose.text().trim(), "Read me");
+    assert_eq!(issue.branch, "kept");
+    assert_eq!(
+        issue.links.get("parent").map(|targets| targets
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()),
+        Some(Vec::from([String::from("hyn162/146")]))
+    );
+    assert_eq!(issue.links.get("blocked_by"), Some(&Vec::from([elsewhere])));
+    Ok(())
+}

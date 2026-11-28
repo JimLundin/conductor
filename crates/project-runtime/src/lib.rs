@@ -1,6 +1,7 @@
 mod comments;
 pub mod issues;
 pub mod operations;
+mod relations;
 mod storage;
 pub mod transport;
 
@@ -15,7 +16,7 @@ use home::backend::{
 use home::hosting;
 use home::issue::{
     Comment, CommentWrite, ListPage, Lookup, Observation, Page, ReadFailure,
-    SendFailure,
+    Relating, RelationChange, RelationStep, SendFailure, Unrelatable,
 };
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
@@ -56,6 +57,9 @@ pub type IssueCompletion<'a, T> =
 pub type SendCompletion<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, SendFailure>> + Send + 'a>>;
 
+pub type RelationCompletion<'a> =
+    Pin<Box<dyn Future<Output = Result<Relating, Unrelatable>> + Send + 'a>>;
+
 pub use comments::WriteError;
 
 pub trait IssueTracker: Send + Sync {
@@ -67,6 +71,16 @@ pub trait IssueTracker: Send + Sync {
         issue: Lookup,
         write: CommentWrite,
     ) -> SendCompletion<'_, Comment>;
+    fn plan_relation(
+        &self,
+        issue: Lookup,
+        change: RelationChange,
+    ) -> RelationCompletion<'_>;
+    fn write_relation(
+        &self,
+        issue: Lookup,
+        step: RelationStep,
+    ) -> SendCompletion<'_, ()>;
 }
 
 pub trait RepositoryHosting: Send + Sync {

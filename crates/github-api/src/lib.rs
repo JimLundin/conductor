@@ -2,6 +2,7 @@ mod client;
 mod comments;
 mod credential;
 mod inspect;
+mod relations;
 
 pub use client::Client;
 pub use credential::{FleetResolver, HostCredentials};

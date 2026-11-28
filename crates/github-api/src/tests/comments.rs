@@ -43,15 +43,15 @@ fn lost(method: &'static str, path: &'static str) -> Exchange {
     }
 }
 
-struct Writer {
+pub(super) struct Writer {
     _dir: tempfile::TempDir,
-    operations: Operations,
-    registry: Registry,
-    backends: Backends,
+    pub(super) operations: Operations,
+    pub(super) registry: Registry,
+    pub(super) backends: Backends,
 }
 
 impl Writer {
-    fn new(base: &str) -> anyhow::Result<Self> {
+    pub(super) fn new(base: &str) -> anyhow::Result<Self> {
         let tracker = tracker(base)?;
         Self::with(
             tracker,
@@ -108,7 +108,7 @@ impl Writer {
             .await
     }
 
-    fn progress(&self, handle: Handle) -> anyhow::Result<Progress> {
+    pub(super) fn progress(&self, handle: Handle) -> anyhow::Result<Progress> {
         Ok(self
             .operations
             .status(handle)?

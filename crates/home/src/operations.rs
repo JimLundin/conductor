@@ -5,7 +5,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::issue::{
-    Comment, CommentRequest, CommentWrite, EditId, IssueChange, Part,
+    Comment, CommentRequest, CommentWrite, EditId, IssueChange, Part, Relating,
+    RelationChange, RelationRequest, RelationStep,
 };
 use crate::{IssueId, ProjectId};
 
@@ -58,8 +59,18 @@ pub struct Intent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Work {
-    ChangeIssue { issue: IssueId, change: IssueChange },
-    Comment { issue: IssueId, write: CommentWrite },
+    ChangeIssue {
+        issue: IssueId,
+        change: IssueChange,
+    },
+    Comment {
+        issue: IssueId,
+        write: CommentWrite,
+    },
+    Relate {
+        issue: IssueId,
+        change: RelationChange,
+    },
 }
 
 impl Intent {
@@ -79,12 +90,31 @@ impl Intent {
             },
         })
     }
+
+    #[must_use]
+    pub fn relate(request: &RelationRequest) -> Self {
+        Self {
+            project: request.issue.project,
+            expected: request.seen.clone(),
+            work: Work::Relate {
+                issue: request.issue.id.clone(),
+                change: request.change.clone(),
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
     Send,
     Settled(Comment),
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Relate {
+    Send(RelationStep),
+    Settled(String),
     Unknown,
 }
 
@@ -95,6 +125,7 @@ pub enum Step {
     SetTransitionValue(Part),
     SetOpenState,
     WriteComment,
+    Relate(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +172,8 @@ pub enum Refusal {
     Unmarked,
     #[error("the operation writes no comment")]
     NotAComment,
+    #[error("the operation sets no relation")]
+    NotARelation,
 }
 
 impl Record {
@@ -205,17 +238,36 @@ impl Record {
         {
             return Err(Refusal::AlreadyConfirmed);
         }
-        let expected = self
-            .confirmed
-            .last()
-            .map_or(self.intent.expected.as_str(), |last| {
-                last.revision.as_str()
-            });
-        if observed != expected {
+        if observed != self.expected() {
             return Err(Refusal::Conflict);
         }
         Ok(Self {
             progress: Progress::AwaitingEvidence(step),
+            ..self.clone()
+        })
+    }
+
+    fn expected(&self) -> &str {
+        self.confirmed
+            .last()
+            .map_or(self.intent.expected.as_str(), |last| {
+                last.revision.as_str()
+            })
+    }
+
+    fn finish(&self, observed: &str) -> Result<Self, Refusal> {
+        match &self.progress {
+            Progress::Completed => return Err(Refusal::Completed),
+            Progress::AwaitingEvidence(_) => {
+                return Err(Refusal::AwaitingEvidence);
+            }
+            Progress::Ready => {}
+        }
+        if observed != self.expected() {
+            return Err(Refusal::Conflict);
+        }
+        Ok(Self {
+            progress: Progress::Completed,
             ..self.clone()
         })
     }
@@ -283,6 +335,47 @@ impl Record {
                 self.send(write, observed).map(|sent| (sent, Next::Send))
             }
             _ => Ok((self.clone(), Next::Unknown)),
+        }
+    }
+
+    pub fn relate(&self, plan: &Relating) -> Result<(Self, Relate), Refusal> {
+        let Work::Relate { .. } = &self.intent.work else {
+            return Err(Refusal::NotARelation);
+        };
+        let pending =
+            |effect: &str| plan.steps.iter().any(|step| step.effect == effect);
+        let record = match &self.progress {
+            Progress::Completed => {
+                let settled = Relate::Settled(String::from(self.expected()));
+                return Ok((self.clone(), settled));
+            }
+            Progress::AwaitingEvidence(Step::Relate(effect))
+                if !pending(effect) =>
+            {
+                let evidence = Confirmed {
+                    step: Step::Relate(effect.clone()),
+                    revision: plan.revision.clone(),
+                    identity: None,
+                };
+                self.confirm(evidence, plan.steps.is_empty())?
+            }
+            Progress::AwaitingEvidence(_) => {
+                return Ok((self.clone(), Relate::Unknown));
+            }
+            Progress::Ready => self.clone(),
+        };
+        let settled = Relate::Settled(plan.revision.clone());
+        match (&record.progress, plan.steps.first()) {
+            (Progress::Completed, _) => Ok((record, settled)),
+            (_, None) => Ok((record.finish(&plan.revision)?, settled)),
+            (_, Some(step)) => Ok((
+                record.dispatch(
+                    Step::Relate(step.effect.clone()),
+                    &plan.revision,
+                    true,
+                )?,
+                Relate::Send(step.clone()),
+            )),
         }
     }
 

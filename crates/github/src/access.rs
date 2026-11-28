@@ -189,6 +189,7 @@ pub const fn send_failure(
     error: AccessError,
 ) -> home::issue::SendFailure {
     match status {
+        Some(422) => home::issue::SendFailure::Invalid,
         Some(400..=499) => {
             home::issue::SendFailure::Rejected(read_failure(error))
         }

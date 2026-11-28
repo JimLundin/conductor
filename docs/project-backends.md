@@ -65,6 +65,24 @@ Retrying the same handle looks for the marker again and never sends the
 request twice. A request the tracker rejects leaves the operation ready to
 send again.
 
+A relation write, `Project::write_relation`, sets one relation of an issue
+to a list of targets, as an operation in the same store. The tracker
+re-reads the issue and plans the steps that take the relation there. The
+runtime refuses the write when the issue's revision differs from what its
+caller saw. It sends one step at a time and re-reads the issue after each.
+It confirms a step once the re-read no longer needs it. When a reply is
+lost, the step stays awaiting evidence, and a retry re-reads the issue
+instead of sending again.
+
+GitHub's tracker keeps `parent` as a sub-issue and `blocked_by` as a
+dependency when the target is an issue of the same repository. A target in
+another project goes to the footer, as does any other relation. A parent
+move sends `replace_parent`. The tracker refuses a write that would give a
+parent more than 100 sub-issues, nest sub-issues more than eight levels
+deep, or give an issue more than 50 blockers, or a blocker more than 50
+issues it blocks. It sends nothing for a refused write. GitHub's 422 reply
+leaves the operation ready, as an invalid write.
+
 Repository hosting declares statuses, checks and workflows separately.
 Access to statuses does not imply access to required checks. Hosted-result
 requests retain their exact revision. Workspace methods use `vcs` values

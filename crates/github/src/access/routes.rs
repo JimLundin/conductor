@@ -121,6 +121,32 @@ impl Repository {
         format!("{}/{number}/dependencies/blocked_by", self.issues_route())
     }
 
+    #[must_use]
+    pub fn sub_issues_route(&self, number: u64) -> String {
+        format!("{}/{number}/sub_issues", self.issues_route())
+    }
+
+    #[must_use]
+    pub fn sub_issue_route(&self, number: u64) -> String {
+        format!("{}/{number}/sub_issue", self.issues_route())
+    }
+
+    pub fn issue_route(
+        &self,
+        endpoint: &str,
+        url: &str,
+    ) -> Result<String, ReadFailure> {
+        Ok(match self.native(endpoint, url)? {
+            Native::Here(number) => format!("{}/{number}", self.issues_route()),
+            Native::Elsewhere(issue) => {
+                let (resource, number) = issue
+                    .split_once('#')
+                    .ok_or(ReadFailure::InvalidResponse)?;
+                format!("/repos/{resource}/issues/{number}")
+            }
+        })
+    }
+
     pub fn verify_record(
         &self,
         endpoint: &str,

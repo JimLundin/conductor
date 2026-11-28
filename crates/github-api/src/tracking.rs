@@ -5,20 +5,22 @@ use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Native, Record};
 use home::flow::Flow;
-use home::issue::{Comment, CommentWrite};
+use home::issue::{Comment, CommentWrite, RelationChange, RelationStep};
 use home::issue::{
     IssueState, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
     Unreadable,
 };
 use home::{IssueId, ProjectId, UnixMillis};
 use octocrab::{FromResponse, models::issues::Issue, params};
-use project_runtime::{IssueCompletion, IssueTracker, SendCompletion};
+use project_runtime::{
+    IssueCompletion, IssueTracker, RelationCompletion, SendCompletion,
+};
 
 use crate::{Client, client::classify, read_failure};
 
 pub struct Tracker {
     pub(crate) client: Client,
-    flow: Flow,
+    pub(crate) flow: Flow,
     config: Configuration,
 }
 
@@ -34,17 +36,24 @@ impl Client {
 }
 
 #[derive(serde::Deserialize)]
-struct ReturnedIssue {
+pub struct ReturnedIssue {
     state_reason: Option<String>,
-    parent_issue_url: Option<String>,
-    issue_dependencies_summary: Option<Dependencies>,
+    pub parent_issue_url: Option<String>,
+    pub issue_dependencies_summary: Option<Dependencies>,
+    pub sub_issues_summary: Option<SubIssues>,
     #[serde(flatten)]
-    issue: Issue,
+    pub issue: Issue,
 }
 
 #[derive(serde::Deserialize)]
-struct Dependencies {
+pub struct Dependencies {
     total_blocked_by: u32,
+    pub total_blocking: u32,
+}
+
+#[derive(serde::Deserialize)]
+pub struct SubIssues {
+    pub total: u32,
 }
 
 #[derive(serde::Deserialize)]
@@ -56,6 +65,11 @@ enum Response {
     Issue(Box<ReturnedIssue>),
     Redirect(String),
     Gone,
+}
+
+enum Located {
+    Found(Box<Record>),
+    Gone(Box<Observation>),
 }
 
 impl Tracker {
@@ -103,7 +117,8 @@ impl Tracker {
             .into_iter()
             .zip(blocked)
             .map(|(returned, blocked_by)| {
-                self.observe(request.project, returned, blocked_by)
+                self.record(returned, blocked_by)
+                    .map(|record| self.mapped(request.project, record))
             })
             .collect::<Result<_, _>>()?;
         Ok(Page { records, next })
@@ -117,17 +132,17 @@ impl Tracker {
             None => Ok(None),
             Some(Dependencies {
                 total_blocked_by: 0,
+                ..
             }) => Ok(Some(Vec::new())),
             Some(_) => self.blockers(value.issue.number).await.map(Some),
         }
     }
 
-    fn observe(
+    fn record(
         &self,
-        project: ProjectId,
         value: ReturnedIssue,
         blocked_by: Option<Vec<Native>>,
-    ) -> Result<Observation, ReadFailure> {
+    ) -> Result<Record, ReadFailure> {
         let client = &self.client;
         let issue = value.issue;
         client.repository.verify_record(
@@ -159,7 +174,7 @@ impl Tracker {
                 (String::from("node_id"), issue.node_id),
             ]),
         };
-        let record = Record {
+        Ok(Record {
             id,
             locator,
             title: issue.title,
@@ -172,11 +187,14 @@ impl Tracker {
             labels: issue.labels.into_iter().map(|label| label.name).collect(),
             parent,
             blocked_by,
-        };
+        })
+    }
+
+    fn mapped(&self, project: ProjectId, record: Record) -> Observation {
         let mut observation =
             mapping::observe(&self.flow, &self.config, project, record);
         observation.observed_at = observed_at();
-        Ok(observation)
+        observation
     }
 
     async fn blockers(&self, number: u64) -> Result<Vec<Native>, ReadFailure> {
@@ -245,6 +263,36 @@ impl Tracker {
         &self,
         request: Lookup,
     ) -> Result<Observation, ReadFailure> {
+        match self.located(&request).await? {
+            Located::Gone(observation) => Ok(*observation),
+            Located::Found(record) => self.verified(&request, *record),
+        }
+    }
+
+    pub(crate) async fn current(
+        &self,
+        request: &Lookup,
+    ) -> Result<(Record, Observation), ReadFailure> {
+        match self.located(request).await? {
+            Located::Gone(_) => Err(ReadFailure::Deleted),
+            Located::Found(record) => {
+                let observed = self.verified(request, (*record).clone())?;
+                Ok((*record, observed))
+            }
+        }
+    }
+
+    fn verified(
+        &self,
+        request: &Lookup,
+        record: Record,
+    ) -> Result<Observation, ReadFailure> {
+        let observed = self.mapped(request.project, record);
+        home::issue::cache::verify(request, &observed)?;
+        Ok(observed)
+    }
+
+    async fn located(&self, request: &Lookup) -> Result<Located, ReadFailure> {
         let mut resolution = Resolution::start(Address::of(&request.id)?);
         loop {
             match self.fetch(resolution.address).await? {
@@ -252,20 +300,23 @@ impl Tracker {
                     resolution =
                         resolution.follow(self.redirect(&location).await?)?;
                 }
-                Response::Gone => return gone(request, resolution),
-                Response::Issue(issue) => {
-                    return self.resolved(&request, resolution, issue).await;
+                Response::Gone => {
+                    return gone(request.clone(), resolution).map(
+                        |observation| Located::Gone(Box::new(observation)),
+                    );
+                }
+                Response::Issue(value) => {
+                    return self.found(resolution, *value).await;
                 }
             }
         }
     }
 
-    async fn resolved(
+    async fn found(
         &self,
-        request: &Lookup,
         resolution: Resolution,
-        value: Box<ReturnedIssue>,
-    ) -> Result<Observation, ReadFailure> {
+        value: ReturnedIssue,
+    ) -> Result<Located, ReadFailure> {
         if value.issue.pull_request.is_some() {
             return Err(ReadFailure::Unavailable);
         }
@@ -273,9 +324,8 @@ impl Tracker {
             return Err(ReadFailure::IdentityConflict);
         }
         let blocked_by = self.blocked_by(&value).await?;
-        let observed = self.observe(request.project, *value, blocked_by)?;
-        home::issue::cache::verify(request, &observed)?;
-        Ok(observed)
+        let record = self.record(value, blocked_by)?;
+        Ok(Located::Found(Box::new(record)))
     }
 }
 
@@ -335,5 +385,21 @@ impl IssueTracker for Tracker {
         write: CommentWrite,
     ) -> SendCompletion<'_, Comment> {
         Box::pin(self.send(issue, write))
+    }
+
+    fn plan_relation(
+        &self,
+        issue: Lookup,
+        change: RelationChange,
+    ) -> RelationCompletion<'_> {
+        Box::pin(self.relating(issue, change))
+    }
+
+    fn write_relation(
+        &self,
+        issue: Lookup,
+        step: RelationStep,
+    ) -> SendCompletion<'_, ()> {
+        Box::pin(self.relate(issue, step))
     }
 }

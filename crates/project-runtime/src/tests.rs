@@ -140,6 +140,24 @@ impl IssueTracker for Scripted {
     ) -> crate::SendCompletion<'_, home::issue::Comment> {
         Box::pin(async { Err(home::issue::SendFailure::Unknown) })
     }
+    fn plan_relation(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::RelationChange,
+    ) -> crate::RelationCompletion<'_> {
+        Box::pin(async {
+            Err(home::issue::Unrelatable::Read(
+                home::issue::ReadFailure::Unavailable,
+            ))
+        })
+    }
+    fn write_relation(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::RelationStep,
+    ) -> crate::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
 }
 
 impl RepositoryHosting for Scripted {

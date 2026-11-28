@@ -18,6 +18,7 @@ use crate::configuration::Configuration;
 
 mod footer;
 mod labels;
+pub mod relate;
 mod relations;
 
 pub const AUTHORITY: &str = "https://api.github.com";

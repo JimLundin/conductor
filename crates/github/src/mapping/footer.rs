@@ -4,7 +4,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use home::flow::Flow;
+use home::flow::{Flow, Relation};
 use home::issue::{Datum, body, document::targets};
 use home::{IssueKey, ProjectId, operations::Handle};
 use serde::Deserialize;
@@ -99,4 +99,62 @@ pub(super) fn read<'a>(
         }
     }
     (human, metadata)
+}
+
+pub(super) fn relate(
+    text: &str,
+    relation: &Relation,
+    project: ProjectId,
+    wanted: &[IssueKey],
+) -> Result<Option<String>, String> {
+    let (human, mut document) = match body::footer(text, "project-data")? {
+        Some((human, data)) => (
+            human,
+            toml::from_str::<toml::Table>(data)
+                .map_err(|error| String::from(error.message()))?,
+        ),
+        None => (text, toml::Table::new()),
+    };
+    let mut relations = match document.remove("relations") {
+        Some(toml::Value::Table(table)) => table,
+        Some(_) => return Err(String::from("relations is not a table")),
+        None => toml::Table::new(),
+    };
+    let current = relations
+        .get(&relation.name)
+        .cloned()
+        .map(|value| targets(relation, value, project))
+        .transpose()?
+        .unwrap_or_default();
+    if current == wanted {
+        return Ok(None);
+    }
+    let named =
+        |target: &IssueKey| toml::Value::String(target.named_from(project));
+    match wanted {
+        [] => {
+            relations.remove(&relation.name);
+        }
+        [one] if !relation.many => {
+            relations.insert(relation.name.clone(), named(one));
+        }
+        many => {
+            relations.insert(
+                relation.name.clone(),
+                toml::Value::Array(many.iter().map(named).collect()),
+            );
+        }
+    }
+    document.entry("schema").or_insert(toml::Value::Integer(1));
+    if !relations.is_empty() {
+        document
+            .insert(String::from("relations"), toml::Value::Table(relations));
+    }
+    let kept = human.trim_end();
+    if document.keys().all(|key| key == "schema") {
+        return Ok(Some(String::from(kept)));
+    }
+    let data = toml::to_string(&document).map_err(|error| error.to_string())?;
+    let gap = if kept.is_empty() { "" } else { "\n\n" };
+    Ok(Some(format!("{kept}{gap}```project-data\n{data}```\n")))
 }

@@ -53,6 +53,24 @@ impl IssueTracker for Github {
     ) -> project_runtime::SendCompletion<'_, home::issue::Comment> {
         Box::pin(async { Err(home::issue::SendFailure::Unknown) })
     }
+    fn plan_relation(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::RelationChange,
+    ) -> project_runtime::RelationCompletion<'_> {
+        Box::pin(async {
+            Err(home::issue::Unrelatable::Read(
+                home::issue::ReadFailure::Unavailable,
+            ))
+        })
+    }
+    fn write_relation(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::RelationStep,
+    ) -> project_runtime::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
 }
 
 fn project(root: &Path, id: &str, text: &str) -> std::io::Result<()> {

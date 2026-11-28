@@ -13,6 +13,10 @@ pub enum WriteError {
     Read(ReadFailure),
     #[error("the tracker rejected the write: {0}")]
     Rejected(ReadFailure),
+    #[error("the tracker found the write invalid")]
+    Invalid,
+    #[error("{0}")]
+    Unheld(String),
     #[error(transparent)]
     Operation(#[from] Error),
     #[error(
@@ -75,6 +79,10 @@ async fn deliver(
         Err(SendFailure::Rejected(failure)) => {
             attempt.reject()?;
             Err(WriteError::Rejected(failure))
+        }
+        Err(SendFailure::Invalid) => {
+            attempt.reject()?;
+            Err(WriteError::Invalid)
         }
         Err(SendFailure::Unknown) => Err(WriteError::Unknown(handle)),
     }

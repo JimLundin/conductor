@@ -2,10 +2,10 @@ use crate::storage::{CACHE_BYTES, private};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
-use home::issue::Comment;
 use home::issue::EditId;
+use home::issue::{Comment, Relating};
 use home::operations::{
-    Confirmed, Handle, Intent, Next, Record, Refusal, Step,
+    Confirmed, Handle, Intent, Next, Record, Refusal, Relate, Step,
 };
 use redb::{Database, ReadableDatabase, TableDefinition};
 
@@ -202,6 +202,12 @@ impl Attempt {
 
     pub fn next(&mut self, observed: &[Comment]) -> Result<Next, Error> {
         let (record, next) = self.record.next(observed)?;
+        self.replace(record)?;
+        Ok(next)
+    }
+
+    pub fn relate(&mut self, plan: &Relating) -> Result<Relate, Error> {
+        let (record, next) = self.record.relate(plan)?;
         self.replace(record)?;
         Ok(next)
     }

@@ -79,6 +79,7 @@ use secrecy::SecretString;
 mod comments;
 #[cfg(unix)]
 mod fleet;
+mod relations;
 mod tracking;
 
 type Reply = (u16, &'static str);

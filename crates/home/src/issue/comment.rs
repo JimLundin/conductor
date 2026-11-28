@@ -28,6 +28,7 @@ pub struct CommentRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendFailure {
     Rejected(ReadFailure),
+    Invalid,
     Unknown,
 }
 
