@@ -13,6 +13,7 @@ pub mod command;
 mod coverage;
 pub mod eval;
 pub mod graph;
+pub mod resolve;
 pub mod role;
 pub mod snapshot;
 mod vocabulary;

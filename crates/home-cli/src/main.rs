@@ -20,7 +20,10 @@ use home_store::{CanvasStore, StoreError};
 mod local;
 mod operations;
 mod project;
+mod resolve;
 mod tracking;
+
+use resolve::Trackers;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -47,7 +50,7 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     match asked(args, snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, snapshot),
         Asked::Flow(command) => {
-            issues(home, &mut store, command, &loaded, &context)
+            issues(home, &mut store, command, loaded, &context)
         }
     }
 }
@@ -56,7 +59,7 @@ fn issues(
     home: &Path,
     store: &mut dyn CanvasStore,
     asked: Command,
-    loaded: &home::issue::storage::ReadHome,
+    loaded: home::issue::storage::ReadHome,
     context: &Context,
 ) -> (String, u8) {
     let given = asked.needs().map(|need| match need {
@@ -65,7 +68,12 @@ fn issues(
         Need::Canvases(wanted) => Given::Canvases(fetched(&*store, &wanted)),
         Need::EveryCanvas => Given::EveryCanvas(every(&*store)),
     });
-    let outcome = run(asked, given, &loaded.snapshot, context);
+    let mut trackers =
+        Trackers::new(home, loaded, asked.data().map(PathBuf::from));
+    let resolved =
+        trackers.resolved(asked.issues(given.as_ref()), asked.mode());
+    let loaded = trackers.loaded();
+    let outcome = run(asked, given, &resolved, &loaded.snapshot, context);
     let saved = outcome
         .changes
         .iter()

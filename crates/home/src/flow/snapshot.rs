@@ -2,8 +2,10 @@ use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
 use crate::flow::Flow;
-use crate::issue::{Issue, Observation};
-use crate::{IssueId, ProjectId};
+use crate::issue::{
+    Freshness, Issue, IssueReading, Observation, ReadStatus, Unreadable,
+};
+use crate::{IssueId, IssueKey, ProjectId};
 
 use super::graph::{Graph, Problem};
 use crate::prelude::*;
@@ -130,6 +132,40 @@ impl Snapshot {
             .find(|observation| {
                 observation.project() == project && observation.id() == id
             })
+    }
+
+    #[must_use]
+    pub fn reading(&self, key: &IssueKey) -> IssueReading {
+        let record = self.records.iter().find_map(|record| match record {
+            Ok(observation) => (observation.project() == key.project
+                && observation.id() == &key.id)
+                .then(|| observation.clone()),
+            Err(problem) => (problem.project == key.project
+                && problem.record == key.id.as_str())
+            .then(|| {
+                Observation::invalid(Unreadable {
+                    id: key.id.clone(),
+                    project: key.project,
+                    title: None,
+                    body: None,
+                    created: None,
+                    reason: problem.to_string(),
+                })
+            }),
+        });
+        let status = ReadStatus {
+            freshness: if record.is_some() {
+                Freshness::Fresh
+            } else {
+                Freshness::Unknown
+            },
+            complete: record.is_some(),
+            observed_at: record
+                .as_ref()
+                .and_then(|observation| observation.observed_at),
+            failure: None,
+        };
+        IssueReading { record, status }
     }
 
     #[must_use]

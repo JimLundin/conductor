@@ -165,10 +165,10 @@ resource = "team/builds"
 }
 
 #[test]
-fn issue_reads_use_only_project_configuration_including_when_offline() {
+fn issue_lists_use_only_project_configuration_including_when_offline() {
     for words in [
         &["issue", "list", "sample", "--offline"][..],
-        &["issue", "show", "sample", "#7", "--data-dir", "store"][..],
+        &["issue", "list", "sample", "--data-dir", "store"][..],
     ] {
         let args: Vec<_> = words.iter().copied().map(String::from).collect();
         assert!(super::configuration_query(&args));

@@ -80,8 +80,16 @@ until their readers are available.
 A successful refresh reports `Fresh`. If a page fails, the command exits
 with status 1 and reports the failure alongside the previous complete list.
 `--offline` reads the host cache and reports `Stale` with the observation
-time. A first read with no cached result reports `Unknown` and exits
-with status 1. Use `--data-dir <dir>` to select the host data directory.
+time. Use `--data-dir <dir>` to select the host data directory.
+
+`home issue show` also reads a project without a tracker, from its Markdown
+issues. Every other command that names an issue, such as
+`home canvas put my-project 42 <name>`, takes the same `<project> <id>`
+and looks the ID up in the cache first. If the cache lacks it, the command
+refreshes the project's tracker once and looks again. An ID still missing
+fails with `no issue 42 in my-project`. If the refresh fails, or
+`home issue show` was given `--offline`, the command fails and names
+`home issue list my-project`.
 
 Edit tracker-backed issues in GitHub during this read-only implementation.
 The CLI refuses to write a second Markdown record for a project with a tracker.

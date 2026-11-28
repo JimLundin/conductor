@@ -58,36 +58,15 @@ async fn read(
     let mut registry = Registry::default();
     let mode = mode(&mut registry, &data, selected.tracker, query.offline);
     let service = registry.project(&selected.project.backends);
-    let id = selected.project.id;
-    let (json, found, failure) = if let Some(reference) = query.reference {
-        let lookup = home::issue::Lookup {
-            project: id,
-            id: home::IssueId::new(reference)
-                .ok_or_else(|| String::from("an issue id is not empty"))?,
-        };
-        let read = service
-            .issue(&cache, lookup, mode)
-            .await
-            .map_err(|err| err.to_string())?;
-        (
-            serde_json::to_string_pretty(&read),
-            read.record.is_some(),
-            read.status.failure,
-        )
-    } else {
-        let list = service
-            .issues(&cache, id, mode)
-            .await
-            .map_err(|err| err.to_string())?;
-        (
-            serde_json::to_string_pretty(&list),
-            list.status.complete,
-            list.status.failure,
-        )
-    };
+    let list = service
+        .issues(&cache, selected.project.id, mode)
+        .await
+        .map_err(|err| err.to_string())?;
+    let json =
+        serde_json::to_string_pretty(&list).map_err(|err| err.to_string())?;
     Ok((
-        format!("{}\n", json.map_err(|err| err.to_string())?),
-        u8::from(!found || failure.is_some()),
+        format!("{json}\n"),
+        u8::from(!list.status.complete || list.status.failure.is_some()),
     ))
 }
 

@@ -96,15 +96,15 @@ fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_wri
         "issue",
         "show",
         "sample",
-        "#42",
+        "42",
         "--data-dir",
         "host",
         "--offline",
     ])?;
     assert!(!offline.status.success());
-    let cached: serde_json::Value = serde_json::from_slice(&offline.stdout)?;
-    assert!(cached["record"].is_null());
-    assert!(cached["status"]["failure"].is_null());
-    assert_eq!(cached["status"]["freshness"], "Unknown");
+    assert_eq!(
+        String::from_utf8(offline.stdout)?,
+        "home: no issue 42 in sample is cached; `home issue list sample` refreshes the cache\n"
+    );
     Ok(())
 }
