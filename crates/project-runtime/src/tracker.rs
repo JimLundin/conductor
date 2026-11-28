@@ -426,17 +426,17 @@ impl CanvasStore for Trackers {
         let mut held = self.markdown.all()?;
         held.canvases.retain(|key| self.markdown(key.project));
         for selected in self.selected.values() {
-            let kept = match selected {
-                Selected::Markdown => continue,
+            match selected {
+                Selected::Markdown => {}
                 Selected::Configured(configured) => {
-                    configured.canvases.all()?
+                    let kept = configured.canvases.all()?;
+                    held.canvases.extend(kept.canvases);
+                    held.strays.extend(kept.strays);
                 }
                 Selected::Unbuilt(reason) => {
-                    return Err(unavailable(reason.as_str()));
+                    held.unavailable.push(reason.clone());
                 }
-            };
-            held.canvases.extend(kept.canvases);
-            held.strays.extend(kept.strays);
+            }
         }
         held.canvases.sort();
         Ok(held)
