@@ -176,9 +176,10 @@ fn key_text(key: &str) -> String {
 pub fn targets(
     relation: &crate::flow::Relation,
     value: Value,
-) -> Result<Vec<crate::IssueId>, String> {
+    from: crate::ProjectId,
+) -> Result<Vec<crate::IssueKey>, String> {
     let id = |value: Value| match value {
-        Value::String(name) => crate::IssueId::new(&name)
+        Value::String(name) => crate::IssueKey::named(&name, from)
             .ok_or_else(|| format!("{name:?} is no issue")),
         _ => Err(String::from("is not a list of ids")),
     };

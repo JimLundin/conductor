@@ -1,7 +1,7 @@
 use super::*;
 use alloc::collections::BTreeMap;
-use home::UnixMillis;
 use home::issue::Coverage;
+use home::{IssueKey, UnixMillis};
 
 fn record() -> Result<Record, String> {
     Ok(Record {
@@ -185,7 +185,7 @@ fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_
     assert_eq!(issue.text("method"), Some("prototype"));
     assert_eq!(
         issue.links.get("parent").and_then(|ids| ids.first()),
-        IssueId::new("712").as_ref()
+        IssueKey::named("712", ProjectId::new(71)).as_ref()
     );
     assert!(body.text().contains("example only"));
     assert!(!body.text().contains("schema = 1"));
@@ -198,6 +198,28 @@ fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_
     assert_eq!(
         observed.completeness.relations.get("parent"),
         Some(&Coverage::Complete)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_footer_relation_names_another_project_s_issue_by_its_project_and_id()
+-> Result<(), String> {
+    let mut input = record()?;
+    input.body = String::from(
+        "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = 'hyn162/146'\n```",
+    );
+    let observed =
+        read(input, "[[relations]]\nname='parent'\nsource='metadata'")?;
+    let (issue, _) = observed.editable()?;
+    assert_eq!(
+        issue
+            .links
+            .get("parent")
+            .and_then(|targets| targets.first())
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("hyn162/146")
     );
     Ok(())
 }

@@ -105,9 +105,13 @@ fn starting_a_session_makes_an_idle_or_startable_issue_active_by_role() {
 fn an_issue_blocked_by_one_not_yet_built_is_not_startable() {
     let flow = renamed();
     let mut waiting = issue(waiting_id(), "queued");
-    waiting
-        .links
-        .insert(text("blocked_by"), Vec::from([blocker_id()]));
+    waiting.links.insert(
+        text("blocked_by"),
+        Vec::from([crate::IssueKey {
+            project: ProjectId::new(1),
+            id: blocker_id(),
+        }]),
+    );
     let offered = |status: &str| {
         let blocking = issue(blocker_id(), status);
         let issues = [&waiting, &blocking];
@@ -151,9 +155,13 @@ fn an_issue_not_yet_built_whose_session_landed_work_is_up_for_review_by_role() {
 fn what_can_start_is_what_the_flow_s_start_rule_says() {
     let blocked_by_one_in = |flow: &Flow, status: &str| {
         let mut waiting = issue(waiting_id(), "queued");
-        waiting
-            .links
-            .insert(text("blocked_by"), Vec::from([blocker_id()]));
+        waiting.links.insert(
+            text("blocked_by"),
+            Vec::from([crate::IssueKey {
+                project: ProjectId::new(1),
+                id: blocker_id(),
+            }]),
+        );
         let blocking = issue(blocker_id(), status);
         can_start(flow, &[&waiting, &blocking], &waiting)
     };

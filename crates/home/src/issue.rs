@@ -160,7 +160,7 @@ fn value_of(issue: &Issue, field: &str) -> Vec<String> {
                 .get(field)
                 .into_iter()
                 .flatten()
-                .map(ToString::to_string)
+                .map(|target| target.named_from(issue.project))
                 .collect()
         },
         normalized_words,

@@ -189,23 +189,26 @@ fn references(
                 .relations
                 .iter()
                 .find(|relation| relation.name == *name);
-            for id in ids {
-                let message = match by_id.get(&(issue.project, id)) {
+            for target in ids {
+                let id = target.named_from(issue.project);
+                let message = match by_id.get(&(target.project, &target.id)) {
                     None if !complete_catalog
-                        || unread
-                            .contains(&(issue.project, id.to_string())) =>
+                        || unread.contains(&(
+                            target.project,
+                            target.id.to_string(),
+                        )) =>
                     {
                         None
                     }
                     None => Some(format!("{id} is no issue")),
-                    Some(target)
+                    Some(reached)
                         if relation.is_some_and(|declared| {
-                            !declared.reaches(&target.kind)
+                            !declared.reaches(&reached.kind)
                         }) =>
                     {
                         Some(format!(
                             "{id} is a {}, which {name} can't point to",
-                            target.kind
+                            reached.kind
                         ))
                     }
                     Some(_) => None,
@@ -230,11 +233,12 @@ fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
         let edges: BTreeMap<Key, Vec<Key>> = issues
             .iter()
             .filter_map(|issue| {
-                issue.links.get(&relation.name).map(|ids| {
+                issue.links.get(&relation.name).map(|targets| {
                     (
                         (issue.project, issue.id.clone()),
-                        ids.iter()
-                            .map(|id| (issue.project, id.clone()))
+                        targets
+                            .iter()
+                            .map(|target| (target.project, target.id.clone()))
                             .collect(),
                     )
                 })

@@ -75,7 +75,9 @@ mapping them. GitHub's Issues API returns them too; Octocrab's
 An issue ID is an opaque string unique within its project's tracker, and a
 project and an ID name one issue. The GitHub adapter gives each issue its
 number as its ID. The issue's REST ID and GraphQL node ID are addresses in
-its locator. The core never parses an ID.
+its locator. The core never parses an ID. A relation names an issue of its
+own project by its ID, and an issue of another project as `<project>/<id>`,
+such as `hyn162/0trfecpc`, where `<project>` is the project's ID.
 Sort issues by their creation time with identity as a deterministic tie
 break, not by the old locally minted ID.
 

@@ -6,7 +6,7 @@ use alloc::{
 };
 use home::flow::Flow;
 use home::issue::{Datum, body, document::targets};
-use home::{IssueId, operations::Handle};
+use home::{IssueKey, ProjectId, operations::Handle};
 use serde::Deserialize;
 
 use super::Findings;
@@ -26,13 +26,14 @@ struct Document {
 #[derive(Default)]
 pub(super) struct Metadata {
     pub fields: BTreeMap<String, Datum>,
-    pub links: BTreeMap<String, Vec<IssueId>>,
+    pub links: BTreeMap<String, Vec<IssueKey>>,
 }
 
 pub(super) fn read<'a>(
     text: &'a str,
     flow: &Flow,
     config: &Configuration,
+    project: ProjectId,
     findings: &mut Findings,
 ) -> (&'a str, Metadata) {
     let (human, data) = match body::footer(text, "project-data") {
@@ -84,7 +85,7 @@ pub(super) fn read<'a>(
                     continue;
                 }
                 if let Some((relation, false)) = flow.relation(&name) {
-                    match targets(relation, value) {
+                    match targets(relation, value, project) {
                         Ok(ids) => {
                             metadata.links.insert(name, ids);
                         }

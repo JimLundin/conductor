@@ -2299,7 +2299,7 @@
         "links": {
           "additionalProperties": {
             "items": {
-              "$ref": "#/$defs/IssueId"
+              "$ref": "#/$defs/IssueKey"
             },
             "type": "array"
           },

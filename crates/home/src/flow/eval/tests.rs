@@ -26,6 +26,13 @@ fn id(name: &str) -> IssueId {
     IssueId(String::from(name))
 }
 
+fn key(name: &str) -> crate::IssueKey {
+    crate::IssueKey {
+        project: ProjectId::new(1),
+        id: id(name),
+    }
+}
+
 fn step(via: &str, name: &str) -> Step {
     Step {
         via: String::from(via),
@@ -61,7 +68,7 @@ fn issue(name: &str, kind: &str, status: &str) -> Issue {
 fn linked(mut issue: Issue, relation: &str, ids: &[&str]) -> Issue {
     issue.links.insert(
         String::from(relation),
-        ids.iter().map(|target| id(target)).collect(),
+        ids.iter().map(|target| key(target)).collect(),
     );
     issue
 }
@@ -279,9 +286,12 @@ fn meets(
                 } else {
                     (issue, *other)
                 };
-                from.links
-                    .get(&relation.name)
-                    .is_some_and(|ids| ids.contains(&to.id))
+                from.links.get(&relation.name).is_some_and(|ids| {
+                    ids.contains(&crate::IssueKey {
+                        project: to.project,
+                        id: to.id.clone(),
+                    })
+                })
             })
             .collect()
     };
@@ -400,13 +410,16 @@ fn issues() -> impl Strategy<Value = Vec<Issue>> {
                         (String::from("focus"), Datum::Text(word))
                     }));
                     made.links.extend(parent.map(|target| {
-                        (String::from("parent"), Vec::from([self::id(&target)]))
+                        (
+                            String::from("parent"),
+                            Vec::from([self::key(&target)]),
+                        )
                     }));
                     made.links.insert(
                         String::from("blocked_by"),
                         blockers
                             .iter()
-                            .map(|target| self::id(target))
+                            .map(|target| self::key(target))
                             .collect(),
                     );
                     made.sections = sections

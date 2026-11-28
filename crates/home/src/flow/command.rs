@@ -1135,7 +1135,7 @@ fn assign(
         let targets = names
             .iter()
             .map(|name| {
-                IssueId::new(name)
+                IssueKey::named(name, issue.project)
                     .ok_or_else(|| format!("{name:?} is no issue"))
             })
             .collect::<Result<Vec<_>, _>>()?;

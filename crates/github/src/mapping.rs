@@ -80,7 +80,7 @@ pub fn observe(
         .clone();
     let stage = labels.managed.get(home::issue::STAGE).cloned();
     let (human, metadata) =
-        footer::read(&record.body, flow, config, &mut findings);
+        footer::read(&record.body, flow, config, project, &mut findings);
     let fields = labels.fields(
         flow,
         &kind,

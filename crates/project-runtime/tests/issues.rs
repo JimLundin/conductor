@@ -415,7 +415,10 @@ async fn project_findings_require_observed_relations_and_visible_targets()
     let flow =
         home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
     let cache = IssueCache::new(dir.path(), &flow);
-    let external = IssueId::new("elsewhere").ok_or("bad identity")?;
+    let external = home::IssueKey {
+        project: project(),
+        id: IssueId::new("elsewhere").ok_or("bad identity")?,
+    };
     let subject = Issue {
         id: IssueId::new("decision").ok_or("bad identity")?,
         project: project(),

@@ -19,10 +19,9 @@ pub(super) fn applicable(flow: &Flow, records: &[Observation]) -> Flow {
         }
         if let Some(issue) = record.issue() {
             for (name, targets) in &issue.links {
-                if targets
-                    .iter()
-                    .any(|id| !valid.contains(&(issue.project, id)))
-                {
+                if targets.iter().any(|target| {
+                    !valid.contains(&(target.project, &target.id))
+                }) {
                     paths.insert(name.as_str());
                 }
             }

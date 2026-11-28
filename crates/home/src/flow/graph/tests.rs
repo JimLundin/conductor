@@ -34,6 +34,13 @@ fn file(project: &str, id: &str, front: &str, body: &str) -> File {
     }
 }
 
+fn keyed(project: &str, id: &str) -> crate::IssueKey {
+    crate::IssueKey {
+        project: ProjectId::parse(project).unwrap_or(ProjectId::new(0)),
+        id: IssueId(String::from(id)),
+    }
+}
+
 fn spec() -> File {
     file(
         CONDUCTOR,
@@ -190,10 +197,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
         graph.issues.get(1).map(|issue| issue.links.clone()),
         Some(BTreeMap::from([
             (String::from("blocked_by"), Vec::new()),
-            (
-                String::from("parent"),
-                IssueId::new(SPEC).into_iter().collect()
-            ),
+            (String::from("parent"), Vec::from([keyed(CONDUCTOR, SPEC)])),
         ]))
     );
 }
@@ -294,6 +298,30 @@ fn a_reference_must_reach_an_issue_of_its_project_and_its_kind() {
             &format!("{HOME}/{TASK}"),
             "parent",
             &format!("{DECISION} is a decision, which parent can't point to"),
+        )])
+    );
+}
+
+#[test]
+fn a_reference_names_another_project_s_issue_by_its_project_and_id() {
+    let crossing = read(
+        &flow(),
+        &[
+            spec(),
+            task(HOME, &format!("parent = \"{CONDUCTOR}/{SPEC}\"\n")),
+        ],
+    );
+    assert_eq!(problems(&crossing), Vec::new());
+    let elsewhere = read(
+        &flow(),
+        &[spec(), task(HOME, &format!("parent = \"{HOME}/{SPEC}\"\n"))],
+    );
+    assert_eq!(
+        problems(&elsewhere),
+        Vec::from([problem(
+            &format!("{HOME}/{TASK}"),
+            "parent",
+            &format!("{SPEC} is no issue")
         )])
     );
 }

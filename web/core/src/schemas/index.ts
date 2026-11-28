@@ -2132,7 +2132,7 @@ type Issue = {
   readonly fields: { readonly [x: string]: Datum };
   readonly id: IssueId;
   readonly kind: string;
-  readonly links: { readonly [x: string]: globalThis.ReadonlyArray<IssueId> };
+  readonly links: { readonly [x: string]: globalThis.ReadonlyArray<IssueKey> };
   readonly log: globalThis.ReadonlyArray<Entry>;
   readonly notes: globalThis.ReadonlyArray<Note>;
   readonly project: ProjectId;
@@ -2156,7 +2156,7 @@ const Issue = Schema.Struct({
   fields: Schema.Record(Schema.String, Datum),
   id: IssueId,
   kind: Schema.String,
-  links: Schema.Record(Schema.String, Schema.Array(IssueId)),
+  links: Schema.Record(Schema.String, Schema.Array(IssueKey)),
   log: Schema.Array(Entry),
   notes: Schema.Array(Note),
   project: ProjectId,

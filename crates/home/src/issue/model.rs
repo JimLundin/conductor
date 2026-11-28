@@ -10,7 +10,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value};
 
 use crate::canvas::CanvasEntry;
-use crate::{IssueId, ProjectId, UnixMillis};
+use crate::{IssueId, IssueKey, ProjectId, UnixMillis};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Issue {
@@ -22,7 +22,7 @@ pub struct Issue {
     pub status: String,
     pub stage: Option<String>,
     pub fields: BTreeMap<String, Datum>,
-    pub links: BTreeMap<String, Vec<IssueId>>,
+    pub links: BTreeMap<String, Vec<IssueKey>>,
     pub body: String,
     pub sections: Vec<Section>,
     pub checklist: Vec<ChecklistItem>,

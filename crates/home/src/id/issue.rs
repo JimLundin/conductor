@@ -1,4 +1,7 @@
-use alloc::{borrow::Cow, string::String};
+use alloc::{
+    borrow::Cow,
+    string::{String, ToString},
+};
 use core::fmt;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -35,6 +38,33 @@ impl IssueId {
 pub struct IssueKey {
     pub project: ProjectId,
     pub id: IssueId,
+}
+
+impl IssueKey {
+    #[must_use]
+    pub fn named(text: &str, from: ProjectId) -> Option<Self> {
+        if let Some((prefix, rest)) = text.split_once('/')
+            && let Some(project) = ProjectId::parse(prefix)
+        {
+            return Some(Self {
+                project,
+                id: IssueId::new(rest)?,
+            });
+        }
+        Some(Self {
+            project: from,
+            id: IssueId::new(text)?,
+        })
+    }
+
+    #[must_use]
+    pub fn named_from(&self, from: ProjectId) -> String {
+        if self.project == from {
+            self.id.to_string()
+        } else {
+            self.to_string()
+        }
+    }
 }
 
 impl fmt::Display for IssueKey {
@@ -83,7 +113,7 @@ impl JsonSchema for IssueId {
 
 #[cfg(test)]
 mod tests {
-    use super::IssueId;
+    use super::{IssueId, IssueKey, ProjectId};
     use alloc::string::ToString;
 
     #[test]
@@ -96,6 +126,38 @@ mod tests {
                 Some(text)
             );
         }
+    }
+
+    #[test]
+    fn a_bare_id_names_an_issue_of_its_own_project() {
+        let here = ProjectId::new(1);
+        let named = IssueKey::named("0trfecpc", here);
+        assert_eq!(
+            named.as_ref().map(|key| (key.project, key.id.as_str())),
+            Some((here, "0trfecpc"))
+        );
+        assert_eq!(
+            named.map(|key| key.named_from(here)).as_deref(),
+            Some("0trfecpc")
+        );
+    }
+
+    #[test]
+    fn a_project_and_an_id_name_an_issue_of_another_project() {
+        let here = ProjectId::new(1);
+        let there = ProjectId::parse("hyn162");
+        let named = IssueKey::named("hyn162/0trfecpc", here);
+        assert_eq!(
+            named
+                .as_ref()
+                .map(|key| (Some(key.project), key.id.as_str())),
+            Some((there, "0trfecpc"))
+        );
+        assert_eq!(
+            named.map(|key| key.named_from(here)).as_deref(),
+            Some("hyn162/0trfecpc")
+        );
+        assert_eq!(IssueKey::named("hyn162/", here), None);
     }
 
     #[test]

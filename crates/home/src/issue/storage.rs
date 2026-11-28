@@ -61,7 +61,7 @@ pub fn decode(
         } else if let Some(relation) = flow.relations.iter().find(|relation| {
             relation.name == key && relation.starts_from(&kind)
         }) {
-            let ids = targets(relation, value)
+            let ids = targets(relation, value, file.project)
                 .map_err(|message| fail(Some(&key), message))?;
             links.insert(key, ids);
         } else {
