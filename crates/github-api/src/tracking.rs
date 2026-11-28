@@ -5,7 +5,9 @@ use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Native, Record};
 use home::flow::Flow;
-use home::issue::{Comment, CommentWrite, RelationChange, RelationStep};
+use home::issue::{
+    Comment, CommentWrite, IssueComment, RelationChange, RelationStep,
+};
 use home::issue::{
     IssueState, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
     Unreadable,
@@ -377,6 +379,13 @@ impl IssueTracker for Tracker {
 
     fn comments(&self, issue: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
         Box::pin(self.issue_comments(issue))
+    }
+
+    fn canvas_comments(
+        &self,
+        _: ProjectId,
+    ) -> IssueCompletion<'_, Vec<IssueComment>> {
+        Box::pin(self.marked_comments())
     }
 
     fn write_comment(

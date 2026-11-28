@@ -741,6 +741,8 @@ dependencies = [
  "codex-cli",
  "daemon",
  "github-api",
+ "home",
+ "home-store",
  "host",
  "project-runtime",
  "rpassword",
@@ -1835,6 +1837,7 @@ dependencies = [
  "data-encoding",
  "home",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "thiserror 2.0.21",
  "toml",
@@ -1849,6 +1852,7 @@ dependencies = [
  "github",
  "home",
  "home-files",
+ "home-store",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2026,6 +2030,7 @@ version = "0.1.0"
 dependencies = [
  "home",
  "home-store",
+ "tokio",
  "vcs",
 ]
 
@@ -2034,6 +2039,7 @@ name = "home-store"
 version = "0.1.0"
 dependencies = [
  "home",
+ "tokio",
 ]
 
 [[package]]
@@ -2860,14 +2866,19 @@ version = "0.1.0"
 dependencies = [
  "agents",
  "data-encoding",
+ "github",
+ "github-api",
  "home",
+ "home-files",
  "home-store",
  "host",
  "postcard",
+ "project-runtime",
  "schemars",
  "serde",
  "serde_json",
  "subtle",
+ "tempfile",
  "thiserror 2.0.21",
  "uuid",
 ]

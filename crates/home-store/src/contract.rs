@@ -15,16 +15,16 @@ pub enum Plant {
     NotAnIssue(ProjectId),
 }
 
-pub fn contract<S: CanvasStore>(
+pub async fn contract<S: CanvasStore + Send>(
     store: &mut S,
-    spoil: impl FnOnce(&mut S, &CanvasKey),
-    plant: impl FnMut(&mut S, &Plant) -> String,
+    spoil: impl AsyncFnOnce(&mut S, &CanvasKey),
+    plant: impl AsyncFnMut(&mut S, &Plant) -> Option<String>,
 ) -> Result<(), String> {
-    keeps(store)?;
-    reports_strays(store, spoil, plant)
+    keeps(store).await?;
+    reports_strays(store, spoil, plant).await
 }
 
-fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
+async fn keeps(store: &mut (dyn CanvasStore + Send)) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
     let (one, two) = issues()?;
     let design = key(alpha, &one, "design")?;
@@ -37,23 +37,28 @@ fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
         &None,
     )?;
     let first = file(1, "first")?;
-    store.put(&design, &first).map_err(shown)?;
+    store.put(&design, &first).await.map_err(shown)?;
     same(
         "get returns what put kept",
         &store.get(&design).map_err(shown)?,
         &Some(first),
     )?;
     let second = file(2, "second")?;
-    store.put(&design, &second).map_err(shown)?;
+    store.put(&design, &second).await.map_err(shown)?;
     same(
         "put again under a key replaces what it kept",
         &store.get(&design).map_err(shown)?,
         &Some(second.clone()),
     )?;
     let third = file(3, "third")?;
-    [&plan, &other, &elsewhere]
-        .into_iter()
-        .try_for_each(|at| store.put(at, &third))
+    store.put(&plan, &third).await.map_err(shown)?;
+    store
+        .put(&other, &file(4, "fourth")?)
+        .await
+        .map_err(shown)?;
+    store
+        .put(&elsewhere, &file(5, "fifth")?)
+        .await
         .map_err(shown)?;
     same(
         "list gives each canvas of the issue by name, with its time and signer",
@@ -78,32 +83,38 @@ fn keeps(store: &mut dyn CanvasStore) -> Result<(), String> {
     )
 }
 
-fn reports_strays<S: CanvasStore>(
+async fn reports_strays<S: CanvasStore + Send>(
     store: &mut S,
-    spoil: impl FnOnce(&mut S, &CanvasKey),
-    mut plant: impl FnMut(&mut S, &Plant) -> String,
+    spoil: impl AsyncFnOnce(&mut S, &CanvasKey),
+    mut plant: impl AsyncFnMut(&mut S, &Plant) -> Option<String>,
 ) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
     let (one, two) = issues()?;
     let design = key(alpha, &one, "design")?;
     let plan = key(alpha, &one, "a-plan")?;
     let broken = key(alpha, &one, "broken")?;
-    spoil(store, &broken);
+    spoil(store, &broken).await;
     let unnamed = plant(
         store,
         &Plant::Unnamed {
             project: alpha,
             issue: one.clone(),
         },
-    );
+    )
+    .await
+    .map(|place| (place, "unnamed"));
     let folder = plant(
         store,
         &Plant::Folder {
             project: alpha,
             issue: one.clone(),
         },
-    );
-    let unissued = plant(store, &Plant::NotAnIssue(alpha));
+    )
+    .await
+    .map(|place| (place, "folder"));
+    let unissued = plant(store, &Plant::NotAnIssue(alpha))
+        .await
+        .map(|place| (place, "not an issue"));
     same(
         "list gives an issue's canvases by name, a broken one's too, beside what isn't one, with where it is and why",
         &seen(listed(store.list(&alpha, &one).map_err(shown)?)),
@@ -113,7 +124,10 @@ fn reports_strays<S: CanvasStore>(
                 Err(broken.name.clone()),
                 Ok(CanvasEntry::of(design.name.clone(), &file(2, "second")?)),
             ],
-            vec![(unnamed.clone(), "unnamed"), (folder.clone(), "folder")],
+            [unnamed.clone(), folder.clone()]
+                .into_iter()
+                .flatten()
+                .collect(),
         ),
     )?;
     same(
@@ -127,11 +141,7 @@ fn reports_strays<S: CanvasStore>(
                 key(alpha, &two, "design")?,
                 key(beta, &one, "design")?,
             ],
-            vec![
-                (unnamed, "unnamed"),
-                (folder, "folder"),
-                (unissued, "not an issue"),
-            ],
+            [unnamed, folder, unissued].into_iter().flatten().collect(),
         ),
     )?;
     match store.get(&broken) {
@@ -161,6 +171,8 @@ fn seen<T>(held: Held<T>) -> Seen<T> {
                 StrayReason::Unnamed => "unnamed",
                 StrayReason::Folder => "folder",
                 StrayReason::NotAnIssue => "not an issue",
+                StrayReason::Unreadable => "unreadable",
+                StrayReason::Repeated => "repeated",
             };
             (place, why)
         })
@@ -183,8 +195,8 @@ fn listed(
 }
 
 fn issues() -> Result<(IssueId, IssueId), String> {
-    let one = IssueId::new("00000001").ok_or("first issue")?;
-    let two = IssueId::new("00000002").ok_or("second issue")?;
+    let one = IssueId::new("1").ok_or("first issue")?;
+    let two = IssueId::new("2").ok_or("second issue")?;
     Ok((one, two))
 }
 

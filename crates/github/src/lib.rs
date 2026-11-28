@@ -8,4 +8,6 @@ pub const ADAPTER: &str = "github";
 
 pub mod access;
 
+pub mod canvas;
+
 pub mod mapping;

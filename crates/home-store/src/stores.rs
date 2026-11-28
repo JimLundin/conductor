@@ -1,11 +1,16 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use home::canvas::{Broken, CanvasEntry, CanvasFile, CanvasKey, Held};
+use home::flow::snapshot::Snapshot;
+use home::project::Project;
 use home::{IssueId, ProjectId};
 
-use crate::{CanvasStore, StoreError};
+use crate::{CanvasStore, Putting, StoreError};
 
 pub type Kept = Box<dyn CanvasStore + Send + Sync>;
+
+pub type Keeper = fn(&Path, &Snapshot, &Project) -> Option<Kept>;
 
 pub struct Stores {
     home: Kept,
@@ -23,6 +28,17 @@ impl Stores {
 
     pub fn track(&mut self, project: ProjectId, store: Kept) {
         self.trackers.insert(project, store);
+    }
+
+    pub fn follow(&mut self, data: &Path, home: &Snapshot, keeper: Keeper) {
+        self.trackers = home
+            .projects()
+            .iter()
+            .filter(|project| project.backends.tracker.is_some())
+            .filter_map(|project| {
+                keeper(data, home, project).map(|store| (project.id, store))
+            })
+            .collect();
     }
 
     fn of(&self, project: ProjectId) -> &Kept {
@@ -58,11 +74,11 @@ impl CanvasStore for Stores {
         self.of(key.project).get(key)
     }
 
-    fn put(
-        &mut self,
-        key: &CanvasKey,
-        file: &CanvasFile,
-    ) -> Result<(), StoreError> {
+    fn put<'a>(
+        &'a mut self,
+        key: &'a CanvasKey,
+        file: &'a CanvasFile,
+    ) -> Putting<'a> {
         self.of_mut(key.project).put(key, file)
     }
 }
@@ -109,19 +125,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_tracked_project_s_canvases_are_kept_by_its_tracker_s_store()
+    #[tokio::test]
+    async fn a_tracked_project_s_canvases_are_kept_by_its_tracker_s_store()
     -> Result<(), String> {
         let mut tracker = Memory::default();
         let held = key(TRACKED, "146")?;
         tracker
             .put(&held, &file()?)
+            .await
             .map_err(|error| error.to_string())?;
         let mut stores = Stores::new(Box::new(Memory::default()));
         stores.track(TRACKED, Box::new(tracker));
         let untracked = key(ProjectId::new(1), "0tm7aaaa")?;
         stores
             .put(&untracked, &file()?)
+            .await
             .map_err(|error| error.to_string())?;
         assert_eq!(
             (

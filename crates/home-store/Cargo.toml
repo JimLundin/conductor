@@ -11,5 +11,8 @@ layer = "shell"
 [dependencies]
 home = { path = "../home" }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
+
 [lints]
 workspace = true

@@ -10,6 +10,7 @@ layer = "shell"
 
 [dependencies]
 home-files = { path = "../home-files" }
+home-store = { path = "../home-store" }
 github = { path = "../github" }
 home = { path = "../home" }
 project-runtime = { path = "../project-runtime" }

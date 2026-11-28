@@ -30,6 +30,8 @@ pub enum StrayReason {
     Unnamed,
     Folder,
     NotAnIssue,
+    Unreadable,
+    Repeated,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +51,12 @@ impl fmt::Display for StrayReason {
             ),
             Self::NotAnIssue => out.write_str(
                 "isn't an issue: keep canvases under an issue's id, or remove it",
+            ),
+            Self::Unreadable => out.write_str(
+                "holds a canvas marker but no canvas data: put the canvas again, or delete the comment",
+            ),
+            Self::Repeated => out.write_str(
+                "holds a canvas an earlier comment already holds: delete it",
             ),
         }
     }

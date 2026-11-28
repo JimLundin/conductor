@@ -87,13 +87,8 @@ fn issues(
         .filter(|canvas| trackers.keeps(canvas.key.project))
         .map(|canvas| FolderStore::place(&canvas.key))
         .collect();
-    let store = trackers.stores_mut();
     let saved = written.and_then(|mut paths| {
-        outcome.canvases.iter().try_for_each(|canvas| {
-            store
-                .put(&canvas.key, &canvas.file)
-                .map_err(|error| error.to_string())
-        })?;
+        trackers.put(&outcome.canvases)?;
         paths.extend(kept);
         committed(home, &paths, outcome.message.as_deref(), context)
     });
@@ -169,7 +164,8 @@ fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
 fn got(store: &dyn CanvasStore, key: CanvasKey) -> Fetched {
     let got = store.get(&key).map_err(|refused| match refused {
         StoreError::Invalid { error, .. } => error.to_string(),
-        StoreError::Unavailable { reason } => reason,
+        StoreError::Unavailable { reason }
+        | StoreError::Refused { reason, .. } => reason,
     });
     Fetched { key, got }
 }

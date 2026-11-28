@@ -8,7 +8,7 @@ use home::canvas::{
 };
 use home::layout::{self, PROJECTS};
 use home::{IssueId, ProjectId};
-use home_store::{CanvasStore, StoreError};
+use home_store::{CanvasStore, Putting, StoreError};
 
 const SUFFIX: &str = ".json";
 
@@ -222,15 +222,19 @@ impl CanvasStore for FolderStore {
         }
     }
 
-    fn put(
-        &mut self,
-        key: &CanvasKey,
-        file: &CanvasFile,
-    ) -> Result<(), StoreError> {
-        let path = self.path(key);
-        fs::create_dir_all(self.root.join(Self::issue(key.project, &key.issue)))
+    fn put<'a>(
+        &'a mut self,
+        key: &'a CanvasKey,
+        file: &'a CanvasFile,
+    ) -> Putting<'a> {
+        Box::pin(async move {
+            let path = self.path(key);
+            fs::create_dir_all(
+                self.root.join(Self::issue(key.project, &key.issue)),
+            )
             .and_then(|()| fs::write(&path, file.encode()))
             .map_err(|error| unavailable(&path, &error))
+        })
     }
 }
 
@@ -277,16 +281,17 @@ mod tests {
         })
     }
 
-    #[test]
-    fn the_folder_store_keeps_the_store_contract() {
+    #[tokio::test]
+    async fn the_folder_store_keeps_the_store_contract() {
         let scratch = Scratch::new("contract");
         let root = scratch.0.clone();
         assert_eq!(
             home_store::contract(
                 &mut FolderStore::new(scratch.0.clone()),
-                |_, key| spoiled(&root, key),
-                |_, plant| planted(&root, plant)
-            ),
+                async |_, key| spoiled(&root, key),
+                async |_, plant| Some(planted(&root, plant))
+            )
+            .await,
             Ok(())
         );
     }
@@ -332,8 +337,8 @@ mod tests {
         file.map_or_else(|| folder.clone(), |named| format!("{folder}/{named}"))
     }
 
-    #[test]
-    fn a_canvas_is_kept_as_json_in_its_issue_s_folder_by_name()
+    #[tokio::test]
+    async fn a_canvas_is_kept_as_json_in_its_issue_s_folder_by_name()
     -> Result<(), Box<dyn std::error::Error>> {
         let scratch = Scratch::new("canvas-path");
         let file = CanvasFile {
@@ -346,7 +351,9 @@ mod tests {
                 }],
             )?,
         };
-        FolderStore::new(scratch.0.clone()).put(&key("design-tree")?, &file)?;
+        FolderStore::new(scratch.0.clone())
+            .put(&key("design-tree")?, &file)
+            .await?;
         let kept = fs::read_to_string(
             scratch
                 .0
@@ -356,8 +363,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn an_issue_id_with_path_characters_is_one_canvas_directory()
+    #[tokio::test]
+    async fn an_issue_id_with_path_characters_is_one_canvas_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let scratch = Scratch::new("qualified-canvas");
         let mut store = FolderStore::new(scratch.0.clone());
@@ -373,7 +380,7 @@ mod tests {
                 }],
             )?,
         };
-        store.put(&key, &file)?;
+        store.put(&key, &file).await?;
         assert!(
             scratch
                 .0
