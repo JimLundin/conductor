@@ -164,3 +164,9 @@ reason = "The controlled storage and pipe adapters pass Effect Deferred handles 
 path = "core/src/schemas/index.ts"
 rule = "unused"
 reason = "tools/schemas.sh generates every schema of link's root types from the Rust contract; the web app imports only the ones the client link reaches"
+
+[[exception]]
+path = "package.json"
+rule = "unused"
+reason = "npm run pipe runs wasm-pack, a Rust tool installed outside npm"
+names = ["wasm-pack"]
