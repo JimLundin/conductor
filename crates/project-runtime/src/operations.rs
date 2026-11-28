@@ -23,8 +23,6 @@ pub enum Error {
     Refused(#[from] Refusal),
     #[error("a write on this issue is already in progress")]
     InProgress,
-    #[error("the host data directory belongs to another owner")]
-    WrongHost,
     #[error("operation storage: {0}")]
     Store(String),
 }
@@ -40,20 +38,9 @@ pub struct Operations {
 }
 
 impl Operations {
-    pub fn bind(data: &Path, owner: [u8; 32]) -> Result<Self, Error> {
-        Self::settle(data, |bound| match bound {
-            Some(other) if other != owner => Err(Error::WrongHost),
-            _ => Ok(owner),
-        })
-    }
-
-    pub fn adopt(data: &Path) -> Result<Self, Error> {
-        Self::settle(data, |bound| bound.map_or_else(|| identity(data), Ok))
-    }
-
-    fn settle(
+    pub fn adopt(
         data: &Path,
-        choose: impl FnOnce(Option<[u8; 32]>) -> Result<[u8; 32], Error>,
+        fresh: impl FnOnce() -> Result<[u8; 32], Error>,
     ) -> Result<Self, Error> {
         std::fs::create_dir_all(data).map_err(failed)?;
         let path = data.join(FILE);
@@ -68,7 +55,7 @@ impl Operations {
             let mut owners = write.open_table(OWNER).map_err(failed)?;
             let bound =
                 owners.get(()).map_err(failed)?.map(|item| item.value());
-            let owner = choose(bound)?;
+            let owner = bound.map_or_else(fresh, Ok)?;
             owners.insert((), owner).map_err(failed)?;
             owner
         };
@@ -77,10 +64,8 @@ impl Operations {
         Ok(Self { path, owner })
     }
 
-    pub fn open(data: &Path) -> Result<Self, Error> {
-        let path = data.join(FILE);
-        let owner = change(&path, read_owner)?;
-        Ok(Self { path, owner })
+    pub fn home(data: &Path) -> Result<Self, Error> {
+        Self::adopt(data, || identity(data))
     }
 
     pub fn handle(&self) -> Result<Handle, Error> {
@@ -233,7 +218,7 @@ fn read_owner(database: &impl ReadableDatabase) -> Result<[u8; 32], Error> {
         .get(())
         .map_err(failed)?
         .map(|owner| owner.value())
-        .ok_or(Error::WrongHost)
+        .ok_or_else(|| Error::Store(String::from("the store has no owner")))
 }
 
 fn read(

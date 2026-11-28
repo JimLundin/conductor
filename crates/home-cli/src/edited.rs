@@ -510,7 +510,7 @@ impl Home {
         body: &str,
     ) -> Result<Self, Box<dyn Error>> {
         let home = Self::fresh(name, labels, body)?;
-        Operations::bind(&home.root.join("data"), [7; 32])?;
+        Operations::adopt(&home.root.join("data"), || Ok([7; 32]))?;
         Ok(home)
     }
 
@@ -766,7 +766,7 @@ fn issue_note_on_a_fresh_data_directory_creates_the_operation_store_under_an_ide
     assert_eq!(owners.len(), 1, "{owners:?}");
     assert_ne!(owners[0], [7; 32]);
     assert_eq!(
-        Operations::open(&home.root.join("data"))?.handle()?.owner,
+        Operations::home(&home.root.join("data"))?.handle()?.owner,
         owners[0]
     );
     Ok(())
@@ -784,18 +784,6 @@ fn a_second_write_reuses_the_store_and_the_identity_the_first_created()
     let owners = home.owners()?;
     assert_eq!(owners.len(), 2, "{owners:?}");
     assert_eq!(owners[0], owners[1]);
-    Ok(())
-}
-
-#[test]
-fn a_store_home_created_is_refused_to_a_host_of_another_identity()
--> Result<(), Box<dyn Error>> {
-    let home = Home::fresh("other-owner", &[], "Words\n")?;
-    home.home(&["issue", "note", "standards", "146", "worker", "started"])?;
-    assert!(matches!(
-        Operations::bind(&home.root.join("data"), [8; 32]),
-        Err(project_runtime::operations::Error::WrongHost)
-    ));
     Ok(())
 }
 

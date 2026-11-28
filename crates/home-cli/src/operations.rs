@@ -17,7 +17,7 @@ pub fn status(args: &[String]) -> Option<(String, u8)> {
 fn read(handle: Handle, directory: Option<PathBuf>) -> Result<String, String> {
     let data = project_runtime::data_dir_or_default(directory)
         .map_err(|error| error.to_string())?;
-    let store = Operations::open(&data).map_err(|error| error.to_string())?;
+    let store = Operations::home(&data).map_err(|error| error.to_string())?;
     let record = store
         .status(handle)
         .map_err(|error| error.to_string())?

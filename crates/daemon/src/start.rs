@@ -21,6 +21,7 @@ use iroh::endpoint::presets;
 use iroh::protocol::Router;
 use iroh::{Endpoint, RelayMode};
 use link::Ticket;
+use project_runtime::operations::Operations;
 use qrcode::render::svg;
 use qrcode::render::unicode::Dense1x2;
 use runtime::{Launch, Plugin, Settings};
@@ -285,12 +286,12 @@ pub struct Hosted {
     initialized: tokio::sync::watch::Receiver<bool>,
     fleet_lock: std::fs::File,
     has_fleet: bool,
-    operations: project_runtime::operations::Operations,
+    operations: Operations,
 }
 
 impl Hosted {
     #[must_use]
-    pub const fn operations(&self) -> &project_runtime::operations::Operations {
+    pub const fn operations(&self) -> &Operations {
         &self.operations
     }
 
@@ -332,6 +333,13 @@ impl Hosted {
     }
 }
 
+fn operations(
+    data: &Path,
+    id: iroh::EndpointId,
+) -> Result<Operations, project_runtime::operations::Error> {
+    Operations::adopt(data, || Ok(*id.as_bytes()))
+}
+
 pub async fn start(
     endpoint: Endpoint,
     plugins: Plugins,
@@ -340,10 +348,7 @@ pub async fn start(
 ) -> anyhow::Result<Hosted> {
     let (lock, fleet) = open_fleet(&endpoint, &options.data_dir).await?;
     let has_fleet = fleet.is_some();
-    let operations = project_runtime::operations::Operations::bind(
-        &options.data_dir,
-        *endpoint.id().as_bytes(),
-    )?;
+    let operations = operations(&options.data_dir, endpoint.id())?;
     let data = options.data_dir.clone();
     let (fleet_slot, _) = tokio::sync::watch::channel(fleet);
     let started = assemble(
@@ -766,3 +771,6 @@ mod version_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests;

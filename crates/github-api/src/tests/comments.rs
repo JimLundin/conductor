@@ -68,7 +68,7 @@ impl Writer {
         capabilities: Vec<Capability>,
     ) -> anyhow::Result<Self> {
         let dir = tempfile::tempdir()?;
-        let operations = Operations::bind(dir.path(), [7; 32])?;
+        let operations = Operations::adopt(dir.path(), || Ok([7; 32]))?;
         let selection = super::selection("owner/work");
         let mut registry = Registry::default();
         registry

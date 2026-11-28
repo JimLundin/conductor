@@ -361,7 +361,7 @@ impl Host {
                 std::fs::Permissions::from_mode(0o600),
             )?;
         }
-        Operations::bind(dir.path(), [7; 32])?;
+        Operations::adopt(dir.path(), || Ok([7; 32]))?;
         Ok(Self { dir })
     }
 

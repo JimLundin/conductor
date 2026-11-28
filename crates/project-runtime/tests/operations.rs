@@ -20,7 +20,7 @@ fn changes() -> Result<Intent, &'static str> {
 fn a_retry_on_another_host_cannot_start_even_with_no_local_record()
 -> Result<(), Box<dyn std::error::Error>> {
     let data = tempfile::tempdir()?;
-    let local = Operations::bind(data.path(), [2; 32])?;
+    let local = Operations::adopt(data.path(), || Ok([2; 32]))?;
     let foreign = Handle {
         owner: [1; 32],
         id: EditId(3),
@@ -62,8 +62,8 @@ use home::operations::{Confirmed, Progress, Refusal, Step};
 fn a_partially_applied_transition_resumes_only_against_its_verified_state()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let daemon = Operations::bind(dir.path(), [1; 32])?;
-    let cli = Operations::open(dir.path())?;
+    let daemon = Operations::adopt(dir.path(), || Ok([1; 32]))?;
+    let cli = Operations::home(dir.path())?;
     let handle = daemon.handle()?;
     let change = transition()?;
     let removed = Step::WriteIssue(0);
@@ -99,7 +99,7 @@ fn a_partially_applied_transition_resumes_only_against_its_verified_state()
     reconciled.confirm(evidence(added, "verified-active"), true)?;
     let success = reconciled.record().clone();
     drop(reconciled);
-    let offline = Operations::open(dir.path())?;
+    let offline = Operations::home(dir.path())?;
     assert_eq!(offline.status(handle)?, Some(success.clone()));
     assert_eq!(offline.begin(handle, change, false)?.record(), &success);
     assert!(matches!(
@@ -113,7 +113,7 @@ fn a_partially_applied_transition_resumes_only_against_its_verified_state()
 fn an_offline_request_creates_no_record_and_cannot_dispatch_a_paused_edit()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let store = Operations::bind(dir.path(), [7; 32])?;
+    let store = Operations::adopt(dir.path(), || Ok([7; 32]))?;
     let handle = store.handle()?;
     let input = changes()?;
     assert!(matches!(
@@ -131,22 +131,15 @@ fn an_offline_request_creates_no_record_and_cannot_dispatch_a_paused_edit()
 }
 
 #[test]
-fn rebinding_a_host_data_directory_cannot_adopt_its_records()
+fn a_second_owner_adopting_a_bound_data_directory_keeps_its_identity_and_records()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let store = Operations::bind(dir.path(), [7; 32])?;
+    let store = Operations::adopt(dir.path(), || Ok([7; 32]))?;
     let handle = store.handle()?;
     drop(store.begin(handle, changes()?, true)?);
-    assert!(matches!(
-        Operations::bind(dir.path(), [8; 32]),
-        Err(Error::WrongHost)
-    ));
-    assert_eq!(
-        Operations::open(dir.path())?
-            .status(handle)?
-            .map(|r| r.handle),
-        Some(handle)
-    );
+    let adopted = Operations::adopt(dir.path(), || Ok([8; 32]))?;
+    assert_eq!(adopted.handle()?.owner, [7; 32]);
+    assert_eq!(adopted.status(handle)?.map(|r| r.handle), Some(handle));
     Ok(())
 }
 
@@ -160,13 +153,13 @@ fn an_interrupted_attempt_can_be_inspected_before_the_host_restarts()
         id: EditId(20),
     };
     if let Some(data) = std::env::var_os(CHILD) {
-        let store = Operations::open(std::path::Path::new(&data))?;
+        let store = Operations::home(std::path::Path::new(&data))?;
         let mut attempt = store.begin(handle, changes()?, true)?;
         attempt.dispatch(Step::WriteIssue(0), "issue-1")?;
         std::process::abort();
     }
     let dir = tempfile::tempdir()?;
-    let _daemon = Operations::bind(dir.path(), owner)?;
+    let _daemon = Operations::adopt(dir.path(), || Ok(owner))?;
     let child = std::process::Command::new(std::env::current_exe()?)
         .arg("--exact")
         .arg("an_interrupted_attempt_can_be_inspected_before_the_host_restarts")
@@ -174,7 +167,7 @@ fn an_interrupted_attempt_can_be_inspected_before_the_host_restarts()
         .current_dir(dir.path())
         .output()?;
     assert!(!child.status.success());
-    let reopened = Operations::open(dir.path())?;
+    let reopened = Operations::home(dir.path())?;
     let status = reopened.status(handle)?.ok_or("attempt disappeared")?;
     assert_eq!(
         status.progress(),
@@ -197,8 +190,8 @@ fn elsewhere() -> Result<Intent, &'static str> {
 fn a_second_write_to_an_issue_whose_request_is_out_is_refused_and_a_write_to_another_issue_goes_ahead()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let daemon = Operations::bind(dir.path(), [4; 32])?;
-    let cli = Operations::open(dir.path())?;
+    let daemon = Operations::adopt(dir.path(), || Ok([4; 32]))?;
+    let cli = Operations::home(dir.path())?;
     let mut out = daemon.begin(daemon.handle()?, changes()?, true)?;
     out.dispatch(Step::WriteIssue(0), "issue-1")?;
     let same = cli.handle()?;
@@ -226,8 +219,8 @@ fn a_second_write_to_an_issue_whose_request_is_out_is_refused_and_a_write_to_ano
 fn a_second_write_on_a_handle_whose_request_is_out_is_refused_as_in_progress()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let daemon = Operations::bind(dir.path(), [5; 32])?;
-    let cli = Operations::open(dir.path())?;
+    let daemon = Operations::adopt(dir.path(), || Ok([5; 32]))?;
+    let cli = Operations::home(dir.path())?;
     let handle = daemon.handle()?;
     let mut out = daemon.begin(handle, changes()?, true)?;
     out.dispatch(Step::WriteIssue(0), "issue-1")?;
