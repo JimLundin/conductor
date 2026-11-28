@@ -1,11 +1,16 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
 use crate::flow::Flow;
-use crate::issue::{Issue, Observation};
-use crate::{IssueId, ProjectId};
+use crate::issue::{
+    Freshness, Issue, IssueListing, IssueReading, Observation, ReadStatus,
+    Unreadable,
+};
+use crate::{IssueId, IssueKey, ProjectId};
 
+use super::command::of_canvas;
 use super::graph::{Graph, Problem};
+use crate::canvas::CanvasKey;
 use crate::prelude::*;
 use crate::project::{Listing, Project};
 
@@ -133,6 +138,74 @@ impl Snapshot {
     }
 
     #[must_use]
+    pub fn reading(&self, key: &IssueKey) -> IssueReading {
+        let record = self.records.iter().find_map(|record| match record {
+            Ok(observation) => (observation.project() == key.project
+                && observation.id() == &key.id)
+                .then(|| observation.clone()),
+            Err(problem) => (problem.project == key.project
+                && problem.record == key.id.as_str())
+            .then(|| {
+                Observation::invalid(Unreadable {
+                    id: key.id.clone(),
+                    project: key.project,
+                    title: None,
+                    body: None,
+                    created: None,
+                    reason: problem.to_string(),
+                })
+            }),
+        });
+        let status = ReadStatus {
+            freshness: if record.is_some() {
+                Freshness::Fresh
+            } else {
+                Freshness::Unknown
+            },
+            complete: record.is_some(),
+            observed_at: record
+                .as_ref()
+                .and_then(|observation| observation.observed_at),
+            failure: None,
+        };
+        IssueReading { record, status }
+    }
+
+    #[must_use]
+    pub fn listed(&self, project: ProjectId) -> IssueListing {
+        let mut records: Vec<Observation> = self
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                Ok(observation) => (observation.project() == project)
+                    .then(|| observation.clone()),
+                Err(problem) => IssueId::new(&problem.record)
+                    .filter(|_| problem.project == project)
+                    .map(|id| {
+                        Observation::invalid(Unreadable {
+                            id,
+                            project,
+                            title: None,
+                            body: None,
+                            created: None,
+                            reason: problem.to_string(),
+                        })
+                    }),
+            })
+            .collect();
+        records.sort_by(creation_order);
+        IssueListing {
+            records,
+            status: ReadStatus {
+                freshness: Freshness::Fresh,
+                complete: true,
+                observed_at: None,
+                failure: None,
+            },
+        }
+    }
+
+    #[must_use]
     pub fn issues(&self) -> BTreeMap<ProjectId, Vec<Observation>> {
         let mut issues: BTreeMap<ProjectId, Vec<Observation>> = BTreeMap::new();
         for observation in self
@@ -149,6 +222,19 @@ impl Snapshot {
             records.sort_by(creation_order);
         }
         issues
+    }
+
+    #[must_use]
+    pub fn canvased(&self, kept: &[CanvasKey]) -> BTreeSet<IssueKey> {
+        self.graph()
+            .issues
+            .iter()
+            .map(|record| IssueKey {
+                project: record.project,
+                id: record.id.clone(),
+            })
+            .chain(kept.iter().map(of_canvas))
+            .collect()
     }
 
     #[must_use]

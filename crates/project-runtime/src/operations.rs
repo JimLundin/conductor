@@ -2,8 +2,11 @@ use crate::storage::{CACHE_BYTES, private};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
+use home::issue::Comment;
 use home::issue::EditId;
-use home::operations::{Confirmed, Handle, Intent, Record, Refusal, Step};
+use home::operations::{
+    Confirmed, Handle, Intent, Next, Record, Refusal, Step,
+};
 use redb::{Database, ReadableDatabase, TableDefinition};
 
 const OWNER: TableDefinition<(), [u8; 32]> = TableDefinition::new("owner/1");
@@ -195,6 +198,16 @@ impl Attempt {
         complete: bool,
     ) -> Result<(), Error> {
         self.replace(self.record.confirm(evidence, complete)?)
+    }
+
+    pub fn next(&mut self, observed: &[Comment]) -> Result<Next, Error> {
+        let (record, next) = self.record.next(observed)?;
+        self.replace(record)?;
+        Ok(next)
+    }
+
+    pub fn reject(&mut self) -> Result<(), Error> {
+        self.replace(self.record.reject()?)
     }
 
     fn replace(&mut self, record: Record) -> Result<(), Error> {

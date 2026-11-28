@@ -1,13 +1,15 @@
 use crate::issue::storage::fresh;
 use crate::issue::{
-    ChecklistChange, ChecklistItem, Datum, Issue, IssueChange, Item, NewIssue,
-    Part,
+    ChecklistChange, ChecklistItem, Datum, Freshness, Issue, IssueChange,
+    IssueReading, IssueState, Item, NewIssue, Observation, Part, ReadFailure,
+    ReadStatus,
 };
-use crate::{DRAWS, Draws, IssueId, ProjectId, UnixMillis, UnixSecs};
+use crate::{DRAWS, Draws, IssueId, IssueKey, ProjectId, UnixMillis, UnixSecs};
 
 use super::{
     Asked, CanvasWrite, Command, Context, Edit, Fetched, Given, Local, Need,
-    Source, Wanted, asked as dispatched, command, homeless, plan, stamp,
+    Resolved, Source, Wanted, asked as dispatched, command, homeless, plan,
+    stamp,
 };
 use crate::canvas::{
     BadName, Block, Canvas, CanvasError, CanvasFile, CanvasKey, CanvasName,
@@ -15,6 +17,8 @@ use crate::canvas::{
 };
 use crate::flow::check::{Report, check as checked};
 use crate::flow::load;
+use crate::flow::resolve::in_folder;
+use crate::flow::resolve::{Missing, Resolver};
 use crate::flow::snapshot::Snapshot;
 use crate::issue::body::log_line;
 use crate::issue::storage::Inputs;
@@ -103,6 +107,7 @@ impl Outcome {
         super::Outcome {
             changes: Vec::new(),
             canvases: self.canvases.clone(),
+            message: None,
             output: self.output.clone(),
             failed: self.failed,
         }
@@ -132,18 +137,19 @@ fn run(
     snapshot: &Snapshot,
     context: &Context,
 ) -> Outcome {
-    saved(super::run(command, given, snapshot, context), &home())
+    let resolved = in_folder(snapshot, &command, given.as_ref());
+    saved(
+        super::run(command, given, &resolved, snapshot, context),
+        &home(),
+    )
 }
 
 fn ran(inputs: &Inputs, line: &str) -> Outcome {
     let home = inputs.clone().read().snapshot;
+    let asked = command(&words(line), &home, fresh(&home, SECONDS, &SEVEN));
+    let resolved = in_folder(&home, &asked, None);
     saved(
-        super::run(
-            command(&words(line), &home, fresh(&home, SECONDS, &SEVEN)),
-            None,
-            &home,
-            &context(),
-        ),
+        super::run(asked, None, &resolved, &home, &context()),
         inputs,
     )
 }
@@ -238,7 +244,7 @@ fn the_words_name_a_command() {
     };
     assert_eq!(
         asked(&format!(
-            "issue move {TASK} stage slice --signed-off by the owner"
+            "issue move home {TASK} stage slice --signed-off by the owner"
         )),
         changing(IssueChange::Move {
             part: Part::Stage,
@@ -248,7 +254,7 @@ fn the_words_name_a_command() {
         })
     );
     assert_eq!(
-        asked(&format!("issue move {TASK} status ready to go")),
+        asked(&format!("issue move home {TASK} status ready to go")),
         changing(IssueChange::Move {
             part: Part::Status,
             to: String::from("ready"),
@@ -257,19 +263,19 @@ fn the_words_name_a_command() {
         })
     );
     assert_eq!(
-        asked(&format!("issue note {TASK} it works")),
+        asked(&format!("issue note home {TASK} it works")),
         changing(IssueChange::Note(String::from("it works")))
     );
     assert_eq!(
-        asked("issue note x it works"),
-        Command::Wrong(String::from("no issue is called x"))
+        asked("issue note elsewhere x it works"),
+        Command::Wrong(String::from("no project is called elsewhere"))
     );
     assert_eq!(
-        asked(&format!("issue body {TASK} Why it matters.")),
+        asked(&format!("issue body home {TASK} Why it matters.")),
         changing(IssueChange::Body(String::from("Why it matters.")))
     );
     assert_eq!(
-        asked(&format!("issue checklist {TASK} add the docs")),
+        asked(&format!("issue checklist home {TASK} add the docs")),
         changing(IssueChange::Checklist(ChecklistChange::Add(String::from(
             "the docs"
         ))))
@@ -280,9 +286,9 @@ fn the_words_name_a_command() {
     };
     assert_eq!(
         [
-            asked(&format!("issue checklist {TASK} check 1")),
-            asked(&format!("issue checklist {TASK} uncheck 1")),
-            asked(&format!("issue checklist {TASK} remove 1")),
+            asked(&format!("issue checklist home {TASK} check 1")),
+            asked(&format!("issue checklist home {TASK} uncheck 1")),
+            asked(&format!("issue checklist home {TASK} remove 1")),
         ],
         [
             changing(IssueChange::Checklist(ChecklistChange::Check {
@@ -297,14 +303,14 @@ fn the_words_name_a_command() {
         ]
     );
     assert_eq!(
-        asked(&format!("issue checklist {TASK} check 0")),
+        asked(&format!("issue checklist home {TASK} check 0")),
         Command::Wrong(String::from(
             "0 is not an item's number, counted from 1"
         ))
     );
-    assert_eq!(asked(&format!("issue set {TASK}")), Command::Usage);
+    assert_eq!(asked(&format!("issue set home {TASK}")), Command::Usage);
     assert_eq!(
-        asked(&format!("issue move {TASK} phase build")),
+        asked(&format!("issue move home {TASK} phase build")),
         Command::Usage
     );
 }
@@ -314,7 +320,7 @@ fn issue_set_names_a_change_for_each_pair() {
     let inputs = home();
     let asked = |line: &str| asked(&inputs, line);
     assert_eq!(
-        asked(&format!("issue set {TASK} a=1 b=2")),
+        asked(&format!("issue set home {TASK} a=1 b=2")),
         Command::Edit(Edit::Change {
             project: folder(),
             id: id(TASK),
@@ -331,7 +337,7 @@ fn issue_set_names_a_change_for_each_pair() {
         })
     );
     assert_eq!(
-        asked(&format!("issue set {TASK} a")),
+        asked(&format!("issue set home {TASK} a")),
         Command::Wrong(String::from("\"a\" is not <field>=<value>"))
     );
 }
@@ -352,7 +358,8 @@ fn a_project_is_named_by_its_name_or_its_id() {
 #[test]
 fn a_body_from_a_file_asks_the_shell_for_the_file() {
     let inputs = home();
-    let from_file = asked(&inputs, &format!("issue body {TASK} --file why.md"));
+    let from_file =
+        asked(&inputs, &format!("issue body home {TASK} --file why.md"));
     assert_eq!(
         from_file.needs(),
         Some(Need::Read(Source::File(String::from("why.md"))))
@@ -375,7 +382,7 @@ fn a_value_is_read_as_its_field_takes_it() {
     let inputs = home();
     let set = |pair: &str| match asked(
         &inputs,
-        &format!("issue set {TASK} {pair}"),
+        &format!("issue set home {TASK} {pair}"),
     ) {
         Command::Edit(Edit::Change { changes, .. }) => changes,
         other => Vec::from([IssueChange::Note(format!("{other:?}"))]),
@@ -413,7 +420,7 @@ fn a_value_is_read_as_its_field_takes_it() {
     };
     for words in [
         String::from("issue new home task T triage.level=high"),
-        format!("issue set {TASK} triage.level=low"),
+        format!("issue set home {TASK} triage.level=low"),
     ] {
         let result = ran(&dotted, &words);
         assert!(!result.failed, "{}", result.output);
@@ -427,7 +434,7 @@ fn a_body_from_a_file_is_the_text_the_shell_read() {
     let inputs = home();
     let home = crate::issue::storage::snapshot(inputs.clone());
     let from_file =
-        || asked(&inputs, &format!("issue body {TASK} --file why.md"));
+        || asked(&inputs, &format!("issue body home {TASK} --file why.md"));
     let written = run(
         from_file(),
         Some(Given::Text(Ok(String::from("Read from a file.\n")))),
@@ -453,7 +460,7 @@ fn a_body_from_a_file_is_the_text_the_shell_read() {
 
 #[test]
 fn the_command_line_says_what_it_did_and_exits_by_how_it_went() {
-    let wrote = ran(&home(), &format!("issue note {TASK} seen"));
+    let wrote = ran(&home(), &format!("issue note home {TASK} seen"));
     assert_eq!(wrote.ended(Ok(())).1, 0);
     assert_eq!(
         wrote.ended(Err(String::from("disk full"))),
@@ -531,11 +538,12 @@ fn a_structural_problem_refuses_the_write() {
         "{said}"
     );
     let inputs = home();
-    let blocking = ran(&inputs, &format!("issue set {SPEC} blocked_by={TASK}"));
+    let blocking =
+        ran(&inputs, &format!("issue set home {SPEC} blocked_by={TASK}"));
     assert!(!blocking.failed, "{}", blocking.output);
     let cycle = ran(
         &after(&inputs, &blocking),
-        &format!("issue set {TASK} blocked_by={SPEC}"),
+        &format!("issue set home {TASK} blocked_by={SPEC}"),
     );
     assert!(cycle.failed && cycle.writes.is_empty());
     assert!(
@@ -547,7 +555,7 @@ fn a_structural_problem_refuses_the_write() {
 
 #[test]
 fn a_missing_section_is_written_with_a_warning() {
-    let outcome = ran(&home(), &format!("issue note {TASK} checked"));
+    let outcome = ran(&home(), &format!("issue note home {TASK} checked"));
     assert!(!outcome.failed);
     assert_eq!(
         outcome.output,
@@ -565,7 +573,9 @@ fn a_missing_section_is_written_with_a_warning() {
 fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
     let usual = ran(
         &home(),
-        &format!("issue move {SPEC} stage slice --signed-off by the owner"),
+        &format!(
+            "issue move home {SPEC} stage slice --signed-off by the owner"
+        ),
     );
     assert!(text(&usual).contains("stage = \"slice\"\n"));
     assert!(text(&usual).ends_with(
@@ -573,16 +583,19 @@ fn a_move_logs_where_from_and_why_and_marks_an_unusual_one() {
     ));
     let unusual = ran(
         &home(),
-        &format!("issue move {SPEC} stage land --signed-off skipping ahead"),
+        &format!(
+            "issue move home {SPEC} stage land --signed-off skipping ahead"
+        ),
     );
     assert!(!unusual.failed);
     assert!(text(&unusual).ends_with(
         "stage spec→land: signed off: skipping ahead (unusual move)\n"
     ));
-    let status = ran(&home(), &format!("issue move {TASK} status ready"));
+    let status = ran(&home(), &format!("issue move home {TASK} status ready"));
     assert!(text(&status).contains("status = \"ready\"\n"));
     assert!(text(&status).ends_with("status open→ready: \n"));
-    let unknown = ran(&home(), &format!("issue move {TASK} status started"));
+    let unknown =
+        ran(&home(), &format!("issue move home {TASK} status started"));
     assert!(
         unknown.failed
             && unknown.output.contains("no status is called started")
@@ -613,7 +626,7 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
     for (from, to) in [("spec", "slice"), ("review", "land")] {
         let inputs = at(from);
         let unsigned =
-            ran(&inputs, &format!("issue move {SPEC} stage {to} ready"));
+            ran(&inputs, &format!("issue move home {SPEC} stage {to} ready"));
         assert!(unsigned.failed && unsigned.writes.is_empty());
         assert_eq!(
             unsigned.output,
@@ -624,7 +637,7 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
         );
         let signed = ran(
             &inputs,
-            &format!("issue move {SPEC} stage {to} --signed-off"),
+            &format!("issue move home {SPEC} stage {to} --signed-off"),
         );
         assert!(!signed.failed, "{}", signed.output);
         assert!(
@@ -634,14 +647,15 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
         );
     }
     for from in ["review", "land"] {
-        let rework = ran(&at(from), &format!("issue move {SPEC} stage build"));
+        let rework =
+            ran(&at(from), &format!("issue move home {SPEC} stage build"));
         assert!(!rework.failed, "{}", rework.output);
     }
 }
 
 #[test]
 fn a_stage_or_status_is_moved_not_set() {
-    let outcome = ran(&home(), &format!("issue set {TASK} status=done"));
+    let outcome = ran(&home(), &format!("issue set home {TASK} status=done"));
     assert!(outcome.failed && outcome.writes.is_empty());
 }
 
@@ -655,7 +669,8 @@ fn a_time_is_written_to_the_second_in_utc() {
 fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
     let inputs = home();
     let said = |inputs: &Inputs, words_said: &str| ran(inputs, words_said);
-    let described = said(&inputs, &format!("issue body {TASK} Wire it up."));
+    let described =
+        said(&inputs, &format!("issue body home {TASK} Wire it up."));
     assert!(!described.failed, "{}", described.output);
     assert!(
         text(&described).contains("+++\n\nWire it up.\n\n## Notes\n"),
@@ -664,11 +679,11 @@ fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
     );
     let added = said(
         &after(&inputs, &described),
-        &format!("issue checklist {TASK} add the docs"),
+        &format!("issue checklist home {TASK} add the docs"),
     );
     let more = said(
         &after(&after(&inputs, &described), &added),
-        &format!("issue checklist {TASK} add the tests"),
+        &format!("issue checklist home {TASK} add the tests"),
     );
     let home_now = after(&after(&after(&inputs, &described), &added), &more);
     assert!(
@@ -678,14 +693,16 @@ fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
         "{}",
         text(&more)
     );
-    let checked = said(&home_now, &format!("issue checklist {TASK} check 2"));
+    let checked =
+        said(&home_now, &format!("issue checklist home {TASK} check 2"));
     assert!(text(&checked).contains("- [ ] the docs\n- [x] the tests\n"));
     let removed = said(
         &after(&home_now, &checked),
-        &format!("issue checklist {TASK} remove 1"),
+        &format!("issue checklist home {TASK} remove 1"),
     );
     assert!(text(&removed).contains("## Checklist\n- [x] the tests\n\n"));
-    let missing = said(&home_now, &format!("issue checklist {TASK} check 3"));
+    let missing =
+        said(&home_now, &format!("issue checklist home {TASK} check 3"));
     assert_eq!(
         (missing.failed, missing.output),
         (true, String::from("home: the checklist has no item 3\n"))
@@ -746,7 +763,7 @@ fn read_and_written(
     text_of_task: &str,
 ) -> (String, Result<Issue, String>, String) {
     let inputs = with_task(text_of_task);
-    let noted = ran(&inputs, &format!("issue note {TASK} seen"));
+    let noted = ran(&inputs, &format!("issue note home {TASK} seen"));
     (
         check(&inputs).text(),
         graph_reads(TASK, text_of_task),
@@ -806,7 +823,7 @@ fn a_checklist_edit_changes_the_item_the_graph_read_at_its_place() {
         reread(&listed),
         Ok(Vec::from([item(false, "first"), item(false, "second")]))
     );
-    let checked = ran(&inputs, &format!("issue checklist {TASK} check 2"));
+    let checked = ran(&inputs, &format!("issue checklist home {TASK} check 2"));
     assert!(!checked.failed, "{}", checked.output);
     assert_eq!(
         reread(&text(&checked)),
@@ -814,7 +831,8 @@ fn a_checklist_edit_changes_the_item_the_graph_read_at_its_place() {
     );
     assert!(text(&checked).contains("- [ ] an example\n"));
     assert!(text(&checked).contains("~~~\n- [ ] fenced\n~~~\n- [x] second\n"));
-    let removed = ran(&inputs, &format!("issue checklist {TASK} remove 1"));
+    let removed =
+        ran(&inputs, &format!("issue checklist home {TASK} remove 1"));
     assert_eq!(
         reread(&text(&removed)),
         Ok(Vec::from([item(false, "second")]))
@@ -828,10 +846,10 @@ fn every_line_the_command_line_logs_is_the_one_log_line_of_its_entry()
     let inputs = home();
     for said in [
         String::from("issue new home task Wire-it"),
-        format!("issue note {TASK} seen"),
-        format!("issue move {SPEC} stage slice --signed-off"),
-        format!("issue move {TASK} status ready"),
-        format!("issue set {TASK} title=Write-it-well"),
+        format!("issue note home {TASK} seen"),
+        format!("issue move home {SPEC} stage slice --signed-off"),
+        format!("issue move home {TASK} status ready"),
+        format!("issue set home {TASK} title=Write-it-well"),
     ] {
         let outcome = ran(&inputs, &said);
         let stem = outcome
@@ -921,7 +939,7 @@ fn an_issue_s_own_words_are_refused_as_fields_in_the_flow_s_terms() {
 fn an_edit_to_an_issue_that_doesn_t_read_says_what_is_wrong_with_it() {
     let inputs =
         with_task(&format!("+++\nid = \"{TASK}\"\nstatus = \"open\"\n+++\n"));
-    let outcome = ran(&inputs, &format!("issue note {TASK} hello"));
+    let outcome = ran(&inputs, &format!("issue note home {TASK} hello"));
     assert_eq!(
         (outcome.failed, outcome.output),
         (
@@ -983,7 +1001,7 @@ fn a_canvas_put_reads_its_json_from_the_file_or_else_from_stdin()
     assert_eq!(
         asked(
             &inputs,
-            &format!("canvas put {TASK} why-a-store --file why.json")
+            &format!("canvas put home {TASK} why-a-store --file why.json")
         ),
         Command::CanvasPut {
             key: canvas_key("why-a-store")?,
@@ -991,7 +1009,7 @@ fn a_canvas_put_reads_its_json_from_the_file_or_else_from_stdin()
         }
     );
     assert_eq!(
-        asked(&inputs, &format!("canvas put {TASK} why-a-store")).needs(),
+        asked(&inputs, &format!("canvas put home {TASK} why-a-store")).needs(),
         Some(Need::Read(Source::Stdin))
     );
     Ok(())
@@ -1001,7 +1019,7 @@ fn a_canvas_put_reads_its_json_from_the_file_or_else_from_stdin()
 fn a_canvas_put_on_an_issue_writes_the_canvas_under_its_key_stamped_with_when_and_by_whom()
 -> Result<(), Box<dyn core::error::Error>> {
     let outcome = given(
-        &format!("canvas put {TASK} why-a-store"),
+        &format!("canvas put home {TASK} why-a-store"),
         Given::Text(Ok(String::from(PROSE))),
     );
     assert_eq!(
@@ -1042,17 +1060,17 @@ fn a_canvas_put_on_an_unknown_issue_with_a_bad_name_or_json_that_isnt_a_canvas_w
     };
     let cases = [
         (
-            put(&["canvas", "put", "0tm7zzzz", "why"], PROSE),
-            String::from("home: no issue is called 0tm7zzzz\n"),
+            put(&["canvas", "put", "home", "0tm7zzzz", "why"], PROSE),
+            String::from("home: no issue 0tm7zzzz in home\n"),
         ),
         (
-            put(&["canvas", "put", TASK, "Design Tree"], PROSE),
+            put(&["canvas", "put", "home", TASK, "Design Tree"], PROSE),
             String::from(
                 "home: `Design Tree` isn't a canvas name: name it with lowercase words joined by `-`, such as `design-tree`\n",
             ),
         ),
         (
-            put(&["canvas", "put", TASK, "why"], r#"{"title": "t"}"#),
+            put(&["canvas", "put", "home", TASK, "why"], r#"{"title": "t"}"#),
             format!(
                 "home: canvas why of home/{TASK}: not a canvas: missing field `blocks` at line 1 column 14\n"
             ),
@@ -1070,7 +1088,7 @@ fn a_canvas_put_on_an_unknown_issue_with_a_bad_name_or_json_that_isnt_a_canvas_w
         );
     }
     let unread = given(
-        &format!("canvas put {TASK} why --file why.json"),
+        &format!("canvas put home {TASK} why --file why.json"),
         Given::Text(Err(String::from("why.json: not found"))),
     );
     assert_eq!(
@@ -1093,18 +1111,18 @@ fn a_canvas_show_asks_the_store_for_the_named_canvas_or_every_canvas_of_the_issu
         name,
     };
     assert_eq!(
-        asked(&inputs, &format!("canvas show {TASK} why-a-store")).needs(),
+        asked(&inputs, &format!("canvas show home {TASK} why-a-store")).needs(),
         Some(Need::Canvases(wanted(Some(CanvasName::parse(
             "why-a-store"
         )?))))
     );
     assert_eq!(
-        asked(&inputs, &format!("canvas show {TASK}")).needs(),
+        asked(&inputs, &format!("canvas show home {TASK}")).needs(),
         Some(Need::Canvases(wanted(None)))
     );
     assert_eq!(
-        asked(&inputs, "canvas show 0tm7zzzz"),
-        Command::Wrong(String::from("no issue is called 0tm7zzzz"))
+        ran(&inputs, "canvas show home 0tm7zzzz").output,
+        "home: no issue 0tm7zzzz in home\n"
     );
     Ok(())
 }
@@ -1124,7 +1142,7 @@ fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
         )?)
     };
     let one = given(
-        &format!("canvas show {TASK} why-a-store"),
+        &format!("canvas show home {TASK} why-a-store"),
         Given::Canvases(Ok(held(Vec::from([kept(
             "why-a-store",
             "Why a store",
@@ -1140,7 +1158,7 @@ fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
         )
     );
     let every = given(
-        &format!("canvas show {TASK}"),
+        &format!("canvas show home {TASK}"),
         Given::Canvases(Ok(held(Vec::from([
             kept("first", "First")?,
             kept("second", "Second")?,
@@ -1157,7 +1175,7 @@ fn a_canvas_show_prints_the_canvas_s_title_and_prose_as_markdown()
 #[test]
 fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     let missing = given(
-        &format!("canvas show {TASK} gone"),
+        &format!("canvas show home {TASK} gone"),
         Given::Canvases(Ok(held(Vec::new()))),
     );
     assert_eq!(
@@ -1168,7 +1186,7 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
         )
     );
     let none = given(
-        &format!("canvas show {TASK}"),
+        &format!("canvas show home {TASK}"),
         Given::Canvases(Ok(held(Vec::new()))),
     );
     assert_eq!(
@@ -1176,7 +1194,7 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
         (false, format!("home/{TASK} has no canvases\n"))
     );
     let failing = given(
-        &format!("canvas show {TASK}"),
+        &format!("canvas show home {TASK}"),
         Given::Canvases(Err(String::from("projects: denied"))),
     );
     assert_eq!(
@@ -1345,8 +1363,10 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
         ),
     ];
     for (text, said) in cases {
-        let outcome =
-            given(&format!("canvas put {TASK} turn"), Given::Text(Ok(text)));
+        let outcome = given(
+            &format!("canvas put home {TASK} turn"),
+            Given::Text(Ok(text)),
+        );
         assert_eq!(
             (
                 outcome.failed,
@@ -1371,7 +1391,7 @@ fn a_canvas_show_prints_a_statechart_as_a_mermaid_state_diagram_with_marked_stat
         statechart(STATES, "open", TRANSITIONS, r#""open", "review", "done""#);
     let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
     let shown = given(
-        &format!("canvas show {TASK} turn"),
+        &format!("canvas show home {TASK} turn"),
         Given::Canvases(Ok(held(Vec::from([fetched(
             TASK,
             "turn",
@@ -1417,9 +1437,12 @@ fn a_canvas_show_prints_a_state_by_its_index_with_its_label_quoted() {
         r#"{"from": "open", "to": "in review", "event": "submit"}"#,
         "",
     );
-    let put = given(&format!("canvas put {TASK} turn"), Given::Text(Ok(text)));
+    let put = given(
+        &format!("canvas put home {TASK} turn"),
+        Given::Text(Ok(text)),
+    );
     let shown = given(
-        &format!("canvas show {TASK} turn"),
+        &format!("canvas show home {TASK} turn"),
         Given::Canvases(Ok(held(
             put.canvases
                 .into_iter()
@@ -1457,7 +1480,7 @@ fn a_canvas_show_keeps_a_statechart_s_events_and_marked_notes_on_one_line_with_c
     );
     let canvas = Canvas::parse(&text).map_err(|error| error.to_string())?;
     let shown = given(
-        &format!("canvas show {TASK} turn"),
+        &format!("canvas show home {TASK} turn"),
         Given::Canvases(Ok(held(Vec::from([fetched(
             TASK,
             "turn",
@@ -1492,7 +1515,7 @@ fn a_canvas_show_keeps_a_statechart_s_events_and_marked_notes_on_one_line_with_c
 fn a_canvas_put_of_a_path_that_begins_at_start_and_follows_transitions_writes_it()
  {
     let outcome = given(
-        &format!("canvas put {TASK} turn"),
+        &format!("canvas put home {TASK} turn"),
         Given::Text(Ok(statechart(
             r#"{"id": "a", "label": "A"}, {"id": "b", "label": "B"}"#,
             "a",
@@ -1510,7 +1533,7 @@ fn a_canvas_put_of_a_path_that_begins_at_start_and_follows_transitions_writes_it
 
 fn put_canvas(text: &str) -> Outcome {
     given(
-        &format!("canvas put {TASK} design"),
+        &format!("canvas put home {TASK} design"),
         Given::Text(Ok(String::from(text))),
     )
 }
@@ -1743,7 +1766,7 @@ fn a_canvas_show_prints_a_diagram_as_one_flowchart_per_step_each_holding_the_ste
     );
     let put = put_canvas(&text);
     let shown = given(
-        &format!("canvas show {TASK} design"),
+        &format!("canvas show home {TASK} design"),
         Given::Canvases(Ok(held(
             put.canvases
                 .into_iter()
@@ -1775,7 +1798,7 @@ fn a_canvas_show_keeps_a_label_with_a_newline_on_one_mermaid_line() {
     let shown = |text: &str| {
         let put = put_canvas(text);
         given(
-            &format!("canvas show {TASK} design"),
+            &format!("canvas show home {TASK} design"),
             Given::Canvases(Ok(held(
                 put.canvases
                     .into_iter()
@@ -1870,8 +1893,10 @@ fn a_canvas_put_with_more_done_than_total_fewer_than_two_options_a_pick_past_the
         ),
     ];
     for (text, said) in cases {
-        let outcome =
-            given(&format!("canvas put {TASK} stands"), Given::Text(Ok(text)));
+        let outcome = given(
+            &format!("canvas put home {TASK} stands"),
+            Given::Text(Ok(text)),
+        );
         assert_eq!(
             (
                 outcome.failed,
@@ -1892,7 +1917,7 @@ fn a_canvas_put_with_more_done_than_total_fewer_than_two_options_a_pick_past_the
 fn shown(text: &str) -> Result<Outcome, String> {
     let canvas = Canvas::parse(text).map_err(|error| error.to_string())?;
     Ok(given(
-        &format!("canvas show {TASK} stands"),
+        &format!("canvas show home {TASK} stands"),
         Given::Canvases(Ok(held(Vec::from([fetched(
             TASK,
             "stands",
@@ -2036,7 +2061,7 @@ fn check_reports_each_canvas_the_store_cant_return_or_that_no_issue_holds()
                  error  canvas denied of home/{TASK}  permission denied\n\
                  error  canvas garbled of home/{TASK}  not a canvas: missing field `title`\n\
                  error  canvas vanished of home/{TASK}  the store lists it but returns nothing\n\
-                 error  canvas orphan of home/0v29xvc9  the issue doesn't exist: write the canvas under one that does, or remove it\n\
+                 error  canvas orphan of home/0v29xvc9  no issue 0v29xvc9 in home: write the canvas under an issue that exists, or remove it\n\
                  4 errors, 1 warnings\n"
             )
         )
@@ -2090,7 +2115,7 @@ fn check_reports_a_store_that_cant_list_its_canvases() {
 fn a_canvas_show_prints_an_issue_s_valid_canvases_then_names_what_it_skipped()
 -> Result<(), String> {
     let shown = given(
-        &format!("canvas show {TASK}"),
+        &format!("canvas show home {TASK}"),
         Given::Canvases(Ok(Held {
             canvases: Vec::from([
                 fetched(TASK, "first", Ok(Some(prose_file()?)))?,
@@ -2138,7 +2163,7 @@ fn check_and_canvas_show_name_a_broken_canvas_the_same_way()
         Given::EveryCanvas(Ok(held(Vec::from([broken()?])))),
     );
     let shown = given(
-        &format!("canvas show {TASK} garbled"),
+        &format!("canvas show home {TASK} garbled"),
         Given::Canvases(Ok(held(Vec::from([broken()?])))),
     );
     assert!(
@@ -2189,6 +2214,369 @@ fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
         ),
         "{}",
         checked.output
+    );
+    Ok(())
+}
+
+const TRACKED: &str = "hyn162";
+const MARKDOWN_ID: &str = "0tm7aaaa";
+const TRACKER_ID: &str = "146";
+
+fn project_file(name: &str, tracker: bool) -> String {
+    let backends = if tracker {
+        "[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n"
+    } else {
+        ""
+    };
+    format!(
+        "name = \"{name}\"\ntitle = \"{name}\"\nroot = \"{ROOT}\"\n{backends}"
+    )
+}
+
+fn filed(project: &str, id: &str) -> File {
+    File {
+        project: ProjectId::parse(project).unwrap_or(ProjectId::new(0)),
+        stem: String::from(id),
+        text: format!(
+            "+++\nid = \"{id}\"\ntitle = \"Keep it\"\nkind = \"task\"\nstatus = \"open\"\n+++\n\n## What\n\n## Notes\n"
+        ),
+    }
+}
+
+fn two_trackers() -> Inputs {
+    let mut inputs = home();
+    inputs
+        .projects
+        .push((String::from(TRACKED), Ok(project_file("standards", true))));
+    inputs.issues.push(filed(FOLDER, MARKDOWN_ID));
+    inputs
+}
+
+fn kept_by_tracker(number: &str) -> Result<Observation, String> {
+    let mut inputs = home();
+    inputs.projects = Vec::from([(
+        String::from(TRACKED),
+        Ok(project_file("standards", false)),
+    )]);
+    inputs.issues = Vec::from([filed(TRACKED, MARKDOWN_ID)]);
+    let project = ProjectId::parse(TRACKED).ok_or("project")?;
+    let mut observation = crate::issue::storage::snapshot(inputs)
+        .observation(project, &id(MARKDOWN_ID))
+        .cloned()
+        .ok_or("the tracker's issue doesn't read")?;
+    match &mut observation.state {
+        IssueState::Valid { issue, .. } => issue.id = id(number),
+        _ => return Err(String::from("the tracker's issue isn't valid")),
+    }
+    Ok(observation)
+}
+
+struct Tracker {
+    cached: Vec<Observation>,
+    remote: Result<Vec<Observation>, ReadFailure>,
+    refreshes: usize,
+}
+
+impl Tracker {
+    fn holding(remote: Result<Vec<Observation>, ReadFailure>) -> Self {
+        Self {
+            cached: Vec::new(),
+            remote,
+            refreshes: 0,
+        }
+    }
+
+    fn look(&self, key: &IssueKey) -> IssueReading {
+        let record = self
+            .cached
+            .iter()
+            .find(|observation| {
+                observation.project() == key.project
+                    && observation.id() == &key.id
+            })
+            .cloned();
+        IssueReading {
+            status: ReadStatus {
+                freshness: Freshness::Stale,
+                complete: record.is_some(),
+                observed_at: None,
+                failure: None,
+            },
+            record,
+        }
+    }
+
+    fn refresh(&mut self) -> Result<(), ReadFailure> {
+        self.refreshes += 1;
+        self.cached = self.remote.clone()?;
+        Ok(())
+    }
+}
+
+fn resolved_by(
+    home: &Snapshot,
+    tracker: &mut Tracker,
+    asked: &Command,
+    given: Option<&Given>,
+) -> Resolved {
+    let on_tracker = |project: ProjectId| {
+        home.projects().iter().any(|known| {
+            known.id == project && known.backends.tracker.is_some()
+        })
+    };
+    let mut steps = Resolver::new(asked.mode());
+    asked
+        .issues(given)
+        .into_iter()
+        .map(|key| {
+            loop {
+                let looked = if on_tracker(key.project) {
+                    tracker.look(&key)
+                } else {
+                    home.reading(&key)
+                };
+                match steps.step(&super::named(home, key.project), &key, looked)
+                {
+                    Ok(reading) => break (key, Ok(reading)),
+                    Err(Missing::Unknown(reason)) => break (key, Err(reason)),
+                    Err(Missing::Refresh(project)) => {
+                        let outcome = if on_tracker(project) {
+                            tracker.refresh()
+                        } else {
+                            Ok(())
+                        };
+                        steps.refreshed(project, outcome);
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+fn tracked_run(
+    tracker: &mut Tracker,
+    line: &str,
+    given: Option<Given>,
+) -> Outcome {
+    let inputs = two_trackers();
+    let home = crate::issue::storage::snapshot(inputs.clone());
+    let asked = command(&words(line), &home, None);
+    let resolved = resolved_by(&home, tracker, &asked, given.as_ref());
+    saved(
+        super::run(asked, given, &resolved, &home, &context()),
+        &inputs,
+    )
+}
+
+fn key_of(project: &str, id: &str, name: &str) -> Result<CanvasKey, String> {
+    Ok(CanvasKey {
+        project: ProjectId::parse(project).ok_or("project")?,
+        issue: self::id(id),
+        name: CanvasName::parse(name).map_err(|error| error.to_string())?,
+    })
+}
+
+#[test]
+fn a_canvas_put_and_show_name_a_markdown_issue_and_a_tracker_issue_alike()
+-> Result<(), Box<dyn core::error::Error>> {
+    for (project, folder, id) in [
+        ("home", FOLDER, MARKDOWN_ID),
+        ("standards", TRACKED, TRACKER_ID),
+    ] {
+        let mut tracker =
+            Tracker::holding(Ok(Vec::from([kept_by_tracker(TRACKER_ID)?])));
+        tracker.refresh()?;
+        let put = tracked_run(
+            &mut tracker,
+            &format!("canvas put {project} {id} why-a-store"),
+            Some(Given::Text(Ok(String::from(PROSE)))),
+        );
+        let key = key_of(folder, id, "why-a-store")?;
+        assert_eq!(
+            (put.failed, put.output, put.canvases),
+            (
+                false,
+                format!("wrote canvas why-a-store of {project}/{id}\n"),
+                Vec::from([CanvasWrite {
+                    key: key.clone(),
+                    file: CanvasFile {
+                        written: NOW,
+                        by: String::from("laptop·claude"),
+                        canvas: why_a_store("Why a store")?,
+                    },
+                }])
+            )
+        );
+        let shown = tracked_run(
+            &mut tracker,
+            &format!("canvas show {project} {id}"),
+            Some(Given::Canvases(Ok(held(Vec::from([Fetched {
+                key,
+                got: Ok(Some(CanvasFile {
+                    written: NOW,
+                    by: String::from("laptop·claude"),
+                    canvas: why_a_store("Why a store")?,
+                })),
+            }]))))),
+        );
+        assert_eq!(
+            (shown.failed, shown.output, tracker.refreshes),
+            (
+                false,
+                String::from(
+                    "# Why a store\n\nThe core decides; the store **keeps**.\n"
+                ),
+                1
+            )
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_id_the_cache_lacks_refreshes_its_tracker_once_and_then_resolves()
+-> Result<(), String> {
+    let mut tracker =
+        Tracker::holding(Ok(Vec::from([kept_by_tracker(TRACKER_ID)?])));
+    let put = tracked_run(
+        &mut tracker,
+        &format!("canvas put standards {TRACKER_ID} why-a-store"),
+        Some(Given::Text(Ok(String::from(PROSE)))),
+    );
+    assert_eq!(
+        (
+            put.failed,
+            put.output,
+            put.canvases.len(),
+            tracker.refreshes
+        ),
+        (
+            false,
+            format!("wrote canvas why-a-store of standards/{TRACKER_ID}\n"),
+            1,
+            1
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn an_id_still_missing_after_one_refresh_is_no_issue_in_its_project()
+-> Result<(), String> {
+    let mut tracker =
+        Tracker::holding(Ok(Vec::from([kept_by_tracker(TRACKER_ID)?])));
+    for (line, said) in [
+        (
+            "canvas put standards 147 why-a-store",
+            "home: no issue 147 in standards\n",
+        ),
+        (
+            "canvas put home 0tm7bbbb why-a-store",
+            "home: no issue 0tm7bbbb in home\n",
+        ),
+        (
+            "issue show standards 147",
+            "home: no issue 147 in standards\n",
+        ),
+        (
+            "issue note standards 147 seen",
+            "home: no issue 147 in standards\n",
+        ),
+    ] {
+        tracker.refreshes = 0;
+        let put = tracked_run(
+            &mut tracker,
+            line,
+            Some(Given::Text(Ok(String::from(PROSE)))),
+        );
+        assert_eq!(
+            (put.failed, put.output.as_str(), put.canvases.len()),
+            (true, said, 0),
+            "{line}"
+        );
+        assert!(tracker.refreshes <= 1, "{line}");
+    }
+    Ok(())
+}
+
+#[test]
+fn offline_an_id_the_cache_lacks_fails_naming_home_issue_list() {
+    let mut unreachable = Tracker::holding(Err(ReadFailure::Unavailable));
+    let put = tracked_run(
+        &mut unreachable,
+        "canvas put standards 146 why-a-store",
+        Some(Given::Text(Ok(String::from(PROSE)))),
+    );
+    assert_eq!(
+        (put.failed, put.output, unreachable.refreshes),
+        (
+            true,
+            String::from(
+                "home: no issue 146 in standards is cached, and its tracker didn't refresh: issue or tracker unavailable or inaccessible; run `home issue list standards` once it's reachable\n"
+            ),
+            1
+        )
+    );
+    let mut reachable = Tracker::holding(Ok(Vec::new()));
+    let offline =
+        tracked_run(&mut reachable, "issue show standards 146 --offline", None);
+    assert_eq!(
+        (offline.failed, offline.output, reachable.refreshes),
+        (
+            true,
+            String::from(
+                "home: no issue 146 in standards is cached; `home issue list standards` refreshes the cache\n"
+            ),
+            0
+        )
+    );
+}
+
+#[test]
+fn issue_show_reads_a_markdown_issue_and_a_tracker_issue_by_the_same_form()
+-> Result<(), Box<dyn core::error::Error>> {
+    for (project, folder, id) in [
+        ("home", FOLDER, MARKDOWN_ID),
+        ("standards", TRACKED, TRACKER_ID),
+    ] {
+        let mut tracker =
+            Tracker::holding(Ok(Vec::from([kept_by_tracker(TRACKER_ID)?])));
+        let shown = tracked_run(
+            &mut tracker,
+            &format!("issue show {project} {id}"),
+            None,
+        );
+        let reading: serde_json::Value = serde_json::from_str(&shown.output)?;
+        let record = &reading["record"]["state"]["Valid"]["issue"];
+        assert_eq!(
+            (
+                shown.failed,
+                record["id"].as_str(),
+                record["project"].as_str(),
+                record["title"].as_str(),
+            ),
+            (false, Some(id), Some(folder), Some("Keep it")),
+            "{}",
+            shown.output
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn issue_show_of_a_cached_issue_whose_tracker_didn_t_refresh_reports_the_failure()
+-> Result<(), Box<dyn core::error::Error>> {
+    let mut tracker = Tracker::holding(Err(ReadFailure::RateLimited));
+    tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
+    let shown = tracked_run(&mut tracker, "issue show standards 146", None);
+    let reading: serde_json::Value = serde_json::from_str(&shown.output)?;
+    assert_eq!(
+        (
+            shown.failed,
+            &reading["status"]["failure"],
+            tracker.refreshes
+        ),
+        (true, &serde_json::json!("RateLimited"), 1)
     );
     Ok(())
 }

@@ -1,4 +1,5 @@
 mod client;
+mod comments;
 mod credential;
 mod inspect;
 

@@ -5,6 +5,8 @@ use crate::AuthToken;
 use crate::CommandId;
 use agents::ClientName;
 use home::canvas::{CanvasFile, CanvasKey, CanvasName};
+use home::flow::resolve::{Mode, Resolver};
+use home::issue::IssueReading;
 use home::{Home, HomeCommand, HomeRefusal, HomeResult, IssueKey};
 use host::fleet::{DeviceHello, FleetCommand, Identity};
 use host::push::PushCommand;
@@ -146,16 +148,21 @@ pub const fn operation(command: &Command) -> &'static str {
 pub fn canvas_key(
     home: Option<&Home>,
     issue: IssueKey,
+    looked: IssueReading,
     name: CanvasName,
 ) -> Result<CanvasKey, HomeRefusal> {
     let known = home.ok_or(HomeRefusal::NoHome)?;
-    known
+    let project = known
         .projects
         .iter()
-        .filter(|project| project.id == issue.project)
-        .flat_map(|project| &project.issues)
-        .find(|at| at.id() == &issue.id)
-        .ok_or(HomeRefusal::UnknownIssue)?;
+        .find(|project| project.id == issue.project)
+        .map_or_else(
+            || issue.project.to_string(),
+            |project| project.name.clone(),
+        );
+    Resolver::new(Mode::Offline)
+        .step(&project, &issue, looked)
+        .map_err(|_| HomeRefusal::UnknownIssue)?;
     Ok(CanvasKey {
         project: issue.project,
         issue: issue.id,

@@ -6,7 +6,7 @@ use crate::canvas::Held;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use crate::issue::Issue;
 
-use super::command::{Fetched, canvas_named};
+use super::command::{Fetched, Resolved, canvas_named, of_canvas};
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -127,6 +127,7 @@ pub fn check(home: &Snapshot) -> Report {
 pub fn canvases(
     home: &Snapshot,
     every: Result<Held<Fetched>, String>,
+    resolved: &Resolved,
 ) -> Vec<Finding> {
     let kept = match every {
         Ok(kept) => kept,
@@ -138,14 +139,16 @@ pub fn canvases(
             }]);
         }
     };
-    let graph = home.graph();
-    let held = |fetched: &Fetched| {
-        graph.issues.iter().any(|issue| {
-            issue.project == fetched.key.project
-                && issue.id == fetched.key.issue
-        }) || graph.problems.iter().any(|problem| {
-            problem.project == fetched.key.project
-                && problem.record == fetched.key.issue.as_str()
+    let unheld = |fetched: &Fetched| {
+        match resolved.get(&of_canvas(&fetched.key)) {
+            Some(Ok(_)) => None,
+            Some(Err(reason)) => Some(reason.clone()),
+            None => Some(format!("{} wasn't looked up", fetched.key.issue)),
+        }
+        .map(|reason| {
+            format!(
+                "{reason}: write the canvas under an issue that exists, or remove it"
+            )
         })
     };
     let strays = kept.strays.iter().map(|stray| Finding {
@@ -161,11 +164,7 @@ pub fn canvases(
                 Ok(None) => {
                     Some(String::from("the store lists it but returns nothing"))
                 }
-                Ok(Some(_)) => (!held(fetched)).then(|| {
-                    String::from(
-                        "the issue doesn't exist: write the canvas under one that does, or remove it",
-                    )
-                }),
+                Ok(Some(_)) => unheld(fetched),
             };
             wrong.map(|message| Finding {
                 severity: Severity::Error,

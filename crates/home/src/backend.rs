@@ -77,13 +77,14 @@ pub enum Capability {
     IntegrateSession,
     PreserveWorkspace,
     ReadIssues,
+    WriteIssues,
     ReadStatuses,
     ReadChecks,
     ReadWorkflows,
 }
 
 impl Capability {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::PrepareWorkspace,
         Self::CaptureSnapshot,
         Self::InstallSnapshot,
@@ -91,6 +92,7 @@ impl Capability {
         Self::IntegrateSession,
         Self::PreserveWorkspace,
         Self::ReadIssues,
+        Self::WriteIssues,
         Self::ReadStatuses,
         Self::ReadChecks,
         Self::ReadWorkflows,
@@ -106,6 +108,7 @@ impl Capability {
             Self::IntegrateSession => "integrate session",
             Self::PreserveWorkspace => "preserve workspace",
             Self::ReadIssues => "read issues",
+            Self::WriteIssues => "write issues",
             Self::ReadStatuses => "read statuses",
             Self::ReadChecks => "read checks",
             Self::ReadWorkflows => "read workflows",
@@ -121,7 +124,7 @@ impl Capability {
             | Self::CompareSnapshots
             | Self::IntegrateSession
             | Self::PreserveWorkspace => Backend::VersionControl,
-            Self::ReadIssues => Backend::IssueTracker,
+            Self::ReadIssues | Self::WriteIssues => Backend::IssueTracker,
             Self::ReadStatuses | Self::ReadChecks | Self::ReadWorkflows => {
                 Backend::RepositoryHosting
             }
@@ -349,8 +352,9 @@ pub fn report(
 ) -> String {
     let mut text = format!("{name}\n");
     for available in capabilities {
-        let failure = tracker_error
-            .filter(|_| available.capability == Capability::ReadIssues);
+        let failure = tracker_error.filter(|_| {
+            available.capability.backend() == Backend::IssueTracker
+        });
         let outcome = failure.map_or_else(
             || {
                 available

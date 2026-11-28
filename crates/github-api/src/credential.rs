@@ -22,6 +22,8 @@ pub struct HostCredentials {
 struct Entry {
     repository: String,
     expires_unix: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    write_issues: bool,
     source: Source,
 }
 
@@ -136,23 +138,32 @@ impl HostCredentials {
         &self,
         repo: &Repository,
         reference: Option<&CredentialRef>,
-    ) -> Result<Source, AccessError> {
+    ) -> Result<Entry, AccessError> {
         let key = reference.ok_or(AccessError::CredentialMissing)?;
         let entry = self.entry(key)?;
         entry.validate_binding()?;
         if !repo.matches(&entry.repository) {
             return Err(AccessError::PermissionDenied);
         }
-        Ok(entry.source)
+        Ok(entry)
     }
 
     pub fn connect(&self, selected: &Selection) -> Result<Client, AccessError> {
+        self.connect_at(selected, github::mapping::AUTHORITY)
+    }
+
+    pub(crate) fn connect_at(
+        &self,
+        selected: &Selection,
+        endpoint: &str,
+    ) -> Result<Client, AccessError> {
         if selected.adapter != github::ADAPTER {
             return Err(AccessError::InvalidConfiguration);
         }
         let repository = Repository::parse(&selected.resource)?;
-        let source = self.resolve(&repository, selected.credential.as_ref())?;
-        Client::new(repository, &source, github::mapping::AUTHORITY)
+        let entry = self.resolve(&repository, selected.credential.as_ref())?;
+        Ok(Client::new(repository, &entry.source, endpoint)?
+            .writing(entry.write_issues))
     }
 
     pub async fn git(
@@ -160,7 +171,7 @@ impl HostCredentials {
         repository: Repository,
         reference: &CredentialRef,
     ) -> Result<project_runtime::transport::Credentials, AccessError> {
-        let source = self.resolve(&repository, Some(reference))?;
+        let source = self.resolve(&repository, Some(reference))?.source;
         if let Source::SshAgent { host_key } = source {
             return ssh(&repository, &host_key);
         }

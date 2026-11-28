@@ -27,6 +27,11 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
         project.join("project.toml"),
         "name = \"home\"\ntitle = \"Home\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n",
     )?;
+    let init = Command::new("git")
+        .args(["init", "-q", "-b", "main"])
+        .arg(&home.0)
+        .status()?;
+    assert!(init.success());
     let ran = Command::new(env!("CARGO_BIN_EXE_home"))
         .args(["issue", "new", "home", "bug", "First"])
         .current_dir(&home.0)
@@ -67,11 +72,11 @@ fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_wri
             .args(args)
             .output()
     };
-    let unconfigured = cli(&["issue", "list", "sample"])?;
-    assert_eq!(
-        String::from_utf8(unconfigured.stdout)?,
-        "home: tracker not configured\n"
-    );
+    let markdown = cli(&["issue", "list", "sample"])?;
+    assert!(markdown.status.success());
+    let listed: serde_json::Value = serde_json::from_slice(&markdown.stdout)?;
+    assert_eq!(listed["records"], serde_json::json!([]));
+    assert_eq!(listed["status"]["complete"], true);
 
     fs::create_dir_all(home.0.join("docs/agents"))?;
     fs::write(home.0.join("docs/agents/flow.toml"), FLOW)?;
@@ -96,15 +101,15 @@ fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_wri
         "issue",
         "show",
         "sample",
-        "#42",
+        "42",
         "--data-dir",
         "host",
         "--offline",
     ])?;
     assert!(!offline.status.success());
-    let cached: serde_json::Value = serde_json::from_slice(&offline.stdout)?;
-    assert!(cached["record"].is_null());
-    assert!(cached["status"]["failure"].is_null());
-    assert_eq!(cached["status"]["freshness"], "Unknown");
+    assert_eq!(
+        String::from_utf8(offline.stdout)?,
+        "home: no issue 42 in sample is cached; `home issue list sample` refreshes the cache\n"
+    );
     Ok(())
 }

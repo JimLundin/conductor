@@ -76,6 +76,19 @@ impl IssueTracker for Script {
             reply
         })
     }
+    fn comments(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn write_comment(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::CommentWrite,
+    ) -> project_runtime::SendCompletion<'_, home::issue::Comment> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
 }
 
 const fn project() -> ProjectId {
@@ -312,6 +325,19 @@ impl IssueTracker for SlowFirst {
                 next: None,
             })
         })
+    }
+    fn comments(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn write_comment(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::CommentWrite,
+    ) -> project_runtime::SendCompletion<'_, home::issue::Comment> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
     }
 }
 

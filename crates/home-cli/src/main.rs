@@ -20,7 +20,10 @@ use home_store::{CanvasStore, StoreError};
 mod local;
 mod operations;
 mod project;
+mod resolve;
 mod tracking;
+
+use resolve::Trackers;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -41,45 +44,76 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     }
     let loaded = home_files::read(home);
     let snapshot = &loaded.snapshot;
-    let mut store = FolderStore::new(home.to_path_buf());
     let context = context();
     let fresh = fresh(snapshot, context.now.secs(), &draws());
     match asked(args, snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, snapshot),
         Asked::Flow(command) => {
-            issues(home, &mut store, command, &loaded, &context)
+            let data = command.data().map(PathBuf::from);
+            let mut trackers = Trackers::new(home, loaded, data);
+            issues(home, &mut trackers, command, &context)
         }
     }
 }
 
 fn issues(
     home: &Path,
-    store: &mut dyn CanvasStore,
+    trackers: &mut Trackers<'_>,
     asked: Command,
-    loaded: &home::issue::storage::ReadHome,
     context: &Context,
 ) -> (String, u8) {
+    let store = trackers.stores();
     let given = asked.needs().map(|need| match need {
         Need::Read(Source::File(path)) => Given::Text(read(Path::new(&path))),
         Need::Read(Source::Stdin) => Given::Text(stdin()),
-        Need::Canvases(wanted) => Given::Canvases(fetched(&*store, &wanted)),
-        Need::EveryCanvas => Given::EveryCanvas(every(&*store)),
+        Need::Canvases(wanted) => Given::Canvases(fetched(store, &wanted)),
+        Need::EveryCanvas => Given::EveryCanvas(every(store)),
     });
-    let outcome = run(asked, given, &loaded.snapshot, context);
-    let saved = outcome
+    let resolved =
+        trackers.resolved(asked.issues(given.as_ref()), asked.mode());
+    let loaded = trackers.loaded();
+    let outcome = run(asked, given, &resolved, &loaded.snapshot, context);
+    let written = outcome
         .changes
         .iter()
-        .try_for_each(|change| {
-            loaded.encode(change).and_then(|file| save(home, &file))
+        .map(|change| {
+            let file = loaded.encode(change)?;
+            save(home, &file).map(|()| file.path())
         })
-        .and_then(|()| {
-            outcome.canvases.iter().try_for_each(|canvas| {
-                store
-                    .put(&canvas.key, &canvas.file)
-                    .map_err(|error| error.to_string())
-            })
-        });
+        .collect::<Result<Vec<String>, String>>();
+    let kept: Vec<String> = outcome
+        .canvases
+        .iter()
+        .filter(|canvas| trackers.keeps(canvas.key.project))
+        .map(|canvas| FolderStore::place(&canvas.key))
+        .collect();
+    let store = trackers.stores_mut();
+    let saved = written.and_then(|mut paths| {
+        outcome.canvases.iter().try_for_each(|canvas| {
+            store
+                .put(&canvas.key, &canvas.file)
+                .map_err(|error| error.to_string())
+        })?;
+        paths.extend(kept);
+        committed(home, &paths, outcome.message.as_deref(), context)
+    });
     outcome.ended(saved)
+}
+
+fn committed(
+    home: &Path,
+    paths: &[String],
+    message: Option<&str>,
+    context: &Context,
+) -> Result<(), String> {
+    match message {
+        Some(subject) if !paths.is_empty() => {
+            vcs_git2::record::commit(home, paths, &context.by, subject)
+                .map(drop)
+                .map_err(|error| format!("committing the home: {error}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn fetched(
@@ -197,6 +231,63 @@ fn save(root: &Path, write: &File) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use home::ProjectId;
+    use home::canvas::{Stray, StrayReason};
+    use home::flow::command::{Asked, asked};
+    use home::issue::storage::fresh;
+    use home_store::Memory;
+
+    use super::resolve::Trackers;
+
+    const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
+
+    #[test]
+    fn check_reports_a_stray_from_a_tracker_s_store_as_an_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir()
+            .join(format!("home-tracker-stray-{}", std::process::id()));
+        let project = root.join("projects/hyn162");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(root.join("docs/agents"))?;
+        std::fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+        std::fs::write(
+            project.join("project.toml"),
+            "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
+        )?;
+        let tracked = ProjectId::parse("hyn162").ok_or("project")?;
+        let mut github = Memory::default();
+        github.stray(
+            tracked,
+            None,
+            Stray {
+                place: String::from("issues/146#issuecomment-7"),
+                reason: StrayReason::Unnamed,
+            },
+        );
+        let loaded = home_files::read(&root);
+        let context = super::context();
+        let fresh =
+            fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
+        let Asked::Flow(command) =
+            asked(&[String::from("check")], &loaded.snapshot, fresh)
+        else {
+            return Err("check isn't a flow command".into());
+        };
+        let mut trackers = Trackers::new(&root, loaded, None);
+        trackers.stores_mut().track(tracked, Box::new(github));
+        let (said, code) =
+            super::issues(&root, &mut trackers, command, &context);
+        std::fs::remove_dir_all(&root)?;
+        assert!(
+            said.contains(
+                "error  issues/146#issuecomment-7  isn't a canvas: name it in lowercase words joined by `-`, or move it out of the issue\n"
+            ),
+            "{said}"
+        );
+        assert_eq!(code, 1, "{said}");
+        Ok(())
+    }
+
     #[test]
     fn a_configuration_query_finds_its_home_without_issue_flow()
     -> std::io::Result<()> {

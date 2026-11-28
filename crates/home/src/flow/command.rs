@@ -4,8 +4,8 @@ use alloc::string::ToString;
 use crate::canvas::{Canvas, CanvasFile, CanvasKey, CanvasName, Held};
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
 use crate::issue::{
-    ChecklistChange, Datum, Entry, ID, Issue, IssueChange, Item, KIND,
-    LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
+    ChecklistChange, Datum, Entry, ID, Issue, IssueChange, IssueReading, Item,
+    KIND, LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
 };
 use crate::{IssueId, IssueKey, ProjectId, UnixMillis, UnixSecs};
 use serde::{Deserialize, Serialize};
@@ -14,6 +14,7 @@ use super::PATH;
 use super::check::{canvases, check, of_issue};
 use super::eval::Move;
 use super::graph::branch_of;
+use super::resolve::Mode;
 use super::role::opening;
 use super::snapshot::Snapshot;
 use crate::issue::body::Body;
@@ -30,35 +31,36 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
   home check
       Checks every project and issue against the flow; fails only on errors.
   home issue list <project> [--offline] [--data-dir <dir>]
-      Lists tracked issues as JSON with freshness, coverage and refresh failures.
-  home issue show <project> <reference> [--offline] [--data-dir <dir>]
-      Reads one tracked issue by qualified ID or project reference such as '#42'.
+      Lists the project's issues as JSON, from its tracker or the home, with
+      freshness, coverage and refresh failures.
+  home issue show <project> <id> [--offline] [--data-dir <dir>]
+      Reads one issue of the project as JSON, by its tracker's ID.
       Both commands refresh by default. --offline reads the host cache.
   home issue new <project> <kind> <title> [<field>=<value>...]
       Opens an issue of the kind in the project, named by its name or id,
       with the kind's sections and a fresh id, which it prints. Give the
       title as one argument.
-  home issue move <id> stage|status <to> [--signed-off] [<reason>...]
+  home issue move <project> <id> stage|status <to> [--signed-off] [<reason>...]
       Moves the stage or status, the only way to change either, and logs
       the move and its reason, marking a move off the stage's usual next
       ones as unusual. Entering a stage with a sign-off takes --signed-off.
-  home issue set <id> <field>=<value>...
+  home issue set <project> <id> <field>=<value>...
       Sets any other field or relation, title, parent and blocked_by among
       them. A list's value is comma-separated: blocked_by=<id>,<id>.
-  home issue note <id> <text>...
+  home issue note <project> <id> <text>...
       Appends a note to the log.
-  home issue body <id> <text>...
-  home issue body <id> --file <path>
+  home issue body <project> <id> <text>...
+  home issue body <project> <id> --file <path>
       Replaces the body, everything above its checklist and notes, with the
       text or the file's; give a body of several lines or sections by file.
-  home issue checklist <id> add <text>...
+  home issue checklist <project> <id> add <text>...
       Adds an item to the checklist.
-  home issue checklist <id> check|uncheck|remove <n>
+  home issue checklist <project> <id> check|uncheck|remove <n>
       Checks, unchecks or removes the checklist's nth item, from 1.
-  home canvas put <id> <name> [--file <path>]
+  home canvas put <project> <id> <name> [--file <path>]
       Writes the issue's canvas of that name, in place of any written
       before, from the file's JSON or else stdin's, dated and signed.
-  home canvas show <id> [<name>]
+  home canvas show <project> <id> [<name>]
       Prints the issue's canvas of that name, or every canvas it has, as
       markdown.
   home canvas schema
@@ -77,9 +79,13 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
       Installs the home's skills for every harness, at user level, keeping
       any skill installed some other way.
 
+A command names an issue by its project, by name or id, and the ID its
+tracker gave it. An ID the cache lacks refreshes the project's tracker once.
+
 Each write signs and dates the log and is read back against the flow: a
 structural problem or a broken error rule refuses it, and anything softer
-is written with a warning.
+is written with a warning. A write the home keeps is committed to the home,
+signed by HOME_BY.
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,13 +107,26 @@ pub enum Local {
 pub enum Command {
     Check,
     Edit(Edit),
-    BodyFrom { issue: IssueKey, path: String },
-    CanvasPut { key: CanvasKey, from: Source },
+    BodyFrom {
+        issue: IssueKey,
+        path: String,
+    },
+    CanvasPut {
+        key: CanvasKey,
+        from: Source,
+    },
     CanvasShow(Wanted),
     CanvasSchema,
+    IssueShow {
+        issue: IssueKey,
+        mode: Mode,
+        data: Option<String>,
+    },
     Wrong(String),
     Usage,
 }
+
+pub type Resolved = BTreeMap<IssueKey, Result<IssueReading, String>>;
 
 impl Command {
     #[must_use]
@@ -121,6 +140,58 @@ impl Command {
             Self::Check => Some(Need::EveryCanvas),
             _ => None,
         }
+    }
+
+    #[must_use]
+    pub fn issue(&self) -> Option<IssueKey> {
+        match self {
+            Self::Edit(edit @ Edit::Change { .. }) => Some(edit.key()),
+            Self::BodyFrom { issue, .. } | Self::IssueShow { issue, .. } => {
+                Some(issue.clone())
+            }
+            Self::CanvasPut { key, .. } => Some(of_canvas(key)),
+            Self::CanvasShow(wanted) => Some(IssueKey {
+                project: wanted.project,
+                id: wanted.issue.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn issues(&self, given: Option<&Given>) -> BTreeSet<IssueKey> {
+        match (self, given) {
+            (Self::Check, Some(Given::EveryCanvas(Ok(held)))) => held
+                .canvases
+                .iter()
+                .map(|fetched| of_canvas(&fetched.key))
+                .collect(),
+            _ => self.issue().into_iter().collect(),
+        }
+    }
+
+    #[must_use]
+    pub const fn mode(&self) -> Mode {
+        match self {
+            Self::IssueShow { mode, .. } => *mode,
+            _ => Mode::Cached,
+        }
+    }
+
+    #[must_use]
+    pub fn data(&self) -> Option<&str> {
+        match self {
+            Self::IssueShow { data, .. } => data.as_deref(),
+            _ => None,
+        }
+    }
+}
+
+#[must_use]
+pub fn of_canvas(key: &CanvasKey) -> IssueKey {
+    IssueKey {
+        project: key.project,
+        id: key.issue.clone(),
     }
 }
 
@@ -219,6 +290,7 @@ pub struct CanvasWrite {
 pub struct Outcome {
     pub changes: Vec<Change>,
     pub canvases: Vec<CanvasWrite>,
+    pub message: Option<String>,
     pub output: String,
     pub failed: bool,
 }
@@ -287,45 +359,62 @@ pub fn command(
         ["issue", "new", project, kind, title, fields @ ..] => {
             opening_command(home, fresh, [project, kind, title], fields)
         }
-        ["issue", "body", id, "--file", path] => {
-            located(home, id).map_or_else(Command::Wrong, |issue| {
+        ["issue", "show", project, id, flags @ ..] => {
+            showing_issue(home, [project, id], flags)
+        }
+        ["issue", "body", project, id, "--file", path] => {
+            key(home, [project, id]).map_or_else(Command::Wrong, |issue| {
                 Command::BodyFrom {
                     issue,
                     path: (*path).to_owned(),
                 }
             })
         }
-        ["canvas", "put", id, name] => putting(home, id, name, Source::Stdin),
-        ["canvas", "put", id, name, "--file", path] => {
-            putting(home, id, name, Source::File((*path).to_owned()))
+        ["canvas", "put", project, id, name] => {
+            putting(home, [project, id, name], Source::Stdin)
+        }
+        ["canvas", "put", project, id, name, "--file", path] => {
+            putting(home, [project, id, name], Source::File((*path).to_owned()))
         }
         ["canvas", "schema"] => Command::CanvasSchema,
-        ["canvas", "show", id] => showing(home, id, None),
-        ["canvas", "show", id, name] => showing(home, id, Some(name)),
-        ["issue", "set", id, pairs @ ..] if !pairs.is_empty() => {
-            setting_command(home, id, pairs)
+        ["canvas", "show", project, id] => showing(home, [project, id], None),
+        ["canvas", "show", project, id, name] => {
+            showing(home, [project, id], Some(name))
         }
-        ["issue", "note", id, first, more @ ..] => {
-            changing(home, id, IssueChange::Note(joined(first, more)))
+        ["issue", "set", project, id, pairs @ ..] if !pairs.is_empty() => {
+            setting_command(home, [project, id], pairs)
         }
-        ["issue", "body", id, first, more @ ..] => {
-            changing(home, id, IssueChange::Body(joined(first, more)))
-        }
-        ["issue", "checklist", id, "add", first, more @ ..] => changing(
+        ["issue", "note", project, id, first, more @ ..] => changing(
             home,
-            id,
-            IssueChange::Checklist(ChecklistChange::Add(joined(first, more))),
+            [project, id],
+            IssueChange::Note(joined(first, more)),
         ),
+        ["issue", "body", project, id, first, more @ ..] => changing(
+            home,
+            [project, id],
+            IssueChange::Body(joined(first, more)),
+        ),
+        ["issue", "checklist", project, id, "add", first, more @ ..] => {
+            changing(
+                home,
+                [project, id],
+                IssueChange::Checklist(ChecklistChange::Add(joined(
+                    first, more,
+                ))),
+            )
+        }
         [
             "issue",
             "checklist",
+            project,
             id,
             action @ ("check" | "uncheck" | "remove"),
             number,
-        ] => checklist_command(home, id, action, number),
+        ] => checklist_command(home, [project, id], action, number),
         [
             "issue",
             "move",
+            project,
             id,
             part @ ("stage" | "status"),
             to,
@@ -337,7 +426,7 @@ pub fn command(
             };
             changing(
                 home,
-                id,
+                [project, id],
                 IssueChange::Move {
                     part: if *part == "stage" {
                         Part::Stage
@@ -354,49 +443,61 @@ pub fn command(
     }
 }
 
-fn located(home: &Snapshot, word: &str) -> Result<IssueKey, String> {
-    let unknown = || format!("no issue is called {word}");
-    let id = IssueId::new(word).ok_or_else(unknown)?;
-    let projects: BTreeSet<ProjectId> = home
-        .records()
-        .iter()
-        .filter_map(|record| match record {
-            Ok(observation) => {
-                (observation.id() == &id).then(|| observation.project())
-            }
-            Err(problem) => {
-                (problem.record == id.as_str()).then_some(problem.project)
-            }
-        })
-        .collect();
-    let mut found = projects.into_iter();
-    match (found.next(), found.next()) {
-        (Some(project), None) => Ok(IssueKey { project, id }),
-        (None, _) => Err(unknown()),
-        (Some(_), Some(_)) => {
-            Err(format!("{word} is the id of issues in several projects"))
-        }
-    }
-}
-
-fn known(home: &Snapshot, word: &str) -> Result<(ProjectId, IssueId), String> {
-    let key = located(home, word)?;
-    home.issue(key.project, &key.id)
-        .map(|_| (key.project, key.id.clone()))
-        .ok_or_else(|| format!("no issue is called {word}"))
+fn key(home: &Snapshot, [name, word]: [&str; 2]) -> Result<IssueKey, String> {
+    let project = home
+        .project(name)
+        .map(|known| known.id)
+        .ok_or_else(|| format!("no project is called {name}"))?;
+    let id = IssueId::new(word)
+        .ok_or_else(|| String::from("an issue's ID isn't empty"))?;
+    Ok(IssueKey { project, id })
 }
 
 fn canvas_name(word: &str) -> Result<CanvasName, String> {
     CanvasName::parse(word).map_err(|bad| bad.to_string())
 }
 
-fn putting(home: &Snapshot, id: &str, name: &str, from: Source) -> Command {
-    known(home, id)
-        .and_then(|(project, issue)| {
+fn showing_issue(
+    home: &Snapshot,
+    naming: [&str; 2],
+    flags: &[&str],
+) -> Command {
+    let mut mode = Mode::Fresh;
+    let mut data = None;
+    let mut rest = flags;
+    while let [flag, after @ ..] = rest {
+        rest = match (*flag, after) {
+            ("--offline", _) if mode == Mode::Fresh => {
+                mode = Mode::Offline;
+                after
+            }
+            ("--data-dir", [dir, beyond @ ..])
+                if data.is_none() && !dir.starts_with("--") =>
+            {
+                data = Some(String::from(*dir));
+                beyond
+            }
+            _ => return Command::Usage,
+        };
+    }
+    key(home, naming).map_or_else(Command::Wrong, |issue| Command::IssueShow {
+        issue,
+        mode,
+        data,
+    })
+}
+
+fn putting(
+    home: &Snapshot,
+    [project, id, name]: [&str; 3],
+    from: Source,
+) -> Command {
+    key(home, [project, id])
+        .and_then(|issue| {
             Ok(Command::CanvasPut {
                 key: CanvasKey {
-                    project,
-                    issue,
+                    project: issue.project,
+                    issue: issue.id,
                     name: canvas_name(name)?,
                 },
                 from,
@@ -405,23 +506,27 @@ fn putting(home: &Snapshot, id: &str, name: &str, from: Source) -> Command {
         .unwrap_or_else(Command::Wrong)
 }
 
-fn showing(home: &Snapshot, id: &str, name: Option<&str>) -> Command {
-    known(home, id)
-        .and_then(|(project, issue)| {
+fn showing(home: &Snapshot, naming: [&str; 2], name: Option<&str>) -> Command {
+    key(home, naming)
+        .and_then(|issue| {
             Ok(Command::CanvasShow(Wanted {
-                project,
-                issue,
+                project: issue.project,
+                issue: issue.id,
                 name: name.map(canvas_name).transpose()?,
             }))
         })
         .unwrap_or_else(Command::Wrong)
 }
 
-fn changing(home: &Snapshot, word: &str, change: IssueChange) -> Command {
-    located(home, word).map_or_else(Command::Wrong, |key| {
+fn changing(
+    home: &Snapshot,
+    naming: [&str; 2],
+    change: IssueChange,
+) -> Command {
+    key(home, naming).map_or_else(Command::Wrong, |issue| {
         Command::Edit(Edit::Change {
-            project: key.project,
-            id: key.id,
+            project: issue.project,
+            id: issue.id,
             changes: Vec::from([change]),
         })
     })
@@ -455,8 +560,12 @@ fn opening_command(
         .map_or_else(Command::Wrong, Command::Edit)
 }
 
-fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
-    located(home, word)
+fn setting_command(
+    home: &Snapshot,
+    naming: [&str; 2],
+    pairs: &[&str],
+) -> Command {
+    key(home, naming)
         .and_then(|IssueKey { project, id }| {
             let kind = home
                 .issue(project, &id)
@@ -479,7 +588,7 @@ fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
 
 fn checklist_command(
     home: &Snapshot,
-    id: &str,
+    issue: [&str; 2],
     action: &str,
     number: &str,
 ) -> Command {
@@ -497,7 +606,7 @@ fn checklist_command(
             let item = Item { index, seen: None };
             changing(
                 home,
-                id,
+                issue,
                 IssueChange::Checklist(match action {
                     "remove" => ChecklistChange::Remove(item),
                     done => ChecklistChange::Check {
@@ -575,12 +684,19 @@ pub fn said(value: &Datum) -> String {
 pub fn run(
     command: Command,
     given: Option<Given>,
+    resolved: &Resolved,
     home: &Snapshot,
     context: &Context,
 ) -> Outcome {
+    let found = match command.issue().map(|key| found(resolved, &key)) {
+        Some(Err(reason)) => return refused(refusal(&reason)),
+        Some(Ok(reading)) => Some(reading),
+        None => None,
+    };
     let edit = match command {
         Command::Usage => return refused(String::from(USAGE)),
         Command::Wrong(reason) => return refused(refusal(&reason)),
+        Command::IssueShow { .. } => return issue_shown(found),
         Command::Check => {
             let mut report = check(home);
             report.findings.extend(canvases(
@@ -589,12 +705,12 @@ pub fn run(
                     Some(Given::EveryCanvas(every)) => every,
                     _ => Err(String::from("the store's canvases weren't read")),
                 },
+                resolved,
             ));
             return Outcome {
-                changes: Vec::new(),
-                canvases: Vec::new(),
                 output: report.text(),
                 failed: report.failed(),
+                ..said_only()
             };
         }
         Command::BodyFrom { issue, path } => match text(given, &path) {
@@ -637,9 +753,35 @@ pub fn run(
             ),
             changes: Vec::from([change]),
             canvases: Vec::new(),
+            message: Some(crate::issue::message(&edit)),
             failed: false,
         },
         Err(reason) => refused(refusal(&reason)),
+    }
+}
+
+fn found<'a>(
+    resolved: &'a Resolved,
+    key: &IssueKey,
+) -> Result<&'a IssueReading, String> {
+    resolved
+        .get(key)
+        .ok_or_else(|| format!("{key} wasn't looked up"))?
+        .as_ref()
+        .map_err(Clone::clone)
+}
+
+fn issue_shown(found: Option<&IssueReading>) -> Outcome {
+    let Some(reading) = found else {
+        return refused(refusal("the issue wasn't looked up"));
+    };
+    match serde_json::to_string_pretty(reading) {
+        Ok(json) => Outcome {
+            output: format!("{json}\n"),
+            failed: reading.status.failure.is_some(),
+            ..said_only()
+        },
+        Err(error) => refused(refusal(&error.to_string())),
     }
 }
 
@@ -647,6 +789,7 @@ const fn refused(output: String) -> Outcome {
     Outcome {
         changes: Vec::new(),
         canvases: Vec::new(),
+        message: None,
         output,
         failed: true,
     }
@@ -672,6 +815,10 @@ fn put(
     match parsed {
         Ok(canvas) => Outcome {
             changes: Vec::new(),
+            message: Some(format!(
+                "Write canvas {} of issue {}",
+                key.name, key.issue
+            )),
             output: format!("wrote {named}\n"),
             canvases: Vec::from([CanvasWrite {
                 key,
@@ -742,6 +889,7 @@ const fn said_only() -> Outcome {
     Outcome {
         changes: Vec::new(),
         canvases: Vec::new(),
+        message: None,
         output: String::new(),
         failed: false,
     }
@@ -765,6 +913,7 @@ pub fn plan(
             id,
             changes,
         } => {
+            crate::issue::storage::writable(home, *project)?;
             let observation =
                 home.observation(*project, id).ok_or_else(|| {
                     home.graph()
@@ -775,7 +924,12 @@ pub fn plan(
                                 && problem.record == id.as_str()
                         })
                         .map_or_else(
-                            || format!("no issue is called {id}"),
+                            || {
+                                format!(
+                                    "no issue {id} in {}",
+                                    named(home, *project)
+                                )
+                            },
                             |problem| {
                                 format!(
                                     "{id} doesn't read as the flow declares: {problem}"
@@ -857,12 +1011,15 @@ pub(crate) fn subject(
     project: ProjectId,
     stem: &str,
 ) -> String {
-    let name = home
-        .projects()
+    format!("{}/{stem}", named(home, project))
+}
+
+#[must_use]
+pub fn named(home: &Snapshot, project: ProjectId) -> String {
+    home.projects()
         .iter()
         .find(|known| known.id == project)
-        .map_or_else(|| project.to_string(), |known| known.name.clone());
-    format!("{name}/{stem}")
+        .map_or_else(|| project.to_string(), |known| known.name.clone())
 }
 
 fn opened(

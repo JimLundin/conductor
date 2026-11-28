@@ -76,6 +76,7 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use secrecy::SecretString;
 
+mod comments;
 #[cfg(unix)]
 mod fleet;
 mod tracking;
@@ -85,12 +86,18 @@ const META: &str = r#"{"id":7,"name":"work","full_name":"owner/work","url":"http
 
 async fn server(
     expected: Vec<(&'static str, &'static str, Reply)>,
-) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
+) -> anyhow::Result<(String, Served)> {
     exchanges(
         expected
             .into_iter()
             .map(|(path, auth, (status, body))| Exchange {
                 path,
+                method: if path.contains("/access_tokens") {
+                    "POST"
+                } else {
+                    "GET"
+                },
+                lost: false,
                 auth,
                 status,
                 body: body.to_owned(),
@@ -103,21 +110,29 @@ async fn server(
 
 struct Exchange {
     path: &'static str,
+    method: &'static str,
+    lost: bool,
     auth: &'static str,
     status: u16,
     body: String,
     headers: Vec<(&'static str, &'static str)>,
 }
 
+type Served = tokio::task::JoinHandle<anyhow::Result<Vec<Bytes>>>;
+
 async fn exchanges(
     expected: Vec<Exchange>,
-) -> anyhow::Result<(String, tokio::task::JoinHandle<anyhow::Result<()>>)> {
+) -> anyhow::Result<(String, Served)> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
     let url = format!("http://{}", listener.local_addr()?);
     let base = url.clone();
     let task = tokio::spawn(async move {
+        let (record, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let mut seen = Vec::new();
         for Exchange {
             path,
+            method,
+            lost,
             auth,
             status,
             body: response,
@@ -145,18 +160,13 @@ async fn exchanges(
                 listener.accept(),
             )
             .await??;
+            let sender = record.clone();
             let serve = service_fn(move |request: Request<Incoming>| {
                 let result = reply.clone();
+                let bodies = sender.clone();
                 async move {
                     check_target(request.uri(), path);
-                    assert_eq!(
-                        request.method(),
-                        if path.contains("/access_tokens") {
-                            "POST"
-                        } else {
-                            "GET"
-                        }
-                    );
+                    assert_eq!(request.method(), method);
                     assert!(
                         request
                             .headers()
@@ -178,14 +188,24 @@ async fn exchanges(
                             Some(vec![String::from("work")])
                         );
                     }
-                    Ok::<_, std::convert::Infallible>(result)
+                    bodies.send(body)?;
+                    if lost {
+                        return Err(anyhow::anyhow!("the reply is lost"));
+                    }
+                    Ok(result)
                 }
             });
-            http1::Builder::new()
+            let served = http1::Builder::new()
                 .serve_connection(TokioIo::new(socket), serve)
-                .await?;
+                .await;
+            if !lost {
+                served?;
+            }
+            while let Ok(body) = received.try_recv() {
+                seen.push(body);
+            }
         }
-        Ok(())
+        Ok(seen)
     });
     Ok((url, task))
 }

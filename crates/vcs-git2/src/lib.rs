@@ -13,6 +13,7 @@ mod compare;
 mod features;
 mod install;
 mod prepare;
+pub mod record;
 pub mod registration;
 mod release;
 pub mod remote;

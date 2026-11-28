@@ -1728,6 +1728,7 @@ mod as_the_command_line {
 
     use super::super::{Context, PendingEdits};
     use crate::flow::command::{self, command, run};
+    use crate::flow::resolve::in_folder;
     use crate::issue::storage::Inputs;
     use crate::issue::storage::{File, fresh};
 
@@ -1777,9 +1778,13 @@ mod as_the_command_line {
     fn by_command_line(said: &str) -> Result<Vec<String>, String> {
         let words: Vec<String> = said.split(' ').map(String::from).collect();
         let home = crate::issue::storage::snapshot(inputs());
+        let asked =
+            command(&words, &home, fresh(&home, NOW, &[7; crate::DRAWS]));
+        let resolved = in_folder(&home, &asked, None);
         let outcome = run(
-            command(&words, &home, fresh(&home, NOW, &[7; crate::DRAWS])),
+            asked,
             None,
+            &resolved,
             &home,
             &command::Context {
                 now: NOW.millis(),
@@ -1851,15 +1856,15 @@ mod as_the_command_line {
         let dangling = "0tm7zx0a";
         for (said, change) in [
             (
-                format!("issue set {TASK} priority=someday"),
+                format!("issue set home {TASK} priority=someday"),
                 set("priority", word("someday")),
             ),
             (
-                format!("issue set {TASK} blocked_by={dangling}"),
+                format!("issue set home {TASK} blocked_by={dangling}"),
                 set("blocked_by", words(&[dangling])),
             ),
             (
-                format!("issue set {TASK} blocked_by={TASK}"),
+                format!("issue set home {TASK} blocked_by={TASK}"),
                 set("blocked_by", words(&[TASK])),
             ),
         ] {
@@ -1882,7 +1887,8 @@ mod as_the_command_line {
 
     #[test]
     fn an_edit_the_command_line_warns_of_is_written_with_its_warning() {
-        let warned = by_command_line(&format!("issue note {TASK} checked"));
+        let warned =
+            by_command_line(&format!("issue note home {TASK} checked"));
         assert_eq!(
             warned,
             Ok(Vec::from([String::from(
@@ -1898,7 +1904,7 @@ mod as_the_command_line {
     #[test]
     fn the_app_and_the_command_line_plan_the_same_semantic_change() {
         let home = crate::issue::storage::snapshot(inputs());
-        let said: Vec<String> = format!("issue set {TASK} priority=high")
+        let said: Vec<String> = format!("issue set home {TASK} priority=high")
             .split(' ')
             .map(String::from)
             .collect();
@@ -1906,12 +1912,10 @@ mod as_the_command_line {
             now: NOW.millis(),
             by: String::from("laptop·iPhone"),
         };
-        let typed = run(
-            command(&said, &home, fresh(&home, NOW, &[7; crate::DRAWS])),
-            None,
-            &home,
-            &by,
-        );
+        let asked =
+            command(&said, &home, fresh(&home, NOW, &[7; crate::DRAWS]));
+        let resolved = in_folder(&home, &asked, None);
+        let typed = run(asked, None, &resolved, &home, &by);
         let made = IssueId::new(TASK)
             .zip(ProjectId::parse(FOLDER))
             .ok_or_else(String::new)
