@@ -9,11 +9,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use home::canvas::{CanvasKey, Held};
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Fetched, Given, Need, Source, Wanted, asked,
-    homeless, run,
+    Asked, Command, Context, Fetched, Given, Need, Outcome, Source, Wanted,
+    asked, homeless, run,
 };
 use home::issue::storage::{File, ReadHome};
+use home::tracker::{self, Tracker};
 use home::{Draws, UnixMillis};
+use home_files::FolderStore;
 use home_store::{CanvasStore, StoreError};
 
 mod local;
@@ -79,37 +81,113 @@ fn issues(
     });
     let resolved =
         trackers.resolved(asked.issues(given.as_ref()), asked.mode());
-    let loaded = trackers.loaded();
-    let outcome = run(asked, given, &resolved, &loaded.snapshot, context);
-    let written = outcome
-        .changes
-        .iter()
-        .map(|change| {
-            let file = loaded.encode(change)?;
-            save(home, &file).map(|()| file.path())
-        })
-        .collect::<Result<Vec<String>, String>>();
-    let saved = written.and_then(|mut paths| {
-        paths.extend(trackers.put(&outcome.canvases)?);
-        committed(home, &paths, outcome.message.as_deref(), context)
-    });
+    let outcome = run(
+        asked,
+        given,
+        &resolved,
+        &trackers.loaded().snapshot,
+        context,
+    );
+    let saved = kept(home, trackers, &outcome, context);
     outcome.ended(saved)
 }
 
-fn committed(
+fn kept(
     home: &Path,
-    paths: &[String],
-    message: Option<&str>,
+    trackers: &mut Trackers,
+    outcome: &Outcome,
     context: &Context,
 ) -> Result<(), String> {
-    match message {
-        Some(subject) if !paths.is_empty() => {
-            vcs_git2::record::commit(home, paths, &context.by, subject)
-                .map(drop)
-                .map_err(|error| format!("committing the home: {error}"))
-        }
-        _ => Ok(()),
+    let loaded = trackers.loaded();
+    let files = outcome
+        .changes
+        .iter()
+        .map(|change| loaded.encode(change))
+        .collect::<Result<Vec<File>, String>>()?;
+    let places: Vec<String> = files
+        .iter()
+        .map(File::path)
+        .chain(
+            outcome
+                .canvases
+                .iter()
+                .filter(|canvas| {
+                    matches!(
+                        tracker::select(&loaded.snapshot, canvas.key.project),
+                        Some(Tracker::Markdown)
+                    )
+                })
+                .map(|canvas| FolderStore::place(&canvas.key)),
+        )
+        .collect();
+    let record = match outcome.message.as_deref() {
+        Some(subject) if !places.is_empty() => Some((
+            vcs_git2::record::open(home).map_err(|error| {
+                format!("opening the home's repository: {error}")
+            })?,
+            subject,
+        )),
+        _ => None,
+    };
+    let before = places
+        .iter()
+        .map(|place| prior(home, place))
+        .collect::<Result<Vec<Prior>, String>>()?;
+    files
+        .iter()
+        .try_for_each(|file| save(home, file))
+        .and_then(|()| trackers.put(&outcome.canvases))
+        .and_then(|put| {
+            let paths: Vec<String> =
+                files.iter().map(File::path).chain(put).collect();
+            record.map_or(Ok(()), |(repository, subject)| {
+                repository
+                    .commit(&paths, &context.by, subject)
+                    .map(drop)
+                    .map_err(|error| format!("committing the home: {error}"))
+            })
+        })
+        .map_err(|failed| {
+            match before.iter().try_for_each(|kept| restore(home, kept)) {
+                Ok(()) => failed,
+                Err(undone) => {
+                    format!("{failed}; restoring the home: {undone}")
+                }
+            }
+        })
+}
+
+struct Prior {
+    place: String,
+    bytes: Option<Vec<u8>>,
+}
+
+fn prior(root: &Path, place: &str) -> Result<Prior, String> {
+    let path = root.join(place);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{}: {error}", path.display())),
     }
+    .map(|bytes| Prior {
+        place: place.to_owned(),
+        bytes,
+    })
+}
+
+fn restore(root: &Path, prior: &Prior) -> Result<(), String> {
+    let path = root.join(&prior.place);
+    prior
+        .bytes
+        .as_ref()
+        .map_or_else(
+            || match fs::remove_file(&path) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                removed => removed,
+            },
+            |bytes| fs::write(&path, bytes),
+        )
+        .map_err(|error| format!("{}: {error}", path.display()))
 }
 
 fn fetched(

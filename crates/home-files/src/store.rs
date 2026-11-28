@@ -32,7 +32,8 @@ impl FolderStore {
         format!("{}/{}", layout::issues(&project), segment(issue))
     }
 
-    fn place(key: &CanvasKey) -> String {
+    #[must_use]
+    pub fn place(key: &CanvasKey) -> String {
         format!(
             "{}/{}{SUFFIX}",
             Self::issue(key.project, &key.issue),
