@@ -9,6 +9,7 @@ publish = false
 layer = "shell"
 
 [dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["alloc"] }
 home-files = { path = "../home-files" }
 home-store = { path = "../home-store" }
 github = { path = "../github" }

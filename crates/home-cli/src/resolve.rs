@@ -3,7 +3,7 @@ use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use home::flow::command::{CanvasWrite, Change};
-use home::flow::command::{Resolved, named};
+use home::flow::command::{Listed, Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::ReadHome;
@@ -146,6 +146,40 @@ impl Trackers {
                 }
             }
         }
+    }
+
+    pub fn listings(&self) -> Vec<Listed> {
+        let home = &self.loaded.snapshot;
+        let tracked = home
+            .projects()
+            .iter()
+            .filter(|project| {
+                matches!(
+                    home::tracker::of(project),
+                    home::tracker::Tracker::Configured(_)
+                )
+            })
+            .map(|project| project.id)
+            .collect::<Vec<_>>();
+        run(async {
+            let mut listed = Vec::new();
+            for project in &tracked {
+                listed.push(Listed {
+                    project: *project,
+                    listing: self.trackers.listing(home, *project, false).await,
+                });
+            }
+            listed
+        })
+        .unwrap_or_else(|error| {
+            tracked
+                .iter()
+                .map(|project| Listed {
+                    project: *project,
+                    listing: Err(error.clone()),
+                })
+                .collect()
+        })
     }
 
     pub async fn listing(

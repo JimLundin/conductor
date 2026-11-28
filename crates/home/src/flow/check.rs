@@ -4,9 +4,11 @@ use alloc::string::ToString;
 use crate::ProjectId;
 use crate::canvas::Held;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
-use crate::issue::Issue;
+use crate::issue::{Issue, IssueState};
 
-use super::command::{Fetched, Resolved, canvas_named, of_canvas};
+use super::command::{
+    Fetched, Listed, Resolved, canvas_named, named, of_canvas, subject,
+};
 use super::eval::{Failure, Move, holds};
 use super::snapshot::Snapshot;
 use crate::prelude::*;
@@ -32,6 +34,14 @@ pub struct Report {
 }
 
 impl Report {
+    pub fn extend(&mut self, findings: Vec<Finding>) {
+        for finding in findings {
+            if !self.findings.contains(&finding) {
+                self.findings.push(finding);
+            }
+        }
+    }
+
     #[must_use]
     pub fn failed(&self) -> bool {
         self.findings
@@ -180,6 +190,47 @@ pub fn canvases(
         .chain(strays)
         .chain(unavailable)
         .collect()
+}
+
+#[must_use]
+pub fn listed(home: &Snapshot, listings: &[Listed]) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    for listed in listings {
+        let finding = |severity, subject, message| Finding {
+            severity,
+            subject: Some(subject),
+            message,
+        };
+        let listing = match &listed.listing {
+            Ok(listing) => listing,
+            Err(reason) => {
+                findings.push(finding(
+                    Severity::Error,
+                    named(home, listed.project),
+                    reason.clone(),
+                ));
+                continue;
+            }
+        };
+        findings.extend(listing.records.iter().filter_map(|record| {
+            match &record.state {
+                IssueState::Invalid(unread) => Some(finding(
+                    Severity::Error,
+                    subject(home, listed.project, &unread.id),
+                    unread.reason.clone(),
+                )),
+                _ => None,
+            }
+        }));
+        if let Some(failure) = &listing.status.failure {
+            findings.push(finding(
+                Severity::Warn,
+                named(home, listed.project),
+                format!("its issues are as last listed: {failure}"),
+            ));
+        }
+    }
+    findings
 }
 
 pub(crate) fn of_issue(

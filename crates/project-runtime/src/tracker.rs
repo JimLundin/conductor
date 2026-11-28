@@ -9,7 +9,9 @@ use home::canvas::{Broken, CanvasEntry, CanvasFile, CanvasKey, Held};
 use home::flow::command::{Change, Mutation};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::ReadHome;
-use home::issue::{IssueListing, IssueReading, Lookup, ReadFailure, ReadMode};
+use home::issue::{
+    IssueListing, IssueReading, IssueState, Lookup, ReadFailure, ReadMode,
+};
 use home::operations::Handle;
 use home::project::Project;
 use home::tracker::{self, Tracker};
@@ -34,10 +36,16 @@ pub type Refreshing<'a> =
 
 pub trait TrackerStore: CanvasStore + Send + Sync {
     fn refresh<'a>(&'a self, listing: &'a IssueListing) -> Refreshing<'a>;
+
+    fn refresh_issue<'a>(&'a self, issue: &'a IssueKey) -> Refreshing<'a>;
 }
 
 impl TrackerStore for Memory {
     fn refresh<'a>(&'a self, _: &'a IssueListing) -> Refreshing<'a> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn refresh_issue<'a>(&'a self, _: &'a IssueKey) -> Refreshing<'a> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -344,11 +352,20 @@ impl Configured {
             project: key.project,
             id: key.id.clone(),
         };
-        registry
+        let refreshing = matches!(mode, ReadMode::Refresh);
+        let mut reading = registry
             .project(&self.backends)
             .issue(&cache, lookup, mode)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        let present = reading.record.as_ref().is_some_and(|record| {
+            !matches!(record.state, IssueState::Deleted(_))
+        });
+        if refreshing && present && reading.status.failure.is_none() {
+            reading.status.failure =
+                self.canvases.refresh_issue(key).await.err();
+        }
+        Ok(reading)
     }
 
     async fn listing(

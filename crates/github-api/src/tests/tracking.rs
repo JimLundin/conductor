@@ -6,6 +6,14 @@ use home::issue::{Coverage, Observation};
 use home::issue::{IssueState, ListPage, Lookup, ReadFailure};
 use project_runtime::IssueTracker as _;
 use serde_json::{Value, json};
+use std::sync::Arc;
+
+use http_body_util::Full;
+use hyper::body::{Bytes, Incoming};
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
 
 const FIRST: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=1";
 const SECOND: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=2";
@@ -501,5 +509,74 @@ async fn a_native_relation_in_a_repository_no_project_tracks_is_reported_and_lef
             .any(|finding| finding.message.contains("owner/other#3"))
     );
     completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_listing_page_reads_the_blockers_of_its_issues_at_once()
+-> anyhow::Result<()> {
+    const BLOCKED: [u64; 3] = [7, 8, 9];
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let base = format!("http://{}", listener.local_addr()?);
+    let at = base.clone();
+    let together = Arc::new(tokio::sync::Barrier::new(BLOCKED.len()));
+    let served = tokio::spawn(async move {
+        while let Ok((socket, _)) = listener.accept().await {
+            let (connection_at, connection_together) =
+                (at.clone(), Arc::clone(&together));
+            let serve = service_fn(move |request: Request<Incoming>| {
+                let (at, together) =
+                    (connection_at.clone(), Arc::clone(&connection_together));
+                async move {
+                    let path = request.uri().path().to_owned();
+                    let (status, body) = if path.ends_with("/issues") {
+                        let page = BLOCKED
+                            .iter()
+                            .map(|number| {
+                                let mut value = issue(*number, 900 + number);
+                                value["issue_dependencies_summary"]
+                                    ["total_blocked_by"] = json!(1);
+                                value
+                            })
+                            .collect::<Vec<_>>();
+                        (200, json!(page))
+                    } else if tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        together.wait(),
+                    )
+                    .await
+                    .is_ok()
+                    {
+                        (200, json!([issue(5, 905)]))
+                    } else {
+                        (500, json!({"message": "read one at a time"}))
+                    };
+                    let mut reply = Response::new(Full::new(Bytes::from(
+                        body.to_string().replace("{api}", &at),
+                    )));
+                    *reply.status_mut() = hyper::StatusCode::from_u16(status)?;
+                    anyhow::Ok(reply)
+                }
+            });
+            tokio::spawn(
+                http1::Builder::new()
+                    .serve_connection(TokioIo::new(socket), serve),
+            );
+        }
+    });
+    let listed = tracker(&base)?.list(page(None)).await?;
+    served.abort();
+    assert_eq!(
+        listed
+            .records
+            .iter()
+            .map(|observed| (
+                observed.id().to_string(),
+                targets(observed, "blocked_by")
+            ))
+            .collect::<Vec<_>>(),
+        BLOCKED
+            .map(|number| (number.to_string(), Vec::from([String::from("5")])))
+    );
     Ok(())
 }

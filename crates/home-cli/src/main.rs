@@ -9,8 +9,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use home::canvas::{CanvasKey, Held};
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Fetched, Given, Need, Outcome, Source, Wanted,
-    asked, homeless, run,
+    Asked, Checked, Command, Context, Fetched, Given, Need, Outcome, Source,
+    Wanted, asked, homeless, run,
 };
 use home::issue::storage::ReadHome;
 use home::{Draws, IssueId, UnixMillis};
@@ -80,7 +80,13 @@ fn issues(
         Need::Read(Source::File(path)) => Given::Text(read(Path::new(&path))),
         Need::Read(Source::Stdin) => Given::Text(stdin()),
         Need::Canvases(wanted) => Given::Canvases(fetched(store, &wanted)),
-        Need::EveryCanvas => Given::EveryCanvas(every(store)),
+        Need::Check => {
+            let listings = trackers.listings();
+            Given::Check(Checked {
+                canvases: every(store),
+                listings,
+            })
+        }
     });
     let resolved =
         trackers.resolved(asked.issues(given.as_ref()), asked.mode());

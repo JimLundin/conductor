@@ -902,3 +902,29 @@ async fn a_refresh_keeps_the_canvases_of_listed_issues_only()
     assert_eq!(store.all()?.canvases, [key(ALPHA, "2", "design")?]);
     Ok(())
 }
+
+#[tokio::test]
+async fn a_fresh_read_of_one_issue_sees_another_host_s_put_and_keeps_the_other_issues_canvases()
+-> anyhow::Result<()> {
+    let github = Github::start().await?;
+    let host = Host::new()?;
+    github.post("alpha", 2, body("design", "Listed.")?).await?;
+    host.refresh(ALPHA, "alpha", &github).await?;
+    github
+        .post("alpha", 1, body("plan", "Put elsewhere.")?)
+        .await?;
+    let store = host.store(ALPHA, "alpha", &github)?;
+    let plan = key(ALPHA, "1", "plan")?;
+    store
+        .refresh_issue(&home::IssueKey {
+            project: ALPHA,
+            id: plan.issue.clone(),
+        })
+        .await?;
+    assert_eq!(
+        store.get(&plan)?.map(|kept| kept.canvas),
+        Some(drawn("Put elsewhere.")?)
+    );
+    assert_eq!(store.all()?.canvases, [plan, key(ALPHA, "2", "design")?]);
+    Ok(())
+}
