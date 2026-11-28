@@ -64,4 +64,4 @@ const replacementFragment = (action: HostAction, fragment: string): string | und
     : undefined;
 
 export { HostAction, HostOperation, operationText, replacementFragment, stepsOf };
-export type { Attempt, Steps };
+export type { Steps };
