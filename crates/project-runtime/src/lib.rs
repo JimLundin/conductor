@@ -1,3 +1,4 @@
+mod comments;
 pub mod issues;
 pub mod operations;
 mod storage;
@@ -12,7 +13,10 @@ use home::backend::{
     Selection,
 };
 use home::hosting;
-use home::issue::{ListPage, Lookup, Observation, Page, ReadFailure};
+use home::issue::{
+    Comment, CommentWrite, ListPage, Lookup, Observation, Page, ReadFailure,
+    SendFailure,
+};
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
     PreserveAndRemove, Revision,
@@ -49,9 +53,20 @@ pub trait VersionControl: Send + Sync {
 pub type IssueCompletion<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, ReadFailure>> + Send + 'a>>;
 
+pub type SendCompletion<'a, T> =
+    Pin<Box<dyn Future<Output = Result<T, SendFailure>> + Send + 'a>>;
+
+pub use comments::WriteError;
+
 pub trait IssueTracker: Send + Sync {
     fn read(&self, request: Lookup) -> IssueCompletion<'_, Observation>;
     fn list(&self, request: ListPage) -> IssueCompletion<'_, Page>;
+    fn comments(&self, issue: Lookup) -> IssueCompletion<'_, Vec<Comment>>;
+    fn write_comment(
+        &self,
+        issue: Lookup,
+        write: CommentWrite,
+    ) -> SendCompletion<'_, Comment>;
 }
 
 pub trait RepositoryHosting: Send + Sync {

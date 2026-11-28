@@ -5,18 +5,19 @@ use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Record};
 use home::flow::Flow;
+use home::issue::{Comment, CommentWrite};
 use home::issue::{
     IssueState, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
     Unreadable,
 };
 use home::{IssueId, ProjectId, UnixMillis};
 use octocrab::{FromResponse, models::issues::Issue, params};
-use project_runtime::{IssueCompletion, IssueTracker};
+use project_runtime::{IssueCompletion, IssueTracker, SendCompletion};
 
 use crate::{Client, client::classify, read_failure};
 
 pub struct Tracker {
-    client: Client,
+    pub(crate) client: Client,
     flow: Flow,
     config: Configuration,
 }
@@ -241,7 +242,7 @@ fn observed_at() -> Option<UnixMillis> {
         .map(UnixMillis::since_epoch)
 }
 
-fn request_error(error: octocrab::Error) -> ReadFailure {
+pub fn request_error(error: octocrab::Error) -> ReadFailure {
     match error {
         octocrab::Error::Json { .. }
         | octocrab::Error::Serde { .. }
@@ -257,5 +258,17 @@ impl IssueTracker for Tracker {
 
     fn list(&self, request: ListPage) -> IssueCompletion<'_, Page> {
         Box::pin(self.page(request))
+    }
+
+    fn comments(&self, issue: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
+        Box::pin(self.issue_comments(issue))
+    }
+
+    fn write_comment(
+        &self,
+        issue: Lookup,
+        write: CommentWrite,
+    ) -> SendCompletion<'_, Comment> {
+        Box::pin(self.send(issue, write))
     }
 }

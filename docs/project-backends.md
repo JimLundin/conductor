@@ -42,8 +42,9 @@ Invalid configuration fails the query. A successful query can report
 unavailable operations, including missing backends, missing or expired
 credentials, and unsupported capabilities.
 
-The CLI registers the local workspace adapter and the GitHub issue reader
-when it can construct them. Use the access command below to check the
+The CLI registers the local workspace adapter and the GitHub tracker when
+it can construct them. The tracker can always read issues; it can also
+write issue comments when its credential declares `write_issues`. Use the access command below to check the
 credential against the remote repository.
 
 `project-runtime::Registry` provides the same registration, capability and
@@ -53,6 +54,16 @@ any of these requires a new binding. Capability checks run before adapter
 dispatch and apply to the requested operation. A tracker failure does not
 prevent local workspace preparation, snapshots or diffs. Issue work without
 a tracker returns `TrackerNotConfigured`.
+
+A comment write, `Project::write_comment`, runs as an operation in the
+host's operation store. Its body must carry its handle's marker,
+`Handle::marker`. The write re-reads the issue's comments and is refused
+when they differ from what its caller saw. It then sends one request and
+reads the comments back. It confirms the write only once it finds the
+marker. When the reply is lost, the outcome is unknown and stays recorded.
+Retrying the same handle looks for the marker again and never sends the
+request twice. A request the tracker rejects leaves the operation ready to
+send again.
 
 Repository hosting declares statuses, checks and workflows separately.
 Access to statuses does not imply access to required checks. Hosted-result
@@ -132,7 +143,9 @@ After provisioning or rotating the root entry, publish it with
 See the [fleet instructions](fleet.md) for sharing and withdrawal.
 
 An optional `expires_unix` on the entry declares its expiry in Unix
-seconds. Use `kind = "classic"` for a classic personal token or
+seconds. Add `write_issues = true` to let Conductor create and edit issue
+comments with the credential. Without it, a comment write is refused
+before any request is sent. Use `kind = "classic"` for a classic personal token or
 `kind = "oauth"` for an OAuth token. A GitHub App installation uses
 `kind = "installation"` with numeric `app_id` and `installation_id` and
 an RSA PEM `private_key`. Git over HTTPS acquires its token from the

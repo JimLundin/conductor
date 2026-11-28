@@ -19,6 +19,8 @@ use crate::{
 };
 
 pub mod cache;
+mod comment;
+pub use comment::*;
 mod observation;
 mod tracking;
 pub use tracking::*;

@@ -40,6 +40,19 @@ impl IssueTracker for Github {
         };
         Box::pin(async move { Ok(page) })
     }
+    fn comments(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn write_comment(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::CommentWrite,
+    ) -> project_runtime::SendCompletion<'_, home::issue::Comment> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
 }
 
 fn project(root: &Path, id: &str, text: &str) -> std::io::Result<()> {

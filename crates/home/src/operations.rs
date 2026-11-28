@@ -4,7 +4,9 @@ use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::issue::{EditId, IssueChange, Part};
+use crate::issue::{
+    Comment, CommentRequest, CommentWrite, EditId, IssueChange, Part,
+};
 use crate::{IssueId, ProjectId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -22,6 +24,11 @@ impl Handle {
             owner: owner.try_into().ok()?,
             id: EditId::parse(id)?,
         })
+    }
+
+    #[must_use]
+    pub fn marker(self) -> String {
+        alloc::format!("conductor-operation {self}")
     }
 
     pub fn local(self, host: [u8; 32]) -> Result<(), Refusal> {
@@ -52,6 +59,33 @@ pub struct Intent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Work {
     ChangeIssue { issue: IssueId, change: IssueChange },
+    Comment { issue: IssueId, write: CommentWrite },
+}
+
+impl Intent {
+    pub fn comment(
+        handle: Handle,
+        request: &CommentRequest,
+    ) -> Result<Self, Refusal> {
+        if !request.write.body().contains(&handle.marker()) {
+            return Err(Refusal::Unmarked);
+        }
+        Ok(Self {
+            project: request.issue.project,
+            expected: request.seen.clone(),
+            work: Work::Comment {
+                issue: request.issue.id.clone(),
+                write: request.write.clone(),
+            },
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Next {
+    Send,
+    Settled(Comment),
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +94,7 @@ pub enum Step {
     RemoveTransitionValue(Part),
     SetTransitionValue(Part),
     SetOpenState,
+    WriteComment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +137,10 @@ pub enum Refusal {
     Completed,
     #[error("the operation has no attempted step to confirm")]
     NoAttempt,
+    #[error("the write's body lacks its operation marker")]
+    Unmarked,
+    #[error("the operation writes no comment")]
+    NotAComment,
 }
 
 impl Record {
@@ -204,6 +243,65 @@ impl Record {
         Ok(record)
     }
 }
+
+impl Record {
+    pub fn reject(&self) -> Result<Self, Refusal> {
+        let Progress::AwaitingEvidence(_) = self.progress else {
+            return Err(Refusal::NoAttempt);
+        };
+        Ok(Self {
+            progress: Progress::Ready,
+            ..self.clone()
+        })
+    }
+
+    pub fn next(&self, observed: &[Comment]) -> Result<(Self, Next), Refusal> {
+        let Work::Comment { write, .. } = &self.intent.work else {
+            return Err(Refusal::NotAComment);
+        };
+        let marker = self.handle.marker();
+        let mut carrying = observed
+            .iter()
+            .filter(|comment| write.covers(comment))
+            .filter(|comment| comment.body.contains(&marker));
+        match (&self.progress, carrying.next(), carrying.next()) {
+            (Progress::Completed, Some(found), None) => {
+                Ok((self.clone(), Next::Settled(found.clone())))
+            }
+            (Progress::AwaitingEvidence(step), Some(found), None) => {
+                let evidence = Confirmed {
+                    step: step.clone(),
+                    revision: write.precondition(core::slice::from_ref(found)),
+                    identity: Some(found.id.clone()),
+                };
+                Ok((
+                    self.confirm(evidence, true)?,
+                    Next::Settled(found.clone()),
+                ))
+            }
+            (Progress::Ready, None, None) => {
+                self.send(write, observed).map(|sent| (sent, Next::Send))
+            }
+            _ => Ok((self.clone(), Next::Unknown)),
+        }
+    }
+
+    fn send(
+        &self,
+        write: &CommentWrite,
+        observed: &[Comment],
+    ) -> Result<Self, Refusal> {
+        if !observed.iter().any(|comment| write.covers(comment))
+            && matches!(write, CommentWrite::Edit { .. })
+        {
+            return Err(Refusal::Conflict);
+        }
+        self.dispatch(Step::WriteComment, &write.precondition(observed), true)
+    }
+}
+
+#[cfg(test)]
+mod tests;
 
 #[must_use]
 pub fn status_query(

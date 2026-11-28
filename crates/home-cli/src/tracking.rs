@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use github::configuration::{TrackerMapping, selected};
-use home::backend::{Capability, CredentialState, IssueQuery};
+use home::backend::{CredentialState, IssueQuery};
 use home::issue::{IssueListing, ReadFailure};
 use project_runtime::{Registration, Registry};
 
@@ -24,7 +24,7 @@ pub fn register(
         .register_tracker(
             Registration {
                 selection: tracker.selection.clone(),
-                capabilities: vec![Capability::ReadIssues],
+                capabilities: reader.capabilities(),
                 credential: CredentialState::Available,
             },
             Arc::new(reader),

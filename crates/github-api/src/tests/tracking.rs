@@ -10,9 +10,11 @@ const FIRST: &str = "/repos/owner/work/issues?state=all&sort=created&direction=a
 const SECOND: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=2";
 const NUMBER: &str = "/repos/owner/work/issues/7";
 
-fn reply(path: &'static str, status: u16, body: &Value) -> Exchange {
+pub(super) fn reply(path: &'static str, status: u16, body: &Value) -> Exchange {
     Exchange {
         path,
+        method: "GET",
+        lost: false,
         status,
         auth: "Bearer fixture",
         headers: Vec::new(),
@@ -29,7 +31,7 @@ fn with_header(
     step
 }
 
-fn issue(number: u64, id: u64) -> Value {
+pub(super) fn author() -> Value {
     let mut author = json!({"login":"reader","type":"User","id":1,"node_id":"user","site_admin":false,"gravatar_id":""});
     for field in [
         "avatar_url",
@@ -47,6 +49,11 @@ fn issue(number: u64, id: u64) -> Value {
     ] {
         author[field] = json!("https://github.com/reader");
     }
+    author
+}
+
+fn issue(number: u64, id: u64) -> Value {
+    let author = author();
     json!({
         "id":id,"node_id":"I_test","url":format!("{{api}}/repos/owner/work/issues/{number}"),
         "repository_url":"{api}/repos/owner/work","labels_url":"{api}/labels",
@@ -67,7 +74,7 @@ fn pull() -> Value {
     value
 }
 
-fn tracker(base: &str) -> anyhow::Result<Tracker> {
+pub(super) fn tracker(base: &str) -> anyhow::Result<Tracker> {
     let client = Client::new(
         Repository::parse("owner/work")?,
         &Source::FineGrained {
@@ -90,7 +97,7 @@ fn page(continuation: Option<String>) -> ListPage {
     }
 }
 
-fn lookup(number: &str) -> anyhow::Result<Lookup> {
+pub(super) fn lookup(number: &str) -> anyhow::Result<Lookup> {
     Ok(Lookup {
         project: ProjectId::new(1),
         id: IssueId::new(number).ok_or_else(|| anyhow::anyhow!("no id"))?,

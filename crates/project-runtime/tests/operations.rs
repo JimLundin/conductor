@@ -35,7 +35,9 @@ fn a_retry_on_another_host_cannot_start_even_with_no_local_record()
 
 fn transition() -> Result<Intent, &'static str> {
     let mut intent = changes()?;
-    let Work::ChangeIssue { change, .. } = &mut intent.work;
+    let Work::ChangeIssue { change, .. } = &mut intent.work else {
+        return Err("not an issue change");
+    };
     *change = IssueChange::Move {
         part: home::issue::Part::Status,
         to: String::from("active"),

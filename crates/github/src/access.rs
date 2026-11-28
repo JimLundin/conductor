@@ -184,6 +184,19 @@ pub fn report(observations: &[Observation]) -> String {
 pub mod routes;
 
 #[must_use]
+pub const fn send_failure(
+    status: Option<u16>,
+    error: AccessError,
+) -> home::issue::SendFailure {
+    match status {
+        Some(400..=499) => {
+            home::issue::SendFailure::Rejected(read_failure(error))
+        }
+        _ => home::issue::SendFailure::Unknown,
+    }
+}
+
+#[must_use]
 pub const fn read_failure(error: AccessError) -> home::issue::ReadFailure {
     use home::issue::ReadFailure;
     match error {

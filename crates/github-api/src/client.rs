@@ -19,6 +19,7 @@ pub struct Client {
     pub(crate) endpoint: String,
     pub(crate) reader: Octocrab,
     pub(crate) kind: TokenKind,
+    pub(crate) writes: bool,
     personal: Option<SecretString>,
 }
 
@@ -47,8 +48,14 @@ impl Client {
             repository,
             reader,
             kind,
+            writes: false,
             personal,
         })
+    }
+
+    pub(crate) const fn writing(mut self, writes: bool) -> Self {
+        self.writes = writes;
+        self
     }
 
     async fn current_token(&self) -> Result<SecretString, AccessError> {
@@ -142,6 +149,16 @@ fn builder(endpoint: &str) -> Result<Builder, AccessError> {
 
 fn configuration(_: octocrab::Error) -> AccessError {
     AccessError::InvalidConfiguration
+}
+
+pub fn unsent(error: octocrab::Error) -> home::issue::SendFailure {
+    let status = match &error {
+        octocrab::Error::GitHub { source, .. } => {
+            Some(source.status_code.as_u16())
+        }
+        _ => None,
+    };
+    github::access::send_failure(status, classify(error))
 }
 
 pub fn classify(error: octocrab::Error) -> AccessError {
