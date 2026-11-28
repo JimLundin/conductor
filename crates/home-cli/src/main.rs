@@ -235,6 +235,7 @@ fn fetched(
             })
             .collect(),
         strays,
+        unavailable: Vec::new(),
     })
 }
 
@@ -247,6 +248,7 @@ fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
             .map(|key| got(store, key))
             .collect(),
         strays: held.strays,
+        unavailable: held.unavailable,
     })
 }
 
@@ -446,6 +448,44 @@ mod tests {
             assert_eq!(*code, 1, "{text}");
         }
         assert_eq!(kept, Vec::from([std::ffi::OsString::from("project.toml")]));
+        Ok(())
+    }
+
+    #[test]
+    fn check_fails_naming_a_project_whose_tracker_cant_be_built()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir()
+            .join(format!("home-check-unbuilt-{}", std::process::id()));
+        let project = root.join("projects/hyn162");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(root.join("docs/agents"))?;
+        std::fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+        std::fs::write(
+            project.join("project.toml"),
+            "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
+        )?;
+        let loaded = home_files::read(&root, github::ISSUERS);
+        let context = super::context();
+        let fresh =
+            fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
+        let Asked::Flow(command) =
+            asked(&[String::from("check")], &loaded.snapshot, fresh)
+        else {
+            return Err("check isn't a flow command".into());
+        };
+        let mut trackers = Trackers::new(&root, loaded, None, |_, _, _| {
+            Err(String::from("unknown field `colour`"))
+        })?;
+        let (said, code) =
+            super::issues(&root, &mut trackers, command, &context);
+        std::fs::remove_dir_all(&root)?;
+        assert!(
+            said.contains(
+                "error  the tracker of standards: unknown field `colour`\n"
+            ),
+            "{said}"
+        );
+        assert_eq!(code, 1, "{said}");
         Ok(())
     }
 

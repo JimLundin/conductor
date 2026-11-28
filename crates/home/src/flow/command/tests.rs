@@ -2029,6 +2029,7 @@ fn held<T>(canvases: Vec<T>) -> Held<T> {
     Held {
         canvases,
         strays: Vec::new(),
+        unavailable: Vec::new(),
     }
 }
 
@@ -2141,6 +2142,7 @@ fn a_canvas_show_prints_an_issue_s_valid_canvases_then_names_what_it_skipped()
                 place: String::from("over/there/notes"),
                 reason: StrayReason::Folder,
             }]),
+            unavailable: Vec::new(),
         })),
     );
     assert_eq!(
@@ -2215,6 +2217,7 @@ fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
                     reason: StrayReason::NotAnIssue,
                 },
             ]),
+            unavailable: Vec::new(),
         })),
     );
     assert!(checked.failed);

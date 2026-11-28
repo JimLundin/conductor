@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
-use home::canvas::{CanvasEntry, CanvasName, Held};
+use home::canvas::{CanvasEntry, CanvasKey, CanvasName, Held};
 use home::checkout::Root;
 use home::flow::command::named;
 use home::flow::resolve::{Mode, Resolver};
@@ -1026,10 +1026,7 @@ async fn listed(
     home: &Snapshot,
     trackers: &Trackers,
 ) -> BTreeMap<IssueKey, Vec<CanvasEntry>> {
-    let kept = trackers.all().unwrap_or_else(|error| {
-        tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
-        Held::default()
-    });
+    let kept = kept(trackers);
     let resolver = Resolver::new(Mode::Offline);
     let mut listed = BTreeMap::new();
     for issue in home.canvased(&kept.canvases) {
@@ -1046,6 +1043,17 @@ async fn listed(
         }
     }
     listed
+}
+
+fn kept(trackers: &Trackers) -> Held<CanvasKey> {
+    let kept = trackers.all().unwrap_or_else(|error| {
+        tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
+        Held::default()
+    });
+    for reason in &kept.unavailable {
+        tracing::warn!(target: "home", %reason, "listed the home without a project's canvases");
+    }
+    kept
 }
 
 fn entries(

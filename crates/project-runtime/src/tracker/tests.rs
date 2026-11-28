@@ -242,6 +242,26 @@ fn all_reports_the_strays_of_every_tracker_s_store() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn all_lists_the_built_projects_canvases_and_reports_an_unbuilt_project_on_its_own()
+-> Result<(), String> {
+    let mut home_store = Memory::default();
+    let homed = key(MARKDOWN, "0tm7aaaa")?;
+    home_store.keep(&homed, &file()?);
+    let trackers = followed(Box::new(home_store), unmapped);
+    assert_eq!(
+        trackers.all(),
+        Ok(Held {
+            canvases: Vec::from([homed]),
+            strays: Vec::new(),
+            unavailable: Vec::from([String::from(
+                "the tracker of standards: unknown field `colour`"
+            )]),
+        })
+    );
+    Ok(())
+}
+
 struct Empty;
 
 impl IssueTracker for Empty {
