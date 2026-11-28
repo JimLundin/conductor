@@ -5,13 +5,13 @@ use crate::log::Event;
 use crate::registry::InstanceId;
 use crate::session::{EventKind, SessionId};
 use agents::{Account, ClientName};
-use home::IssueId;
+use home::IssueKey;
 
 use crate::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Assignment {
-    pub issue: IssueId,
+    pub issue: IssueKey,
     pub(crate) instance: InstanceId,
 }
 
@@ -28,7 +28,7 @@ impl Assignment {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct Assigned {
-    pub(crate) issue: Option<IssueId>,
+    pub(crate) issue: Option<IssueKey>,
     pub(crate) instance: Option<InstanceId>,
 }
 
@@ -53,7 +53,7 @@ impl Assigned {
     }
 
     #[must_use]
-    pub(crate) fn is(&self, issue: IssueId, instance: &InstanceId) -> bool {
+    pub(crate) fn is(&self, issue: IssueKey, instance: &InstanceId) -> bool {
         self.issue == Some(issue) && self.instance.as_ref() == Some(instance)
     }
 }

@@ -12,12 +12,7 @@ pub fn verify(
     request: &Lookup,
     record: &Observation,
 ) -> Result<(), ReadFailure> {
-    if request.project != record.project()
-        || request
-            .expected
-            .as_ref()
-            .is_some_and(|id| id != record.id())
-    {
+    if request.project != record.project() || &request.id != record.id() {
         return Err(ReadFailure::IdentityConflict);
     }
     Ok(())
@@ -87,17 +82,6 @@ impl Collection {
         {
             return Ok(());
         }
-        let mut references = BTreeMap::new();
-        let known = self.known.values().map(|seen| &seen.record);
-        for record in known.chain(scan.records.values()) {
-            if let Some(address) = &record.locator
-                && references
-                    .insert(&address.reference, record.id())
-                    .is_some_and(|old| old != record.id())
-            {
-                return Err(ReadFailure::IdentityConflict);
-            }
-        }
         self.list = Some(Membership {
             generation,
             when,
@@ -116,16 +100,7 @@ impl Collection {
         generation: u64,
         when: UnixMillis,
     ) -> Result<IssueId, ReadFailure> {
-        let returned = record
-            .locator
-            .as_ref()
-            .map(|address| address.reference.as_str());
-        for reference in [Some(lookup.reference.as_str()), returned]
-            .into_iter()
-            .flatten()
-        {
-            verify(&self.lookup(lookup.project, reference)?, &record)?;
-        }
+        verify(lookup, &record)?;
         let id = record.id().clone();
         self.remember(record, generation, when);
         Ok(id)
@@ -188,39 +163,6 @@ impl Collection {
         snapshot::project_issues(flow, records)
     }
 
-    pub fn lookup(
-        &self,
-        project: ProjectId,
-        selector: &str,
-    ) -> Result<Lookup, ReadFailure> {
-        let id = IssueId::parse(selector);
-        let known = if let Some(key) = &id {
-            self.known.get(key)
-        } else {
-            let mut matches = self.known.values().filter(|seen| {
-                seen.record
-                    .locator
-                    .as_ref()
-                    .is_some_and(|address| address.reference == selector)
-            });
-            let first = matches.next();
-            if matches.next().is_some() {
-                return Err(ReadFailure::IdentityConflict);
-            }
-            first
-        };
-        let expected = known.map(|seen| seen.record.id().clone()).or(id);
-        let address = known.and_then(|seen| seen.record.locator.as_ref());
-        Ok(Lookup {
-            project,
-            expected,
-            reference: address.map_or_else(
-                || String::from(selector),
-                |locator| locator.reference.clone(),
-            ),
-        })
-    }
-
     #[must_use]
     pub fn failed_read(
         &self,
@@ -228,16 +170,7 @@ impl Collection {
         lookup: &Lookup,
         error: ReadFailure,
     ) -> IssueReading {
-        let current = self
-            .lookup(lookup.project, &lookup.reference)
-            .ok()
-            .and_then(|request| request.expected);
-        self.reading(
-            flow,
-            lookup.expected.as_ref().or(current.as_ref()),
-            false,
-            Some(error),
-        )
+        self.reading(flow, Some(&lookup.id), false, Some(error))
     }
 
     #[must_use]

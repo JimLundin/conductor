@@ -74,7 +74,7 @@ pub fn inputs(
                     text,
                 }),
                 Err(reason) => {
-                    if let Some(id) = crate::IssueId::from_reference(&at.stem) {
+                    if let Some(id) = crate::id::slug(&at.stem) {
                         unavailable.push(crate::issue::Unreadable {
                             id,
                             project: at.project,

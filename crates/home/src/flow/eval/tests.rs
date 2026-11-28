@@ -23,10 +23,7 @@ fn flow() -> Flow {
 }
 
 fn id(name: &str) -> IssueId {
-    IssueId {
-        authority: String::from("test"),
-        key: String::from(name),
-    }
+    IssueId(String::from(name))
 }
 
 fn step(via: &str, name: &str) -> Step {
@@ -161,6 +158,26 @@ fn blocking_holds_until_every_blocker_is_built_and_ends_on_a_cycle() {
             issue: id("two"),
             path: Vec::from([step("blocked_by", "two")]),
         })
+    );
+}
+
+#[test]
+fn a_relation_reaches_the_issue_of_its_own_project_with_that_id() {
+    let flow = flow();
+    let one = linked(issue("one", "task", "active"), "blocked_by", &["two"]);
+    let mut elsewhere = issue("two", "task", "open");
+    elsewhere.project = ProjectId::new(2);
+    let graph = Graph {
+        issues: Vec::from([one.clone(), elsewhere]),
+        problems: Vec::new(),
+    };
+    let standing = Move {
+        from: Some(&one),
+        to: Some(&one),
+    };
+    assert_eq!(
+        holds(&flow, &among(&graph), &one, standing, &rule(&flow, 1)),
+        Ok(())
     );
 }
 

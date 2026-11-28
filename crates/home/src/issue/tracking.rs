@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Lookup {
     pub project: ProjectId,
-    pub reference: String,
-    pub expected: Option<IssueId>,
+    pub id: IssueId,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -1,10 +1,10 @@
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 
+use crate::ProjectId;
 use crate::canvas::Held;
 use crate::flow::{Flow, Literal, Predicate, Quantifier, Rule, Severity};
 use crate::issue::Issue;
-use crate::{IssueId, ProjectId};
 
 use super::command::{Fetched, canvas_named};
 use super::eval::{Failure, Move, holds};
@@ -107,19 +107,13 @@ pub fn check(home: &Snapshot) -> Report {
     };
     findings.extend(graph.problems.iter().map(|problem| {
         error(
-            Some(named(
-                problem.project,
-                &IssueId::from_reference(&problem.record).map_or_else(
-                    || problem.record.clone(),
-                    |id| id.reference(),
-                ),
-            )),
+            Some(named(problem.project, &problem.record)),
             problem.to_string(),
         )
     }));
     let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
-        let subject = named(issue.project, &issue.id.reference());
+        let subject = named(issue.project, issue.id.as_str());
         let standing = Move {
             from: Some(issue),
             to: Some(issue),
@@ -151,8 +145,7 @@ pub fn canvases(
                 && issue.id == fetched.key.issue
         }) || graph.problems.iter().any(|problem| {
             problem.project == fetched.key.project
-                && IssueId::from_reference(&problem.record).as_ref()
-                    == Some(&fetched.key.issue)
+                && problem.record == fetched.key.issue.as_str()
         })
     };
     let strays = kept.strays.iter().map(|stray| Finding {

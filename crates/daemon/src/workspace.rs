@@ -781,8 +781,10 @@ mod tests {
     async fn synchronization_refuses_to_move_a_checked_out_issue_branch()
     -> Result<(), Box<dyn std::error::Error>> {
         let repo = repository().await?;
-        let identity = home::IssueId::new("fixture", "issue-x")
-            .ok_or("fixture identity")?;
+        let identity = home::IssueKey {
+            project: home::ProjectId::new(1),
+            id: home::IssueId::new("issue-x").ok_or("fixture identity")?,
+        };
         crate::home::ready_issue_branch(
             &repo.source,
             &identity,

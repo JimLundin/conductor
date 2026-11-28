@@ -3,6 +3,7 @@ use alloc::{
     string::{String, ToString},
 };
 use core::num::NonZeroU64;
+use home::IssueId;
 use home::issue::ReadFailure;
 
 use super::Repository;
@@ -14,10 +15,8 @@ pub enum Address {
 }
 
 impl Address {
-    pub fn from_reference(reference: &str) -> Result<Self, ReadFailure> {
-        reference
-            .strip_prefix('#')
-            .and_then(number)
+    pub fn of(id: &IssueId) -> Result<Self, ReadFailure> {
+        number(id.as_str())
             .map(Self::Named)
             .ok_or(ReadFailure::InvalidResponse)
     }

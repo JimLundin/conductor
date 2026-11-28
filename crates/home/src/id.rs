@@ -15,8 +15,8 @@ pub const DRAWS: usize = 64;
 
 pub type Draws = [u64; DRAWS];
 
-mod qualified;
-pub use qualified::IssueId;
+mod issue;
+pub use issue::{IssueId, IssueKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProjectId(u64);
@@ -47,6 +47,10 @@ impl fmt::Display for ProjectId {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
         write(out, self.0, Self::DIGITS)
     }
+}
+
+pub fn slug(text: &str) -> Option<IssueId> {
+    read(text, 8).and_then(|_| IssueId::new(text))
 }
 
 const fn mask(bits: u32) -> u64 {

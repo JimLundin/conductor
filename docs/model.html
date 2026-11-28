@@ -86,7 +86,7 @@
     <thead><tr><th>Type</th><th>Values</th></tr></thead>
     <tbody>
       <tr><td><code>NodeId</code></td><td>a node's public key (32 bytes)</td></tr>
-      <tr><td><code>IssueId</code></td><td>8 base 32 digits: the seconds since 2026 then 2 random, unique across every node</td></tr>
+      <tr><td><code>IssueId</code></td><td>a string unique within its project's tracker: a Markdown issue's 8 base 32 digits, or a GitHub issue's number</td></tr>
       <tr><td><code>ProjectId</code></td><td>6 random base 32 digits</td></tr>
       <tr><td><code>HarnessId</code></td><td><code>claude</code> | <code>codex</code>: one per harness plugin</td></tr>
       <tr><td><code>IssueStatus</code></td><td><code>Open</code> | <code>Ready</code> | <code>InProgress</code> | <code>Review</code> | <code>Done</code> | <code>Dropped</code></td></tr>

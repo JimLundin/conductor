@@ -8,9 +8,9 @@ use crate::flow::Flow;
 use crate::flow::load;
 use crate::issue::storage::{File, one};
 
-const SPEC: &str = "local~0tm7zt00";
-const TASK: &str = "local~0tm7zx0b";
-const DECISION: &str = "local~0tm7zx0a";
+const SPEC: &str = "0tm7zt00";
+const TASK: &str = "0tm7zx0b";
+const DECISION: &str = "0tm7zx0a";
 const HOME: &str = "hme000";
 const CONDUCTOR: &str = "cnd000";
 
@@ -100,7 +100,10 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
         &flow(),
         &[
             spec(),
-            task(HOME, &format!("parent = \"{SPEC}\"\nblocked_by = []\n")),
+            task(
+                CONDUCTOR,
+                &format!("parent = \"{SPEC}\"\nblocked_by = []\n"),
+            ),
         ],
     );
     assert_eq!(problems(&graph), Vec::new());
@@ -189,7 +192,7 @@ fn an_issue_reads_its_fields_links_sections_and_log() {
             (String::from("blocked_by"), Vec::new()),
             (
                 String::from("parent"),
-                IssueId::parse(SPEC).into_iter().collect()
+                IssueId::new(SPEC).into_iter().collect()
             ),
         ]))
     );
@@ -250,12 +253,19 @@ fn an_issue_without_a_kind_reads_as_the_default_kind() {
 }
 
 #[test]
-fn a_reference_may_cross_projects_but_must_reach_an_issue_of_its_kind() {
+fn a_reference_must_reach_an_issue_of_its_project_and_its_kind() {
     let crossing = read(
         &flow(),
         &[spec(), task(HOME, &format!("parent = \"{SPEC}\"\n"))],
     );
-    assert_eq!(problems(&crossing), Vec::new());
+    assert_eq!(
+        problems(&crossing),
+        Vec::from([problem(
+            &format!("{HOME}/{TASK}"),
+            "parent",
+            &format!("{SPEC} is no issue")
+        )])
+    );
     let dangling = read(
         &flow(),
         &[task(HOME, &format!("parent = \"{DECISION}\"\n"))],
@@ -299,7 +309,7 @@ fn a_reference_to_an_issue_that_has_its_own_problem_is_left_to_it() {
         &[
             broken,
             task(
-                HOME,
+                CONDUCTOR,
                 &format!(
                     "parent = \"{SPEC}\"
 "
@@ -457,23 +467,10 @@ fn an_issue_lands_on_the_branch_its_branch_field_names_whatever_it_is_called()
 }
 
 #[test]
-fn each_file_holding_an_id_another_file_holds_is_a_problem() {
+fn two_projects_can_each_hold_an_issue_with_one_id() {
     let graph = read(&flow(), &[task(HOME, ""), task(CONDUCTOR, "")]);
-    assert_eq!(
-        problems(&graph),
-        Vec::from([
-            problem(
-                &format!("{HOME}/{TASK}"),
-                "id",
-                &format!("is also the id of {CONDUCTOR}/{TASK}")
-            ),
-            problem(
-                &format!("{CONDUCTOR}/{TASK}"),
-                "id",
-                &format!("is also the id of {HOME}/{TASK}")
-            ),
-        ])
-    );
+    assert_eq!(problems(&graph), Vec::new());
+    assert_eq!(graph.issues.len(), 2);
 }
 
 fn read(flow: &Flow, files: &[File]) -> Graph {

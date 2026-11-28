@@ -10,8 +10,8 @@ use home::issue::{EditId, Issue, IssueChange, NewIssue};
 use home::project::Project;
 use home::sync::Sync;
 use home::{
-    Found, Home, HomeCommand, HomeRefusal, HomeResult, IssueId, ProjectId,
-    UnixMillis,
+    Found, Home, HomeCommand, HomeRefusal, HomeResult, IssueId, IssueKey,
+    ProjectId, UnixMillis,
 };
 use home_store::{CanvasStore, Memory, StoreError};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
@@ -188,8 +188,7 @@ fn issue_commands_keep_a_receipt() -> Result<(), &'static str> {
         },
         HomeCommand::ChangeIssue {
             edit: EditId(2),
-            issue: IssueId::new("local", "00000001")
-                .ok_or("invalid fixture identity")?,
+            issue: at(PROJECT, "00000001").map_err(|_| "fixture identity")?,
             change: IssueChange::Note(String::from("done")),
         },
     ]
@@ -262,7 +261,14 @@ fn a_command_is_named_in_log_lines_by_its_operation() {
 
 const PROJECT: ProjectId = ProjectId::new(1);
 fn id(key: &str) -> Result<IssueId, String> {
-    IssueId::new("local", key).ok_or_else(|| String::from("test issue ID"))
+    IssueId::new(key).ok_or_else(|| String::from("test issue ID"))
+}
+
+fn at(project: ProjectId, key: &str) -> Result<IssueKey, String> {
+    Ok(IssueKey {
+        project,
+        id: id(key)?,
+    })
 }
 
 fn issue(id: IssueId) -> home::issue::Observation {
@@ -294,7 +300,7 @@ fn a_home() -> Result<Home, String> {
 }
 
 fn listed_home(
-    listed: &BTreeMap<IssueId, Vec<CanvasEntry>>,
+    listed: &BTreeMap<IssueKey, Vec<CanvasEntry>>,
 ) -> Result<Home, String> {
     Ok(home::view(
         "origin",
@@ -377,7 +383,10 @@ fn served_entries(store: &Memory) -> Result<(), String> {
         .into_iter()
         .map(|id| {
             Ok((
-                id.clone(),
+                IssueKey {
+                    project: PROJECT,
+                    id: id.clone(),
+                },
                 store
                     .list(&PROJECT, &id)
                     .map_err(|e| e.to_string())?
@@ -420,7 +429,11 @@ fn served_entries(store: &Memory) -> Result<(), String> {
 fn a_canvas_of_a_known_issue_is_keyed_by_the_issues_project()
 -> Result<(), String> {
     assert_eq!(
-        canvas_key(Some(&a_home()?), id("00000001")?, named("design")?),
+        canvas_key(
+            Some(&a_home()?),
+            at(PROJECT, "00000001")?,
+            named("design")?
+        ),
         Ok(key(id("00000001")?, "design")?)
     );
     Ok(())
@@ -431,10 +444,23 @@ fn a_canvas_of_an_issue_the_home_lacks_or_of_no_home_is_refused()
 -> Result<(), String> {
     assert_eq!(
         [
-            canvas_key(Some(&a_home()?), id("00000003")?, named("design")?),
-            canvas_key(None, id("00000001")?, named("design")?),
+            canvas_key(
+                Some(&a_home()?),
+                at(PROJECT, "00000003")?,
+                named("design")?
+            ),
+            canvas_key(
+                Some(&a_home()?),
+                at(ProjectId::new(2), "00000001")?,
+                named("design")?
+            ),
+            canvas_key(None, at(PROJECT, "00000001")?, named("design")?),
         ],
-        [Err(HomeRefusal::UnknownIssue), Err(HomeRefusal::NoHome),]
+        [
+            Err(HomeRefusal::UnknownIssue),
+            Err(HomeRefusal::UnknownIssue),
+            Err(HomeRefusal::NoHome),
+        ]
     );
     Ok(())
 }
@@ -472,7 +498,7 @@ fn a_failing_store_leaves_the_canvas_unavailable() {
 #[test]
 fn a_canvas_is_read_every_time_and_named_get_canvas() -> Result<(), String> {
     let command = Command::Home(HomeCommand::Canvas {
-        issue: id("00000001")?,
+        issue: at(PROJECT, "00000001")?,
         name: named("design")?,
     });
     assert_eq!(

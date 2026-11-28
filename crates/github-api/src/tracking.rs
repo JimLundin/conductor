@@ -99,7 +99,7 @@ impl Tracker {
             issue.url.as_str(),
             issue.number,
         )?;
-        let id = IssueId::new(&client.endpoint, &issue.id.to_string())
+        let id = IssueId::new(&issue.number.to_string())
             .ok_or(ReadFailure::InvalidResponse)?;
         let owned_repo = format!(
             "{}/{}",
@@ -107,16 +107,15 @@ impl Tracker {
             client.repository.name()
         );
         let locator = Locator {
-            reference: format!("#{}", issue.number),
             url: Some(format!(
                 "https://github.com/{owned_repo}/issues/{}",
                 issue.number
             )),
             repository: owned_repo,
-            addresses: BTreeMap::from([(
-                String::from("node_id"),
-                issue.node_id,
-            )]),
+            addresses: BTreeMap::from([
+                (String::from("id"), issue.id.to_string()),
+                (String::from("node_id"), issue.node_id),
+            ]),
         };
         let record = Record {
             id,
@@ -181,15 +180,7 @@ impl Tracker {
         &self,
         request: Lookup,
     ) -> Result<Observation, ReadFailure> {
-        if request
-            .expected
-            .as_ref()
-            .is_some_and(|id| id.authority() != self.client.endpoint)
-        {
-            return Err(ReadFailure::IdentityConflict);
-        }
-        let mut resolution =
-            Resolution::start(Address::from_reference(&request.reference)?);
+        let mut resolution = Resolution::start(Address::of(&request.id)?);
         loop {
             match self.fetch(resolution.address).await? {
                 Response::Redirect(location) => {
@@ -226,12 +217,11 @@ fn gone(
     request: Lookup,
     resolution: Resolution,
 ) -> Result<Observation, ReadFailure> {
-    let id = request.expected.ok_or(ReadFailure::Deleted)?;
     if !resolution.original() {
         return Err(ReadFailure::IdentityConflict);
     }
     let record = Unreadable {
-        id,
+        id: request.id,
         project: request.project,
         title: None,
         body: None,

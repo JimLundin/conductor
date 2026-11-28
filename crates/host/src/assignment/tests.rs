@@ -7,8 +7,13 @@ use home::IssueId;
 
 use super::{Assigned, Assignment, assigned};
 
-fn issue_id() -> Result<IssueId, &'static str> {
-    IssueId::new("local", "00000003").ok_or("invalid fixture identity")
+fn issue_id() -> Result<home::IssueKey, &'static str> {
+    IssueId::new("00000003")
+        .map(|id| home::IssueKey {
+            project: home::ProjectId::new(1),
+            id,
+        })
+        .ok_or("invalid fixture identity")
 }
 
 fn event(session: u128, kind: EventKind) -> Event {
@@ -91,10 +96,17 @@ fn a_session_is_on_an_issue_in_its_instance_only() -> Result<(), &'static str> {
         event(1, EventKind::OnIssue { issue: issue_id()? }),
     ]);
     assert!(on.is(issue_id()?, &own()));
-    assert!(!on.is(
-        IssueId::new("local", "00000004").ok_or("invalid fixture identity")?,
-        &own()
-    ));
+    assert!(
+        !on.is(
+            IssueId::new("00000004")
+                .map(|id| home::IssueKey {
+                    project: home::ProjectId::new(1),
+                    id
+                })
+                .ok_or("invalid fixture identity")?,
+            &own()
+        )
+    );
     assert!(!on.is(
         issue_id()?,
         &InstanceId::named(Provider::new("claude"), "https://gw")

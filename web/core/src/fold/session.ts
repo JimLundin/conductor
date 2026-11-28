@@ -18,7 +18,7 @@ import type {
   EventKind,
   HostSeq,
   InstanceId,
-  IssueId,
+  IssueKey,
   ModelId,
   Output,
   RequestId,
@@ -51,7 +51,7 @@ interface Session {
   readonly model: ModelId | undefined;
   readonly effort: Effort | undefined;
   readonly status: SessionStatus;
-  readonly issue: IssueId | undefined;
+  readonly issue: IssueKey | undefined;
   readonly finish: FinishState;
   readonly checklist: ReadonlyArray<ChecklistEntry>;
   readonly items: ReadonlyArray<Item>;

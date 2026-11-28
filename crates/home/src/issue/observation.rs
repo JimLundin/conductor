@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Locator {
     pub repository: String,
-    pub reference: String,
     pub url: Option<String>,
     pub addresses: BTreeMap<String, String>,
 }

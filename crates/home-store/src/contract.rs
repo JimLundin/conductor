@@ -183,8 +183,8 @@ fn listed(
 }
 
 fn issues() -> Result<(IssueId, IssueId), String> {
-    let one = IssueId::from_reference("00000001").ok_or("first issue")?;
-    let two = IssueId::from_reference("00000002").ok_or("second issue")?;
+    let one = IssueId::new("00000001").ok_or("first issue")?;
+    let two = IssueId::new("00000002").ok_or("second issue")?;
     Ok((one, two))
 }
 

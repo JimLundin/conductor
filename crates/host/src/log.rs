@@ -10,7 +10,7 @@ use crate::session::{EventKind, SessionId};
 
 use crate::prelude::*;
 
-pub const FORMAT: u32 = 10;
+pub const FORMAT: u32 = 11;
 
 pub fn opens(created: bool, stored: Option<u32>) -> Result<bool, String> {
     match (created, stored) {

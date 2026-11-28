@@ -5,7 +5,7 @@ use alloc::format;
 use crate::log::Event;
 use crate::session::{SessionId, SessionRefusal, SessionResult};
 use agents::{Account, Auth, Credential, Effort, ModelId, Models, Provider};
-use home::IssueId;
+use home::IssueKey;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -238,7 +238,7 @@ pub fn running(history: &[Event]) -> BTreeSet<SessionId> {
 #[must_use]
 fn on_issue(
     history: &[Event],
-    issue: &IssueId,
+    issue: &IssueKey,
     instance: &InstanceId,
 ) -> Option<SessionId> {
     assigned(history)

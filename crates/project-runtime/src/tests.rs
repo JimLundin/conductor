@@ -52,11 +52,7 @@ fn workspace() -> Prepared {
 fn issue() -> Result<Lookup, String> {
     Ok(Lookup {
         project: home::ProjectId::new(1),
-        reference: String::from("#42"),
-        expected: Some(
-            home::IssueId::new("tracker.test", "42")
-                .ok_or("invalid test issue")?,
-        ),
+        id: home::IssueId::new("42").ok_or("invalid test issue")?,
     })
 }
 
@@ -122,7 +118,7 @@ impl IssueTracker for Scripted {
         let _sent = self.calls.send(());
         Box::pin(async move {
             Ok(Observation::invalid(Unreadable {
-                id: request.expected.ok_or(ReadFailure::Unavailable)?,
+                id: request.id,
                 project: request.project,
                 title: Some(String::from(self.name)),
                 body: None,

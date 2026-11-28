@@ -356,7 +356,7 @@ impl Actor {
     async fn ready_landing(
         &self,
         workspace: &Workspace,
-        issue: &home::IssueId,
+        issue: &home::IssueKey,
         branch: &str,
         run: &mut FinishRun,
     ) -> Result<Result<(), String>, Stopped> {

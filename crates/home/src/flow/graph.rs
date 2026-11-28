@@ -50,17 +50,17 @@ pub(super) fn observed(
             Ok(issue) => match validate(flow, issue) {
                 Ok(()) => issues.push(issue.clone()),
                 Err(problem) => {
-                    unread.insert(problem.record.clone());
+                    unread.insert((problem.project, problem.record.clone()));
                     problems.push(problem);
                 }
             },
             Err(problem) => {
-                unread.insert(problem.record.clone());
+                unread.insert((problem.project, problem.record.clone()));
                 problems.push(problem.clone());
             }
         }
     }
-    issues.sort_by_key(|issue| issue.id.clone());
+    issues.sort_by_key(|issue| (issue.project, issue.id.clone()));
     problems.extend(shared(&issues));
     problems.extend(references(flow, &issues, &unread, complete_catalog));
     problems.extend(cycles(flow, &issues));
@@ -135,8 +135,11 @@ pub fn branch_of(id: &IssueId, declared: Option<&str>) -> String {
     use sha2::{Digest, Sha256};
     declared.map_or_else(
         || {
-            if let Some(slug) = id.local_slug() {
-                return format!("issue/{slug}");
+            let text = id.as_str();
+            if text.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+            }) {
+                return format!("issue/{text}");
             }
             let digest = Sha256::digest(id.to_string().as_bytes());
             format!("issue/{}", data_encoding::HEXLOWER.encode(&digest))
@@ -147,7 +150,9 @@ pub fn branch_of(id: &IssueId, declared: Option<&str>) -> String {
 
 fn shared(issues_sorted_by_id: &[Issue]) -> Vec<Problem> {
     issues_sorted_by_id
-        .chunk_by(|one, other| one.id == other.id)
+        .chunk_by(|one, other| {
+            one.project == other.project && one.id == other.id
+        })
         .flat_map(|sharing| {
             sharing.iter().flat_map(move |issue| {
                 sharing
@@ -170,12 +175,12 @@ fn shared(issues_sorted_by_id: &[Issue]) -> Vec<Problem> {
 fn references(
     flow: &Flow,
     issues: &[Issue],
-    unread: &BTreeSet<String>,
+    unread: &BTreeSet<(ProjectId, String)>,
     complete_catalog: bool,
 ) -> Vec<Problem> {
-    let by_id: BTreeMap<IssueId, &Issue> = issues
+    let by_id: BTreeMap<(ProjectId, &IssueId), &Issue> = issues
         .iter()
-        .map(|issue| (issue.id.clone(), issue))
+        .map(|issue| ((issue.project, &issue.id), issue))
         .collect();
     let mut problems = Vec::new();
     for issue in issues {
@@ -185,13 +190,14 @@ fn references(
                 .iter()
                 .find(|relation| relation.name == *name);
             for id in ids {
-                let message = match by_id.get(id) {
+                let message = match by_id.get(&(issue.project, id)) {
                     None if !complete_catalog
-                        || unread.contains(id.to_string().as_str()) =>
+                        || unread
+                            .contains(&(issue.project, id.to_string())) =>
                     {
                         None
                     }
-                    None => Some(format!("{} is no issue", id.reference())),
+                    None => Some(format!("{id} is no issue")),
                     Some(target)
                         if relation.is_some_and(|declared| {
                             !declared.reaches(&target.kind)
@@ -216,44 +222,48 @@ fn references(
     problems
 }
 
+type Key = (ProjectId, IssueId);
+
 fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
-    let projects: BTreeMap<IssueId, ProjectId> = issues
-        .iter()
-        .map(|issue| (issue.id.clone(), issue.project))
-        .collect();
     let mut problems = Vec::new();
     for relation in flow.relations.iter().filter(|relation| !relation.cycles) {
-        let edges: BTreeMap<IssueId, &[IssueId]> = issues
+        let edges: BTreeMap<Key, Vec<Key>> = issues
             .iter()
             .filter_map(|issue| {
-                issue
-                    .links
-                    .get(&relation.name)
-                    .map(|ids| (issue.id.clone(), ids.as_slice()))
+                issue.links.get(&relation.name).map(|ids| {
+                    (
+                        (issue.project, issue.id.clone()),
+                        ids.iter()
+                            .map(|id| (issue.project, id.clone()))
+                            .collect(),
+                    )
+                })
             })
             .collect();
-        let mut done: BTreeSet<IssueId> = BTreeSet::new();
+        let mut done: BTreeSet<Key> = BTreeSet::new();
         for issue in issues {
             let mut path = Vec::new();
-            if let Some(cycle) =
-                walk(&edges, issue.id.clone(), &mut path, &mut done)
-            {
+            if let Some(cycle) = walk(
+                &edges,
+                (issue.project, issue.id.clone()),
+                &mut path,
+                &mut done,
+            ) {
                 let message = format!(
                     "is part of a cycle: {}",
                     cycle
                         .iter()
-                        .map(ToString::to_string)
+                        .map(|(_, id)| id.to_string())
                         .collect::<Vec<String>>()
                         .join(" → ")
                 );
-                let members = cycle.iter().skip(1).filter_map(|id| {
-                    projects.get(id).map(|project| (*project, id))
-                });
-                problems.extend(members.map(|(project, id)| Problem {
-                    project,
-                    record: id.to_string(),
-                    field: Some(relation.name.clone()),
-                    message: message.clone(),
+                problems.extend(cycle.iter().skip(1).map(|(project, id)| {
+                    Problem {
+                        project: *project,
+                        record: id.to_string(),
+                        field: Some(relation.name.clone()),
+                        message: message.clone(),
+                    }
                 }));
             }
         }
@@ -262,24 +272,24 @@ fn cycles(flow: &Flow, issues: &[Issue]) -> Vec<Problem> {
 }
 
 fn walk(
-    edges: &BTreeMap<IssueId, &[IssueId]>,
-    id: IssueId,
-    path: &mut Vec<IssueId>,
-    done: &mut BTreeSet<IssueId>,
-) -> Option<Vec<IssueId>> {
-    if let Some(start) = path.iter().position(|seen| *seen == id) {
+    edges: &BTreeMap<Key, Vec<Key>>,
+    at: Key,
+    path: &mut Vec<Key>,
+    done: &mut BTreeSet<Key>,
+) -> Option<Vec<Key>> {
+    if let Some(start) = path.iter().position(|seen| *seen == at) {
         let mut cycle = path.get(start..)?.to_vec();
-        cycle.push(id);
+        cycle.push(at);
         return Some(cycle);
     }
-    if !done.insert(id.clone()) {
+    if !done.insert(at.clone()) {
         return None;
     }
-    path.push(id.clone());
+    path.push(at.clone());
     let found = edges
-        .get(&id)
+        .get(&at)
         .into_iter()
-        .flat_map(|ids| ids.iter())
+        .flat_map(|next| next.iter())
         .find_map(|next| walk(edges, next.clone(), path, done));
     path.pop();
     found

@@ -29,7 +29,7 @@ pub use home::{
     Checkout, CheckoutLocation, Cloning, Home, HomeCommand, HomeRefusal,
     HomeResult, HomeSync, Origin, Project,
 };
-pub use id::{DRAWS, Draws, IssueId, ProjectId};
+pub use id::{DRAWS, Draws, IssueId, IssueKey, ProjectId};
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::CanvasEntry;
@@ -80,7 +80,7 @@ pub struct Found<'host> {
     pub cloning: &'host BTreeMap<ProjectId, Cloning>,
     pub flow: Option<&'host Flow>,
     pub issues: &'host BTreeMap<ProjectId, Vec<Observation>>,
-    pub canvases: &'host BTreeMap<IssueId, Vec<CanvasEntry>>,
+    pub canvases: &'host BTreeMap<IssueKey, Vec<CanvasEntry>>,
     pub unpushed: u64,
 }
 
@@ -133,7 +133,10 @@ pub fn view(
                         } = &mut record.state
                         {
                             issue.canvases = canvases
-                                .get(&issue.id)
+                                .get(&IssueKey {
+                                    project: issue.project,
+                                    id: issue.id.clone(),
+                                })
                                 .cloned()
                                 .unwrap_or_default();
                         }

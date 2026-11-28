@@ -5,10 +5,7 @@ use alloc::{
     vec::Vec,
 };
 use home::flow::Flow;
-use home::issue::{
-    Datum, body,
-    document::{References, targets},
-};
+use home::issue::{Datum, body, document::targets};
 use home::{IssueId, operations::Handle};
 use serde::Deserialize;
 
@@ -87,7 +84,7 @@ pub(super) fn read<'a>(
                     continue;
                 }
                 if let Some((relation, false)) = flow.relation(&name) {
-                    match targets(relation, value, References::Qualified) {
+                    match targets(relation, value) {
                         Ok(ids) => {
                             metadata.links.insert(name, ids);
                         }

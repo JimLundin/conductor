@@ -8,8 +8,8 @@ use crate::issue::storage::Inputs;
 
 const FLOW: &str = include_str!("../test-flow.toml");
 const ROOT: &str = "e22b7f7b2976650400965d4147ba771675f96076";
-const SPEC: &str = "local~0tm7zt00";
-const REVIEW: &str = "local~0tm7zx0c";
+const SPEC: &str = "0tm7zt00";
+const REVIEW: &str = "0tm7zx0c";
 
 fn project(
     folder: &str,
@@ -62,7 +62,7 @@ fn check(inputs: &Inputs) -> super::Report {
 }
 
 fn subject(id: &str) -> String {
-    format!("conductor/{}", id.strip_prefix("local~").unwrap_or(id))
+    format!("conductor/{id}")
 }
 
 #[test]
@@ -150,36 +150,9 @@ fn the_text_lists_each_finding_and_the_counts() {
 }
 
 #[test]
-fn two_issue_files_with_one_id_fail_the_check() {
-    let mut home = inputs(FLOW, "done");
-    home.projects.push(project("8p0d1x", "other", ""));
-    home.issues.push(File {
-        project: ProjectId::parse("8p0d1x").unwrap_or(ProjectId::new(0)),
-        ..issue(
-            SPEC,
-            "title = \"Again\"\nkind = \"spec\"\nstatus = \"open\"\n",
-            "",
-        )
-    });
-    let report = check(&home);
-    assert!(report.failed(), "{}", report.text());
-    assert!(
-        report.findings.contains(&Finding {
-            severity: Severity::Error,
-            subject: Some(String::from("other/0tm7zt00")),
-            message: String::from(
-                "id: is also the id of 7r5n23/local~0tm7zt00"
-            ),
-        }),
-        "{}",
-        report.text()
-    );
-}
-
-#[test]
 fn an_active_issue_whose_blocker_isn_t_built_warns() {
-    const TASK: &str = "local~0tm7zy00";
-    const BLOCKER: &str = "local~0tm7zz00";
+    const TASK: &str = "0tm7zy00";
+    const BLOCKER: &str = "0tm7zz00";
     let mut home = inputs(FLOW, "done");
     home.issues.extend([
         issue(

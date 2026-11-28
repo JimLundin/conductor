@@ -5,10 +5,9 @@ use home::issue::Coverage;
 
 fn record() -> Result<Record, String> {
     Ok(Record {
-        id: IssueId::new(AUTHORITY, "1378").ok_or("missing identity")?,
+        id: IssueId::new("42").ok_or("missing identity")?,
         locator: Locator {
             repository: String::from("owner/repo"),
-            reference: String::from("#42"),
             url: None,
             addresses: BTreeMap::new(),
         },
@@ -36,15 +35,7 @@ fn a_direct_issue_uses_declared_defaults_and_native_fields()
 -> Result<(), String> {
     let observation = read(record()?, "")?;
     let (issue, _) = observation.editable()?;
-    assert_eq!(issue.id.authority(), AUTHORITY);
-    assert_eq!(issue.id.key(), "1378");
-    assert_eq!(
-        observation
-            .locator
-            .as_ref()
-            .map(|locator| locator.reference.as_str()),
-        Some("#42")
-    );
+    assert_eq!(issue.id.as_str(), "42");
     assert_eq!(issue.title, "Edited in GitHub");
     assert_eq!(issue.body, "## What\nRead this");
     assert!(
@@ -119,7 +110,7 @@ fn unknown_and_ambiguous_managed_labels_leave_the_issue_visible()
             .as_deref()
             .is_some_and(|body| body.contains("## What"))
     );
-    assert_eq!(problem.id.key(), "1378");
+    assert_eq!(problem.id.as_str(), "42");
     assert!(
         observed
             .findings
@@ -180,11 +171,11 @@ fn explicit_status_requires_matching_open_state_but_native_reason_is_advisory()
 }
 
 #[test]
-fn one_final_footer_supplies_typed_fields_and_qualified_relations_outside_the_body()
+fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_body()
 -> Result<(), String> {
     let mut input = record()?;
     input.body = String::from(
-        "## What\nAn example\n\n````text\n```project-data\nexample only\n```\n````\n\n## Checklist\n- [ ] inspect\n\n~~~project-data\nschema = 1\n[fields]\nbranch='decision-work'\nmethod='prototype'\n[relations]\nparent='other~712'\n~~~\n\n",
+        "## What\nAn example\n\n````text\n```project-data\nexample only\n```\n````\n\n## Checklist\n- [ ] inspect\n\n~~~project-data\nschema = 1\n[fields]\nbranch='decision-work'\nmethod='prototype'\n[relations]\nparent='712'\n~~~\n\n",
     );
     with_labels(&mut input, &["work/kind/decision"]);
     let observed =
@@ -194,7 +185,7 @@ fn one_final_footer_supplies_typed_fields_and_qualified_relations_outside_the_bo
     assert_eq!(issue.text("method"), Some("prototype"));
     assert_eq!(
         issue.links.get("parent").and_then(|ids| ids.first()),
-        IssueId::parse("other~712").as_ref()
+        IssueId::new("712").as_ref()
     );
     assert!(body.text().contains("example only"));
     assert!(!body.text().contains("schema = 1"));
@@ -221,7 +212,7 @@ fn invalid_footer_data_and_competing_native_sources_are_visible()
         "schema=1\n[fields]\nbranch=true",
         "schema=1\n[fields]\nmethod='prototype'",
         "schema=1\n[fields]\nunknown='word'",
-        "schema=1\n[relations]\nparent='tracker~123'",
+        "schema=1\n[relations]\nparent='123'",
         "schema=1\noperation='not a handle'",
     ] {
         let mut input = record()?;
@@ -235,7 +226,7 @@ fn invalid_footer_data_and_competing_native_sources_are_visible()
             unreadable.body.as_deref().map(str::trim_end),
             Some("Read me")
         );
-        assert_eq!(unreadable.id.key(), "1378");
+        assert_eq!(unreadable.id.as_str(), "42");
         assert!(
             observed
                 .findings
@@ -325,9 +316,9 @@ fn footer_values_keep_declared_types_and_an_owner_bound_create_marker()
 }
 
 #[test]
-fn metadata_edges_require_qualified_identities_and_declared_cardinality()
+fn metadata_edges_require_issue_ids_and_declared_cardinality()
 -> Result<(), String> {
-    for value in ["'#42'", "['a~42', 'b~42']", "['a~42']"] {
+    for value in ["''", "42", "['42', '43']", "['42']"] {
         let mut input = record()?;
         input.body = format!(
             "```project-data\nschema=1\n[relations]\nparent={value}\n```"

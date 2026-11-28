@@ -60,8 +60,13 @@ async fn read(
     let service = registry.project(&selected.project.backends);
     let id = selected.project.id;
     let (json, found, failure) = if let Some(reference) = query.reference {
+        let lookup = home::issue::Lookup {
+            project: id,
+            id: home::IssueId::new(reference)
+                .ok_or_else(|| String::from("an issue id is not empty"))?,
+        };
         let read = service
-            .issue(&cache, id, reference, mode)
+            .issue(&cache, lookup, mode)
             .await
             .map_err(|err| err.to_string())?;
         (

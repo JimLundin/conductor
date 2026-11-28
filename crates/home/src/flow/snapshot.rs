@@ -111,16 +111,25 @@ impl Snapshot {
     }
 
     #[must_use]
-    pub fn issue(&self, id: &IssueId) -> Option<&Issue> {
-        self.graph.issues.iter().find(|issue| &issue.id == id)
+    pub fn issue(&self, project: ProjectId, id: &IssueId) -> Option<&Issue> {
+        self.graph
+            .issues
+            .iter()
+            .find(|issue| issue.project == project && &issue.id == id)
     }
 
     #[must_use]
-    pub fn observation(&self, id: &IssueId) -> Option<&Observation> {
+    pub fn observation(
+        &self,
+        project: ProjectId,
+        id: &IssueId,
+    ) -> Option<&Observation> {
         self.records
             .iter()
             .filter_map(|record| record.as_ref().ok())
-            .find(|observation| observation.id() == id)
+            .find(|observation| {
+                observation.project() == project && observation.id() == id
+            })
     }
 
     #[must_use]
@@ -279,45 +288,4 @@ fn observed(
         }
     }
     graph
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolveIssue {
-    ProjectRequired,
-    Unknown,
-    Ambiguous,
-}
-
-impl Snapshot {
-    pub fn resolve(
-        &self,
-        project: Option<ProjectId>,
-        reference: &str,
-    ) -> Result<&Observation, ResolveIssue> {
-        if let Some(id) = IssueId::parse(reference) {
-            return self
-                .observation(&id)
-                .filter(|observation| {
-                    project
-                        .is_none_or(|context| context == observation.project())
-                })
-                .ok_or(ResolveIssue::Unknown);
-        }
-        let context = project.ok_or(ResolveIssue::ProjectRequired)?;
-        let mut found =
-            self.records
-                .iter()
-                .filter_map(|record| record.as_ref().ok())
-                .filter(|record| {
-                    record.project() == context
-                        && record.locator.as_ref().is_some_and(|locator| {
-                            locator.reference == reference
-                        })
-                });
-        let issue = found.next().ok_or(ResolveIssue::Unknown)?;
-        if found.next().is_some() {
-            return Err(ResolveIssue::Ambiguous);
-        }
-        Ok(issue)
-    }
 }

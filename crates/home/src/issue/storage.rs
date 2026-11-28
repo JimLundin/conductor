@@ -1,4 +1,4 @@
-use super::document::{Document, References, targets};
+use super::document::{Document, targets};
 use super::{ID, KIND, STAGE, STATUS, TITLE};
 use crate::flow::graph::{Problem, branch_of};
 use crate::flow::snapshot::{Inputs as DomainInputs, Snapshot};
@@ -36,7 +36,7 @@ pub fn decode(
     let id = front
         .id
         .filter(|id| *id == file.stem)
-        .and_then(|id| IssueId::from_reference(&id))
+        .and_then(|id| crate::id::slug(&id))
         .ok_or_else(|| {
             fail(
                 Some(ID),
@@ -61,7 +61,7 @@ pub fn decode(
         } else if let Some(relation) = flow.relations.iter().find(|relation| {
             relation.name == key && relation.starts_from(&kind)
         }) {
-            let ids = targets(relation, value, References::Project)
+            let ids = targets(relation, value)
                 .map_err(|message| fail(Some(&key), message))?;
             links.insert(key, ids);
         } else {
@@ -252,7 +252,7 @@ pub fn load(flow: &Flow, target: &super::Read, text: &str) -> Loaded {
         flow,
         &File {
             project: target.project,
-            stem: target.issue.reference(),
+            stem: String::from(target.issue.as_str()),
             text: String::from(text),
         },
     );
@@ -295,7 +295,7 @@ impl File {
 
 #[must_use]
 pub fn path(target: &super::Read) -> String {
-    crate::layout::issue_file(&target.project, &target.issue.reference())
+    crate::layout::issue_file(&target.project, target.issue.as_str())
 }
 
 pub fn encode(
@@ -336,7 +336,7 @@ fn opened(
     use crate::flow::command::Mutation;
     let (issue, body) = change.observation.editable()?;
     let mut front = Vec::from([
-        (String::from(ID), quoted(&issue.id.reference())),
+        (String::from(ID), quoted(issue.id.as_str())),
         (String::from(TITLE), quoted(&issue.title)),
         (String::from(KIND), quoted(&issue.kind)),
         (String::from(STATUS), quoted(&issue.status)),
@@ -422,7 +422,7 @@ impl Listing {
 
     #[must_use]
     pub fn created_from_path(path: &str) -> Option<IssueId> {
-        crate::layout::issue_stem(path).and_then(IssueId::from_reference)
+        crate::layout::issue_stem(path).and_then(crate::id::slug)
     }
 }
 
@@ -452,14 +452,19 @@ pub fn fresh(
                     )
                 })
                 .collect();
-            IssueId::new("local", &key)
+            IssueId::new(&key)
         })
-        .find(|id| home.observation(id).is_none())
+        .find(|id| {
+            home.records().iter().all(|record| match record {
+                Ok(observation) => observation.id() != id,
+                Err(problem) => problem.record != id.as_str(),
+            })
+        })
 }
 
 fn invalid(file: &File, problem: Problem) -> Result<Observation, Problem> {
     let reason = problem.to_string();
-    let id = IssueId::from_reference(&file.stem).ok_or(problem)?;
+    let id = crate::id::slug(&file.stem).ok_or(problem)?;
     let document = Document::of(&file.text).ok();
     let front = document
         .as_ref()

@@ -72,11 +72,10 @@ Exclude pull requests from tracker lists and direct issue reads before
 mapping them. GitHub's Issues API returns them too; Octocrab's
 `Issue.pull_request` identifies those records.
 
-An issue identity contains an opaque tracker authority and an opaque key.
-The GitHub adapter uses its API authority and the issue's REST identity;
-repository name, issue number, URL and GraphQL node ID are addressing data.
-The core never parses GitHub numbers or node ID formats. A bare `#42` needs
-an explicit project context. Cross-project links contain full identities.
+An issue ID is an opaque string unique within its project's tracker, and a
+project and an ID name one issue. The GitHub adapter gives each issue its
+number as its ID. The issue's REST ID and GraphQL node ID are addresses in
+its locator. The core never parses an ID.
 Sort issues by their creation time with identity as a deterministic tie
 break, not by the old locally minted ID.
 

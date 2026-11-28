@@ -78,10 +78,11 @@ fn draws(given: &[u64]) -> Draws {
 }
 
 fn id(stem: &str) -> IssueId {
-    IssueId::from_reference(stem).unwrap_or_else(|| IssueId {
-        authority: String::from("local"),
-        key: String::from("00000000"),
-    })
+    IssueId(String::from(stem))
+}
+
+fn folder() -> ProjectId {
+    ProjectId::parse(FOLDER).unwrap_or(ProjectId::new(0))
 }
 
 fn asked(inputs: &Inputs, line: &str) -> Command {
@@ -230,6 +231,7 @@ fn the_words_name_a_command() {
     assert_eq!(asked("check"), Command::Check);
     let changing = |change| {
         Command::Edit(Edit::Change {
+            project: folder(),
             id: id(TASK),
             changes: Vec::from([change]),
         })
@@ -261,26 +263,6 @@ fn the_words_name_a_command() {
     assert_eq!(
         asked("issue note x it works"),
         Command::Wrong(String::from("no issue is called x"))
-    );
-    assert_eq!(
-        asked(&format!("issue set {TASK} a=1 b=2")),
-        Command::Edit(Edit::Change {
-            id: id(TASK),
-            changes: Vec::from([
-                IssueChange::Set {
-                    field: String::from("a"),
-                    value: Datum::Text(String::from("1")),
-                },
-                IssueChange::Set {
-                    field: String::from("b"),
-                    value: Datum::Text(String::from("2")),
-                },
-            ]),
-        })
-    );
-    assert_eq!(
-        asked(&format!("issue set {TASK} a")),
-        Command::Wrong(String::from("\"a\" is not <field>=<value>"))
     );
     assert_eq!(
         asked(&format!("issue body {TASK} Why it matters.")),
@@ -328,6 +310,33 @@ fn the_words_name_a_command() {
 }
 
 #[test]
+fn issue_set_names_a_change_for_each_pair() {
+    let inputs = home();
+    let asked = |line: &str| asked(&inputs, line);
+    assert_eq!(
+        asked(&format!("issue set {TASK} a=1 b=2")),
+        Command::Edit(Edit::Change {
+            project: folder(),
+            id: id(TASK),
+            changes: Vec::from([
+                IssueChange::Set {
+                    field: String::from("a"),
+                    value: Datum::Text(String::from("1")),
+                },
+                IssueChange::Set {
+                    field: String::from("b"),
+                    value: Datum::Text(String::from("2")),
+                },
+            ]),
+        })
+    );
+    assert_eq!(
+        asked(&format!("issue set {TASK} a")),
+        Command::Wrong(String::from("\"a\" is not <field>=<value>"))
+    );
+}
+
+#[test]
 fn a_project_is_named_by_its_name_or_its_id() {
     let inputs = home();
     assert_eq!(
@@ -351,7 +360,10 @@ fn a_body_from_a_file_asks_the_shell_for_the_file() {
     assert_eq!(
         from_file,
         Command::BodyFrom {
-            id: id(TASK),
+            issue: crate::IssueKey {
+                project: folder(),
+                id: id(TASK),
+            },
             path: String::from("why.md"),
         }
     );
@@ -684,6 +696,7 @@ fn a_body_is_replaced_and_a_checklist_item_added_checked_and_removed() {
 fn a_note_of_several_lines_is_indented_under_its_first() {
     let outcome = run(
         Command::Edit(Edit::Change {
+            project: folder(),
             id: id(TASK),
             changes: Vec::from([IssueChange::Note(String::from(
                 "first\nsecond",
@@ -876,6 +889,7 @@ fn a_new_issue_writes_when_it_opened_in_its_created_field_whatever_it_is_called(
 fn an_issue_s_own_words_are_refused_as_fields_in_the_flow_s_terms() {
     let refused = |field: &str| {
         let edit = Edit::Change {
+            project: folder(),
             id: id(TASK),
             changes: Vec::from([IssueChange::Set {
                 field: String::from(field),
@@ -1968,7 +1982,7 @@ fn fetched(
     Ok(Fetched {
         key: CanvasKey {
             project: ProjectId::parse(FOLDER).ok_or("project")?,
-            issue: IssueId::from_reference(issue).ok_or("issue")?,
+            issue: IssueId::new(issue).ok_or("issue")?,
             name: CanvasName::parse(name).map_err(|error| error.to_string())?,
         },
         got,

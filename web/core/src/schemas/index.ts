@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/52";
+type Alpn = "conductor/53";
 
-const Alpn = Schema.Literal("conductor/52").annotate({
+const Alpn = Schema.Literal("conductor/53").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -557,25 +557,28 @@ const ProjectId = Schema.String.check(
 type IssueId = string;
 
 const IssueId = Schema.String.check(
-  Schema.isPattern(
-    new globalThis.RegExp("^(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+~(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+$", "u"),
-  ).annotate({
-    expected:
-      "a string matching the RegExp ^(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+~(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+$",
+  Schema.isMinLength(1).annotate({
+    expected: "a value with a length of at least 1",
     identifier: "IssueId",
   }),
 );
 
+type IssueKey = { readonly id: IssueId; readonly project: ProjectId };
+
+const IssueKey = Schema.Struct({ id: IssueId, project: ProjectId }).annotate({
+  identifier: "IssueKey",
+});
+
 type StartAt =
   | { readonly Directory: SessionDirectory }
   | { readonly Project: ProjectId }
-  | { readonly Issue: IssueId };
+  | { readonly Issue: IssueKey };
 
 const StartAt = Schema.Union(
   [
     Schema.Struct({ Directory: SessionDirectory }),
     Schema.Struct({ Project: ProjectId }),
-    Schema.Struct({ Issue: IssueId }),
+    Schema.Struct({ Issue: IssueKey }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "StartAt" });
@@ -803,10 +806,10 @@ type HomeCommand =
       readonly ChangeIssue: {
         readonly change: IssueChange;
         readonly edit: EditId;
-        readonly issue: IssueId;
+        readonly issue: IssueKey;
       };
     }
-  | { readonly Canvas: { readonly issue: IssueId; readonly name: CanvasName } };
+  | { readonly Canvas: { readonly issue: IssueKey; readonly name: CanvasName } };
 
 const HomeCommand = Schema.Union(
   [
@@ -814,9 +817,9 @@ const HomeCommand = Schema.Union(
     Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }),
     Schema.Struct({ CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }) }),
     Schema.Struct({
-      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueId }),
+      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueKey }),
     }),
-    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueId, name: CanvasName }) }),
+    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueKey, name: CanvasName }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeCommand" });
@@ -1193,7 +1196,7 @@ type HomeResult =
   | "Accepted"
   | {
       readonly IssueWritten: {
-        readonly issue: IssueId;
+        readonly issue: IssueKey;
         readonly warnings: globalThis.ReadonlyArray<string>;
       };
     }
@@ -1204,7 +1207,7 @@ const HomeResult = Schema.Union(
   [
     Schema.Literal("Accepted"),
     Schema.Struct({
-      IssueWritten: Schema.Struct({ issue: IssueId, warnings: Schema.Array(Schema.String) }),
+      IssueWritten: Schema.Struct({ issue: IssueKey, warnings: Schema.Array(Schema.String) }),
     }),
     Schema.Struct({ Canvas: CanvasFile }),
     Schema.Struct({ Refused: HomeRefusal }),
@@ -1769,7 +1772,7 @@ type EventKind =
   | { readonly EffortChanged: { readonly effort: Effort } }
   | { readonly Subagent: { readonly agent: SubagentId; readonly event: SubagentEvent } }
   | { readonly SessionRemoved: { readonly kept: Kept | null } }
-  | { readonly OnIssue: { readonly issue: IssueId } }
+  | { readonly OnIssue: { readonly issue: IssueKey } }
   | { readonly SessionFinished: { readonly finished: Finished } };
 
 const EventKind = Schema.Union(
@@ -1820,7 +1823,7 @@ const EventKind = Schema.Union(
     Schema.Struct({ EffortChanged: Schema.Struct({ effort: Effort }) }),
     Schema.Struct({ Subagent: Schema.Struct({ agent: SubagentId, event: SubagentEvent }) }),
     Schema.Struct({ SessionRemoved: Schema.Struct({ kept: Schema.Union([Kept, Schema.Null]) }) }),
-    Schema.Struct({ OnIssue: Schema.Struct({ issue: IssueId }) }),
+    Schema.Struct({ OnIssue: Schema.Struct({ issue: IssueKey }) }),
     Schema.Struct({ SessionFinished: Schema.Struct({ finished: Finished }) }),
   ],
   { mode: "oneOf" },
@@ -2086,14 +2089,12 @@ const Finding = Schema.Struct({
 
 type Locator = {
   readonly addresses: { readonly [x: string]: string };
-  readonly reference: string;
   readonly repository: string;
   readonly url: string | null;
 };
 
 const Locator = Schema.Struct({
   addresses: Schema.Record(Schema.String, Schema.String),
-  reference: Schema.String,
   repository: Schema.String,
   url: Schema.Union([Schema.String, Schema.Null]),
 }).annotate({ identifier: "Locator" });
@@ -2490,6 +2491,7 @@ export {
   Issue,
   IssueChange,
   IssueId,
+  IssueKey,
   IssueState,
   Item,
   Kept,

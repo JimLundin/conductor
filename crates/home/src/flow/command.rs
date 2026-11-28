@@ -7,7 +7,7 @@ use crate::issue::{
     ChecklistChange, Datum, Entry, ID, Issue, IssueChange, Item, KIND,
     LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
 };
-use crate::{IssueId, ProjectId, UnixMillis, UnixSecs};
+use crate::{IssueId, IssueKey, ProjectId, UnixMillis, UnixSecs};
 use serde::{Deserialize, Serialize};
 
 use super::PATH;
@@ -101,7 +101,7 @@ pub enum Local {
 pub enum Command {
     Check,
     Edit(Edit),
-    BodyFrom { id: IssueId, path: String },
+    BodyFrom { issue: IssueKey, path: String },
     CanvasPut { key: CanvasKey, from: Source },
     CanvasShow(Wanted),
     CanvasSchema,
@@ -164,6 +164,7 @@ pub enum Edit {
         issue: NewIssue,
     },
     Change {
+        project: ProjectId,
         id: IssueId,
         changes: Vec<IssueChange>,
     },
@@ -171,9 +172,16 @@ pub enum Edit {
 
 impl Edit {
     #[must_use]
-    pub fn id(&self) -> IssueId {
+    pub fn key(&self) -> IssueKey {
         match self {
-            Self::New { id, .. } | Self::Change { id, .. } => id.clone(),
+            Self::New { id, issue } => IssueKey {
+                project: issue.project,
+                id: id.clone(),
+            },
+            Self::Change { project, id, .. } => IssueKey {
+                project: *project,
+                id: id.clone(),
+            },
         }
     }
 }
@@ -280,9 +288,11 @@ pub fn command(
             opening_command(home, fresh, [project, kind, title], fields)
         }
         ["issue", "body", id, "--file", path] => {
-            named(id).map_or_else(Command::Wrong, |issue| Command::BodyFrom {
-                id: issue,
-                path: (*path).to_owned(),
+            located(home, id).map_or_else(Command::Wrong, |issue| {
+                Command::BodyFrom {
+                    issue,
+                    path: (*path).to_owned(),
+                }
             })
         }
         ["canvas", "put", id, name] => putting(home, id, name, Source::Stdin),
@@ -296,12 +306,13 @@ pub fn command(
             setting_command(home, id, pairs)
         }
         ["issue", "note", id, first, more @ ..] => {
-            changing(id, IssueChange::Note(joined(first, more)))
+            changing(home, id, IssueChange::Note(joined(first, more)))
         }
         ["issue", "body", id, first, more @ ..] => {
-            changing(id, IssueChange::Body(joined(first, more)))
+            changing(home, id, IssueChange::Body(joined(first, more)))
         }
         ["issue", "checklist", id, "add", first, more @ ..] => changing(
+            home,
             id,
             IssueChange::Checklist(ChecklistChange::Add(joined(first, more))),
         ),
@@ -311,7 +322,7 @@ pub fn command(
             id,
             action @ ("check" | "uncheck" | "remove"),
             number,
-        ] => checklist_command(id, action, number),
+        ] => checklist_command(home, id, action, number),
         [
             "issue",
             "move",
@@ -325,6 +336,7 @@ pub fn command(
                 reason => (false, reason),
             };
             changing(
+                home,
                 id,
                 IssueChange::Move {
                     part: if *part == "stage" {
@@ -342,15 +354,35 @@ pub fn command(
     }
 }
 
-fn named(word: &str) -> Result<IssueId, String> {
-    IssueId::from_reference(word)
-        .ok_or_else(|| format!("no issue is called {word}"))
+fn located(home: &Snapshot, word: &str) -> Result<IssueKey, String> {
+    let unknown = || format!("no issue is called {word}");
+    let id = IssueId::new(word).ok_or_else(unknown)?;
+    let projects: BTreeSet<ProjectId> = home
+        .records()
+        .iter()
+        .filter_map(|record| match record {
+            Ok(observation) => {
+                (observation.id() == &id).then(|| observation.project())
+            }
+            Err(problem) => {
+                (problem.record == id.as_str()).then_some(problem.project)
+            }
+        })
+        .collect();
+    let mut found = projects.into_iter();
+    match (found.next(), found.next()) {
+        (Some(project), None) => Ok(IssueKey { project, id }),
+        (None, _) => Err(unknown()),
+        (Some(_), Some(_)) => {
+            Err(format!("{word} is the id of issues in several projects"))
+        }
+    }
 }
 
 fn known(home: &Snapshot, word: &str) -> Result<(ProjectId, IssueId), String> {
-    let id = named(word)?;
-    home.issue(&id)
-        .map(|issue| (issue.project, id))
+    let key = located(home, word)?;
+    home.issue(key.project, &key.id)
+        .map(|_| (key.project, key.id.clone()))
         .ok_or_else(|| format!("no issue is called {word}"))
 }
 
@@ -385,10 +417,11 @@ fn showing(home: &Snapshot, id: &str, name: Option<&str>) -> Command {
         .unwrap_or_else(Command::Wrong)
 }
 
-fn changing(word: &str, change: IssueChange) -> Command {
-    named(word).map_or_else(Command::Wrong, |id| {
+fn changing(home: &Snapshot, word: &str, change: IssueChange) -> Command {
+    located(home, word).map_or_else(Command::Wrong, |key| {
         Command::Edit(Edit::Change {
-            id,
+            project: key.project,
+            id: key.id,
             changes: Vec::from([change]),
         })
     })
@@ -423,9 +456,11 @@ fn opening_command(
 }
 
 fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
-    named(word)
-        .and_then(|id| {
-            let kind = home.issue(&id).map_or("", |issue| issue.kind.as_str());
+    located(home, word)
+        .and_then(|IssueKey { project, id }| {
+            let kind = home
+                .issue(project, &id)
+                .map_or("", |issue| issue.kind.as_str());
             let changes = settings(home, kind, pairs)?
                 .into_iter()
                 .map(|(field, value)| match field.as_str() {
@@ -433,12 +468,21 @@ fn setting_command(home: &Snapshot, word: &str, pairs: &[&str]) -> Command {
                     _ => IssueChange::Set { field, value },
                 })
                 .collect();
-            Ok(Edit::Change { id, changes })
+            Ok(Edit::Change {
+                project,
+                id,
+                changes,
+            })
         })
         .map_or_else(Command::Wrong, Command::Edit)
 }
 
-fn checklist_command(id: &str, action: &str, number: &str) -> Command {
+fn checklist_command(
+    home: &Snapshot,
+    id: &str,
+    action: &str,
+    number: &str,
+) -> Command {
     let place = number
         .parse::<usize>()
         .ok()
@@ -452,6 +496,7 @@ fn checklist_command(id: &str, action: &str, number: &str) -> Command {
         |index| {
             let item = Item { index, seen: None };
             changing(
+                home,
                 id,
                 IssueChange::Checklist(match action {
                     "remove" => ChecklistChange::Remove(item),
@@ -552,9 +597,10 @@ pub fn run(
                 failed: report.failed(),
             };
         }
-        Command::BodyFrom { id, path } => match text(given, &path) {
+        Command::BodyFrom { issue, path } => match text(given, &path) {
             Ok(text) => Edit::Change {
-                id,
+                project: issue.project,
+                id: issue.id,
                 changes: Vec::from([IssueChange::Body(text)]),
             },
             Err(reason) => return refused(refusal(&reason)),
@@ -642,7 +688,7 @@ fn put(
 }
 
 fn shown(home: &Snapshot, wanted: &Wanted, given: Option<Given>) -> Outcome {
-    let subject = subject(home, wanted.project, &wanted.issue.reference());
+    let subject = subject(home, wanted.project, wanted.issue.as_str());
     let fetched = match given {
         Some(Given::Canvases(fetched)) => fetched,
         _ => Err(format!("the canvases of {subject} weren't fetched")),
@@ -688,7 +734,7 @@ pub(crate) fn canvas_named(home: &Snapshot, key: &CanvasKey) -> String {
     format!(
         "canvas {} of {}",
         key.name,
-        subject(home, key.project, &key.issue.reference())
+        subject(home, key.project, key.issue.as_str())
     )
 }
 
@@ -714,16 +760,31 @@ pub fn plan(
     };
     let change = match edit {
         Edit::New { id, issue } => opened(home, flow, id, &sign, issue)?,
-        Edit::Change { id, changes } => {
-            let observation = home.observation(id).ok_or_else(|| {
-                home.graph().problems.iter().find(|problem| IssueId::from_reference(&problem.record).as_ref() == Some(id))
-                    .map_or_else(|| format!("no issue is called {}", id.reference()), |problem| format!("{} doesn't read as the flow declares: {problem}", id.reference()))
-            })?;
+        Edit::Change {
+            project,
+            id,
+            changes,
+        } => {
+            let observation =
+                home.observation(*project, id).ok_or_else(|| {
+                    home.graph()
+                        .problems
+                        .iter()
+                        .find(|problem| {
+                            problem.project == *project
+                                && problem.record == id.as_str()
+                        })
+                        .map_or_else(
+                            || format!("no issue is called {id}"),
+                            |problem| {
+                                format!(
+                                    "{id} doesn't read as the flow declares: {problem}"
+                                )
+                            },
+                        )
+                })?;
             observation.editable().map_err(|reason| {
-                format!(
-                    "{} doesn't read as the flow declares: {reason}",
-                    id.reference()
-                )
+                format!("{id} doesn't read as the flow declares: {reason}")
             })?;
             changed(flow, observation, changes, &sign)?
         }
@@ -756,19 +817,18 @@ fn finished(
     let (issue, _) = change.observation.editable()?;
     let after = home.with(change.observation.clone());
     let graph = after.graph();
-    let subject = subject(home, issue.project, &issue.id.reference());
+    let subject = subject(home, issue.project, issue.id.as_str());
     let mut problems: Vec<String> = graph
         .problems
         .iter()
         .filter(|problem| {
             problem.project == issue.project
-                && IssueId::from_reference(&problem.record).as_ref()
-                    == Some(&issue.id)
+                && problem.record == issue.id.as_str()
         })
         .map(ToString::to_string)
         .collect();
     let moving = Move {
-        from: home.issue(&issue.id),
+        from: home.issue(issue.project, &issue.id),
         to: Some(issue),
     };
     let issues: Vec<&Issue> = graph.issues.iter().collect();
@@ -1075,8 +1135,8 @@ fn assign(
         let targets = names
             .iter()
             .map(|name| {
-                IssueId::from_reference(name)
-                    .ok_or_else(|| format!("{name} is no issue"))
+                IssueId::new(name)
+                    .ok_or_else(|| format!("{name:?} is no issue"))
             })
             .collect::<Result<Vec<_>, _>>()?;
         issue.links.insert(String::from(key), targets);

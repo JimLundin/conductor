@@ -8,7 +8,7 @@ pub(super) fn applicable(flow: &Flow, records: &[Observation]) -> Flow {
     let valid: BTreeSet<_> = records
         .iter()
         .filter_map(Observation::issue)
-        .map(|issue| &issue.id)
+        .map(|issue| (issue.project, &issue.id))
         .collect();
     for record in records {
         for (name, coverage) in &record.completeness.relations {
@@ -19,7 +19,10 @@ pub(super) fn applicable(flow: &Flow, records: &[Observation]) -> Flow {
         }
         if let Some(issue) = record.issue() {
             for (name, targets) in &issue.links {
-                if targets.iter().any(|id| !valid.contains(id)) {
+                if targets
+                    .iter()
+                    .any(|id| !valid.contains(&(issue.project, id)))
+                {
                     paths.insert(name.as_str());
                 }
             }

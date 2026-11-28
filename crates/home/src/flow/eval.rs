@@ -160,7 +160,9 @@ impl Walk<'_> {
                 .into_iter()
                 .flatten()
                 .filter_map(|id| {
-                    self.issues.iter().copied().find(|other| other.id == *id)
+                    self.issues.iter().copied().find(|other| {
+                        other.project == issue.project && other.id == *id
+                    })
                 })
                 .collect(),
             Some((relation, true)) => self
@@ -168,10 +170,11 @@ impl Walk<'_> {
                 .iter()
                 .copied()
                 .filter(|other| {
-                    other
-                        .links
-                        .get(&relation.name)
-                        .is_some_and(|ids| ids.contains(&issue.id))
+                    other.project == issue.project
+                        && other
+                            .links
+                            .get(&relation.name)
+                            .is_some_and(|ids| ids.contains(&issue.id))
                 })
                 .collect(),
         }

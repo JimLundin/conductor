@@ -111,72 +111,27 @@ impl Project<'_> {
     pub async fn issue(
         &self,
         cache: &IssueCache<'_>,
-        project: ProjectId,
-        selector: &str,
+        lookup: Lookup,
         mode: ReadMode,
     ) -> Result<IssueReading, CacheError> {
-        let scope = self.scope(cache, project)?;
-        let records = scope.load()?;
-        let lookup = match records.lookup(project, selector) {
-            Ok(request) => request,
-            Err(error) => {
-                return Ok(records.reading(
-                    cache.flow,
-                    None,
-                    false,
-                    Some(error),
-                ));
-            }
-        };
+        let scope = self.scope(cache, lookup.project)?;
         match mode {
-            ReadMode::Refresh => self.resolve(&scope, cache.flow, lookup).await,
-            ReadMode::Cached => Ok(records.reading(
+            ReadMode::Refresh => {
+                self.refresh_issue(&scope, cache.flow, lookup).await
+            }
+            ReadMode::Cached => Ok(scope.load()?.reading(
                 cache.flow,
-                lookup.expected.as_ref(),
+                Some(&lookup.id),
                 false,
                 None,
             )),
-            ReadMode::Failed(cause) => Ok(records.reading(
+            ReadMode::Failed(cause) => Ok(scope.load()?.reading(
                 cache.flow,
-                lookup.expected.as_ref(),
+                Some(&lookup.id),
                 false,
                 Some(cause),
             )),
         }
-    }
-
-    async fn resolve(
-        &self,
-        scope: &Scope,
-        flow: &Flow,
-        mut lookup: Lookup,
-    ) -> Result<IssueReading, CacheError> {
-        if home::IssueId::parse(&lookup.reference).is_some() {
-            let listing =
-                self.refresh_list(scope, lookup.project, flow).await?;
-            let records = scope.load()?;
-            let previous = lookup.expected.as_ref();
-            lookup = match records
-                .lookup(lookup.project, &lookup.reference)
-                .ok()
-                .filter(|resolved| {
-                    home::IssueId::parse(&resolved.reference).is_none()
-                }) {
-                Some(resolved) => resolved,
-                None => {
-                    return Ok(records.reading(
-                        flow,
-                        previous,
-                        false,
-                        listing
-                            .status
-                            .failure
-                            .or(Some(ReadFailure::Unavailable)),
-                    ));
-                }
-            };
-        }
-        self.refresh_issue(scope, flow, lookup).await
     }
 
     async fn refresh_issue(

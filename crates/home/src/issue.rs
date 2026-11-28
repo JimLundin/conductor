@@ -15,7 +15,7 @@ use crate::flow::snapshot::Snapshot;
 use crate::issue::body::{checklist_line, log_line};
 use crate::prelude::*;
 use crate::{
-    CheckoutLocation, Home, HomeRefusal, IssueId, ProjectId, UnixSecs,
+    CheckoutLocation, Home, HomeRefusal, IssueId, IssueKey, ProjectId, UnixSecs,
 };
 
 pub mod cache;
@@ -37,7 +37,7 @@ fn message(edit: &command::Edit) -> String {
         command::Edit::New { id, issue } => {
             format!("Open issue {id}: {}", issue.title.trim())
         }
-        command::Edit::Change { id, changes } => match changes.as_slice() {
+        command::Edit::Change { id, changes, .. } => match changes.as_slice() {
             [change] => change_message(id, change),
             _ => format!("Change issue {id}"),
         },
@@ -97,8 +97,8 @@ pub struct EditData {
 }
 
 impl EditData {
-    fn issue(&self) -> IssueId {
-        self.edit.id()
+    fn key(&self) -> IssueKey {
+        self.edit.key()
     }
 }
 
@@ -312,7 +312,7 @@ fn written(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Start {
-    pub issue: IssueId,
+    pub issue: IssueKey,
     pub checkout: CheckoutLocation,
     pub branch: String,
     pub brief: String,
@@ -320,19 +320,18 @@ pub struct Start {
 
 pub fn start(
     home: Option<&Home>,
-    id: IssueId,
+    id: IssueKey,
 ) -> Result<(ProjectId, Start), HomeRefusal> {
     let known = home.ok_or(HomeRefusal::NoHome)?;
-    let (project, observation) = known
+    let project = known
         .projects
         .iter()
-        .find_map(|project| {
-            project
-                .issues
-                .iter()
-                .find(|observation| observation.id() == &id)
-                .map(|issue| (project, issue))
-        })
+        .find(|project| project.id == id.project)
+        .ok_or(HomeRefusal::UnknownIssue)?;
+    let observation = project
+        .issues
+        .iter()
+        .find(|observation| observation.id() == &id.id)
         .ok_or(HomeRefusal::UnknownIssue)?;
     let (issue, _) = observation
         .editable()
@@ -353,19 +352,20 @@ pub fn start(
 }
 
 #[must_use]
-pub fn branch(home: Option<&Home>, id: &IssueId) -> String {
+pub fn branch(home: Option<&Home>, id: &IssueKey) -> String {
     let named = home.and_then(|known| {
         known
             .projects
             .iter()
+            .filter(|project| project.id == id.project)
             .flat_map(|project| &project.issues)
             .filter_map(Observation::issue)
-            .find(|issue| &issue.id == id)
+            .find(|issue| issue.id == id.id)
             .map(|issue| issue.branch.clone())
     });
     format!(
         "refs/heads/{}",
-        named.unwrap_or_else(|| branch_of(id, None))
+        named.unwrap_or_else(|| branch_of(&id.id, None))
     )
 }
 

@@ -173,23 +173,13 @@ fn key_text(key: &str) -> String {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum References {
-    Project,
-    Qualified,
-}
-
 pub fn targets(
     relation: &crate::flow::Relation,
     value: Value,
-    references: References,
 ) -> Result<Vec<crate::IssueId>, String> {
     let id = |value: Value| match value {
-        Value::String(name) => match references {
-            References::Project => crate::IssueId::from_reference(&name),
-            References::Qualified => crate::IssueId::parse(&name),
-        }
-        .ok_or_else(|| format!("{name} is no issue")),
+        Value::String(name) => crate::IssueId::new(&name)
+            .ok_or_else(|| format!("{name:?} is no issue")),
         _ => Err(String::from("is not a list of ids")),
     };
     match (relation.many, value) {

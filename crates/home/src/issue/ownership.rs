@@ -64,40 +64,39 @@ pub fn reserve(
 mod tests {
     use super::*;
 
-    fn id(authority: &str, key: &str) -> IssueId {
-        IssueId {
-            authority: String::from(authority),
-            key: String::from(key),
-        }
+    fn id(text: &str) -> IssueId {
+        IssueId(String::from(text))
     }
 
     #[test]
-    fn a_generated_branch_has_a_bounded_digest_of_the_full_identity() {
-        let identity = id(&"long-tracker-".repeat(30), "same-number");
+    fn an_issue_id_that_is_a_ref_name_names_its_branch() {
+        assert_eq!(
+            crate::flow::graph::branch_of(&id("146"), None),
+            "issue/146"
+        );
+    }
+
+    #[test]
+    fn an_issue_id_that_is_no_ref_name_has_a_bounded_digest_as_its_branch() {
+        let identity = id(&"https://tracker/~".repeat(30));
         let branch = crate::flow::graph::branch_of(&identity, None);
         assert_eq!(branch.len(), 70);
         assert!(branch.starts_with("issue/"));
         assert!(branch[6..].bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_ne!(
-            branch,
-            crate::flow::graph::branch_of(
-                &id("other-tracker", "same-number"),
-                None
-            )
-        );
+        assert_ne!(branch, crate::flow::graph::branch_of(&id("other/1"), None));
     }
 
     #[test]
     fn another_issue_cannot_claim_a_recorded_branch_in_the_same_repository() {
         let owner = Owner {
             repository: Repository(String::from("repo")),
-            issue: id("a", "rest-1"),
+            issue: id("rest-1"),
             branch: String::from("shared"),
         };
         assert_eq!(
             reserve(
                 &owner.repository,
-                &id("b", "rest-1"),
+                &id("rest-2"),
                 "shared",
                 false,
                 core::slice::from_ref(&owner)
@@ -110,7 +109,7 @@ mod tests {
     fn an_existing_owners_choice_survives_a_changed_proposed_branch() {
         let owner = Owner {
             repository: Repository(String::from("repo")),
-            issue: id("a", "rest-1"),
+            issue: id("rest-1"),
             branch: String::from("kept"),
         };
         assert_eq!(
@@ -132,10 +131,7 @@ mod scope_tests {
 
     #[test]
     fn identical_branch_names_can_be_owned_in_different_repositories() {
-        let issue = IssueId {
-            authority: String::from("tracker"),
-            key: String::from("rest-42"),
-        };
+        let issue = IssueId(String::from("rest-42"));
         let owner = Owner {
             repository: Repository(String::from("repo-one")),
             issue: issue.clone(),
@@ -155,10 +151,7 @@ mod scope_tests {
 
     #[test]
     fn a_branch_without_an_owner_record_requires_reconciliation() {
-        let issue = IssueId {
-            authority: String::from("tracker"),
-            key: String::from("rest-42"),
-        };
+        let issue = IssueId(String::from("rest-42"));
         assert_eq!(
             reserve(
                 &Repository(String::from("repo")),

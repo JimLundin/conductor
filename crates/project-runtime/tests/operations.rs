@@ -7,7 +7,7 @@ fn changes() -> Result<Intent, &'static str> {
         project: home::ProjectId::new(1),
         expected: String::from("issue-1"),
         work: Work::ChangeIssue {
-            issue: home::IssueId::new("tracker", "42").ok_or("bad fixture")?,
+            issue: home::IssueId::new("42").ok_or("bad fixture")?,
             change: IssueChange::Title(String::from("Ready")),
         },
     })

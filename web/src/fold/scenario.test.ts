@@ -215,7 +215,7 @@ describe("finishing controls", () => {
     expect.hasAssertions();
     const ready = [
       ...through(received(recordedFeed(scenario), 0), 4),
-      eventUpdate(5, { OnIssue: { issue: "local~0twr04e5" } }),
+      eventUpdate(5, { OnIssue: { issue: { id: "0twr04e5", project: "7r5n23" } } }),
     ];
     const start = eventUpdate(6, providerStart);
     const running = theSession(applyUpdate(folded(ready), start));
@@ -232,7 +232,9 @@ describe("finishing controls", () => {
   it("offers finish only while an issue session can finish", () => {
     expect.hasAssertions();
     const updates = received(recordedFeed(scenario), 0);
-    const onIssue = then(folded(through(updates, 4)), 5, { OnIssue: { issue: "local~0twr04e5" } });
+    const onIssue = then(folded(through(updates, 4)), 5, {
+      OnIssue: { issue: { id: "0twr04e5", project: "7r5n23" } },
+    });
     const stages = finishing(onIssue).map((host) => theSession(host));
     const done = Option.getOrThrow(Arr.last(stages));
     expect(stages.map((current) => controls(current).finish)).toStrictEqual([

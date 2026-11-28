@@ -4,7 +4,7 @@ use crate::log::{Event, HostSeq};
 use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
 use agents::ClientName;
 use agents::Output;
-use home::{Home, IssueId};
+use home::{Home, IssueKey};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -192,7 +192,7 @@ pub enum Effect {
     NextEvent,
     ReadHome,
     Ready {
-        issue: IssueId,
+        issue: IssueKey,
         workspace: Workspace,
         branch: String,
     },
@@ -205,7 +205,7 @@ pub enum Effect {
         branch: String,
     },
     Note {
-        issue: IssueId,
+        issue: IssueKey,
         summary: Option<String>,
         by: ClientName,
         commits: u64,

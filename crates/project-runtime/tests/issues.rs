@@ -83,7 +83,7 @@ const fn project() -> ProjectId {
 }
 fn item(key: &str, title: &str) -> Result<Observation, Box<dyn Error>> {
     let mut record = Observation::invalid(Unreadable {
-        id: IssueId::new("tracker", key).ok_or("fixture identity")?,
+        id: IssueId::new(key).ok_or("fixture identity")?,
         project: project(),
         title: Some(title.into()),
         body: Some("human text".into()),
@@ -92,11 +92,17 @@ fn item(key: &str, title: &str) -> Result<Observation, Box<dyn Error>> {
     });
     record.locator = Some(Locator {
         repository: "example".into(),
-        reference: format!("#{key}"),
         url: None,
         addresses: BTreeMap::new(),
     });
     Ok(record)
+}
+
+fn lookup(key: &str) -> Result<Lookup, Box<dyn Error>> {
+    Ok(Lookup {
+        project: project(),
+        id: IssueId::new(key).ok_or("fixture identity")?,
+    })
 }
 
 fn setup(
@@ -181,7 +187,7 @@ async fn failed_second_page_keeps_the_last_complete_snapshot_across_process_rest
 }
 
 #[tokio::test]
-async fn a_missing_or_reassigned_locator_keeps_the_previous_identity_and_text()
+async fn a_missing_or_mismatched_read_keeps_the_previous_identity_and_text()
 -> Result<(), Box<dyn Error>> {
     use home::issue::IssueState;
     let dir = tempfile::tempdir()?;
@@ -189,8 +195,7 @@ async fn a_missing_or_reassigned_locator_keeps_the_previous_identity_and_text()
         home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
     let cache = IssueCache::new(dir.path(), &flow);
     let first = item("1", "human title")?;
-    let mut replacement = item("2", "replacement")?;
-    replacement.locator.clone_from(&first.locator);
+    let replacement = item("2", "replacement")?;
     let mut deleted = first.clone();
     if let IssueState::Invalid(mut tombstone) = deleted.state {
         tombstone.title = None;
@@ -207,14 +212,14 @@ async fn a_missing_or_reassigned_locator_keeps_the_previous_identity_and_text()
     let (registry, backends) = setup(adapter, "example")?;
     let service = registry.project(&backends);
     let initial = service
-        .issue(&cache, project(), "#1", ReadMode::Refresh)
+        .issue(&cache, lookup("1")?, ReadMode::Refresh)
         .await?;
     assert_eq!(
         initial.record.as_ref().map(Observation::id),
         Some(first.id())
     );
     let missing = service
-        .issue(&cache, project(), "#1", ReadMode::Refresh)
+        .issue(&cache, lookup("1")?, ReadMode::Refresh)
         .await?;
     assert_eq!(missing.status.freshness, Freshness::Stale);
     assert_eq!(missing.status.failure, Some(ReadFailure::Unavailable));
@@ -222,7 +227,7 @@ async fn a_missing_or_reassigned_locator_keeps_the_previous_identity_and_text()
         matches!(missing.record.map(|o| o.state), Some(IssueState::Unavailable(previous)) if previous.title.as_deref()==Some("human title") && previous.body.as_deref()==Some("human text"))
     );
     let conflict = service
-        .issue(&cache, project(), "#1", ReadMode::Refresh)
+        .issue(&cache, lookup("1")?, ReadMode::Refresh)
         .await?;
     assert_eq!(conflict.status.failure, Some(ReadFailure::IdentityConflict));
     assert_eq!(
@@ -230,7 +235,7 @@ async fn a_missing_or_reassigned_locator_keeps_the_previous_identity_and_text()
         Some(first.id())
     );
     let confirmed = service
-        .issue(&cache, project(), "#1", ReadMode::Refresh)
+        .issue(&cache, lookup("1")?, ReadMode::Refresh)
         .await?;
     assert_eq!(confirmed.status.freshness, Freshness::Fresh);
     let record = confirmed.record.ok_or("missing tombstone")?;
@@ -350,52 +355,10 @@ async fn an_earlier_refresh_finishing_last_cannot_undo_a_direct_tracker_edit()
     let first_read = first?;
     assert_eq!(first_read.records, second_read.records);
     let disk = service
-        .issue(&cache, project(), "#42", ReadMode::Cached)
+        .issue(&cache, lookup("42")?, ReadMode::Cached)
         .await?;
     assert!(
         matches!(disk.record.map(|o| o.state), Some(home::issue::IssueState::Invalid(record)) if record.title.as_deref()==Some("edited in tracker"))
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_competing_single_read_cannot_install_another_identity_at_a_known_locator()
--> Result<(), Box<dyn Error>> {
-    let dir = tempfile::tempdir()?;
-    let flow =
-        home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
-    let cache = IssueCache::new(dir.path(), &flow);
-    let older = item("41", "different issue")?;
-    let mut newer = item("42", "current observation")?;
-    newer.locator.clone_from(&older.locator);
-    let adapter = Arc::new(SlowFirst {
-        started: tokio::sync::Notify::new(),
-        finish: tokio::sync::Notify::new(),
-        older,
-    });
-    let (registry, backends) = setup(adapter.clone(), "example")?;
-    let service = registry.project(&backends);
-    let (other, selected) = setup(Script::reads([Ok(newer)]), "example")?;
-    let newer_service = other.project(&selected);
-    let (earlier, later) = tokio::join!(
-        service.issue(&cache, project(), "#41", ReadMode::Refresh),
-        async {
-            adapter.started.notified().await;
-            let latest = newer_service
-                .issue(&cache, project(), "#41", ReadMode::Refresh)
-                .await;
-            adapter.finish.notify_one();
-            latest
-        }
-    );
-    let current = later?.record.ok_or("missing newer observation")?;
-    assert_eq!(earlier?.status.failure, Some(ReadFailure::IdentityConflict));
-    let offline = service
-        .issue(&cache, project(), "#41", ReadMode::Cached)
-        .await?;
-    assert_eq!(
-        offline.record.as_ref().map(Observation::id),
-        Some(current.id())
     );
     Ok(())
 }
@@ -452,10 +415,9 @@ async fn project_findings_require_observed_relations_and_visible_targets()
     let flow =
         home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
     let cache = IssueCache::new(dir.path(), &flow);
-    let external =
-        IssueId::new("tracker", "elsewhere").ok_or("bad identity")?;
+    let external = IssueId::new("elsewhere").ok_or("bad identity")?;
     let subject = Issue {
-        id: IssueId::new("tracker", "decision").ok_or("bad identity")?,
+        id: IssueId::new("decision").ok_or("bad identity")?,
         project: project(),
         title: "Settled decision".into(),
         created: Some(UnixMillis(999)),
@@ -511,47 +473,64 @@ async fn project_findings_require_observed_relations_and_visible_targets()
 }
 
 #[tokio::test]
-async fn a_scan_with_a_reassigned_or_ambiguous_locator_keeps_the_previous_snapshot()
+async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
 -> Result<(), Box<dyn Error>> {
     let dir = tempfile::tempdir()?;
     let flow =
         home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
     let cache = IssueCache::new(dir.path(), &flow);
-    let first = item("1", "first")?;
-    let mut second = item("2", "another identity")?;
-    second.locator.clone_from(&first.locator);
-    let adapter = Script::pages([
-        (
+    let other = ProjectId::new(33);
+    let elsewhere = Observation::invalid(Unreadable {
+        id: IssueId::new("146").ok_or("fixture identity")?,
+        project: other,
+        title: Some("in the other project".into()),
+        body: None,
+        created: Some(UnixMillis(10)),
+        reason: "unmapped label".into(),
+    });
+    let (our_registry, ours_backends) = setup(
+        Script::pages([(
             None,
             Ok(Page {
-                records: vec![first.clone()],
+                records: vec![item("146", "in our project")?],
                 next: None,
             }),
-        ),
-        (
+        )]),
+        "example",
+    )?;
+    let (their_registry, theirs_backends) = setup(
+        Script::pages([(
             None,
             Ok(Page {
-                records: vec![second.clone()],
+                records: vec![elsewhere],
                 next: None,
             }),
-        ),
-        (
-            None,
-            Ok(Page {
-                records: vec![first, second],
-                next: None,
-            }),
-        ),
-    ]);
-    let (registry, backends) = setup(adapter, "example")?;
-    let service = registry.project(&backends);
-    let initial = service.issues(&cache, project(), ReadMode::Refresh).await?;
-    for _ in 0..2 {
-        let report =
-            service.issues(&cache, project(), ReadMode::Refresh).await?;
-        assert_eq!(report.status.failure, Some(ReadFailure::IdentityConflict));
-        assert_eq!(report.records, initial.records);
-        assert_eq!(report.status.freshness, Freshness::Stale);
-    }
+        )]),
+        "example",
+    )?;
+    let ours = our_registry.project(&ours_backends);
+    let theirs = their_registry.project(&theirs_backends);
+    ours.issues(&cache, project(), ReadMode::Refresh).await?;
+    theirs.issues(&cache, other, ReadMode::Refresh).await?;
+    let title = |reading: home::issue::IssueReading| {
+        reading.record.and_then(|record| match record.state {
+            home::issue::IssueState::Invalid(unread) => unread.title,
+            _ => None,
+        })
+    };
+    let id = IssueId::new("146").ok_or("fixture identity")?;
+    let our_lookup = Lookup {
+        project: project(),
+        id: id.clone(),
+    };
+    let their_lookup = Lookup { project: other, id };
+    assert_eq!(
+        title(ours.issue(&cache, our_lookup, ReadMode::Cached).await?),
+        Some(String::from("in our project"))
+    );
+    assert_eq!(
+        title(theirs.issue(&cache, their_lookup, ReadMode::Cached).await?),
+        Some(String::from("in the other project"))
+    );
     Ok(())
 }

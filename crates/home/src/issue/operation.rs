@@ -6,7 +6,7 @@ use crate::flow::command;
 use crate::flow::role;
 use crate::flow::snapshot::Snapshot;
 use crate::prelude::*;
-use crate::{HomeRefusal, IssueId, ProjectId, UnixSecs};
+use crate::{HomeRefusal, IssueId, IssueKey, ProjectId, UnixSecs};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Read {
@@ -130,7 +130,7 @@ impl PendingEdits {
     }
 
     #[must_use]
-    pub fn issue_for(&self, id: EditId) -> Option<IssueId> {
+    pub fn issue_for(&self, id: EditId) -> Option<IssueKey> {
         self.0.iter().find_map(|pending| pending.edit.issue_for(id))
     }
 
@@ -173,7 +173,11 @@ impl PendingEdits {
     pub fn replay_target(&self, index: usize) -> Option<Read> {
         let (earlier, remaining) = self.0.split_at_checked(index)?;
         let target = remaining.first()?.edit.read();
-        can_commit(earlier, &target.issue).then_some(target)
+        let key = IssueKey {
+            project: target.project,
+            id: target.issue.clone(),
+        };
+        can_commit(earlier, &key).then_some(target)
     }
 
     pub fn replay(
@@ -269,21 +273,21 @@ impl Context<'_> {
 
     pub fn edit(
         &self,
-        issue: IssueId,
+        issue: IssueKey,
         change: IssueChange,
         client: &str,
     ) -> Result<Record, HomeRefusal> {
         crate::configured(self.remote)?;
-        let project = self
-            .home
-            .issue(&issue)
-            .map(|known| known.project)
+        let IssueKey { project, id } = issue;
+        self.home
+            .issue(project, &id)
             .ok_or(HomeRefusal::UnknownIssue)?;
         self.record(
             project,
             signer(self.host, client),
             command::Edit::Change {
-                id: issue,
+                project,
+                id,
                 changes: Vec::from([change]),
             },
         )
@@ -358,31 +362,30 @@ impl Record {
                 return Err(HomeRefusal::IssueRefused { reason });
             }
         };
-        let next =
-            commit.filter(|_| can_commit(&pending.0, &edit.data.issue()));
+        let next = commit.filter(|_| can_commit(&pending.0, &edit.data.key()));
         Ok(Recorded(Recording::Keep(edit), warnings, next))
     }
 }
 
-fn can_commit(earlier: &[Pending], issue: &IssueId) -> bool {
+fn can_commit(earlier: &[Pending], issue: &IssueKey) -> bool {
     earlier
         .iter()
-        .all(|pending| pending.covered || &pending.edit.data.issue() != issue)
+        .all(|pending| pending.covered || &pending.edit.data.key() != issue)
 }
 
 impl EditData {
     fn read(&self) -> Read {
         Read {
             project: self.project,
-            issue: self.issue(),
+            issue: self.key().id,
         }
     }
 }
 
 impl Edit {
     #[must_use]
-    pub fn issue_for(&self, id: EditId) -> Option<IssueId> {
-        (self.id == id).then_some(self.data.issue())
+    pub fn issue_for(&self, id: EditId) -> Option<IssueKey> {
+        (self.id == id).then(|| self.data.key())
     }
 
     #[must_use]
@@ -456,7 +459,7 @@ impl SessionUpdate {
     pub fn next(
         &mut self,
         home: &Snapshot,
-        id: &IssueId,
+        id: &IssueKey,
     ) -> Option<IssueChange> {
         let update = core::mem::replace(self, Self::Done);
         match update {
@@ -474,7 +477,7 @@ impl SessionUpdate {
             Self::Started | Self::Finished { summary: None, .. } => {
                 let flow = home.flow().ok()?;
                 let all: Vec<&Issue> = home.graph().issues.iter().collect();
-                let issue = home.issue(id)?;
+                let issue = home.issue(id.project, &id.id)?;
                 let (moved, reason) = match update {
                     Self::Started => (
                         role::started(flow, &all, issue),

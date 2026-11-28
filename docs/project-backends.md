@@ -63,19 +63,18 @@ commands, indexes and object operations do not cross this interface.
 ## Reading tracked issues
 
 Run these commands from the home checkout. The project argument accepts
-a name or project ID. Quote GitHub references so the shell passes the
-number sign to the command.
+a name or project ID. The issue argument is the issue's ID, which for a
+GitHub issue is its number.
 
 ```sh
 home issue list my-project
-home issue show my-project '#42'
-home issue show my-project '#42' --offline
+home issue show my-project 42
+home issue show my-project 42 --offline
 ```
 
 Both commands print JSON. A refresh reads direct GitHub edits. The list
-includes open, closed and invalid issues. Each record includes its stable
-ID, locator, findings and coverage. You can pass its stable ID to
-`home issue show`. Comments and native relations have incomplete coverage
+includes open, closed and invalid issues. Each record includes its ID,
+locator, findings and coverage. Comments and native relations have incomplete coverage
 until their readers are available.
 
 A successful refresh reports `Fresh`. If a page fails, the command exits

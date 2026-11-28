@@ -22,9 +22,13 @@ use crate::issue::storage::Inputs;
 use crate::issue::storage::{self, File};
 
 fn id_id() -> IssueId {
-    IssueId {
-        authority: String::from("local"),
-        key: String::from("00000001"),
+    IssueId(String::from("00000001"))
+}
+
+fn key_id() -> crate::IssueKey {
+    crate::IssueKey {
+        project: project(),
+        id: id_id(),
     }
 }
 const OPENED: u64 = 1_794_996_720;
@@ -62,9 +66,9 @@ fn snapshot_with(files: &[File], selection: &str) -> Snapshot {
 fn filed(id: &IssueId, status: &str, more: &str) -> File {
     File {
         project: project(),
-        stem: id.reference(),
+        stem: id.to_string(),
         text: written()
-            .replace(&id_id().reference(), &id.reference())
+            .replace(&id_id().to_string(), &id.to_string())
             .replace(
                 "status = \"active\"\n",
                 &format!("status = \"{status}\"\n{more}"),
@@ -75,7 +79,7 @@ fn filed(id: &IssueId, status: &str, more: &str) -> File {
 fn issue_file() -> File {
     File {
         project: project(),
-        stem: id_id().reference(),
+        stem: id_id().to_string(),
         text: written(),
     }
 }
@@ -309,6 +313,7 @@ fn creating(new: NewIssue) -> command::Edit {
 
 fn changing(change: IssueChange) -> command::Edit {
     command::Edit::Change {
+        project: project(),
         id: id_id(),
         changes: Vec::from([change]),
     }
@@ -467,9 +472,9 @@ fn an_item_is_checked_and_removed_by_its_place() -> Result<(), String> {
 
 #[test]
 fn an_issue_id_its_file_and_its_status_must_agree() {
-    assert_eq!(id_id().to_string(), "local~00000001");
+    assert_eq!(id_id().to_string(), "00000001");
     assert_eq!(
-        crate::layout::issue_file(&project(), &id_id().reference()),
+        crate::layout::issue_file(&project(), &id_id().to_string()),
         "projects/7r5n23/issues/00000001.md"
     );
     assert_eq!(
@@ -477,11 +482,7 @@ fn an_issue_id_its_file_and_its_status_must_agree() {
             &flow(),
             &File {
                 project: project(),
-                stem: IssueId {
-                    authority: String::from("local"),
-                    key: String::from("00000002")
-                }
-                .to_string(),
+                stem: IssueId(String::from("00000002")).to_string(),
                 text: written()
             }
         )
@@ -701,16 +702,16 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
     let listed = context(&home, EditId(1));
     assert_eq!(
         listed
-            .edit(id_id(), IssueChange::Note(text("x")), "iPhone")
+            .edit(key_id(), IssueChange::Note(text("x")), "iPhone")
             .map(|record| record.project()),
         Ok(project())
     );
     assert_eq!(
         listed
             .edit(
-                IssueId {
-                    authority: String::from("local"),
-                    key: String::from("00000007")
+                crate::IssueKey {
+                    project: project(),
+                    id: IssueId(String::from("00000007")),
                 },
                 IssueChange::Note(text("x")),
                 "iPhone"
@@ -724,7 +725,7 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
     };
     assert_eq!(
         nowhere
-            .edit(id_id(), IssueChange::Note(text("x")), "iPhone")
+            .edit(key_id(), IssueChange::Note(text("x")), "iPhone")
             .map(|_| ()),
         Err(HomeRefusal::NoHome)
     );
@@ -743,7 +744,7 @@ fn a_configured_tracker_refuses_local_creates_edits_and_previously_pending_repla
         recorded(change.clone(), EditId(2), &observed(&written()))?;
     for attempt in [
         access.open(id_id(), wanted(), "device"),
-        access.edit(id_id(), change, "device"),
+        access.edit(key_id(), change, "device"),
     ] {
         assert!(
             matches!(attempt, Err(HomeRefusal::IssueRefused { reason }) if reason.contains("configured tracker"))
@@ -765,10 +766,10 @@ fn each_change_is_its_own_commit() {
             message(&changing(IssueChange::Note(text("x")))),
         ],
         [
-            String::from("Open issue local~00000001: Sign in"),
-            String::from("Move issue local~00000001 to review"),
-            String::from("Set the priority of issue local~00000001 to low"),
-            String::from("Note on issue local~00000001"),
+            String::from("Open issue 00000001: Sign in"),
+            String::from("Move issue 00000001 to review"),
+            String::from("Set the priority of issue 00000001 to low"),
+            String::from("Note on issue 00000001"),
         ]
     );
 }
@@ -817,7 +818,7 @@ fn checkout() -> Checkout {
 fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
     let started = start(
         Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
-        id_id(),
+        key_id(),
     );
     assert_eq!(
         started
@@ -841,16 +842,16 @@ fn a_session_on_an_issue_starts_in_its_projects_checkout_with_a_brief() {
         assert!(brief.contains(part), "the brief has {part:?}: {brief}");
     }
     assert_eq!(
-        start(Some(&home(Vec::new(), Vec::from([issue()]))), id_id())
+        start(Some(&home(Vec::new(), Vec::from([issue()]))), key_id())
             .map(|_| ()),
         Err(HomeRefusal::NotCheckedOut)
     );
     assert_eq!(
-        start(Some(&home(Vec::from([checkout()]), Vec::new())), id_id())
+        start(Some(&home(Vec::from([checkout()]), Vec::new())), key_id())
             .map(|_| ()),
         Err(HomeRefusal::UnknownIssue)
     );
-    assert_eq!(start(None, id_id()).map(|_| ()), Err(HomeRefusal::NoHome));
+    assert_eq!(start(None, key_id()).map(|_| ()), Err(HomeRefusal::NoHome));
 }
 
 #[test]
@@ -862,7 +863,7 @@ fn a_brief_names_the_issue_s_stage_and_the_skills_that_serve_it() {
         };
         start(
             Some(&home(Vec::from([checkout()]), Vec::from([at]))),
-            id_id(),
+            key_id(),
         )
         .map_or_else(|_| String::new(), |(_, started)| started.brief)
     };
@@ -888,17 +889,14 @@ fn moved(
     status: &str,
     blocker: Option<&str>,
 ) -> Option<String> {
-    let blocking = IssueId {
-        authority: String::from("local"),
-        key: String::from("00000002"),
-    };
+    let blocking = IssueId(String::from("00000002"));
     let mut files = Vec::from([filed(
         &id_id(),
         status,
         &format!("blocked_by = [\"{blocking}\"]\n"),
     )]);
     files.extend(blocker.map(|other| filed(&blocking, other, "")));
-    match update.next(&snapshot_of(&files), &id_id()) {
+    match update.next(&snapshot_of(&files), &key_id()) {
         Some(IssueChange::Move {
             part: Part::Status,
             to,
@@ -986,10 +984,10 @@ fn the_issue_branch_follows_the_remote_and_never_leaves_its_work_out() {
 fn an_issue_branch_is_the_homes_or_named_by_its_id() {
     let known = home(Vec::from([checkout()]), Vec::from([issue()]));
     assert_eq!(
-        branch(Some(&known), &id_id()),
+        branch(Some(&known), &key_id()),
         String::from("refs/heads/issue/00000001")
     );
-    assert_eq!(branch(None, &id_id()), "refs/heads/issue/00000001");
+    assert_eq!(branch(None, &key_id()), "refs/heads/issue/00000001");
 }
 
 fn bare(rest: &str) -> String {
@@ -1016,7 +1014,7 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
         &flow(),
         &File {
             project: project(),
-            stem: id_id().reference(),
+            stem: id_id().to_string(),
             text: source.clone(),
         },
     )
@@ -1076,6 +1074,7 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
         let plan = command::plan(
             &snapshot_of(&[]).with(original.clone()),
             &command::Edit::Change {
+                project: project(),
                 id: id_id(),
                 changes: Vec::from([
                     IssueChange::Body(text(body)),
@@ -1341,10 +1340,7 @@ fn what_a_client_writes_is_signed_by_the_host_and_the_client_as_one_word() {
 fn an_issues_branch_is_the_one_the_home_lists_for_it() {
     let other = Issue {
         created: None,
-        id: IssueId {
-            authority: String::from("local"),
-            key: String::from("00000009"),
-        },
+        id: IssueId(String::from("00000009")),
         branch: text("issue/other"),
         ..issue()
     };
@@ -1353,7 +1349,7 @@ fn an_issues_branch_is_the_one_the_home_lists_for_it() {
         ..issue()
     };
     let listed = home(Vec::new(), Vec::from([other, mine]));
-    assert_eq!(branch(Some(&listed), &id_id()), "refs/heads/issue/mine");
+    assert_eq!(branch(Some(&listed), &key_id()), "refs/heads/issue/mine");
 }
 
 fn unexpected_effect() -> HomeRefusal {
@@ -1455,7 +1451,7 @@ fn recorded(
 ) -> Result<(Edit, super::Commit), HomeRefusal> {
     use super::RecordEffect;
     let home = snapshot_of(&[issue_file()]);
-    let request = context(&home, edit).edit(id_id(), change, "laptop")?;
+    let request = context(&home, edit).edit(key_id(), change, "laptop")?;
     let mut recorded =
         request.decide(Some(current), &home, &PendingEdits::default())?;
     let Some(RecordEffect::Persist(edit)) = recorded.next(Ok(()))? else {
@@ -1569,10 +1565,10 @@ fn an_edit_retried_with_its_edit_id_under_a_new_command_is_applied_once()
     let change = || IssueChange::Note(text("Retried note"));
     let (kept, first) = recorded(change(), retried, &observed(&written()))?;
     let pending = PendingEdits::loaded(Vec::from([kept.clone()]));
-    assert_eq!(pending.issue_for(retried), Some(id_id()));
+    assert_eq!(pending.issue_for(retried), Some(key_id()));
     assert_eq!(pending.issue_for(EditId(8)), None);
     let home = snapshot_of(&[issue_file()]);
-    let again = context(&home, retried).edit(id_id(), change(), "laptop")?;
+    let again = context(&home, retried).edit(key_id(), change(), "laptop")?;
     let current = committed(&first, None);
     assert_eq!(
         again
@@ -1610,7 +1606,7 @@ fn replay_preserves_separate_notes_with_identical_text()
         return Err(unexpected_effect());
     };
     let home = snapshot_of(&[issue_file()]);
-    let again = context(&home, EditId(1)).edit(id_id(), note(), "laptop")?;
+    let again = context(&home, EditId(1)).edit(key_id(), note(), "laptop")?;
     let first_observed = committed(&first_commit, Some(&original));
     assert_eq!(
         again
@@ -1653,7 +1649,7 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
     let open = snapshot_of(&[filed(&id_id(), "open", "")]);
     let mut start = SessionUpdate::Started;
     assert_eq!(
-        start.next(&open, &id_id()),
+        start.next(&open, &key_id()),
         Some(IssueChange::Move {
             part: Part::Status,
             to: text("active"),
@@ -1661,25 +1657,25 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
             signed_off: false,
         })
     );
-    assert_eq!(start.next(&open, &id_id()), None);
+    assert_eq!(start.next(&open, &key_id()), None);
 
     let mut finish = SessionUpdate::Finished {
         summary: Some(text("Summary")),
         landed: 1,
     };
     assert_eq!(
-        finish.next(&open, &id_id()),
+        finish.next(&open, &key_id()),
         Some(IssueChange::Note(text("Summary")))
     );
     let closed = snapshot_of(&[filed(&id_id(), "done", "")]);
-    assert_eq!(finish.next(&closed, &id_id()), None);
+    assert_eq!(finish.next(&closed, &key_id()), None);
 
     let mut finish = SessionUpdate::Finished {
         summary: None,
         landed: 1,
     };
     assert_eq!(
-        finish.next(&open, &id_id()),
+        finish.next(&open, &key_id()),
         Some(IssueChange::Move {
             part: Part::Status,
             to: text("review"),
@@ -1687,7 +1683,7 @@ fn a_session_updates_its_issue_using_the_listing_after_the_note() {
             signed_off: false,
         })
     );
-    assert_eq!(finish.next(&open, &id_id()), None);
+    assert_eq!(finish.next(&open, &key_id()), None);
 }
 
 #[test]
@@ -1699,7 +1695,7 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
         landed: 1,
     };
     let change = finish
-        .next(&listing, &id_id())
+        .next(&listing, &key_id())
         .ok_or_else(|| text("expected a move"))?;
     let finishing = Edit {
         data: EditData {
@@ -1810,14 +1806,18 @@ mod as_the_command_line {
 
     fn by_app(change: IssueChange) -> Result<Vec<String>, HomeRefusal> {
         let home = crate::issue::storage::snapshot(inputs());
-        let task =
-            IssueId::from_reference(TASK).ok_or(HomeRefusal::UnknownIssue)?;
-        let current = home.observation(&task).cloned().map(|issue| {
-            crate::issue::Observed {
-                reading: Ok(issue),
-                applied: Vec::new(),
-            }
-        });
+        let task = crate::IssueKey {
+            project: ProjectId::parse(FOLDER)
+                .ok_or(HomeRefusal::UnknownIssue)?,
+            id: IssueId::new(TASK).ok_or(HomeRefusal::UnknownIssue)?,
+        };
+        let current =
+            home.observation(task.project, &task.id)
+                .cloned()
+                .map(|issue| crate::issue::Observed {
+                    reading: Ok(issue),
+                    applied: Vec::new(),
+                });
         let record = Context {
             remote: Some("origin"),
             home: &home,
@@ -1912,12 +1912,14 @@ mod as_the_command_line {
             &home,
             &by,
         );
-        let made = IssueId::from_reference(TASK)
+        let made = IssueId::new(TASK)
+            .zip(ProjectId::parse(FOLDER))
             .ok_or_else(String::new)
-            .and_then(|id| {
+            .and_then(|(id, project)| {
                 command::plan(
                     &home,
                     &command::Edit::Change {
+                        project,
                         id,
                         changes: Vec::from([set("priority", word("high"))]),
                     },
@@ -2002,7 +2004,7 @@ fn every_line_the_app_logs_or_briefs_is_the_one_log_line_of_its_entry()
     }
     let brief = start(
         Some(&home(Vec::from([checkout()]), Vec::from([issue()]))),
-        id_id(),
+        key_id(),
     )
     .map(|(_, at)| at.brief)
     .map_err(|refusal| format!("{refusal:?}"))?;

@@ -40,7 +40,11 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
         .strip_prefix("wrote home/")
         .unwrap_or_default();
     assert_eq!(id.len(), 8, "{said}");
-    assert!(home::IssueId::from_reference(id).is_some(), "{said}");
+    assert!(
+        id.bytes()
+            .all(|digit| b"0123456789abcdefghjkmnpqrstvwxyz".contains(&digit)),
+        "{said}"
+    );
     assert!(project.join("issues").join(format!("{id}.md")).is_file());
     Ok(())
 }

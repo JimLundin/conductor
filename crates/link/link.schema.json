@@ -19,7 +19,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/52",
+      "const": "conductor/53",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -1291,7 +1291,7 @@
             "OnIssue": {
               "properties": {
                 "issue": {
-                  "$ref": "#/$defs/IssueId"
+                  "$ref": "#/$defs/IssueKey"
                 }
               },
               "required": ["issue"],
@@ -1845,7 +1845,7 @@
                   "$ref": "#/$defs/EditId"
                 },
                 "issue": {
-                  "$ref": "#/$defs/IssueId"
+                  "$ref": "#/$defs/IssueKey"
                 }
               },
               "required": ["edit", "issue", "change"],
@@ -1861,7 +1861,7 @@
             "Canvas": {
               "properties": {
                 "issue": {
-                  "$ref": "#/$defs/IssueId"
+                  "$ref": "#/$defs/IssueKey"
                 },
                 "name": {
                   "$ref": "#/$defs/CanvasName"
@@ -1951,7 +1951,7 @@
             "IssueWritten": {
               "properties": {
                 "issue": {
-                  "$ref": "#/$defs/IssueId"
+                  "$ref": "#/$defs/IssueKey"
                 },
                 "warnings": {
                   "items": {
@@ -2445,8 +2445,20 @@
       ]
     },
     "IssueId": {
-      "pattern": "^(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+~(?:[A-Za-z0-9_-]|%[0-9A-F]{2})+$",
+      "minLength": 1,
       "type": "string"
+    },
+    "IssueKey": {
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/IssueId"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectId"
+        }
+      },
+      "required": ["project", "id"],
+      "type": "object"
     },
     "IssueState": {
       "oneOf": [
@@ -2626,9 +2638,6 @@
           },
           "type": "object"
         },
-        "reference": {
-          "type": "string"
-        },
         "repository": {
           "type": "string"
         },
@@ -2636,7 +2645,7 @@
           "type": ["string", "null"]
         }
       },
-      "required": ["repository", "reference", "url", "addresses"],
+      "required": ["repository", "url", "addresses"],
       "type": "object"
     },
     "LogEvent": {
@@ -4297,7 +4306,7 @@
           "additionalProperties": false,
           "properties": {
             "Issue": {
-              "$ref": "#/$defs/IssueId"
+              "$ref": "#/$defs/IssueKey"
             }
           },
           "required": ["Issue"],

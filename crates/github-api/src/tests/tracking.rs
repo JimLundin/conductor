@@ -90,12 +90,11 @@ fn page(continuation: Option<String>) -> ListPage {
     }
 }
 
-fn lookup(expected: Option<IssueId>) -> Lookup {
-    Lookup {
+fn lookup(number: &str) -> anyhow::Result<Lookup> {
+    Ok(Lookup {
         project: ProjectId::new(1),
-        reference: "#7".into(),
-        expected,
-    }
+        id: IssueId::new(number).ok_or_else(|| anyhow::anyhow!("no id"))?,
+    })
 }
 
 #[tokio::test]
@@ -118,19 +117,14 @@ async fn all_issue_pages_are_authenticated_and_pull_requests_are_excluded()
     let second = tracker.list(page(first.next)).await?;
     assert!(second.next.is_none());
     let record = &second.records[0];
-    assert_eq!(record.id().key(), "802");
-    assert_eq!(record.id().authority(), base);
+    assert_eq!(record.id().as_str(), "9");
     assert_eq!(
         record.issue().map(|i| i.title.as_str()),
         Some("Native issue")
     );
-    assert_eq!(
-        record.locator.as_ref().map(|l| l.reference.as_str()),
-        Some("#9")
-    );
     assert!(record.observed_at.is_some());
     assert_eq!(
-        tracker.read(lookup(None)).await,
+        tracker.read(lookup("7")?).await,
         Err(ReadFailure::Unavailable)
     );
     completed.await??;
@@ -138,14 +132,10 @@ async fn all_issue_pages_are_authenticated_and_pull_requests_are_excluded()
 }
 
 #[tokio::test]
-async fn redirects_verify_the_destination_and_rest_identity_before_returning_the_new_number()
+async fn redirects_verify_the_destination_and_keep_the_issue_s_number()
 -> anyhow::Result<()> {
-    let moved = || {
-        with_header(
-            reply(NUMBER, 301, &json!({})),
-            "location",
-            "{api}/repositories/88/issues/12",
-        )
+    let moved = |location| {
+        with_header(reply(NUMBER, 301, &json!({})), "location", location)
     };
     let repo = || {
         reply(
@@ -154,14 +144,13 @@ async fn redirects_verify_the_destination_and_rest_identity_before_returning_the
             &json!({"id":88,"name":"work","full_name":"owner/work","url":"{api}/repos/owner/work"}),
         )
     };
-    let resolved = "/repositories/88/issues/12";
     let (base, completed) = exchanges(vec![
-        moved(),
+        moved("{api}/repositories/88/issues/7"),
         repo(),
-        reply(resolved, 200, &issue(12, 901)),
-        moved(),
+        reply("/repositories/88/issues/7", 200, &issue(7, 901)),
+        moved("{api}/repositories/88/issues/12"),
         repo(),
-        reply(resolved, 200, &issue(12, 999)),
+        reply("/repositories/88/issues/12", 200, &issue(12, 901)),
         with_header(
             reply(NUMBER, 301, &json!({})),
             "location",
@@ -181,16 +170,11 @@ async fn redirects_verify_the_destination_and_rest_identity_before_returning_the
     ])
     .await?;
     let tracker = tracker(&base)?;
-    let expected = IssueId::new(&base, "901");
-    let record = tracker.read(lookup(expected.clone())).await?;
-    assert_eq!(record.id().key(), "901");
-    assert_eq!(
-        record.locator.as_ref().map(|l| l.reference.as_str()),
-        Some("#12")
-    );
+    let record = tracker.read(lookup("7")?).await?;
+    assert_eq!(record.id().as_str(), "7");
     for _ in 0..4 {
         assert_eq!(
-            tracker.read(lookup(expected.clone())).await,
+            tracker.read(lookup("7")?).await,
             Err(ReadFailure::IdentityConflict)
         );
     }
@@ -205,7 +189,6 @@ async fn permission_rate_limits_and_confirmed_deletion_remain_distinct()
     let (base, completed) = exchanges(vec![
         reply(NUMBER, 404, &error),
         reply(NUMBER, 410, &error),
-        reply(NUMBER, 410, &error),
         reply(FIRST, 403, &error),
         with_header(reply(FIRST, 403, &error), "x-ratelimit-remaining", "0"),
         with_header(reply(FIRST, 403, &error), "retry-after", "30"),
@@ -219,16 +202,14 @@ async fn permission_rate_limits_and_confirmed_deletion_remain_distinct()
     ])
     .await?;
     let tracker = tracker(&base)?;
-    let expected = IssueId::new(&base, "901");
     assert_eq!(
-        tracker.read(lookup(expected.clone())).await,
+        tracker.read(lookup("7")?).await,
         Err(ReadFailure::Unavailable)
     );
     assert!(matches!(
-        tracker.read(lookup(expected)).await?.state,
+        tracker.read(lookup("7")?).await?.state,
         IssueState::Deleted(_)
     ));
-    assert_eq!(tracker.read(lookup(None)).await, Err(ReadFailure::Deleted));
     for expected in [
         ReadFailure::PermissionDenied,
         ReadFailure::RateLimited,
@@ -266,7 +247,7 @@ async fn a_foreign_page_or_mismatched_issue_url_cannot_replace_the_project_snaps
     }
     for _ in 0..2 {
         assert_eq!(
-            tracker.read(lookup(None)).await,
+            tracker.read(lookup("7")?).await,
             Err(ReadFailure::IdentityConflict)
         );
     }
@@ -282,8 +263,8 @@ async fn an_unrecognized_native_reason_preserves_the_issue_and_its_diagnostic()
     unusual["state_reason"] = json!("future_reason");
     let (base, completed) =
         exchanges(vec![reply(NUMBER, 200, &unusual)]).await?;
-    let observed = tracker(&base)?.read(lookup(None)).await?;
-    assert_eq!(observed.id().key(), "901");
+    let observed = tracker(&base)?.read(lookup("7")?).await?;
+    assert_eq!(observed.id().as_str(), "7");
     assert!(
         matches!(observed.state, IssueState::Invalid(_))
             || !observed.findings.is_empty()
@@ -293,21 +274,39 @@ async fn an_unrecognized_native_reason_preserves_the_issue_and_its_diagnostic()
 }
 
 #[tokio::test]
-async fn only_the_issued_display_reference_can_address_an_issue()
--> anyhow::Result<()> {
+async fn only_the_issue_s_number_can_address_an_issue() -> anyhow::Result<()> {
     let (base, completed) = exchanges(Vec::new()).await?;
     completed.await??;
     let tracker = tracker(&base)?;
-    for alias in ["7", "#07", "#+7", "#0", "#-7", " #7"] {
-        let request = Lookup {
-            reference: alias.into(),
-            ..lookup(None)
-        };
+    for alias in ["#7", "07", "+7", "0", "-7", " 7"] {
         assert_eq!(
-            tracker.read(request).await,
+            tracker.read(lookup(alias)?).await,
             Err(ReadFailure::InvalidResponse),
             "{alias}"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_s_number_is_its_id_and_its_api_id_is_among_its_addresses()
+-> anyhow::Result<()> {
+    let (base, completed) = exchanges(vec![reply(
+        "/repos/owner/work/issues/146",
+        200,
+        &issue(146, 6_663_214_162),
+    )])
+    .await?;
+    let record = tracker(&base)?.read(lookup("146")?).await?;
+    assert_eq!(record.id().as_str(), "146");
+    assert_eq!(
+        record
+            .locator
+            .as_ref()
+            .and_then(|locator| locator.addresses.get("id"))
+            .map(String::as_str),
+        Some("6663214162")
+    );
+    completed.await??;
     Ok(())
 }

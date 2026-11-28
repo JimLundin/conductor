@@ -10,7 +10,7 @@ use crate::session::{
 };
 use crate::workspace::{Snapshot, Workspace};
 use agents::{ClientName, Effort, ModelId, Models, Provider};
-use home::{Home, HomeRefusal, IssueId, ProjectId};
+use home::{Home, HomeRefusal, IssueKey, ProjectId};
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;
@@ -27,7 +27,7 @@ pub struct Placement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InHome {
     Project(ProjectId),
-    Issue(IssueId),
+    Issue(IssueKey),
 }
 
 pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
@@ -122,7 +122,7 @@ pub enum StartEnd {
 
 #[derive(Debug)]
 pub struct StartOutcome {
-    pub progress: Option<(IssueId, ClientName)>,
+    pub progress: Option<(IssueKey, ClientName)>,
     pub result: SessionResult,
 }
 

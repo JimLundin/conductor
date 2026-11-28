@@ -56,16 +56,10 @@ const RENAMED: [&str; 7] = [
 ];
 
 fn waiting_id() -> IssueId {
-    IssueId {
-        authority: String::from("local"),
-        key: String::from("00000001"),
-    }
+    IssueId(String::from("00000001"))
 }
 fn blocker_id() -> IssueId {
-    IssueId {
-        authority: String::from("local"),
-        key: String::from("00000002"),
-    }
+    IssueId(String::from("00000002"))
 }
 
 fn issue(id: IssueId, status: &str) -> Issue {

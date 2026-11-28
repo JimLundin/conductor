@@ -21,7 +21,7 @@ use home::skills;
 use home::sync::{self, Git, Sync};
 use home::{
     Checkout, Cloning, Home, HomeCommand, HomeRefusal, HomeResult, HomeSync,
-    IssueId, ProjectId, UnixSecs,
+    IssueId, IssueKey, ProjectId, UnixSecs,
 };
 use home::{Found, Stored};
 use home_store::CanvasStore;
@@ -112,12 +112,12 @@ enum Msg {
         reply: oneshot::Sender<Result<(), SessionRefusal>>,
     },
     Started {
-        issue: IssueId,
+        issue: IssueKey,
         client: ClientName,
         reply: oneshot::Sender<()>,
     },
     Finished {
-        issue: IssueId,
+        issue: IssueKey,
         summary: Option<String>,
         client: ClientName,
         landed: u64,
@@ -242,7 +242,7 @@ impl HomeClone {
 
     pub async fn started(
         &self,
-        issue: IssueId,
+        issue: IssueKey,
         client: ClientName,
     ) -> Result<(), Stopped> {
         self.ask(|reply| Msg::Started {
@@ -255,7 +255,7 @@ impl HomeClone {
 
     pub async fn finished(
         &self,
-        issue: IssueId,
+        issue: IssueKey,
         summary: Option<String>,
         client: ClientName,
         landed: u64,
@@ -302,7 +302,7 @@ struct Actor {
     user: Option<PathBuf>,
     skills_commit: Option<String>,
     canvases: Box<dyn CanvasStore + Send + core::marker::Sync>,
-    listed: BTreeMap<IssueId, Vec<CanvasEntry>>,
+    listed: BTreeMap<IssueKey, Vec<CanvasEntry>>,
 }
 
 impl Actor {
@@ -412,7 +412,7 @@ impl Actor {
 
     async fn session_update(
         &mut self,
-        issue: IssueId,
+        issue: IssueKey,
         client: &ClientName,
         mut update: SessionUpdate,
         note_id: Option<EditId>,
@@ -434,7 +434,7 @@ impl Actor {
     async fn next_session_change(
         &mut self,
         update: &mut SessionUpdate,
-        issue: &IssueId,
+        issue: &IssueKey,
     ) -> Option<IssueChange> {
         if *update == SessionUpdate::Done {
             return None;
@@ -475,7 +475,7 @@ impl Actor {
         }
     }
 
-    fn canvas(&self, issue: IssueId, name: CanvasName) -> HomeResult {
+    fn canvas(&self, issue: IssueKey, name: CanvasName) -> HomeResult {
         link::serve::canvas_key(self.shown.borrow().as_ref(), issue, name)
             .map_or_else(HomeResult::Refused, |key| {
                 link::serve::kept_canvas(self.canvases.get(&key))
@@ -619,7 +619,7 @@ impl Actor {
         new: NewIssue,
         client: &ClientName,
         edit: EditId,
-    ) -> Result<(IssueId, Vec<String>), IssueError> {
+    ) -> Result<(IssueKey, Vec<String>), IssueError> {
         self.load_current_edits().await?;
         if let Some(kept) = self.kept_issue(edit) {
             return kept.map(|issue| (issue, Vec::new()));
@@ -634,12 +634,19 @@ impl Actor {
         let request =
             self.issue_context(edit)
                 .open(issue.clone(), new, &client.0)?;
-        let issue_dir = home::layout::issues(&request.project());
+        let project = request.project();
+        let issue_dir = home::layout::issues(&project);
         if let Some(opened) = self.created(&issue_dir, edit).await? {
-            return Ok((opened, Vec::new()));
+            return Ok((
+                IssueKey {
+                    project,
+                    id: opened,
+                },
+                Vec::new(),
+            ));
         }
         let warnings = self.record(request).await?;
-        Ok((issue, warnings))
+        Ok((IssueKey { project, id: issue }, warnings))
     }
 
     async fn created(
@@ -675,7 +682,7 @@ impl Actor {
 
     async fn change(
         &mut self,
-        issue: IssueId,
+        issue: IssueKey,
         change: IssueChange,
         client: &ClientName,
         edit: EditId,
@@ -691,7 +698,7 @@ impl Actor {
         self.record(request).await
     }
 
-    fn kept_issue(&self, id: EditId) -> Option<Result<IssueId, IssueError>> {
+    fn kept_issue(&self, id: EditId) -> Option<Result<IssueKey, IssueError>> {
         let issue = self.edits.issue_for(id)?;
         Some(
             self.sync_edits()
@@ -958,12 +965,15 @@ impl Actor {
 fn listed(
     home: &Snapshot,
     store: &dyn CanvasStore,
-) -> BTreeMap<IssueId, Vec<CanvasEntry>> {
+) -> BTreeMap<IssueKey, Vec<CanvasEntry>> {
     home.graph().issues.iter()
         .filter_map(|record| {
-            let issue = &record.id;
+            let issue = IssueKey {
+                project: record.project,
+                id: record.id.clone(),
+            };
             store
-                .list(&record.project, issue)
+                .list(&issue.project, &issue.id)
                 .inspect_err(|error| {
                     tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
                 })
@@ -982,7 +992,7 @@ fn listed(
                             .ok()
                         })
                         .collect();
-                    (issue.clone(), canvases)
+                    (issue, canvases)
                 })
         })
         .collect()
@@ -1160,7 +1170,7 @@ async fn ready_branch(start: &home::issue::Start) -> Result<(), String> {
 
 pub async fn ready_issue_branch(
     checkout: &Path,
-    issue: &IssueId,
+    issue: &IssueKey,
     branch: &str,
 ) -> Result<(), String> {
     run(checkout, &["check-ref-format", branch]).await?;
@@ -1178,7 +1188,7 @@ pub async fn ready_issue_branch(
             home::issue::Remote::At(_)
                 | home::issue::Remote::PresentUnfetched(_)
         );
-    ownership.reserve(issue, branch, exists)?;
+    ownership.reserve(&issue.id, branch, exists)?;
     move_issue_branch(checkout, branch, facts).await
 }
 
@@ -1402,7 +1412,7 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-const EDITS_VERSION: &[u8] = b"\x80\x00\x07";
+const EDITS_VERSION: &[u8] = b"\x80\x00\x08";
 
 fn load_edits(path: &Path) -> Result<Vec<Edit>, String> {
     let bytes = match std::fs::read(path) {
@@ -1529,7 +1539,9 @@ mod tests {
         CanvasName,
     };
     use home::issue::Remote;
-    use home::{HomeRefusal, HomeResult, IssueId, ProjectId, UnixMillis};
+    use home::{
+        HomeRefusal, HomeResult, IssueId, IssueKey, ProjectId, UnixMillis,
+    };
     use home_store::{CanvasStore, Memory};
     use std::path::{Path, PathBuf};
     use tokio::sync::watch;
@@ -1621,7 +1633,7 @@ mod tests {
         an_issue(&issues, DESIGNED)?;
         an_issue(&issues, BARE)?;
         let project = ProjectId::parse(PROJECT).ok_or("project id")?;
-        let designed = IssueId::from_reference(DESIGNED).ok_or("issue id")?;
+        let designed = IssueId::new(DESIGNED).ok_or("issue id")?;
         let named = |name: &str| CanvasName::parse(name);
         let mut store = Memory::default();
         for (name, at, by) in [
@@ -1664,7 +1676,7 @@ mod tests {
             .iter()
             .flat_map(|project| project.issues.iter())
             .filter_map(home::issue::Observation::issue)
-            .map(|issue| (issue.id.reference(), issue.canvases.clone()))
+            .map(|issue| (issue.id.to_string(), issue.canvases.clone()))
             .collect::<Vec<_>>();
         assert_eq!(
             canvases,
@@ -1687,17 +1699,18 @@ mod tests {
                 (BARE.to_owned(), Vec::new()),
             ]
         );
+        let at = |id: IssueId| IssueKey { project, id };
         assert_eq!(
-            actor.canvas(designed.clone(), named("a-plan")?),
+            actor.canvas(at(designed.clone()), named("a-plan")?),
             HomeResult::Canvas(written(20, "laptop·codex")?)
         );
         assert_eq!(
-            actor.canvas(designed, named("missing")?),
+            actor.canvas(at(designed), named("missing")?),
             HomeResult::Refused(HomeRefusal::UnknownCanvas)
         );
         assert_eq!(
             actor.canvas(
-                IssueId::from_reference("00000003").ok_or("issue id")?,
+                at(IssueId::new("00000003").ok_or("issue id")?),
                 named("design")?
             ),
             HomeResult::Refused(HomeRefusal::UnknownIssue)

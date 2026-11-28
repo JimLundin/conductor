@@ -18,8 +18,13 @@ use crate::assignment::Assignment;
 use crate::session::Order;
 
 const SESSION: SessionId = SessionId(1);
-fn issue_id() -> Result<IssueId, &'static str> {
-    IssueId::new("local", "00000009").ok_or("invalid fixture identity")
+fn issue_id() -> Result<home::IssueKey, &'static str> {
+    IssueId::new("00000009")
+        .map(|id| home::IssueKey {
+            project: home::ProjectId::new(1),
+            id,
+        })
+        .ok_or("invalid fixture identity")
 }
 
 fn text(value: &str) -> String {
