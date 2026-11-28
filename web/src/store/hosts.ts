@@ -2,17 +2,17 @@ import type { Command, CommandResult, Ticket } from "@conductor/core/schemas/ind
 import { Effect, FiberMap, Semaphore, Stream } from "effect";
 import { HostAction, HostOperation, replacementFragment } from "@conductor/core/pairing";
 import type { HostKey, Saved } from "@conductor/core/saved";
+import type { PairedHost, Requested } from "@conductor/core/store";
 import {
   adoptHost,
   applyPairedUpdate,
   rememberAction,
-  requestedHost,
+  requestHost,
   settledHost,
   shown,
 } from "@conductor/core/store";
-import { restore, save, unsave } from "#ui/saved.ts";
+import { persist, restore } from "#ui/saved.ts";
 import type { HostLink } from "#ui/link/host.ts";
-import type { PairedHost } from "@conductor/core/store";
 import { SendError } from "@conductor/core/link";
 import type { StoreContext } from "#ui/store/types.ts";
 import type { Update } from "@conductor/core/link";
@@ -20,8 +20,8 @@ import { link } from "#ui/link.ts";
 
 const oneOperation = 1;
 
-const current = (context: StoreContext, key: HostKey, action: HostAction): boolean =>
-  context.registry.get(context.state).hosts.get(key)?.operation.action === action;
+const current = (context: StoreContext, host: PairedHost): boolean =>
+  context.registry.get(context.state).hosts.get(host.key)?.operation.id === host.operation.id;
 
 const remove = (context: StoreContext, key: HostKey): void => {
   context.registry.update(
@@ -44,12 +44,37 @@ const lock = (context: StoreContext, key: HostKey): Semaphore.Semaphore => {
   return created;
 };
 
-const settle = (context: StoreContext, key: HostKey, operation: HostOperation): void => {
-  if (!current(context, key, operation.action)) {
-    return;
+const prune = (context: StoreContext, key: HostKey, used: Semaphore.Semaphore): void => {
+  const operation = context.registry.get(context.state).hosts.get(key)?.operation;
+  const waiting = operation !== undefined && HostOperation.$is("Pending")(operation);
+  if (!waiting && context.registry.get(context.locks).get(key) === used) {
+    context.registry.update(
+      context.locks,
+      (locks) => new Map([...locks].filter(([other]) => other !== key)),
+    );
   }
+};
+
+const serialized = (
+  context: StoreContext,
+  host: PairedHost,
+  effect: Effect.Effect<void>,
+): Effect.Effect<void> => {
+  const used = lock(context, host.key);
+  const pruned = Effect.sync(() => {
+    prune(context, host.key, used);
+  });
+  return used
+    .withPermit(Effect.suspend(() => (current(context, host) ? effect : Effect.void)))
+    .pipe(Effect.ensuring(pruned));
+};
+
+const settle = (context: StoreContext, key: HostKey, operation: HostOperation): void => {
   context.registry.update(context.state, (view) => {
     const settled = settledHost(view, key, operation);
+    if (settled === view) {
+      return view;
+    }
     return {
       ...settled,
       route: HostOperation.$is("Failed")(operation)
@@ -59,38 +84,61 @@ const settle = (context: StoreContext, key: HostKey, operation: HostOperation): 
   });
 };
 
-const remember = (context: StoreContext, host: PairedHost, action: HostAction): void => {
-  const next = requestedHost(host, action);
-  context.registry.update(context.state, (view) => ({
-    ...view,
-    hosts: new Map(view.hosts).set(host.key, next),
-  }));
-  const persisted = save(context.boundary.storage, { name: host.saved, ticket: host.ticket }).pipe(
-    Effect.match({
-      onFailure: () => {
-        settle(context, host.key, HostOperation.Failed({ action }));
-      },
-      onSuccess: () => {
-        settle(context, host.key, HostOperation.Complete({ action }));
-      },
+const finished = (context: StoreContext, host: PairedHost): void => {
+  if (!current(context, host)) {
+    return;
+  }
+  const fragment = replacementFragment(host.operation.action, context.boundary.fragment());
+  if (fragment !== undefined) {
+    context.boundary.replace(fragment);
+  }
+  const { action, id } = host.operation;
+  settle(context, host.key, HostOperation.Complete({ action, id }));
+};
+
+const completed = (context: StoreContext, requested: Requested): Effect.Effect<void> =>
+  Effect.gen(function* completing() {
+    if (requested.steps.start && current(context, requested.host)) {
+      yield* context.connect(requested.host);
+    }
+    finished(context, requested.host);
+  });
+
+const perform = (context: StoreContext, requested: Requested): Effect.Effect<void> =>
+  persist(
+    context.boundary.storage,
+    { name: requested.host.saved, ticket: requested.host.ticket },
+    requested.steps.storage,
+  ).pipe(
+    Effect.matchEffect({
+      onFailure: () =>
+        Effect.sync(() => {
+          const { action, id } = requested.host.operation;
+          settle(context, requested.host.key, HostOperation.Failed({ action, id }));
+        }),
+      onSuccess: () => completed(context, requested),
     }),
   );
-  context.execute(
-    lock(context, host.key).withPermit(
-      Effect.suspend(() => (current(context, host.key, action) ? persisted : Effect.void)),
-    ),
-  );
+
+const request = (context: StoreContext, requested: Requested): void => {
+  context.registry.set(context.state, requested.view);
+  const { host, steps } = requested;
+  if (steps.stop) {
+    remove(context, host.key);
+  }
+  const stopped = steps.stop ? FiberMap.remove(context.fibers, host.key) : Effect.void;
+  const performed = serialized(context, host, perform(context, requested));
+  context.execute(stopped.pipe(Effect.andThen(performed)));
 };
 
 const updated = (context: StoreContext, key: HostKey, update: Update): void => {
   const planned = applyPairedUpdate(context.registry.get(context.state), key, update);
   const host = planned.view.hosts.get(key);
-  if (planned.saved !== undefined && host !== undefined) {
-    const action = rememberAction(host);
-    if (action !== undefined) {
-      remember(context, host, action);
-      return;
-    }
+  const action =
+    planned.saved !== undefined && host !== undefined ? rememberAction(host) : undefined;
+  if (action !== undefined && host !== undefined) {
+    request(context, requestHost(planned.view, host, action));
+    return;
   }
   context.registry.set(context.state, planned.view);
 };
@@ -117,81 +165,19 @@ const follow = (context: StoreContext, key: HostKey, ticket: Ticket): Effect.Eff
     }),
   );
 
-const start = (context: StoreContext, host: PairedHost): Effect.Effect<void> =>
+const connect = (context: StoreContext, host: PairedHost): Effect.Effect<void> =>
   FiberMap.run(context.fibers, host.key, follow(context, host.key, host.ticket)).pipe(
     Effect.asVoid,
   );
 
-const completed = (
-  context: StoreContext,
-  host: PairedHost,
-  action: HostAction,
-): Effect.Effect<void> =>
-  Effect.gen(function* completing() {
-    if (!current(context, host.key, action)) {
-      return;
-    }
-    if (HostAction.$is("Pair")(action) || HostAction.$is("Restore")(action)) {
-      yield* start(context, host);
-    }
-    if (!current(context, host.key, action)) {
-      return;
-    }
-    const fragment = replacementFragment(action, context.boundary.fragment());
-    if (fragment !== undefined) {
-      context.boundary.replace(fragment);
-    }
-    settle(context, host.key, HostOperation.Complete({ action }));
-  });
-
-const perform = (
-  context: StoreContext,
-  host: PairedHost,
-  action: HostAction,
-): Effect.Effect<void> => {
-  const persist = HostAction.$match(action, {
-    Forget: () => unsave(context.boundary.storage, host.key),
-    Pair: () => save(context.boundary.storage, { name: host.saved, ticket: host.ticket }),
-    Remember: () => save(context.boundary.storage, { name: host.saved, ticket: host.ticket }),
-    Restore: () => Effect.void,
-  });
-  return persist.pipe(
-    Effect.matchEffect({
-      onFailure: () =>
-        Effect.sync(() => {
-          settle(context, host.key, HostOperation.Failed({ action }));
-        }),
-      onSuccess: () => completed(context, host, action),
-    }),
-  );
-};
-
-const request = (context: StoreContext, host: PairedHost, action: HostAction): void => {
-  const next = requestedHost(host, action);
-  context.registry.update(context.state, (view) => ({
-    ...view,
-    hosts: new Map(view.hosts).set(host.key, next),
-  }));
-  if (!current(context, host.key, action)) {
-    return;
-  }
-  const retained = HostAction.$is("Remember")(action);
-  if (!retained) {
-    remove(context, host.key);
-  }
-  const stopped = retained ? Effect.void : FiberMap.remove(context.fibers, host.key);
-  const serialized = lock(context, host.key).withPermit(
-    Effect.suspend(() =>
-      current(context, host.key, action) ? perform(context, next, action) : Effect.void,
-    ),
-  );
-  context.execute(stopped.pipe(Effect.andThen(serialized)));
+const requestFor = (context: StoreContext, host: PairedHost, action: HostAction): void => {
+  request(context, requestHost(context.registry.get(context.state), host, action));
 };
 
 const adopt = (context: StoreContext, saved: Saved, action: HostAction): void => {
-  const planned = adoptHost(context.registry.get(context.state), saved.ticket, saved.name);
-  if (planned.host !== undefined) {
-    request(context, planned.host, action);
+  const requested = adoptHost(context.registry.get(context.state), saved, action);
+  if (requested !== undefined) {
+    request(context, requested);
     return;
   }
   const fragment = replacementFragment(action, context.boundary.fragment());
@@ -207,14 +193,14 @@ const adopt = (context: StoreContext, saved: Saved, action: HostAction): void =>
 const forget = (context: StoreContext, key: HostKey): void => {
   const host = context.registry.get(context.state).hosts.get(key);
   if (host !== undefined) {
-    request(context, host, HostAction.Forget());
+    requestFor(context, host, HostAction.Forget());
   }
 };
 
 const retry = (context: StoreContext, key: HostKey): void => {
   const host = context.registry.get(context.state).hosts.get(key);
   if (host !== undefined && HostOperation.$is("Failed")(host.operation)) {
-    request(context, host, { ...host.operation.action });
+    requestFor(context, host, host.operation.action);
   }
 };
 
@@ -229,14 +215,7 @@ const load = (context: StoreContext): Effect.Effect<void> =>
       },
       onSuccess: (saved) => {
         for (const record of saved) {
-          const { key } = adoptHost(
-            context.registry.get(context.state),
-            record.ticket,
-            record.name,
-          );
-          if (!context.registry.get(context.locks).has(key)) {
-            adopt(context, record, HostAction.Restore());
-          }
+          adopt(context, record, HostAction.Restore());
         }
         context.registry.update(context.state, (view) => ({
           ...view,
@@ -262,4 +241,4 @@ const reconnect = (context: StoreContext): void => {
   context.execute(Effect.forEach(linked.values(), (value) => value.reconnect, { discard: true }));
 };
 
-export { adopt, forget, load, reconnect, retry, send };
+export { adopt, connect, forget, load, reconnect, retry, send };

@@ -2,6 +2,7 @@ import type { HostKey, Saved } from "@conductor/core/saved";
 import { hostKey, restored, savedText, storageKey } from "@conductor/core/saved";
 import { Effect } from "effect";
 import type { KeyValueStore } from "effect/persistence";
+import type { Steps } from "@conductor/core/pairing";
 
 const restore: (
   storage: KeyValueStore.KeyValueStore,
@@ -27,4 +28,15 @@ const unsave: (
 ) => Effect.Effect<void, KeyValueStore.KeyValueStoreError> = (storage, host) =>
   storage.remove(storageKey(host));
 
-export { restore, save, unsave };
+const persist: (
+  storage: KeyValueStore.KeyValueStore,
+  saved: Saved,
+  step: Steps["storage"],
+) => Effect.Effect<void, KeyValueStore.KeyValueStoreError> = (storage, saved, step) =>
+  ({
+    Keep: Effect.void,
+    Remove: unsave(storage, hostKey(saved.ticket)),
+    Save: save(storage, saved),
+  })[step];
+
+export { persist, restore };

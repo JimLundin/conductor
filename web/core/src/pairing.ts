@@ -11,13 +11,31 @@ type HostAction = Data.TaggedEnum<{
 
 const HostAction = Data.taggedEnum<HostAction>();
 
+interface Attempt {
+  readonly id: number;
+  readonly action: HostAction;
+}
+
 type HostOperation = Data.TaggedEnum<{
-  readonly Pending: { readonly action: HostAction };
-  readonly Failed: { readonly action: HostAction };
-  readonly Complete: { readonly action: HostAction };
+  readonly Pending: Attempt;
+  readonly Failed: Attempt;
+  readonly Complete: Attempt;
 }>;
 
 const HostOperation = Data.taggedEnum<HostOperation>();
+
+interface Steps {
+  readonly stop: boolean;
+  readonly start: boolean;
+  readonly storage: "Save" | "Remove" | "Keep";
+}
+
+const stepsOf = HostAction.$match({
+  Forget: (): Steps => ({ start: false, stop: true, storage: "Remove" }),
+  Pair: (): Steps => ({ start: true, stop: true, storage: "Save" }),
+  Remember: (): Steps => ({ start: false, stop: false, storage: "Save" }),
+  Restore: (): Steps => ({ start: true, stop: true, storage: "Keep" }),
+});
 
 const pendingText = HostAction.$match({
   Forget: () => "Forgetting host…",
@@ -31,7 +49,7 @@ const failureText = HostAction.$match({
     "Connection closed. The saved pairing could not be removed. Retry to forget this host.",
   Pair: () => "The pairing could not be saved. Retry to connect to this host.",
   Remember: () => "The host name could not be saved. The connection is still available.",
-  Restore: () => "The host could not be restored.",
+  Restore: (): undefined => undefined,
 });
 
 const operationText = HostOperation.$match({
@@ -45,4 +63,5 @@ const replacementFragment = (action: HostAction, fragment: string): string | und
     ? fragmentOf(Route.Sessions())
     : undefined;
 
-export { HostAction, HostOperation, operationText, replacementFragment };
+export { HostAction, HostOperation, operationText, replacementFragment, stepsOf };
+export type { Attempt, Steps };

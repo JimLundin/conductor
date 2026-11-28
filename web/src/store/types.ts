@@ -1,12 +1,12 @@
 import type { Atom, AtomRegistry } from "effect/reactivity";
 import type { Command, CommandResult } from "@conductor/core/schemas/index";
 import type { Effect, FiberMap, Semaphore } from "effect";
+import type { PairedHost, View } from "@conductor/core/store";
 import type { Boundary } from "#ui/store/boundary.ts";
 import type { HostKey } from "@conductor/core/saved";
 import type { HostLink } from "#ui/link/host.ts";
 import type { Route } from "@conductor/core/route";
 import type { SendError } from "@conductor/core/link";
-import type { View } from "@conductor/core/store";
 
 interface Store {
   readonly follow: () => void;
@@ -25,6 +25,7 @@ interface Store {
 
 interface StoreContext {
   readonly boundary: Boundary;
+  readonly connect: (host: PairedHost) => Effect.Effect<void>;
   readonly execute: (effect: Effect.Effect<void>) => void;
   readonly locks: Atom.Writable<ReadonlyMap<HostKey, Semaphore.Semaphore>>;
   readonly fibers: FiberMap.FiberMap<HostKey>;

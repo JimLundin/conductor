@@ -69,6 +69,44 @@ _Avoid_: protocol, proto, wire
 The contract between hosts in one fleet, and the signed data they exchange.
 _Avoid_: protocol, proto
 
+## Paired hosts in the app
+
+**Paired host**:
+A host the app has a ticket for, saved in the browser so the app connects
+to it again when it opens.
+
+**Pair**:
+Saving a host's ticket and connecting to it, from a join link or a pasted
+ticket. Pairing a host again with a new ticket replaces its saved one.
+
+**Forget**:
+Closing a paired host's connection and removing its saved ticket. A host
+forgotten in a session stays forgotten until it's paired again, even when a
+later restoration reads its old record.
+
+**Restore**:
+Connecting to a host saved by an earlier session, without writing its
+record again.
+
+**Remember**:
+Saving the name a host gives in its welcome, keeping its connection open.
+
+**Host operation**:
+One request to Pair, Forget, Restore or Remember a host, with an id of its
+own: a retry of the same action is a new operation. A host has one current
+operation; a later request supersedes it, and a superseded operation
+changes nothing when it finishes.
+
+**Pending operation**:
+A host operation still writing storage or connecting.
+
+**Failed operation**:
+A host operation whose storage write failed. The app shows why, and the
+owner can retry it.
+
+**Complete operation**:
+A host operation that finished. A complete Forget removes the host.
+
 ## Project operations and backends
 
 These terms describe the direction chosen in spec `0v265ymj`. The

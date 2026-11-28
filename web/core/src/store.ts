@@ -1,4 +1,4 @@
-import { HostAction, HostOperation } from "#core/pairing";
+import { HostAction, HostOperation, stepsOf } from "#core/pairing";
 import type { HostKey, Saved } from "#core/saved";
 import { Route, route } from "#core/route";
 import type { SessionId, Ticket } from "#core/schemas/index";
@@ -6,6 +6,7 @@ import { applyUpdate, emptyHost, recent } from "#core/fold/host";
 import type { Host } from "#core/fold/host";
 import type { Session } from "#core/fold/session";
 import type { Status } from "#core/link";
+import type { Steps } from "#core/pairing";
 import type { TicketError } from "#core/ticket";
 import { Update } from "#core/link";
 import { hostKey } from "#core/saved";
@@ -24,11 +25,14 @@ interface View {
   readonly route: Route;
   readonly notice: TicketError | undefined;
   readonly restoration: "Ready" | "Failed";
+  readonly forgotten: Readonly<ReadonlySet<HostKey>>;
+  readonly operations: number;
 }
 
-interface Adopted {
-  readonly key: HostKey;
-  readonly host: PairedHost | undefined;
+interface Requested {
+  readonly view: View;
+  readonly host: PairedHost;
+  readonly steps: Steps;
 }
 
 interface Updated {
@@ -39,10 +43,13 @@ interface Updated {
 const hostLength = 8;
 const firstCharacter = 0;
 const noHosts = 0;
+const oneOperation = 1;
 
 const initialView = (): View => ({
+  forgotten: new Set(),
   hosts: new Map(),
   notice: undefined,
+  operations: 0,
   restoration: "Ready",
   route: Route.Pairing(),
 });
@@ -89,27 +96,63 @@ const shown = (fragment: string, hosts: View["hosts"]): Route => {
 const sameTicket = (first: Ticket, second: Ticket): boolean =>
   JSON.stringify(first) === JSON.stringify(second);
 
-const adoptHost = (view: View, ticket: Ticket, name: string | undefined): Adopted => {
+const requestHost = (
+  view: View,
+  host: Omit<PairedHost, "operation">,
+  action: HostAction,
+): Requested => {
+  const steps = stepsOf(action);
+  const requested: PairedHost = {
+    ...host,
+    fold: HostAction.$is("Forget")(action) ? emptyHost() : host.fold,
+    operation: HostOperation.Pending({ action, id: view.operations }),
+    status: steps.stop ? { error: undefined, state: "Disconnected" } : host.status,
+  };
+  const forgotten = new Set(view.forgotten);
+  forgotten.delete(host.key);
+  return {
+    host: requested,
+    steps,
+    view: {
+      ...view,
+      forgotten,
+      hosts: new Map(view.hosts).set(host.key, requested),
+      operations: view.operations + oneOperation,
+    },
+  };
+};
+
+const adopted = (view: View, ticket: Ticket, action: HostAction): boolean => {
   const key = hostKey(ticket);
   const known = view.hosts.get(key);
-  if (
-    known !== undefined &&
-    HostOperation.$is("Complete")(known.operation) &&
-    sameTicket(known.ticket, ticket)
-  ) {
-    return { host: undefined, key };
+  if (HostAction.$is("Restore")(action)) {
+    return known === undefined && !view.forgotten.has(key);
   }
-  return {
-    host: {
+  return (
+    known === undefined ||
+    !HostOperation.$is("Complete")(known.operation) ||
+    !sameTicket(known.ticket, ticket)
+  );
+};
+
+const adoptHost = (view: View, saved: Saved, action: HostAction): Requested | undefined => {
+  if (!adopted(view, saved.ticket, action)) {
+    return undefined;
+  }
+  const { name, ticket } = saved;
+  const key = hostKey(ticket);
+  const known = view.hosts.get(key);
+  return requestHost(
+    view,
+    {
       fold: known?.fold ?? emptyHost(),
       key,
-      operation: HostOperation.Complete({ action: HostAction.Restore() }),
       saved: known?.saved ?? name,
       status: { error: undefined, state: "Disconnected" },
       ticket,
     },
-    key,
-  };
+    action,
+  );
 };
 
 const applyPairedUpdate = (view: View, key: HostKey, update: Update): Updated => {
@@ -124,26 +167,17 @@ const applyPairedUpdate = (view: View, key: HostKey, update: Update): Updated =>
   };
 };
 
-const requestedHost = (host: PairedHost, action: HostAction): PairedHost => ({
-  ...host,
-  fold: HostAction.$is("Forget")(action) ? emptyHost() : host.fold,
-  operation: HostOperation.Pending({ action }),
-  status: HostAction.$is("Remember")(action)
-    ? host.status
-    : { error: undefined, state: "Disconnected" },
-});
-
 const settledHost = (view: View, key: HostKey, operation: HostOperation): View => {
   const host = view.hosts.get(key);
-  if (host?.operation.action !== operation.action) {
+  if (host?.operation.id !== operation.id) {
     return view;
   }
   const hosts = new Map(view.hosts);
   if (HostOperation.$is("Complete")(operation) && HostAction.$is("Forget")(operation.action)) {
     hosts.delete(key);
-  } else {
-    hosts.set(key, { ...host, operation });
+    return { ...view, forgotten: new Set(view.forgotten).add(key), hosts };
   }
+  hosts.set(key, { ...host, operation });
   return { ...view, hosts };
 };
 
@@ -154,7 +188,7 @@ const rememberAction = (host: PairedHost): HostAction | undefined =>
 
 export {
   rememberAction,
-  requestedHost,
+  requestHost,
   settledHost,
   adoptHost,
   applyPairedUpdate,
@@ -165,4 +199,4 @@ export {
   sessionsOf,
   shown,
 };
-export type { PairedHost, View };
+export type { PairedHost, Requested, View };

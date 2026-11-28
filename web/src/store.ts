@@ -2,10 +2,10 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import type { Boundary, Store, StoreContext } from "#ui/store/types.ts";
 import { Effect, FiberMap, FiberSet } from "effect";
 import type { Scope, Semaphore } from "effect";
+import { connect, load } from "#ui/store/hosts.ts";
 import type { HostKey } from "@conductor/core/saved";
 import type { HostLink } from "#ui/link/host.ts";
 import { initialView } from "@conductor/core/store";
-import { load } from "#ui/store/hosts.ts";
 import { methods } from "#ui/store/methods.ts";
 
 const openStore: (
@@ -17,6 +17,7 @@ const openStore: (
     const run = yield* FiberSet.makeRuntime();
     const context: StoreContext = {
       boundary,
+      connect: (host) => connect(context, host),
       execute: (effect): void => {
         run(effect);
       },
