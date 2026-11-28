@@ -271,3 +271,47 @@ fn issue_list_lists_a_markdown_project_and_a_tracker_project_in_one_shape()
     assert_eq!((home.2, tracker.2), (0, 0));
     Ok(())
 }
+
+#[test]
+fn a_canvas_put_on_a_tracked_project_needs_no_repository()
+-> Result<(), Box<dyn Error>> {
+    let scratch = scratch("tracked-put")?;
+    let root = &scratch.0;
+    let canvas = root.join("design.json");
+    fs::write(
+        &canvas,
+        "{\"title\":\"Kept by its tracker\",\"blocks\":[{\"prose\":{\"text\":\"The tracker keeps it.\"}}]}",
+    )?;
+    let file = canvas.to_string_lossy().into_owned();
+    let args: Vec<String> = [
+        "canvas",
+        "put",
+        "standards",
+        "146",
+        "design",
+        "--file",
+        &file,
+    ]
+    .map(String::from)
+    .into();
+    let loaded = home_files::read(root);
+    let context = crate::context();
+    let fresh = home::issue::storage::fresh(
+        &loaded.snapshot,
+        context.now.secs(),
+        &[7; home::DRAWS],
+    );
+    let home::flow::command::Asked::Flow(command) =
+        home::flow::command::asked(&args, &loaded.snapshot, fresh)
+    else {
+        return Err("canvas put isn't a flow command".into());
+    };
+    let mut trackers =
+        Trackers::new(root, loaded, Some(root.join("data")), scripted)?;
+    let said = crate::issues(root, &mut trackers, command, &context);
+    assert_eq!(
+        said,
+        (String::from("wrote canvas design of standards/146\n"), 0)
+    );
+    Ok(())
+}

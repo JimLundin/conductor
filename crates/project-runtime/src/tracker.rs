@@ -303,6 +303,14 @@ impl CanvasStore for Trackers {
             Err(refused) => Box::pin(async move { Err(refused) }),
         }
     }
+
+    fn touches(&self, key: &CanvasKey) -> Vec<String> {
+        if self.markdown(key.project) {
+            self.markdown.touches(key)
+        } else {
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(test)]

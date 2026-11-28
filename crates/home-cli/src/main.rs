@@ -14,7 +14,6 @@ use home::flow::command::{
 };
 use home::issue::storage::{File, ReadHome};
 use home::{Draws, UnixMillis};
-use home_files::FolderStore;
 use home_store::{CanvasStore, StoreError};
 
 mod local;
@@ -106,11 +105,7 @@ fn kept(
     let places: Vec<String> = files
         .iter()
         .map(File::path)
-        .chain(
-            outcome
-                .home_canvases(&loaded.snapshot)
-                .map(FolderStore::place),
-        )
+        .chain(trackers.touches(&outcome.canvases))
         .collect();
     let record = outcome
         .commit_message(&places)
@@ -158,10 +153,19 @@ fn restored(home: &Path, before: &[Prior], failed: String) -> String {
 struct Prior {
     place: String,
     bytes: Option<Vec<u8>>,
+    made: Option<PathBuf>,
 }
 
 fn prior(root: &Path, place: &str) -> Result<Prior, String> {
     let path = root.join(place);
+    let made = Path::new(place)
+        .ancestors()
+        .skip(1)
+        .take_while(|folder| {
+            !folder.as_os_str().is_empty() && !root.join(folder).exists()
+        })
+        .last()
+        .map(|folder| root.join(folder));
     match fs::read(&path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -170,6 +174,7 @@ fn prior(root: &Path, place: &str) -> Result<Prior, String> {
     .map(|bytes| Prior {
         place: place.to_owned(),
         bytes,
+        made,
     })
 }
 
@@ -179,13 +184,21 @@ fn restore(root: &Path, prior: &Prior) -> Result<(), String> {
         .bytes
         .as_ref()
         .map_or_else(
-            || match fs::remove_file(&path) {
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                removed => removed,
-            },
+            || gone(fs::remove_file(&path)),
             |bytes| fs::write(&path, bytes),
         )
-        .map_err(|error| format!("{}: {error}", path.display()))
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    prior.made.as_ref().map_or(Ok(()), |folder| {
+        gone(fs::remove_dir_all(folder))
+            .map_err(|error| format!("{}: {error}", folder.display()))
+    })
+}
+
+fn gone(removing: io::Result<()>) -> io::Result<()> {
+    match removing {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        removed => removed,
+    }
 }
 
 fn fetched(

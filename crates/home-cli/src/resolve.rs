@@ -63,6 +63,13 @@ impl Trackers {
         })?
     }
 
+    pub fn touches(&self, canvases: &[CanvasWrite]) -> Vec<String> {
+        canvases
+            .iter()
+            .flat_map(|canvas| self.trackers.touches(&canvas.key))
+            .collect()
+    }
+
     pub fn resolved(&self, keys: BTreeSet<IssueKey>, mode: Mode) -> Resolved {
         if keys.is_empty() {
             return Resolved::new();

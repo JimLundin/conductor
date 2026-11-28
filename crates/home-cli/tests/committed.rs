@@ -131,7 +131,6 @@ fn a_canvas_whose_commit_fails_leaves_the_home_as_it_was() -> std::io::Result<()
             .join(FOLDER)
             .join("issues")
             .join(&id)
-            .join("why.json")
             .exists(),
         "{said}"
     );

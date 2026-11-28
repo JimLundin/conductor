@@ -32,8 +32,7 @@ impl FolderStore {
         format!("{}/{}", layout::issues(&project), segment(issue))
     }
 
-    #[must_use]
-    pub fn place(key: &CanvasKey) -> String {
+    fn place(key: &CanvasKey) -> String {
         format!(
             "{}/{}{SUFFIX}",
             Self::issue(key.project, &key.issue),
@@ -239,6 +238,10 @@ impl CanvasStore for FolderStore {
             .map_err(|error| unavailable(&path, &error))
         })
     }
+
+    fn touches(&self, key: &CanvasKey) -> Vec<String> {
+        Vec::from([Self::place(key)])
+    }
 }
 
 fn unavailable(path: &Path, error: &io::Error) -> StoreError {
@@ -367,6 +370,21 @@ mod tests {
                 .join("projects/a1b2c3/issues/0v29xv1q/design-tree.json"),
         )?;
         assert_eq!(CanvasFile::parse(&kept), Ok(file));
+        Ok(())
+    }
+
+    #[test]
+    fn a_canvas_put_touches_the_home_file_it_will_write_before_writing_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let scratch = Scratch::new("canvas-touches");
+        let store = FolderStore::new(scratch.0.clone());
+        assert_eq!(
+            store.touches(&key("design-tree")?),
+            Vec::from([String::from(
+                "projects/a1b2c3/issues/0v29xv1q/design-tree.json"
+            )])
+        );
+        assert!(!scratch.0.exists());
         Ok(())
     }
 

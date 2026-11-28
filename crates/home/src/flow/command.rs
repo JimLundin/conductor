@@ -304,21 +304,6 @@ impl Outcome {
         (text, code)
     }
 
-    pub fn home_canvases<'a>(
-        &'a self,
-        home: &'a Snapshot,
-    ) -> impl Iterator<Item = &'a CanvasKey> + 'a {
-        self.canvases
-            .iter()
-            .map(|canvas| &canvas.key)
-            .filter(|key| {
-                matches!(
-                    crate::tracker::select(home, key.project),
-                    Some(crate::tracker::Tracker::Markdown)
-                )
-            })
-    }
-
     #[must_use]
     pub fn commit_message(&self, home_files: &[String]) -> Option<&str> {
         self.message.as_deref().filter(|_| !home_files.is_empty())

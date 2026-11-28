@@ -39,6 +39,10 @@ pub trait CanvasStore {
         key: &'a CanvasKey,
         file: &'a CanvasFile,
     ) -> Putting<'a>;
+
+    fn touches(&self, _key: &CanvasKey) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
