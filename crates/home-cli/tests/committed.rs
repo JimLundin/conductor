@@ -33,6 +33,9 @@ fn ran(root: &Path, args: &[&str]) -> std::io::Result<(bool, String)> {
     let ran = Command::new(env!("CARGO_BIN_EXE_home"))
         .args(args)
         .current_dir(root)
+        .env("HOME", root)
+        .env("XDG_CONFIG_HOME", root)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("HOME_BY", "devbox·test")
         .output()?;
     Ok((
@@ -176,9 +179,9 @@ fn a_note_and_a_canvas_on_a_markdown_issue_are_committed_to_the_home_signed_by_t
     )?;
     assert_eq!(git(root, &["status", "--porcelain"])?, "");
     assert_eq!(
-        git(root, &["log", "-4", "--format=%an|%s"])?,
+        git(root, &["log", "-4", "--format=%an|%ae|%s"])?,
         format!(
-            "devbox·test|Write canvas why of issue {id}\ntest|canvas source\ndevbox·test|Note on issue {id}\ndevbox·test|Open issue {id}: First\n"
+            "devbox·test|home@conductor.invalid|Write canvas why of issue {id}\ntest|test@example.com|canvas source\ndevbox·test|home@conductor.invalid|Note on issue {id}\ndevbox·test|home@conductor.invalid|Open issue {id}: First\n"
         )
     );
     let canvas = git(
