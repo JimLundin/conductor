@@ -43,7 +43,8 @@ async fn ask<Msg, T>(
 
 fn load_or_create_key(data_dir: &Path) -> anyhow::Result<SecretKey> {
     Ok(SecretKey::from_bytes(&load_or_create_secret(
-        data_dir, "host.key",
+        data_dir,
+        fleet_store::HOST_KEY,
     )?))
 }
 

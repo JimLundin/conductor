@@ -13,12 +13,12 @@ project-runtime = { path = "../project-runtime" }
 vcs = { path = "../vcs" }
 uuid = { workspace = true, features = ["v5"] }
 anyhow.workspace = true
-argon2 = "0.5.3"
 cap-fs-ext = "4.0.2"
 cap-std = "4.0.2"
 # The credential store's cipher (§6.3), XChaCha20-Poly1305.
 chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] }
 data-encoding.workspace = true
+fleet-store = { path = "../fleet-store" }
 getrandom.workspace = true
 iroh = { workspace = true, features = ["tls-ring"] }
 net = { path = "../net" }

@@ -83,7 +83,7 @@ pub fn access(root: &Path, project: &str, data: Option<&str>) -> (String, u8) {
             root,
             project,
             &host_data,
-            daemon::fleet::project_credential,
+            fleet_store::project_credential,
         )
         .await
     })

@@ -10,9 +10,9 @@ use iroh::protocol::Router;
 use iroh::{Endpoint, EndpointId, RelayMode, SecretKey};
 
 use super::Membership;
-use super::crypto;
 use super::member::clock;
 use super::peer::{Protocol, admit_existing, join, sync_with};
+use fleet_store::crypto;
 
 async fn endpoint(seed: u8) -> anyhow::Result<Endpoint> {
     Ok(Endpoint::builder(presets::Minimal)
@@ -474,7 +474,7 @@ async fn publish(root: &Membership, token: Option<&str>) -> anyhow::Result<()> {
 fn check_shared(data: &Path, expected: &str) -> anyhow::Result<()> {
     use project_runtime::transport::SharedCredential;
     use secrecy::ExposeSecret as _;
-    let resolved = super::project_credential(data, SHARED)?;
+    let resolved = fleet_store::project_credential(data, SHARED)?;
     ensure!(!format!("{resolved:?}").contains(expected));
     let SharedCredential::Stored(entry) = resolved else {
         anyhow::bail!("no shared credential");
@@ -506,7 +506,7 @@ async fn hosts_share_rotate_withdraw_and_revoke_project_credentials()
     let root_id = crate::load_or_create_key(&data)?;
     let member_id = crate::load_or_create_key(&member_dir)?.public();
     assert!(matches!(
-        super::project_credential(&data, SHARED)?,
+        fleet_store::project_credential(&data, SHARED)?,
         SharedCredential::Standalone
     ));
     Membership::initialize(
@@ -517,7 +517,7 @@ async fn hosts_share_rotate_withdraw_and_revoke_project_credentials()
         b"fixture passphrase",
     )?;
     assert!(matches!(
-        super::project_credential(&data, SHARED)?,
+        fleet_store::project_credential(&data, SHARED)?,
         SharedCredential::Missing
     ));
     let original = "fixture-github-original";
@@ -575,7 +575,7 @@ async fn hosts_share_rotate_withdraw_and_revoke_project_credentials()
     publish(&root, None).await?;
     latest(&root, &member).await?;
     assert!(matches!(
-        super::project_credential(&member_dir, SHARED)?,
+        fleet_store::project_credential(&member_dir, SHARED)?,
         SharedCredential::Missing
     ));
     publish(&root, Some(rotated)).await?;
@@ -585,7 +585,7 @@ async fn hosts_share_rotate_withdraw_and_revoke_project_credentials()
         .adopt_revocation(root.public_snapshot().await)
         .await?;
     assert!(matches!(
-        super::project_credential(&member_dir, SHARED)?,
+        fleet_store::project_credential(&member_dir, SHARED)?,
         SharedCredential::Missing
     ));
 
@@ -597,14 +597,14 @@ async fn hosts_share_rotate_withdraw_and_revoke_project_credentials()
 fn damaged_membership(data: &Path, member_dir: &Path) -> anyhow::Result<()> {
     let identity_path = data.join("host.key");
     std::fs::copy(member_dir.join("host.key"), &identity_path)?;
-    assert!(super::project_credential(data, SHARED).is_err());
+    assert!(fleet_store::project_credential(data, SHARED).is_err());
     std::fs::remove_file(identity_path)?;
-    assert!(super::project_credential(data, SHARED).is_err());
+    assert!(fleet_store::project_credential(data, SHARED).is_err());
     assert!(!data.join("host.key").exists());
     let sealed = member_dir.join("fleet.sealed");
     std::fs::write(&sealed, b"corrupt")?;
-    assert!(super::project_credential(member_dir, SHARED).is_err());
+    assert!(fleet_store::project_credential(member_dir, SHARED).is_err());
     std::fs::remove_file(sealed)?;
-    assert!(super::project_credential(member_dir, SHARED).is_err());
+    assert!(fleet_store::project_credential(member_dir, SHARED).is_err());
     Ok(())
 }

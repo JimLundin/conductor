@@ -1,5 +1,4 @@
 mod credentials;
-mod crypto;
 mod member;
 mod peer;
 mod wire;
@@ -8,7 +7,7 @@ pub(crate) use peer::{Protocol, follow_when_enrolled, refresh};
 
 pub use credentials::Sharing;
 pub(crate) use credentials::{configure, follow_credentials, share_credential};
-pub use member::{Membership, project_credential};
+pub use member::Membership;
 pub(crate) type Slot = tokio::sync::watch::Sender<Option<Membership>>;
 
 use std::io::Write;
@@ -19,6 +18,7 @@ use host::fleet::{HostEntry, Invite, PairRequest, Pairing, Reply};
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointId, RelayMode};
 
+use fleet_store::crypto;
 use member::clock;
 
 pub fn initialize(
@@ -248,6 +248,18 @@ pub(crate) fn exclusive(data: &Path) -> anyhow::Result<std::fs::File> {
     file.try_lock()
         .context("another host process is using this fleet data directory")?;
     Ok(file)
+}
+
+fn create_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    crate::with_private_file(dir, bytes, |next| {
+        std::fs::hard_link(next, path)
+    })?;
+    crate::sync_dir(dir)?;
+    Ok(())
 }
 
 pub(crate) async fn command(

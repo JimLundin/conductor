@@ -180,7 +180,7 @@ fn connect(
     home: &home::flow::snapshot::Snapshot,
     project: &home::project::Project,
 ) -> Result<project_runtime::tracker::Connection, String> {
-    adapters::connect(data, home, project, daemon::fleet::project_credential)
+    adapters::connect(data, home, project, fleet_store::project_credential)
 }
 
 #[tokio::main]
@@ -222,7 +222,7 @@ async fn main() -> anyhow::Result<()> {
                 &daemon::home_checkout(&data),
                 &project,
                 &data,
-                daemon::fleet::project_credential,
+                fleet_store::project_credential,
             )
             .await
             .map_err(anyhow::Error::msg)?;

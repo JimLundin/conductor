@@ -10,15 +10,15 @@ use host::fleet::{
     SignedSnapshot, Snapshot,
 };
 use iroh::{EndpointId, PublicKey, SecretKey};
-use project_runtime::transport::SharedCredential;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::{RwLock, watch};
 use zeroize::Zeroizing;
 
-use super::crypto;
+use fleet_store::{Invitation, STORE, STORE_KEY, State, admit, crypto};
 
-const STORE: &str = "fleet.sealed";
+use super::create_file;
+
 const INVITE_LIMIT: usize = 64;
 const INVITE_SECONDS: u64 = 3600;
 
@@ -29,46 +29,6 @@ pub struct Membership {
     state: Arc<RwLock<State>>,
     versions: watch::Sender<u64>,
     fresh: watch::Sender<bool>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct State {
-    certificate: Certificate,
-    current: SignedConfiguration,
-    root_key: Option<[u8; 32]>,
-    invites: Vec<Invitation>,
-    revoked: Option<SignedSnapshot>,
-    applied: BTreeSet<host::registry::InstanceId>,
-}
-
-impl State {
-    fn is_active(&self) -> bool {
-        self.revoked.is_none()
-            && admit(
-                &self.current.config.snapshot,
-                &self.certificate,
-                Role::Host,
-            )
-            .is_ok()
-    }
-
-    fn into_project_credential(mut self, reference: &str) -> SharedCredential {
-        if !self.is_active() {
-            return SharedCredential::Missing;
-        }
-        self.current
-            .config
-            .project_credentials
-            .remove(reference)
-            .map_or(SharedCredential::Missing, |entry| {
-                SharedCredential::Stored(entry.into_secret().into())
-            })
-    }
-
-    fn reserve_credentials(&mut self) {
-        self.applied
-            .extend(self.current.config.instances.0.keys().cloned());
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -86,13 +46,6 @@ impl Drop for Recovery {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-struct Invitation {
-    secret: InviteSecret,
-    expires: u64,
-    admitted: Option<Certificate>,
-}
-
 impl core::fmt::Debug for Membership {
     fn fmt(&self, output: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         output.write_str("Membership")
@@ -104,7 +57,7 @@ impl Membership {
         data: &Path,
         local: EndpointId,
     ) -> anyhow::Result<Option<Self>> {
-        Ok(read_state(data, || Ok(local))?
+        Ok(fleet_store::read(data, || Ok(local))?
             .map(|(key, state)| Self::new(data.join(STORE), key, state)))
     }
 
@@ -616,7 +569,7 @@ impl Membership {
             root_key: *seed,
             initial: state.current.clone(),
         };
-        crypto::backup(backup, passphrase, &recovery)?;
+        create_file(backup, &crypto::backup(passphrase, &recovery)?)?;
         Self::install(data, state)
     }
 
@@ -657,7 +610,7 @@ impl Membership {
         passphrase: &[u8],
     ) -> anyhow::Result<()> {
         let state = self.state.read().await;
-        crypto::backup(path, passphrase, &state.current)
+        create_file(path, &crypto::backup(passphrase, &state.current)?)
     }
 
     pub(super) fn restore_root(
@@ -706,7 +659,7 @@ impl Membership {
         state.reserve_credentials();
         let key = store_key(data)?;
         let path = data.join(STORE);
-        crypto::create_file(&path, &crypto::seal(&key, &state)?)?;
+        create_file(&path, &crypto::seal(&key, &state)?)?;
         let installed = Self::new(path, key, state);
         installed.mark_fresh();
         Ok(installed)
@@ -772,99 +725,11 @@ impl Membership {
     }
 }
 
-pub fn project_credential(
-    data: &Path,
-    reference: &str,
-) -> std::io::Result<SharedCredential> {
-    resolve_project_credential(data, reference).map_err(|_| {
-        std::io::Error::other("fleet credential store is unavailable")
-    })
-}
-
-fn resolve_project_credential(
-    data: &Path,
-    reference: &str,
-) -> anyhow::Result<SharedCredential> {
-    let membership = read_state(data, || {
-        let key = existing_key(data, "host.key")?;
-        Ok(SecretKey::from_bytes(&key).public())
-    })?;
-    Ok(
-        membership.map_or(SharedCredential::Standalone, |(_, state)| {
-            state.into_project_credential(reference)
-        }),
-    )
-}
-
-fn read_state(
-    data: &Path,
-    identity: impl FnOnce() -> anyhow::Result<EndpointId>,
-) -> anyhow::Result<Option<(Zeroizing<[u8; 32]>, State)>> {
-    if !crate::credentials::has_file(data, STORE)? {
-        ensure!(
-            !crate::credentials::has_file(data, "fleet-store.key")?,
-            "missing sealed fleet membership"
-        );
-        return Ok(None);
-    }
-    let key = existing_key(data, "fleet-store.key")?;
-    let state = crypto::unseal(&key, &std::fs::read(data.join(STORE))?)?;
-    verify_local(&state, identity()?)?;
-    Ok(Some((key, state)))
-}
-
-fn existing_key(
-    data: &Path,
-    name: &str,
-) -> anyhow::Result<Zeroizing<[u8; 32]>> {
-    crate::credentials::read_key(data, name)?
-        .map(Zeroizing::new)
-        .context("missing fleet key")
-}
-
-fn verify_local(state: &State, local: EndpointId) -> anyhow::Result<()> {
-    let snapshot = &state.current.config.snapshot;
-    let root = PublicKey::from_bytes(&snapshot.fleet)?;
-    crypto::verify_config(root, &state.current)?;
-    let identity = crypto::open(root, &state.certificate)?;
-    ensure!(
-        local_identity(&identity, snapshot, local),
-        "fleet membership belongs to another host"
-    );
-    verify_root(state, root, &identity)
-}
-
 fn local(state: &State) -> anyhow::Result<Identity> {
     crypto::open(
         PublicKey::from_bytes(&state.current.config.snapshot.fleet)?,
         &state.certificate,
     )
-}
-
-fn local_identity(
-    identity: &Identity,
-    snapshot: &Snapshot,
-    local: EndpointId,
-) -> bool {
-    identity.fleet == snapshot.fleet
-        && identity.device == *local.as_bytes()
-        && identity.role == Role::Host
-}
-
-fn verify_root(
-    state: &State,
-    expected: PublicKey,
-    identity: &Identity,
-) -> anyhow::Result<()> {
-    if let Some(seed) = state.root_key {
-        let snapshot = &state.current.config.snapshot;
-        ensure!(
-            SecretKey::from_bytes(&seed).public() == expected
-                && snapshot.root == identity.device,
-            "invalid local root key"
-        );
-    }
-    Ok(())
 }
 
 fn new_configuration(
@@ -923,7 +788,7 @@ fn matches_recovery(
 }
 
 fn restore_identity(data: &Path, key: &[u8; 32]) -> anyhow::Result<()> {
-    let key_path = data.join("host.key");
+    let key_path = data.join(fleet_store::HOST_KEY);
     ensure!(
         !data.join(STORE).exists(),
         "restore into an empty data directory"
@@ -936,40 +801,13 @@ fn restore_identity(data: &Path, key: &[u8; 32]) -> anyhow::Result<()> {
         );
     } else {
         let bytes = Zeroizing::new(data_encoding::HEXLOWER.encode(key));
-        crypto::create_file(&key_path, bytes.as_bytes())?;
+        create_file(&key_path, bytes.as_bytes())?;
     }
     Ok(())
 }
 
 fn store_key(data: &Path) -> anyhow::Result<Zeroizing<[u8; 32]>> {
-    crate::load_or_create_secret(data, "fleet-store.key").map(Zeroizing::new)
-}
-
-fn admit(
-    snapshot: &Snapshot,
-    certificate: &Certificate,
-    role: Role,
-) -> anyhow::Result<Identity> {
-    let identity =
-        crypto::open(PublicKey::from_bytes(&snapshot.fleet)?, certificate)?;
-    ensure!(
-        identity.fleet == snapshot.fleet && identity.role == role,
-        "wrong fleet or role"
-    );
-    ensure!(
-        !snapshot.revoked.contains(&identity.device),
-        "peer has been revoked"
-    );
-    if role == Role::Host {
-        ensure!(
-            snapshot
-                .hosts
-                .iter()
-                .any(|entry| entry.node == identity.device),
-            "host is outside the roster"
-        );
-    }
-    Ok(identity)
+    crate::load_or_create_secret(data, STORE_KEY).map(Zeroizing::new)
 }
 
 fn root(state: &State) -> anyhow::Result<SecretKey> {

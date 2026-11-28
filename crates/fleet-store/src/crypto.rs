@@ -9,7 +9,7 @@ use chacha20poly1305::{
 use host::fleet::{
     Certificate, Configuration, Identity, Signed, SignedConfiguration,
 };
-use iroh::{PublicKey, SecretKey, Signature};
+use iroh_base::{PublicKey, SecretKey, Signature};
 use serde::{Serialize, de::DeserializeOwned};
 use zeroize::Zeroizing;
 
@@ -17,7 +17,7 @@ const CONFIGURATION: &[u8] = b"conductor fleet configuration v5";
 const STORE: &[u8] = b"conductor fleet local store v5";
 const BACKUP: &[u8] = b"conductor fleet root backup v5";
 
-pub(super) fn sign_identity(
+pub fn sign_identity(
     key: &SecretKey,
     identity: &Identity,
 ) -> anyhow::Result<Certificate> {
@@ -33,7 +33,7 @@ fn sign_payload<T: host::fleet::Payload>(
     Ok(Signed::new(payload, signature))
 }
 
-pub(super) fn open<T: host::fleet::Payload>(
+pub fn open<T: host::fleet::Payload>(
     key: PublicKey,
     signed: &Signed<T>,
 ) -> anyhow::Result<T> {
@@ -53,7 +53,7 @@ fn message<T: host::fleet::Payload>(payload: &[u8]) -> Vec<u8> {
     T::DOMAIN.iter().chain(payload).copied().collect()
 }
 
-pub(super) fn sign_config(
+pub fn sign_config(
     key: &SecretKey,
     config: Configuration,
 ) -> anyhow::Result<SignedConfiguration> {
@@ -70,7 +70,7 @@ pub(super) fn sign_config(
     })
 }
 
-pub(super) fn verify_config(
+pub fn verify_config(
     key: PublicKey,
     signed: &SignedConfiguration,
 ) -> anyhow::Result<()> {
@@ -105,7 +105,7 @@ fn verify<T: Serialize>(
     Ok(())
 }
 
-pub(super) fn seal<T: Serialize>(
+pub fn seal<T: Serialize>(
     key: &[u8; 32],
     state: &T,
 ) -> anyhow::Result<Vec<u8>> {
@@ -113,7 +113,7 @@ pub(super) fn seal<T: Serialize>(
     encrypt(key, STORE, &bytes)
 }
 
-pub(super) fn unseal<T: DeserializeOwned>(
+pub fn unseal<T: DeserializeOwned>(
     key: &[u8; 32],
     file: &[u8],
 ) -> anyhow::Result<T> {
@@ -121,11 +121,10 @@ pub(super) fn unseal<T: DeserializeOwned>(
     Ok(postcard::from_bytes(&bytes)?)
 }
 
-pub(super) fn backup<T: Serialize>(
-    path: &Path,
+pub fn backup<T: Serialize>(
     passphrase: &[u8],
     value: &T,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<u8>> {
     ensure!(
         !passphrase.is_empty(),
         "the fleet backup needs a passphrase"
@@ -135,11 +134,10 @@ pub(super) fn backup<T: Serialize>(
     let key = backup_key(passphrase, &salt)?;
     let encoded = Zeroizing::new(postcard::to_stdvec(value)?);
     let sealed = encrypt(&key, BACKUP, &encoded)?;
-    let file = salt.into_iter().chain(sealed).collect::<Vec<_>>();
-    create_file(path, &file)
+    Ok(salt.into_iter().chain(sealed).collect())
 }
 
-pub(super) fn recover<T: DeserializeOwned>(
+pub fn recover<T: DeserializeOwned>(
     path: &Path,
     passphrase: &[u8],
 ) -> anyhow::Result<T> {
@@ -199,23 +197,11 @@ fn decrypt(key: &[u8; 32], aad: &[u8], file: &[u8]) -> anyhow::Result<Vec<u8>> {
         .map_err(|_| anyhow!("could not open sealed fleet data"))
 }
 
-pub(super) fn create_file(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let dir = path
-        .parent()
-        .filter(|dir| !dir.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    crate::with_private_file(dir, bytes, |next| {
-        std::fs::hard_link(next, path)
-    })?;
-    crate::sync_dir(dir)?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
     use host::fleet::{HostEntry, Identity, Role, Snapshot};
-    use iroh::SecretKey;
+    use iroh_base::SecretKey;
 
     use super::{open, sign_identity, sign_payload};
 
@@ -356,7 +342,7 @@ mod tests {
         std::fs::write(&path, salt.into_iter().chain(old).collect::<Vec<_>>())?;
         assert!(super::recover::<u8>(&path, phrase).is_err());
         let current = directory.path().join("current-backup");
-        super::backup(&current, phrase, &7u8)?;
+        std::fs::write(&current, super::backup(phrase, &7u8)?)?;
         assert_eq!(super::recover::<u8>(&current, phrase)?, 7);
         Ok(())
     }

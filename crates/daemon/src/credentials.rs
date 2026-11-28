@@ -1,8 +1,6 @@
 mod adoption;
 mod key;
 
-pub use key::{exists as has_file, read_file as read_key};
-
 use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions};
 use std::io::ErrorKind;

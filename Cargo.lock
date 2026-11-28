@@ -751,6 +751,7 @@ dependencies = [
  "codex",
  "codex-cli",
  "daemon",
+ "fleet-store",
  "github-api",
  "home",
  "home-store",
@@ -1049,12 +1050,12 @@ version = "0.1.0"
 dependencies = [
  "agents",
  "anyhow",
- "argon2",
  "cap-fs-ext",
  "cap-std",
  "chacha20poly1305",
  "data-encoding",
  "dbus-secret-service",
+ "fleet-store",
  "getrandom 0.4.3",
  "home",
  "home-files",
@@ -1547,6 +1548,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5905ec755cc8386d7928353e4d356d2be3e89e81e5ca01fe630a1ca4d08dc175"
 
 [[package]]
+name = "fleet-store"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "argon2",
+ "chacha20poly1305",
+ "getrandom 0.4.3",
+ "host",
+ "iroh-base",
+ "postcard",
+ "project-runtime",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zeroize",
+]
+
+[[package]]
 name = "fluent-uri"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2025,13 +2044,16 @@ name = "home-cli"
 version = "0.1.0"
 dependencies = [
  "adapters",
- "daemon",
+ "data-encoding",
+ "fleet-store",
  "getrandom 0.4.3",
  "github",
  "github-api",
  "home",
  "home-files",
  "home-store",
+ "host",
+ "iroh-base",
  "project-runtime",
  "serde_json",
  "tokio",

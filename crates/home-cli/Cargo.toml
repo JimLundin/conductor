@@ -14,7 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 adapters = { path = "../adapters" }
-daemon = { path = "../daemon" }
+fleet-store = { path = "../fleet-store" }
 vcs-git2 = { path = "../vcs-git2" }
 serde_json.workspace = true
 github-api = { path = "../github-api" }
@@ -26,6 +26,11 @@ home = { path = "../home" }
 home-files = { path = "../home-files" }
 home-store = { path = "../home-store" }
 getrandom.workspace = true
+
+[dev-dependencies]
+data-encoding.workspace = true
+host = { path = "../host" }
+iroh-base = { version = "1.4.1", default-features = false, features = ["key"] }
 
 [lints]
 workspace = true

@@ -217,7 +217,7 @@ pub fn connect(
     home: &Snapshot,
     project: &home::project::Project,
 ) -> Result<tracker::Connection, String> {
-    adapters::connect(data, home, project, daemon::fleet::project_credential)
+    adapters::connect(data, home, project, fleet_store::project_credential)
 }
 
 fn run<F: Future>(future: F) -> Result<F::Output, String> {
