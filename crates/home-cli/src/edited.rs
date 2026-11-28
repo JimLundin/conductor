@@ -509,6 +509,16 @@ impl Home {
         labels: &[&str],
         body: &str,
     ) -> Result<Self, Box<dyn Error>> {
+        let home = Self::fresh(name, labels, body)?;
+        Operations::bind(&home.root.join("data"), [7; 32])?;
+        Ok(home)
+    }
+
+    fn fresh(
+        name: &str,
+        labels: &[&str],
+        body: &str,
+    ) -> Result<Self, Box<dyn Error>> {
         let root = std::env::temp_dir()
             .join(format!("home-edits-{name}-{}", std::process::id()));
         let project = root.join("projects/hyn162");
@@ -520,7 +530,7 @@ impl Home {
             "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
         )?;
         let data = root.join("data");
-        Operations::bind(&data, [7; 32])?;
+        std::fs::create_dir_all(&data)?;
         keep(
             &data,
             "146",
@@ -724,6 +734,79 @@ fn issue_note_on_a_github_issue_adds_one_comment_and_issue_show_lists_it_in_the_
     assert_eq!(issue["log"][0]["event"], "Note");
     assert_eq!(issue["notes"], serde_json::json!([]));
     assert_eq!(home.issue()?.body, "Words\n");
+    Ok(())
+}
+
+impl Home {
+    fn owners(&self) -> Result<Vec<[u8; 32]>, Box<dyn Error>> {
+        self.comments("146")?
+            .iter()
+            .map(|comment| {
+                comment
+                    .lines()
+                    .find_map(|line| line.strip_prefix("conductor-operation "))
+                    .and_then(|marker| marker.split_whitespace().next())
+                    .and_then(Handle::parse)
+                    .map(|handle| handle.owner)
+                    .ok_or_else(|| format!("no operation in {comment}").into())
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn issue_note_on_a_fresh_data_directory_creates_the_operation_store_under_an_identity_of_its_own()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::fresh("fresh-store", &[], "Words\n")?;
+    let note = ["issue", "note", "standards", "146", "worker", "started"];
+    let (said, code) = home.home(&note)?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    let owners = home.owners()?;
+    assert_eq!(owners.len(), 1, "{owners:?}");
+    assert_ne!(owners[0], [7; 32]);
+    assert_eq!(
+        Operations::open(&home.root.join("data"))?.handle()?.owner,
+        owners[0]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_write_reuses_the_store_and_the_identity_the_first_created()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::fresh("second-write", &[], "Words\n")?;
+    let note = ["issue", "note", "standards", "146", "worker", "started"];
+    home.home(&note)?;
+    let (said, code) = home.home(&note)?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    let owners = home.owners()?;
+    assert_eq!(owners.len(), 2, "{owners:?}");
+    assert_eq!(owners[0], owners[1]);
+    Ok(())
+}
+
+#[test]
+fn a_store_home_created_is_refused_to_a_host_of_another_identity()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::fresh("other-owner", &[], "Words\n")?;
+    home.home(&["issue", "note", "standards", "146", "worker", "started"])?;
+    assert!(matches!(
+        Operations::bind(&home.root.join("data"), [8; 32]),
+        Err(project_runtime::operations::Error::WrongHost)
+    ));
+    Ok(())
+}
+
+#[test]
+fn issue_note_on_a_store_a_host_bound_writes_under_that_host_identity()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("host-store", &[], "Words\n")?;
+    let (said, code) =
+        home.home(&["issue", "note", "standards", "146", "worker", "started"])?;
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(home.owners()?, [[7; 32]]);
     Ok(())
 }
 

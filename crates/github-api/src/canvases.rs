@@ -145,7 +145,7 @@ impl Canvases {
         key: &CanvasKey,
         file: &CanvasFile,
     ) -> Result<(), StoreError> {
-        let operations = Operations::open(&self.data).map_err(unavailable)?;
+        let operations = Operations::adopt(&self.data).map_err(unavailable)?;
         let fresh = operations.handle().map_err(unavailable)?;
         let body =
             canvas::comment(&key.name, &file.by, &fresh.marker(), &file.canvas)

@@ -297,7 +297,7 @@ impl Configured {
         self.register(&mut registry)
             .map_err(|failure| failure.to_string())?;
         let operations =
-            Operations::open(data).map_err(|error| error.to_string())?;
+            Operations::adopt(data).map_err(|error| error.to_string())?;
         let project = registry.project(&self.backends);
         let fresh = operations.handle().map_err(|error| error.to_string())?;
         let id = if change.created {

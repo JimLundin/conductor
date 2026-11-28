@@ -15,6 +15,7 @@ const OWNER: TableDefinition<(), [u8; 32]> = TableDefinition::new("owner/1");
 const RECORDS: TableDefinition<u128, &[u8]> =
     TableDefinition::new("operations/3");
 const FILE: &str = "project-operations.redb";
+const IDENTITY: &str = "home-identity";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -40,6 +41,20 @@ pub struct Operations {
 
 impl Operations {
     pub fn bind(data: &Path, owner: [u8; 32]) -> Result<Self, Error> {
+        Self::settle(data, |bound| match bound {
+            Some(other) if other != owner => Err(Error::WrongHost),
+            _ => Ok(owner),
+        })
+    }
+
+    pub fn adopt(data: &Path) -> Result<Self, Error> {
+        Self::settle(data, |bound| bound.map_or_else(|| identity(data), Ok))
+    }
+
+    fn settle(
+        data: &Path,
+        choose: impl FnOnce(Option<[u8; 32]>) -> Result<[u8; 32], Error>,
+    ) -> Result<Self, Error> {
         std::fs::create_dir_all(data).map_err(failed)?;
         let path = data.join(FILE);
         let _lease = lock(&path)?;
@@ -48,16 +63,15 @@ impl Operations {
             .create_file(private(&path).map_err(failed)?)
             .map_err(failed)?;
         let write = database.begin_write().map_err(failed)?;
-        {
+        let owner = {
             use redb::ReadableTable as _;
             let mut owners = write.open_table(OWNER).map_err(failed)?;
             let bound =
                 owners.get(()).map_err(failed)?.map(|item| item.value());
-            if bound.is_some_and(|other| other != owner) {
-                return Err(Error::WrongHost);
-            }
+            let owner = choose(bound)?;
             owners.insert((), owner).map_err(failed)?;
-        }
+            owner
+        };
         write.open_table(RECORDS).map_err(failed)?;
         write.commit().map_err(failed)?;
         Ok(Self { path, owner })
@@ -129,6 +143,24 @@ impl Operations {
             _claim: claim,
         })
     }
+}
+
+fn identity(data: &Path) -> Result<[u8; 32], Error> {
+    use std::io::{Read as _, Write as _};
+    let mut file = private(&data.join(IDENTITY)).map_err(failed)?;
+    let mut kept = Vec::new();
+    file.read_to_end(&mut kept).map_err(failed)?;
+    if let Ok(owner) = <[u8; 32]>::try_from(kept.as_slice()) {
+        return Ok(owner);
+    }
+    if !kept.is_empty() {
+        return Err(Error::Store(format!("{IDENTITY} is not 32 bytes")));
+    }
+    let mut owner = [0; 32];
+    getrandom::fill(&mut owner).map_err(failed)?;
+    file.write_all(&owner).map_err(failed)?;
+    file.sync_all().map_err(failed)?;
+    Ok(owner)
 }
 
 fn lock(path: &Path) -> Result<File, Error> {
