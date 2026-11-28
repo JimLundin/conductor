@@ -413,6 +413,9 @@ pub fn command(
             .collect::<Vec<&str>>()
             .join(" ")
     };
+    if let Some(refused) = slashed_naming(home, &words) {
+        return refused;
+    }
     match words.as_slice() {
         ["check"] => Command::Check,
         ["issue", "new", project, kind, title, fields @ ..] => {
@@ -507,8 +510,42 @@ fn key(home: &Snapshot, [name, word]: [&str; 2]) -> Result<IssueKey, String> {
         .project(name)
         .map(|known| known.id)
         .ok_or_else(|| format!("no project is called {name}"))?;
-    let id = home.ids().read(project, word)?;
+    let id = issue_id(home, project, name, word)?;
     Ok(IssueKey { project, id })
+}
+
+fn issue_id(
+    home: &Snapshot,
+    project: ProjectId,
+    called: &str,
+    text: &str,
+) -> Result<IssueId, String> {
+    home.ids().read(project, text).map_err(|unread| {
+        let said = unread.said(called, text);
+        slashed(home, text).map_or_else(
+            || said.clone(),
+            |(other, id)| {
+                format!(
+                    "{said}: name another project's issue as <project> <id>, like \"{other} {id}\""
+                )
+            },
+        )
+    })
+}
+
+fn slashed_naming(home: &Snapshot, words: &[&str]) -> Option<Command> {
+    let ["issue" | "canvas", _, named, ..] = words else {
+        return None;
+    };
+    let (project, id) = slashed(home, named)?;
+    Some(Command::Wrong(format!(
+        "{named:?} names no issue: name an issue as <project> <id>, like \"{project} {id}\""
+    )))
+}
+
+fn slashed<'a>(home: &Snapshot, text: &'a str) -> Option<(&'a str, &'a str)> {
+    let (project, id) = text.split_once('/')?;
+    (home.project(project).is_some() && !id.is_empty()).then_some((project, id))
 }
 
 fn canvas_name(word: &str) -> Result<CanvasName, String> {
@@ -1132,7 +1169,7 @@ pub(crate) fn subject(
     project: ProjectId,
     stem: impl core::fmt::Display,
 ) -> String {
-    format!("{}/{stem}", named(home, project))
+    format!("{} {stem}", named(home, project))
 }
 
 #[must_use]
@@ -1421,7 +1458,7 @@ fn related(
     match name.split_whitespace().collect::<Vec<_>>().as_slice() {
         [id] => Ok(IssueKey {
             project: from,
-            id: home.ids().read(from, id)?,
+            id: issue_id(home, from, &named(home, from), id)?,
         }),
         [called, id] => {
             let project = home
@@ -1430,7 +1467,7 @@ fn related(
                 .ok_or_else(|| format!("no project is called {called}"))?;
             Ok(IssueKey {
                 project,
-                id: home.ids().read(project, id)?,
+                id: issue_id(home, project, called, id)?,
             })
         }
         _ => Err(format!("{name:?} is not <id> or <project> <id>")),

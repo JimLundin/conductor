@@ -381,7 +381,7 @@ fn a_canvas_put_on_a_tracked_project_needs_no_repository()
     let said = crate::issues(root, &mut trackers, command, &context);
     assert_eq!(
         said,
-        (String::from("wrote canvas design of standards/146\n"), 0)
+        (String::from("wrote canvas design of standards 146\n"), 0)
     );
     Ok(())
 }
@@ -409,7 +409,7 @@ fn check_reports_a_tracker_issue_that_reads_as_invalid()
     let (said, code) =
         super::super::issues(root, &mut trackers, command, &context);
     assert!(
-        said.contains("error  standards/146  unmapped label\n"),
+        said.contains("error  standards 146  unmapped label\n"),
         "{said}"
     );
     assert_eq!(code, 1, "{said}");

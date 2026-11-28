@@ -207,9 +207,9 @@ async fn setting_parent_to_an_issue_of_a_project_no_repository_tracks_writes_the
     let other = ProjectId::new(2);
     let elsewhere = IssueKey {
         project: other,
-        id: Ids::default()
-            .read(other, "0v2csjdj")
-            .map_err(anyhow::Error::msg)?,
+        id: Ids::default().read(other, "0v2csjdj").map_err(|unread| {
+            anyhow::Error::msg(unread.said(other, "0v2csjdj"))
+        })?,
     };
     let footed = format!(
         "{PROSE}\n\n```project-data\nschema = 1\n\n[relations.parent]\nid = \"0v2csjdj\"\nproject = \"{other}\"\n```\n"

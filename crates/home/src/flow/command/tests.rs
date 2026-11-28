@@ -508,7 +508,7 @@ fn a_new_issue_gets_a_fresh_id_its_sections_and_a_log_that_check_accepts() {
              - 2026-11-22T12:00:00Z laptop·claude note: opened.\n"
         )
     );
-    assert_eq!(outcome.output, format!("wrote home/{id}\n"));
+    assert_eq!(outcome.output, format!("wrote home {id}\n"));
     assert!(!check(&after(&inputs, &outcome)).failed());
     let staged = ran(&inputs, "issue new home spec Stage-it stage=shape");
     assert!(!staged.failed, "{}", staged.output);
@@ -568,7 +568,7 @@ fn a_missing_section_is_written_with_a_warning() {
     assert_eq!(
         outcome.output,
         format!(
-            "wrote home/{TASK}\nwarn   home/{TASK}  lacks the section \"Acceptance\"\n"
+            "wrote home {TASK}\nwarn   home {TASK}  lacks the section \"Acceptance\"\n"
         )
     );
     assert!(text(&outcome).ends_with(
@@ -1050,7 +1050,7 @@ fn a_canvas_put_on_an_issue_writes_the_canvas_under_its_key_stamped_with_when_an
     );
     assert_eq!(
         outcome.output,
-        format!("wrote canvas why-a-store of home/{TASK}\n")
+        format!("wrote canvas why-a-store of home {TASK}\n")
     );
     Ok(())
 }
@@ -1083,7 +1083,7 @@ fn a_canvas_put_on_an_unknown_issue_with_a_bad_name_or_json_that_isnt_a_canvas_w
         (
             put(&["canvas", "put", "home", TASK, "why"], r#"{"title": "t"}"#),
             format!(
-                "home: canvas why of home/{TASK}: not a canvas: missing field `blocks` at line 1 column 14\n"
+                "home: canvas why of home {TASK}: not a canvas: missing field `blocks` at line 1 column 14\n"
             ),
         ),
     ];
@@ -1193,7 +1193,7 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
         (missing.failed, missing.output),
         (
             true,
-            format!("home: no canvas is called gone on home/{TASK}\n")
+            format!("home: no canvas is called gone on home {TASK}\n")
         )
     );
     let none = given(
@@ -1202,7 +1202,7 @@ fn a_canvas_show_of_a_name_the_store_lacks_or_a_store_that_fails_says_so() {
     );
     assert_eq!(
         (none.failed, none.output),
-        (false, format!("home/{TASK} has no canvases\n"))
+        (false, format!("home {TASK} has no canvases\n"))
     );
     let failing = given(
         &format!("canvas show home {TASK}"),
@@ -1387,7 +1387,7 @@ fn a_canvas_put_of_a_statechart_that_breaks_a_drawing_rule_writes_nothing_and_sa
             ),
             (
                 true,
-                format!("home: canvas turn of home/{TASK}: {said}\n"),
+                format!("home: canvas turn of home {TASK}: {said}\n"),
                 Vec::new(),
                 Vec::new()
             )
@@ -1570,7 +1570,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
         (
             diagram(&seven, ""),
             format!(
-                "home: canvas design of home/{TASK}: step 2 of a diagram shows 7 nodes, over 6: split it into steps or diagrams\n"
+                "home: canvas design of home {TASK}: step 2 of a diagram shows 7 nodes, over 6: split it into steps or diagrams\n"
             ),
         ),
         (
@@ -1583,7 +1583,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 "",
             ),
             format!(
-                "home: canvas design of home/{TASK}: the label `the core decides what every store keeps and how` is over 8 words: put the detail in prose\n"
+                "home: canvas design of home {TASK}: the label `the core decides what every store keeps and how` is over 8 words: put the detail in prose\n"
             ),
         ),
         (
@@ -1593,7 +1593,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 r#"{"from": "core", "to": "store", "label": "this edge label runs on for nine whole words", "step": 1}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: the label `this edge label runs on for nine whole words` is over 8 words: put the detail in prose\n"
+                "home: canvas design of home {TASK}: the label `this edge label runs on for nine whole words` is over 8 words: put the detail in prose\n"
             ),
         ),
         (
@@ -1602,7 +1602,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 r#"{"from": "core", "to": "store", "step": 1}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: an edge runs from `core` to `store`, but the diagram has no node `store`: add the node or drop the edge\n"
+                "home: canvas design of home {TASK}: an edge runs from `core` to `store`, but the diagram has no node `store`: add the node or drop the edge\n"
             ),
         ),
         (
@@ -1611,7 +1611,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 "",
             ),
             format!(
-                "home: canvas design of home/{TASK}: node `folder` is in group `core`, but the diagram has no group `core`: add the group or take the node out of it\n"
+                "home: canvas design of home {TASK}: node `folder` is in group `core`, but the diagram has no group `core`: add the group or take the node out of it\n"
             ),
         ),
         (
@@ -1621,7 +1621,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 r#"{"from": "core", "to": "store", "step": 1}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: the edge from `core` to `store` comes at step 1, before node `store` at step 2: move the edge to step 2 or later\n"
+                "home: canvas design of home {TASK}: the edge from `core` to `store` comes at step 1, before node `store` at step 2: move the edge to step 2 or later\n"
             ),
         ),
         (
@@ -1630,7 +1630,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 "",
             ),
             format!(
-                "home: canvas design of home/{TASK}: two nodes are called `core`: give each node its own id\n"
+                "home: canvas design of home {TASK}: two nodes are called `core`: give each node its own id\n"
             ),
         ),
         (
@@ -1638,7 +1638,7 @@ fn a_canvas_put_of_a_diagram_that_breaks_a_drawing_rule_writes_nothing_and_says_
                 r#"{"title": "Design", "blocks": [{"diagram": {"nodes": [], "edges": [], "groups": [{"id": "shell", "label": "the shell does every piece of input and output"}]}}]}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: the label `the shell does every piece of input and output` is over 8 words: put the detail in prose\n"
+                "home: canvas design of home {TASK}: the label `the shell does every piece of input and output` is over 8 words: put the detail in prose\n"
             ),
         ),
     ];
@@ -1660,13 +1660,13 @@ fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_gr
                 r#"{"from": "core", "to": "store", "step": 1}, {"from": "store", "to": "cache", "step": 2}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: node `cache` stands alone at step 1: bring the node in with the edge that connects it\n"
+                "home: canvas design of home {TASK}: node `cache` stands alone at step 1: bring the node in with the edge that connects it\n"
             ),
         ),
         (
             diagram(&node("core", "Core", 1), ""),
             format!(
-                "home: canvas design of home/{TASK}: node `core` stands alone at step 1: bring the node in with the edge that connects it\n"
+                "home: canvas design of home {TASK}: node `core` stands alone at step 1: bring the node in with the edge that connects it\n"
             ),
         ),
         (
@@ -1680,7 +1680,7 @@ fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_gr
                 r#"{"from": "core", "to": "store", "step": 1}, {"from": "store", "to": "cache", "step": 3}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: a diagram skips step 2: number its steps from 1 with no gap\n"
+                "home: canvas design of home {TASK}: a diagram skips step 2: number its steps from 1 with no gap\n"
             ),
         ),
         (
@@ -1694,7 +1694,7 @@ fn a_canvas_put_of_a_diagram_with_a_lone_node_misnumbered_steps_or_a_repeated_gr
                 r#"{"id": "shell", "label": "Shell"}, {"id": "shell", "label": "Host"}"#,
             ),
             format!(
-                "home: canvas design of home/{TASK}: two groups are called `shell`: give each group its own id\n"
+                "home: canvas design of home {TASK}: two groups are called `shell`: give each group its own id\n"
             ),
         ),
     ];
@@ -1711,7 +1711,7 @@ fn a_canvas_put_of_a_diagram_step_of_0_is_refused_when_decoding_and_says_to_numb
     refuses_each([(
         text,
         format!(
-            "home: canvas design of home/{TASK}: not a canvas: a diagram has a step 0: number its steps from 1 at line 1 column 96\n"
+            "home: canvas design of home {TASK}: not a canvas: a diagram has a step 0: number its steps from 1 at line 1 column 96\n"
         ),
     )]);
 }
@@ -1917,7 +1917,7 @@ fn a_canvas_put_with_more_done_than_total_fewer_than_two_options_a_pick_past_the
             ),
             (
                 true,
-                format!("home: canvas stands of home/{TASK}: {said}\n"),
+                format!("home: canvas stands of home {TASK}: {said}\n"),
                 Vec::new(),
                 Vec::new()
             )
@@ -2076,11 +2076,11 @@ fn check_reports_each_canvas_the_store_cant_return_or_that_no_issue_holds()
         (
             true,
             format!(
-                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
-                 error  canvas denied of home/{TASK}  permission denied\n\
-                 error  canvas garbled of home/{TASK}  not a canvas: missing field `title`\n\
-                 error  canvas vanished of home/{TASK}  the store lists it but returns nothing\n\
-                 error  canvas orphan of home/0v29xvc9  no issue 0v29xvc9 in home: write the canvas under an issue that exists, or remove it\n\
+                "warn   home {TASK}  lacks the section \"Acceptance\"\n\
+                 error  canvas denied of home {TASK}  permission denied\n\
+                 error  canvas garbled of home {TASK}  not a canvas: missing field `title`\n\
+                 error  canvas vanished of home {TASK}  the store lists it but returns nothing\n\
+                 error  canvas orphan of home 0v29xvc9  no issue 0v29xvc9 in home: write the canvas under an issue that exists, or remove it\n\
                  4 errors, 1 warnings\n"
             )
         )
@@ -2103,7 +2103,7 @@ fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
         (
             false,
             format!(
-                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
+                "warn   home {TASK}  lacks the section \"Acceptance\"\n\
                  0 errors, 1 warnings\n"
             )
         )
@@ -2125,9 +2125,9 @@ fn check_reports_a_tracker_whose_canvases_it_couldnt_read() {
     );
     assert!(checked.failed);
     assert!(
-        checked
-            .output
-            .contains("error  the tracker of standards: GitHub is unreachable\n"),
+        checked.output.contains(
+            "error  the tracker of standards: GitHub is unreachable\n"
+        ),
         "{}",
         checked.output
     );
@@ -2179,8 +2179,8 @@ fn check_reports_each_tracker_issue_that_reads_as_invalid_and_a_listing_it_could
         (
             true,
             format!(
-                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
-                 error  home/0v29xvc9  the label `kind:widget` names no kind\n\
+                "warn   home {TASK}  lacks the section \"Acceptance\"\n\
+                 error  home 0v29xvc9  the label `kind:widget` names no kind\n\
                  warn   home  its issues are as last listed: tracker rate limited the request\n\
                  error  home  issue cache: locked\n\
                  2 errors, 2 warnings\n"
@@ -2198,7 +2198,7 @@ fn check_reports_a_store_that_cant_list_its_canvases() {
         (
             true,
             format!(
-                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
+                "warn   home {TASK}  lacks the section \"Acceptance\"\n\
                  error  canvases: projects: denied\n\
                  1 errors, 1 warnings\n"
             )
@@ -2234,7 +2234,7 @@ fn a_canvas_show_prints_an_issue_s_valid_canvases_then_names_what_it_skipped()
             format!(
                 "# Why a store\n\nThe core decides.\n\n\
                  # Why a store\n\nThe core decides.\n\
-                 home: canvas garbled of home/{TASK}: not a canvas: missing field `title`\n\
+                 home: canvas garbled of home {TASK}: not a canvas: missing field `title`\n\
                  home: over/there/notes: is a folder, and an issue's folder holds only canvases: move it out of the issue\n"
             )
         )
@@ -2252,7 +2252,7 @@ fn check_and_canvas_show_name_a_broken_canvas_the_same_way()
             Err(String::from("not a canvas: missing field `title`")),
         )
     };
-    let named = format!("canvas garbled of home/{TASK}");
+    let named = format!("canvas garbled of home {TASK}");
     let checked = given("check", every(Ok(held(Vec::from([broken()?])))));
     let shown = given(
         &format!("canvas show home {TASK} garbled"),
@@ -2519,7 +2519,7 @@ fn a_canvas_put_and_show_name_a_markdown_issue_and_a_tracker_issue_alike()
             (put.failed, put.output, put.canvases),
             (
                 false,
-                format!("wrote canvas why-a-store of {project}/{id}\n"),
+                format!("wrote canvas why-a-store of {project} {id}\n"),
                 Vec::from([CanvasWrite {
                     key: key.clone(),
                     file: CanvasFile {
@@ -2575,7 +2575,7 @@ fn an_id_the_cache_lacks_refreshes_its_tracker_once_and_then_resolves()
         ),
         (
             false,
-            format!("wrote canvas why-a-store of standards/{TRACKER_ID}\n"),
+            format!("wrote canvas why-a-store of standards {TRACKER_ID}\n"),
             1,
             1
         )
@@ -2775,7 +2775,10 @@ fn an_id_its_tracker_allows_reads_back_as_itself_in_its_own_project()
             id: id("team42/7"),
         })
     );
-    let read = home.ids().read(tracked, "team42/7")?;
+    let read = home
+        .ids()
+        .read(tracked, "team42/7")
+        .map_err(|unread| unread.said(tracked, "team42/7"))?;
     assert_eq!(read.to_string(), "team42/7");
     assert_eq!(
         read.tracked::<crate::id::Text>()
@@ -2922,4 +2925,30 @@ fn a_relation_target_its_tracker_can_t_read_refuses_the_write_naming_why()
         )
     );
     Ok(())
+}
+
+#[test]
+fn an_issue_named_as_project_slash_id_is_refused_with_the_project_id_form() {
+    let mut tracker = Tracker::holding(Ok(Vec::new()));
+    for (line, said) in [
+        (
+            format!("issue set home {TASK} blocked_by=standards/146"),
+            "home: \"standards/146\" is no issue ID of home: name another project's issue as <project> <id>, like \"standards 146\"\n",
+        ),
+        (
+            String::from("issue show standards/146"),
+            "home: \"standards/146\" names no issue: name an issue as <project> <id>, like \"standards 146\"\n",
+        ),
+        (
+            String::from("issue note standards/146 seen"),
+            "home: \"standards/146\" names no issue: name an issue as <project> <id>, like \"standards 146\"\n",
+        ),
+    ] {
+        let refused = tracked_run(&mut tracker, &line, None);
+        assert_eq!(
+            (refused.failed, refused.output.as_str()),
+            (true, said),
+            "{line}"
+        );
+    }
 }

@@ -79,6 +79,24 @@ impl Issuers {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unread {
+    Untracked,
+    Unknown,
+}
+
+impl Unread {
+    #[must_use]
+    pub fn said(self, project: impl core::fmt::Display, text: &str) -> String {
+        match self {
+            Self::Untracked => {
+                format!("no tracker of {project} reads issue IDs")
+            }
+            Self::Unknown => format!("{text:?} is no issue ID of {project}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ids(BTreeMap<ProjectId, Option<Issuer>>);
 
@@ -93,24 +111,22 @@ impl Ids {
         &self,
         project: ProjectId,
         text: &str,
-    ) -> Result<IssueId, String> {
+    ) -> Result<IssueId, Unread> {
         let issuer = self
             .0
             .get(&project)
             .copied()
             .unwrap_or(Some(Issuer::MARKDOWN))
-            .ok_or_else(|| {
-                format!("no tracker of {project} reads issue IDs")
-            })?;
-        issuer
-            .read(text)
-            .ok_or_else(|| format!("{text:?} is no issue ID of {project}"))
+            .ok_or(Unread::Untracked)?;
+        issuer.read(text).ok_or(Unread::Unknown)
     }
 
     pub fn key(&self, name: &IssueName) -> Result<IssueKey, String> {
         Ok(IssueKey {
             project: name.project,
-            id: self.read(name.project, &name.id)?,
+            id: self
+                .read(name.project, &name.id)
+                .map_err(|unread| unread.said(name.project, &name.id))?,
         })
     }
 }

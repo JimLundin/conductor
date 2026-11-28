@@ -111,8 +111,8 @@ pub fn check(home: &Snapshot) -> Report {
     let graph = home.graph();
     let named = |project: ProjectId, stem: &str| {
         project_names.get(&project).map_or_else(
-            || format!("{project}/{stem}"),
-            |name| format!("{name}/{stem}"),
+            || format!("{project} {stem}"),
+            |name| format!("{name} {stem}"),
         )
     };
     findings.extend(graph.problems.iter().map(|problem| {

@@ -306,7 +306,7 @@ impl Snapshot {
             .chain(self.listing.problems.iter().cloned())
             .chain(self.unread.iter().cloned())
             .chain(self.graph.problems.iter().map(|problem| {
-                format!("{}/{}: {problem}", problem.project, problem.record)
+                format!("{} {}: {problem}", problem.project, problem.record)
             }))
             .collect()
     }

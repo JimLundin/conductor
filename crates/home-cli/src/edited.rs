@@ -633,7 +633,7 @@ fn issue_move_stage_spec_on_a_github_issue_swaps_its_stage_label_and_nothing_els
         Home::new("move", &["Customer report", "work/stage/shape"], "Words\n")?;
     let (said, code) =
         home.home(&["issue", "move", "standards", "146", "stage", "spec"])?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let writes: Vec<String> = home
         .requests()
@@ -678,7 +678,7 @@ fn issue_body_on_a_github_issue_keeps_its_project_data_footer()
     let home = Home::new("body", &[], &format!("Old words\n\n{FOOTER}"))?;
     let (said, code) =
         home.home(&["issue", "body", "standards", "146", "New", "words"])?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     assert_eq!(home.issue()?.body, format!("New words\n\n{FOOTER}"));
     Ok(())
@@ -713,7 +713,7 @@ fn issue_new_on_a_github_project_sends_one_create_holding_its_marker_and_prints_
     let home = Home::new("new", &[], "Words\n")?;
     let (said, code) =
         home.home(&["issue", "new", "standards", "task", "Opened by home"])?;
-    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(said, "wrote standards 147\n");
     assert_eq!(code, 0, "{said}");
     assert_eq!(home.creates(), 1);
     let opened = home.opened()?;
@@ -749,7 +749,7 @@ fn a_lost_create_reply_retried_finds_the_issue_and_creates_nothing_more()
     assert_eq!(code, 1);
     assert_eq!(home.creates(), 1);
     let (said, code) = home.home(&new)?;
-    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(said, "wrote standards 147\n");
     assert_eq!(code, 0);
     assert_eq!(home.creates(), 0);
     assert_eq!(
@@ -767,7 +767,7 @@ fn issue_note_on_a_github_issue_adds_one_comment_and_issue_show_lists_it_in_the_
     let home = Home::new("note", &[], "Words\n")?;
     let (said, code) =
         home.home(&["issue", "note", "standards", "146", "worker", "started"])?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let comments = home.comments("146")?;
     assert_eq!(comments.len(), 1);
@@ -810,7 +810,7 @@ fn issue_note_on_a_fresh_data_directory_creates_the_operation_store_under_an_ide
     let home = Home::fresh("fresh-store", &[], "Words\n")?;
     let note = ["issue", "note", "standards", "146", "worker", "started"];
     let (said, code) = home.home(&note)?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let owners = home.owners()?;
     assert_eq!(owners.len(), 1, "{owners:?}");
@@ -829,7 +829,7 @@ fn a_second_write_reuses_the_store_and_the_identity_the_first_created()
     let note = ["issue", "note", "standards", "146", "worker", "started"];
     home.home(&note)?;
     let (said, code) = home.home(&note)?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let owners = home.owners()?;
     assert_eq!(owners.len(), 2, "{owners:?}");
@@ -858,7 +858,7 @@ fn a_lost_note_reply_retried_finds_the_comment_and_posts_nothing_more()
     assert!(said.contains("is unknown"), "{said}");
     assert_eq!(code, 1);
     let (said, code) = home.home(&note)?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let comments = home.comments("146")?;
     assert_eq!(comments.len(), 1, "{comments:?}");
@@ -886,7 +886,7 @@ fn issue_set_parent_on_a_github_issue_makes_it_a_sub_issue_and_writes_no_footer(
     )?;
     let (said, code) =
         home.home(&["issue", "set", "standards", "146", "parent=140"])?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let writes: Vec<String> = home
         .requests()
@@ -954,7 +954,7 @@ fn a_write_after_an_edit_on_github_plans_from_a_fresh_read_and_goes_ahead()
     keep(&home.root.join("data"), "146", &edited)?;
     let (said, code) =
         home.home(&["issue", "move", "standards", "146", "stage", "spec"])?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     let issue = home.issue()?;
     assert_eq!(issue.title, "Retitled on GitHub");
@@ -996,7 +996,7 @@ fn a_note_whose_request_never_reached_github_is_sent_again_once_a_newer_comment_
     assert_eq!(home.comments("146")?, Vec::<String>::new());
     by_someone(&home, "146")?;
     let (said, code) = home.home(&note)?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     assert_eq!(home.comments("146")?.len(), 2);
     Ok(())
@@ -1030,7 +1030,7 @@ fn a_create_whose_request_never_reached_github_is_sent_again_once_a_newer_issue_
     )?;
     home.requests();
     let (said, code) = home.home(&new)?;
-    assert_eq!(said, "wrote standards/148\n");
+    assert_eq!(said, "wrote standards 148\n");
     assert_eq!(code, 0);
     assert_eq!(home.creates(), 1);
     Ok(())
@@ -1043,7 +1043,7 @@ fn a_create_is_confirmed_by_reading_the_issue_github_made_while_its_listing_lags
     let new = ["issue", "new", "standards", "task", "Opened by home"];
     std::fs::write(home.root.join("data").join(LAG), "")?;
     let (said, code) = home.home(&new)?;
-    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(said, "wrote standards 147\n");
     assert_eq!(code, 0);
     assert_eq!(home.creates(), 1);
     Ok(())
@@ -1068,7 +1068,7 @@ fn issue_set_parent_to_an_issue_opened_after_the_cached_listing_reads_it_from_gi
     spec(&home.root.join("data"), "140")?;
     let (said, code) =
         home.home(&["issue", "set", "standards", "146", "parent=140"])?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     assert_eq!(parents(&home.root.join("data")).get("146"), Some(&140));
     Ok(())
@@ -1105,7 +1105,7 @@ fn a_relation_write_whose_reply_was_lost_is_resumed_on_the_rerun()
     assert_eq!(code, 1);
     home.requests();
     let (said, code) = home.home(&set)?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     assert!(
         !home
@@ -1127,7 +1127,7 @@ fn a_relation_write_whose_request_never_reached_github_is_sent_on_the_rerun()
     let (said, code) = home.home(&set)?;
     assert_eq!(code, 1, "{said}");
     let (said, code) = home.home(&set)?;
-    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert!(said.starts_with("wrote standards 146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     assert_eq!(parents(&home.root.join("data")).get("146"), Some(&140));
     assert_eq!(unsettled(&home)?, 0);

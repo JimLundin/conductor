@@ -453,11 +453,15 @@ fn a_footer_relation_write_keeps_the_prose_the_fields_and_the_other_relations()
     let hyn162 = ProjectId::parse("hyn162").ok_or("project")?;
     let elsewhere = IssueKey {
         project: hyn162,
-        id: Ids::default().read(hyn162, "0trfecpc")?,
+        id: Ids::default()
+            .read(hyn162, "0trfecpc")
+            .map_err(|unread| unread.said(hyn162, "0trfecpc"))?,
     };
     let kept = IssueKey {
         project: hyn162,
-        id: Ids::default().read(hyn162, "0tm7aaaa")?,
+        id: Ids::default()
+            .read(hyn162, "0tm7aaaa")
+            .map_err(|unread| unread.said(hyn162, "0tm7aaaa"))?,
     };
     let plan = relate::plan(
         &flow,
@@ -703,7 +707,9 @@ fn a_blocked_by_bound_for_the_footer_plans_without_a_dependency_summary()
     let hyn162 = ProjectId::parse("hyn162").ok_or("project")?;
     let kept = IssueKey {
         project: hyn162,
-        id: Ids::default().read(hyn162, "0tm7aaaa")?,
+        id: Ids::default()
+            .read(hyn162, "0tm7aaaa")
+            .map_err(|unread| unread.said(hyn162, "0tm7aaaa"))?,
     };
     let plan = relate::plan(
         &flow,

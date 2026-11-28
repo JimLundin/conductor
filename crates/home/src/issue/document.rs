@@ -205,7 +205,9 @@ fn target(
     match value {
         Value::String(id) => Ok(IssueKey {
             project: from,
-            id: ids.read(from, &id)?,
+            id: ids
+                .read(from, &id)
+                .map_err(|unread| unread.said(from, &id))?,
         }),
         Value::Table(mut named) => {
             let project = match named.remove(PROJECT) {
@@ -224,7 +226,9 @@ fn target(
             }
             Ok(IssueKey {
                 project,
-                id: ids.read(project, &id)?,
+                id: ids
+                    .read(project, &id)
+                    .map_err(|unread| unread.said(project, &id))?,
             })
         }
         _ => Err(String::from("is not an issue")),

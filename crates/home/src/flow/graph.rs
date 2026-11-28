@@ -163,7 +163,7 @@ fn shared(issues_sorted_by_id: &[Issue]) -> Vec<Problem> {
                         record: issue.id.to_string(),
                         field: Some(String::from(ID)),
                         message: format!(
-                            "is also the id of {}/{}",
+                            "is also the id of {} {}",
                             other.project, other.id
                         ),
                     })

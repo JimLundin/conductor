@@ -63,7 +63,7 @@ fn check(inputs: &Inputs) -> super::Report {
 }
 
 fn subject(id: &str) -> String {
-    format!("conductor/{id}")
+    format!("conductor {id}")
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn the_text_lists_each_finding_and_the_counts() {
     assert_eq!(
         check(&inputs(FLOW, "done")).text(),
         String::from(
-            "warn   conductor/0tm7zx0c  lacks the section \"Verdict\"\n0 errors, 1 warnings\n"
+            "warn   conductor 0tm7zx0c  lacks the section \"Verdict\"\n0 errors, 1 warnings\n"
         )
     );
 }

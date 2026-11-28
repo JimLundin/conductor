@@ -70,7 +70,7 @@ fn committed_home(name: &str) -> std::io::Result<(Scratch, String)> {
     let opened = home(root, &["issue", "new", "home", "bug", "First"])?;
     let id = opened
         .trim_end()
-        .strip_prefix("wrote home/")
+        .strip_prefix("wrote home ")
         .unwrap_or_default()
         .to_owned();
     Ok((scratch, id))
@@ -163,7 +163,7 @@ fn a_note_and_a_canvas_on_a_markdown_issue_are_committed_to_the_home_signed_by_t
     let opened = home(root, &["issue", "new", "home", "bug", "First"])?;
     let id = opened
         .trim_end()
-        .strip_prefix("wrote home/")
+        .strip_prefix("wrote home ")
         .unwrap_or_default()
         .to_owned();
     home(

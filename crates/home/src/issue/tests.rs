@@ -1160,7 +1160,7 @@ fn a_value_the_flow_doesnt_declare_is_refused() {
             Mode::Record
         ),
         Applied::Refused(String::from(
-            "refused conductor/00000001: priority: \"someday\" is not one of low, normal, high, urgent"
+            "refused conductor 00000001: priority: \"someday\" is not one of low, normal, high, urgent"
         ))
     );
 }
@@ -1794,7 +1794,7 @@ mod as_the_command_line {
                 by: String::from("laptop·claude"),
             },
         );
-        let subject = format!("home/{TASK}");
+        let subject = format!("home {TASK}");
         if outcome.failed {
             return Err(outcome
                 .output
@@ -1876,7 +1876,7 @@ mod as_the_command_line {
             assert!(
                 refused
                     .as_ref()
-                    .is_err_and(|reason| reason.starts_with("refused home/")),
+                    .is_err_and(|reason| reason.starts_with("refused home ")),
                 "{refused:?}"
             );
             assert_eq!(

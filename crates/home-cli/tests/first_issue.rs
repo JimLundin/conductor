@@ -45,7 +45,7 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
     assert_eq!(written.len(), 1, "{said}");
     let id = said
         .trim_end()
-        .strip_prefix("wrote home/")
+        .strip_prefix("wrote home ")
         .unwrap_or_default();
     assert_eq!(id.len(), 8, "{said}");
     assert!(
