@@ -24,6 +24,7 @@ const paired = (): ReturnType<typeof requestHost> => {
 
 describe("retried operations", () => {
   it("a retry racing an earlier attempt of the same action settles only the retry", () => {
+    expect.hasAssertions();
     const first = paired();
     const attempt = first.host.operation;
     const failedView = settledHost(
