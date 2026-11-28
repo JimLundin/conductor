@@ -21,6 +21,20 @@ impl Address {
             .ok_or(ReadFailure::InvalidResponse)
     }
 
+    pub const fn returned(
+        self,
+        number: u64,
+        pull_request: bool,
+    ) -> Result<(), ReadFailure> {
+        if pull_request {
+            Err(ReadFailure::Unavailable)
+        } else if number == self.number() {
+            Ok(())
+        } else {
+            Err(ReadFailure::IdentityConflict)
+        }
+    }
+
     #[must_use]
     pub const fn number(self) -> u64 {
         match self {

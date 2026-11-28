@@ -120,12 +120,20 @@ canvas's time is its comment's `updated_at`.
 `home canvas put` writes through `Project::write_comment`: it edits the
 comment of that name, or creates one, and fails before any request when the
 comment would pass GitHub's limit of 65,536 characters. A put needs GitHub
-reachable and a credential with `write_issues`. A refresh of the project,
-such as `home issue list`, also reads the repository's marked comments on
-its issues into the host cache, and `home canvas show` and the app read
-them from there offline. A marked comment whose name or data doesn't parse
-is a stray at the comment's URL, and so is a second comment holding the
-same canvas; `home check` reports each.
+reachable and a credential with `write_issues`. The store keeps a create's
+operation handle under the canvas's key until GitHub shows the comment: a
+create whose result is unknown is settled by its marker on the next put,
+and while GitHub's list doesn't show it yet the put fails rather than create
+a second comment.
+
+A refresh of the project, such as `home issue list`, ends with the store's
+own refresh, which reads the repository's marked comments on the listed
+issues into GitHub's canvas cache, `github-canvases.redb` in the host data
+directory. `home canvas show` and the app read them from there offline. A
+marked comment whose name reads but whose data or signer doesn't is that
+canvas, broken, and the next put of its name edits it. A marked comment
+whose name doesn't parse is a stray at the comment's URL, and so is a
+second comment holding the same canvas; `home check` reports each.
 
 ## Repository access and credentials
 

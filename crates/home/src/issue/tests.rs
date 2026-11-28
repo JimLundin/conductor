@@ -1081,6 +1081,7 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
                     IssueChange::Note(text("following note")),
                 ]),
             },
+            Some(&original),
             &context,
         )?;
         let file =
@@ -1924,9 +1925,10 @@ mod as_the_command_line {
                     &home,
                     &command::Edit::Change {
                         project,
-                        id,
+                        id: id.clone(),
                         changes: Vec::from([set("priority", word("high"))]),
                     },
+                    home.observation(project, &id),
                     &by,
                 )
             });

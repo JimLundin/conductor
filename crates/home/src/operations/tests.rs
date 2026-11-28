@@ -83,3 +83,28 @@ fn a_rejected_send_can_be_sent_again() -> Result<(), Refusal> {
     assert_eq!(rejected.reject().err(), Some(Refusal::NoAttempt));
     Ok(())
 }
+
+#[test]
+fn only_a_comment_sent_and_unconfirmed_is_awaited_with_the_request_it_sent()
+-> Result<(), Refusal> {
+    let ready = record(create(), &[])?;
+    let (sent, _) = ready.next(&[])?;
+    let marked = comment("2", create().body());
+    let (settled, _) = sent.next(core::slice::from_ref(&marked))?;
+    assert_eq!(
+        [ready.awaited(), sent.awaited(), settled.awaited()],
+        [
+            None,
+            Some(CommentRequest {
+                issue: Lookup {
+                    project: ProjectId::new(1),
+                    id: IssueId::new("146").ok_or(Refusal::Conflict)?,
+                },
+                write: create(),
+                seen: create().precondition(&[]),
+            }),
+            None,
+        ]
+    );
+    Ok(())
+}

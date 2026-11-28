@@ -135,21 +135,49 @@ async fn reports_strays<S: CanvasStore + Send>(
         &seen(store.all().map_err(shown)?),
         &want(
             vec![
-                plan,
+                plan.clone(),
                 broken.clone(),
-                design,
+                design.clone(),
                 key(alpha, &two, "design")?,
                 key(beta, &one, "design")?,
             ],
-            [unnamed, folder, unissued].into_iter().flatten().collect(),
+            [unnamed.clone(), folder.clone(), unissued]
+                .into_iter()
+                .flatten()
+                .collect(),
         ),
     )?;
     match store.get(&broken) {
-        Err(StoreError::Invalid { key, .. }) if key == broken => Ok(()),
-        got => Err(format!(
-            "get of a broken canvas is invalid under its key: got {got:?}"
-        )),
+        Err(StoreError::Invalid { key, .. }) if key == broken => {}
+        got => {
+            return Err(format!(
+                "get of a broken canvas is invalid under its key: got {got:?}"
+            ));
+        }
     }
+    let mended = file(6, "mended")?;
+    store.put(&broken, &mended).await.map_err(shown)?;
+    same(
+        "a put of a broken canvas's name replaces it, leaving one canvas",
+        &(
+            seen(listed(store.list(&alpha, &one).map_err(shown)?)),
+            store.get(&broken).map_err(shown)?,
+        ),
+        &(
+            want(
+                vec![
+                    Ok(CanvasEntry::of(plan.name.clone(), &file(3, "third")?)),
+                    Ok(CanvasEntry::of(broken.name.clone(), &mended)),
+                    Ok(CanvasEntry::of(
+                        design.name.clone(),
+                        &file(2, "second")?,
+                    )),
+                ],
+                [unnamed, folder].into_iter().flatten().collect(),
+            ),
+            Some(mended.clone()),
+        ),
+    )
 }
 
 type Seen<T> = (Vec<T>, Vec<(String, &'static str)>);

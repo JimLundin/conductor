@@ -1,9 +1,9 @@
 use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use home::UnixMillis;
 use home::flow::{Flow, Role, command::stamp};
-use home::issue::{self, Datum};
+use home::issue::{self, Datum, NativeIssue};
 
-use super::{Findings, Record};
+use super::Findings;
 use crate::configuration::{Configuration, FieldSource};
 
 pub(super) struct Labels {
@@ -100,7 +100,7 @@ impl Labels {
 
     pub fn status(
         &self,
-        record: &Record,
+        record: &NativeIssue,
         flow: &Flow,
         config: &Configuration,
         findings: &mut Findings,
@@ -115,7 +115,7 @@ impl Labels {
             if expected.is_none() != record.open {
                 let state = if record.open { "open" } else { "closed" };
                 findings.error(format!("status label {status:?} conflicts with native {state} state"));
-            } else if let Some(reason) = record.state_reason.as_deref()
+            } else if let Some(reason) = record.reason.as_deref()
                 && reason != expected.unwrap_or("reopened")
             {
                 findings.warn(format!("native state reason {reason:?} differs from status label {status:?}"));
@@ -123,7 +123,7 @@ impl Labels {
             return status.clone();
         }
         let defaults = &config.defaults;
-        match (record.open, record.state_reason.as_deref()) {
+        match (record.open, record.reason.as_deref()) {
             (true, None | Some("reopened")) => defaults.open.clone(),
             (false, None) => defaults.closed.clone(),
             (false, Some("completed")) => defaults.completed.clone(),

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use home::flow::command::CanvasWrite;
+use home::flow::command::{CanvasWrite, Change};
 use home::flow::command::{Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::flow::snapshot::Snapshot;
@@ -45,6 +45,22 @@ impl Trackers {
         &self.trackers
     }
 
+    pub fn write(
+        &self,
+        root: &Path,
+        changes: &[Change],
+    ) -> Result<Vec<String>, String> {
+        run(async {
+            let mut written = Vec::new();
+            for change in changes {
+                written.extend(
+                    self.trackers.write(&self.loaded, root, change).await?,
+                );
+            }
+            Ok(written)
+        })?
+    }
+
     pub fn put(
         &mut self,
         canvases: &[CanvasWrite],
@@ -63,11 +79,21 @@ impl Trackers {
         })?
     }
 
-    pub fn touches(&self, canvases: &[CanvasWrite]) -> Vec<String> {
-        canvases
-            .iter()
-            .flat_map(|canvas| self.trackers.touches(&canvas.key))
-            .collect()
+    pub fn touches(
+        &self,
+        changes: &[Change],
+        canvases: &[CanvasWrite],
+    ) -> Result<Vec<String>, String> {
+        let mut touched = Vec::new();
+        for change in changes {
+            touched.extend(self.trackers.touches_issue(&self.loaded, change)?);
+        }
+        touched.extend(
+            canvases
+                .iter()
+                .flat_map(|canvas| self.trackers.touches(&canvas.key)),
+        );
+        Ok(touched)
     }
 
     pub fn resolved(&self, keys: BTreeSet<IssueKey>, mode: Mode) -> Resolved {

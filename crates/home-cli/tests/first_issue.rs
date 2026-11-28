@@ -55,7 +55,7 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
 }
 
 #[test]
-fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_write()
+fn configured_issue_reads_report_cache_coverage_and_refuse_opening_an_issue_there()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = Scratch(
         std::env::temp_dir()
@@ -88,7 +88,10 @@ fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_wri
     )?;
     let rejected = cli(&["issue", "new", "sample", "bug", "Report"])?;
     assert!(!rejected.status.success());
-    assert!(String::from_utf8(rejected.stdout)?.contains("configured tracker"));
+    assert!(
+        String::from_utf8(rejected.stdout)?
+            .contains("doesn't open issues in a project's own tracker")
+    );
     assert!(!project.join("issues").exists());
 
     let online = cli(&["issue", "list", "sample", "--data-dir", "host"])?;

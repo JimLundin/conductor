@@ -37,6 +37,26 @@ struct Github {
 }
 
 impl IssueTracker for Github {
+    fn native(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, home::issue::NativeIssue> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn writes(
+        &self,
+        _: &home::issue::NativeIssue,
+        _: &[home::flow::command::Mutation],
+    ) -> Result<Vec<home::issue::IssueWrite>, String> {
+        Err(String::from("the script takes no edits"))
+    }
+    fn write_issue(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::IssueWrite,
+    ) -> project_runtime::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
     fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
         let read = self.read.clone();
         Box::pin(async move { read })
@@ -54,13 +74,6 @@ impl IssueTracker for Github {
         _: home::issue::Lookup,
     ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
-    }
-    fn canvas_comments(
-        &self,
-        _: home::ProjectId,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::IssueComment>>
-    {
-        Box::pin(async { Ok(Vec::new()) })
     }
     fn write_comment(
         &self,

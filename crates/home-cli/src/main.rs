@@ -12,10 +12,12 @@ use home::flow::command::{
     Asked, Command, Context, Fetched, Given, Need, Outcome, Source, Wanted,
     asked, homeless, run,
 };
-use home::issue::storage::{File, ReadHome};
+use home::issue::storage::ReadHome;
 use home::{Draws, UnixMillis};
 use home_store::{CanvasStore, StoreError};
 
+#[cfg(test)]
+mod edited;
 mod local;
 mod operations;
 mod project;
@@ -96,17 +98,7 @@ fn kept(
     outcome: &Outcome,
     context: &Context,
 ) -> Result<(), String> {
-    let loaded = trackers.loaded();
-    let files = outcome
-        .changes
-        .iter()
-        .map(|change| loaded.encode(change))
-        .collect::<Result<Vec<File>, String>>()?;
-    let places: Vec<String> = files
-        .iter()
-        .map(File::path)
-        .chain(trackers.touches(&outcome.canvases))
-        .collect();
+    let places = trackers.touches(&outcome.changes, &outcome.canvases)?;
     let record = outcome
         .commit_message(&places)
         .map(|subject| opened(home).map(|repository| (repository, subject)))
@@ -115,7 +107,7 @@ fn kept(
         .iter()
         .map(|place| prior(home, place))
         .collect::<Result<Vec<Prior>, String>>()?;
-    written(home, trackers, outcome, &files)
+    written(home, trackers, outcome)
         .and_then(|paths| {
             record.map_or(Ok(()), |(repository, subject)| {
                 repository
@@ -136,11 +128,10 @@ fn written(
     home: &Path,
     trackers: &mut Trackers,
     outcome: &Outcome,
-    files: &[File],
 ) -> Result<Vec<String>, String> {
-    files.iter().try_for_each(|file| save(home, file))?;
-    let put = trackers.put(&outcome.canvases)?;
-    Ok(files.iter().map(File::path).chain(put).collect())
+    let mut paths = trackers.write(home, &outcome.changes)?;
+    paths.extend(trackers.put(&outcome.canvases)?);
+    Ok(paths)
 }
 
 fn restored(home: &Path, before: &[Prior], failed: String) -> String {
@@ -309,13 +300,6 @@ fn draws() -> Draws {
 
 fn read(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))
-}
-
-fn save(root: &Path, write: &File) -> Result<(), String> {
-    let path = root.join(write.path());
-    fs::create_dir_all(root.join(write.folder()))
-        .and_then(|()| fs::write(&path, &write.text))
-        .map_err(|err| format!("{}: {err}", path.display()))
 }
 
 #[cfg(test)]

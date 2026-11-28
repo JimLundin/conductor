@@ -11,14 +11,16 @@ fn record() -> Result<Record, String> {
             url: None,
             addresses: BTreeMap::new(),
         },
-        title: String::from("Edited in GitHub"),
-        body: String::from(
-            "## What\nRead this\n\n## Checklist\n- [x] Finished",
-        ),
         created: UnixMillis(1000),
-        open: true,
-        state_reason: None,
-        labels: Vec::from([String::from("Customer report")]),
+        native: home::issue::NativeIssue {
+            title: String::from("Edited in GitHub"),
+            body: String::from(
+                "## What\nRead this\n\n## Checklist\n- [x] Finished",
+            ),
+            open: true,
+            reason: None,
+            labels: Vec::from([String::from("Customer report")]),
+        },
     })
 }
 
@@ -64,7 +66,7 @@ fn a_direct_issue_uses_declared_defaults_and_native_fields()
 }
 
 fn with_labels(input: &mut Record, labels: &[&str]) {
-    input.labels = labels.iter().copied().map(String::from).collect();
+    input.native.labels = labels.iter().copied().map(String::from).collect();
 }
 
 #[test]
@@ -137,13 +139,13 @@ fn native_close_and_reopen_use_only_declared_defaults() -> Result<(), String> {
         (true, Some("reopened"), "ready"),
     ] {
         let mut input = record()?;
-        input.open = open;
-        input.state_reason = reason.map(String::from);
+        input.native.open = open;
+        input.native.reason = reason.map(String::from);
         assert_eq!(read(input, options)?.editable()?.0.status, expected);
     }
     let mut unknown = record()?;
-    unknown.open = false;
-    unknown.state_reason = Some(String::from("duplicate"));
+    unknown.native.open = false;
+    unknown.native.reason = Some(String::from("duplicate"));
     assert!(read(unknown, options)?.editable().is_err());
     Ok(())
 }
@@ -156,8 +158,8 @@ fn explicit_status_requires_matching_open_state_but_native_reason_is_advisory()
     let conflict = read(input.clone(), "")?;
     assert!(conflict.editable().is_err());
     assert!(conflict.findings.iter().any(|f| f.message.contains("open")));
-    input.open = false;
-    input.state_reason = Some(String::from("completed"));
+    input.native.open = false;
+    input.native.reason = Some(String::from("completed"));
     let observed = read(input, "")?;
     assert_eq!(observed.editable()?.0.status, "dropped");
     assert!(
@@ -174,7 +176,7 @@ fn explicit_status_requires_matching_open_state_but_native_reason_is_advisory()
 fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_body()
 -> Result<(), String> {
     let mut input = record()?;
-    input.body = String::from(
+    input.native.body = String::from(
         "## What\nAn example\n\n````text\n```project-data\nexample only\n```\n````\n\n## Checklist\n- [ ] inspect\n\n~~~project-data\nschema = 1\n[fields]\nbranch='decision-work'\nmethod='prototype'\n[relations]\nparent='712'\n~~~\n\n",
     );
     with_labels(&mut input, &["work/kind/decision"]);
@@ -206,7 +208,7 @@ fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_
 fn a_footer_relation_names_another_project_s_issue_by_its_project_and_id()
 -> Result<(), String> {
     let mut input = record()?;
-    input.body = String::from(
+    input.native.body = String::from(
         "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = 'hyn162/146'\n```",
     );
     let observed =
@@ -238,7 +240,7 @@ fn invalid_footer_data_and_competing_native_sources_are_visible()
         "schema=1\noperation='not a handle'",
     ] {
         let mut input = record()?;
-        input.body = format!("Read me\n\n```project-data\n{data}\n```");
+        input.native.body = format!("Read me\n\n```project-data\n{data}\n```");
         let observed = read(input, "")?;
         let home::issue::IssueState::Invalid(unreadable) = observed.state
         else {
@@ -267,7 +269,7 @@ fn a_reserved_block_must_be_single_closed_and_final() -> Result<(), String> {
         "```project-data\nschema=1\n```\n```project-data\nschema=1\n```",
     ] {
         let mut input = record()?;
-        input.body = format!("Read me\n\n{tail}");
+        input.native.body = format!("Read me\n\n{tail}");
         let observation = read(input, "")?;
         let home::issue::IssueState::Invalid(problem) = observation.state
         else {
@@ -287,7 +289,7 @@ fn a_reserved_block_must_be_single_closed_and_final() -> Result<(), String> {
 fn a_human_notes_heading_cannot_supply_approval_or_native_comments()
 -> Result<(), String> {
     let mut input = record()?;
-    input.body = String::from(
+    input.native.body = String::from(
         "## Notes\n- 2026-11-25T06:00Z me stage build→land: signed off",
     );
     let observed = read(input, "")?;
@@ -304,9 +306,9 @@ fn fingerprints_follow_observed_fields_and_ignore_label_order()
     let mut input = record()?;
     with_labels(&mut input, &["bug", "work/priority/high"]);
     let original = read(input.clone(), "")?.revision;
-    input.labels.reverse();
+    input.native.labels.reverse();
     assert_eq!(read(input.clone(), "")?.revision, original);
-    input.body.push_str("\nEdited in GitHub");
+    input.native.body.push_str("\nEdited in GitHub");
     assert_ne!(read(input, "")?.revision, original);
     Ok(())
 }
@@ -325,7 +327,7 @@ fn footer_values_keep_declared_types_and_an_owner_bound_create_marker()
         owner: [0xAB; 32],
         id: home::issue::EditId(3),
     };
-    input.body = format!(
+    input.native.body = format!(
         "```project-data\nschema=1\noperation='{marker}'\n[fields]\nflagged=true\nusers=['one','two']\ndue=2026-01-01T12:20:40Z\n```"
     );
     let observed = observe(&flow, &config, ProjectId::new(1), input);
@@ -342,7 +344,7 @@ fn metadata_edges_require_issue_ids_and_declared_cardinality()
 -> Result<(), String> {
     for value in ["''", "42", "['42', '43']", "['42']"] {
         let mut input = record()?;
-        input.body = format!(
+        input.native.body = format!(
             "```project-data\nschema=1\n[relations]\nparent={value}\n```"
         );
         let observed =
@@ -361,5 +363,140 @@ fn creation_time_keeps_native_subseconds_in_the_declared_field()
     let (issue, _) = observed.editable()?;
     assert_eq!(issue.created, Some(UnixMillis(1090)));
     assert_eq!(issue.text("created"), Some("1970-01-01T00:00:01.090Z"));
+    Ok(())
+}
+
+fn planned(
+    native: &home::issue::NativeIssue,
+    mutations: &[home::flow::command::Mutation],
+) -> Result<Vec<home::issue::IssueWrite>, String> {
+    let flow = home::flow::load(include_str!(
+        "../../../home/src/flow/test-flow.toml"
+    ))?;
+    let config = crate::configuration::load("", &flow)?;
+    writes(&flow, &config, native, mutations)
+}
+
+fn labelled(labels: &[&str]) -> Result<home::issue::NativeIssue, String> {
+    let mut native = record()?.native;
+    native.labels = labels.iter().copied().map(String::from).collect();
+    Ok(native)
+}
+
+fn moved(part: home::issue::Part, to: &str) -> home::flow::command::Mutation {
+    home::flow::command::Mutation::Move {
+        part,
+        to: String::from(to),
+    }
+}
+
+fn logged() -> home::flow::command::Mutation {
+    home::flow::command::Mutation::Note(home::issue::Entry {
+        at: None,
+        by: None,
+        event: home::issue::LogEvent::Note,
+        text: String::from("moved"),
+    })
+}
+
+#[test]
+fn a_stage_move_adds_the_new_stage_label_then_removes_the_old_one_and_touches_nothing_else()
+-> Result<(), String> {
+    use home::issue::IssueWrite;
+    let native = labelled(&["Customer report", "work/stage/shape"])?;
+    assert_eq!(
+        planned(
+            &native,
+            &[moved(home::issue::Part::Stage, "spec"), logged()]
+        )?,
+        [
+            IssueWrite::AddLabel(String::from("work/stage/spec")),
+            IssueWrite::RemoveLabel(String::from("work/stage/shape")),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_move_to_a_terminal_status_swaps_its_label_and_closes_the_issue_as_completed()
+-> Result<(), String> {
+    use home::issue::IssueWrite;
+    let native = labelled(&["work/status/active"])?;
+    assert_eq!(
+        planned(&native, &[moved(home::issue::Part::Status, "done")])?,
+        [
+            IssueWrite::AddLabel(String::from("work/status/done")),
+            IssueWrite::RemoveLabel(String::from("work/status/active")),
+            IssueWrite::Close {
+                reason: String::from("completed"),
+                was: None,
+            },
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_body_edit_replaces_the_human_text_and_keeps_the_project_data_footer()
+-> Result<(), String> {
+    let footer =
+        "```project-data\nschema = 1\n\n[fields]\nbranch = \"kept\"\n```\n";
+    let mut native = record()?.native;
+    native.body = format!("Old words\n\n{footer}");
+    let written = planned(
+        &native,
+        &[home::flow::command::Mutation::Body(String::from(
+            "New words",
+        ))],
+    )?;
+    assert_eq!(
+        written,
+        [home::issue::IssueWrite::Body {
+            from: native.body,
+            to: format!("New words\n\n{footer}"),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn setting_a_metadata_field_changes_only_its_footer_entry() -> Result<(), String>
+{
+    let mut native = record()?.native;
+    native.body = String::from(
+        "Words\n\n```project-data\nschema = 1\n\n[fields]\nmethod = \"shape\"\n```\n",
+    );
+    let written = planned(
+        &native,
+        &[home::flow::command::Mutation::Set {
+            field: String::from("branch"),
+            value: Datum::Text(String::from("edits")),
+        }],
+    )?;
+    assert_eq!(
+        written,
+        [home::issue::IssueWrite::Body {
+            from: native.body,
+            to: String::from(
+                "Words\n\n```project-data\nschema = 1\n\n[fields]\nbranch = \"edits\"\nmethod = \"shape\"\n```\n",
+            ),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_native_relation_or_a_lone_note_is_refused_before_any_write()
+-> Result<(), String> {
+    let native = record()?.native;
+    let relation = planned(
+        &native,
+        &[home::flow::command::Mutation::Set {
+            field: String::from("blocked_by"),
+            value: Datum::Texts(Vec::from([String::from("7")])),
+        }],
+    );
+    assert!(relation.is_err_and(|reason| reason.contains("#140")));
+    assert!(planned(&native, &[logged()]).is_err());
     Ok(())
 }

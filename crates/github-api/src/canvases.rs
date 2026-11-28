@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -9,17 +10,20 @@ use home::canvas::{Broken, CanvasEntry, CanvasFile, CanvasKey, Held};
 use home::flow::Flow;
 use home::flow::snapshot::Snapshot;
 use home::issue::{
-    CommentRequest, CommentWrite, IssueComment, Lookup, ReadFailure,
+    CommentRequest, CommentWrite, IssueComment, IssueListing, Lookup,
+    Observation, ReadFailure,
 };
+use home::operations::Handle;
 use home::project::Project;
 use home::{IssueId, ProjectId};
 use home_store::{CanvasStore, Putting, StoreError, Wrote};
-use project_runtime::issues::IssueCache;
 use project_runtime::operations::Operations;
-use project_runtime::tracker::{Connection, Connector, Reader};
+use project_runtime::tracker::{
+    Connection, Connector, Reader, Refreshing, TrackerStore,
+};
 use project_runtime::{Registration, Registry};
 
-use crate::{FleetResolver, HostCredentials};
+use crate::{CanvasCache, FleetResolver, HostCredentials, Tracker};
 
 pub struct Github {
     selection: Selection,
@@ -29,13 +33,19 @@ pub struct Github {
     endpoint: String,
 }
 
-impl Connector for Github {
-    fn connect(&self) -> Result<Reader, ReadFailure> {
-        let reader = self
+impl Github {
+    fn tracker(&self) -> Result<Tracker, ReadFailure> {
+        Ok(self
             .credentials
             .connect_at(&self.selection, &self.endpoint)
             .map_err(crate::read_failure)?
-            .tracker(self.flow.clone(), self.mapping.clone());
+            .tracker(self.flow.clone(), self.mapping.clone()))
+    }
+}
+
+impl Connector for Github {
+    fn connect(&self) -> Result<Reader, ReadFailure> {
+        let reader = self.tracker()?;
         Ok(Reader {
             registration: Registration {
                 selection: self.selection.clone(),
@@ -109,8 +119,9 @@ impl Canvases {
         })
     }
 
-    fn cache(&self) -> IssueCache<'_> {
-        IssueCache::new(&self.data, &self.github.flow)
+    fn cache(&self) -> Result<CanvasCache, StoreError> {
+        CanvasCache::open(&self.data, self.project, &self.github.selection)
+            .map_err(unavailable)
     }
 
     fn found(
@@ -121,10 +132,7 @@ impl Canvases {
         if project != self.project {
             return Ok(Held::default());
         }
-        let comments = Registry::default()
-            .project(&self.backends)
-            .canvas_comments(&self.cache(), self.project)
-            .map_err(unavailable)?;
+        let comments = self.cache()?.comments().map_err(unavailable)?;
         Ok(canvas::found(comments, issue))
     }
 
@@ -134,57 +142,91 @@ impl Canvases {
         file: &CanvasFile,
     ) -> Result<(), StoreError> {
         let operations = Operations::open(&self.data).map_err(unavailable)?;
-        let handle = operations.handle().map_err(unavailable)?;
-        let body = canvas::comment(
-            &key.name,
-            &file.by,
-            &handle.marker(),
-            &file.canvas,
-        )
-        .map_err(|too_long| StoreError::Refused {
-            key: key.clone(),
-            reason: too_long.to_string(),
-        })?;
+        let fresh = operations.handle().map_err(unavailable)?;
+        let body =
+            canvas::comment(&key.name, &file.by, &fresh.marker(), &file.canvas)
+                .map_err(|too_long| StoreError::Refused {
+                    key: key.clone(),
+                    reason: too_long.to_string(),
+                })?;
+        let cache = self.cache()?;
         let reader = self.github.connect().map_err(unavailable)?;
         let mut registry = Registry::default();
         registry
             .register_tracker(reader.registration, reader.tracker)
             .map_err(|refusal| unavailable(refusal.label()))?;
         let project = registry.project(&self.backends);
+        let writer = Writer {
+            operations: &operations,
+            project: &project,
+            cache: &cache,
+        };
+        writer.settle(key).await?;
         let issue = Lookup {
             project: key.project,
             id: key.issue.clone(),
         };
         let comments =
             project.comments(issue.clone()).await.map_err(unavailable)?;
-        let write = comments
-            .iter()
-            .find(|comment| canvas::holds(comment, &key.name))
-            .map_or_else(
-                || CommentWrite::Create { body: body.clone() },
-                |comment| CommentWrite::Edit {
-                    comment: comment.id.clone(),
-                    body: body.clone(),
-                },
-            );
+        let write = canvas::write(&comments, &key.name, body);
         let seen = write.precondition(&comments);
-        let written = project
-            .write_comment(
-                &operations,
-                handle,
-                CommentRequest { issue, write, seen },
-            )
+        writer
+            .put(key, fresh, CommentRequest { issue, write, seen })
+            .await
+    }
+}
+
+struct Writer<'a> {
+    operations: &'a Operations,
+    project: &'a project_runtime::Project<'a>,
+    cache: &'a CanvasCache,
+}
+
+impl Writer<'_> {
+    async fn settle(&self, key: &CanvasKey) -> Result<(), StoreError> {
+        let Some(creating) = self.cache.creating(key).map_err(unavailable)?
+        else {
+            return Ok(());
+        };
+        let awaited = self
+            .operations
+            .status(creating)
+            .map_err(unavailable)?
+            .and_then(|record| record.awaited());
+        if let Some(request) = awaited {
+            self.send(creating, request).await?;
+        }
+        self.cache.created(key, creating).map_err(unavailable)
+    }
+
+    async fn put(
+        &self,
+        key: &CanvasKey,
+        fresh: Handle,
+        request: CommentRequest,
+    ) -> Result<(), StoreError> {
+        let CommentWrite::Create { .. } = request.write else {
+            return self.send(fresh, request).await;
+        };
+        let creating =
+            self.cache.create_with(key, fresh).map_err(unavailable)?;
+        self.send(creating, request).await?;
+        self.cache.created(key, creating).map_err(unavailable)
+    }
+
+    async fn send(
+        &self,
+        handle: Handle,
+        request: CommentRequest,
+    ) -> Result<(), StoreError> {
+        let issue = request.issue.id.clone();
+        let comment = self
+            .project
+            .write_comment(self.operations, handle, request)
             .await
             .map_err(unavailable)?;
-        project
-            .posted(
-                &self.cache(),
-                key.project,
-                IssueComment {
-                    issue: key.issue.clone(),
-                    comment: written,
-                },
-            )
+        self.cache
+            .posted(IssueComment { issue, comment })
             .map_err(unavailable)
     }
 }
@@ -192,6 +234,26 @@ impl Canvases {
 fn unavailable(error: impl Display) -> StoreError {
     StoreError::Unavailable {
         reason: format!("GitHub's canvases: {error}"),
+    }
+}
+
+impl TrackerStore for Canvases {
+    fn refresh<'a>(&'a self, listing: &'a IssueListing) -> Refreshing<'a> {
+        Box::pin(async move {
+            let marked = self.github.tracker()?.marked_comments().await?;
+            let listed = listing
+                .records
+                .iter()
+                .map(Observation::id)
+                .collect::<BTreeSet<_>>();
+            let kept = marked
+                .into_iter()
+                .filter(|comment| listed.contains(&comment.issue))
+                .collect::<Vec<_>>();
+            CanvasCache::open(&self.data, self.project, &self.github.selection)
+                .and_then(|cache| cache.refreshed(&kept))
+                .map_err(|_| ReadFailure::Unavailable)
+        })
     }
 }
 

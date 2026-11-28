@@ -78,6 +78,7 @@ use secrecy::SecretString;
 
 mod canvases;
 mod comments;
+mod edits;
 #[cfg(unix)]
 mod fleet;
 mod tracking;

@@ -1,9 +1,12 @@
+mod cache;
 mod canvases;
 mod client;
 mod comments;
 mod credential;
+mod edits;
 mod inspect;
 
+pub use cache::CanvasCache;
 pub use canvases::{Canvases, Github, connect};
 pub use client::Client;
 pub use credential::{FleetResolver, HostCredentials};
