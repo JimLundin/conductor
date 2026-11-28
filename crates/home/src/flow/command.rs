@@ -72,6 +72,7 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
   home repos --verify
       Shows the same, then each project whose default branch head lacks a
       recorded pass of its profiles, with the command that runs them.
+      Exits 1 when it shows any, and 0 when every project has its passes.
   home repos sync
       Clones each project with a remote and no checkout here.
   home repos scan
