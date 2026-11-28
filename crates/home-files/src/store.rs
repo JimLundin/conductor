@@ -176,7 +176,6 @@ impl CanvasStore for FolderStore {
         let mut held = Held {
             canvases: Vec::new(),
             strays: named.strays,
-            unavailable: Vec::new(),
         };
         for name in named.canvases {
             let key = CanvasKey {

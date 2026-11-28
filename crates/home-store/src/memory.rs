@@ -70,7 +70,6 @@ impl Folder {
                 })
                 .collect(),
             strays: self.strays.clone(),
-            unavailable: Vec::new(),
         }
     }
 }
@@ -95,7 +94,6 @@ impl CanvasStore for Memory {
                 .flat_map(|folder| folder.strays.iter().cloned())
                 .chain(self.strays.iter().cloned())
                 .collect(),
-            unavailable: Vec::new(),
         })
     }
 

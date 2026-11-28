@@ -15,6 +15,7 @@ use home::flow::command::{
 use home::issue::storage::ReadHome;
 use home::{Draws, IssueId, UnixMillis};
 use home_store::{CanvasStore, StoreError};
+use project_runtime::tracker::{self, Canvases};
 
 #[cfg(test)]
 mod edited;
@@ -82,8 +83,10 @@ fn issues(
         Need::Canvases(wanted) => Given::Canvases(fetched(store, &wanted)),
         Need::Check => {
             let listings = trackers.listings();
+            let (canvases, unavailable) = every(store);
             Given::Check(Checked {
-                canvases: every(store),
+                canvases,
+                unavailable,
                 listings,
             })
         }
@@ -246,21 +249,26 @@ fn fetched(
             })
             .collect(),
         strays,
-        unavailable: Vec::new(),
     })
 }
 
-fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
-    let held = store.all().map_err(|error| error.to_string())?;
-    Ok(Held {
-        canvases: held
-            .canvases
-            .into_iter()
-            .map(|key| got(store, key))
-            .collect(),
-        strays: held.strays,
-        unavailable: held.unavailable,
-    })
+fn every(
+    store: &tracker::Trackers,
+) -> (Result<Held<Fetched>, String>, Vec<String>) {
+    match store.canvases() {
+        Ok(Canvases { held, unavailable }) => (
+            Ok(Held {
+                canvases: held
+                    .canvases
+                    .into_iter()
+                    .map(|key| got(store, key))
+                    .collect(),
+                strays: held.strays,
+            }),
+            unavailable,
+        ),
+        Err(error) => (Err(error.to_string()), Vec::new()),
+    }
 }
 
 fn got(store: &dyn CanvasStore, key: CanvasKey) -> Fetched {

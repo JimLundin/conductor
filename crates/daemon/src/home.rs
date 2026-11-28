@@ -33,7 +33,7 @@ use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
-use project_runtime::tracker::{Connect, Trackers};
+use project_runtime::tracker::{Canvases, Connect, Trackers};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -1049,14 +1049,17 @@ async fn listed(
 }
 
 fn kept(trackers: &Trackers) -> Held<CanvasKey> {
-    let kept = trackers.all().unwrap_or_else(|error| {
-        tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
-        Held::default()
-    });
-    for reason in &kept.unavailable {
+    let Ok(Canvases { held, unavailable }) =
+        trackers.canvases().inspect_err(|error| {
+            tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
+        })
+    else {
+        return Held::default();
+    };
+    for reason in &unavailable {
         tracing::warn!(target: "home", %reason, "listed the home without a project's canvases");
     }
-    kept
+    held
 }
 
 fn entries(

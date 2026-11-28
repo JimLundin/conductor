@@ -17,7 +17,7 @@ use home_files::FolderStore;
 use home_store::{CanvasStore, Memory, Putting, StoreError};
 
 use super::{
-    Connection, Connector, Reader, Refreshing, TrackerStore, Trackers,
+    Canvases, Connection, Connector, Reader, Refreshing, TrackerStore, Trackers,
 };
 use crate::{IssueCompletion, IssueTracker, Registration, SendCompletion};
 
@@ -250,10 +250,12 @@ fn all_lists_the_built_projects_canvases_and_reports_an_unbuilt_project_on_its_o
     home_store.keep(&homed, &file()?);
     let trackers = followed(Box::new(home_store), unmapped);
     assert_eq!(
-        trackers.all(),
-        Ok(Held {
-            canvases: Vec::from([homed]),
-            strays: Vec::new(),
+        trackers.canvases(),
+        Ok(Canvases {
+            held: Held {
+                canvases: Vec::from([homed]),
+                strays: Vec::new(),
+            },
             unavailable: Vec::from([String::from(
                 "the tracker of standards: unknown field `colour`"
             )]),
@@ -321,10 +323,12 @@ fn all_lists_the_markdown_canvases_and_reports_a_tracker_whose_store_fails_on_it
         })
     });
     assert_eq!(
-        trackers.all(),
-        Ok(Held {
-            canvases: Vec::from([homed]),
-            strays: Vec::new(),
+        trackers.canvases(),
+        Ok(Canvases {
+            held: Held {
+                canvases: Vec::from([homed]),
+                strays: Vec::new(),
+            },
             unavailable: Vec::from([String::from(
                 "the tracker of standards: GitHub is unreachable"
             )]),

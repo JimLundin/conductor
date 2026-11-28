@@ -166,11 +166,6 @@ pub fn canvases(
         subject: Some(stray.place.clone()),
         message: stray.reason.to_string(),
     });
-    let unavailable = kept.unavailable.iter().map(|reason| Finding {
-        severity: Severity::Error,
-        subject: None,
-        message: reason.clone(),
-    });
     kept.canvases
         .iter()
         .filter_map(|fetched| {
@@ -188,7 +183,18 @@ pub fn canvases(
             })
         })
         .chain(strays)
-        .chain(unavailable)
+        .collect()
+}
+
+#[must_use]
+pub fn unavailable(trackers: Vec<String>) -> Vec<Finding> {
+    trackers
+        .into_iter()
+        .map(|reason| Finding {
+            severity: Severity::Error,
+            subject: None,
+            message: reason,
+        })
         .collect()
 }
 

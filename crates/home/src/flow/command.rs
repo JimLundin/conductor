@@ -11,7 +11,7 @@ use crate::{IssueId, IssueKey, ProjectId, UnixMillis, UnixSecs};
 use serde::{Deserialize, Serialize};
 
 use super::PATH;
-use super::check::{canvases, check, listed, of_issue};
+use super::check::{canvases, check, listed, of_issue, unavailable};
 use super::eval::Move;
 use super::graph::branch_of;
 use super::resolve::Mode;
@@ -242,6 +242,7 @@ pub enum Given {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checked {
     pub canvases: Result<Held<Fetched>, String>,
+    pub unavailable: Vec<String>,
     pub listings: Vec<Listed>,
 }
 
@@ -762,12 +763,14 @@ pub fn run(
                     canvases: Err(String::from(
                         "the store's canvases weren't read",
                     )),
+                    unavailable: Vec::new(),
                     listings: Vec::new(),
                 },
             };
             report
                 .findings
                 .extend(canvases(home, checked.canvases, resolved));
+            report.extend(unavailable(checked.unavailable));
             report.extend(listed(home, &checked.listings));
             return Outcome {
                 output: report.text(),

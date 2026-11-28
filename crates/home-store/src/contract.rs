@@ -222,7 +222,6 @@ fn listed(
             .map(|kept| kept.map_err(|broken| broken.name))
             .collect(),
         strays: held.strays,
-        unavailable: Vec::new(),
     }
 }
 

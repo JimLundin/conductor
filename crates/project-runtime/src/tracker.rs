@@ -65,22 +65,33 @@ struct Configured {
 }
 
 impl Configured {
-    fn held(&self) -> Held<CanvasKey> {
-        self.canvases.all().unwrap_or_else(|error| Held {
-            canvases: Vec::new(),
-            strays: Vec::new(),
-            unavailable: Vec::from([format!(
-                "the tracker of {}: {error}",
-                self.name
-            )]),
-        })
+    fn held(&self) -> Result<Held<CanvasKey>, String> {
+        self.canvases
+            .all()
+            .map_err(|error| format!("the tracker of {}: {error}", self.name))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Canvases {
+    pub held: Held<CanvasKey>,
+    pub unavailable: Vec<String>,
 }
 
 enum Selected {
     Markdown,
     Configured(Box<Configured>),
     Unbuilt(String),
+}
+
+impl Selected {
+    fn held(&self) -> Option<Result<Held<CanvasKey>, String>> {
+        match self {
+            Self::Markdown => None,
+            Self::Configured(configured) => Some(configured.held()),
+            Self::Unbuilt(reason) => Some(Err(reason.clone())),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -453,26 +464,28 @@ fn unavailable(reason: impl Into<String>) -> StoreError {
     }
 }
 
-impl CanvasStore for Trackers {
-    fn all(&self) -> Result<Held<CanvasKey>, StoreError> {
+impl Trackers {
+    pub fn canvases(&self) -> Result<Canvases, StoreError> {
         let mut held = self.markdown.all()?;
         held.canvases.retain(|key| self.markdown(key.project));
-        for selected in self.selected.values() {
-            match selected {
-                Selected::Markdown => {}
-                Selected::Configured(configured) => {
-                    let kept = configured.held();
+        let mut unavailable = Vec::new();
+        for read in self.selected.values().filter_map(Selected::held) {
+            match read {
+                Ok(kept) => {
                     held.canvases.extend(kept.canvases);
                     held.strays.extend(kept.strays);
-                    held.unavailable.extend(kept.unavailable);
                 }
-                Selected::Unbuilt(reason) => {
-                    held.unavailable.push(reason.clone());
-                }
+                Err(reason) => unavailable.push(reason),
             }
         }
         held.canvases.sort();
-        Ok(held)
+        Ok(Canvases { held, unavailable })
+    }
+}
+
+impl CanvasStore for Trackers {
+    fn all(&self) -> Result<Held<CanvasKey>, StoreError> {
+        self.canvases().map(|canvases| canvases.held)
     }
 
     fn list(

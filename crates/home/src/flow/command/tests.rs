@@ -2028,6 +2028,7 @@ fn fetched(
 fn every(canvases: Result<Held<Fetched>, String>) -> Given {
     Given::Check(Checked {
         canvases,
+        unavailable: Vec::new(),
         listings: Vec::new(),
     })
 }
@@ -2036,7 +2037,6 @@ fn held<T>(canvases: Vec<T>) -> Held<T> {
     Held {
         canvases,
         strays: Vec::new(),
-        unavailable: Vec::new(),
     }
 }
 
@@ -2112,6 +2112,28 @@ fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
 }
 
 #[test]
+fn check_reports_a_tracker_whose_canvases_it_couldnt_read() {
+    let checked = given(
+        "check",
+        Given::Check(Checked {
+            canvases: Ok(held(Vec::new())),
+            unavailable: Vec::from([String::from(
+                "the tracker of standards: GitHub is unreachable",
+            )]),
+            listings: Vec::new(),
+        }),
+    );
+    assert!(checked.failed);
+    assert!(
+        checked
+            .output
+            .contains("error  the tracker of standards: GitHub is unreachable\n"),
+        "{}",
+        checked.output
+    );
+}
+
+#[test]
 fn check_reports_each_tracker_issue_that_reads_as_invalid_and_a_listing_it_couldnt_refresh()
 -> Result<(), String> {
     use crate::issue::{
@@ -2131,6 +2153,7 @@ fn check_reports_each_tracker_issue_that_reads_as_invalid_and_a_listing_it_could
         "check",
         Given::Check(Checked {
             canvases: Ok(held(Vec::new())),
+            unavailable: Vec::new(),
             listings: Vec::from([
                 Listed {
                     project,
@@ -2202,7 +2225,6 @@ fn a_canvas_show_prints_an_issue_s_valid_canvases_then_names_what_it_skipped()
                 place: String::from("over/there/notes"),
                 reason: StrayReason::Folder,
             }]),
-            unavailable: Vec::new(),
         })),
     );
     assert_eq!(
@@ -2274,7 +2296,6 @@ fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
                     reason: StrayReason::NotAnIssue,
                 },
             ]),
-            unavailable: Vec::new(),
         })),
     );
     assert!(checked.failed);

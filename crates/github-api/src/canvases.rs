@@ -310,7 +310,6 @@ impl CanvasStore for Canvases {
                 })
                 .collect(),
             strays: found.strays,
-            unavailable: Vec::new(),
         })
     }
 
@@ -337,7 +336,6 @@ impl CanvasStore for Canvases {
                 })
                 .collect(),
             strays: found.strays,
-            unavailable: Vec::new(),
         })
     }
 

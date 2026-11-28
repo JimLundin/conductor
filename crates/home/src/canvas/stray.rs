@@ -8,7 +8,6 @@ use super::{CanvasError, CanvasName};
 pub struct Held<T> {
     pub canvases: Vec<T>,
     pub strays: Vec<Stray>,
-    pub unavailable: Vec<String>,
 }
 
 impl<T> Default for Held<T> {
@@ -16,7 +15,6 @@ impl<T> Default for Held<T> {
         Self {
             canvases: Vec::new(),
             strays: Vec::new(),
-            unavailable: Vec::new(),
         }
     }
 }
