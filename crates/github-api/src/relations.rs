@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use github::access::routes::Address;
 use github::mapping::Native;
 use github::mapping::relate::{
@@ -61,44 +63,38 @@ impl Tracker {
             .ok_or(Unrelatable::Read(ReadFailure::InvalidResponse))?;
         let number =
             Address::of(&issue.id).map_err(Unrelatable::Read)?.number();
-        let mut steps = Vec::new();
-        for edge in plan.changes {
-            let effect = edge.effect();
-            let request = match edge {
-                Change::Adopt { parent, replace } => {
+        let mut ids = BTreeMap::new();
+        for edge in &plan.changes {
+            match edge {
+                Change::Adopt { parent, .. } => {
                     let facts = self.parent(parent.clone()).await?;
                     let height = self.height(number).await?;
                     adoptable(facts, height)
                         .map_err(|reason| unheld(&reason))?;
-                    Request::Adopt {
-                        parent,
-                        child,
-                        replace,
-                    }
                 }
-                Change::Orphan(parent) => Request::Orphan { parent, child },
+                Change::Orphan(_) => {}
                 Change::Block(blocker) => {
-                    let target = self.issue(blocker).await?;
+                    let target = self.issue(*blocker).await?;
                     let blocking = target
                         .issue_dependencies_summary
                         .map(|summary| summary.total_blocking)
                         .ok_or(Unrelatable::Read(
                             ReadFailure::InvalidResponse,
                         ))?;
-                    blockable(blocker, blocking)
+                    blockable(*blocker, blocking)
                         .map_err(|reason| unheld(&reason))?;
-                    Request::Block(target.issue.id.0)
+                    ids.insert(*blocker, target.issue.id.0);
                 }
                 Change::Unblock(blocker) => {
-                    Request::Unblock(self.issue(blocker).await?.issue.id.0)
+                    ids.insert(
+                        *blocker,
+                        self.issue(*blocker).await?.issue.id.0,
+                    );
                 }
-            };
-            steps.push(RelationStep {
-                effect,
-                request: request.encode(),
-            });
+            }
         }
-        steps.extend(plan.footer);
+        let steps = relate::steps(plan, child, &ids)
+            .ok_or(Unrelatable::Read(ReadFailure::InvalidResponse))?;
         Ok(Relating { revision, steps })
     }
 

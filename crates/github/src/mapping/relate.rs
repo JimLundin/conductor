@@ -1,4 +1,5 @@
 use alloc::{
+    collections::BTreeMap,
     format,
     string::{String, ToString},
     vec::Vec,
@@ -46,6 +47,14 @@ pub enum Change {
 }
 
 impl Change {
+    #[must_use]
+    pub const fn blocker(&self) -> Option<u64> {
+        match self {
+            Self::Block(blocker) | Self::Unblock(blocker) => Some(*blocker),
+            Self::Adopt { .. } | Self::Orphan(_) => None,
+        }
+    }
+
     #[must_use]
     pub fn effect(&self) -> String {
         match self {
@@ -132,6 +141,38 @@ pub fn plan(
                 request: Request::Body(body).encode(),
             });
     Ok(Plan { changes, footer })
+}
+
+#[must_use]
+pub fn steps(
+    plan: Plan,
+    child: u64,
+    blockers: &BTreeMap<u64, u64>,
+) -> Option<Vec<RelationStep>> {
+    let blocker = |number: u64| blockers.get(&number).copied();
+    let mut steps = plan
+        .changes
+        .into_iter()
+        .map(|edge| {
+            let effect = edge.effect();
+            let request = match edge {
+                Change::Adopt { parent, replace } => Request::Adopt {
+                    parent,
+                    child,
+                    replace,
+                },
+                Change::Orphan(parent) => Request::Orphan { parent, child },
+                Change::Block(number) => Request::Block(blocker(number)?),
+                Change::Unblock(number) => Request::Unblock(blocker(number)?),
+            };
+            Some(RelationStep {
+                effect,
+                request: request.encode(),
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    steps.extend(plan.footer);
+    Some(steps)
 }
 
 fn held(target: &IssueKey) -> Option<u64> {

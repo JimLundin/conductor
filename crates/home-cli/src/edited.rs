@@ -184,31 +184,14 @@ impl Github {
         )
         .map_err(|reason| Unrelatable::Unheld(reason.to_string()))?;
         let child = issue.id.to_string().parse().unwrap_or_default();
-        let mut steps: Vec<RelationStep> = plan
+        let blockers = plan
             .changes
-            .into_iter()
-            .map(|edge| RelationStep {
-                effect: edge.effect(),
-                request: match edge {
-                    relate::Change::Adopt { parent, replace } => {
-                        Request::Adopt {
-                            parent,
-                            child,
-                            replace,
-                        }
-                    }
-                    relate::Change::Orphan(parent) => {
-                        Request::Orphan { parent, child }
-                    }
-                    relate::Change::Block(blocker) => Request::Block(blocker),
-                    relate::Change::Unblock(blocker) => {
-                        Request::Unblock(blocker)
-                    }
-                }
-                .encode(),
-            })
+            .iter()
+            .filter_map(relate::Change::blocker)
+            .map(|number| (number, number))
             .collect();
-        steps.extend(plan.footer);
+        let steps = relate::steps(plan, child, &blockers)
+            .ok_or(Unrelatable::Read(ReadFailure::InvalidResponse))?;
         Ok(Relating {
             revision: record.native.revision(),
             steps,
