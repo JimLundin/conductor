@@ -614,3 +614,24 @@ fn issue_note_on_a_github_issue_adds_one_comment_and_issue_show_lists_it_in_the_
     assert_eq!(home.issue()?.body, "Words\n");
     Ok(())
 }
+
+#[test]
+fn a_lost_note_reply_retried_finds_the_comment_and_posts_nothing_more()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("lost-note", &[], "Words\n")?;
+    std::fs::write(home.root.join("data").join(LOSE), "")?;
+    let note = ["issue", "note", "standards", "146", "worker", "started"];
+    let (said, code) = home.home(&note)?;
+    assert!(said.contains("is unknown; retry it"), "{said}");
+    assert_eq!(code, 1);
+    let (said, code) = home.home(&note)?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    let comments = home.comments("146")?;
+    assert_eq!(comments.len(), 1, "{comments:?}");
+    assert!(
+        comments[0].ends_with(" note: worker started\n"),
+        "{comments:?}"
+    );
+    Ok(())
+}

@@ -5,8 +5,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::issue::{
-    Comment, CommentRequest, CommentWrite, EditId, IssueCreate, IssueWrite,
-    Lookup, NativeIssue, Opened,
+    Comment, CommentRequest, CommentWrite, EditId, Entry, IssueCreate,
+    IssueWrite, Lookup, NativeIssue, Opened,
 };
 use crate::{IssueId, ProjectId};
 
@@ -66,6 +66,7 @@ pub enum Work {
     Comment {
         issue: IssueId,
         write: CommentWrite,
+        note: Option<Entry>,
     },
     Create {
         create: IssueCreate,
@@ -114,9 +115,38 @@ impl Intent {
         }
     }
 
+    #[must_use]
+    pub fn issue(&self) -> Option<Lookup> {
+        match &self.work {
+            Work::ChangeIssue { issue, .. } | Work::Comment { issue, .. } => {
+                Some(Lookup {
+                    project: self.project,
+                    id: issue.clone(),
+                })
+            }
+            Work::Create { .. } => None,
+        }
+    }
+
     pub fn comment(
         handle: Handle,
         request: &CommentRequest,
+    ) -> Result<Self, Refusal> {
+        Self::commenting(handle, request, None)
+    }
+
+    pub fn note(
+        handle: Handle,
+        request: &CommentRequest,
+        entry: &Entry,
+    ) -> Result<Self, Refusal> {
+        Self::commenting(handle, request, Some(entry.clone()))
+    }
+
+    fn commenting(
+        handle: Handle,
+        request: &CommentRequest,
+        note: Option<Entry>,
     ) -> Result<Self, Refusal> {
         if !request.write.body().contains(&handle.marker()) {
             return Err(Refusal::Unmarked);
@@ -127,7 +157,33 @@ impl Intent {
             work: Work::Comment {
                 issue: request.issue.id.clone(),
                 write: request.write.clone(),
+                note,
             },
+        })
+    }
+
+    #[must_use]
+    pub fn notes(&self, issue: &Lookup, entry: &Entry) -> bool {
+        matches!(&self.work, Work::Comment { issue: id, note: Some(held), .. }
+            if self.project == issue.project
+                && *id == issue.id
+                && held.by == entry.by
+                && held.event == entry.event
+                && held.text == entry.text)
+    }
+
+    #[must_use]
+    pub fn requested(&self) -> Option<CommentRequest> {
+        let Work::Comment { issue, write, .. } = &self.work else {
+            return None;
+        };
+        Some(CommentRequest {
+            issue: Lookup {
+                project: self.project,
+                id: issue.clone(),
+            },
+            write: write.clone(),
+            seen: self.expected.clone(),
         })
     }
 }
@@ -339,19 +395,10 @@ impl Record {
 impl Record {
     #[must_use]
     pub fn awaited(&self) -> Option<CommentRequest> {
-        let (Progress::AwaitingEvidence(_), Work::Comment { issue, write }) =
-            (&self.progress, &self.intent.work)
-        else {
-            return None;
-        };
-        Some(CommentRequest {
-            issue: Lookup {
-                project: self.intent.project,
-                id: issue.clone(),
-            },
-            write: write.clone(),
-            seen: self.intent.expected.clone(),
-        })
+        match self.progress {
+            Progress::AwaitingEvidence(_) => self.intent.requested(),
+            Progress::Ready | Progress::Completed => None,
+        }
     }
 
     pub fn reject(&self) -> Result<Self, Refusal> {

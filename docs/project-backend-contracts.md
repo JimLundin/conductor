@@ -231,9 +231,15 @@ original intent, owner host, preconditions and per-step results before
 effects. The operation handle binds the owner host before first dispatch,
 so a missing record on another host cannot look like a new operation. The
 same ID with different input is refused. CLI and daemon use the same host
-store namespace and interprocess locks to serialize project and repository
-operations. A retry on another host must reach the owner or report it
-unavailable; it must not start the operation again.
+store namespace, and a repository operation holds its workspace's lock. An
+issue operation claims its issue, or for an issue it opens its ID, with an
+interprocess lock held until its attempt ends, so writes to one issue on
+one host never overlap, writes to other issues go ahead, and a second
+write to a claimed issue is refused as in progress. A note rerun after a
+lost reply resumes the unsettled note on the same issue with the same
+words, so it finds its marker and posts nothing more. A retry on another
+host must reach the owner or report it unavailable; it must not start the
+operation again.
 
 GitHub does not support conditional issue PATCH. Re-read before writing,
 refuse a known changed precondition, send only the affected fields or
