@@ -1,17 +1,18 @@
 use std::path::Path;
 
-use github::configuration::selected;
 use home::flow::snapshot::Snapshot;
+use home_files::FolderStore;
 use project_runtime::Registry;
+use project_runtime::tracker::Trackers;
 
 pub fn capabilities(root: &Path, name: &str) -> (String, u8) {
     run(async {
-        let configuration = home_files::configuration(root);
+        let configuration = home_files::configuration(root, github::ISSUERS);
         let data = project_runtime::data_dir_or_default(None)
             .map_err(|error| error.to_string())?;
         let mut registry = Registry::default();
         local_workspace(&configuration, name, &mut registry, &data)?;
-        describe(&configuration, name, &mut registry, &data)
+        describe(root, &configuration, name, &mut registry, &data)
             .map(|report| (report, 0))
     })
 }
@@ -38,21 +39,36 @@ fn local_workspace(
 }
 
 fn describe(
+    root: &Path,
     configuration: &Snapshot,
     name: &str,
     registry: &mut Registry,
     data: &Path,
 ) -> Result<String, String> {
-    let selected = selected(configuration, name)?;
-    let failure = selected
-        .tracker
-        .and_then(|tracker| {
-            super::tracking::register(registry, data, tracker).err()
-        })
-        .map(|err| err.to_string());
+    let project = configuration.project(name).ok_or_else(|| {
+        configuration
+            .listing_problems()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("unknown project {name:?}"))
+    })?;
+    project
+        .backends
+        .validate()
+        .map_err(|refusal| refusal.label())?;
+    let mut trackers = Trackers::new(
+        data.to_path_buf(),
+        Box::new(FolderStore::new(root.to_path_buf())),
+        super::resolve::connect,
+    );
+    trackers.follow(configuration);
+    let failure = trackers
+        .register(project.id, registry)?
+        .err()
+        .map(|error| error.to_string());
     Ok(home::backend::report(
-        &selected.project.name,
-        &registry.capabilities(&selected.project.backends),
+        &project.name,
+        &registry.capabilities(&project.backends),
         failure.as_deref(),
     ))
 }
@@ -120,6 +136,7 @@ mod tests {
             )]),
             issues: Vec::new(),
             unread: Vec::new(),
+            issuers: github::ISSUERS,
         })
     }
 
@@ -130,6 +147,7 @@ mod tests {
             "[backends.tracker]\nadapter = \"github\"\nresource = \"owner/issues\"\n",
         );
         let report = describe(
+            std::path::Path::new("."),
             &loaded,
             "local",
             &mut Registry::default(),
@@ -153,6 +171,7 @@ mod tests {
         );
         assert!(
             describe(
+                std::path::Path::new("."),
                 &loaded,
                 "local",
                 &mut Registry::default(),
@@ -170,6 +189,7 @@ mod tests {
             Err(String::from("issue flow is unavailable")),
         );
         let report = describe(
+            std::path::Path::new("."),
             &loaded,
             "local",
             &mut Registry::default(),
@@ -199,6 +219,7 @@ mod tests {
             "[backends.hosting]\nadapter = \"github\"\nresource = \"owner/builds\"\noptions = 'queue = \"configured\"'\n",
         );
         let report = describe(
+            std::path::Path::new("."),
             &loaded,
             "local",
             &mut Registry::default(),

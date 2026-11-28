@@ -6,7 +6,7 @@ use crate::session::{EventKind, SessionId, SessionRefusal, SessionResult};
 use crate::workspace::Workspace;
 use agents::Output;
 use agents::{ClientName, CloseReason, Provider, TurnOutcome};
-use home::IssueId;
+
 use vcs::Kept;
 use vcs::{Repository, WorkingCopy, Worktree};
 
@@ -19,7 +19,7 @@ use crate::session::Order;
 
 const SESSION: SessionId = SessionId(1);
 fn issue_id() -> Result<home::IssueKey, &'static str> {
-    IssueId::new("00000009")
+    Some(home::IssueId::of(&home::Slug::new(9)))
         .map(|id| home::IssueKey {
             project: home::ProjectId::new(1),
             id,

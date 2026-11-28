@@ -1,36 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
-use github::configuration::{TrackerMapping, selected};
-use home::backend::{CredentialState, IssueQuery};
-use home::issue::{IssueListing, ReadFailure};
-use project_runtime::{Registration, Registry};
+use github::configuration::selected;
+use home::backend::IssueQuery;
+use home::issue::IssueListing;
 
-use crate::resolve::Trackers;
-
-pub fn register(
-    registry: &mut Registry,
-    data: &Path,
-    tracker: TrackerMapping<'_>,
-) -> Result<(), ReadFailure> {
-    let client = github_api::HostCredentials::with_fleet(
-        data,
-        daemon::fleet::project_credential,
-    )
-    .connect(tracker.selection)
-    .map_err(github_api::read_failure)?;
-    let reader = client.tracker(tracker.flow.clone(), tracker.mapping);
-    registry
-        .register_tracker(
-            Registration {
-                selection: tracker.selection.clone(),
-                capabilities: reader.capabilities(),
-                credential: CredentialState::Available,
-            },
-            Arc::new(reader),
-        )
-        .map_err(ReadFailure::Refused)
-}
+use crate::resolve::{Trackers, connect};
 
 pub fn answer(root: &Path, args: &[String]) -> Option<(String, u8)> {
     let parsed = home::backend::issue_query(args)?;
@@ -44,10 +18,10 @@ async fn listed(
     root: &Path,
     query: IssueQuery<'_>,
 ) -> Result<(String, u8), String> {
-    let loaded = home_files::read(root);
+    let loaded = home_files::read(root, github::ISSUERS);
     let project = selected(&loaded.snapshot, query.project)?.project.id;
     let data = query.data.map(PathBuf::from);
-    let mut trackers = Trackers::new(root, loaded, data);
+    let trackers = Trackers::new(root, loaded, data, connect)?;
     shown(&trackers.listing(project, query.offline).await?)
 }
 

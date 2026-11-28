@@ -22,7 +22,7 @@ use crate::issue::storage::Inputs;
 use crate::issue::storage::{self, File};
 
 fn id_id() -> IssueId {
-    IssueId(String::from("00000001"))
+    crate::id::issue_id("00000001")
 }
 
 fn key_id() -> crate::IssueKey {
@@ -50,6 +50,7 @@ fn snapshot_with(files: &[File], selection: &str) -> Snapshot {
     crate::issue::storage::snapshot(Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: Ok(text(include_str!("../flow/test-flow.toml"))),
         projects: Vec::from([(
             project().to_string(),
@@ -103,6 +104,7 @@ fn among<T>(files: &[File], within: impl FnOnce(&Snapshot) -> T) -> T {
 fn observed(text: &str) -> super::Observed {
     storage::load(
         &flow(),
+        &crate::tracker::Ids::default(),
         &super::Read {
             project: project(),
             issue: id_id(),
@@ -136,7 +138,13 @@ fn rendered(
     match applied {
         Ok(super::Applied { change, warnings }) => {
             let document = current.and_then(|text| {
-                storage::load(&flow(), &edit.read(), text).document
+                storage::load(
+                    &flow(),
+                    &crate::tracker::Ids::default(),
+                    &edit.read(),
+                    text,
+                )
+                .document
             });
             storage::encode(&flow(), &change, document, Some(edit.id))
                 .map_or_else(Applied::Refused, |file| Applied::Write {
@@ -478,14 +486,11 @@ fn an_issue_id_its_file_and_its_status_must_agree() {
         "projects/7r5n23/issues/00000001.md"
     );
     assert_eq!(
-        storage::decode(
-            &flow(),
-            &File {
-                project: project(),
-                stem: IssueId(String::from("00000002")).to_string(),
-                text: written()
-            }
-        )
+        decoded(&File {
+            project: project(),
+            stem: crate::id::issue_id("00000002").to_string(),
+            text: written()
+        })
         .map(|_| ())
         .map_err(|problem| problem.to_string()),
         Err(text("id: is not its file's name, an issue id"))
@@ -711,7 +716,7 @@ fn a_change_finds_its_issues_project_on_a_host_with_a_home() {
             .edit(
                 crate::IssueKey {
                     project: project(),
-                    id: IssueId(String::from("00000007")),
+                    id: crate::id::issue_id("00000007"),
                 },
                 IssueChange::Note(text("x")),
                 "iPhone"
@@ -889,7 +894,7 @@ fn moved(
     status: &str,
     blocker: Option<&str>,
 ) -> Option<String> {
-    let blocking = IssueId(String::from("00000002"));
+    let blocking = crate::id::issue_id("00000002");
     let mut files = Vec::from([filed(
         &id_id(),
         status,
@@ -1010,14 +1015,11 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
         "a body with nothing after it ends the file"
     );
     let source = format!("{}\n## Design\nKept after the notes.\n", written());
-    let original = storage::decode(
-        &flow(),
-        &File {
-            project: project(),
-            stem: id_id().to_string(),
-            text: source.clone(),
-        },
-    )
+    let original = decoded(&File {
+        project: project(),
+        stem: id_id().to_string(),
+        text: source.clone(),
+    })
     .map_err(|problem| problem.to_string())?
     .0;
     let observed = super::Observed {
@@ -1065,6 +1067,7 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
     ] {
         let loaded = storage::load(
             &flow(),
+            &crate::tracker::Ids::default(),
             &super::Read {
                 project: project(),
                 issue: id_id(),
@@ -1081,13 +1084,12 @@ fn a_new_body_replaces_only_the_body() -> Result<(), String> {
                     IssueChange::Note(text("following note")),
                 ]),
             },
+            Some(&original),
             &context,
         )?;
         let file =
             storage::encode(&flow(), &plan.change, loaded.document, None)?;
-        let decoded = storage::decode(&flow(), &file)
-            .map_err(|problem| problem.to_string())?
-            .0;
+        let decoded = decoded(&file).map_err(|problem| problem.to_string())?.0;
         assert_eq!(plan.change.observation.body(), decoded.body(), "{body}");
         let logged = &plan.change.observation.editable()?.0.log;
         assert_eq!(logged.len(), original.editable()?.0.log.len() + 1);
@@ -1340,7 +1342,7 @@ fn what_a_client_writes_is_signed_by_the_host_and_the_client_as_one_word() {
 fn an_issues_branch_is_the_one_the_home_lists_for_it() {
     let other = Issue {
         created: None,
-        id: IssueId(String::from("00000009")),
+        id: crate::id::issue_id("00000009"),
         branch: text("issue/other"),
         ..issue()
     };
@@ -1722,7 +1724,7 @@ fn a_competing_done_commit_supersedes_a_session_finishing_its_issue()
 
 mod as_the_command_line {
     use crate::issue::{EditId, IssueChange};
-    use crate::{HomeRefusal, IssueId, ProjectId, UnixSecs};
+    use crate::{HomeRefusal, ProjectId, UnixSecs};
 
     use crate::issue::Datum;
 
@@ -1750,6 +1752,7 @@ mod as_the_command_line {
         Inputs {
             unavailable: Vec::new(),
             observed_at: None,
+            issuers: crate::tracker::Issuers::default(),
             flow: Ok(String::from(FLOW)),
             projects: Vec::from([(
                 String::from(FOLDER),
@@ -1814,7 +1817,8 @@ mod as_the_command_line {
         let task = crate::IssueKey {
             project: ProjectId::parse(FOLDER)
                 .ok_or(HomeRefusal::UnknownIssue)?,
-            id: IssueId::new(TASK).ok_or(HomeRefusal::UnknownIssue)?,
+            id: Some(crate::id::issue_id(TASK))
+                .ok_or(HomeRefusal::UnknownIssue)?,
         };
         let current =
             home.observation(task.project, &task.id)
@@ -1916,7 +1920,7 @@ mod as_the_command_line {
             command(&said, &home, fresh(&home, NOW, &[7; crate::DRAWS]));
         let resolved = in_folder(&home, &asked, None);
         let typed = run(asked, None, &resolved, &home, &by);
-        let made = IssueId::new(TASK)
+        let made = Some(crate::id::issue_id(TASK))
             .zip(ProjectId::parse(FOLDER))
             .ok_or_else(String::new)
             .and_then(|(id, project)| {
@@ -1924,9 +1928,10 @@ mod as_the_command_line {
                     &home,
                     &command::Edit::Change {
                         project,
-                        id,
+                        id: id.clone(),
                         changes: Vec::from([set("priority", word("high"))]),
                     },
+                    home.observation(project, &id),
                     &by,
                 )
             });
@@ -2016,4 +2021,13 @@ fn every_line_the_app_logs_or_briefs_is_the_one_log_line_of_its_entry()
         assert!(brief.contains(&log_line(entry)), "{brief}");
     }
     Ok(())
+}
+
+fn decoded(
+    file: &File,
+) -> Result<
+    (super::Observation, super::document::Document),
+    crate::flow::graph::Problem,
+> {
+    storage::decode(&flow(), &crate::tracker::Ids::default(), file)
 }

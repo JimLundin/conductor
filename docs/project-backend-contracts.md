@@ -76,8 +76,10 @@ An issue ID is an opaque string unique within its project's tracker, and a
 project and an ID name one issue. The GitHub adapter gives each issue its
 number as its ID. The issue's REST ID and GraphQL node ID are addresses in
 its locator. The core never parses an ID. A relation names an issue of its
-own project by its ID, and an issue of another project as `<project>/<id>`,
-such as `hyn162/0trfecpc`, where `<project>` is the project's ID.
+own project by its ID, and an issue of another project by that project and
+the ID. A command reads it as `<project> <id>`, such as `hyn162 0trfecpc`,
+where `<project>` is the project's name or ID. A stored relation keeps the
+two apart, as `{ id = "0trfecpc", project = "hyn162" }`.
 Sort issues by their creation time with identity as a deterministic tie
 break, not by the old locally minted ID.
 
@@ -234,9 +236,15 @@ original intent, owner host, preconditions and per-step results before
 effects. The operation handle binds the owner host before first dispatch,
 so a missing record on another host cannot look like a new operation. The
 same ID with different input is refused. CLI and daemon use the same host
-store namespace and interprocess locks to serialize project and repository
-operations. A retry on another host must reach the owner or report it
-unavailable; it must not start the operation again.
+store namespace, and a repository operation holds its workspace's lock. An
+issue operation claims its issue, or for an issue it opens its ID, with an
+interprocess lock held until its attempt ends, so writes to one issue on
+one host never overlap, writes to other issues go ahead, and a second
+write to a claimed issue is refused as in progress. A note rerun after a
+lost reply resumes the unsettled note on the same issue with the same
+words, so it finds its marker and posts nothing more. A retry on another
+host must reach the owner or report it unavailable; it must not start the
+operation again.
 
 GitHub does not support conditional issue PATCH. Re-read before writing,
 refuse a known changed precondition, send only the affected fields or

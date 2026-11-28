@@ -7,6 +7,8 @@ use toml::{Spanned, Table, Value};
 use toml_parser::{Source, lexer::TokenKind};
 
 use crate::prelude::*;
+use crate::tracker::Ids;
+use crate::{IssueKey, ProjectId};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Front {
@@ -173,24 +175,83 @@ fn key_text(key: &str) -> String {
     }
 }
 
+const PROJECT: &str = "project";
+
+const TARGET: &str = "id";
+
 pub fn targets(
     relation: &crate::flow::Relation,
     value: Value,
-    from: crate::ProjectId,
-) -> Result<Vec<crate::IssueKey>, String> {
-    let id = |value: Value| match value {
-        Value::String(name) => crate::IssueKey::named(&name, from)
-            .ok_or_else(|| format!("{name:?} is no issue")),
-        _ => Err(String::from("is not a list of ids")),
-    };
+    from: ProjectId,
+    ids: &Ids,
+) -> Result<Vec<IssueKey>, String> {
     match (relation.many, value) {
-        (_, Value::String(name)) => {
-            id(Value::String(name)).map(|one| Vec::from([one]))
-        }
-        (true, Value::Array(values)) => values.into_iter().map(id).collect(),
+        (true, Value::Array(values)) => values
+            .into_iter()
+            .map(|value| target(value, from, ids))
+            .collect(),
         (false, Value::Array(_)) => {
             Err(String::from("points to one issue, not a list"))
         }
-        _ => Err(String::from("is not an id")),
+        (_, one) => target(one, from, ids).map(|key| Vec::from([key])),
+    }
+}
+
+fn target(
+    value: Value,
+    from: ProjectId,
+    ids: &Ids,
+) -> Result<IssueKey, String> {
+    match value {
+        Value::String(id) => Ok(IssueKey {
+            project: from,
+            id: ids.read(from, &id)?,
+        }),
+        Value::Table(mut named) => {
+            let project = match named.remove(PROJECT) {
+                None => from,
+                Some(Value::String(project)) => ProjectId::parse(&project)
+                    .ok_or_else(|| format!("{project:?} is no project ID"))?,
+                Some(_) => {
+                    return Err(String::from("its project is no project ID"));
+                }
+            };
+            let Some(Value::String(id)) = named.remove(TARGET) else {
+                return Err(String::from("names no issue ID"));
+            };
+            if let Some(extra) = named.keys().next() {
+                return Err(format!("{extra:?} is not a project or an id"));
+            }
+            Ok(IssueKey {
+                project,
+                id: ids.read(project, &id)?,
+            })
+        }
+        _ => Err(String::from("is not an issue")),
+    }
+}
+
+#[must_use]
+pub fn relation_value(
+    many: bool,
+    targets: &[IssueKey],
+    from: ProjectId,
+) -> Value {
+    let named = |key: &IssueKey| {
+        if key.project == from {
+            Value::String(key.id.to_string())
+        } else {
+            Value::Table(Table::from_iter([
+                (
+                    String::from(PROJECT),
+                    Value::String(key.project.to_string()),
+                ),
+                (String::from(TARGET), Value::String(key.id.to_string())),
+            ]))
+        }
+    };
+    match (many, targets) {
+        (false, [one]) => named(one),
+        _ => Value::Array(targets.iter().map(named).collect()),
     }
 }

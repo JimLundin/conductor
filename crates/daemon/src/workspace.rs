@@ -783,7 +783,9 @@ mod tests {
         let repo = repository().await?;
         let identity = home::IssueKey {
             project: home::ProjectId::new(1),
-            id: home::IssueId::new("issue-x").ok_or("fixture identity")?,
+            id: home::tracker::Issuer::MARKDOWN
+                .read("0v2n8x00")
+                .ok_or("fixture identity")?,
         };
         crate::home::ready_issue_branch(
             &repo.source,

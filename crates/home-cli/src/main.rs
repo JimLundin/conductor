@@ -9,14 +9,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use home::canvas::{CanvasKey, Held};
 use home::flow::PATH;
 use home::flow::command::{
-    Asked, Command, Context, Fetched, Given, Need, Source, Wanted, asked,
-    homeless, run,
+    Asked, Command, Context, Fetched, Given, Need, Outcome, Source, Wanted,
+    asked, homeless, run,
 };
-use home::issue::storage::File;
-use home::{Draws, UnixMillis};
-use home_files::FolderStore;
+use home::issue::storage::ReadHome;
+use home::{Draws, IssueId, UnixMillis};
 use home_store::{CanvasStore, StoreError};
 
+#[cfg(test)]
+mod edited;
 mod local;
 mod operations;
 mod project;
@@ -42,23 +43,32 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     {
         return answer;
     }
-    let loaded = home_files::read(home);
+    let loaded = home_files::read(home, github::ISSUERS);
     let snapshot = &loaded.snapshot;
     let context = context();
     let fresh = fresh(snapshot, context.now.secs(), &draws());
     match asked(args, snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, snapshot),
-        Asked::Flow(command) => {
-            let data = command.data().map(PathBuf::from);
-            let mut trackers = Trackers::new(home, loaded, data);
-            issues(home, &mut trackers, command, &context)
-        }
+        Asked::Flow(command) => tracked(home, loaded, command, &context),
+    }
+}
+
+fn tracked(
+    home: &Path,
+    loaded: ReadHome,
+    command: Command,
+    context: &Context,
+) -> (String, u8) {
+    let data = command.data().map(PathBuf::from);
+    match Trackers::new(home, loaded, data, resolve::connect) {
+        Ok(mut trackers) => issues(home, &mut trackers, command, context),
+        Err(reason) => (format!("home: {reason}\n"), 1),
     }
 }
 
 fn issues(
     home: &Path,
-    trackers: &mut Trackers<'_>,
+    trackers: &mut Trackers,
     asked: Command,
     context: &Context,
 ) -> (String, u8) {
@@ -71,43 +81,122 @@ fn issues(
     });
     let resolved =
         trackers.resolved(asked.issues(given.as_ref()), asked.mode());
-    let loaded = trackers.loaded();
-    let outcome = run(asked, given, &resolved, &loaded.snapshot, context);
-    let written = outcome
-        .changes
-        .iter()
-        .map(|change| {
-            let file = loaded.encode(change)?;
-            save(home, &file).map(|()| file.path())
-        })
-        .collect::<Result<Vec<String>, String>>();
-    let kept: Vec<String> = outcome
-        .canvases
-        .iter()
-        .filter(|canvas| trackers.keeps(canvas.key.project))
-        .map(|canvas| FolderStore::place(&canvas.key))
-        .collect();
-    let saved = written.and_then(|mut paths| {
-        trackers.put(&outcome.canvases)?;
-        paths.extend(kept);
-        committed(home, &paths, outcome.message.as_deref(), context)
-    });
+    let mut outcome = run(
+        asked,
+        given,
+        &resolved,
+        &trackers.loaded().snapshot,
+        context,
+    );
+    let saved = kept(home, trackers, &outcome, context)
+        .map(|ids| outcome.named(&trackers.loaded().snapshot, &ids));
     outcome.ended(saved)
 }
 
-fn committed(
+fn kept(
     home: &Path,
-    paths: &[String],
-    message: Option<&str>,
+    trackers: &mut Trackers,
+    outcome: &Outcome,
     context: &Context,
-) -> Result<(), String> {
-    match message {
-        Some(subject) if !paths.is_empty() => {
-            vcs_git2::record::commit(home, paths, &context.by, subject)
-                .map(drop)
-                .map_err(|error| format!("committing the home: {error}"))
-        }
-        _ => Ok(()),
+) -> Result<Vec<IssueId>, String> {
+    let places = trackers.touches(&outcome.changes, &outcome.canvases)?;
+    let record = outcome
+        .commit_message(&places)
+        .map(|subject| opened(home).map(|repository| (repository, subject)))
+        .transpose()?;
+    let before = places
+        .iter()
+        .map(|place| prior(home, place))
+        .collect::<Result<Vec<Prior>, String>>()?;
+    written(home, trackers, outcome)
+        .and_then(|(paths, ids)| {
+            record.map_or(Ok(()), |(repository, subject)| {
+                repository
+                    .commit(&paths, &context.by, subject)
+                    .map(drop)
+                    .map_err(|error| format!("committing the home: {error}"))
+            })?;
+            Ok(ids)
+        })
+        .map_err(|failed| restored(home, &before, failed))
+}
+
+fn opened(home: &Path) -> Result<vcs_git2::record::Home, String> {
+    vcs_git2::record::open(home)
+        .map_err(|error| format!("opening the home's repository: {error}"))
+}
+
+fn written(
+    home: &Path,
+    trackers: &mut Trackers,
+    outcome: &Outcome,
+) -> Result<(Vec<String>, Vec<IssueId>), String> {
+    let written = trackers.write(home, &outcome.changes)?;
+    let ids = written.iter().map(|wrote| wrote.id.clone()).collect();
+    let mut paths: Vec<String> =
+        written.into_iter().filter_map(|wrote| wrote.file).collect();
+    paths.extend(trackers.put(&outcome.canvases)?);
+    Ok((paths, ids))
+}
+
+fn restored(home: &Path, before: &[Prior], failed: String) -> String {
+    match before.iter().try_for_each(|kept| restore(home, kept)) {
+        Ok(()) => failed,
+        Err(undone) => format!("{failed}; restoring the home: {undone}"),
+    }
+}
+
+struct Prior {
+    place: String,
+    bytes: Option<Vec<u8>>,
+    made: Option<PathBuf>,
+}
+
+fn prior(root: &Path, place: &str) -> Result<Prior, String> {
+    let path = root.join(place);
+    match fs::read(&path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("{}: {error}", path.display())),
+    }
+    .map(|bytes| Prior {
+        place: place.to_owned(),
+        bytes,
+        made: made(root, place),
+    })
+}
+
+fn made(root: &Path, place: &str) -> Option<PathBuf> {
+    Path::new(place)
+        .ancestors()
+        .skip(1)
+        .take_while(|folder| {
+            !folder.as_os_str().is_empty() && !root.join(folder).exists()
+        })
+        .last()
+        .map(|folder| root.join(folder))
+}
+
+fn restore(root: &Path, prior: &Prior) -> Result<(), String> {
+    let path = root.join(&prior.place);
+    prior
+        .bytes
+        .as_ref()
+        .map_or_else(
+            || gone(fs::remove_file(&path)),
+            |bytes| fs::write(&path, bytes),
+        )
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    prior.made.as_ref().map_or(Ok(()), |folder| {
+        gone(fs::remove_dir_all(folder))
+            .map_err(|error| format!("{}: {error}", folder.display()))
+    })
+}
+
+fn gone(removing: io::Result<()>) -> io::Result<()> {
+    match removing {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        removed => removed,
     }
 }
 
@@ -146,6 +235,7 @@ fn fetched(
             })
             .collect(),
         strays,
+        unavailable: Vec::new(),
     })
 }
 
@@ -158,6 +248,7 @@ fn every(store: &dyn CanvasStore) -> Result<Held<Fetched>, String> {
             .map(|key| got(store, key))
             .collect(),
         strays: held.strays,
+        unavailable: held.unavailable,
     })
 }
 
@@ -218,24 +309,28 @@ fn read(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))
 }
 
-fn save(root: &Path, write: &File) -> Result<(), String> {
-    let path = root.join(write.path());
-    fs::create_dir_all(root.join(write.folder()))
-        .and_then(|()| fs::write(&path, &write.text))
-        .map_err(|err| format!("{}: {err}", path.display()))
-}
-
 #[cfg(test)]
 mod tests {
-    use home::ProjectId;
+    use std::sync::Arc;
+
     use home::canvas::{Stray, StrayReason};
     use home::flow::command::{Asked, asked};
+    use home::issue::ReadFailure;
     use home::issue::storage::fresh;
     use home_store::Memory;
+    use project_runtime::tracker::{Connection, Connector, Reader};
 
     use super::resolve::Trackers;
 
     const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
+
+    struct Offline;
+
+    impl Connector for Offline {
+        fn connect(&self) -> Result<Reader, ReadFailure> {
+            Err(ReadFailure::Unavailable)
+        }
+    }
 
     #[test]
     fn check_reports_a_stray_from_a_tracker_s_store_as_an_error()
@@ -250,17 +345,7 @@ mod tests {
             project.join("project.toml"),
             "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
         )?;
-        let tracked = ProjectId::parse("hyn162").ok_or("project")?;
-        let mut github = Memory::default();
-        github.stray(
-            tracked,
-            None,
-            Stray {
-                place: String::from("issues/146#issuecomment-7"),
-                reason: StrayReason::Unnamed,
-            },
-        );
-        let loaded = home_files::read(&root);
+        let loaded = home_files::read(&root, github::ISSUERS);
         let context = super::context();
         let fresh =
             fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
@@ -269,14 +354,134 @@ mod tests {
         else {
             return Err("check isn't a flow command".into());
         };
-        let mut trackers = Trackers::new(&root, loaded, None);
-        trackers.stores_mut().track(tracked, Box::new(github));
+        let mut trackers =
+            Trackers::new(&root, loaded, None, |_, _, project| {
+                let mut github = Memory::default();
+                github.stray(
+                    project.id,
+                    None,
+                    Stray {
+                        place: String::from("issues/146#issuecomment-7"),
+                        reason: StrayReason::Unnamed,
+                    },
+                );
+                Ok(Connection {
+                    canvases: Box::new(github),
+                    connector: Arc::new(Offline),
+                })
+            })?;
         let (said, code) =
             super::issues(&root, &mut trackers, command, &context);
         std::fs::remove_dir_all(&root)?;
         assert!(
             said.contains(
                 "error  issues/146#issuecomment-7  isn't a canvas: name it in lowercase words joined by `-`, or move it out of the issue\n"
+            ),
+            "{said}"
+        );
+        assert_eq!(code, 1, "{said}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_tracker_whose_mapping_fails_to_load_fails_every_canvas_command_naming_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir()
+            .join(format!("home-unmapped-{}", std::process::id()));
+        let project = root.join("projects/hyn162");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(root.join("docs/agents"))?;
+        std::fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+        std::fs::write(
+            project.join("project.toml"),
+            "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\noptions = 'colour = \"blue\"'\n",
+        )?;
+        let canvas = root.join("design.json");
+        std::fs::write(
+            &canvas,
+            "{\"title\":\"Kept by its tracker\",\"blocks\":[{\"kind\":\"prose\",\"text\":\"The tracker keeps it.\"}]}",
+        )?;
+        let file = canvas.to_string_lossy().into_owned();
+        let said = [
+            Vec::from([
+                "canvas",
+                "put",
+                "standards",
+                "146",
+                "design",
+                "--file",
+                &file,
+            ]),
+            Vec::from(["canvas", "show", "standards", "146", "design"]),
+            Vec::from(["canvas", "show", "standards", "146"]),
+        ]
+        .map(|words| {
+            let args: Vec<String> =
+                words.into_iter().map(String::from).collect();
+            let loaded = home_files::read(&root, github::ISSUERS);
+            let context = super::context();
+            let fresh =
+                fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
+            let Asked::Flow(command) = asked(&args, &loaded.snapshot, fresh)
+            else {
+                return (String::from("not a flow command"), 0);
+            };
+            Trackers::new(
+                &root,
+                loaded,
+                Some(root.join("data")),
+                super::resolve::connect,
+            )
+            .map_or_else(
+                |reason| (reason, 1),
+                |mut trackers| {
+                    super::issues(&root, &mut trackers, command, &context)
+                },
+            )
+        });
+        let kept = std::fs::read_dir(&project)?
+            .map(|found| found.map(|entry| entry.file_name()))
+            .collect::<Result<Vec<_>, _>>()?;
+        std::fs::remove_dir_all(&root)?;
+        for (text, code) in &said {
+            assert!(text.contains("unknown field `colour`"), "{text}");
+            assert_eq!(*code, 1, "{text}");
+        }
+        assert_eq!(kept, Vec::from([std::ffi::OsString::from("project.toml")]));
+        Ok(())
+    }
+
+    #[test]
+    fn check_fails_naming_a_project_whose_tracker_cant_be_built()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir()
+            .join(format!("home-check-unbuilt-{}", std::process::id()));
+        let project = root.join("projects/hyn162");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(root.join("docs/agents"))?;
+        std::fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+        std::fs::write(
+            project.join("project.toml"),
+            "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
+        )?;
+        let loaded = home_files::read(&root, github::ISSUERS);
+        let context = super::context();
+        let fresh =
+            fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
+        let Asked::Flow(command) =
+            asked(&[String::from("check")], &loaded.snapshot, fresh)
+        else {
+            return Err("check isn't a flow command".into());
+        };
+        let mut trackers = Trackers::new(&root, loaded, None, |_, _, _| {
+            Err(String::from("unknown field `colour`"))
+        })?;
+        let (said, code) =
+            super::issues(&root, &mut trackers, command, &context);
+        std::fs::remove_dir_all(&root)?;
+        assert!(
+            said.contains(
+                "error  the tracker of standards: unknown field `colour`\n"
             ),
             "{said}"
         );

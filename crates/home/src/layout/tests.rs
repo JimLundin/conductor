@@ -54,6 +54,7 @@ fn an_issue_file_that_couldn_t_be_read_is_unread_by_its_path() {
             (read, Ok(String::from("text"))),
             (failed, Err(String::from("denied"))),
         ]),
+        crate::tracker::Issuers::default(),
     );
     assert_eq!(
         made.issues,

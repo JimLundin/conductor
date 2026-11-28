@@ -1,4 +1,5 @@
 use github::access::routes::Address;
+use github::log::Posted;
 use home::backend::Capability;
 use home::issue::{
     Comment, CommentWrite, IssueComment, Lookup, ReadFailure, SendFailure,
@@ -28,6 +29,35 @@ impl Tracker {
         issue: Lookup,
     ) -> Result<Vec<Comment>, ReadFailure> {
         let number = Address::of(&issue.id)?.number();
+        self.listed(number)
+            .await?
+            .into_iter()
+            .map(observe)
+            .collect()
+    }
+
+    pub(crate) async fn posted(
+        &self,
+        number: u64,
+    ) -> Result<Vec<Posted>, ReadFailure> {
+        self.listed(number)
+            .await?
+            .into_iter()
+            .map(|comment| {
+                Ok(Posted {
+                    id: comment.id.to_string(),
+                    author: comment.user.login.clone(),
+                    created: millis(comment.created_at.timestamp_millis())?,
+                    body: comment.body.unwrap_or_default(),
+                })
+            })
+            .collect()
+    }
+
+    async fn listed(
+        &self,
+        number: u64,
+    ) -> Result<Vec<issues::Comment>, ReadFailure> {
         let repository = &self.client.repository;
         let issues = self
             .client
@@ -44,12 +74,7 @@ impl Tracker {
                 .await
                 .map_err(request_error)?;
             let more = listed.next.is_some();
-            let items = listed
-                .items
-                .into_iter()
-                .map(observe)
-                .collect::<Result<Vec<_>, _>>()?;
-            found.extend(items);
+            found.extend(listed.items);
             if !more {
                 return Ok(found);
             }
@@ -130,18 +155,26 @@ fn commented(comment: &issues::Comment) -> Result<IssueId, ReadFailure> {
         .issue_url
         .as_ref()
         .and_then(|url| url.path_segments()?.next_back())
-        .and_then(IssueId::new)
+        .and_then(|number| github::ISSUER.read(number))
         .ok_or(ReadFailure::InvalidResponse)
 }
 
 fn observe(comment: issues::Comment) -> Result<Comment, ReadFailure> {
-    let updated = comment.updated_at.unwrap_or(comment.created_at);
     Ok(Comment {
         id: comment.id.to_string(),
         url: comment.html_url.to_string(),
+        updated: millis(
+            comment
+                .updated_at
+                .unwrap_or(comment.created_at)
+                .timestamp_millis(),
+        )?,
         body: comment.body.unwrap_or_default(),
-        updated: u64::try_from(updated.timestamp_millis())
-            .map(UnixMillis)
-            .map_err(|_| ReadFailure::InvalidResponse)?,
     })
+}
+
+fn millis(at: i64) -> Result<UnixMillis, ReadFailure> {
+    u64::try_from(at)
+        .map(UnixMillis)
+        .map_err(|_| ReadFailure::InvalidResponse)
 }

@@ -23,7 +23,7 @@ fn flow() -> Flow {
 }
 
 fn id(name: &str) -> IssueId {
-    IssueId(String::from(name))
+    crate::id::issue_id(name)
 }
 
 fn key(name: &str) -> crate::IssueKey {

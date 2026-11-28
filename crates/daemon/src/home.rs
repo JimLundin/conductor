@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
-use home::canvas::{CanvasEntry, CanvasName, Held};
+use home::canvas::{CanvasEntry, CanvasKey, CanvasName, Held};
 use home::checkout::Root;
 use home::flow::command::named;
 use home::flow::resolve::{Mode, Resolver};
@@ -21,18 +21,19 @@ use home::issue::{
 use home::issue::{EditId, IssueChange, NewIssue};
 use home::skills;
 use home::sync::{self, Git, Sync};
+use home::tracker::Issuers;
 use home::{
     Checkout, Cloning, Home, HomeCommand, HomeRefusal, HomeResult, HomeSync,
-    IssueId, IssueKey, ProjectId, UnixSecs,
+    IssueId, IssueKey, IssueName, ProjectId, UnixSecs,
 };
 use home::{Found, Stored};
-use home_store::{CanvasStore, Keeper, Kept, Stores};
+use home_store::{CanvasStore, Kept};
 use host::registry::InHome;
 use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
-use project_runtime::issues::cached;
+use project_runtime::tracker::{Connect, Trackers};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -51,7 +52,8 @@ pub struct Homing {
     pub roots: Vec<PathBuf>,
     pub user: Option<PathBuf>,
     pub canvases: Kept,
-    pub trackers: Keeper,
+    pub connect: Connect,
+    pub issuers: Issuers,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +61,7 @@ pub struct HomeClone {
     inbox: mpsc::Sender<Msg>,
     shown: watch::Receiver<Option<Home>>,
     clone: PathBuf,
+    issuers: Issuers,
 }
 
 pub use host::registry::Placement;
@@ -136,6 +139,7 @@ impl HomeClone {
         let (inbox, messages) = mpsc::channel(16);
         let (shown, watched) = watch::channel(None);
         let clone = clone_of(&homing.data_dir);
+        let issuers = homing.issuers;
         let actor = Actor::new(homing, shown);
         actor.publish();
         tokio::spawn(actor.run(messages));
@@ -143,6 +147,7 @@ impl HomeClone {
             inbox,
             shown: watched,
             clone,
+            issuers,
         }
     }
 
@@ -222,8 +227,9 @@ impl HomeClone {
         };
         let root = self.clone.clone();
         let backend = workspaces.clone();
+        let issuers = self.issuers;
         tokio::task::spawn_blocking(move || {
-            let catalog = home_files::configuration(&root);
+            let catalog = home_files::configuration(&root, issuers);
             let project = catalog
                 .projects()
                 .iter()
@@ -305,8 +311,8 @@ struct Actor {
     shown: watch::Sender<Option<Home>>,
     user: Option<PathBuf>,
     skills_commit: Option<String>,
-    canvases: Stores,
-    trackers: Keeper,
+    trackers: Trackers,
+    issuers: Issuers,
     listed: BTreeMap<IssueKey, Vec<CanvasEntry>>,
 }
 
@@ -319,7 +325,8 @@ impl Actor {
             roots,
             user,
             canvases,
-            trackers,
+            connect,
+            issuers,
         } = homing;
         let stored_at = data_dir.join("home.state");
         let stored: Stored = load(&stored_at);
@@ -328,8 +335,8 @@ impl Actor {
         let _ = std::fs::create_dir_all(&clones);
         Self {
             clone: clone_of(&data_dir),
-            canvases: Stores::new(canvases),
-            trackers,
+            trackers: Trackers::new(data_dir.clone(), canvases, connect),
+            issuers,
             listed: BTreeMap::new(),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
@@ -374,8 +381,11 @@ impl Actor {
             Msg::Place { at, reply } => {
                 self.fresh().await;
                 let shown = self.shown.borrow().clone();
-                let _ = reply
-                    .send(host::registry::place_in_home(at, shown.as_ref()));
+                let _ = reply.send(host::registry::place_in_home(
+                    at,
+                    shown.as_ref(),
+                    self.home.ids(),
+                ));
             }
             Msg::Ready { start, reply } => {
                 let readied = ready_branch(&start).await.map_err(|reason| {
@@ -470,20 +480,44 @@ impl Actor {
                 edit,
                 issue,
                 change,
-            } => self
+            } => self.change_named(&issue, change, by, edit).await,
+            HomeCommand::Canvas { issue, name } => {
+                home(self.canvas_named(&issue, name).await)
+            }
+        }
+    }
+
+    async fn change_named(
+        &mut self,
+        named: &IssueName,
+        change: IssueChange,
+        by: &ClientName,
+        edit: EditId,
+    ) -> Completion {
+        match self.home.ids().key(named) {
+            Ok(issue) => self
                 .change(issue.clone(), change, by, edit)
                 .await
                 .map_or_else(IssueError::completion, |warnings| {
                     home(HomeResult::IssueWritten { issue, warnings })
                 }),
-            HomeCommand::Canvas { issue, name } => {
-                home(self.canvas(issue, name).await)
-            }
+            Err(_) => home(HomeResult::Refused(HomeRefusal::UnknownIssue)),
+        }
+    }
+
+    async fn canvas_named(
+        &self,
+        named: &IssueName,
+        name: CanvasName,
+    ) -> HomeResult {
+        match self.home.ids().key(named) {
+            Ok(issue) => self.canvas(issue, name).await,
+            Err(_) => HomeResult::Refused(HomeRefusal::UnknownIssue),
         }
     }
 
     async fn canvas(&self, issue: IssueKey, name: CanvasName) -> HomeResult {
-        let looked = match cached(&self.data_dir, &self.home, &issue).await {
+        let looked = match self.trackers.look(&self.home, &issue).await {
             Ok(looked) => looked,
             Err(reason) => {
                 return HomeResult::Refused(HomeRefusal::CanvasUnavailable {
@@ -498,7 +532,7 @@ impl Actor {
             name,
         )
         .map_or_else(HomeResult::Refused, |key| {
-            link::serve::kept_canvas(self.canvases.get(&key))
+            link::serve::kept_canvas(self.trackers.get(&key))
         })
     }
 
@@ -749,8 +783,12 @@ impl Actor {
                 })?;
         let current = read_issue(&self.clone, &storage::path(&request.read()))
             .map_err(IssueError::Retryable)?;
-        let loaded =
-            home_files::issue(flow, &request.read(), current.as_deref());
+        let loaded = home_files::issue(
+            flow,
+            self.home.ids(),
+            &request.read(),
+            current.as_deref(),
+        );
         let mut recorded = request
             .decide(
                 loaded.as_ref().map(|observation| &observation.observed),
@@ -834,8 +872,12 @@ impl Actor {
             changed_at(&self.clone, &self.destination()?.tracking, path)
                 .await?;
         let current = committed_issue(&self.clone, path).await?;
-        let loaded =
-            home_files::issue(self.home.flow()?, target, current.as_deref());
+        let loaded = home_files::issue(
+            self.home.flow()?,
+            self.home.ids(),
+            target,
+            current.as_deref(),
+        );
         match self.edits.replay(
             &self.home,
             index,
@@ -931,7 +973,7 @@ impl Actor {
 
     async fn scan(&mut self) {
         self.reread();
-        self.listed = listed(&self.data_dir, &self.home, &self.canvases).await;
+        self.listed = listed(&self.home, &self.trackers).await;
         self.home.problems().iter().for_each(|problem| {
             tracing::warn!(target: "home", %problem, "read the home without it");
         });
@@ -958,9 +1000,8 @@ impl Actor {
     }
 
     fn reread(&mut self) {
-        self.home = home_files::read(&self.clone).snapshot;
-        self.canvases
-            .follow(&self.data_dir, &self.home, self.trackers);
+        self.home = home_files::read(&self.clone, self.issuers).snapshot;
+        self.trackers.follow(&self.home);
     }
 
     fn publish(&self) {
@@ -985,18 +1026,14 @@ impl Actor {
 }
 
 async fn listed(
-    data: &Path,
     home: &Snapshot,
-    store: &(dyn CanvasStore + Send + core::marker::Sync),
+    trackers: &Trackers,
 ) -> BTreeMap<IssueKey, Vec<CanvasEntry>> {
-    let kept = store.all().unwrap_or_else(|error| {
-        tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
-        Held::default()
-    });
+    let kept = kept(trackers);
     let resolver = Resolver::new(Mode::Offline);
     let mut listed = BTreeMap::new();
     for issue in home.canvased(&kept.canvases) {
-        let read = cached(data, home, &issue).await.inspect_err(|error| {
+        let read = trackers.look(home, &issue).await.inspect_err(|error| {
             tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
         });
         let found = read.ok().and_then(|looked| {
@@ -1004,11 +1041,22 @@ async fn listed(
                 .step(&named(home, issue.project), &issue, looked)
                 .ok()
         });
-        if let Some(canvases) = found.and_then(|_| entries(store, &issue)) {
+        if let Some(canvases) = found.and_then(|_| entries(trackers, &issue)) {
             listed.insert(issue, canvases);
         }
     }
     listed
+}
+
+fn kept(trackers: &Trackers) -> Held<CanvasKey> {
+    let kept = trackers.all().unwrap_or_else(|error| {
+        tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
+        Held::default()
+    });
+    for reason in &kept.unavailable {
+        tracing::warn!(target: "home", %reason, "listed the home without a project's canvases");
+    }
+    kept
 }
 
 fn entries(
@@ -1630,6 +1678,10 @@ mod tests {
 
     const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
     const PROJECT: &str = "7w85je";
+    fn slug(text: &str) -> Result<IssueId, &'static str> {
+        home::tracker::Issuer::MARKDOWN.read(text).ok_or("issue id")
+    }
+
     const DESIGNED: &str = "0v2n8dbb";
     const BARE: &str = "0v2n8dbc";
 
@@ -1672,7 +1724,7 @@ mod tests {
         an_issue(&issues, DESIGNED)?;
         an_issue(&issues, BARE)?;
         let project = ProjectId::parse(PROJECT).ok_or("project id")?;
-        let designed = IssueId::new(DESIGNED).ok_or("issue id")?;
+        let designed = slug(DESIGNED)?;
         let named = |name: &str| CanvasName::parse(name);
         let mut store = Memory::default();
         for (name, at, by) in [
@@ -1705,7 +1757,8 @@ mod tests {
                 roots: Vec::new(),
                 user: None,
                 canvases: Box::new(store),
-                trackers: |_, _, _| None,
+                connect: |_, _, _| Err(String::from("no tracker")),
+                issuers: home::tracker::Issuers::default(),
             },
             shown,
         );
@@ -1749,12 +1802,7 @@ mod tests {
             HomeResult::Refused(HomeRefusal::UnknownCanvas)
         );
         assert_eq!(
-            actor
-                .canvas(
-                    at(IssueId::new("00000003").ok_or("issue id")?),
-                    named("design")?
-                )
-                .await,
+            actor.canvas(at(slug("00000003")?), named("design")?).await,
             HomeResult::Refused(HomeRefusal::UnknownIssue)
         );
         Ok(())
@@ -1819,7 +1867,8 @@ mod tests {
                 roots: Vec::new(),
                 user: None,
                 canvases: Box::new(Memory::default()),
-                trackers: |_, _, _| None,
+                connect: |_, _, _| Err(String::from("no tracker")),
+                issuers: home::tracker::Issuers::default(),
             },
             shown,
         );

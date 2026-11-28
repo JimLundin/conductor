@@ -23,6 +23,8 @@ mod comment;
 pub use comment::*;
 mod relation;
 pub use relation::*;
+mod native;
+pub use native::{IssueCreate, IssueWrite, NativeIssue, Opened};
 mod observation;
 mod tracking;
 pub use tracking::*;
@@ -164,7 +166,7 @@ fn value_of(issue: &Issue, field: &str) -> Vec<String> {
                 .get(field)
                 .into_iter()
                 .flatten()
-                .map(|target| target.named_from(issue.project))
+                .map(|target| target.said_from(issue.project))
                 .collect()
         },
         normalized_words,
@@ -305,7 +307,9 @@ fn written(
         now: data.at.millis(),
         by: data.by.clone(),
     };
-    match command::plan(&among, &data.edit, &context) {
+    let key = data.key();
+    let observed = among.observation(key.project, &key.id);
+    match command::plan(&among, &data.edit, observed, &context) {
         Ok(made) => Ok(Applied {
             change: made.change,
             warnings: made.warnings,

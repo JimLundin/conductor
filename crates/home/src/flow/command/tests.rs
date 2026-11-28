@@ -45,10 +45,16 @@ fn issue(id: &str, front: &str, body: &str) -> File {
     }
 }
 
+const TRACKERS: crate::tracker::Issuers =
+    crate::tracker::Issuers::new(&[crate::tracker::Issuer::of::<
+        crate::id::Text,
+    >("github")]);
+
 fn home() -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: TRACKERS,
         flow: Ok(String::from(FLOW)),
         projects: Vec::from([(
             String::from(FOLDER),
@@ -82,7 +88,7 @@ fn draws(given: &[u64]) -> Draws {
 }
 
 fn id(stem: &str) -> IssueId {
-    IssueId(String::from(stem))
+    crate::id::issue_id(stem)
 }
 
 fn folder() -> ProjectId {
@@ -182,6 +188,7 @@ fn after(inputs: &Inputs, outcome: &Outcome) -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         issues,
         ..inputs.clone()
     }
@@ -415,6 +422,7 @@ fn a_value_is_read_as_its_field_takes_it() {
     let dotted = Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: Ok(FLOW.replace("\"priority\"", "\"triage.level\"")),
         ..home()
     };
@@ -609,6 +617,7 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
         Inputs {
             unavailable: Vec::new(),
             observed_at: None,
+            issuers: crate::tracker::Issuers::default(),
             issues: inputs
                 .issues
                 .into_iter()
@@ -873,6 +882,7 @@ fn home_with(from: &str, to: &str) -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: Ok(FLOW.replacen(from, to, 1)),
         ..home()
     }
@@ -914,8 +924,9 @@ fn an_issue_s_own_words_are_refused_as_fields_in_the_flow_s_terms() {
                 value: Datum::Text(String::from("x")),
             }]),
         };
-        plan(&crate::issue::storage::snapshot(home()), &edit, &context())
-            .map(|_| ())
+        let home = crate::issue::storage::snapshot(home());
+        let observed = home.observation(folder(), &id(TASK));
+        plan(&home, &edit, observed, &context()).map(|_| ())
     };
     assert_eq!(
         ["status", "stage", "kind", "id", "title"].map(refused),
@@ -2007,7 +2018,7 @@ fn fetched(
     Ok(Fetched {
         key: CanvasKey {
             project: ProjectId::parse(FOLDER).ok_or("project")?,
-            issue: IssueId::new(issue).ok_or("issue")?,
+            issue: Some(crate::id::issue_id(issue)).ok_or("issue")?,
             name: CanvasName::parse(name).map_err(|error| error.to_string())?,
         },
         got,
@@ -2018,6 +2029,7 @@ fn held<T>(canvases: Vec<T>) -> Held<T> {
     Held {
         canvases,
         strays: Vec::new(),
+        unavailable: Vec::new(),
     }
 }
 
@@ -2130,6 +2142,7 @@ fn a_canvas_show_prints_an_issue_s_valid_canvases_then_names_what_it_skipped()
                 place: String::from("over/there/notes"),
                 reason: StrayReason::Folder,
             }]),
+            unavailable: Vec::new(),
         })),
     );
     assert_eq!(
@@ -2204,6 +2217,7 @@ fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
                     reason: StrayReason::NotAnIssue,
                 },
             ]),
+            unavailable: Vec::new(),
         })),
     );
     assert!(checked.failed);
@@ -2275,6 +2289,7 @@ struct Tracker {
     cached: Vec<Observation>,
     remote: Result<Vec<Observation>, ReadFailure>,
     refreshes: usize,
+    reads: usize,
 }
 
 impl Tracker {
@@ -2283,6 +2298,7 @@ impl Tracker {
             cached: Vec::new(),
             remote,
             refreshes: 0,
+            reads: 0,
         }
     }
 
@@ -2306,6 +2322,32 @@ impl Tracker {
         }
     }
 
+    fn read(&mut self, key: &IssueKey) -> IssueReading {
+        self.reads += 1;
+        let read = self.remote.clone().map(|remote| {
+            remote.into_iter().find(|observation| {
+                observation.project() == key.project
+                    && observation.id() == &key.id
+            })
+        });
+        match read {
+            Ok(Some(found)) => {
+                self.cached.retain(|observation| {
+                    observation.project() != key.project
+                        || observation.id() != &key.id
+                });
+                self.cached.push(found);
+                self.look(key)
+            }
+            Ok(None) => self.look(key),
+            Err(failure) => {
+                let mut looked = self.look(key);
+                looked.status.failure = Some(failure);
+                looked
+            }
+        }
+    }
+
     fn refresh(&mut self) -> Result<(), ReadFailure> {
         self.refreshes += 1;
         self.cached = self.remote.clone()?;
@@ -2320,9 +2362,10 @@ fn resolved_by(
     given: Option<&Given>,
 ) -> Resolved {
     let on_tracker = |project: ProjectId| {
-        home.projects().iter().any(|known| {
-            known.id == project && known.backends.tracker.is_some()
-        })
+        matches!(
+            crate::tracker::select(home, project),
+            Some(crate::tracker::Tracker::Configured(_))
+        )
     };
     let mut steps = Resolver::new(asked.mode());
     asked
@@ -2330,10 +2373,12 @@ fn resolved_by(
         .into_iter()
         .map(|key| {
             loop {
-                let looked = if on_tracker(key.project) {
-                    tracker.look(&key)
-                } else {
+                let looked = if !on_tracker(key.project) {
                     home.reading(&key)
+                } else if steps.fresh(key.project) {
+                    tracker.read(&key)
+                } else {
+                    tracker.look(&key)
                 };
                 match steps.step(&super::named(home, key.project), &key, looked)
                 {
@@ -2564,7 +2609,7 @@ fn issue_show_reads_a_markdown_issue_and_a_tracker_issue_by_the_same_form()
 }
 
 #[test]
-fn issue_show_of_a_cached_issue_whose_tracker_didn_t_refresh_reports_the_failure()
+fn issue_show_of_a_cached_issue_its_tracker_can_t_read_reports_the_failure()
 -> Result<(), Box<dyn core::error::Error>> {
     let mut tracker = Tracker::holding(Err(ReadFailure::RateLimited));
     tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
@@ -2574,9 +2619,151 @@ fn issue_show_of_a_cached_issue_whose_tracker_didn_t_refresh_reports_the_failure
         (
             shown.failed,
             &reading["status"]["failure"],
+            tracker.reads,
             tracker.refreshes
         ),
-        (true, &serde_json::json!("RateLimited"), 1)
+        (true, &serde_json::json!("RateLimited"), 1, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fresh_issue_show_of_a_cached_issue_reads_it_and_never_lists_its_tracker()
+-> Result<(), Box<dyn core::error::Error>> {
+    let mut retitled = kept_by_tracker(TRACKER_ID)?;
+    if let IssueState::Valid { issue, .. } = &mut retitled.state {
+        issue.title = String::from("Read just now");
+    }
+    let mut tracker = Tracker::holding(Ok(Vec::from([retitled])));
+    tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
+    let shown = tracked_run(&mut tracker, "issue show standards 146", None);
+    let reading: serde_json::Value = serde_json::from_str(&shown.output)?;
+    assert_eq!(
+        (
+            shown.failed,
+            reading["record"]["state"]["Valid"]["issue"]["title"].as_str(),
+            tracker.reads,
+            tracker.refreshes
+        ),
+        (false, Some("Read just now"), 1, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fresh_issue_show_the_tracker_lacks_lists_its_tracker_once()
+-> Result<(), String> {
+    let mut tracker =
+        Tracker::holding(Ok(Vec::from([kept_by_tracker(TRACKER_ID)?])));
+    let shown = tracked_run(&mut tracker, "issue show standards 147", None);
+    assert_eq!(
+        (shown.failed, shown.output, tracker.reads, tracker.refreshes),
+        (
+            true,
+            String::from("home: no issue 147 in standards\n"),
+            1,
+            1
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn a_write_commits_only_when_it_touches_a_home_file() {
+    let outcome = super::Outcome {
+        changes: Vec::new(),
+        canvases: Vec::new(),
+        message: Some(String::from("Write canvas why")),
+        output: String::new(),
+        failed: false,
+    };
+    assert_eq!(outcome.commit_message(&[]), None);
+    assert_eq!(
+        outcome.commit_message(&[String::from("why.json")]),
+        Some("Write canvas why")
+    );
+}
+
+#[test]
+fn an_id_its_tracker_allows_reads_back_as_itself_in_its_own_project()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(two_trackers());
+    let tracked = ProjectId::parse(TRACKED).ok_or("project")?;
+    let asked = command(&words("issue show standards team42/7"), &home, None);
+    assert_eq!(
+        asked.issue(),
+        Some(IssueKey {
+            project: tracked,
+            id: id("team42/7"),
+        })
+    );
+    let read = home.ids().read(tracked, "team42/7")?;
+    assert_eq!(read.to_string(), "team42/7");
+    assert_eq!(
+        read.tracked::<crate::id::Text>()
+            .map(|text| text.to_string()),
+        Some(String::from("team42/7"))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relation_to_another_project_s_issue_writes_and_reads_its_project_and_id_apart()
+-> Result<(), String> {
+    let mut inputs = home();
+    inputs
+        .projects
+        .push((String::from(TRACKED), Ok(project_file("standards", false))));
+    inputs.issues.push(filed(TRACKED, MARKDOWN_ID));
+    let home = inputs.clone().read().snapshot;
+    let pair = format!("blocked_by=standards {MARKDOWN_ID}");
+    let line = ["issue", "set", "home", TASK, &pair].map(String::from);
+    let asked = command(&line, &home, None);
+    let resolved = in_folder(&home, &asked, None);
+    let outcome = saved(
+        super::run(asked, None, &resolved, &home, &context()),
+        &inputs,
+    );
+    assert!(!outcome.failed, "{}", outcome.output);
+    assert!(
+        text(&outcome).contains(&format!(
+            "blocked_by = [{{ id = \"{MARKDOWN_ID}\", project = \"{TRACKED}\" }}]"
+        )),
+        "{}",
+        text(&outcome)
+    );
+    let read = crate::issue::storage::snapshot(after(&inputs, &outcome));
+    assert_eq!(
+        read.issue(folder(), &id(TASK))
+            .and_then(|issue| issue.links.get("blocked_by"))
+            .cloned(),
+        Some(Vec::from([IssueKey {
+            project: ProjectId::parse(TRACKED).ok_or("project")?,
+            id: id(MARKDOWN_ID),
+        }]))
+    );
+    Ok(())
+}
+
+#[test]
+fn an_issue_named_over_the_client_link_reads_through_its_project_s_tracker()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(two_trackers());
+    let tracked = ProjectId::parse(TRACKED).ok_or("project")?;
+    let named = |project: ProjectId| crate::IssueName {
+        project,
+        id: String::from("team42/7"),
+    };
+    assert_eq!(
+        home.ids().key(&named(tracked)),
+        Ok(IssueKey {
+            project: tracked,
+            id: id("team42/7"),
+        })
+    );
+    assert_eq!(
+        home.ids().key(&named(folder())),
+        Err(format!("\"team42/7\" is no issue ID of {FOLDER}"))
     );
     Ok(())
 }

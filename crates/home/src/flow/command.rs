@@ -47,6 +47,8 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
   home issue set <project> <id> <field>=<value>...
       Sets any other field or relation, title, parent and blocked_by among
       them. A list's value is comma-separated: blocked_by=<id>,<id>.
+      Name another project's issue as <project> <id>, the project by its
+      name or id, and quote the pair: parent=\"standards 146\".
   home issue note <project> <id> <text>...
       Appends a note to the log.
   home issue body <project> <id> <text>...
@@ -265,9 +267,20 @@ pub struct Context {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mutation {
-    Set { field: String, value: Datum },
+    Set {
+        field: String,
+        value: Datum,
+    },
+    Relate {
+        relation: String,
+        many: bool,
+        targets: Vec<IssueKey>,
+    },
     Title(String),
-    Move { part: Part, to: String },
+    Move {
+        part: Part,
+        to: String,
+    },
     Body(String),
     Checklist(ChecklistChange),
     Note(Entry),
@@ -296,12 +309,30 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    pub fn named(&mut self, home: &Snapshot, ids: &[IssueId]) {
+        for (change, id) in self.changes.iter().zip(ids) {
+            let project = change.observation.project();
+            let planned = change.observation.id();
+            if planned != id {
+                self.output = self.output.replace(
+                    &subject(home, project, planned),
+                    &subject(home, project, id),
+                );
+            }
+        }
+    }
+
     #[must_use]
     pub fn ended(&self, saved: Result<(), String>) -> (String, u8) {
         let code = u8::from(self.failed || saved.is_err());
         let text = saved
             .map_or_else(|reason| refusal(&reason), |()| self.output.clone());
         (text, code)
+    }
+
+    #[must_use]
+    pub fn commit_message(&self, home_files: &[String]) -> Option<&str> {
+        self.message.as_deref().filter(|_| !home_files.is_empty())
     }
 }
 
@@ -448,8 +479,7 @@ fn key(home: &Snapshot, [name, word]: [&str; 2]) -> Result<IssueKey, String> {
         .project(name)
         .map(|known| known.id)
         .ok_or_else(|| format!("no project is called {name}"))?;
-    let id = IssueId::new(word)
-        .ok_or_else(|| String::from("an issue's ID isn't empty"))?;
+    let id = home.ids().read(project, word)?;
     Ok(IssueKey { project, id })
 }
 
@@ -737,7 +767,8 @@ pub fn run(
         }
         Command::Edit(edit) => edit,
     };
-    match plan(home, &edit, context) {
+    let observed = found.and_then(|reading| reading.record.as_ref());
+    match plan(home, &edit, observed, context) {
         Ok(Planned {
             change,
             subject,
@@ -835,7 +866,7 @@ fn put(
 }
 
 fn shown(home: &Snapshot, wanted: &Wanted, given: Option<Given>) -> Outcome {
-    let subject = subject(home, wanted.project, wanted.issue.as_str());
+    let subject = subject(home, wanted.project, &wanted.issue);
     let fetched = match given {
         Some(Given::Canvases(fetched)) => fetched,
         _ => Err(format!("the canvases of {subject} weren't fetched")),
@@ -881,7 +912,7 @@ pub(crate) fn canvas_named(home: &Snapshot, key: &CanvasKey) -> String {
     format!(
         "canvas {} of {}",
         key.name,
-        subject(home, key.project, key.issue.as_str())
+        subject(home, key.project, &key.issue)
     )
 }
 
@@ -898,6 +929,7 @@ const fn said_only() -> Outcome {
 pub fn plan(
     home: &Snapshot,
     edit: &Edit,
+    observed: Option<&crate::issue::Observation>,
     context: &Context,
 ) -> Result<Planned, String> {
     let flow = home.flow()?;
@@ -913,37 +945,21 @@ pub fn plan(
             id,
             changes,
         } => {
-            crate::issue::storage::writable(home, *project)?;
-            let observation =
-                home.observation(*project, id).ok_or_else(|| {
-                    home.graph()
-                        .problems
-                        .iter()
-                        .find(|problem| {
-                            problem.project == *project
-                                && problem.record == id.as_str()
-                        })
-                        .map_or_else(
-                            || {
-                                format!(
-                                    "no issue {id} in {}",
-                                    named(home, *project)
-                                )
-                            },
-                            |problem| {
-                                format!(
-                                    "{id} doesn't read as the flow declares: {problem}"
-                                )
-                            },
-                        )
-                })?;
+            let observation = observed.ok_or_else(|| {
+                format!("no issue {id} in {}", named(home, *project))
+            })?;
             observation.editable().map_err(|reason| {
                 format!("{id} doesn't read as the flow declares: {reason}")
             })?;
-            changed(flow, observation, changes, &sign)?
+            changed(home, flow, observation, changes, &sign)?
         }
     };
-    finished(home, flow, change)
+    finished(
+        home,
+        flow,
+        observed.and_then(|before| before.issue()),
+        change,
+    )
 }
 
 struct Signer {
@@ -966,23 +982,24 @@ impl Signer {
 fn finished(
     home: &Snapshot,
     flow: &Flow,
+    before: Option<&Issue>,
     change: Change,
 ) -> Result<Planned, String> {
     let (issue, _) = change.observation.editable()?;
     let after = home.with(change.observation.clone());
     let graph = after.graph();
-    let subject = subject(home, issue.project, issue.id.as_str());
+    let subject = subject(home, issue.project, &issue.id);
     let mut problems: Vec<String> = graph
         .problems
         .iter()
         .filter(|problem| {
             problem.project == issue.project
-                && problem.record == issue.id.as_str()
+                && problem.record == issue.id.to_string()
         })
         .map(ToString::to_string)
         .collect();
     let moving = Move {
-        from: home.issue(issue.project, &issue.id),
+        from: before,
         to: Some(issue),
     };
     let issues: Vec<&Issue> = graph.issues.iter().collect();
@@ -1009,7 +1026,7 @@ fn finished(
 pub(crate) fn subject(
     home: &Snapshot,
     project: ProjectId,
-    stem: &str,
+    stem: impl core::fmt::Display,
 ) -> String {
     format!("{}/{stem}", named(home, project))
 }
@@ -1072,12 +1089,9 @@ fn opened(
         if field == STAGE {
             issue.stage = value.text().map(str::trim).map(String::from);
         } else {
-            assign(flow, &mut issue, field, value)?;
+            assign(home, flow, &mut issue, field, value)?;
         }
-        mutations.push(Mutation::Set {
-            field: field.clone(),
-            value: normalized(value),
-        });
+        mutations.push(kept(flow, &issue, field, value));
     }
     if let Some(created) = flow.field_with(kind, FieldRole::Created) {
         let value = Datum::Text(sign.at.clone());
@@ -1104,6 +1118,7 @@ fn opened(
 }
 
 fn changed(
+    home: &Snapshot,
     flow: &Flow,
     observation: &crate::issue::Observation,
     changes: &[IssueChange],
@@ -1137,11 +1152,8 @@ fn changed(
                 mutations.push(Mutation::Note(entry));
             }
             IssueChange::Set { field, value } => {
-                setting(flow, &mut issue, field, value)?;
-                mutations.push(Mutation::Set {
-                    field: field.clone(),
-                    value: normalized(value),
-                });
+                setting(home, flow, &mut issue, field, value)?;
+                mutations.push(kept(flow, &issue, field, value));
                 set.push(format!("{field}={}", said(value)));
             }
             IssueChange::Title(title) => {
@@ -1252,6 +1264,7 @@ fn shifted(
 }
 
 fn setting(
+    home: &Snapshot,
     flow: &Flow,
     issue: &mut Issue,
     key: &str,
@@ -1265,11 +1278,63 @@ fn setting(
         TITLE => Err(String::from(
             "the title changes by retitling, not by setting a field",
         )),
-        _ => assign(flow, issue, key, value),
+        _ => assign(home, flow, issue, key, value),
+    }
+}
+
+fn kept(flow: &Flow, issue: &Issue, field: &str, value: &Datum) -> Mutation {
+    match (relation_of(flow, issue, field), issue.links.get(field)) {
+        (Some(relation), Some(targets)) => Mutation::Relate {
+            relation: String::from(field),
+            many: relation.many,
+            targets: targets.clone(),
+        },
+        _ => Mutation::Set {
+            field: String::from(field),
+            value: normalized(value),
+        },
+    }
+}
+
+fn relation_of<'a>(
+    flow: &'a Flow,
+    issue: &Issue,
+    key: &str,
+) -> Option<&'a super::Relation> {
+    if flow.field(&issue.kind, key).is_some() {
+        return None;
+    }
+    flow.relations.iter().find(|relation| {
+        relation.name == key && relation.starts_from(&issue.kind)
+    })
+}
+
+fn related(
+    home: &Snapshot,
+    from: ProjectId,
+    name: &str,
+) -> Result<IssueKey, String> {
+    match name.split_whitespace().collect::<Vec<_>>().as_slice() {
+        [id] => Ok(IssueKey {
+            project: from,
+            id: home.ids().read(from, id)?,
+        }),
+        [called, id] => {
+            let project = home
+                .project(called)
+                .map(|known| known.id)
+                .ok_or_else(|| format!("no project is called {called}"))?;
+            Ok(IssueKey {
+                project,
+                id: home.ids().read(project, id)?,
+            })
+        }
+        _ => Err(format!("{name:?} is not <id> or <project> <id>")),
     }
 }
 
 fn assign(
+    home: &Snapshot,
     flow: &Flow,
     issue: &mut Issue,
     key: &str,
@@ -1278,9 +1343,7 @@ fn assign(
     let kept = normalized(value);
     if flow.field(&issue.kind, key).is_some() {
         issue.fields.insert(String::from(key), kept);
-    } else if let Some(relation) = flow.relations.iter().find(|relation| {
-        relation.name == key && relation.starts_from(&issue.kind)
-    }) {
+    } else if let Some(relation) = relation_of(flow, issue, key) {
         let names = match (&kept, relation.many) {
             (Datum::Text(name), _) => Vec::from([name.clone()]),
             (Datum::Texts(names), true) => names.clone(),
@@ -1291,10 +1354,7 @@ fn assign(
         };
         let targets = names
             .iter()
-            .map(|name| {
-                IssueKey::named(name, issue.project)
-                    .ok_or_else(|| format!("{name:?} is no issue"))
-            })
+            .map(|name| related(home, issue.project, name))
             .collect::<Result<Vec<_>, _>>()?;
         issue.links.insert(String::from(key), targets);
     } else {

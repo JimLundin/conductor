@@ -162,7 +162,7 @@ async fn inspect_project(
     project: &str,
     credentials: HostCredentials,
 ) -> Result<(String, u8), String> {
-    let configuration = home_files::configuration(catalog);
+    let configuration = home_files::configuration(catalog, github::ISSUERS);
     let selected = github::configuration::selected(&configuration, project)?;
     let observed = observations(&credentials, &selected.project.backends).await;
     let code = u8::from(observed.iter().any(|read| read.result.is_err()));

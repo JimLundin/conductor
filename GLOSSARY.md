@@ -49,7 +49,7 @@ The signed-off backend contract replaces this offline-edit behavior with online
 writes and recovery records for attempted operations.
 
 **Issue ID**:
-A string unique among the issues of a project's issue tracker, given by that tracker. A user names an issue by its project and its ID, whichever tracker the project uses. Nothing outside the tracker reads meaning into the string.
+A value unique among the issues of a project's issue tracker, given by that tracker. Each tracker has its own type for it: a Markdown issue's slug, or a GitHub issue's number. Only that tracker turns its text form into an ID, and nothing else reads structure out of one. A user names an issue by its project and its ID, whichever tracker the project uses, and a relation keeps the two as separate fields.
 _Avoid_: issue reference, issue number, slug
 
 **Canvas**:

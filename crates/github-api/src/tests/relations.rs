@@ -3,7 +3,8 @@ use super::tracking::{issue, lookup, reply};
 use super::{Exchange, exchanges};
 use home::issue::{RelationChange, RelationRequest};
 use home::operations::{Handle, Progress, Step};
-use home::{IssueId, IssueKey, ProjectId};
+use home::tracker::Ids;
+use home::{IssueKey, ProjectId};
 use project_runtime::WriteError;
 use serde_json::{Value, json};
 
@@ -19,6 +20,8 @@ const UNBLOCK: &str =
     "/repos/owner/work/issues/146/dependencies/blocked_by/9150";
 const OLD_BLOCKER: &str = "/repos/owner/work/issues/150";
 const NEW_BLOCKER: &str = "/repos/owner/work/issues/151";
+const COMMENTS: &str =
+    "/repos/owner/work/issues/146/comments?per_page=100&page=1";
 const PROSE: &str = "Visible human text";
 
 fn child(parent: Option<u64>, body: &str) -> Value {
@@ -61,7 +64,9 @@ fn lost(method: &'static str, path: &'static str) -> Exchange {
 fn here(id: &str) -> anyhow::Result<IssueKey> {
     Ok(IssueKey {
         project: ProjectId::new(1),
-        id: IssueId::new(id).ok_or_else(|| anyhow::anyhow!("no id"))?,
+        id: github::ISSUER
+            .read(id)
+            .ok_or_else(|| anyhow::anyhow!("no id"))?,
     })
 }
 
@@ -141,6 +146,7 @@ async fn setting_parent_to_an_issue_of_the_same_repository_adds_a_sub_issue_and_
 -> anyhow::Result<()> {
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(None, PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(None, PROSE)),
         reply(PARENT, 200, &parent(3)),
         reply(CHILDREN, 200, &json!([])),
@@ -161,15 +167,19 @@ async fn setting_parent_to_an_issue_of_the_same_repository_adds_a_sub_issue_and_
 #[tokio::test]
 async fn setting_parent_to_an_issue_of_another_project_writes_the_footer_and_sends_no_sub_issue_request()
 -> anyhow::Result<()> {
+    let other = ProjectId::new(2);
     let elsewhere = IssueKey {
-        project: ProjectId::new(2),
-        id: IssueId::new("0v2csjdj").ok_or_else(|| anyhow::anyhow!("no id"))?,
+        project: other,
+        id: Ids::default()
+            .read(other, "0v2csjdj")
+            .map_err(anyhow::Error::msg)?,
     };
     let footed = format!(
-        "{PROSE}\n\n```project-data\nschema = 1\n\n[relations]\nparent = \"{elsewhere}\"\n```\n"
+        "{PROSE}\n\n```project-data\nschema = 1\n\n[relations.parent]\nid = \"0v2csjdj\"\nproject = \"{other}\"\n```\n"
     );
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(None, PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(None, PROSE)),
         sent("PATCH", CHILD, 200),
         reply(CHILD, 200, &child(None, &footed)),
@@ -190,6 +200,7 @@ async fn an_uncertain_relation_write_is_recorded_and_settles_once_the_sub_issue_
 -> anyhow::Result<()> {
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(None, PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(None, PROSE)),
         reply(PARENT, 200, &parent(3)),
         reply(CHILDREN, 200, &json!([])),
@@ -229,6 +240,7 @@ async fn moving_a_sub_issue_to_another_parent_replaces_its_parent()
 -> anyhow::Result<()> {
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(Some(139), PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(Some(139), PROSE)),
         reply(PARENT, 200, &parent(3)),
         reply(CHILDREN, 200, &json!([])),
@@ -255,6 +267,7 @@ async fn clearing_a_native_parent_removes_the_sub_issue() -> anyhow::Result<()>
 {
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(Some(139), PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(Some(139), PROSE)),
         sent("DELETE", ORPHAN, 200),
         reply(CHILD, 200, &child(None, PROSE)),
@@ -273,6 +286,7 @@ async fn a_parent_holding_100_sub_issues_is_refused_before_any_write()
 -> anyhow::Result<()> {
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(None, PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(None, PROSE)),
         reply(PARENT, 200, &parent(100)),
         reply(CHILDREN, 200, &json!([])),
@@ -296,6 +310,7 @@ async fn a_sub_issue_github_finds_invalid_leaves_the_operation_ready()
 -> anyhow::Result<()> {
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(None, PROSE)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(None, PROSE)),
         reply(PARENT, 200, &parent(3)),
         reply(CHILDREN, 200, &json!([])),
@@ -326,6 +341,7 @@ async fn setting_blocked_by_adds_and_removes_dependencies_by_the_blockers_ids()
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &blocked(&[150])),
         reply(BLOCKERS, 200, &json!([blocker(150)])),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &blocked(&[150])),
         reply(BLOCKERS, 200, &json!([blocker(150)])),
         reply(NEW_BLOCKER, 200, &target(151)),
@@ -360,6 +376,7 @@ async fn a_parent_kept_in_the_footer_moves_to_a_sub_issue() -> anyhow::Result<()
     );
     let (base, served) = exchanges(vec![
         reply(CHILD, 200, &child(None, &footed)),
+        reply(COMMENTS, 200, &json!([])),
         reply(CHILD, 200, &child(None, &footed)),
         reply(PARENT, 200, &parent(3)),
         reply(CHILDREN, 200, &json!([])),

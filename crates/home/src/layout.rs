@@ -4,6 +4,7 @@ use alloc::string::ToString;
 use crate::issue::storage::File;
 use crate::issue::storage::Inputs;
 use crate::prelude::*;
+use crate::tracker::{Issuer, Issuers};
 
 pub const PROJECTS: &str = "projects";
 
@@ -63,6 +64,7 @@ pub fn inputs(
     flow: Result<String, String>,
     projects: Vec<(String, Result<String, String>)>,
     issues: Vec<(IssueLocation, Result<String, String>)>,
+    tracked: Issuers,
 ) -> Inputs {
     let (files, unavailable, unread) = issues.into_iter().fold(
         (Vec::new(), Vec::new(), Vec::new()),
@@ -74,7 +76,7 @@ pub fn inputs(
                     text,
                 }),
                 Err(reason) => {
-                    if let Some(id) = crate::id::slug(&at.stem) {
+                    if let Some(id) = Issuer::MARKDOWN.read(&at.stem) {
                         unavailable.push(crate::issue::Unreadable {
                             id,
                             project: at.project,
@@ -98,6 +100,7 @@ pub fn inputs(
         unavailable,
         observed_at: None,
         unread,
+        issuers: tracked,
     }
 }
 

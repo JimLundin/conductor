@@ -3,12 +3,11 @@ use crate::registry::InstanceId;
 use crate::session::SessionDirectory;
 use crate::session::{EventKind, SessionId};
 use agents::{ClientName, Provider};
-use home::IssueId;
 
 use super::{Assigned, Assignment, assigned};
 
 fn issue_id() -> Result<home::IssueKey, &'static str> {
-    IssueId::new("00000003")
+    Some(home::IssueId::of(&home::Slug::new(3)))
         .map(|id| home::IssueKey {
             project: home::ProjectId::new(1),
             id,
@@ -98,7 +97,7 @@ fn a_session_is_on_an_issue_in_its_instance_only() -> Result<(), &'static str> {
     assert!(on.is(issue_id()?, &own()));
     assert!(
         !on.is(
-            IssueId::new("00000004")
+            Some(home::IssueId::of(&home::Slug::new(4)))
                 .map(|id| home::IssueKey {
                     project: home::ProjectId::new(1),
                     id

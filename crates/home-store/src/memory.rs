@@ -6,7 +6,7 @@ use home::canvas::{
 };
 use home::{IssueId, ProjectId};
 
-use crate::{CanvasStore, Putting, StoreError};
+use crate::{CanvasStore, Putting, StoreError, Wrote};
 
 #[derive(Debug, Default)]
 pub struct Memory {
@@ -70,6 +70,7 @@ impl Folder {
                 })
                 .collect(),
             strays: self.strays.clone(),
+            unavailable: Vec::new(),
         }
     }
 }
@@ -94,6 +95,7 @@ impl CanvasStore for Memory {
                 .flat_map(|folder| folder.strays.iter().cloned())
                 .chain(self.strays.iter().cloned())
                 .collect(),
+            unavailable: Vec::new(),
         })
     }
 
@@ -127,7 +129,7 @@ impl CanvasStore for Memory {
     ) -> Putting<'a> {
         Box::pin(async move {
             self.keep(key, file);
-            Ok(())
+            Ok(Wrote::default())
         })
     }
 }
@@ -144,6 +146,10 @@ mod tests {
         assert_eq!(
             contract(
                 &mut Memory::default(),
+                &[
+                    home::IssueId::of(&home::Slug::new(1)),
+                    home::IssueId::of(&home::Slug::new(2)),
+                ],
                 async |memory, key| memory.spoil(
                     key.clone(),
                     CanvasError::Json {

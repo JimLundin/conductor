@@ -1,9 +1,9 @@
 use super::{Exchange, exchanges};
 use crate::{Client, Tracker, credential::Source};
 use github::access::Repository;
+use home::ProjectId;
 use home::issue::{Coverage, Observation};
 use home::issue::{IssueState, ListPage, Lookup, ReadFailure};
-use home::{IssueId, IssueKey, ProjectId};
 use project_runtime::IssueTracker as _;
 use serde_json::{Value, json};
 
@@ -90,7 +90,11 @@ pub(super) fn tracker(base: &str) -> anyhow::Result<Tracker> {
             .map_err(anyhow::Error::msg)?;
     let config =
         github::configuration::load("", &flow).map_err(anyhow::Error::msg)?;
-    Ok(client.tracker(flow, config))
+    Ok(client.tracker(
+        flow,
+        config,
+        home::tracker::Ids::default().with(ProjectId::new(1), github::ISSUER),
+    ))
 }
 
 fn page(continuation: Option<String>) -> ListPage {
@@ -103,7 +107,9 @@ fn page(continuation: Option<String>) -> ListPage {
 pub(super) fn lookup(number: &str) -> anyhow::Result<Lookup> {
     Ok(Lookup {
         project: ProjectId::new(1),
-        id: IssueId::new(number).ok_or_else(|| anyhow::anyhow!("no id"))?,
+        id: github::ISSUER
+            .read(number)
+            .ok_or_else(|| anyhow::anyhow!("no id"))?,
     })
 }
 
@@ -127,7 +133,7 @@ async fn all_issue_pages_are_authenticated_and_pull_requests_are_excluded()
     let second = tracker.list(page(first.next)).await?;
     assert!(second.next.is_none());
     let record = &second.records[0];
-    assert_eq!(record.id().as_str(), "9");
+    assert_eq!(record.id().to_string(), "9");
     assert_eq!(
         record.issue().map(|i| i.title.as_str()),
         Some("Native issue")
@@ -158,6 +164,11 @@ async fn redirects_verify_the_destination_and_keep_the_issue_s_number()
         moved("{api}/repositories/88/issues/7"),
         repo(),
         reply("/repositories/88/issues/7", 200, &issue(7, 901)),
+        reply(
+            "/repos/owner/work/issues/7/comments?per_page=100&page=1",
+            200,
+            &json!([]),
+        ),
         moved("{api}/repositories/88/issues/12"),
         repo(),
         reply("/repositories/88/issues/12", 200, &issue(12, 901)),
@@ -181,7 +192,7 @@ async fn redirects_verify_the_destination_and_keep_the_issue_s_number()
     .await?;
     let tracker = tracker(&base)?;
     let record = tracker.read(lookup("7")?).await?;
-    assert_eq!(record.id().as_str(), "7");
+    assert_eq!(record.id().to_string(), "7");
     for _ in 0..4 {
         assert_eq!(
             tracker.read(lookup("7")?).await,
@@ -274,7 +285,7 @@ async fn an_unrecognized_native_reason_preserves_the_issue_and_its_diagnostic()
     let (base, completed) =
         exchanges(vec![reply(NUMBER, 200, &unusual)]).await?;
     let observed = tracker(&base)?.read(lookup("7")?).await?;
-    assert_eq!(observed.id().as_str(), "7");
+    assert_eq!(observed.id().to_string(), "7");
     assert!(
         matches!(observed.state, IssueState::Invalid(_))
             || !observed.findings.is_empty()
@@ -283,14 +294,32 @@ async fn an_unrecognized_native_reason_preserves_the_issue_and_its_diagnostic()
     Ok(())
 }
 
+struct Alias(&'static str);
+
+impl std::fmt::Display for Alias {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str(self.0)
+    }
+}
+
+impl home::TrackerId for Alias {
+    fn read(_: &str) -> Option<Self> {
+        None
+    }
+}
+
 #[tokio::test]
 async fn only_the_issue_s_number_can_address_an_issue() -> anyhow::Result<()> {
     let (base, completed) = exchanges(Vec::new()).await?;
     completed.await??;
     let tracker = tracker(&base)?;
     for alias in ["#7", "07", "+7", "0", "-7", " 7"] {
+        let kept = Lookup {
+            project: ProjectId::new(1),
+            id: home::IssueId::of(&Alias(alias)),
+        };
         assert_eq!(
-            tracker.read(lookup(alias)?).await,
+            tracker.read(kept).await,
             Err(ReadFailure::InvalidResponse),
             "{alias}"
         );
@@ -308,7 +337,7 @@ async fn an_issue_s_number_is_its_id_and_its_api_id_is_among_its_addresses()
     )])
     .await?;
     let record = tracker(&base)?.read(lookup("146")?).await?;
-    assert_eq!(record.id().as_str(), "146");
+    assert_eq!(record.id().to_string(), "146");
     assert_eq!(
         record
             .locator
@@ -323,6 +352,8 @@ async fn an_issue_s_number_is_its_id_and_its_api_id_is_among_its_addresses()
 
 const BLOCKERS: &str =
     "/repos/owner/work/issues/7/dependencies/blocked_by?per_page=100";
+const COMMENTS: &str =
+    "/repos/owner/work/issues/7/comments?per_page=100&page=1";
 
 fn sub_issue_of(parent: &str) -> Value {
     let mut value = issue(7, 901);
@@ -341,23 +372,26 @@ fn targets(observed: &Observation, relation: &str) -> Vec<String> {
         .issue()
         .and_then(|issue| issue.links.get(relation))
         .map_or_else(Vec::new, |keys| {
-            keys.iter().map(ToString::to_string).collect()
+            keys.iter()
+                .map(|key| key.said_from(ProjectId::new(1)))
+                .collect()
         })
 }
 
 #[tokio::test]
 async fn a_sub_issue_reads_its_parent_issue_as_its_parent() -> anyhow::Result<()>
 {
-    let (base, completed) = exchanges(vec![reply(
-        NUMBER,
-        200,
-        &sub_issue_of("{api}/repos/owner/work/issues/3"),
-    )])
+    let (base, completed) = exchanges(vec![
+        reply(
+            NUMBER,
+            200,
+            &sub_issue_of("{api}/repos/owner/work/issues/3"),
+        ),
+        reply(COMMENTS, 200, &json!([])),
+    ])
     .await?;
     let observed = tracker(&base)?.read(lookup("7")?).await?;
-    let parent = IssueKey::named("3", ProjectId::new(1))
-        .ok_or_else(|| anyhow::anyhow!("no key"))?;
-    assert_eq!(targets(&observed, "parent"), [parent.to_string()]);
+    assert_eq!(targets(&observed, "parent"), ["3"]);
     assert_eq!(
         observed.completeness.relations.get("parent"),
         Some(&Coverage::Complete)
@@ -376,11 +410,7 @@ async fn an_issue_with_blocked_by_dependencies_reads_them_in_blocked_by()
     .await?;
     let listed = tracker(&base)?.list(page(None)).await?;
     let observed = &listed.records[0];
-    let project = ProjectId::new(1);
-    assert_eq!(
-        targets(observed, "blocked_by"),
-        [format!("{project}/5"), format!("{project}/6")]
-    );
+    assert_eq!(targets(observed, "blocked_by"), ["5", "6"]);
     assert_eq!(
         observed.completeness.relations.get("blocked_by"),
         Some(&Coverage::Complete)
@@ -395,19 +425,19 @@ async fn a_footer_relation_reads_beside_the_native_relations()
     let mut value = sub_issue_of("{api}/repos/owner/work/issues/3");
     value["issue_dependencies_summary"]["total_blocked_by"] = json!(1);
     value["body"] = json!(
-        "Visible human text\n\n```project-data\nschema = 1\n\n[relations]\nblocked_by = [\"local~0v2csjdj\"]\n```"
+        "Visible human text\n\n```project-data\nschema = 1\n\n[relations]\nblocked_by = [{ project = \"hyn162\", id = \"0v2csjdj\" }]\n```"
     );
     let (base, completed) = exchanges(vec![
         reply(NUMBER, 200, &value),
         reply(BLOCKERS, 200, &json!([issue(5, 905)])),
+        reply(COMMENTS, 200, &json!([])),
     ])
     .await?;
     let observed = tracker(&base)?.read(lookup("7")?).await?;
-    let project = ProjectId::new(1);
-    assert_eq!(targets(&observed, "parent"), [format!("{project}/3")]);
+    assert_eq!(targets(&observed, "parent"), ["3"]);
     assert_eq!(
         targets(&observed, "blocked_by"),
-        [format!("{project}/5"), format!("{project}/local~0v2csjdj")]
+        ["5", "0v2csjdj in hyn162"]
     );
     completed.await??;
     Ok(())
@@ -416,11 +446,14 @@ async fn a_footer_relation_reads_beside_the_native_relations()
 #[tokio::test]
 async fn a_native_relation_in_another_repository_is_reported_and_left_uncovered()
 -> anyhow::Result<()> {
-    let (base, completed) = exchanges(vec![reply(
-        NUMBER,
-        200,
-        &sub_issue_of("{api}/repos/owner/other/issues/3"),
-    )])
+    let (base, completed) = exchanges(vec![
+        reply(
+            NUMBER,
+            200,
+            &sub_issue_of("{api}/repos/owner/other/issues/3"),
+        ),
+        reply(COMMENTS, 200, &json!([])),
+    ])
     .await?;
     let observed = tracker(&base)?.read(lookup("7")?).await?;
     assert!(observed.issue().is_some());

@@ -8,7 +8,7 @@ use home::issue::{
     Freshness, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
     ReadMode, Unreadable,
 };
-use home::{IssueId, ProjectId, UnixMillis};
+use home::{ProjectId, UnixMillis};
 use project_runtime::{
     IssueCompletion, IssueTracker, Registration, Registry, issues::IssueCache,
 };
@@ -64,6 +64,55 @@ impl Script {
 }
 
 impl IssueTracker for Script {
+    fn native(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, home::issue::NativeIssue> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn writes(
+        &self,
+        _: &Lookup,
+        _: &home::issue::NativeIssue,
+        _: &[home::flow::command::Mutation],
+    ) -> Result<Vec<home::issue::IssueWrite>, String> {
+        Err(String::from("the script takes no edits"))
+    }
+    fn write_issue(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::IssueWrite,
+    ) -> project_runtime::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opening(
+        &self,
+        _: &home::flow::command::Change,
+        _: home::operations::Handle,
+    ) -> Result<home::issue::IssueCreate, String> {
+        Err(String::from("the script opens no issues"))
+    }
+    fn create(
+        &self,
+        _: home::ProjectId,
+        _: home::issue::IssueCreate,
+    ) -> project_runtime::SendCompletion<'_, home::IssueId> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opened(
+        &self,
+        _: home::ProjectId,
+        _: home::operations::Handle,
+    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Opened>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn logged(
+        &self,
+        _: &home::issue::Entry,
+        _: home::operations::Handle,
+    ) -> String {
+        String::new()
+    }
     fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
         Box::pin(async { self.reads.next().await? })
     }
@@ -81,13 +130,6 @@ impl IssueTracker for Script {
         _: home::issue::Lookup,
     ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
-    }
-    fn canvas_comments(
-        &self,
-        _: home::ProjectId,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::IssueComment>>
-    {
-        Box::pin(async { Ok(Vec::new()) })
     }
     fn write_comment(
         &self,
@@ -121,7 +163,7 @@ const fn project() -> ProjectId {
 }
 fn item(key: &str, title: &str) -> Result<Observation, Box<dyn Error>> {
     let mut record = Observation::invalid(Unreadable {
-        id: IssueId::new(key).ok_or("fixture identity")?,
+        id: github::ISSUER.read(key).ok_or("fixture identity")?,
         project: project(),
         title: Some(title.into()),
         body: Some("human text".into()),
@@ -139,7 +181,7 @@ fn item(key: &str, title: &str) -> Result<Observation, Box<dyn Error>> {
 fn lookup(key: &str) -> Result<Lookup, Box<dyn Error>> {
     Ok(Lookup {
         project: project(),
-        id: IssueId::new(key).ok_or("fixture identity")?,
+        id: github::ISSUER.read(key).ok_or("fixture identity")?,
     })
 }
 
@@ -340,6 +382,55 @@ impl SlowFirst {
 }
 
 impl IssueTracker for SlowFirst {
+    fn native(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, home::issue::NativeIssue> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn writes(
+        &self,
+        _: &Lookup,
+        _: &home::issue::NativeIssue,
+        _: &[home::flow::command::Mutation],
+    ) -> Result<Vec<home::issue::IssueWrite>, String> {
+        Err(String::from("the script takes no edits"))
+    }
+    fn write_issue(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::IssueWrite,
+    ) -> project_runtime::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opening(
+        &self,
+        _: &home::flow::command::Change,
+        _: home::operations::Handle,
+    ) -> Result<home::issue::IssueCreate, String> {
+        Err(String::from("the script opens no issues"))
+    }
+    fn create(
+        &self,
+        _: home::ProjectId,
+        _: home::issue::IssueCreate,
+    ) -> project_runtime::SendCompletion<'_, home::IssueId> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opened(
+        &self,
+        _: home::ProjectId,
+        _: home::operations::Handle,
+    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Opened>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn logged(
+        &self,
+        _: &home::issue::Entry,
+        _: home::operations::Handle,
+    ) -> String {
+        String::new()
+    }
     fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
         Box::pin(async { Ok(self.next().await) })
     }
@@ -356,13 +447,6 @@ impl IssueTracker for SlowFirst {
         _: home::issue::Lookup,
     ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
-    }
-    fn canvas_comments(
-        &self,
-        _: home::ProjectId,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::IssueComment>>
-    {
-        Box::pin(async { Ok(Vec::new()) })
     }
     fn write_comment(
         &self,
@@ -493,10 +577,10 @@ async fn project_findings_require_observed_relations_and_visible_targets()
     let cache = IssueCache::new(dir.path(), &flow);
     let external = home::IssueKey {
         project: project(),
-        id: IssueId::new("elsewhere").ok_or("bad identity")?,
+        id: github::ISSUER.read("43").ok_or("bad identity")?,
     };
     let subject = Issue {
-        id: IssueId::new("decision").ok_or("bad identity")?,
+        id: github::ISSUER.read("42").ok_or("bad identity")?,
         project: project(),
         title: "Settled decision".into(),
         created: Some(UnixMillis(999)),
@@ -560,7 +644,7 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
     let cache = IssueCache::new(dir.path(), &flow);
     let other = ProjectId::new(33);
     let elsewhere = Observation::invalid(Unreadable {
-        id: IssueId::new("146").ok_or("fixture identity")?,
+        id: github::ISSUER.read("146").ok_or("fixture identity")?,
         project: other,
         title: Some("in the other project".into()),
         body: None,
@@ -597,7 +681,7 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
             _ => None,
         })
     };
-    let id = IssueId::new("146").ok_or("fixture identity")?;
+    let id = github::ISSUER.read("146").ok_or("fixture identity")?;
     let our_lookup = Lookup {
         project: project(),
         id: id.clone(),
@@ -611,106 +695,5 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
         title(theirs.issue(&cache, their_lookup, ReadMode::Cached).await?),
         Some(String::from("in the other project"))
     );
-    Ok(())
-}
-
-struct Commented(Vec<home::issue::IssueComment>);
-
-impl IssueTracker for Commented {
-    fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
-        Box::pin(async { Err(ReadFailure::Unavailable) })
-    }
-    fn list(&self, _: ListPage) -> IssueCompletion<'_, Page> {
-        Box::pin(async {
-            Ok(Page {
-                records: vec![
-                    item("1", "with a canvas")
-                        .map_err(|_| ReadFailure::InvalidResponse)?,
-                ],
-                next: None,
-            })
-        })
-    }
-    fn comments(
-        &self,
-        _: Lookup,
-    ) -> IssueCompletion<'_, Vec<home::issue::Comment>> {
-        Box::pin(async { Err(ReadFailure::Unavailable) })
-    }
-    fn canvas_comments(
-        &self,
-        _: ProjectId,
-    ) -> IssueCompletion<'_, Vec<home::issue::IssueComment>> {
-        let comments = self.0.clone();
-        Box::pin(async move { Ok(comments) })
-    }
-    fn write_comment(
-        &self,
-        _: Lookup,
-        _: home::issue::CommentWrite,
-    ) -> project_runtime::SendCompletion<'_, home::issue::Comment> {
-        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
-    }
-    fn plan_relation(
-        &self,
-        _: Lookup,
-        _: home::issue::RelationChange,
-    ) -> project_runtime::RelationCompletion<'_> {
-        Box::pin(async {
-            Err(home::issue::Unrelatable::Read(ReadFailure::Unavailable))
-        })
-    }
-    fn write_relation(
-        &self,
-        _: Lookup,
-        _: home::issue::RelationStep,
-    ) -> project_runtime::SendCompletion<'_, ()> {
-        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
-    }
-}
-
-fn on(
-    issue: &str,
-    id: &str,
-    body: &str,
-) -> Result<home::issue::IssueComment, Box<dyn Error>> {
-    Ok(home::issue::IssueComment {
-        issue: IssueId::new(issue).ok_or("fixture identity")?,
-        comment: home::issue::Comment {
-            id: id.into(),
-            url: format!(
-                "https://github.com/owner/work/issues/{issue}#issuecomment-{id}"
-            ),
-            body: body.into(),
-            updated: UnixMillis(20),
-        },
-    })
-}
-
-#[tokio::test]
-async fn a_refresh_caches_the_canvas_comments_of_the_listed_issues_for_offline_reads()
--> Result<(), Box<dyn Error>> {
-    let dir = tempfile::tempdir()?;
-    let flow =
-        home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
-    let cache = IssueCache::new(dir.path(), &flow);
-    let listed = on("1", "11", "a canvas")?;
-    let adapter = Arc::new(Commented(vec![
-        listed.clone(),
-        on("7", "71", "a pull request's")?,
-    ]));
-    let (registry, backends) = setup(adapter, "example")?;
-    registry
-        .project(&backends)
-        .issues(&cache, project(), ReadMode::Refresh)
-        .await?;
-    let offline = Registry::default();
-    let kept = offline.project(&backends);
-    assert_eq!(kept.canvas_comments(&cache, project())?, [listed]);
-    let edited = on("1", "11", "the canvas again")?;
-    let added = on("1", "12", "another canvas")?;
-    kept.posted(&cache, project(), edited.clone())?;
-    kept.posted(&cache, project(), added.clone())?;
-    assert_eq!(kept.canvas_comments(&cache, project())?, [edited, added]);
     Ok(())
 }

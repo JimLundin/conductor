@@ -1,11 +1,12 @@
-use super::document::{Document, targets};
+use super::document::{Document, relation_value, targets};
 use super::{ID, KIND, STAGE, STATUS, TITLE};
 use crate::flow::graph::{Problem, branch_of};
 use crate::flow::snapshot::{Inputs as DomainInputs, Snapshot};
 use crate::flow::{FieldRole, Flow};
 use crate::issue::{Datum, Issue, Observation};
 use crate::prelude::*;
-use crate::{IssueId, ProjectId, UnixMillis, UnixSecs};
+use crate::tracker::{Ids, Issuer, Issuers};
+use crate::{IssueId, ProjectId, Slug, UnixMillis, UnixSecs};
 use alloc::collections::BTreeMap;
 use alloc::string::ToString;
 use serde::Deserialize;
@@ -20,6 +21,7 @@ pub struct File {
 
 pub fn decode(
     flow: &Flow,
+    ids: &Ids,
     file: &File,
 ) -> Result<(Observation, Document), Problem> {
     let fail = |field: Option<&str>, message: String| Problem {
@@ -36,7 +38,7 @@ pub fn decode(
     let id = front
         .id
         .filter(|id| *id == file.stem)
-        .and_then(|id| crate::id::slug(&id))
+        .and_then(|id| Issuer::MARKDOWN.read(&id))
         .ok_or_else(|| {
             fail(
                 Some(ID),
@@ -61,9 +63,9 @@ pub fn decode(
         } else if let Some(relation) = flow.relations.iter().find(|relation| {
             relation.name == key && relation.starts_from(&kind)
         }) {
-            let ids = targets(relation, value, file.project)
+            let reached = targets(relation, value, file.project, ids)
                 .map_err(|message| fail(Some(&key), message))?;
-            links.insert(key, ids);
+            links.insert(key, reached);
         } else {
             return Err(fail(
                 Some(&key),
@@ -126,6 +128,7 @@ pub struct Inputs {
     pub unavailable: Vec<super::Unreadable>,
     pub observed_at: Option<UnixMillis>,
     pub unread: Vec<String>,
+    pub issuers: Issuers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,6 +144,8 @@ impl Inputs {
             .flow
             .and_then(|text| crate::flow::load(&text))
             .map_err(|problem| format!("{}: {problem}", crate::flow::PATH));
+        let projects = crate::project::listed(self.projects);
+        let ids = self.issuers.ids(&projects.projects);
         let mut documents = Vec::new();
         let mut issues: Vec<Result<Observation, Problem>> =
             flow.as_ref().map_or_else(
@@ -149,7 +154,7 @@ impl Inputs {
                     self.issues
                         .iter()
                         .map(|file| {
-                            decode(declared, file)
+                            decode(declared, &ids, file)
                                 .map(|(issue, document)| {
                                     documents.push((
                                         issue.project(),
@@ -176,31 +181,14 @@ impl Inputs {
         ReadHome {
             snapshot: Snapshot::of(DomainInputs {
                 flow,
-                projects: crate::project::listed(self.projects),
+                projects,
                 issues,
                 unread: self.unread,
+                issuers: self.issuers,
             }),
             documents,
         }
     }
-}
-
-pub fn writable(home: &Snapshot, project: ProjectId) -> Result<(), String> {
-    let selected = home
-        .projects()
-        .iter()
-        .find(|known| known.id == project)
-        .ok_or_else(|| {
-            String::from(
-                "local issue writes require a valid project configuration",
-            )
-        })?;
-    if selected.backends.tracker.is_some() {
-        return Err(String::from(
-            "edit this issue in the configured tracker; local issue writes are disabled for this project",
-        ));
-    }
-    Ok(())
 }
 
 impl ReadHome {
@@ -208,7 +196,7 @@ impl ReadHome {
         &self,
         change: &crate::flow::command::Change,
     ) -> Result<File, String> {
-        writable(&self.snapshot, change.observation.project())?;
+        crate::tracker::writable(&self.snapshot, change.observation.project())?;
         let document = self
             .documents
             .iter()
@@ -228,16 +216,19 @@ pub(crate) fn snapshot(inputs: Inputs) -> Snapshot {
 
 #[cfg(test)]
 pub(crate) fn one(flow: &Flow, file: &File) -> Result<Issue, Problem> {
-    decode(flow, file).and_then(|(observation, _)| {
-        observation.issue().cloned().ok_or_else(|| {
-            observation.problem().unwrap_or_else(|| Problem {
-                project: file.project,
-                record: file.stem.clone(),
-                field: None,
-                message: String::from("invalid"),
+    let projects = crate::project::listed(Vec::new());
+    decode(flow, &Issuers::default().ids(&projects.projects), file).and_then(
+        |(observation, _)| {
+            observation.issue().cloned().ok_or_else(|| {
+                observation.problem().unwrap_or_else(|| Problem {
+                    project: file.project,
+                    record: file.stem.clone(),
+                    field: None,
+                    message: String::from("invalid"),
+                })
             })
-        })
-    })
+        },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,12 +238,18 @@ pub struct Loaded {
 }
 
 #[must_use]
-pub fn load(flow: &Flow, target: &super::Read, text: &str) -> Loaded {
+pub fn load(
+    flow: &Flow,
+    ids: &Ids,
+    target: &super::Read,
+    text: &str,
+) -> Loaded {
     let decoded = decode(
         flow,
+        ids,
         &File {
             project: target.project,
-            stem: String::from(target.issue.as_str()),
+            stem: target.issue.to_string(),
             text: String::from(text),
         },
     );
@@ -295,7 +292,7 @@ impl File {
 
 #[must_use]
 pub fn path(target: &super::Read) -> String {
-    crate::layout::issue_file(&target.project, target.issue.as_str())
+    crate::layout::issue_file(&target.project, &target.issue.to_string())
 }
 
 pub fn encode(
@@ -311,7 +308,7 @@ pub fn encode(
         let mut document = existing
             .ok_or_else(|| String::from("the issue document is missing"))?;
         for mutation in &change.mutations {
-            update(&mut document, mutation)?;
+            update(&mut document, issue.project, mutation)?;
         }
         document
     };
@@ -336,7 +333,7 @@ fn opened(
     use crate::flow::command::Mutation;
     let (issue, body) = change.observation.editable()?;
     let mut front = Vec::from([
-        (String::from(ID), quoted(issue.id.as_str())),
+        (String::from(ID), quoted(&issue.id.to_string())),
         (String::from(TITLE), quoted(&issue.title)),
         (String::from(KIND), quoted(&issue.kind)),
         (String::from(STATUS), quoted(&issue.status)),
@@ -354,6 +351,14 @@ fn opened(
                 };
                 Some((field.clone(), encoded))
             }
+            Mutation::Relate {
+                relation,
+                many,
+                targets,
+            } => Some((
+                relation.clone(),
+                relation_value(*many, targets, issue.project).to_string(),
+            )),
             _ => None,
         },
     ));
@@ -362,6 +367,7 @@ fn opened(
 
 fn update(
     document: &mut Document,
+    project: ProjectId,
     mutation: &crate::flow::command::Mutation,
 ) -> Result<(), String> {
     use super::Part;
@@ -370,6 +376,14 @@ fn update(
     match mutation {
         Mutation::Set { field, value } => {
             document.set(field, &toml_of(value)).ok_or_else(unread)?;
+        }
+        Mutation::Relate {
+            relation,
+            many,
+            targets,
+        } => {
+            let value = relation_value(*many, targets, project).to_string();
+            document.set(relation, &value).ok_or_else(unread)?;
         }
         Mutation::Title(title) => {
             document.set(TITLE, &quoted(title)).ok_or_else(unread)?;
@@ -422,7 +436,8 @@ impl Listing {
 
     #[must_use]
     pub fn created_from_path(path: &str) -> Option<IssueId> {
-        crate::layout::issue_stem(path).and_then(crate::id::slug)
+        crate::layout::issue_stem(path)
+            .and_then(|stem| Issuer::MARKDOWN.read(stem))
     }
 }
 
@@ -440,31 +455,18 @@ pub fn fresh(
         .filter(|seconds| *seconds < (1 << 30))?;
     draws
         .iter()
-        .filter_map(|draw| {
-            let value = (seconds << 10) | (draw & 1023);
-            let digits = b"0123456789abcdefghjkmnpqrstvwxyz";
-            let key: String = (0..8)
-                .rev()
-                .map(|place| {
-                    char::from(
-                        digits[usize::try_from((value >> (place * 5)) & 31)
-                            .unwrap_or_default()],
-                    )
-                })
-                .collect();
-            IssueId::new(&key)
-        })
+        .map(|draw| IssueId::of(&Slug::new((seconds << 10) | (draw & 1023))))
         .find(|id| {
             home.records().iter().all(|record| match record {
                 Ok(observation) => observation.id() != id,
-                Err(problem) => problem.record != id.as_str(),
+                Err(problem) => problem.record != id.to_string(),
             })
         })
 }
 
 fn invalid(file: &File, problem: Problem) -> Result<Observation, Problem> {
     let reason = problem.to_string();
-    let id = crate::id::slug(&file.stem).ok_or(problem)?;
+    let id = Issuer::MARKDOWN.read(&file.stem).ok_or(problem)?;
     let document = Document::of(&file.text).ok();
     let front = document
         .as_ref()

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::canvas::{CanvasFile, CanvasName};
 use crate::flow::Flow;
 use crate::issue::{EditId, IssueChange, NewIssue, Observation};
-use crate::{IssueKey, ProjectId, UnixSecs};
+use crate::{IssueKey, IssueName, ProjectId, UnixSecs};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Home {
@@ -78,11 +78,11 @@ pub enum HomeCommand {
     },
     ChangeIssue {
         edit: EditId,
-        issue: IssueKey,
+        issue: IssueName,
         change: IssueChange,
     },
     Canvas {
-        issue: IssueKey,
+        issue: IssueName,
         name: CanvasName,
     },
 }

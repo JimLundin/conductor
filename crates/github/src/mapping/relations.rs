@@ -1,14 +1,10 @@
-use alloc::{
-    collections::BTreeMap,
-    format,
-    string::{String, ToString},
-    vec::Vec,
-};
+use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use home::flow::Flow;
 use home::issue::Coverage;
 use home::{IssueId, IssueKey, ProjectId};
 
 use super::{Findings, Native, Record};
+use crate::IssueNumber;
 
 pub(super) const PARENT: &str = "parent";
 pub(super) const BLOCKED_BY: &str = "blocked_by";
@@ -49,8 +45,11 @@ impl Relations {
             for edge in native.unwrap_or_default() {
                 match edge {
                     Native::Here(number) => {
-                        if let Some(id) = IssueId::new(&number.to_string()) {
-                            targets.push(IssueKey { project, id });
+                        if let Some(held) = IssueNumber::new(*number) {
+                            targets.push(IssueKey {
+                                project,
+                                id: IssueId::of(&held),
+                            });
                         }
                     }
                     Native::Elsewhere(issue) => {
@@ -73,7 +72,7 @@ impl Relations {
                     "relation {name:?} names more than one issue: {}",
                     targets
                         .iter()
-                        .map(|target| target.named_from(project))
+                        .map(|target| target.said_from(project))
                         .collect::<Vec<_>>()
                         .join(", ")
                 ));

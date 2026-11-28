@@ -55,7 +55,7 @@ fn the_first_issue_of_a_project_makes_its_issues_folder() -> std::io::Result<()>
 }
 
 #[test]
-fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_write()
+fn configured_issue_reads_report_cache_coverage_and_opening_an_issue_there_needs_a_credential()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = Scratch(
         std::env::temp_dir()
@@ -88,7 +88,8 @@ fn configured_issue_reads_report_cache_coverage_and_refuse_a_competing_local_wri
     )?;
     let rejected = cli(&["issue", "new", "sample", "bug", "Report"])?;
     assert!(!rejected.status.success());
-    assert!(String::from_utf8(rejected.stdout)?.contains("configured tracker"));
+    let refusal = String::from_utf8(rejected.stdout)?;
+    assert_eq!(refusal, "home: host credential is missing\n");
     assert!(!project.join("issues").exists());
 
     let online = cli(&["issue", "list", "sample", "--data-dir", "host"])?;

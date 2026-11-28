@@ -113,7 +113,7 @@ pub fn check(home: &Snapshot) -> Report {
     }));
     let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
-        let subject = named(issue.project, issue.id.as_str());
+        let subject = named(issue.project, &issue.id.to_string());
         let standing = Move {
             from: Some(issue),
             to: Some(issue),
@@ -156,6 +156,11 @@ pub fn canvases(
         subject: Some(stray.place.clone()),
         message: stray.reason.to_string(),
     });
+    let unavailable = kept.unavailable.iter().map(|reason| Finding {
+        severity: Severity::Error,
+        subject: None,
+        message: reason.clone(),
+    });
     kept.canvases
         .iter()
         .filter_map(|fetched| {
@@ -173,6 +178,7 @@ pub fn canvases(
             })
         })
         .chain(strays)
+        .chain(unavailable)
         .collect()
 }
 

@@ -1,17 +1,21 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use github::IssueNumber;
 use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Native, Record};
 use home::flow::Flow;
+use home::flow::command::{Change, Mutation};
 use home::issue::{
-    Comment, CommentWrite, IssueComment, RelationChange, RelationStep,
+    Comment, CommentWrite, Coverage, Entry, RelationChange, RelationStep,
 };
 use home::issue::{
-    IssueState, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
-    Unreadable,
+    IssueCreate, IssueState, IssueWrite, ListPage, Locator, Lookup,
+    NativeIssue, Observation, Opened, Page, ReadFailure, Unreadable,
 };
+use home::operations::Handle;
+use home::tracker::Ids;
 use home::{IssueId, ProjectId, UnixMillis};
 use octocrab::{FromResponse, models::issues::Issue, params};
 use project_runtime::{
@@ -24,22 +28,29 @@ pub struct Tracker {
     pub(crate) client: Client,
     pub(crate) flow: Flow,
     config: Configuration,
+    pub(crate) ids: Ids,
 }
 
 impl Client {
     #[must_use]
-    pub const fn tracker(self, flow: Flow, config: Configuration) -> Tracker {
+    pub const fn tracker(
+        self,
+        flow: Flow,
+        config: Configuration,
+        ids: Ids,
+    ) -> Tracker {
         Tracker {
             client: self,
             flow,
             config,
+            ids,
         }
     }
 }
 
 #[derive(serde::Deserialize)]
 pub struct ReturnedIssue {
-    state_reason: Option<String>,
+    pub state_reason: Option<String>,
     pub parent_issue_url: Option<String>,
     pub issue_dependencies_summary: Option<Dependencies>,
     pub sub_issues_summary: Option<SubIssues>,
@@ -63,7 +74,7 @@ struct Blocker {
     url: String,
 }
 
-enum Response {
+pub enum Response {
     Issue(Box<ReturnedIssue>),
     Redirect(String),
     Gone,
@@ -76,10 +87,23 @@ enum Located {
 
 impl Tracker {
     async fn page(&self, request: ListPage) -> Result<Page, ReadFailure> {
+        let (items, next) =
+            self.raw_page(request.continuation.as_deref()).await?;
+        let mut records = Vec::new();
+        for returned in items {
+            let blocked_by = self.blocked_by(&returned).await?;
+            let record = self.record(returned, blocked_by)?;
+            records.push(self.mapped(request.project, record));
+        }
+        Ok(Page { records, next })
+    }
+
+    pub(crate) async fn raw_page(
+        &self,
+        continuation: Option<&str>,
+    ) -> Result<(Vec<ReturnedIssue>, Option<String>), ReadFailure> {
         let client = &self.client;
-        let number = request
-            .continuation
-            .as_deref()
+        let number = continuation
             .unwrap_or("1")
             .parse::<std::num::NonZeroU32>()
             .map_err(|_| ReadFailure::InvalidResponse)?
@@ -106,24 +130,12 @@ impl Tracker {
             link.as_deref(),
             raw.incomplete_results,
         )?;
-        let issues: Vec<_> = raw
+        let items = raw
             .items
             .into_iter()
             .filter(|returned| returned.issue.pull_request.is_none())
             .collect();
-        let mut blocked = Vec::new();
-        for returned in &issues {
-            blocked.push(self.blocked_by(returned).await?);
-        }
-        let records = issues
-            .into_iter()
-            .zip(blocked)
-            .map(|(returned, blocked_by)| {
-                self.record(returned, blocked_by)
-                    .map(|record| self.mapped(request.project, record))
-            })
-            .collect::<Result<_, _>>()?;
-        Ok(Page { records, next })
+        Ok((items, next))
     }
 
     async fn blocked_by(
@@ -138,65 +150,6 @@ impl Tracker {
             }) => Ok(Some(Vec::new())),
             Some(_) => self.blockers(value.issue.number).await.map(Some),
         }
-    }
-
-    fn record(
-        &self,
-        value: ReturnedIssue,
-        blocked_by: Option<Vec<Native>>,
-    ) -> Result<Record, ReadFailure> {
-        let client = &self.client;
-        let issue = value.issue;
-        client.repository.verify_record(
-            &client.endpoint,
-            issue.repository_url.as_str(),
-            issue.url.as_str(),
-            issue.number,
-        )?;
-        let parent = value
-            .parent_issue_url
-            .as_deref()
-            .map(|url| client.repository.native(&client.endpoint, url))
-            .transpose()?;
-        let id = IssueId::new(&issue.number.to_string())
-            .ok_or(ReadFailure::InvalidResponse)?;
-        let owned_repo = format!(
-            "{}/{}",
-            client.repository.owner(),
-            client.repository.name()
-        );
-        let locator = Locator {
-            url: Some(format!(
-                "https://github.com/{owned_repo}/issues/{}",
-                issue.number
-            )),
-            repository: owned_repo,
-            addresses: BTreeMap::from([
-                (String::from("id"), issue.id.to_string()),
-                (String::from("node_id"), issue.node_id),
-            ]),
-        };
-        Ok(Record {
-            id,
-            locator,
-            title: issue.title,
-            body: issue.body.unwrap_or_default(),
-            created: u64::try_from(issue.created_at.timestamp_millis())
-                .map(UnixMillis)
-                .map_err(|_| ReadFailure::InvalidResponse)?,
-            open: matches!(issue.state, octocrab::models::IssueState::Open),
-            state_reason: value.state_reason,
-            labels: issue.labels.into_iter().map(|label| label.name).collect(),
-            parent,
-            blocked_by,
-        })
-    }
-
-    fn mapped(&self, project: ProjectId, record: Record) -> Observation {
-        let mut observation =
-            mapping::observe(&self.flow, &self.config, project, record);
-        observation.observed_at = observed_at();
-        observation
     }
 
     async fn blockers(&self, number: u64) -> Result<Vec<Native>, ReadFailure> {
@@ -220,7 +173,71 @@ impl Tracker {
             .collect()
     }
 
-    async fn fetch(&self, address: Address) -> Result<Response, ReadFailure> {
+    fn record(
+        &self,
+        value: ReturnedIssue,
+        blocked_by: Option<Vec<Native>>,
+    ) -> Result<Record, ReadFailure> {
+        let client = &self.client;
+        let issue = value.issue;
+        client.repository.verify_record(
+            &client.endpoint,
+            issue.repository_url.as_str(),
+            issue.url.as_str(),
+            issue.number,
+        )?;
+        let parent = value
+            .parent_issue_url
+            .as_deref()
+            .map(|url| client.repository.native(&client.endpoint, url))
+            .transpose()?;
+        let id = IssueNumber::new(issue.number)
+            .map(|number| IssueId::of(&number))
+            .ok_or(ReadFailure::InvalidResponse)?;
+        let owned_repo = format!(
+            "{}/{}",
+            client.repository.owner(),
+            client.repository.name()
+        );
+        let locator = Locator {
+            url: Some(format!(
+                "https://github.com/{owned_repo}/issues/{}",
+                issue.number
+            )),
+            repository: owned_repo,
+            addresses: BTreeMap::from([
+                (String::from("id"), issue.id.to_string()),
+                (String::from("node_id"), issue.node_id.clone()),
+            ]),
+        };
+        Ok(Record {
+            id,
+            locator,
+            created: u64::try_from(issue.created_at.timestamp_millis())
+                .map(UnixMillis)
+                .map_err(|_| ReadFailure::InvalidResponse)?,
+            native: native(issue, value.state_reason),
+            parent,
+            blocked_by,
+        })
+    }
+
+    fn mapped(&self, project: ProjectId, record: Record) -> Observation {
+        let mut observation = mapping::observe(
+            &self.flow,
+            &self.config,
+            &self.ids,
+            project,
+            record,
+        );
+        observation.observed_at = observed_at();
+        observation
+    }
+
+    pub(crate) async fn fetch(
+        &self,
+        address: Address,
+    ) -> Result<Response, ReadFailure> {
         let response = self
             .client
             .reader
@@ -265,10 +282,25 @@ impl Tracker {
         &self,
         request: Lookup,
     ) -> Result<Observation, ReadFailure> {
-        match self.located(&request).await? {
-            Located::Gone(observation) => Ok(*observation),
-            Located::Found(record) => self.verified(&request, *record),
+        let record = match self.located(&request).await? {
+            Located::Gone(observation) => return Ok(*observation),
+            Located::Found(record) => *record,
+        };
+        let number = record
+            .id
+            .tracked::<IssueNumber>()
+            .ok_or(ReadFailure::InvalidResponse)?
+            .get();
+        let mut observed = self.verified(&request, record)?;
+        match self.posted(number).await {
+            Ok(posted) => mapping::logged(&mut observed, posted),
+            Err(failure) => {
+                observed.completeness.notes = Coverage::Incomplete {
+                    reason: failure.to_string(),
+                };
+            }
         }
+        Ok(observed)
     }
 
     pub(crate) async fn current(
@@ -307,27 +339,28 @@ impl Tracker {
                         |observation| Located::Gone(Box::new(observation)),
                     );
                 }
-                Response::Issue(value) => {
-                    return self.found(resolution, *value).await;
+                Response::Issue(returned) => {
+                    let value = *returned;
+                    resolution.address.returned(
+                        value.issue.number,
+                        value.issue.pull_request.is_some(),
+                    )?;
+                    let blocked_by = self.blocked_by(&value).await?;
+                    let record = self.record(value, blocked_by)?;
+                    return Ok(Located::Found(Box::new(record)));
                 }
             }
         }
     }
+}
 
-    async fn found(
-        &self,
-        resolution: Resolution,
-        value: ReturnedIssue,
-    ) -> Result<Located, ReadFailure> {
-        if value.issue.pull_request.is_some() {
-            return Err(ReadFailure::Unavailable);
-        }
-        if value.issue.number != resolution.address.number() {
-            return Err(ReadFailure::IdentityConflict);
-        }
-        let blocked_by = self.blocked_by(&value).await?;
-        let record = self.record(value, blocked_by)?;
-        Ok(Located::Found(Box::new(record)))
+pub fn native(issue: Issue, reason: Option<String>) -> NativeIssue {
+    NativeIssue {
+        title: issue.title,
+        body: issue.body.unwrap_or_default(),
+        open: matches!(issue.state, octocrab::models::IssueState::Open),
+        reason,
+        labels: issue.labels.into_iter().map(|label| label.name).collect(),
     }
 }
 
@@ -381,19 +414,67 @@ impl IssueTracker for Tracker {
         Box::pin(self.issue_comments(issue))
     }
 
-    fn canvas_comments(
-        &self,
-        _: ProjectId,
-    ) -> IssueCompletion<'_, Vec<IssueComment>> {
-        Box::pin(self.marked_comments())
-    }
-
     fn write_comment(
         &self,
         issue: Lookup,
         write: CommentWrite,
     ) -> SendCompletion<'_, Comment> {
         Box::pin(self.send(issue, write))
+    }
+
+    fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue> {
+        Box::pin(self.native_issue(issue))
+    }
+
+    fn writes(
+        &self,
+        issue: &Lookup,
+        observed: &NativeIssue,
+        mutations: &[Mutation],
+    ) -> Result<Vec<IssueWrite>, String> {
+        mapping::writes(
+            &self.flow,
+            &self.config,
+            issue.project,
+            observed,
+            mutations,
+        )
+    }
+
+    fn write_issue(
+        &self,
+        issue: Lookup,
+        write: IssueWrite,
+    ) -> SendCompletion<'_, ()> {
+        Box::pin(self.apply(issue, write))
+    }
+
+    fn opening(
+        &self,
+        change: &Change,
+        handle: Handle,
+    ) -> Result<IssueCreate, String> {
+        mapping::opening(&self.flow, &self.config, change, &handle.to_string())
+    }
+
+    fn create(
+        &self,
+        _: ProjectId,
+        create: IssueCreate,
+    ) -> SendCompletion<'_, IssueId> {
+        Box::pin(self.open(create))
+    }
+
+    fn opened(
+        &self,
+        _: ProjectId,
+        handle: Handle,
+    ) -> IssueCompletion<'_, Vec<Opened>> {
+        Box::pin(self.carrying(handle))
+    }
+
+    fn logged(&self, entry: &Entry, handle: Handle) -> String {
+        github::log::comment(entry, &handle.marker())
     }
 
     fn plan_relation(

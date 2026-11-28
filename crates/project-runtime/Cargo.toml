@@ -16,9 +16,12 @@ redb = "3.1"
 thiserror.workspace = true
 secrecy = "0.10"
 home = { path = "../home" }
+home-store = { path = "../home-store" }
 vcs = { path = "../vcs" }
 
 [dev-dependencies]
+home-files = { path = "../home-files" }
+github = { path = "../github" }
 tempfile = "3.27.0"
 tokio.workspace = true
 

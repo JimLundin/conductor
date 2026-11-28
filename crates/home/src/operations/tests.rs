@@ -1,7 +1,7 @@
 use super::{Handle, Intent, Next, Progress, Record, Refusal};
 use crate::issue::{Comment, CommentRequest, CommentWrite, EditId, Lookup};
 use crate::prelude::*;
-use crate::{IssueId, ProjectId, UnixMillis};
+use crate::{ProjectId, UnixMillis};
 
 const HANDLE: Handle = Handle {
     owner: [3; 32],
@@ -25,7 +25,7 @@ fn record(
     let request = CommentRequest {
         issue: Lookup {
             project: ProjectId::new(1),
-            id: IssueId::new("146").ok_or(Refusal::Conflict)?,
+            id: Some(crate::id::issue_id("146")).ok_or(Refusal::Conflict)?,
         },
         write,
         seen,
@@ -81,5 +81,31 @@ fn a_rejected_send_can_be_sent_again() -> Result<(), Refusal> {
     assert_eq!(rejected.progress(), &Progress::Ready);
     assert_eq!(rejected.next(&[])?.1, Next::Send);
     assert_eq!(rejected.reject().err(), Some(Refusal::NoAttempt));
+    Ok(())
+}
+
+#[test]
+fn only_a_comment_sent_and_unconfirmed_is_awaited_with_the_request_it_sent()
+-> Result<(), Refusal> {
+    let ready = record(create(), &[])?;
+    let (sent, _) = ready.next(&[])?;
+    let marked = comment("2", create().body());
+    let (settled, _) = sent.next(core::slice::from_ref(&marked))?;
+    assert_eq!(
+        [ready.awaited(), sent.awaited(), settled.awaited()],
+        [
+            None,
+            Some(CommentRequest {
+                issue: Lookup {
+                    project: ProjectId::new(1),
+                    id: Some(crate::id::issue_id("146"))
+                        .ok_or(Refusal::Conflict)?,
+                },
+                write: create(),
+                seen: create().precondition(&[]),
+            }),
+            None,
+        ]
+    );
     Ok(())
 }

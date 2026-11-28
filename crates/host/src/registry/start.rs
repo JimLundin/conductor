@@ -10,7 +10,7 @@ use crate::session::{
 };
 use crate::workspace::{Snapshot, Workspace};
 use agents::{ClientName, Effort, ModelId, Models, Provider};
-use home::{Home, HomeRefusal, IssueKey, ProjectId};
+use home::{Home, HomeRefusal, IssueKey, IssueName, ProjectId, tracker::Ids};
 
 use super::{Launch, Registry, on_issue, unbriefed, unprepared};
 use crate::prelude::*;
@@ -27,7 +27,7 @@ pub struct Placement {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InHome {
     Project(ProjectId),
-    Issue(IssueKey),
+    Issue(IssueName),
 }
 
 pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
@@ -38,13 +38,14 @@ pub fn place_without_home(at: StartAt) -> Result<Placement, InHome> {
             on: None,
         }),
         StartAt::Project(id) => Err(InHome::Project(id)),
-        StartAt::Issue(id) => Err(InHome::Issue(id)),
+        StartAt::Issue(name) => Err(InHome::Issue(name)),
     }
 }
 
 pub fn place_in_home(
     at: InHome,
     home: Option<&Home>,
+    ids: &Ids,
 ) -> Result<Placement, HomeRefusal> {
     match at {
         InHome::Project(id) => {
@@ -54,7 +55,8 @@ pub fn place_in_home(
                 on: None,
             })
         }
-        InHome::Issue(id) => {
+        InHome::Issue(name) => {
+            let id = ids.key(&name).map_err(|_| HomeRefusal::UnknownIssue)?;
             home::issue::start(home, id).map(|(project, on)| Placement {
                 project: Some(project),
                 directory: on.checkout.clone().into(),

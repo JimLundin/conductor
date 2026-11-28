@@ -5,11 +5,12 @@ use alloc::{
 };
 use home::flow::Flow;
 use home::issue::{RelationChange, RelationStep};
+use home::tracker::Ids;
 use home::{IssueKey, ProjectId};
 
 use super::relations::{BLOCKED_BY, PARENT};
 use super::{Native, Record, footer};
-use crate::access::routes::Address;
+use crate::IssueNumber;
 
 pub const SUB_ISSUES: u32 = 100;
 pub const LEVELS: u32 = 8;
@@ -63,6 +64,7 @@ pub struct Plan {
 
 pub fn plan(
     flow: &Flow,
+    ids: &Ids,
     project: ProjectId,
     record: &Record,
     change: &RelationChange,
@@ -85,23 +87,24 @@ pub fn plan(
         BLOCKED_BY => blockers(record.blocked_by.as_deref(), &wanted)?,
         _ => Vec::new(),
     };
-    let footer = footer::relate(&record.body, relation, project, &kept)
-        .map_err(Unheld::Footer)?
-        .map(|body| RelationStep {
-            effect: format!(
-                "footer {name} = [{}]",
-                kept.iter()
-                    .map(|target| target.named_from(project))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-            request: Request::Body(body).encode(),
-        });
+    let footer =
+        footer::relate(&record.native.body, relation, project, ids, &kept)
+            .map_err(Unheld::Footer)?
+            .map(|body| RelationStep {
+                effect: format!(
+                    "footer {name} = [{}]",
+                    kept.iter()
+                        .map(|target| target.said_from(project))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                request: Request::Body(body).encode(),
+            });
     Ok(Plan { changes, footer })
 }
 
 fn held(target: &IssueKey) -> Option<u64> {
-    Address::of(&target.id).ok().map(Address::number)
+    target.id.tracked::<IssueNumber>().map(IssueNumber::get)
 }
 
 fn parent(current: Option<&Native>, wanted: Option<u64>) -> Vec<Change> {

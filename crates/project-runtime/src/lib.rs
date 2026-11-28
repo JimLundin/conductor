@@ -1,25 +1,30 @@
 mod comments;
+mod edits;
 pub mod issues;
+mod opening;
 pub mod operations;
 mod relations;
-mod storage;
+pub mod storage;
+pub mod tracker;
 pub mod transport;
 
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use home::ProjectId;
 use home::backend::{
     self, Backend, Backends, Binding, Capability, CredentialState, Refusal,
     Selection,
 };
+use home::flow::command::{Change, Mutation};
 use home::hosting;
 use home::issue::{
-    Comment, CommentWrite, IssueComment, ListPage, Lookup, Observation, Page,
-    ReadFailure, Relating, RelationChange, RelationStep, SendFailure,
-    Unrelatable,
+    self, Comment, CommentWrite, IssueCreate, IssueWrite, ListPage, Lookup,
+    NativeIssue, Observation, Opened, Page, ReadFailure, Relating,
+    RelationChange, RelationStep, SendFailure, Unrelatable,
 };
+use home::operations::Handle;
+use home::{IssueId, ProjectId};
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
     PreserveAndRemove, Revision,
@@ -63,20 +68,45 @@ pub type RelationCompletion<'a> =
     Pin<Box<dyn Future<Output = Result<Relating, Unrelatable>> + Send + 'a>>;
 
 pub use comments::WriteError;
+pub use edits::IssueEdit;
 
 pub trait IssueTracker: Send + Sync {
     fn read(&self, request: Lookup) -> IssueCompletion<'_, Observation>;
     fn list(&self, request: ListPage) -> IssueCompletion<'_, Page>;
     fn comments(&self, issue: Lookup) -> IssueCompletion<'_, Vec<Comment>>;
-    fn canvas_comments(
-        &self,
-        project: ProjectId,
-    ) -> IssueCompletion<'_, Vec<IssueComment>>;
     fn write_comment(
         &self,
         issue: Lookup,
         write: CommentWrite,
     ) -> SendCompletion<'_, Comment>;
+    fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue>;
+    fn writes(
+        &self,
+        on: &Lookup,
+        observed: &NativeIssue,
+        mutations: &[Mutation],
+    ) -> Result<Vec<IssueWrite>, String>;
+    fn write_issue(
+        &self,
+        issue: Lookup,
+        write: IssueWrite,
+    ) -> SendCompletion<'_, ()>;
+    fn opening(
+        &self,
+        change: &Change,
+        handle: Handle,
+    ) -> Result<IssueCreate, String>;
+    fn create(
+        &self,
+        project: ProjectId,
+        create: IssueCreate,
+    ) -> SendCompletion<'_, IssueId>;
+    fn opened(
+        &self,
+        project: ProjectId,
+        handle: Handle,
+    ) -> IssueCompletion<'_, Vec<Opened>>;
+    fn logged(&self, entry: &issue::Entry, handle: Handle) -> String;
     fn plan_relation(
         &self,
         issue: Lookup,

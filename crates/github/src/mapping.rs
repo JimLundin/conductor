@@ -9,10 +9,11 @@ use home::flow::{
     graph::{self, branch_of},
 };
 use home::issue::{
-    Coverage, Datum, Issue, Locator, Observation, Unreadable, body::Body,
+    Coverage, Datum, Issue, IssueState, Locator, NativeIssue, Observation,
+    Unreadable, body::Body,
 };
+use home::tracker::Ids;
 use home::{IssueId, ProjectId, UnixMillis};
-use sha2::{Digest, Sha256};
 
 use crate::configuration::Configuration;
 
@@ -20,6 +21,10 @@ mod footer;
 mod labels;
 pub mod relate;
 mod relations;
+mod writes;
+
+pub use footer::carries;
+pub use writes::{opening, writes};
 
 pub const AUTHORITY: &str = "https://api.github.com";
 
@@ -27,12 +32,8 @@ pub const AUTHORITY: &str = "https://api.github.com";
 pub struct Record {
     pub id: IssueId,
     pub locator: Locator,
-    pub title: String,
-    pub body: String,
     pub created: UnixMillis,
-    pub open: bool,
-    pub state_reason: Option<String>,
-    pub labels: Vec<String>,
+    pub native: NativeIssue,
     pub parent: Option<Native>,
     pub blocked_by: Option<Vec<Native>>,
 }
@@ -43,60 +44,11 @@ pub enum Native {
     Elsewhere(String),
 }
 
-impl Record {
-    fn fingerprint(&self) -> String {
-        fn field(hash: &mut Sha256, text: &str) {
-            hash.update((text.len() as u64).to_be_bytes());
-            hash.update(text.as_bytes());
-        }
-        fn native(hash: &mut Sha256, edge: &Native) {
-            match edge {
-                Native::Here(number) => {
-                    hash.update([1]);
-                    hash.update(number.to_be_bytes());
-                }
-                Native::Elsewhere(issue) => {
-                    hash.update([2]);
-                    field(hash, issue);
-                }
-            }
-        }
-        let mut hash = Sha256::new();
-        field(&mut hash, &self.id.to_string());
-        field(&mut hash, &self.title);
-        field(&mut hash, &self.body);
-        hash.update(self.created.0.to_be_bytes());
-        hash.update([
-            u8::from(self.open),
-            u8::from(self.state_reason.is_some()),
-        ]);
-        if let Some(reason) = &self.state_reason {
-            field(&mut hash, reason);
-        }
-        let mut labels: Vec<_> = self.labels.iter().collect();
-        labels.sort_unstable();
-        for label in labels {
-            field(&mut hash, label);
-        }
-        hash.update([u8::from(self.parent.is_some())]);
-        if let Some(parent) = &self.parent {
-            native(&mut hash, parent);
-        }
-        hash.update([u8::from(self.blocked_by.is_some())]);
-        if let Some(blockers) = &self.blocked_by {
-            hash.update((blockers.len() as u64).to_be_bytes());
-            for blocker in blockers {
-                native(&mut hash, blocker);
-            }
-        }
-        data_encoding::HEXLOWER.encode(&hash.finalize())
-    }
-}
-
 #[must_use]
 pub fn observe(
     flow: &Flow,
     config: &Configuration,
+    ids: &Ids,
     project: ProjectId,
     record: Record,
 ) -> Observation {
@@ -104,16 +56,23 @@ pub fn observe(
         subject: format!("{project}/{}", record.id),
         entries: Vec::new(),
     };
-    let labels = labels::Labels::read(config, &record.labels, &mut findings);
-    let status = labels.status(&record, flow, config, &mut findings);
+    let labels =
+        labels::Labels::read(config, &record.native.labels, &mut findings);
+    let status = labels.status(&record.native, flow, config, &mut findings);
     let kind = labels
         .managed
         .get(home::issue::KIND)
         .unwrap_or(&flow.default_kind)
         .clone();
     let stage = labels.managed.get(home::issue::STAGE).cloned();
-    let (human, metadata) =
-        footer::read(&record.body, flow, config, project, &mut findings);
+    let (human, metadata) = footer::read(
+        &record.native.body,
+        flow,
+        config,
+        ids,
+        project,
+        &mut findings,
+    );
     let fields = labels.fields(
         flow,
         &kind,
@@ -129,7 +88,7 @@ pub fn observe(
         metadata.links,
         &mut findings,
     );
-    let revision = record.fingerprint();
+    let revision = record.native.revision();
     let branch = branch_of(
         &record.id,
         flow.field_with(&kind, FieldRole::Branch)
@@ -139,7 +98,7 @@ pub fn observe(
     let issue = Issue {
         id: record.id,
         project,
-        title: record.title,
+        title: record.native.title.clone(),
         created: Some(record.created),
         kind,
         status,
@@ -171,6 +130,15 @@ pub fn observe(
         observation.completeness.relations.insert(name, coverage);
     }
     observation
+}
+
+pub fn logged(observation: &mut Observation, posted: Vec<crate::log::Posted>) {
+    let log = crate::log::read(posted);
+    if let IssueState::Valid { issue, .. } = &mut observation.state {
+        issue.log = log.entries;
+        issue.notes = log.notes;
+        observation.completeness.notes = Coverage::Complete;
+    }
 }
 
 struct Findings {

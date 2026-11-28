@@ -43,8 +43,14 @@ impl Tracker {
         let revision = observed
             .revision
             .ok_or(Unrelatable::Read(ReadFailure::InvalidResponse))?;
-        let plan = relate::plan(&self.flow, issue.project, &record, &change)
-            .map_err(|reason| unheld(&reason))?;
+        let plan = relate::plan(
+            &self.flow,
+            &self.ids,
+            issue.project,
+            &record,
+            &change,
+        )
+        .map_err(|reason| unheld(&reason))?;
         let child = record
             .locator
             .addresses

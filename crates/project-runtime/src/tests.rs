@@ -52,7 +52,7 @@ fn workspace() -> Prepared {
 fn issue() -> Result<Lookup, String> {
     Ok(Lookup {
         project: home::ProjectId::new(1),
-        id: home::IssueId::new("42").ok_or("invalid test issue")?,
+        id: github::ISSUER.read("42").ok_or("invalid test issue")?,
     })
 }
 
@@ -110,6 +110,55 @@ impl VersionControl for Scripted {
 }
 
 impl IssueTracker for Scripted {
+    fn native(
+        &self,
+        _: home::issue::Lookup,
+    ) -> crate::IssueCompletion<'_, home::issue::NativeIssue> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn writes(
+        &self,
+        _: &Lookup,
+        _: &home::issue::NativeIssue,
+        _: &[home::flow::command::Mutation],
+    ) -> Result<Vec<home::issue::IssueWrite>, String> {
+        Err(String::from("the script takes no edits"))
+    }
+    fn write_issue(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::IssueWrite,
+    ) -> crate::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opening(
+        &self,
+        _: &home::flow::command::Change,
+        _: home::operations::Handle,
+    ) -> Result<home::issue::IssueCreate, String> {
+        Err(String::from("the script opens no issues"))
+    }
+    fn create(
+        &self,
+        _: home::ProjectId,
+        _: home::issue::IssueCreate,
+    ) -> crate::SendCompletion<'_, home::IssueId> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opened(
+        &self,
+        _: home::ProjectId,
+        _: home::operations::Handle,
+    ) -> crate::IssueCompletion<'_, Vec<home::issue::Opened>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn logged(
+        &self,
+        _: &home::issue::Entry,
+        _: home::operations::Handle,
+    ) -> String {
+        String::new()
+    }
     fn list(&self, _request: ListPage) -> IssueCompletion<'_, Page> {
         Box::pin(async { Err(ReadFailure::Unavailable) })
     }
@@ -132,12 +181,6 @@ impl IssueTracker for Scripted {
         _: home::issue::Lookup,
     ) -> crate::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
-    }
-    fn canvas_comments(
-        &self,
-        _: home::ProjectId,
-    ) -> crate::IssueCompletion<'_, Vec<home::issue::IssueComment>> {
-        Box::pin(async { Ok(Vec::new()) })
     }
     fn write_comment(
         &self,

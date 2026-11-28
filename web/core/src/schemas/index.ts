@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/53";
+type Alpn = "conductor/55";
 
-const Alpn = Schema.Literal("conductor/53").annotate({
+const Alpn = Schema.Literal("conductor/55").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -554,31 +554,22 @@ const ProjectId = Schema.String.check(
   }),
 );
 
-type IssueId = string;
+type IssueName = { readonly id: string; readonly project: ProjectId };
 
-const IssueId = Schema.String.check(
-  Schema.isMinLength(1).annotate({
-    expected: "a value with a length of at least 1",
-    identifier: "IssueId",
-  }),
-);
-
-type IssueKey = { readonly id: IssueId; readonly project: ProjectId };
-
-const IssueKey = Schema.Struct({ id: IssueId, project: ProjectId }).annotate({
-  identifier: "IssueKey",
+const IssueName = Schema.Struct({ id: Schema.String, project: ProjectId }).annotate({
+  identifier: "IssueName",
 });
 
 type StartAt =
   | { readonly Directory: SessionDirectory }
   | { readonly Project: ProjectId }
-  | { readonly Issue: IssueKey };
+  | { readonly Issue: IssueName };
 
 const StartAt = Schema.Union(
   [
     Schema.Struct({ Directory: SessionDirectory }),
     Schema.Struct({ Project: ProjectId }),
-    Schema.Struct({ Issue: IssueKey }),
+    Schema.Struct({ Issue: IssueName }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "StartAt" });
@@ -806,10 +797,10 @@ type HomeCommand =
       readonly ChangeIssue: {
         readonly change: IssueChange;
         readonly edit: EditId;
-        readonly issue: IssueKey;
+        readonly issue: IssueName;
       };
     }
-  | { readonly Canvas: { readonly issue: IssueKey; readonly name: CanvasName } };
+  | { readonly Canvas: { readonly issue: IssueName; readonly name: CanvasName } };
 
 const HomeCommand = Schema.Union(
   [
@@ -817,9 +808,9 @@ const HomeCommand = Schema.Union(
     Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }),
     Schema.Struct({ CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }) }),
     Schema.Struct({
-      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueKey }),
+      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueName }),
     }),
-    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueKey, name: CanvasName }) }),
+    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueName, name: CanvasName }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeCommand" });
@@ -1191,6 +1182,21 @@ const SignInResult = Schema.Union(
   [Schema.Literal("Accepted"), Schema.Struct({ Refused: SignInRefusal })],
   { mode: "oneOf" },
 ).annotate({ identifier: "SignInResult" });
+
+type IssueId = string;
+
+const IssueId = Schema.String.check(
+  Schema.isMinLength(1).annotate({
+    expected: "a value with a length of at least 1",
+    identifier: "IssueId",
+  }),
+);
+
+type IssueKey = { readonly id: IssueId; readonly project: ProjectId };
+
+const IssueKey = Schema.Struct({ id: IssueId, project: ProjectId }).annotate({
+  identifier: "IssueKey",
+});
 
 type HomeResult =
   | "Accepted"
@@ -2492,6 +2498,7 @@ export {
   IssueChange,
   IssueId,
   IssueKey,
+  IssueName,
   IssueState,
   Item,
   Kept,

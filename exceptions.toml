@@ -15,6 +15,16 @@ path = "crates/host/src/fleet/frame.rs"
 rule = "api"
 reason = "encode and decode are generic over serde's Serialize and DeserializeOwned, which describe a message's shape and carry no effect"
 
+[[exception]]
+path = "crates/home/src/id/issue.rs"
+rule = "api"
+reason = "an IssueId is built only from a tracker's own ID type, so IssueId::of and IssueId::tracked are bounded by TrackerId, which describes an ID's text form and carries no effect; taking plain text instead would give the core a parser of IDs"
+
+[[exception]]
+path = "crates/home/src/tracker.rs"
+rule = "api"
+reason = "Issuer::of turns a tracker's ID type into that tracker's reader, bounded by TrackerId, which describes an ID's text form and carries no effect"
+
 # Debt: shell code that still makes decisions. Each entry goes as its
 # decisions move into a core crate.
 

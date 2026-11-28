@@ -299,7 +299,7 @@ impl Context<'_> {
         by: String,
         edit: command::Edit,
     ) -> Result<Record, HomeRefusal> {
-        super::storage::writable(self.home, project)
+        crate::tracker::writable(self.home, project)
             .map_err(|reason| HomeRefusal::IssueRefused { reason })?;
         Ok(Record {
             id: self.edit,
@@ -399,7 +399,7 @@ impl Edit {
         current: Result<Option<&Observed>, String>,
         upstream_changed: Option<UnixSecs>,
     ) -> Result<Commit, NoCommit> {
-        super::storage::writable(home, self.data.project)
+        crate::tracker::writable(home, self.data.project)
             .map_err(NoCommit::Waiting)?;
         let contents = match current {
             Ok(contents) => contents,

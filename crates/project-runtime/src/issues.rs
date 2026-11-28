@@ -1,12 +1,11 @@
 mod store;
 
-use super::{Project, Registry};
-use home::flow::snapshot::Snapshot;
+use super::Project;
 use home::issue::{
-    IssueComment, IssueListing, IssueReading, ListPage, Lookup, ReadFailure,
-    ReadMode, cache::Scan,
+    IssueListing, IssueReading, ListPage, Lookup, ReadFailure, ReadMode,
+    cache::Scan,
 };
-use home::{IssueKey, ProjectId, UnixMillis, backend::Refusal, flow::Flow};
+use home::{ProjectId, UnixMillis, backend::Refusal, flow::Flow};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::Scope;
@@ -31,28 +30,6 @@ impl<'a> IssueCache<'a> {
     }
 }
 
-pub async fn cached(
-    data: &Path,
-    home: &Snapshot,
-    key: &IssueKey,
-) -> Result<IssueReading, String> {
-    let Some(project) = home.projects().iter().find(|known| {
-        known.id == key.project && known.backends.tracker.is_some()
-    }) else {
-        return Ok(home.reading(key));
-    };
-    let cache = IssueCache::new(data, home.flow()?);
-    let lookup = Lookup {
-        project: key.project,
-        id: key.id.clone(),
-    };
-    Registry::default()
-        .project(&project.backends)
-        .issue(&cache, lookup, ReadMode::Cached)
-        .await
-        .map_err(|error| error.to_string())
-}
-
 fn now() -> Result<UnixMillis, CacheError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -72,25 +49,6 @@ impl Project<'_> {
             .as_ref()
             .ok_or(CacheError::Refused(Refusal::TrackerNotConfigured))?;
         Scope::new(cache.data, project, selection, cache.flow)
-    }
-
-    pub fn canvas_comments(
-        &self,
-        cache: &IssueCache<'_>,
-        project: ProjectId,
-    ) -> Result<Vec<IssueComment>, CacheError> {
-        Ok(self.scope(cache, project)?.load()?.comments().to_vec())
-    }
-
-    pub fn posted(
-        &self,
-        cache: &IssueCache<'_>,
-        project: ProjectId,
-        comment: IssueComment,
-    ) -> Result<(), CacheError> {
-        self.scope(cache, project)?
-            .save(|records| records.posted(comment))
-            .map(drop)
     }
 
     pub async fn issues(
@@ -145,7 +103,6 @@ impl Project<'_> {
                 .await?;
             continuation = scan.append(project, page)?;
             if continuation.is_none() {
-                scan.commented(tracker.canvas_comments(project).await?);
                 return Ok(scan);
             }
         }

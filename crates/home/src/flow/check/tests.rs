@@ -36,6 +36,7 @@ fn inputs(flow: &str, review_status: &str) -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: Ok(String::from(flow)),
         projects: Vec::from([project("7r5n23", "conductor", "")]),
         issues: Vec::from([

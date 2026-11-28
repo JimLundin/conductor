@@ -1,4 +1,4 @@
-use home::issue::{EditId, IssueChange};
+use home::issue::{EditId, IssueWrite};
 use home::operations::{Handle, Intent, Work};
 use project_runtime::operations::{Error, Operations};
 
@@ -7,8 +7,11 @@ fn changes() -> Result<Intent, &'static str> {
         project: home::ProjectId::new(1),
         expected: String::from("issue-1"),
         work: Work::ChangeIssue {
-            issue: home::IssueId::new("42").ok_or("bad fixture")?,
-            change: IssueChange::Title(String::from("Ready")),
+            issue: github::ISSUER.read("42").ok_or("bad fixture")?,
+            writes: Vec::from([IssueWrite::Title {
+                from: String::from("Draft"),
+                to: String::from("Ready"),
+            }]),
         },
     })
 }
@@ -35,15 +38,13 @@ fn a_retry_on_another_host_cannot_start_even_with_no_local_record()
 
 fn transition() -> Result<Intent, &'static str> {
     let mut intent = changes()?;
-    let Work::ChangeIssue { change, .. } = &mut intent.work else {
+    let Work::ChangeIssue { writes, .. } = &mut intent.work else {
         return Err("not an issue change");
     };
-    *change = IssueChange::Move {
-        part: home::issue::Part::Status,
-        to: String::from("active"),
-        reason: String::from("starting work"),
-        signed_off: false,
-    };
+    *writes = Vec::from([
+        IssueWrite::RemoveLabel(String::from("work/status/open")),
+        IssueWrite::AddLabel(String::from("work/status/active")),
+    ]);
     Ok(intent)
 }
 
@@ -65,17 +66,13 @@ fn a_partially_applied_transition_resumes_only_against_its_verified_state()
     let cli = Operations::open(dir.path())?;
     let handle = daemon.handle()?;
     let change = transition()?;
-    let removed = Step::RemoveTransitionValue(home::issue::Part::Status);
-    let added = Step::SetTransitionValue(home::issue::Part::Status);
+    let removed = Step::WriteIssue(0);
+    let added = Step::WriteIssue(1);
     let mut attempt = daemon.begin(handle, change.clone(), true)?;
     attempt.dispatch(removed.clone(), "issue-1")?;
     assert!(matches!(
         cli.begin(handle, change.clone(), true),
-        Err(Error::Busy)
-    ));
-    assert!(matches!(
-        cli.begin(cli.handle()?, change.clone(), true),
-        Err(Error::Busy)
+        Err(Error::InProgress)
     ));
     attempt.confirm(evidence(removed.clone(), "old-label-removed"), false)?;
     drop(attempt);
@@ -127,7 +124,7 @@ fn an_offline_request_creates_no_record_and_cannot_dispatch_a_paused_edit()
     drop(store.begin(handle, input.clone(), true)?);
     let mut retry = store.begin(handle, input, false)?;
     assert!(matches!(
-        retry.dispatch(Step::ApplyChange, "issue-1"),
+        retry.dispatch(Step::WriteIssue(0), "issue-1"),
         Err(Error::Refused(Refusal::Offline))
     ));
     Ok(())
@@ -165,7 +162,7 @@ fn an_interrupted_attempt_can_be_inspected_before_the_host_restarts()
     if let Some(data) = std::env::var_os(CHILD) {
         let store = Operations::open(std::path::Path::new(&data))?;
         let mut attempt = store.begin(handle, changes()?, true)?;
-        attempt.dispatch(Step::ApplyChange, "issue-1")?;
+        attempt.dispatch(Step::WriteIssue(0), "issue-1")?;
         std::process::abort();
     }
     let dir = tempfile::tempdir()?;
@@ -181,7 +178,71 @@ fn an_interrupted_attempt_can_be_inspected_before_the_host_restarts()
     let status = reopened.status(handle)?.ok_or("attempt disappeared")?;
     assert_eq!(
         status.progress(),
-        &Progress::AwaitingEvidence(Step::ApplyChange)
+        &Progress::AwaitingEvidence(Step::WriteIssue(0))
+    );
+    assert_eq!(reopened.begin(handle, changes()?, true)?.record(), &status);
+    Ok(())
+}
+
+fn elsewhere() -> Result<Intent, &'static str> {
+    let mut intent = changes()?;
+    let Work::ChangeIssue { issue, .. } = &mut intent.work else {
+        return Err("not an issue change");
+    };
+    *issue = github::ISSUER.read("43").ok_or("bad fixture")?;
+    Ok(intent)
+}
+
+#[test]
+fn a_second_write_to_an_issue_whose_request_is_out_is_refused_and_a_write_to_another_issue_goes_ahead()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let daemon = Operations::bind(dir.path(), [4; 32])?;
+    let cli = Operations::open(dir.path())?;
+    let mut out = daemon.begin(daemon.handle()?, changes()?, true)?;
+    out.dispatch(Step::WriteIssue(0), "issue-1")?;
+    let same = cli.handle()?;
+    assert!(matches!(
+        cli.begin(same, changes()?, true),
+        Err(Error::InProgress)
+    ));
+    assert_eq!(cli.status(same)?, None);
+    let other = cli.handle()?;
+    let mut second = cli.begin(other, elsewhere()?, true)?;
+    second.dispatch(Step::WriteIssue(0), "issue-1")?;
+    out.confirm(evidence(Step::WriteIssue(0), "issue-2"), true)?;
+    assert_eq!(
+        daemon
+            .status(other)?
+            .map(|record| record.progress().clone()),
+        Some(Progress::AwaitingEvidence(Step::WriteIssue(0)))
+    );
+    drop(out);
+    assert!(cli.begin(same, changes()?, true).is_ok());
+    Ok(())
+}
+
+#[test]
+fn a_second_write_on_a_handle_whose_request_is_out_is_refused_as_in_progress()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let daemon = Operations::bind(dir.path(), [5; 32])?;
+    let cli = Operations::open(dir.path())?;
+    let handle = daemon.handle()?;
+    let mut out = daemon.begin(handle, changes()?, true)?;
+    out.dispatch(Step::WriteIssue(0), "issue-1")?;
+    assert!(matches!(
+        cli.begin(handle, changes()?, true),
+        Err(Error::InProgress)
+    ));
+    assert!(matches!(
+        daemon.begin(handle, changes()?, true),
+        Err(Error::InProgress)
+    ));
+    drop(out);
+    assert_eq!(
+        cli.begin(handle, changes()?, true)?.record().progress(),
+        &Progress::AwaitingEvidence(Step::WriteIssue(0))
     );
     Ok(())
 }

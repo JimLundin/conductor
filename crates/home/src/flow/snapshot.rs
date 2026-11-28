@@ -13,6 +13,7 @@ use super::graph::{Graph, Problem};
 use crate::canvas::CanvasKey;
 use crate::prelude::*;
 use crate::project::{Listing, Project};
+use crate::tracker::{Ids, Issuers};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
@@ -20,6 +21,7 @@ pub struct Inputs {
     pub projects: Listing,
     pub issues: Vec<Result<Observation, Problem>>,
     pub unread: Vec<String>,
+    pub issuers: Issuers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +31,7 @@ pub struct Snapshot {
     records: Vec<Result<Observation, Problem>>,
     unread: Vec<String>,
     graph: Graph,
+    ids: Ids,
 }
 
 impl Snapshot {
@@ -40,12 +43,14 @@ impl Snapshot {
             |_| Graph::default(),
             |read_flow| observed(read_flow, &mut records, true),
         );
+        let ids = inputs.issuers.ids(&inputs.projects.projects);
         Self {
             flow,
             listing: inputs.projects,
             records,
             unread: inputs.unread,
             graph,
+            ids,
         }
     }
 
@@ -57,6 +62,7 @@ impl Snapshot {
             records: Vec::new(),
             unread: Vec::new(),
             graph: Graph::default(),
+            ids: Ids::default(),
         }
     }
 
@@ -106,6 +112,11 @@ impl Snapshot {
     }
 
     #[must_use]
+    pub const fn ids(&self) -> &Ids {
+        &self.ids
+    }
+
+    #[must_use]
     pub fn records(&self) -> &[Result<Observation, Problem>] {
         &self.records
     }
@@ -144,7 +155,7 @@ impl Snapshot {
                 && observation.id() == &key.id)
                 .then(|| observation.clone()),
             Err(problem) => (problem.project == key.project
-                && problem.record == key.id.as_str())
+                && problem.record == key.id.to_string())
             .then(|| {
                 Observation::invalid(Unreadable {
                     id: key.id.clone(),
@@ -179,8 +190,9 @@ impl Snapshot {
             .filter_map(|record| match record {
                 Ok(observation) => (observation.project() == project)
                     .then(|| observation.clone()),
-                Err(problem) => IssueId::new(&problem.record)
-                    .filter(|_| problem.project == project)
+                Err(problem) => (problem.project == project)
+                    .then(|| self.ids.read(project, &problem.record).ok())
+                    .flatten()
                     .map(|id| {
                         Observation::invalid(Unreadable {
                             id,

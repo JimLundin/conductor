@@ -8,12 +8,12 @@ use project_runtime::{Registration, Registry, WriteError};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-const LISTED: &str =
+pub(super) const LISTED: &str =
     "/repos/owner/work/issues/146/comments?per_page=100&page=1";
-const CREATED: &str = "/repos/owner/work/issues/146/comments";
+pub(super) const CREATED: &str = "/repos/owner/work/issues/146/comments";
 const EDITED: &str = "/repos/owner/work/issues/comments/2";
 
-fn comment(id: u64, body: &str, updated: &str) -> Value {
+pub(super) fn comment(id: u64, body: &str, updated: &str) -> Value {
     json!({
         "id": id, "node_id": format!("IC_{id}"),
         "url": format!("{{api}}/repos/owner/work/issues/comments/{id}"),
@@ -24,11 +24,15 @@ fn comment(id: u64, body: &str, updated: &str) -> Value {
     })
 }
 
-fn human() -> Value {
+pub(super) fn human() -> Value {
     comment(1, "A person's note", "2026-11-01T10:00:00Z")
 }
 
-fn sent(method: &'static str, path: &'static str, body: &Value) -> Exchange {
+pub(super) fn sent(
+    method: &'static str,
+    path: &'static str,
+    body: &Value,
+) -> Exchange {
     Exchange {
         method,
         status: if method == "POST" { 201 } else { 200 },
@@ -36,7 +40,7 @@ fn sent(method: &'static str, path: &'static str, body: &Value) -> Exchange {
     }
 }
 
-fn lost(method: &'static str, path: &'static str) -> Exchange {
+pub(super) fn lost(method: &'static str, path: &'static str) -> Exchange {
     Exchange {
         lost: true,
         ..sent(method, path, &json!({}))
@@ -139,7 +143,7 @@ async fn create(
     ))
 }
 
-fn posted(bodies: &[hyper::body::Bytes]) -> Vec<String> {
+pub(super) fn posted(bodies: &[hyper::body::Bytes]) -> Vec<String> {
     bodies
         .iter()
         .filter(|body| !body.is_empty())
@@ -309,16 +313,18 @@ async fn a_credential_without_issue_writes_fails_the_write_preflight_and_sends_n
         github::configuration::load("", &flow).map_err(anyhow::Error::msg)?;
     let writing = credentials
         .connect_at(&selection, "http://127.0.0.1:9")?
-        .tracker(flow.clone(), mapping.clone());
+        .tracker(flow.clone(), mapping.clone(), home::tracker::Ids::default());
     assert_eq!(
         writing.capabilities(),
         [Capability::ReadIssues, Capability::WriteIssues]
     );
     std::fs::write(&path, entry(""))?;
     let (base, served) = exchanges(Vec::new()).await?;
-    let reading = credentials
-        .connect_at(&selection, &base)?
-        .tracker(flow, mapping);
+    let reading = credentials.connect_at(&selection, &base)?.tracker(
+        flow,
+        mapping,
+        home::tracker::Ids::default(),
+    );
     let capabilities = reading.capabilities();
     let writer = Writer::with(reading, capabilities)?;
     let handle = writer.operations.handle()?;

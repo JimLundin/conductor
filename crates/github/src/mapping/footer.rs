@@ -5,7 +5,11 @@ use alloc::{
     vec::Vec,
 };
 use home::flow::{Flow, Relation};
-use home::issue::{Datum, body, document::targets};
+use home::issue::{
+    Datum, body,
+    document::{relation_value, targets},
+};
+use home::tracker::Ids;
 use home::{IssueKey, ProjectId, operations::Handle};
 use serde::Deserialize;
 
@@ -29,10 +33,18 @@ pub(super) struct Metadata {
     pub links: BTreeMap<String, Vec<IssueKey>>,
 }
 
+#[must_use]
+pub fn carries(text: &str, handle: Handle) -> bool {
+    matches!(body::footer(text, "project-data"), Ok(Some((_, data)))
+        if toml::from_str::<Document>(data)
+            .is_ok_and(|document| document.operation == Some(handle.to_string())))
+}
+
 pub(super) fn read<'a>(
     text: &'a str,
     flow: &Flow,
     config: &Configuration,
+    ids: &Ids,
     project: ProjectId,
     findings: &mut Findings,
 ) -> (&'a str, Metadata) {
@@ -79,9 +91,9 @@ pub(super) fn read<'a>(
                     findings.error(format!("no relation is called {name:?}"));
                     continue;
                 };
-                match targets(relation, value, project) {
-                    Ok(ids) => {
-                        metadata.links.insert(name, ids);
+                match targets(relation, value, project, ids) {
+                    Ok(reached) => {
+                        metadata.links.insert(name, reached);
                     }
                     Err(error) => {
                         findings.error(format!("relation {name:?}: {error}"));
@@ -105,6 +117,7 @@ pub(super) fn relate(
     text: &str,
     relation: &Relation,
     project: ProjectId,
+    ids: &Ids,
     wanted: &[IssueKey],
 ) -> Result<Option<String>, String> {
     let (human, mut document) = match body::footer(text, "project-data")? {
@@ -123,27 +136,19 @@ pub(super) fn relate(
     let current = relations
         .get(&relation.name)
         .cloned()
-        .map(|value| targets(relation, value, project))
+        .map(|value| targets(relation, value, project, ids))
         .transpose()?
         .unwrap_or_default();
     if current == wanted {
         return Ok(None);
     }
-    let named =
-        |target: &IssueKey| toml::Value::String(target.named_from(project));
-    match wanted {
-        [] => {
-            relations.remove(&relation.name);
-        }
-        [one] if !relation.many => {
-            relations.insert(relation.name.clone(), named(one));
-        }
-        many => {
-            relations.insert(
-                relation.name.clone(),
-                toml::Value::Array(many.iter().map(named).collect()),
-            );
-        }
+    if wanted.is_empty() {
+        relations.remove(&relation.name);
+    } else {
+        relations.insert(
+            relation.name.clone(),
+            relation_value(relation.many, wanted, project),
+        );
     }
     document.entry("schema").or_insert(toml::Value::Integer(1));
     if !relations.is_empty() {

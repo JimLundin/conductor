@@ -1,6 +1,5 @@
 mod contract;
 mod memory;
-mod stores;
 
 use std::fmt;
 use std::future::Future;
@@ -13,10 +12,16 @@ use home::{IssueId, ProjectId};
 
 pub use contract::{Plant, contract};
 pub use memory::Memory;
-pub use stores::{Keeper, Kept, Stores};
+
+pub type Kept = Box<dyn CanvasStore + Send + Sync>;
 
 pub type Putting<'a> =
-    Pin<Box<dyn Future<Output = Result<(), StoreError>> + Send + 'a>>;
+    Pin<Box<dyn Future<Output = Result<Wrote, StoreError>> + Send + 'a>>;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Wrote {
+    pub home_file: Option<String>,
+}
 
 pub trait CanvasStore {
     fn all(&self) -> Result<Held<CanvasKey>, StoreError>;
@@ -34,6 +39,10 @@ pub trait CanvasStore {
         key: &'a CanvasKey,
         file: &'a CanvasFile,
     ) -> Putting<'a>;
+
+    fn touches(&self, _key: &CanvasKey) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

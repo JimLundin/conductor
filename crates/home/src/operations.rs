@@ -1,12 +1,13 @@
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::issue::{
-    Comment, CommentRequest, CommentWrite, EditId, IssueChange, Part, Relating,
-    RelationChange, RelationRequest, RelationStep,
+    Comment, CommentRequest, CommentWrite, EditId, Entry, IssueCreate,
+    IssueWrite, Lookup, NativeIssue, Opened, Relating, RelationChange,
+    RelationRequest, RelationStep,
 };
 use crate::{IssueId, ProjectId};
 
@@ -61,11 +62,15 @@ pub struct Intent {
 pub enum Work {
     ChangeIssue {
         issue: IssueId,
-        change: IssueChange,
+        writes: Vec<IssueWrite>,
     },
     Comment {
         issue: IssueId,
         write: CommentWrite,
+        note: Option<Entry>,
+    },
+    Create {
+        create: IssueCreate,
     },
     Relate {
         issue: IssueId,
@@ -74,9 +79,79 @@ pub enum Work {
 }
 
 impl Intent {
+    #[must_use]
+    pub fn edit(issue: &Lookup, seen: String, writes: Vec<IssueWrite>) -> Self {
+        Self {
+            project: issue.project,
+            expected: seen,
+            work: Work::ChangeIssue {
+                issue: issue.id.clone(),
+                writes,
+            },
+        }
+    }
+
+    pub fn unchanged(
+        seen: &str,
+        observed: &NativeIssue,
+    ) -> Result<(), Refusal> {
+        (observed.revision() == seen)
+            .then_some(())
+            .ok_or(Refusal::Conflict)
+    }
+
+    pub fn edits(
+        &self,
+        issue: &Lookup,
+        seen: &str,
+    ) -> Result<&[IssueWrite], Refusal> {
+        match &self.work {
+            Work::ChangeIssue { issue: id, writes }
+                if self.project == issue.project
+                    && *id == issue.id
+                    && self.expected == seen =>
+            {
+                Ok(writes)
+            }
+            Work::ChangeIssue { .. } => Err(Refusal::ChangedIntent),
+            Work::Comment { .. }
+            | Work::Create { .. }
+            | Work::Relate { .. } => Err(Refusal::NotAnEdit),
+        }
+    }
+
+    #[must_use]
+    pub fn issue(&self) -> Option<Lookup> {
+        match &self.work {
+            Work::ChangeIssue { issue, .. }
+            | Work::Comment { issue, .. }
+            | Work::Relate { issue, .. } => Some(Lookup {
+                project: self.project,
+                id: issue.clone(),
+            }),
+            Work::Create { .. } => None,
+        }
+    }
+
     pub fn comment(
         handle: Handle,
         request: &CommentRequest,
+    ) -> Result<Self, Refusal> {
+        Self::commenting(handle, request, None)
+    }
+
+    pub fn note(
+        handle: Handle,
+        request: &CommentRequest,
+        entry: &Entry,
+    ) -> Result<Self, Refusal> {
+        Self::commenting(handle, request, Some(entry.clone()))
+    }
+
+    fn commenting(
+        handle: Handle,
+        request: &CommentRequest,
+        note: Option<Entry>,
     ) -> Result<Self, Refusal> {
         if !request.write.body().contains(&handle.marker()) {
             return Err(Refusal::Unmarked);
@@ -87,6 +162,7 @@ impl Intent {
             work: Work::Comment {
                 issue: request.issue.id.clone(),
                 write: request.write.clone(),
+                note,
             },
         })
     }
@@ -102,6 +178,70 @@ impl Intent {
             },
         }
     }
+
+    #[must_use]
+    pub fn notes(&self, issue: &Lookup, entry: &Entry) -> bool {
+        matches!(&self.work, Work::Comment { issue: id, note: Some(held), .. }
+            if self.project == issue.project
+                && *id == issue.id
+                && held.by == entry.by
+                && held.event == entry.event
+                && held.text == entry.text)
+    }
+
+    #[must_use]
+    pub fn requested(&self) -> Option<CommentRequest> {
+        let Work::Comment { issue, write, .. } = &self.work else {
+            return None;
+        };
+        Some(CommentRequest {
+            issue: Lookup {
+                project: self.project,
+                id: issue.clone(),
+            },
+            write: write.clone(),
+            seen: self.expected.clone(),
+        })
+    }
+}
+
+impl Intent {
+    pub fn create(
+        handle: Handle,
+        project: ProjectId,
+        create: IssueCreate,
+    ) -> Result<Self, Refusal> {
+        if !create.body.contains(&handle.to_string()) {
+            return Err(Refusal::Unmarked);
+        }
+        Ok(Self {
+            project,
+            expected: String::new(),
+            work: Work::Create { create },
+        })
+    }
+
+    #[must_use]
+    pub fn opens(&self, project: ProjectId, create: &IssueCreate) -> bool {
+        matches!(&self.work, Work::Create { create: held }
+            if self.project == project
+                && held.title == create.title
+                && held.labels == create.labels)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    Send(IssueCreate),
+    Settled(IssueId),
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Advance {
+    Send(IssueWrite),
+    Done,
+    Unknown,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,11 +260,9 @@ pub enum Relate {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Step {
-    ApplyChange,
-    RemoveTransitionValue(Part),
-    SetTransitionValue(Part),
-    SetOpenState,
+    WriteIssue(usize),
     WriteComment,
+    CreateIssue,
     Relate(String),
 }
 
@@ -174,6 +312,10 @@ pub enum Refusal {
     NotAComment,
     #[error("the operation sets no relation")]
     NotARelation,
+    #[error("the operation edits no issue")]
+    NotAnEdit,
+    #[error("the operation opens no issue")]
+    NotACreate,
 }
 
 impl Record {
@@ -297,6 +439,14 @@ impl Record {
 }
 
 impl Record {
+    #[must_use]
+    pub fn awaited(&self) -> Option<CommentRequest> {
+        match self.progress {
+            Progress::AwaitingEvidence(_) => self.intent.requested(),
+            Progress::Ready | Progress::Completed => None,
+        }
+    }
+
     pub fn reject(&self) -> Result<Self, Refusal> {
         let Progress::AwaitingEvidence(_) = self.progress else {
             return Err(Refusal::NoAttempt);
@@ -376,6 +526,83 @@ impl Record {
                 )?,
                 Relate::Send(step.clone()),
             )),
+        }
+    }
+
+    pub fn opened(&self, found: &[Opened]) -> Result<(Self, Opening), Refusal> {
+        let Work::Create { create } = &self.intent.work else {
+            return Err(Refusal::NotACreate);
+        };
+        let mut carrying = found
+            .iter()
+            .filter(|issue| issue.native.title == create.title);
+        match (&self.progress, carrying.next(), carrying.next()) {
+            (Progress::Completed, Some(found), None) => {
+                Ok((self.clone(), Opening::Settled(found.id.clone())))
+            }
+            (Progress::AwaitingEvidence(step), Some(found), None) => {
+                let evidence = Confirmed {
+                    step: step.clone(),
+                    revision: found.native.revision(),
+                    identity: Some(found.id.to_string()),
+                };
+                Ok((
+                    self.confirm(evidence, true)?,
+                    Opening::Settled(found.id.clone()),
+                ))
+            }
+            (Progress::Ready, None, None) => {
+                let sent = self.dispatch(Step::CreateIssue, "", true)?;
+                Ok((sent, Opening::Send(create.clone())))
+            }
+            _ => Ok((self.clone(), Opening::Unknown)),
+        }
+    }
+
+    pub fn advance(
+        &self,
+        observed: &NativeIssue,
+        resuming: bool,
+    ) -> Result<(Self, Advance), Refusal> {
+        let Work::ChangeIssue { writes, .. } = &self.intent.work else {
+            return Err(Refusal::NotAnEdit);
+        };
+        let mut record = self.clone();
+        loop {
+            let done = record.confirmed.len();
+            let before = record
+                .confirmed
+                .last()
+                .map_or(&record.intent.expected, |last| &last.revision)
+                .clone();
+            let Some(write) = writes.get(done) else {
+                return Ok((record, Advance::Done));
+            };
+            record = match record.progress.clone() {
+                Progress::Completed => return Ok((record, Advance::Done)),
+                Progress::Ready => {
+                    let step = Step::WriteIssue(done);
+                    let sent =
+                        record.dispatch(step, &observed.revision(), true)?;
+                    return Ok((sent, Advance::Send(write.clone())));
+                }
+                Progress::AwaitingEvidence(step) => {
+                    if write.holds(observed)
+                        && write.undone(observed).revision() == before
+                    {
+                        let evidence = Confirmed {
+                            step,
+                            revision: observed.revision(),
+                            identity: None,
+                        };
+                        record.confirm(evidence, done + 1 == writes.len())?
+                    } else if resuming && observed.revision() == before {
+                        record.reject()?
+                    } else {
+                        return Ok((record, Advance::Unknown));
+                    }
+                }
+            };
         }
     }
 
