@@ -184,16 +184,31 @@ fn an_interrupted_attempt_can_be_inspected_before_the_host_restarts()
     Ok(())
 }
 
+fn elsewhere() -> Result<Intent, &'static str> {
+    let mut intent = changes()?;
+    let Work::ChangeIssue { issue, .. } = &mut intent.work else {
+        return Err("not an issue change");
+    };
+    *issue = github::ISSUER.read("43").ok_or("bad fixture")?;
+    Ok(intent)
+}
+
 #[test]
-fn a_write_whose_request_is_out_lets_a_write_on_another_handle_begin()
+fn a_second_write_to_an_issue_whose_request_is_out_is_refused_and_a_write_to_another_issue_goes_ahead()
 -> Result<(), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
     let daemon = Operations::bind(dir.path(), [4; 32])?;
     let cli = Operations::open(dir.path())?;
     let mut out = daemon.begin(daemon.handle()?, changes()?, true)?;
     out.dispatch(Step::WriteIssue(0), "issue-1")?;
+    let same = cli.handle()?;
+    assert!(matches!(
+        cli.begin(same, changes()?, true),
+        Err(Error::InProgress)
+    ));
+    assert_eq!(cli.status(same)?, None);
     let other = cli.handle()?;
-    let mut second = cli.begin(other, changes()?, true)?;
+    let mut second = cli.begin(other, elsewhere()?, true)?;
     second.dispatch(Step::WriteIssue(0), "issue-1")?;
     out.confirm(evidence(Step::WriteIssue(0), "issue-2"), true)?;
     assert_eq!(
@@ -202,6 +217,8 @@ fn a_write_whose_request_is_out_lets_a_write_on_another_handle_begin()
             .map(|record| record.progress().clone()),
         Some(Progress::AwaitingEvidence(Step::WriteIssue(0)))
     );
+    drop(out);
+    assert!(cli.begin(same, changes()?, true).is_ok());
     Ok(())
 }
 

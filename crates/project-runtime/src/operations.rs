@@ -1,4 +1,5 @@
 use crate::storage::{CACHE_BYTES, private};
+use std::fmt::Write as _;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
@@ -12,14 +13,14 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 
 const OWNER: TableDefinition<(), [u8; 32]> = TableDefinition::new("owner/1");
 const RECORDS: TableDefinition<u128, &[u8]> =
-    TableDefinition::new("operations/1");
+    TableDefinition::new("operations/2");
 const FILE: &str = "project-operations.redb";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
     Refused(#[from] Refusal),
-    #[error("a write on this operation is already in progress")]
+    #[error("a write on this issue is already in progress")]
     InProgress,
     #[error("the host data directory belongs to another owner")]
     WrongHost,
@@ -110,7 +111,7 @@ impl Operations {
         online: bool,
     ) -> Result<Attempt, Error> {
         handle.local(self.owner)?;
-        let claim = claim(&self.path, handle)?;
+        let claim = claim(&self.path, &subject(handle, &intent)?)?;
         let record = change(&self.path, |database| {
             handle.local(read_owner(database)?)?;
             let stored = read(database, handle)?;
@@ -153,11 +154,25 @@ struct Claim {
     _file: File,
 }
 
-fn claim(store: &Path, handle: Handle) -> Result<Claim, Error> {
+fn subject(handle: Handle, intent: &Intent) -> Result<String, Error> {
+    let (kind, bytes) = match intent.issue() {
+        Some(issue) => {
+            ("issue", postcard::to_stdvec(&(issue.project, issue.id)))
+        }
+        None => ("opening", postcard::to_stdvec(&handle.id)),
+    };
+    let mut named = format!("{kind}-");
+    for byte in bytes.map_err(failed)? {
+        write!(named, "{byte:02x}").map_err(failed)?;
+    }
+    Ok(named)
+}
+
+fn claim(store: &Path, subject: &str) -> Result<Claim, Error> {
     use std::os::unix::fs::MetadataExt as _;
     let claims = store.with_extension("claims");
     std::fs::create_dir_all(&claims).map_err(failed)?;
-    let path = claims.join(format!("{:032x}", handle.id.0));
+    let path = claims.join(subject);
     loop {
         let file = private(&path).map_err(failed)?;
         file.try_lock().map_err(|err| match err {

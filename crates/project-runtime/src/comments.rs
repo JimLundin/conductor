@@ -59,25 +59,30 @@ impl Project<'_> {
     pub async fn append_note(
         &self,
         operations: &Operations,
-        handle: Handle,
+        fresh: Handle,
         issue: Lookup,
         entry: &Entry,
     ) -> Result<Comment, WriteError> {
         let tracker = self.writer()?;
-        let write = CommentWrite::Create {
-            body: tracker.logged(entry, handle),
+        let unsettled = operations
+            .unsettled()?
+            .into_iter()
+            .find(|record| record.intent.notes(&issue, entry));
+        let (handle, intent) = if let Some(record) = unsettled {
+            (record.handle, record.intent)
+        } else {
+            let write = CommentWrite::Create {
+                body: tracker.logged(entry, fresh),
+            };
+            let comments = tracker
+                .comments(issue.clone())
+                .await
+                .map_err(WriteError::Read)?;
+            let seen = write.precondition(&comments);
+            let request = CommentRequest { issue, write, seen };
+            (fresh, Intent::note(fresh, &request, entry)?)
         };
-        let comments = tracker
-            .comments(issue.clone())
-            .await
-            .map_err(WriteError::Read)?;
-        let seen = write.precondition(&comments);
-        self.write_comment(
-            operations,
-            handle,
-            CommentRequest { issue, write, seen },
-        )
-        .await
+        attempt(tracker, operations, handle, intent).await
     }
 
     pub async fn write_comment(
@@ -88,16 +93,28 @@ impl Project<'_> {
     ) -> Result<Comment, WriteError> {
         let tracker = self.writer()?;
         let intent = Intent::comment(handle, &request)?;
-        let mut attempt = operations.begin(handle, intent, true)?;
-        let observed = tracker
-            .comments(request.issue.clone())
-            .await
-            .map_err(WriteError::Read)?;
-        match attempt.next(&observed)? {
-            Next::Settled(comment) => Ok(comment),
-            Next::Unknown => Err(WriteError::Unknown(handle)),
-            Next::Send => deliver(tracker, attempt, request).await,
-        }
+        attempt(tracker, operations, handle, intent).await
+    }
+}
+
+async fn attempt(
+    tracker: &dyn IssueTracker,
+    operations: &Operations,
+    handle: Handle,
+    intent: Intent,
+) -> Result<Comment, WriteError> {
+    let request = intent
+        .requested()
+        .ok_or(home::operations::Refusal::NotAComment)?;
+    let mut attempt = operations.begin(handle, intent, true)?;
+    let observed = tracker
+        .comments(request.issue.clone())
+        .await
+        .map_err(WriteError::Read)?;
+    match attempt.next(&observed)? {
+        Next::Settled(comment) => Ok(comment),
+        Next::Unknown => Err(WriteError::Unknown(handle)),
+        Next::Send => deliver(tracker, attempt, request).await,
     }
 }
 
