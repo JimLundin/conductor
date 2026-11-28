@@ -18,8 +18,8 @@ const FILE: &str = "project-operations.redb";
 pub enum Error {
     #[error(transparent)]
     Refused(#[from] Refusal),
-    #[error("another project operation holds the host store")]
-    Busy,
+    #[error("a write on this operation is already in progress")]
+    InProgress,
     #[error("the host data directory belongs to another owner")]
     WrongHost,
     #[error("operation storage: {0}")]
@@ -28,13 +28,6 @@ pub enum Error {
 
 fn failed(error: impl std::fmt::Display) -> Error {
     Error::Store(error.to_string())
-}
-
-fn opening(error: redb::DatabaseError) -> Error {
-    match error {
-        redb::DatabaseError::DatabaseAlreadyOpen => Error::Busy,
-        other => failed(other),
-    }
 }
 
 #[derive(Clone)]
@@ -51,7 +44,7 @@ impl Operations {
         let database = Database::builder()
             .set_cache_size(CACHE_BYTES)
             .create_file(private(&path).map_err(failed)?)
-            .map_err(opening)?;
+            .map_err(failed)?;
         let write = database.begin_write().map_err(failed)?;
         {
             use redb::ReadableTable as _;
@@ -70,12 +63,7 @@ impl Operations {
 
     pub fn open(data: &Path) -> Result<Self, Error> {
         let path = data.join(FILE);
-        let _lease = lock(&path)?;
-        let database = Database::builder()
-            .set_cache_size(CACHE_BYTES)
-            .open(&path)
-            .map_err(opening)?;
-        let owner = read_owner(&database)?;
+        let owner = change(&path, read_owner)?;
         Ok(Self { path, owner })
     }
 
@@ -90,13 +78,10 @@ impl Operations {
 
     pub fn status(&self, handle: Handle) -> Result<Option<Record>, Error> {
         handle.local(self.owner)?;
-        let _lease = lock(&self.path)?;
-        let database = Database::builder()
-            .set_cache_size(CACHE_BYTES)
-            .open(&self.path)
-            .map_err(opening)?;
-        handle.local(read_owner(&database)?)?;
-        read(&database, handle)
+        change(&self.path, |database| {
+            handle.local(read_owner(database)?)?;
+            read(database, handle)
+        })
     }
 
     pub fn begin(
@@ -106,36 +91,75 @@ impl Operations {
         online: bool,
     ) -> Result<Attempt, Error> {
         handle.local(self.owner)?;
-        let lease = lock(&self.path)?;
-        let database = Database::builder()
-            .set_cache_size(CACHE_BYTES)
-            .open(&self.path)
-            .map_err(opening)?;
-        handle.local(read_owner(&database)?)?;
-        let stored = read(&database, handle)?;
-        let fresh = stored.is_none();
-        let record = Record::resume(handle, intent, stored, online)?;
-        if fresh {
-            save(&database, &record)?;
-        }
+        let claim = claim(&self.path, handle)?;
+        let record = change(&self.path, |database| {
+            handle.local(read_owner(database)?)?;
+            let stored = read(database, handle)?;
+            let fresh = stored.is_none();
+            let record = Record::resume(handle, intent, stored, online)?;
+            if fresh {
+                save(database, &record)?;
+            }
+            Ok(record)
+        })?;
         Ok(Attempt {
-            database,
+            path: self.path.clone(),
             record,
             online,
-            _lease: lease,
+            _claim: claim,
         })
     }
 }
 
 fn lock(path: &Path) -> Result<File, Error> {
     let lease = private(&path.with_extension("lock")).map_err(failed)?;
-    lease.try_lock().map_err(|err| match err {
-        TryLockError::WouldBlock => Error::Busy,
-        TryLockError::Error(cause) => failed(cause),
-    })?;
+    lease.lock().map_err(failed)?;
     Ok(lease)
 }
 
+fn change<T>(
+    path: &Path,
+    apply: impl FnOnce(&Database) -> Result<T, Error>,
+) -> Result<T, Error> {
+    let _lease = lock(path)?;
+    let database = Database::builder()
+        .set_cache_size(CACHE_BYTES)
+        .open(path)
+        .map_err(failed)?;
+    apply(&database)
+}
+
+struct Claim {
+    path: PathBuf,
+    _file: File,
+}
+
+fn claim(store: &Path, handle: Handle) -> Result<Claim, Error> {
+    use std::os::unix::fs::MetadataExt as _;
+    let claims = store.with_extension("claims");
+    std::fs::create_dir_all(&claims).map_err(failed)?;
+    let path = claims.join(format!("{:032x}", handle.id.0));
+    loop {
+        let file = private(&path).map_err(failed)?;
+        file.try_lock().map_err(|err| match err {
+            TryLockError::WouldBlock => Error::InProgress,
+            TryLockError::Error(cause) => failed(cause),
+        })?;
+        let held = file.metadata().map_err(failed)?;
+        let current = std::fs::metadata(&path).ok();
+        if current.is_some_and(|named| {
+            (named.dev(), named.ino()) == (held.dev(), held.ino())
+        }) {
+            return Ok(Claim { path, _file: file });
+        }
+    }
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        std::fs::remove_file(&self.path).ok();
+    }
+}
 fn read_owner(database: &impl ReadableDatabase) -> Result<[u8; 32], Error> {
     let txn = database.begin_read().map_err(failed)?;
     let table = txn.open_table(OWNER).map_err(failed)?;
@@ -172,9 +196,9 @@ fn save(database: &Database, record: &Record) -> Result<(), Error> {
 }
 
 pub struct Attempt {
-    database: Database,
+    path: PathBuf,
     online: bool,
-    _lease: File,
+    _claim: Claim,
     record: Record,
 }
 
@@ -211,7 +235,7 @@ impl Attempt {
     }
 
     fn replace(&mut self, record: Record) -> Result<(), Error> {
-        save(&self.database, &record)?;
+        change(&self.path, |database| save(database, &record))?;
         self.record = record;
         Ok(())
     }

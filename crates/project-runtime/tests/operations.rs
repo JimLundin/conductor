@@ -71,11 +71,7 @@ fn a_partially_applied_transition_resumes_only_against_its_verified_state()
     attempt.dispatch(removed.clone(), "issue-1")?;
     assert!(matches!(
         cli.begin(handle, change.clone(), true),
-        Err(Error::Busy)
-    ));
-    assert!(matches!(
-        cli.begin(cli.handle()?, change.clone(), true),
-        Err(Error::Busy)
+        Err(Error::InProgress)
     ));
     attempt.confirm(evidence(removed.clone(), "old-label-removed"), false)?;
     drop(attempt);
@@ -181,6 +177,53 @@ fn an_interrupted_attempt_can_be_inspected_before_the_host_restarts()
     let status = reopened.status(handle)?.ok_or("attempt disappeared")?;
     assert_eq!(
         status.progress(),
+        &Progress::AwaitingEvidence(Step::ApplyChange)
+    );
+    assert_eq!(reopened.begin(handle, changes()?, true)?.record(), &status);
+    Ok(())
+}
+
+#[test]
+fn a_write_whose_request_is_out_lets_a_write_on_another_handle_begin()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let daemon = Operations::bind(dir.path(), [4; 32])?;
+    let cli = Operations::open(dir.path())?;
+    let mut out = daemon.begin(daemon.handle()?, changes()?, true)?;
+    out.dispatch(Step::ApplyChange, "issue-1")?;
+    let other = cli.handle()?;
+    let mut second = cli.begin(other, changes()?, true)?;
+    second.dispatch(Step::ApplyChange, "issue-1")?;
+    out.confirm(evidence(Step::ApplyChange, "issue-2"), true)?;
+    assert_eq!(
+        daemon
+            .status(other)?
+            .map(|record| record.progress().clone()),
+        Some(Progress::AwaitingEvidence(Step::ApplyChange))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_second_write_on_a_handle_whose_request_is_out_is_refused_as_in_progress()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let daemon = Operations::bind(dir.path(), [5; 32])?;
+    let cli = Operations::open(dir.path())?;
+    let handle = daemon.handle()?;
+    let mut out = daemon.begin(handle, changes()?, true)?;
+    out.dispatch(Step::ApplyChange, "issue-1")?;
+    assert!(matches!(
+        cli.begin(handle, changes()?, true),
+        Err(Error::InProgress)
+    ));
+    assert!(matches!(
+        daemon.begin(handle, changes()?, true),
+        Err(Error::InProgress)
+    ));
+    drop(out);
+    assert_eq!(
+        cli.begin(handle, changes()?, true)?.record().progress(),
         &Progress::AwaitingEvidence(Step::ApplyChange)
     );
     Ok(())
