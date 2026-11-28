@@ -161,10 +161,8 @@ export {
   initialView,
   listed,
   nameOf,
-  sameTicket,
   sessionOf,
   sessionsOf,
   shown,
-  withUpdate,
 };
-export type { Adopted, PairedHost, Updated, View };
+export type { PairedHost, View };

@@ -1,11 +1,6 @@
 # Exceptions for tools or code whose requirements differ from the standard.
 
 [[exception]]
-path = "knip.json"
-rule = "drift:ignoreBinaries:wasm-pack"
-reason = "npm run pipe invokes the Rust wasm-pack tool, which is installed outside npm"
-
-[[exception]]
 path = "core/src/schemas/index.ts"
 rule = "lint/unicorn/max-nested-calls"
 reason = "Effect Codegen nests schema constructors to express the published Rust contract; it has no option to flatten those expressions"
@@ -156,16 +151,6 @@ rule = "lint/unicorn/no-null"
 reason = "These fixtures encode the Rust client link's nullable model, effort and request fields as JSON null"
 
 [[exception]]
-path = "knip.json"
-rule = "drift:ignoreDependencies:@stryker-mutator/core"
-reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"
-
-[[exception]]
-path = "knip.json"
-rule = "drift:ignoreDependencies:@stryker-mutator/vitest-runner"
-reason = "The shared TypeScript release gate invokes this mutation tool from the project install using its own configuration"
-
-[[exception]]
 path = "src/store/types.ts"
 rule = "lint/typescript/prefer-readonly-parameter-types"
 reason = "The store submits Effect values to its scoped runtime; Effect's library type exposes mutable internal fields that the store does not mutate"
@@ -174,3 +159,8 @@ reason = "The store submits Effect values to its scoped runtime; Effect's librar
 path = "src/test/lifecycle.ts"
 rule = "lint/typescript/prefer-readonly-parameter-types"
 reason = "The controlled storage and pipe adapters pass Effect Deferred handles and Uint8Array values to library operations without mutating their internals"
+
+[[exception]]
+path = "core/src/schemas/index.ts"
+rule = "unused"
+reason = "tools/schemas.sh generates every schema of link's root types from the Rust contract; the web app imports only the ones the client link reaches"

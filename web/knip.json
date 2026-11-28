@@ -1,5 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
-  "ignoreBinaries": ["wasm-pack"],
-  "ignoreDependencies": ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"]
+  "workspaces": {
+    "scripts": {
+      "entry": ["schemas.ts!"]
+    }
+  }
 }

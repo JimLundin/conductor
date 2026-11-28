@@ -112,4 +112,4 @@ const describeTicketError = TicketError.$match({
   Version: ({ version: found }) => `Ticket version ${String(found)} is not supported.`,
 });
 
-export { describeTicketError, joinMarker, parseJoin, parseTicket, TicketError };
+export { describeTicketError, joinMarker, parseJoin, TicketError };

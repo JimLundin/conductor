@@ -41,5 +41,5 @@ const savedText = (saved: Saved): string => {
   return Schema.encodeSync(SavedRecord)({ name, ticket: saved.ticket });
 };
 
-export { hostKey, restored, SavedRecord, savedText, storageKey };
+export { hostKey, restored, savedText, storageKey };
 export type { HostKey, Saved };
