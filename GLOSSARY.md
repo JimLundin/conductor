@@ -48,8 +48,12 @@ retry under a new command id, so the home applies it once.
 The signed-off backend contract replaces this offline-edit behavior with online
 writes and recovery records for attempted operations.
 
+**Issue ID**:
+A string unique among the issues of a project's issue tracker, given by that tracker. A user names an issue by its project and its ID, whichever tracker the project uses. Nothing outside the tracker reads meaning into the string.
+_Avoid_: issue reference, issue number, slug
+
 **Canvas**:
-A structured explanation of an issue's work, written by an agent as typed blocks and stored in the home beside the issue.
+A structured explanation of an issue's work, written by an agent as typed blocks and kept by the project's issue tracker with the issue.
 _Avoid_: report, visual, diagram
 
 **Stray**:
