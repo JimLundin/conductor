@@ -42,7 +42,7 @@ impl Resolver {
         let held = looked.record.is_some();
         let id = &key.id;
         match (held, refreshed, self.mode) {
-            (_, None, Mode::Fresh) | (false, None, Mode::Cached) => {
+            (false, None, Mode::Fresh | Mode::Cached) => {
                 Err(Missing::Refresh(key.project))
             }
             (true, Some(Err(failure)), _) => {
@@ -60,6 +60,11 @@ impl Resolver {
                 "no issue {id} in {project} is cached, and its tracker didn't refresh: {failure}; run `home issue list {project}` once it's reachable"
             ))),
         }
+    }
+
+    #[must_use]
+    pub fn fresh(&self, project: ProjectId) -> bool {
+        self.mode == Mode::Fresh && !self.refreshed.contains_key(&project)
     }
 
     pub fn refreshed(

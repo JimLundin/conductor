@@ -2275,6 +2275,7 @@ struct Tracker {
     cached: Vec<Observation>,
     remote: Result<Vec<Observation>, ReadFailure>,
     refreshes: usize,
+    reads: usize,
 }
 
 impl Tracker {
@@ -2283,6 +2284,7 @@ impl Tracker {
             cached: Vec::new(),
             remote,
             refreshes: 0,
+            reads: 0,
         }
     }
 
@@ -2303,6 +2305,32 @@ impl Tracker {
                 failure: None,
             },
             record,
+        }
+    }
+
+    fn read(&mut self, key: &IssueKey) -> IssueReading {
+        self.reads += 1;
+        let read = self.remote.clone().map(|remote| {
+            remote.into_iter().find(|observation| {
+                observation.project() == key.project
+                    && observation.id() == &key.id
+            })
+        });
+        match read {
+            Ok(Some(found)) => {
+                self.cached.retain(|observation| {
+                    observation.project() != key.project
+                        || observation.id() != &key.id
+                });
+                self.cached.push(found);
+                self.look(key)
+            }
+            Ok(None) => self.look(key),
+            Err(failure) => {
+                let mut looked = self.look(key);
+                looked.status.failure = Some(failure);
+                looked
+            }
         }
     }
 
@@ -2331,10 +2359,12 @@ fn resolved_by(
         .into_iter()
         .map(|key| {
             loop {
-                let looked = if on_tracker(key.project) {
-                    tracker.look(&key)
-                } else {
+                let looked = if !on_tracker(key.project) {
                     home.reading(&key)
+                } else if steps.fresh(key.project) {
+                    tracker.read(&key)
+                } else {
+                    tracker.look(&key)
                 };
                 match steps.step(&super::named(home, key.project), &key, looked)
                 {
@@ -2565,7 +2595,7 @@ fn issue_show_reads_a_markdown_issue_and_a_tracker_issue_by_the_same_form()
 }
 
 #[test]
-fn issue_show_of_a_cached_issue_whose_tracker_didn_t_refresh_reports_the_failure()
+fn issue_show_of_a_cached_issue_its_tracker_can_t_read_reports_the_failure()
 -> Result<(), Box<dyn core::error::Error>> {
     let mut tracker = Tracker::holding(Err(ReadFailure::RateLimited));
     tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
@@ -2575,9 +2605,51 @@ fn issue_show_of_a_cached_issue_whose_tracker_didn_t_refresh_reports_the_failure
         (
             shown.failed,
             &reading["status"]["failure"],
+            tracker.reads,
             tracker.refreshes
         ),
-        (true, &serde_json::json!("RateLimited"), 1)
+        (true, &serde_json::json!("RateLimited"), 1, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fresh_issue_show_of_a_cached_issue_reads_it_and_never_lists_its_tracker()
+-> Result<(), Box<dyn core::error::Error>> {
+    let mut retitled = kept_by_tracker(TRACKER_ID)?;
+    if let IssueState::Valid { issue, .. } = &mut retitled.state {
+        issue.title = String::from("Read just now");
+    }
+    let mut tracker = Tracker::holding(Ok(Vec::from([retitled])));
+    tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
+    let shown = tracked_run(&mut tracker, "issue show standards 146", None);
+    let reading: serde_json::Value = serde_json::from_str(&shown.output)?;
+    assert_eq!(
+        (
+            shown.failed,
+            reading["record"]["state"]["Valid"]["issue"]["title"].as_str(),
+            tracker.reads,
+            tracker.refreshes
+        ),
+        (false, Some("Read just now"), 1, 0)
+    );
+    Ok(())
+}
+
+#[test]
+fn a_fresh_issue_show_the_tracker_lacks_lists_its_tracker_once()
+-> Result<(), String> {
+    let mut tracker =
+        Tracker::holding(Ok(Vec::from([kept_by_tracker(TRACKER_ID)?])));
+    let shown = tracked_run(&mut tracker, "issue show standards 147", None);
+    assert_eq!(
+        (shown.failed, shown.output, tracker.reads, tracker.refreshes),
+        (
+            true,
+            String::from("home: no issue 147 in standards\n"),
+            1,
+            1
+        )
     );
     Ok(())
 }

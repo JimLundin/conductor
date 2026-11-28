@@ -1,17 +1,18 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use home::ProjectId;
 use home::backend::{Capability, CredentialState, Selection};
+use home::flow::resolve::Mode;
 use home::flow::snapshot::Snapshot;
 use home::issue::{
     ListPage, Locator, Lookup, Observation, Page, ReadFailure, Unreadable,
 };
 use home::project::Project;
 use home::{IssueId, UnixMillis};
+use home::{IssueKey, ProjectId};
 use home_store::Memory;
 use project_runtime::tracker::{Connection, Connector, Reader};
 use project_runtime::{IssueCompletion, IssueTracker, Registration};
@@ -30,19 +31,23 @@ impl Drop for Scratch {
     }
 }
 
-struct Github(Observation);
+struct Github {
+    read: Result<Observation, ReadFailure>,
+    listed: Result<Observation, ReadFailure>,
+}
 
 impl IssueTracker for Github {
     fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
-        Box::pin(async { Err(ReadFailure::Unavailable) })
+        let read = self.read.clone();
+        Box::pin(async move { read })
     }
 
     fn list(&self, _: ListPage) -> IssueCompletion<'_, Page> {
-        let page = Page {
-            records: Vec::from([self.0.clone()]),
+        let page = self.listed.clone().map(|record| Page {
+            records: Vec::from([record]),
             next: None,
-        };
-        Box::pin(async move { Ok(page) })
+        });
+        Box::pin(async move { page })
     }
     fn comments(
         &self,
@@ -69,6 +74,7 @@ impl IssueTracker for Github {
 struct Scripted {
     selection: Selection,
     project: ProjectId,
+    lists: bool,
 }
 
 impl Connector for Scripted {
@@ -79,12 +85,30 @@ impl Connector for Scripted {
                 capabilities: Vec::from([Capability::ReadIssues]),
                 credential: CredentialState::NotRequired,
             },
-            tracker: Arc::new(Github(
-                tracked(self.project)
-                    .map_err(|_| ReadFailure::InvalidResponse)?,
-            )),
+            tracker: Arc::new(if self.lists {
+                Github {
+                    read: Err(ReadFailure::Unavailable),
+                    listed: tracked(self.project, "Kept by GitHub"),
+                }
+            } else {
+                Github {
+                    read: tracked(self.project, "Read just now"),
+                    listed: Err(ReadFailure::RateLimited),
+                }
+            }),
         })
     }
+}
+
+fn connection(project: &Project, lists: bool) -> Result<Connection, String> {
+    Ok(Connection {
+        canvases: Box::new(Memory::default()),
+        connector: Arc::new(Scripted {
+            selection: project.backends.tracker.clone().ok_or("no tracker")?,
+            project: project.id,
+            lists,
+        }),
+    })
 }
 
 fn scripted(
@@ -92,13 +116,15 @@ fn scripted(
     _: &Snapshot,
     project: &Project,
 ) -> Result<Connection, String> {
-    Ok(Connection {
-        canvases: Box::new(Memory::default()),
-        connector: Arc::new(Scripted {
-            selection: project.backends.tracker.clone().ok_or("no tracker")?,
-            project: project.id,
-        }),
-    })
+    connection(project, true)
+}
+
+fn reading_only(
+    _: &Path,
+    _: &Snapshot,
+    project: &Project,
+) -> Result<Connection, String> {
+    connection(project, false)
 }
 
 fn project(root: &Path, id: &str, text: &str) -> std::io::Result<()> {
@@ -107,11 +133,14 @@ fn project(root: &Path, id: &str, text: &str) -> std::io::Result<()> {
     fs::write(folder.join("project.toml"), text)
 }
 
-fn tracked(project: ProjectId) -> Result<Observation, String> {
+fn tracked(
+    project: ProjectId,
+    title: &str,
+) -> Result<Observation, ReadFailure> {
     let mut record = Observation::invalid(Unreadable {
-        id: IssueId::new("146").ok_or("id")?,
+        id: IssueId::new("146").ok_or(ReadFailure::InvalidResponse)?,
         project,
-        title: Some(String::from("Kept by GitHub")),
+        title: Some(String::from(title)),
         body: Some(String::from("human text")),
         created: Some(UnixMillis(10)),
         reason: String::from("unmapped label"),
@@ -131,6 +160,58 @@ fn shape(json: &serde_json::Value) -> Vec<Vec<String>> {
             .map_or_else(Vec::new, |object| object.keys().cloned().collect())
     };
     Vec::from([keys(json), keys(&json["status"])])
+}
+
+fn scratch(name: &str) -> Result<Scratch, Box<dyn Error>> {
+    let scratch = Scratch(
+        std::env::temp_dir()
+            .join(format!("home-{name}-{}", std::process::id())),
+    );
+    let root = &scratch.0;
+    fs::create_dir_all(root.join("docs/agents"))?;
+    fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+    project(
+        root,
+        TRACKED,
+        "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
+    )?;
+    Ok(scratch)
+}
+
+#[test]
+fn a_fresh_issue_show_of_a_cached_issue_reads_it_and_never_lists_its_tracker()
+-> Result<(), Box<dyn Error>> {
+    let scratch = scratch("show-fresh")?;
+    let root = &scratch.0;
+    let github = ProjectId::parse(TRACKED).ok_or("project")?;
+    let data = Some(root.join("data"));
+    let listing =
+        Trackers::new(root, home_files::read(root), data.clone(), scripted)?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(listing.listing(github, false))?;
+    let trackers =
+        Trackers::new(root, home_files::read(root), data, reading_only)?;
+    let key = IssueKey {
+        project: github,
+        id: IssueId::new("146").ok_or("id")?,
+    };
+    let resolved =
+        trackers.resolved(BTreeSet::from([key.clone()]), Mode::Fresh);
+    let reading = resolved.get(&key).ok_or("unresolved")?.clone()?;
+    let shown = serde_json::to_value(&reading)?;
+    assert_eq!(
+        (
+            &shown["record"]["state"]["Invalid"]["title"],
+            &shown["status"]["failure"]
+        ),
+        (
+            &serde_json::json!("Read just now"),
+            &serde_json::Value::Null
+        )
+    );
+    Ok(())
 }
 
 #[test]
