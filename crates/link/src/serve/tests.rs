@@ -6,14 +6,16 @@ use agents::{ClientName, Effort, Provider, SignInCode};
 use home::canvas::{
     Block, Canvas, CanvasEntry, CanvasFile, CanvasKey, CanvasName,
 };
-use home::issue::{EditId, Issue, IssueChange, NewIssue};
+use home::issue::{
+    EditId, Freshness, Issue, IssueChange, IssueReading, NewIssue, ReadStatus,
+};
 use home::project::Project;
 use home::sync::Sync;
 use home::{
     Found, Home, HomeCommand, HomeRefusal, HomeResult, IssueId, IssueKey,
     ProjectId, UnixMillis,
 };
-use home_store::{CanvasStore, Memory, StoreError};
+use home_store::{CanvasStore, Memory, StoreError, Stores};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
 use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};
@@ -272,13 +274,17 @@ fn at(project: ProjectId, key: &str) -> Result<IssueKey, String> {
 }
 
 fn issue(id: IssueId) -> home::issue::Observation {
+    issue_in(PROJECT, id)
+}
+
+fn issue_in(project: ProjectId, id: IssueId) -> home::issue::Observation {
     home::issue::Observation::mapped(
         Issue {
             branch: format!("issue/{id}"),
             id,
             created: None,
             notes: Vec::new(),
-            project: PROJECT,
+            project,
             title: String::from("Serve canvases"),
             kind: String::from("task"),
             status: String::from("open"),
@@ -425,13 +431,31 @@ fn served_entries(store: &Memory) -> Result<(), String> {
     Ok(())
 }
 
+fn looked(record: Option<home::issue::Observation>) -> IssueReading {
+    IssueReading {
+        status: ReadStatus {
+            freshness: Freshness::Stale,
+            complete: record.is_some(),
+            observed_at: None,
+            failure: None,
+        },
+        record,
+    }
+}
+
+fn held(key: &IssueKey) -> IssueReading {
+    looked(Some(issue_in(key.project, key.id.clone())))
+}
+
 #[test]
 fn a_canvas_of_a_known_issue_is_keyed_by_the_issues_project()
 -> Result<(), String> {
+    let issue = at(PROJECT, "00000001")?;
     assert_eq!(
         canvas_key(
             Some(&a_home()?),
-            at(PROJECT, "00000001")?,
+            issue.clone(),
+            held(&issue),
             named("design")?
         ),
         Ok(key(id("00000001")?, "design")?)
@@ -447,19 +471,65 @@ fn a_canvas_of_an_issue_the_home_lacks_or_of_no_home_is_refused()
             canvas_key(
                 Some(&a_home()?),
                 at(PROJECT, "00000003")?,
+                looked(None),
                 named("design")?
             ),
             canvas_key(
                 Some(&a_home()?),
                 at(ProjectId::new(2), "00000001")?,
+                looked(None),
                 named("design")?
             ),
-            canvas_key(None, at(PROJECT, "00000001")?, named("design")?),
+            canvas_key(
+                None,
+                at(PROJECT, "00000001")?,
+                held(&at(PROJECT, "00000001")?),
+                named("design")?
+            ),
         ],
         [
             Err(HomeRefusal::UnknownIssue),
             Err(HomeRefusal::UnknownIssue),
             Err(HomeRefusal::NoHome),
+        ]
+    );
+    Ok(())
+}
+
+#[test]
+fn get_canvas_of_an_issue_only_the_tracker_cache_holds_is_kept_by_its_tracker()
+-> Result<(), String> {
+    let tracked = ProjectId::new(2);
+    let cached = at(tracked, "146")?;
+    let kept = CanvasKey {
+        project: tracked,
+        issue: cached.id.clone(),
+        name: named("design")?,
+    };
+    let mut github = Memory::default();
+    github
+        .put(&kept, &written(10, "devbox·claude")?)
+        .map_err(|error| error.to_string())?;
+    let mut stores = Stores::new(Box::new(Memory::default()));
+    stores.track(tracked, Box::new(github));
+    let get = |issue: IssueKey,
+               reading: IssueReading|
+     -> Result<HomeResult, String> {
+        Ok(
+            canvas_key(Some(&a_home()?), issue, reading, named("design")?)
+                .map_or_else(HomeResult::Refused, |key| {
+                    kept_canvas(stores.get(&key))
+                }),
+        )
+    };
+    assert_eq!(
+        [
+            get(cached.clone(), held(&cached))?,
+            get(at(tracked, "147")?, looked(None))?
+        ],
+        [
+            HomeResult::Canvas(written(10, "devbox·claude")?),
+            HomeResult::Refused(HomeRefusal::UnknownIssue),
         ]
     );
     Ok(())

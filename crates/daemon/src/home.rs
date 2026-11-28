@@ -1,13 +1,15 @@
 mod issue_file;
 mod ownership;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
-use home::canvas::{CanvasEntry, CanvasName};
+use home::canvas::{CanvasEntry, CanvasName, Held};
 use home::checkout::Root;
+use home::flow::command::{named, of_canvas};
+use home::flow::resolve::{Mode, Resolver};
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
 use home::issue::storage::fresh;
@@ -30,6 +32,7 @@ use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
+use project_runtime::issues::cached;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -470,16 +473,29 @@ impl Actor {
                     home(HomeResult::IssueWritten { issue, warnings })
                 }),
             HomeCommand::Canvas { issue, name } => {
-                home(self.canvas(issue, name))
+                home(self.canvas(issue, name).await)
             }
         }
     }
 
-    fn canvas(&self, issue: IssueKey, name: CanvasName) -> HomeResult {
-        link::serve::canvas_key(self.shown.borrow().as_ref(), issue, name)
-            .map_or_else(HomeResult::Refused, |key| {
-                link::serve::kept_canvas(self.canvases.get(&key))
-            })
+    async fn canvas(&self, issue: IssueKey, name: CanvasName) -> HomeResult {
+        let looked = match cached(&self.data_dir, &self.home, &issue).await {
+            Ok(looked) => looked,
+            Err(reason) => {
+                return HomeResult::Refused(HomeRefusal::CanvasUnavailable {
+                    reason,
+                });
+            }
+        };
+        link::serve::canvas_key(
+            self.shown.borrow().as_ref(),
+            issue,
+            looked,
+            name,
+        )
+        .map_or_else(HomeResult::Refused, |key| {
+            link::serve::kept_canvas(self.canvases.get(&key))
+        })
     }
 
     async fn pull_now(&mut self) -> HomeResult {
@@ -911,7 +927,8 @@ impl Actor {
 
     async fn scan(&mut self) {
         self.home = self.read_home();
-        self.listed = listed(&self.home, self.canvases.as_ref());
+        self.listed =
+            listed(&self.data_dir, &self.home, self.canvases.as_ref()).await;
         self.home.problems().iter().for_each(|problem| {
             tracing::warn!(target: "home", %problem, "read the home without it");
         });
@@ -962,40 +979,70 @@ impl Actor {
     }
 }
 
-fn listed(
+async fn listed(
+    data: &Path,
     home: &Snapshot,
-    store: &dyn CanvasStore,
+    store: &(dyn CanvasStore + Send + core::marker::Sync),
 ) -> BTreeMap<IssueKey, Vec<CanvasEntry>> {
-    home.graph().issues.iter()
-        .filter_map(|record| {
-            let issue = IssueKey {
-                project: record.project,
-                id: record.id.clone(),
-            };
-            store
-                .list(&issue.project, &issue.id)
-                .inspect_err(|error| {
-                    tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
-                })
-                .ok()
-                .map(|held| {
-                    for stray in &held.strays {
-                        tracing::warn!(target: "home", %issue, place = %stray.place, reason = %stray.reason, "listed the issue without what isn't a canvas");
-                    }
-                    let canvases = held
-                        .canvases
-                        .into_iter()
-                        .filter_map(|kept| {
-                            kept.inspect_err(|broken| {
-                                tracing::warn!(target: "home", %issue, canvas = %broken.name, error = %broken.error, "listed the issue without a broken canvas");
-                            })
-                            .ok()
-                        })
-                        .collect();
-                    (issue, canvases)
-                })
+    let kept = store.all().unwrap_or_else(|error| {
+        tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
+        Held::default()
+    });
+    let issues = home
+        .graph()
+        .issues
+        .iter()
+        .map(|record| IssueKey {
+            project: record.project,
+            id: record.id.clone(),
         })
-        .collect()
+        .chain(kept.canvases.iter().map(of_canvas))
+        .collect::<BTreeSet<IssueKey>>();
+    let resolver = Resolver::new(Mode::Offline);
+    let mut listed = BTreeMap::new();
+    for issue in issues {
+        let looked = match cached(data, home, &issue).await {
+            Ok(looked) => looked,
+            Err(error) => {
+                tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
+                continue;
+            }
+        };
+        let project = named(home, issue.project);
+        if resolver.step(&project, &issue, looked).is_err() {
+            continue;
+        }
+        if let Some(canvases) = entries(store, &issue) {
+            listed.insert(issue, canvases);
+        }
+    }
+    listed
+}
+
+fn entries(
+    store: &dyn CanvasStore,
+    issue: &IssueKey,
+) -> Option<Vec<CanvasEntry>> {
+    store
+        .list(&issue.project, &issue.id)
+        .inspect_err(|error| {
+            tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
+        })
+        .ok()
+        .map(|held| {
+            for stray in &held.strays {
+                tracing::warn!(target: "home", %issue, place = %stray.place, reason = %stray.reason, "listed the issue without what isn't a canvas");
+            }
+            held.canvases
+                .into_iter()
+                .filter_map(|kept| {
+                    kept.inspect_err(|broken| {
+                        tracing::warn!(target: "home", %issue, canvas = %broken.name, error = %broken.error, "listed the issue without a broken canvas");
+                    })
+                    .ok()
+                })
+                .collect()
+        })
 }
 
 async fn next(
@@ -1701,18 +1748,20 @@ mod tests {
         );
         let at = |id: IssueId| IssueKey { project, id };
         assert_eq!(
-            actor.canvas(at(designed.clone()), named("a-plan")?),
+            actor.canvas(at(designed.clone()), named("a-plan")?).await,
             HomeResult::Canvas(written(20, "laptop·codex")?)
         );
         assert_eq!(
-            actor.canvas(at(designed), named("missing")?),
+            actor.canvas(at(designed), named("missing")?).await,
             HomeResult::Refused(HomeRefusal::UnknownCanvas)
         );
         assert_eq!(
-            actor.canvas(
-                at(IssueId::new("00000003").ok_or("issue id")?),
-                named("design")?
-            ),
+            actor
+                .canvas(
+                    at(IssueId::new("00000003").ok_or("issue id")?),
+                    named("design")?
+                )
+                .await,
             HomeResult::Refused(HomeRefusal::UnknownIssue)
         );
         Ok(())

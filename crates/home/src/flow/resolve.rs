@@ -1,7 +1,5 @@
 use alloc::collections::BTreeMap;
 
-use super::command::named;
-use super::snapshot::Snapshot;
 use crate::issue::{IssueReading, ReadFailure};
 use crate::prelude::*;
 use crate::{IssueKey, ProjectId};
@@ -36,13 +34,12 @@ impl Resolver {
 
     pub fn step(
         &self,
-        home: &Snapshot,
+        project: &str,
         key: &IssueKey,
         mut looked: IssueReading,
     ) -> Result<IssueReading, Missing> {
         let refreshed = self.refreshed.get(&key.project);
         let held = looked.record.is_some();
-        let project = named(home, key.project);
         let id = &key.id;
         match (held, refreshed, self.mode) {
             (_, None, Mode::Fresh) | (false, None, Mode::Cached) => {
@@ -76,7 +73,7 @@ impl Resolver {
 
 #[cfg(test)]
 pub(crate) fn in_folder(
-    home: &Snapshot,
+    home: &super::snapshot::Snapshot,
     command: &super::command::Command,
     given: Option<&super::command::Given>,
 ) -> super::command::Resolved {
@@ -86,7 +83,11 @@ pub(crate) fn in_folder(
         .into_iter()
         .map(|key| {
             loop {
-                match steps.step(home, &key, home.reading(&key)) {
+                match steps.step(
+                    &super::command::named(home, key.project),
+                    &key,
+                    home.reading(&key),
+                ) {
                     Ok(reading) => break (key, Ok(reading)),
                     Err(Missing::Unknown(reason)) => break (key, Err(reason)),
                     Err(Missing::Refresh(project)) => {

@@ -1,5 +1,6 @@
 mod contract;
 mod memory;
+mod stores;
 
 use std::fmt;
 
@@ -10,6 +11,7 @@ use home::{IssueId, ProjectId};
 
 pub use contract::{Plant, contract};
 pub use memory::Memory;
+pub use stores::{Kept, Stores};
 
 pub trait CanvasStore {
     fn all(&self) -> Result<Held<CanvasKey>, StoreError>;

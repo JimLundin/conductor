@@ -2,20 +2,23 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use github::configuration::selected;
-use home::flow::command::Resolved;
+use home::flow::command::{Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::issue::storage::ReadHome;
-use home::issue::{IssueReading, Lookup, ReadFailure, ReadMode};
+use home::issue::{IssueReading, ReadFailure, ReadMode};
 use home::project::Project;
 use home::{IssueKey, ProjectId};
+use home_files::FolderStore;
+use home_store::Stores;
 use project_runtime::Registry;
-use project_runtime::issues::IssueCache;
+use project_runtime::issues::{IssueCache, cached};
 
 pub struct Trackers<'a> {
     root: &'a Path,
     loaded: ReadHome,
     data: Option<PathBuf>,
     registry: Registry,
+    stores: Stores,
 }
 
 impl<'a> Trackers<'a> {
@@ -29,11 +32,20 @@ impl<'a> Trackers<'a> {
             loaded,
             data,
             registry: Registry::default(),
+            stores: Stores::new(Box::new(FolderStore::new(root.to_path_buf()))),
         }
     }
 
     pub const fn loaded(&self) -> &ReadHome {
         &self.loaded
+    }
+
+    pub const fn stores(&self) -> &Stores {
+        &self.stores
+    }
+
+    pub const fn stores_mut(&mut self) -> &mut Stores {
+        &mut self.stores
     }
 
     pub fn resolved(
@@ -73,7 +85,8 @@ impl<'a> Trackers<'a> {
     ) -> Result<IssueReading, String> {
         loop {
             let looked = self.look(key).await?;
-            match resolver.step(&self.loaded.snapshot, key, looked) {
+            let name = named(&self.loaded.snapshot, key.project);
+            match resolver.step(&name, key, looked) {
                 Ok(reading) => return Ok(reading),
                 Err(Missing::Unknown(reason)) => return Err(reason),
                 Err(Missing::Refresh(project)) => {
@@ -96,20 +109,7 @@ impl<'a> Trackers<'a> {
     }
 
     async fn look(&self, key: &IssueKey) -> Result<IssueReading, String> {
-        let Some(project) = self.tracked(key.project) else {
-            return Ok(self.loaded.snapshot.reading(key));
-        };
-        let data = self.data()?;
-        let cache = IssueCache::new(&data, self.loaded.snapshot.flow()?);
-        let lookup = Lookup {
-            project: key.project,
-            id: key.id.clone(),
-        };
-        self.registry
-            .project(&project.backends)
-            .issue(&cache, lookup, ReadMode::Cached)
-            .await
-            .map_err(|error| error.to_string())
+        cached(&self.data()?, &self.loaded.snapshot, key).await
     }
 
     async fn refresh(

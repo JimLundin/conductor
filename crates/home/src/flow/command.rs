@@ -1005,7 +1005,8 @@ pub(crate) fn subject(
     format!("{}/{stem}", named(home, project))
 }
 
-pub(crate) fn named(home: &Snapshot, project: ProjectId) -> String {
+#[must_use]
+pub fn named(home: &Snapshot, project: ProjectId) -> String {
     home.projects()
         .iter()
         .find(|known| known.id == project)

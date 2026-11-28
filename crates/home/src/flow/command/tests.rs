@@ -2334,7 +2334,8 @@ fn resolved_by(
                 } else {
                     home.reading(&key)
                 };
-                match steps.step(home, &key, looked) {
+                match steps.step(&super::named(home, key.project), &key, looked)
+                {
                     Ok(reading) => break (key, Ok(reading)),
                     Err(Missing::Unknown(reason)) => break (key, Err(reason)),
                     Err(Missing::Refresh(project)) => {
