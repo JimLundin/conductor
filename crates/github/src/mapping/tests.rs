@@ -486,7 +486,7 @@ fn setting_a_metadata_field_changes_only_its_footer_entry() -> Result<(), String
 }
 
 #[test]
-fn a_native_relation_or_a_lone_note_is_refused_before_any_write()
+fn a_native_relation_is_refused_before_any_write_and_a_lone_note_changes_no_issue_field()
 -> Result<(), String> {
     let native = record()?.native;
     let relation = planned(
@@ -497,6 +497,66 @@ fn a_native_relation_or_a_lone_note_is_refused_before_any_write()
         }],
     );
     assert!(relation.is_err_and(|reason| reason.contains("#140")));
-    assert!(planned(&native, &[logged()]).is_err());
+    assert_eq!(planned(&native, &[logged()])?, []);
+    Ok(())
+}
+
+#[test]
+fn opening_an_issue_labels_its_kind_and_stage_and_marks_its_footer_with_the_operation()
+-> Result<(), String> {
+    use home::flow::command::{Change, Mutation};
+    use home::issue::{Entry, LogEvent, body::Body};
+    let flow = home::flow::load(include_str!(
+        "../../../home/src/flow/test-flow.toml"
+    ))?;
+    let config = crate::configuration::load("", &flow)?;
+    let opened = Entry {
+        at: Some(String::from("2026-11-28T10:00:00Z")),
+        by: Some(String::from("devbox·claude")),
+        event: LogEvent::Note,
+        text: String::from("opened."),
+    };
+    let issue = home::issue::Issue {
+        id: IssueId::new("0v2abcde").ok_or("id")?,
+        project: ProjectId::new(1),
+        created: Some(UnixMillis(1000)),
+        title: String::from("Open me on GitHub"),
+        kind: String::from("spec"),
+        status: String::from("open"),
+        stage: Some(String::from("shape")),
+        fields: BTreeMap::new(),
+        links: BTreeMap::new(),
+        body: String::new(),
+        sections: Vec::new(),
+        checklist: Vec::new(),
+        log: Vec::new(),
+        notes: Vec::new(),
+        branch: String::new(),
+        canvases: Vec::new(),
+    };
+    let set = |field: &str, value: &str| Mutation::Set {
+        field: String::from(field),
+        value: Datum::Text(String::from(value)),
+    };
+    let change = Change {
+        observation: Observation::mapped(
+            issue,
+            Body::new(&[String::from("Problem")], &opened),
+        ),
+        created: true,
+        mutations: Vec::from([
+            set("stage", "shape"),
+            set("branch", "opened"),
+            set("created", "2026-11-28T10:00:00Z"),
+            Mutation::Note(opened),
+        ]),
+    };
+    let create = opening(&flow, &config, &change, "ab/cd")?;
+    assert_eq!(create.title, "Open me on GitHub");
+    assert_eq!(create.labels, ["work/kind/spec", "work/stage/shape"]);
+    assert_eq!(
+        create.body,
+        "## Problem\n\n```project-data\noperation = \"ab/cd\"\nschema = 1\n\n[fields]\nbranch = \"opened\"\n```\n"
+    );
     Ok(())
 }

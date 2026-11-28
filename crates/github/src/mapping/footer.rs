@@ -29,6 +29,13 @@ pub(super) struct Metadata {
     pub links: BTreeMap<String, Vec<IssueKey>>,
 }
 
+#[must_use]
+pub fn carries(text: &str, handle: Handle) -> bool {
+    matches!(body::footer(text, "project-data"), Ok(Some((_, data)))
+        if toml::from_str::<Document>(data)
+            .is_ok_and(|document| document.operation == Some(handle.to_string())))
+}
+
 pub(super) fn read<'a>(
     text: &'a str,
     flow: &Flow,

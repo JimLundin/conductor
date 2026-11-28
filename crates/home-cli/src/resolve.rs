@@ -12,7 +12,7 @@ use home::project::Project;
 use home::{IssueKey, ProjectId};
 use home_files::FolderStore;
 use home_store::CanvasStore;
-use project_runtime::tracker::{self, Connect, Connection};
+use project_runtime::tracker::{self, Connect, Connection, Written};
 
 pub struct Trackers {
     loaded: ReadHome,
@@ -49,11 +49,11 @@ impl Trackers {
         &self,
         root: &Path,
         changes: &[Change],
-    ) -> Result<Vec<String>, String> {
+    ) -> Result<Vec<Written>, String> {
         run(async {
             let mut written = Vec::new();
             for change in changes {
-                written.extend(
+                written.push(
                     self.trackers.write(&self.loaded, root, change).await?,
                 );
             }

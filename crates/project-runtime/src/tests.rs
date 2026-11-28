@@ -130,6 +130,34 @@ impl IssueTracker for Scripted {
     ) -> crate::SendCompletion<'_, ()> {
         Box::pin(async { Err(home::issue::SendFailure::Unknown) })
     }
+    fn opening(
+        &self,
+        _: &home::flow::command::Change,
+        _: home::operations::Handle,
+    ) -> Result<home::issue::IssueCreate, String> {
+        Err(String::from("the script opens no issues"))
+    }
+    fn create(
+        &self,
+        _: home::ProjectId,
+        _: home::issue::IssueCreate,
+    ) -> crate::SendCompletion<'_, home::IssueId> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
+    fn opened(
+        &self,
+        _: home::ProjectId,
+        _: home::operations::Handle,
+    ) -> crate::IssueCompletion<'_, Vec<home::issue::Opened>> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn logged(
+        &self,
+        _: &home::issue::Entry,
+        _: home::operations::Handle,
+    ) -> String {
+        String::new()
+    }
     fn list(&self, _request: ListPage) -> IssueCompletion<'_, Page> {
         Box::pin(async { Err(ReadFailure::Unavailable) })
     }

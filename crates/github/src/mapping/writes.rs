@@ -4,10 +4,11 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use home::flow::command::Mutation;
+use home::flow::command::{Change, Mutation};
 use home::flow::{Flow, Role};
 use home::issue::{
-    ChecklistChange, Datum, IssueWrite, NativeIssue, Part, STAGE, STATUS,
+    ChecklistChange, Datum, IssueCreate, IssueWrite, KIND, NativeIssue, Part,
+    STAGE, STATUS,
     body::{self, Body},
 };
 
@@ -32,14 +33,6 @@ pub fn writes(
     observed: &NativeIssue,
     mutations: &[Mutation],
 ) -> Result<Vec<IssueWrite>, String> {
-    if mutations
-        .iter()
-        .all(|mutation| matches!(mutation, Mutation::Note(_)))
-    {
-        return Err(String::from(
-            "a note on a GitHub issue is a comment, which home doesn't post yet",
-        ));
-    }
     let mut planned = Planned {
         flow,
         config,
@@ -56,7 +49,81 @@ pub fn writes(
     planned.writes()
 }
 
+pub fn opening(
+    flow: &Flow,
+    config: &Configuration,
+    change: &Change,
+    operation: &str,
+) -> Result<IssueCreate, String> {
+    let (issue, body) = change.observation.editable()?;
+    let blank = NativeIssue {
+        title: String::new(),
+        body: String::new(),
+        labels: Vec::new(),
+        open: true,
+        reason: None,
+    };
+    let mut planned = Planned {
+        flow,
+        config,
+        observed: &blank,
+        labels: Vec::new(),
+        open: true,
+        title: None,
+        human: Some(Body::of(&body.body_text())),
+        footer: None,
+    };
+    planned.label(KIND, &issue.kind)?;
+    if issue.status != config.defaults.open {
+        planned.label(STATUS, &issue.status)?;
+    }
+    if let Some(stage) = &issue.stage {
+        planned.label(STAGE, stage)?;
+    }
+    for mutation in &change.mutations {
+        match mutation {
+            Mutation::Set { field, .. }
+                if field == STAGE || planned.created(field) => {}
+            other => planned.apply(other)?,
+        }
+    }
+    planned.footer()?.insert(
+        String::from("operation"),
+        toml::Value::String(String::from(operation)),
+    );
+    Ok(IssueCreate {
+        title: issue.title.clone(),
+        body: planned.written_body()?.unwrap_or_default(),
+        labels: planned.labels,
+    })
+}
+
 impl Planned<'_> {
+    fn created(&self, field: &str) -> bool {
+        self.config.fields.iter().any(|mapping| {
+            mapping.name == field && mapping.source == FieldSource::CreationTime
+        })
+    }
+
+    fn footer(&mut self) -> Result<&mut toml::Table, String> {
+        if self.footer.is_none() {
+            let read =
+                match self.parts()?.1 {
+                    Some(data) => toml::from_str::<toml::Table>(data).map_err(
+                        |error| format!("invalid project-data: {error}"),
+                    )?,
+                    None => toml::Table::from_iter([(
+                        String::from("schema"),
+                        toml::Value::Integer(1),
+                    )]),
+                };
+            self.footer = Some(read);
+        }
+        self.footer
+            .as_mut()
+            .ok_or_else(|| String::from("the footer doesn't read"))
+    }
+
     fn apply(&mut self, mutation: &Mutation) -> Result<(), String> {
         match mutation {
             Mutation::Move { part, to } => {
@@ -217,24 +284,8 @@ impl Planned<'_> {
         name: &str,
         value: &Datum,
     ) -> Result<(), String> {
-        if self.footer.is_none() {
-            let read =
-                match self.parts()?.1 {
-                    Some(data) => toml::from_str::<toml::Table>(data).map_err(
-                        |error| format!("invalid project-data: {error}"),
-                    )?,
-                    None => toml::Table::from_iter([(
-                        String::from("schema"),
-                        toml::Value::Integer(1),
-                    )]),
-                };
-            self.footer = Some(read);
-        }
-        let footer = self
-            .footer
-            .as_mut()
-            .ok_or_else(|| String::from("the footer doesn't read"))?;
-        let entries = footer
+        let entries = self
+            .footer()?
             .entry(table)
             .or_insert_with(|| toml::Value::Table(toml::Table::new()))
             .as_table_mut()

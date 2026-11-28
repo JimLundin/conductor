@@ -13,7 +13,7 @@ use home::flow::command::{
     asked, homeless, run,
 };
 use home::issue::storage::ReadHome;
-use home::{Draws, UnixMillis};
+use home::{Draws, IssueId, UnixMillis};
 use home_store::{CanvasStore, StoreError};
 
 #[cfg(test)]
@@ -81,14 +81,15 @@ fn issues(
     });
     let resolved =
         trackers.resolved(asked.issues(given.as_ref()), asked.mode());
-    let outcome = run(
+    let mut outcome = run(
         asked,
         given,
         &resolved,
         &trackers.loaded().snapshot,
         context,
     );
-    let saved = kept(home, trackers, &outcome, context);
+    let saved = kept(home, trackers, &outcome, context)
+        .map(|ids| outcome.named(&trackers.loaded().snapshot, &ids));
     outcome.ended(saved)
 }
 
@@ -97,7 +98,7 @@ fn kept(
     trackers: &mut Trackers,
     outcome: &Outcome,
     context: &Context,
-) -> Result<(), String> {
+) -> Result<Vec<IssueId>, String> {
     let places = trackers.touches(&outcome.changes, &outcome.canvases)?;
     let record = outcome
         .commit_message(&places)
@@ -108,13 +109,14 @@ fn kept(
         .map(|place| prior(home, place))
         .collect::<Result<Vec<Prior>, String>>()?;
     written(home, trackers, outcome)
-        .and_then(|paths| {
+        .and_then(|(paths, ids)| {
             record.map_or(Ok(()), |(repository, subject)| {
                 repository
                     .commit(&paths, &context.by, subject)
                     .map(drop)
                     .map_err(|error| format!("committing the home: {error}"))
-            })
+            })?;
+            Ok(ids)
         })
         .map_err(|failed| restored(home, &before, failed))
 }
@@ -128,10 +130,13 @@ fn written(
     home: &Path,
     trackers: &mut Trackers,
     outcome: &Outcome,
-) -> Result<Vec<String>, String> {
-    let mut paths = trackers.write(home, &outcome.changes)?;
+) -> Result<(Vec<String>, Vec<IssueId>), String> {
+    let written = trackers.write(home, &outcome.changes)?;
+    let ids = written.iter().map(|wrote| wrote.id.clone()).collect();
+    let mut paths: Vec<String> =
+        written.into_iter().filter_map(|wrote| wrote.file).collect();
     paths.extend(trackers.put(&outcome.canvases)?);
-    Ok(paths)
+    Ok((paths, ids))
 }
 
 fn restored(home: &Path, before: &[Prior], failed: String) -> String {

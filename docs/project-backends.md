@@ -85,8 +85,10 @@ home issue show my-project 42 --offline
 
 Both commands print JSON. A refresh reads direct GitHub edits. The list
 includes open, closed and invalid issues. Each record includes its ID,
-locator, findings and coverage. Comments and native relations have incomplete coverage
-until their readers are available.
+locator, findings and coverage. `home issue show` also reads the issue's
+comments, so its log and notes are complete. The list doesn't read
+comments, so its records have incomplete notes coverage. Native relations
+have incomplete coverage until their reader is available.
 
 A successful refresh reports `Fresh`. If a page fails, the command exits
 with status 1 and reports the failure alongside the previous complete list.
@@ -102,10 +104,36 @@ fails with `no issue 42 in my-project`. If the refresh fails, or
 `home issue show` was given `--offline`, the command fails and names
 `home issue list my-project`.
 
-Edit tracker-backed issues in GitHub during this read-only implementation.
 The CLI refuses to write a second Markdown record for a project with a tracker.
 A write to a Markdown issue or its canvas commits the files it wrote to the
 home, authored by `HOME_BY`, through the git2 backend.
+
+## Opening issues and adding notes on GitHub
+
+`home issue new my-project task "Title"` on a GitHub project sends one
+create through `Project::open_issue`. The issue carries its kind label, a
+stage label when it has a stage, and a status label unless its status is
+the open default. Its body holds the kind's sections and a project-data
+footer whose `operation` field is the create's operation handle. The
+command prints the number GitHub gave the issue, as `wrote my-project/147`.
+
+The create runs as an operation in the host's operation store. Before
+sending, it lists every issue of the repository and settles on the one
+whose footer names its handle and whose title matches. It confirms the
+create the same way after sending. When the reply is lost, the outcome is
+unknown and stays recorded. Running the same `issue new` again resumes
+that operation, by its project, title and labels, and looks for the
+issue again. It never sends a second create, even after a list that finds
+no issue.
+
+Every log entry a Markdown write would add becomes one comment on the
+GitHub issue, through `Project::append_note`: a note, a move with its
+reason or sign-off, a set, and the `opened.` entry of a new issue. A
+comment opens with a hidden `conductor-log` marker holding its operation
+marker. The entry follows in the Markdown log's format without its
+bullet, signed by `HOME_BY`. A read of the issue turns these comments into its log. A
+comment without the marker is a person's note, even when its text reads
+like a move. A canvas comment is neither.
 
 ## Canvases on GitHub
 

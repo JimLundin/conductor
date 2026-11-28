@@ -5,12 +5,13 @@ use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Record};
 use home::flow::Flow;
-use home::flow::command::Mutation;
-use home::issue::{Comment, CommentWrite};
+use home::flow::command::{Change, Mutation};
+use home::issue::{Comment, CommentWrite, Coverage, Entry};
 use home::issue::{
-    IssueState, IssueWrite, ListPage, Locator, Lookup, NativeIssue,
-    Observation, Page, ReadFailure, Unreadable,
+    IssueCreate, IssueState, IssueWrite, ListPage, Locator, Lookup,
+    NativeIssue, Observation, Opened, Page, ReadFailure, Unreadable,
 };
+use home::operations::Handle;
 use home::{IssueId, ProjectId, UnixMillis};
 use octocrab::{FromResponse, models::issues::Issue, params};
 use project_runtime::{IssueCompletion, IssueTracker, SendCompletion};
@@ -49,10 +50,21 @@ pub enum Response {
 
 impl Tracker {
     async fn page(&self, request: ListPage) -> Result<Page, ReadFailure> {
+        let (items, next) =
+            self.raw_page(request.continuation.as_deref()).await?;
+        let records = items
+            .into_iter()
+            .map(|returned| self.observe(request.project, returned))
+            .collect::<Result<_, _>>()?;
+        Ok(Page { records, next })
+    }
+
+    pub(crate) async fn raw_page(
+        &self,
+        continuation: Option<&str>,
+    ) -> Result<(Vec<ReturnedIssue>, Option<String>), ReadFailure> {
         let client = &self.client;
-        let number = request
-            .continuation
-            .as_deref()
+        let number = continuation
             .unwrap_or("1")
             .parse::<std::num::NonZeroU32>()
             .map_err(|_| ReadFailure::InvalidResponse)?
@@ -79,13 +91,12 @@ impl Tracker {
             link.as_deref(),
             raw.incomplete_results,
         )?;
-        let records = raw
+        let items = raw
             .items
             .into_iter()
             .filter(|returned| returned.issue.pull_request.is_none())
-            .map(|returned| self.observe(request.project, returned))
-            .collect::<Result<_, _>>()?;
-        Ok(Page { records, next })
+            .collect();
+        Ok((items, next))
     }
 
     fn observe(
@@ -190,7 +201,19 @@ impl Tracker {
                 }
                 Response::Gone => return gone(request, resolution),
                 Response::Issue(issue) => {
-                    return self.resolved(&request, resolution, *issue);
+                    let number = issue.issue.number;
+                    let mut observed =
+                        self.resolved(&request, resolution, *issue)?;
+                    match self.posted(number).await {
+                        Ok(posted) => mapping::logged(&mut observed, posted),
+                        Err(failure) => {
+                            observed.completeness.notes =
+                                Coverage::Incomplete {
+                                    reason: failure.to_string(),
+                                };
+                        }
+                    }
+                    return Ok(observed);
                 }
             }
         }
@@ -297,5 +320,33 @@ impl IssueTracker for Tracker {
         write: IssueWrite,
     ) -> SendCompletion<'_, ()> {
         Box::pin(self.apply(issue, write))
+    }
+
+    fn opening(
+        &self,
+        change: &Change,
+        handle: Handle,
+    ) -> Result<IssueCreate, String> {
+        mapping::opening(&self.flow, &self.config, change, &handle.to_string())
+    }
+
+    fn create(
+        &self,
+        _: ProjectId,
+        create: IssueCreate,
+    ) -> SendCompletion<'_, IssueId> {
+        Box::pin(self.open(create))
+    }
+
+    fn opened(
+        &self,
+        _: ProjectId,
+        handle: Handle,
+    ) -> IssueCompletion<'_, Vec<Opened>> {
+        Box::pin(self.carrying(handle))
+    }
+
+    fn logged(&self, entry: &Entry, handle: Handle) -> String {
+        github::log::comment(entry, &handle.marker())
     }
 }

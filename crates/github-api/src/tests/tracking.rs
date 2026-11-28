@@ -155,6 +155,11 @@ async fn redirects_verify_the_destination_and_keep_the_issue_s_number()
         moved("{api}/repositories/88/issues/7"),
         repo(),
         reply("/repositories/88/issues/7", 200, &issue(7, 901)),
+        reply(
+            "/repos/owner/work/issues/7/comments?per_page=100&page=1",
+            200,
+            &json!([]),
+        ),
         moved("{api}/repositories/88/issues/12"),
         repo(),
         reply("/repositories/88/issues/12", 200, &issue(12, 901)),

@@ -9,8 +9,8 @@ use home::flow::{
     graph::{self, branch_of},
 };
 use home::issue::{
-    Coverage, Datum, Issue, Locator, NativeIssue, Observation, Unreadable,
-    body::Body,
+    Coverage, Datum, Issue, IssueState, Locator, NativeIssue, Observation,
+    Unreadable, body::Body,
 };
 use home::{IssueId, ProjectId, UnixMillis};
 
@@ -20,7 +20,8 @@ mod footer;
 mod labels;
 mod writes;
 
-pub use writes::writes;
+pub use footer::carries;
+pub use writes::{opening, writes};
 
 pub const AUTHORITY: &str = "https://api.github.com";
 
@@ -111,6 +112,15 @@ pub fn observe(
             .insert(relation.name.clone(), coverage);
     }
     observation
+}
+
+pub fn logged(observation: &mut Observation, posted: Vec<crate::log::Posted>) {
+    let log = crate::log::read(posted);
+    if let IssueState::Valid { issue, .. } = &mut observation.state {
+        issue.log = log.entries;
+        issue.notes = log.notes;
+        observation.completeness.notes = Coverage::Complete;
+    }
 }
 
 struct Findings {

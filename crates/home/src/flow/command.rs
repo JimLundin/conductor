@@ -296,6 +296,19 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    pub fn named(&mut self, home: &Snapshot, ids: &[IssueId]) {
+        for (change, id) in self.changes.iter().zip(ids) {
+            let project = change.observation.project();
+            let planned = change.observation.id();
+            if planned != id {
+                self.output = self.output.replace(
+                    &subject(home, project, planned.as_str()),
+                    &subject(home, project, id.as_str()),
+                );
+            }
+        }
+    }
+
     #[must_use]
     pub fn ended(&self, saved: Result<(), String>) -> (String, u8) {
         let code = u8::from(self.failed || saved.is_err());

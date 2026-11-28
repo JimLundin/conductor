@@ -1,5 +1,8 @@
 use home::backend::{Capability, Refusal};
-use home::issue::{Comment, CommentRequest, Lookup, ReadFailure, SendFailure};
+use home::issue::{
+    Comment, CommentRequest, CommentWrite, Entry, Lookup, ReadFailure,
+    SendFailure,
+};
 use home::operations::{Handle, Intent, Next};
 
 use crate::operations::{Attempt, Error, Operations};
@@ -45,18 +48,45 @@ impl Project<'_> {
         self.tracker()?.comments(issue).await
     }
 
+    pub(crate) fn writer(&self) -> Result<&dyn IssueTracker, WriteError> {
+        self.registry
+            .preflight(self.backends, Capability::WriteIssues)
+            .map_err(WriteError::Refused)?;
+        selected(&self.registry.trackers, self.backends.tracker.as_ref())
+            .map_err(|_| WriteError::Read(ReadFailure::Unavailable))
+    }
+
+    pub async fn append_note(
+        &self,
+        operations: &Operations,
+        handle: Handle,
+        issue: Lookup,
+        entry: &Entry,
+    ) -> Result<Comment, WriteError> {
+        let tracker = self.writer()?;
+        let write = CommentWrite::Create {
+            body: tracker.logged(entry, handle),
+        };
+        let comments = tracker
+            .comments(issue.clone())
+            .await
+            .map_err(WriteError::Read)?;
+        let seen = write.precondition(&comments);
+        self.write_comment(
+            operations,
+            handle,
+            CommentRequest { issue, write, seen },
+        )
+        .await
+    }
+
     pub async fn write_comment(
         &self,
         operations: &Operations,
         handle: Handle,
         request: CommentRequest,
     ) -> Result<Comment, WriteError> {
-        self.registry
-            .preflight(self.backends, Capability::WriteIssues)
-            .map_err(WriteError::Refused)?;
-        let tracker =
-            selected(&self.registry.trackers, self.backends.tracker.as_ref())
-                .map_err(|_| WriteError::Read(ReadFailure::Unavailable))?;
+        let tracker = self.writer()?;
         let intent = Intent::comment(handle, &request)?;
         let mut attempt = operations.begin(handle, intent, true)?;
         let observed = tracker

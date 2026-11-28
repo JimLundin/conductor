@@ -3,9 +3,10 @@ use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use home::issue::EditId;
-use home::issue::{Comment, NativeIssue};
+use home::issue::{Comment, NativeIssue, Opened};
 use home::operations::{
-    Advance, Confirmed, Handle, Intent, Next, Record, Refusal, Step,
+    Advance, Confirmed, Handle, Intent, Next, Opening, Progress, Record,
+    Refusal, Step,
 };
 use redb::{Database, ReadableDatabase, TableDefinition};
 
@@ -81,6 +82,24 @@ impl Operations {
         change(&self.path, |database| {
             handle.local(read_owner(database)?)?;
             read(database, handle)
+        })
+    }
+
+    pub fn unsettled(&self) -> Result<Vec<Record>, Error> {
+        change(&self.path, |database| {
+            use redb::ReadableTable as _;
+            let txn = database.begin_read().map_err(failed)?;
+            let records = txn.open_table(RECORDS).map_err(failed)?;
+            let mut open = Vec::new();
+            for item in records.iter().map_err(failed)? {
+                let (_, value) = item.map_err(failed)?;
+                let record: Record =
+                    postcard::from_bytes(value.value()).map_err(failed)?;
+                if *record.progress() != Progress::Completed {
+                    open.push(record);
+                }
+            }
+            Ok(open)
         })
     }
 
@@ -228,6 +247,12 @@ impl Attempt {
         let (record, next) = self.record.next(observed)?;
         self.replace(record)?;
         Ok(next)
+    }
+
+    pub fn opened(&mut self, found: &[Opened]) -> Result<Opening, Error> {
+        let (record, opening) = self.record.opened(found)?;
+        self.replace(record)?;
+        Ok(opening)
     }
 
     pub fn advance(

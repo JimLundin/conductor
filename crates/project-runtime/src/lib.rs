@@ -1,6 +1,7 @@
 mod comments;
 mod edits;
 pub mod issues;
+mod opening;
 pub mod operations;
 pub mod storage;
 pub mod tracker;
@@ -14,12 +15,14 @@ use home::backend::{
     self, Backend, Backends, Binding, Capability, CredentialState, Refusal,
     Selection,
 };
-use home::flow::command::Mutation;
+use home::flow::command::{Change, Mutation};
 use home::hosting;
 use home::issue::{
-    Comment, CommentWrite, IssueWrite, ListPage, Lookup, NativeIssue,
-    Observation, Page, ReadFailure, SendFailure,
+    self, Comment, CommentWrite, IssueCreate, IssueWrite, ListPage, Lookup,
+    NativeIssue, Observation, Opened, Page, ReadFailure, SendFailure,
 };
+use home::operations::Handle;
+use home::{IssueId, ProjectId};
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
     PreserveAndRemove, Revision,
@@ -82,6 +85,22 @@ pub trait IssueTracker: Send + Sync {
         issue: Lookup,
         write: IssueWrite,
     ) -> SendCompletion<'_, ()>;
+    fn opening(
+        &self,
+        change: &Change,
+        handle: Handle,
+    ) -> Result<IssueCreate, String>;
+    fn create(
+        &self,
+        project: ProjectId,
+        create: IssueCreate,
+    ) -> SendCompletion<'_, IssueId>;
+    fn opened(
+        &self,
+        project: ProjectId,
+        handle: Handle,
+    ) -> IssueCompletion<'_, Vec<Opened>>;
+    fn logged(&self, entry: &issue::Entry, handle: Handle) -> String;
 }
 
 pub trait RepositoryHosting: Send + Sync {

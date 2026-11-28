@@ -1,10 +1,9 @@
-use home::backend::Capability;
 use home::flow::command::Mutation;
-use home::issue::{Lookup, NativeIssue, ReadFailure, SendFailure};
+use home::issue::{Lookup, NativeIssue, SendFailure};
 use home::operations::{Advance, Handle, Intent};
 
 use crate::operations::{Attempt, Operations};
-use crate::{IssueTracker, Project, WriteError, selected};
+use crate::{IssueTracker, Project, WriteError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IssueEdit {
@@ -20,12 +19,7 @@ impl Project<'_> {
         handle: Handle,
         edit: IssueEdit,
     ) -> Result<NativeIssue, WriteError> {
-        self.registry
-            .preflight(self.backends, Capability::WriteIssues)
-            .map_err(WriteError::Refused)?;
-        let tracker =
-            selected(&self.registry.trackers, self.backends.tracker.as_ref())
-                .map_err(|_| WriteError::Read(ReadFailure::Unavailable))?;
+        let tracker = self.writer()?;
         let observed = tracker
             .native(edit.issue.clone())
             .await

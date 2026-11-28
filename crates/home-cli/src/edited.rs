@@ -5,16 +5,18 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use github::configuration::Configuration;
+use github::log::Posted;
 use github::mapping::Record;
 use home::backend::{Capability, CredentialState};
 use home::flow::Flow;
-use home::flow::command::{Asked, Mutation, asked};
+use home::flow::command::{Asked, Change, Mutation, asked};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::fresh;
 use home::issue::{
-    Comment, CommentWrite, IssueWrite, ListPage, Locator, Lookup, NativeIssue,
-    Observation, Page, ReadFailure, SendFailure,
+    Comment, CommentWrite, Entry, IssueCreate, IssueWrite, ListPage, Locator,
+    Lookup, NativeIssue, Observation, Opened, Page, ReadFailure, SendFailure,
 };
+use home::operations::Handle;
 use home::project::Project;
 use home::{IssueId, ProjectId, UnixMillis};
 use home_store::Memory;
@@ -34,27 +36,63 @@ struct Github {
     flow: Flow,
     config: Configuration,
     project: ProjectId,
-    id: IssueId,
     data: PathBuf,
 }
 
-const ISSUE: &str = "scripted-issue.json";
+const ISSUES: &str = "scripted-issues.json";
+const COMMENTS: &str = "scripted-comments.json";
+const LOSE: &str = "scripted-lose";
 const REQUESTS: &str = "scripted-requests";
 
-fn kept(data: &Path) -> Result<NativeIssue, ReadFailure> {
-    std::fs::read(data.join(ISSUE))
+type Issues = BTreeMap<String, NativeIssue>;
+
+fn issues(data: &Path) -> Result<Issues, ReadFailure> {
+    std::fs::read(data.join(ISSUES))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .ok_or(ReadFailure::Unavailable)
 }
 
-fn keep(data: &Path, issue: &NativeIssue) -> Result<(), String> {
-    serde_json::to_vec(issue)
+fn kept(data: &Path, id: &str) -> Result<NativeIssue, ReadFailure> {
+    issues(data)?.remove(id).ok_or(ReadFailure::Deleted)
+}
+
+fn keep(data: &Path, id: &str, issue: &NativeIssue) -> Result<(), String> {
+    let mut all = issues(data).unwrap_or_default();
+    all.insert(String::from(id), issue.clone());
+    save(data, ISSUES, serde_json::to_vec(&all))
+}
+
+fn save(
+    data: &Path,
+    name: &str,
+    encoded: serde_json::Result<Vec<u8>>,
+) -> Result<(), String> {
+    encoded
         .map_err(|error| error.to_string())
         .and_then(|bytes| {
-            std::fs::write(data.join(ISSUE), bytes)
+            std::fs::write(data.join(name), bytes)
                 .map_err(|error| error.to_string())
         })
+}
+
+fn comments(data: &Path) -> Vec<(String, Comment)> {
+    std::fs::read(data.join(COMMENTS))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn on(data: &Path, issue: &IssueId) -> Vec<Comment> {
+    comments(data)
+        .into_iter()
+        .filter(|(on, _)| on == issue.as_str())
+        .map(|(_, comment)| comment)
+        .collect()
+}
+
+fn lost(data: &Path) -> bool {
+    std::fs::remove_file(data.join(LOSE)).is_ok()
 }
 
 impl Github {
@@ -66,22 +104,73 @@ impl Github {
             .and_then(|mut log| writeln!(log, "{request}"));
     }
 
-    fn observed(&self) -> Result<Observation, ReadFailure> {
-        Ok(github::mapping::observe(
+    fn observed(&self, id: &IssueId) -> Result<Observation, ReadFailure> {
+        let mut observed = github::mapping::observe(
             &self.flow,
             &self.config,
             self.project,
             Record {
-                id: self.id.clone(),
+                id: id.clone(),
                 locator: Locator {
                     repository: String::from("owner/standards"),
                     url: None,
                     addresses: BTreeMap::new(),
                 },
                 created: UnixMillis(1000),
-                native: kept(&self.data)?,
+                native: kept(&self.data, id.as_str())?,
             },
-        ))
+        );
+        let posted = on(&self.data, id)
+            .into_iter()
+            .map(|comment| Posted {
+                id: comment.id,
+                author: String::from("reader"),
+                created: comment.updated,
+                body: comment.body,
+            })
+            .collect();
+        github::mapping::logged(&mut observed, posted);
+        Ok(observed)
+    }
+
+    fn comment(&self, issue: &Lookup, body: String) -> Result<Comment, String> {
+        let mut all = comments(&self.data);
+        let id = all.len() + 1;
+        let comment = Comment {
+            id: id.to_string(),
+            url: format!(
+                "https://github.com/owner/standards/issues/{}#issuecomment-{id}",
+                issue.id
+            ),
+            body,
+            updated: UnixMillis(2000),
+        };
+        all.push((String::from(issue.id.as_str()), comment.clone()));
+        save(&self.data, COMMENTS, serde_json::to_vec(&all))?;
+        Ok(comment)
+    }
+
+    fn open(&self, create: IssueCreate) -> Result<IssueId, String> {
+        let next = issues(&self.data)
+            .unwrap_or_default()
+            .keys()
+            .filter_map(|id| id.parse::<u64>().ok())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let id = next.to_string();
+        keep(
+            &self.data,
+            &id,
+            &NativeIssue {
+                title: create.title,
+                body: create.body,
+                labels: create.labels,
+                open: true,
+                reason: None,
+            },
+        )?;
+        IssueId::new(&id).ok_or_else(|| String::from("id"))
     }
 }
 
@@ -106,36 +195,60 @@ fn applied(mut issue: NativeIssue, write: &IssueWrite) -> NativeIssue {
 }
 
 impl IssueTracker for Github {
-    fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
+    fn read(&self, issue: Lookup) -> IssueCompletion<'_, Observation> {
         self.asked("read");
-        let observed = self.observed();
+        let observed = self.observed(&issue.id);
         Box::pin(async move { observed })
     }
 
     fn list(&self, _: ListPage) -> IssueCompletion<'_, Page> {
         self.asked("list");
-        let page = self.observed().map(|observed| Page {
-            records: Vec::from([observed]),
-            next: None,
+        let page = issues(&self.data).and_then(|all| {
+            let records = all
+                .keys()
+                .filter_map(|id| IssueId::new(id))
+                .map(|id| self.observed(&id))
+                .collect::<Result<_, _>>()?;
+            Ok(Page {
+                records,
+                next: None,
+            })
         });
         Box::pin(async move { page })
     }
 
-    fn comments(&self, _: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
-        Box::pin(async { Ok(Vec::new()) })
+    fn comments(&self, issue: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
+        let found = on(&self.data, &issue.id);
+        Box::pin(async move { Ok(found) })
     }
 
     fn write_comment(
         &self,
-        _: Lookup,
-        _: CommentWrite,
+        issue: Lookup,
+        write: CommentWrite,
     ) -> SendCompletion<'_, Comment> {
-        Box::pin(async { Err(SendFailure::Unknown) })
+        self.asked("comment");
+        let CommentWrite::Create { body } = write else {
+            return Box::pin(async {
+                Err(SendFailure::Rejected(ReadFailure::InvalidConfiguration))
+            });
+        };
+        let posted = self
+            .comment(&issue, body)
+            .map_err(|_| SendFailure::Unknown)
+            .and_then(|comment| {
+                if lost(&self.data) {
+                    Err(SendFailure::Unknown)
+                } else {
+                    Ok(comment)
+                }
+            });
+        Box::pin(async move { posted })
     }
 
-    fn native(&self, _: Lookup) -> IssueCompletion<'_, NativeIssue> {
+    fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue> {
         self.asked("native");
-        let native = kept(&self.data);
+        let native = kept(&self.data, issue.id.as_str());
         Box::pin(async move { native })
     }
 
@@ -149,18 +262,72 @@ impl IssueTracker for Github {
 
     fn write_issue(
         &self,
-        _: Lookup,
+        issue: Lookup,
         write: IssueWrite,
     ) -> SendCompletion<'_, ()> {
         self.asked(&format!("{write:?}"));
-        let written =
-            kept(&self.data)
-                .map_err(SendFailure::Rejected)
-                .and_then(|issue| {
-                    keep(&self.data, &applied(issue, &write))
-                        .map_err(|_| SendFailure::Unknown)
-                });
+        let id = issue.id.as_str();
+        let written = kept(&self.data, id)
+            .map_err(SendFailure::Rejected)
+            .and_then(|found| {
+                keep(&self.data, id, &applied(found, &write))
+                    .map_err(|_| SendFailure::Unknown)
+            });
         Box::pin(async move { written })
+    }
+
+    fn opening(
+        &self,
+        change: &Change,
+        handle: Handle,
+    ) -> Result<IssueCreate, String> {
+        github::mapping::opening(
+            &self.flow,
+            &self.config,
+            change,
+            &handle.to_string(),
+        )
+    }
+
+    fn create(
+        &self,
+        _: ProjectId,
+        create: IssueCreate,
+    ) -> SendCompletion<'_, IssueId> {
+        self.asked("create");
+        let opened = self
+            .open(create)
+            .map_err(|_| SendFailure::Unknown)
+            .and_then(|id| {
+                if lost(&self.data) {
+                    Err(SendFailure::Unknown)
+                } else {
+                    Ok(id)
+                }
+            });
+        Box::pin(async move { opened })
+    }
+
+    fn opened(
+        &self,
+        _: ProjectId,
+        handle: Handle,
+    ) -> IssueCompletion<'_, Vec<Opened>> {
+        let found = issues(&self.data).map(|all| {
+            all.into_iter()
+                .filter(|(_, native)| {
+                    github::mapping::carries(&native.body, handle)
+                })
+                .filter_map(|(number, native)| {
+                    IssueId::new(&number).map(|id| Opened { id, native })
+                })
+                .collect()
+        });
+        Box::pin(async move { found })
+    }
+
+    fn logged(&self, entry: &Entry, handle: Handle) -> String {
+        github::log::comment(entry, &handle.marker())
     }
 }
 
@@ -194,7 +361,6 @@ fn connect(
         flow,
         config,
         project: project.id,
-        id: IssueId::new("146").ok_or("id")?,
         data: data.to_path_buf(),
     });
     Ok(Connection {
@@ -236,6 +402,7 @@ impl Home {
         Operations::bind(&data, [7; 32])?;
         keep(
             &data,
+            "146",
             &NativeIssue {
                 title: String::from("Kept by GitHub"),
                 body: String::from(body),
@@ -274,7 +441,7 @@ impl Home {
     }
 
     fn issue(&self) -> Result<NativeIssue, ReadFailure> {
-        kept(&self.root.join("data"))
+        kept(&self.root.join("data"), "146")
     }
 }
 
@@ -298,7 +465,8 @@ fn issue_move_stage_spec_on_a_github_issue_swaps_its_stage_label_and_nothing_els
         writes,
         [
             "AddLabel(\"work/stage/spec\")",
-            "RemoveLabel(\"work/stage/shape\")"
+            "RemoveLabel(\"work/stage/shape\")",
+            "comment"
         ]
     );
     let issue = home.issue()?;
@@ -332,5 +500,107 @@ fn issue_body_on_a_github_issue_keeps_its_project_data_footer()
     assert!(said.starts_with("wrote standards/146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
     assert_eq!(home.issue()?.body, format!("New words\n\n{FOOTER}"));
+    Ok(())
+}
+
+impl Home {
+    fn creates(&self) -> usize {
+        self.requests()
+            .iter()
+            .filter(|request| *request == "create")
+            .count()
+    }
+
+    fn opened(&self) -> Result<NativeIssue, ReadFailure> {
+        kept(&self.root.join("data"), "147")
+    }
+
+    fn comments(&self, issue: &str) -> Result<Vec<String>, Box<dyn Error>> {
+        Ok(
+            on(&self.root.join("data"), &IssueId::new(issue).ok_or("id")?)
+                .into_iter()
+                .map(|comment| comment.body)
+                .collect(),
+        )
+    }
+}
+
+#[test]
+fn issue_new_on_a_github_project_sends_one_create_holding_its_marker_and_prints_the_number_github_gave()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("new", &[], "Words\n")?;
+    let (said, code) =
+        home.home(&["issue", "new", "standards", "task", "Opened by home"])?;
+    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(home.creates(), 1);
+    let opened = home.opened()?;
+    assert_eq!(opened.title, "Opened by home");
+    assert_eq!(opened.labels, ["work/kind/task"]);
+    let (human, footer) = opened
+        .body
+        .split_once("```project-data\n")
+        .ok_or("no footer")?;
+    assert_eq!(human, "## What\n\n## Acceptance\n\n");
+    let operation = footer
+        .lines()
+        .find_map(|line| line.strip_prefix("operation = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .and_then(Handle::parse)
+        .ok_or("no operation in the footer")?;
+    assert!(github::mapping::carries(&opened.body, operation));
+    let comments = home.comments("147")?;
+    assert_eq!(comments.len(), 1);
+    assert!(comments[0].ends_with(" note: opened.\n"), "{comments:?}");
+    assert!(!home.root.join("projects/hyn162/issues").exists());
+    Ok(())
+}
+
+#[test]
+fn a_lost_create_reply_retried_finds_the_issue_and_creates_nothing_more()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("lost-create", &[], "Words\n")?;
+    std::fs::write(home.root.join("data").join(LOSE), "")?;
+    let new = ["issue", "new", "standards", "task", "Opened by home"];
+    let (said, code) = home.home(&new)?;
+    assert!(said.contains("is unknown; retry it"), "{said}");
+    assert_eq!(code, 1);
+    assert_eq!(home.creates(), 1);
+    let (said, code) = home.home(&new)?;
+    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(code, 0);
+    assert_eq!(home.creates(), 0);
+    assert_eq!(
+        issues(&home.root.join("data"))?
+            .into_keys()
+            .collect::<Vec<_>>(),
+        ["146", "147"]
+    );
+    Ok(())
+}
+
+#[test]
+fn issue_note_on_a_github_issue_adds_one_comment_and_issue_show_lists_it_in_the_log()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("note", &[], "Words\n")?;
+    let (said, code) =
+        home.home(&["issue", "note", "standards", "146", "worker", "started"])?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    let comments = home.comments("146")?;
+    assert_eq!(comments.len(), 1);
+    assert!(
+        comments[0].starts_with("<!-- conductor-log\nconductor-operation "),
+        "{comments:?}"
+    );
+    let (shown, code) = home.home(&["issue", "show", "standards", "146"])?;
+    assert_eq!(code, 0, "{shown}");
+    let read: serde_json::Value = serde_json::from_str(&shown)?;
+    let issue = &read["record"]["state"]["Valid"]["issue"];
+    assert_eq!(issue["log"].as_array().map(Vec::len), Some(1), "{shown}");
+    assert_eq!(issue["log"][0]["text"], "worker started");
+    assert_eq!(issue["log"][0]["event"], "Note");
+    assert_eq!(issue["notes"], serde_json::json!([]));
+    assert_eq!(home.issue()?.body, "Words\n");
     Ok(())
 }

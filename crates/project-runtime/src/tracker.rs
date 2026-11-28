@@ -6,10 +6,11 @@ use std::sync::Arc;
 
 use home::backend::{Backends, Capability};
 use home::canvas::{Broken, CanvasEntry, CanvasFile, CanvasKey, Held};
-use home::flow::command::Change;
+use home::flow::command::{Change, Mutation};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::ReadHome;
 use home::issue::{IssueListing, IssueReading, Lookup, ReadFailure, ReadMode};
+use home::operations::Handle;
 use home::project::Project;
 use home::tracker::{self, Tracker};
 use home::{IssueId, IssueKey, ProjectId};
@@ -58,6 +59,12 @@ enum Selected {
     Markdown,
     Configured(Box<Configured>),
     Unbuilt(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    pub file: Option<String>,
+    pub id: IssueId,
 }
 
 pub struct Trackers {
@@ -170,7 +177,7 @@ impl Trackers {
         home: &ReadHome,
         root: &Path,
         change: &Change,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<Written, String> {
         match self.selected(change.observation.project())? {
             Selected::Markdown => {
                 let file = home.encode(change)?;
@@ -178,12 +185,15 @@ impl Trackers {
                 std::fs::create_dir_all(root.join(file.folder()))
                     .and_then(|()| std::fs::write(&path, &file.text))
                     .map_err(|err| format!("{}: {err}", path.display()))?;
-                Ok(Some(file.path()))
+                Ok(Written {
+                    file: Some(file.path()),
+                    id: change.observation.id().clone(),
+                })
             }
             Selected::Configured(configured) => configured
                 .write(&self.data, &home.snapshot, change)
                 .await
-                .map(|()| None),
+                .map(|id| Written { file: None, id }),
             Selected::Unbuilt(reason) => Err(reason.clone()),
         }
     }
@@ -267,44 +277,33 @@ impl Configured {
         data: &Path,
         home: &Snapshot,
         change: &Change,
-    ) -> Result<(), String> {
-        if change.created {
-            return Err(String::from(
-                "home doesn't open issues in a project's own tracker yet",
-            ));
-        }
-        let seen = change.observation.revision.clone().ok_or_else(|| {
-            String::from("the issue was read without a revision to compare")
-        })?;
+    ) -> Result<IssueId, String> {
         let mut registry = Registry::default();
         self.register(&mut registry)
             .map_err(|failure| failure.to_string())?;
         let operations =
             Operations::open(data).map_err(|error| error.to_string())?;
-        let handle = operations.handle().map_err(|error| error.to_string())?;
+        let project = registry.project(&self.backends);
+        let fresh = operations.handle().map_err(|error| error.to_string())?;
+        let id = if change.created {
+            project.open_issue(&operations, fresh, change).await
+        } else {
+            edited(&project, &operations, fresh, change).await
+        }
+        .map_err(|error| error.to_string())?;
         let issue = Lookup {
             project: change.observation.project(),
-            id: change.observation.id().clone(),
+            id: id.clone(),
         };
-        let project = registry.project(&self.backends);
-        project
-            .edit_issue(
-                &operations,
-                handle,
-                IssueEdit {
-                    issue: issue.clone(),
-                    seen,
-                    mutations: change.mutations.clone(),
-                },
-            )
+        noted(&project, &operations, &issue, &change.mutations)
             .await
             .map_err(|error| error.to_string())?;
         let cache = IssueCache::new(data, home.flow()?);
         project
             .issue(&cache, issue, ReadMode::Refresh)
             .await
-            .map(drop)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        Ok(id)
     }
 
     fn mode(&self, registry: &mut Registry, fresh: bool) -> ReadMode {
@@ -367,6 +366,53 @@ impl Configured {
         }
         listing
     }
+}
+
+async fn noted(
+    project: &crate::Project<'_>,
+    operations: &Operations,
+    issue: &Lookup,
+    mutations: &[Mutation],
+) -> Result<(), crate::WriteError> {
+    let entries = mutations.iter().filter_map(|mutation| match mutation {
+        Mutation::Note(entry) => Some(entry),
+        _ => None,
+    });
+    for entry in entries {
+        project
+            .append_note(operations, operations.handle()?, issue.clone(), entry)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn edited(
+    project: &crate::Project<'_>,
+    operations: &Operations,
+    handle: Handle,
+    change: &Change,
+) -> Result<IssueId, crate::WriteError> {
+    let seen = change.observation.revision.clone().ok_or_else(|| {
+        crate::WriteError::Unsupported(String::from(
+            "the issue was read without a revision to compare",
+        ))
+    })?;
+    let issue = Lookup {
+        project: change.observation.project(),
+        id: change.observation.id().clone(),
+    };
+    project
+        .edit_issue(
+            operations,
+            handle,
+            IssueEdit {
+                issue: issue.clone(),
+                seen,
+                mutations: change.mutations.clone(),
+            },
+        )
+        .await?;
+    Ok(issue.id)
 }
 
 fn unavailable(reason: impl Into<String>) -> StoreError {

@@ -10,4 +10,6 @@ pub mod access;
 
 pub mod canvas;
 
+pub mod log;
+
 pub mod mapping;

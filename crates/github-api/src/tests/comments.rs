@@ -8,12 +8,12 @@ use project_runtime::{Registration, Registry, WriteError};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-const LISTED: &str =
+pub(super) const LISTED: &str =
     "/repos/owner/work/issues/146/comments?per_page=100&page=1";
-const CREATED: &str = "/repos/owner/work/issues/146/comments";
+pub(super) const CREATED: &str = "/repos/owner/work/issues/146/comments";
 const EDITED: &str = "/repos/owner/work/issues/comments/2";
 
-fn comment(id: u64, body: &str, updated: &str) -> Value {
+pub(super) fn comment(id: u64, body: &str, updated: &str) -> Value {
     json!({
         "id": id, "node_id": format!("IC_{id}"),
         "url": format!("{{api}}/repos/owner/work/issues/comments/{id}"),
@@ -24,11 +24,15 @@ fn comment(id: u64, body: &str, updated: &str) -> Value {
     })
 }
 
-fn human() -> Value {
+pub(super) fn human() -> Value {
     comment(1, "A person's note", "2026-11-01T10:00:00Z")
 }
 
-fn sent(method: &'static str, path: &'static str, body: &Value) -> Exchange {
+pub(super) fn sent(
+    method: &'static str,
+    path: &'static str,
+    body: &Value,
+) -> Exchange {
     Exchange {
         method,
         status: if method == "POST" { 201 } else { 200 },
@@ -36,22 +40,22 @@ fn sent(method: &'static str, path: &'static str, body: &Value) -> Exchange {
     }
 }
 
-fn lost(method: &'static str, path: &'static str) -> Exchange {
+pub(super) fn lost(method: &'static str, path: &'static str) -> Exchange {
     Exchange {
         lost: true,
         ..sent(method, path, &json!({}))
     }
 }
 
-struct Writer {
+pub(super) struct Writer {
     _dir: tempfile::TempDir,
-    operations: Operations,
-    registry: Registry,
-    backends: Backends,
+    pub(super) operations: Operations,
+    pub(super) registry: Registry,
+    pub(super) backends: Backends,
 }
 
 impl Writer {
-    fn new(base: &str) -> anyhow::Result<Self> {
+    pub(super) fn new(base: &str) -> anyhow::Result<Self> {
         let tracker = tracker(base)?;
         Self::with(
             tracker,
@@ -108,7 +112,7 @@ impl Writer {
             .await
     }
 
-    fn progress(&self, handle: Handle) -> anyhow::Result<Progress> {
+    pub(super) fn progress(&self, handle: Handle) -> anyhow::Result<Progress> {
         Ok(self
             .operations
             .status(handle)?
@@ -139,7 +143,7 @@ async fn create(
     ))
 }
 
-fn posted(bodies: &[hyper::body::Bytes]) -> Vec<String> {
+pub(super) fn posted(bodies: &[hyper::body::Bytes]) -> Vec<String> {
     bodies
         .iter()
         .filter(|body| !body.is_empty())

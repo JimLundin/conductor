@@ -81,6 +81,7 @@ mod comments;
 mod edits;
 #[cfg(unix)]
 mod fleet;
+mod opening;
 mod tracking;
 
 type Reply = (u16, &'static str);

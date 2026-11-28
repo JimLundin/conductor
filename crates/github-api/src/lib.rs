@@ -5,6 +5,7 @@ mod comments;
 mod credential;
 mod edits;
 mod inspect;
+mod opening;
 
 pub use cache::CanvasCache;
 pub use canvases::{Canvases, Github, connect};

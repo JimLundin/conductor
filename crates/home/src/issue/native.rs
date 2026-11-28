@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::IssueId;
 use crate::prelude::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -10,6 +11,19 @@ pub struct NativeIssue {
     pub labels: Vec<String>,
     pub open: bool,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueCreate {
+    pub title: String,
+    pub body: String,
+    pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Opened {
+    pub id: IssueId,
+    pub native: NativeIssue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -22,7 +22,7 @@ pub mod cache;
 mod comment;
 pub use comment::*;
 mod native;
-pub use native::{IssueWrite, NativeIssue};
+pub use native::{IssueCreate, IssueWrite, NativeIssue, Opened};
 mod observation;
 mod tracking;
 pub use tracking::*;

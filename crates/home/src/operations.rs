@@ -1,12 +1,12 @@
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::issue::{
-    Comment, CommentRequest, CommentWrite, EditId, IssueWrite, Lookup,
-    NativeIssue,
+    Comment, CommentRequest, CommentWrite, EditId, IssueCreate, IssueWrite,
+    Lookup, NativeIssue, Opened,
 };
 use crate::{IssueId, ProjectId};
 
@@ -67,6 +67,9 @@ pub enum Work {
         issue: IssueId,
         write: CommentWrite,
     },
+    Create {
+        create: IssueCreate,
+    },
 }
 
 impl Intent {
@@ -105,7 +108,9 @@ impl Intent {
                 Ok(writes)
             }
             Work::ChangeIssue { .. } => Err(Refusal::ChangedIntent),
-            Work::Comment { .. } => Err(Refusal::NotAnEdit),
+            Work::Comment { .. } | Work::Create { .. } => {
+                Err(Refusal::NotAnEdit)
+            }
         }
     }
 
@@ -127,6 +132,38 @@ impl Intent {
     }
 }
 
+impl Intent {
+    pub fn create(
+        handle: Handle,
+        project: ProjectId,
+        create: IssueCreate,
+    ) -> Result<Self, Refusal> {
+        if !create.body.contains(&handle.to_string()) {
+            return Err(Refusal::Unmarked);
+        }
+        Ok(Self {
+            project,
+            expected: String::new(),
+            work: Work::Create { create },
+        })
+    }
+
+    #[must_use]
+    pub fn opens(&self, project: ProjectId, create: &IssueCreate) -> bool {
+        matches!(&self.work, Work::Create { create: held }
+            if self.project == project
+                && held.title == create.title
+                && held.labels == create.labels)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Opening {
+    Send(IssueCreate),
+    Settled(IssueId),
+    Unknown,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Advance {
     Send(IssueWrite),
@@ -145,6 +182,7 @@ pub enum Next {
 pub enum Step {
     WriteIssue(usize),
     WriteComment,
+    CreateIssue,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +231,8 @@ pub enum Refusal {
     NotAComment,
     #[error("the operation edits no issue")]
     NotAnEdit,
+    #[error("the operation opens no issue")]
+    NotACreate,
 }
 
 impl Record {
@@ -352,6 +392,36 @@ impl Record {
                 self.send(write, observed).map(|sent| (sent, Next::Send))
             }
             _ => Ok((self.clone(), Next::Unknown)),
+        }
+    }
+
+    pub fn opened(&self, found: &[Opened]) -> Result<(Self, Opening), Refusal> {
+        let Work::Create { create } = &self.intent.work else {
+            return Err(Refusal::NotACreate);
+        };
+        let mut carrying = found
+            .iter()
+            .filter(|issue| issue.native.title == create.title);
+        match (&self.progress, carrying.next(), carrying.next()) {
+            (Progress::Completed, Some(found), None) => {
+                Ok((self.clone(), Opening::Settled(found.id.clone())))
+            }
+            (Progress::AwaitingEvidence(step), Some(found), None) => {
+                let evidence = Confirmed {
+                    step: step.clone(),
+                    revision: found.native.revision(),
+                    identity: Some(String::from(found.id.as_str())),
+                };
+                Ok((
+                    self.confirm(evidence, true)?,
+                    Opening::Settled(found.id.clone()),
+                ))
+            }
+            (Progress::Ready, None, None) => {
+                let sent = self.dispatch(Step::CreateIssue, "", true)?;
+                Ok((sent, Opening::Send(create.clone())))
+            }
+            _ => Ok((self.clone(), Opening::Unknown)),
         }
     }
 
