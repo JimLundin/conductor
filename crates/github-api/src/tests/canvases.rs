@@ -20,6 +20,7 @@ use hyper::{Method, Request, Response};
 use hyper_util::rt::TokioIo;
 use project_runtime::issues::IssueCache;
 use project_runtime::operations::Operations;
+use project_runtime::tracker::TrackerStore as _;
 use project_runtime::{Registration, Registry};
 use serde_json::{Value, json};
 
@@ -42,6 +43,8 @@ struct State {
     comments: Vec<Posted>,
     clock: u64,
     requests: Vec<(Method, String)>,
+    lost: u32,
+    lagging: u32,
 }
 
 impl State {
@@ -127,11 +130,12 @@ fn answer(
         (
             &Method::GET,
             ["repos", "owner", repo, "issues", number, "comments"],
-        ) => (
-            200,
+        ) => (200, {
+            let lags = state.lagging > 0;
+            state.lagging = state.lagging.saturating_sub(1);
+            let shown = state.comments.len() - usize::from(lags);
             Value::Array(
-                state
-                    .comments
+                state.comments[..shown]
                     .iter()
                     .filter(|posted| {
                         posted.repo == *repo
@@ -139,8 +143,8 @@ fn answer(
                     })
                     .map(|posted| comment(base, posted))
                     .collect(),
-            ),
-        ),
+            )
+        }),
         (
             &Method::POST,
             ["repos", "owner", repo, "issues", number, "comments"],
@@ -201,11 +205,15 @@ async fn served(
     let path = request.uri().path().to_owned();
     let body = request.into_body().collect().await?.to_bytes();
     let sent = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
-    let (status, reply) = asked(&asks, move |state| {
+    let (status, reply, lost) = asked(&asks, move |state| {
         state.requests.push((method.clone(), path.clone()));
-        answer(state, &base, &method, &path, &sent)
+        let (status, reply) = answer(state, &base, &method, &path, &sent);
+        let lost = method == Method::POST && state.lost > 0;
+        state.lost -= u32::from(lost);
+        (status, reply, lost)
     })
     .await?;
+    anyhow::ensure!(!lost, "the reply is lost");
     let mut response = Response::new(Full::new(Bytes::from(reply.to_string())));
     *response.status_mut() = hyper::StatusCode::from_u16(status)?;
     Ok(response)
@@ -270,6 +278,26 @@ impl Github {
                 id,
                 body,
                 updated,
+            });
+            format!("https://github.com/owner/{repo}/issues/{issue}#issuecomment-{id}")
+        })
+        .await
+    }
+
+    async fn seed(
+        &self,
+        repo: &'static str,
+        issue: u64,
+        body: String,
+    ) -> anyhow::Result<String> {
+        self.with(move |state| {
+            let id = 100 + state.comments.len() as u64;
+            state.comments.push(Posted {
+                repo,
+                issue,
+                id,
+                body,
+                updated: state.clock,
             });
             format!("https://github.com/owner/{repo}/issues/{issue}#issuecomment-{id}")
         })
@@ -396,6 +424,7 @@ impl Host {
             "{:?}",
             listing.status
         );
+        self.store(project, repo, github)?.refresh(&listing).await?;
         Ok(())
     }
 }
@@ -455,18 +484,17 @@ fn writes(requests: &[(Method, String)]) -> Vec<(Method, String)> {
 async fn spoil(github: &Github, key: &CanvasKey) -> anyhow::Result<String> {
     let good = body(key.name.as_str(), "spoiled")?;
     let (head, _) = good
-        .split_once("```json\n")
+        .split_once("<details>")
         .ok_or_else(|| anyhow::anyhow!("no data"))?;
-    let spoiled = format!("{head}```json\n{{}}\n```\n\n</details>\n");
     github
-        .post("alpha", key.issue.as_str().parse()?, spoiled)
+        .seed("alpha", key.issue.as_str().parse()?, head.to_owned())
         .await
 }
 
 async fn unnamed(github: &Github, issue: &IssueId) -> anyhow::Result<String> {
     let good = body("design", "unnamed")?;
     github
-        .post(
+        .seed(
             "alpha",
             issue.as_str().parse()?,
             good.replace("name: design", "name: Bad Name"),
@@ -602,7 +630,7 @@ async fn a_put_of_a_new_canvas_creates_one_comment_and_a_second_put_edits_it()
 }
 
 #[tokio::test]
-async fn a_marked_comment_whose_data_or_name_doesnt_parse_is_a_stray_placed_by_its_url()
+async fn a_marked_comment_whose_name_doesnt_parse_is_a_stray_placed_by_its_url()
 -> anyhow::Result<()> {
     let github = Github::start().await?;
     let host = Host::new()?;
@@ -614,10 +642,6 @@ async fn a_marked_comment_whose_data_or_name_doesnt_parse_is_a_stray_placed_by_i
             good.replace("name: design", "name: Design Tree"),
         )
         .await?;
-    let (head, _) = good
-        .split_once("<details>")
-        .ok_or_else(|| anyhow::anyhow!("no data"))?;
-    let unreadable = github.post("alpha", 1, head.to_owned()).await?;
     github
         .post("alpha", 1, String::from("A person's note"))
         .await?;
@@ -628,17 +652,41 @@ async fn a_marked_comment_whose_data_or_name_doesnt_parse_is_a_stray_placed_by_i
     assert!(listed.canvases.is_empty(), "{:?}", listed.canvases);
     assert_eq!(
         listed.strays,
-        [
-            Stray {
-                place: unnamed,
-                reason: StrayReason::Unnamed
-            },
-            Stray {
-                place: unreadable,
-                reason: StrayReason::Unreadable
-            },
-        ]
+        [Stray {
+            place: unnamed,
+            reason: StrayReason::Unnamed
+        }]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_put_of_a_broken_canvas_edits_its_comment_and_creates_none()
+-> anyhow::Result<()> {
+    let github = Github::start().await?;
+    let host = Host::new()?;
+    let good = body("design", "Fine.")?;
+    let (head, _) = good
+        .split_once("<details>")
+        .ok_or_else(|| anyhow::anyhow!("no data"))?;
+    github.post("alpha", 1, head.to_owned()).await?;
+    host.refresh(ALPHA, "alpha", &github).await?;
+    let mut store = host.store(ALPHA, "alpha", &github)?;
+    let design = key(ALPHA, "1", "design")?;
+    store.put(&design, &file(2, "Mended.")?).await?;
+    assert_eq!(
+        writes(&github.requests().await?),
+        [(
+            Method::PATCH,
+            String::from("/repos/owner/alpha/issues/comments/100")
+        )]
+    );
+    assert_eq!(github.bodies().await?.len(), 1);
+    assert_eq!(
+        store.get(&design)?.map(|kept| kept.canvas),
+        Some(drawn("Mended.")?)
+    );
+    assert_eq!(store.all()?.strays, []);
     Ok(())
 }
 
@@ -755,5 +803,90 @@ async fn a_second_comment_holding_the_same_canvas_is_a_stray_and_the_first_is_th
             reason: StrayReason::Repeated
         }]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_put_whose_create_reply_is_lost_put_again_finds_its_marker_and_leaves_one_comment()
+-> anyhow::Result<()> {
+    let github = Github::start().await?;
+    let host = Host::new()?;
+    let mut store = host.store(ALPHA, "alpha", &github)?;
+    let design = key(ALPHA, "1", "design")?;
+    github.with(|state| state.lost = 1).await?;
+    let lost = store.put(&design, &file(1, "The first draft.")?).await;
+    assert!(
+        matches!(&lost, Err(StoreError::Unavailable { reason }) if reason.contains("is unknown")),
+        "{lost:?}"
+    );
+    store.put(&design, &file(2, "The second draft.")?).await?;
+    assert_eq!(
+        writes(&github.requests().await?),
+        [
+            (
+                Method::POST,
+                String::from("/repos/owner/alpha/issues/1/comments")
+            ),
+            (
+                Method::PATCH,
+                String::from("/repos/owner/alpha/issues/comments/100")
+            ),
+        ]
+    );
+    assert_eq!(github.bodies().await?.len(), 1);
+    assert_eq!(
+        store.get(&design)?.map(|kept| kept.canvas),
+        Some(drawn("The second draft.")?)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_uncertain_create_unseen_while_github_s_list_lags_sends_no_second_create()
+-> anyhow::Result<()> {
+    let github = Github::start().await?;
+    let host = Host::new()?;
+    let mut store = host.store(ALPHA, "alpha", &github)?;
+    let design = key(ALPHA, "1", "design")?;
+    github.with(|state| state.lost = 1).await?;
+    let lost = store.put(&design, &file(1, "The first draft.")?).await;
+    assert!(lost.is_err(), "{lost:?}");
+    github.with(|state| state.lagging = 2).await?;
+    let lagged = store.put(&design, &file(2, "The second draft.")?).await;
+    assert!(
+        matches!(&lagged, Err(StoreError::Unavailable { reason }) if reason.contains("is unknown")),
+        "{lagged:?}"
+    );
+    github.with(|state| state.lagging = 0).await?;
+    store.put(&design, &file(3, "The third draft.")?).await?;
+    assert_eq!(
+        writes(&github.requests().await?),
+        [
+            (
+                Method::POST,
+                String::from("/repos/owner/alpha/issues/1/comments")
+            ),
+            (
+                Method::PATCH,
+                String::from("/repos/owner/alpha/issues/comments/100")
+            ),
+        ]
+    );
+    assert_eq!(github.bodies().await?.len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refresh_keeps_the_canvases_of_listed_issues_only()
+-> anyhow::Result<()> {
+    let github = Github::start().await?;
+    let host = Host::new()?;
+    github.post("alpha", 2, body("design", "Listed.")?).await?;
+    github
+        .post("alpha", 7, body("design", "On a pull request.")?)
+        .await?;
+    host.refresh(ALPHA, "alpha", &github).await?;
+    let store = host.store(ALPHA, "alpha", &github)?;
+    assert_eq!(store.all()?.canvases, [key(ALPHA, "2", "design")?]);
     Ok(())
 }

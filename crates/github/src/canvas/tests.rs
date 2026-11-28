@@ -4,7 +4,10 @@ use alloc::vec;
 
 use home::canvas::{Block, Canvas, CanvasError, CanvasName, StrayReason};
 
-use super::{LIMIT, Read, TooLong, comment, read};
+use home::UnixMillis;
+use home::issue::{Comment, CommentWrite};
+
+use super::{LIMIT, Read, TooLong, comment, read, write};
 
 const MARKER: &str = "conductor-operation 0707/11";
 
@@ -94,23 +97,18 @@ fn a_comment_without_the_marker_is_no_canvas() {
 }
 
 #[test]
-fn a_marked_comment_whose_name_or_data_doesnt_parse_is_a_stray()
+fn a_marked_comment_whose_name_doesnt_parse_or_whose_marker_doesnt_close_is_a_stray()
 -> Result<(), String> {
     let good = written("devbox·claude")?;
-    let data = good.find("```json").ok_or("no data")?;
     assert_eq!(
         [
             read(&good.replace("name: design", "name: Design Tree")),
             read(&good.replace("name: design\n", "")),
-            read(&good[..data]),
-            read(&good.replace("\"title\"", "title")),
             read(&good.replace("\n-->\n", "\n")),
         ],
         [
             Some(Read::Stray(StrayReason::Unnamed)),
             Some(Read::Stray(StrayReason::Unnamed)),
-            Some(Read::Stray(StrayReason::Unreadable)),
-            Some(Read::Stray(StrayReason::Unreadable)),
             Some(Read::Stray(StrayReason::Unreadable)),
         ]
     );
@@ -118,16 +116,27 @@ fn a_marked_comment_whose_name_or_data_doesnt_parse_is_a_stray()
 }
 
 #[test]
-fn marked_data_that_isnt_a_canvas_is_a_broken_canvas_of_its_name()
+fn a_marked_comment_of_a_readable_name_is_that_canvas_broken_when_its_data_or_signer_doesnt_read()
 -> Result<(), String> {
     let good = written("devbox·claude")?;
+    let data = good.find("<details>").ok_or("no data")?;
     let (head, _) = good.split_once("```json\n").ok_or("no data")?;
-    let broken = format!("{head}```json\n{{}}\n```\n\n</details>\n");
-    assert!(matches!(
-        read(&broken),
-        Some(Read::Canvas { name: named, canvas: Err(CanvasError::Json { .. }), .. })
-            if named == name("design")?
-    ));
+    let broken = |text: &str| {
+        matches!(
+            read(text),
+            Some(Read::Canvas { name: named, canvas: Err(CanvasError::Json { .. }), .. })
+                if name("design").is_ok_and(|design| named == design)
+        )
+    };
+    assert_eq!(
+        [
+            broken(&good[..data]),
+            broken(&format!("{head}```json\n{{}}\n```\n\n</details>\n")),
+            broken(&good.replace("\"title\"", "title")),
+            broken(&good.replace("by: \"devbox·claude\"\n", "")),
+        ],
+        [true; 4]
+    );
     Ok(())
 }
 
@@ -145,6 +154,39 @@ fn a_canvas_whose_comment_passes_github_s_limit_fails_with_its_size()
         Err(format!(
             "its comment would be {size} characters, over GitHub's limit of 65536: split the canvas"
         ))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_put_edits_the_comment_holding_its_name_broken_or_not_and_otherwise_creates_one()
+-> Result<(), String> {
+    let good = written("devbox·claude")?;
+    let data = good.find("<details>").ok_or("no data")?;
+    let on = |id: &str, body: &str| Comment {
+        id: String::from(id),
+        url: format!(
+            "https://github.com/owner/work/issues/1#issuecomment-{id}"
+        ),
+        body: String::from(body),
+        updated: UnixMillis(1),
+    };
+    let body = || String::from("the new comment");
+    let edit = |id: &str| CommentWrite::Edit {
+        comment: String::from(id),
+        body: body(),
+    };
+    assert_eq!(
+        [
+            write(
+                &[on("1", "A note"), on("2", &good)],
+                &name("design")?,
+                body()
+            ),
+            write(&[on("3", &good[..data])], &name("design")?, body()),
+            write(&[on("4", &good)], &name("plan")?, body()),
+        ],
+        [edit("2"), edit("3"), CommentWrite::Create { body: body() }]
     );
     Ok(())
 }

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::fmt;
 
 use home::canvas::{Canvas, CanvasError, CanvasName, Held, Stray, StrayReason};
-use home::issue::{Comment, IssueComment};
+use home::issue::{Comment, CommentWrite, IssueComment};
 use home::{IssueId, UnixMillis};
 
 pub const LIMIT: usize = 65_536;
@@ -79,7 +79,21 @@ pub fn marked(comments: Vec<IssueComment>) -> Vec<IssueComment> {
 }
 
 #[must_use]
-pub fn holds(comment: &Comment, name: &CanvasName) -> bool {
+pub fn write(
+    comments: &[Comment],
+    name: &CanvasName,
+    body: String,
+) -> CommentWrite {
+    match comments.iter().find(|comment| holds(comment, name)) {
+        Some(held) => CommentWrite::Edit {
+            comment: held.id.clone(),
+            body,
+        },
+        None => CommentWrite::Create { body },
+    }
+}
+
+fn holds(comment: &Comment, name: &CanvasName) -> bool {
     matches!(read(&comment.body), Some(Read::Canvas { name: held, .. }) if held == *name)
 }
 
@@ -139,16 +153,23 @@ pub fn read(text: &str) -> Option<Read> {
     let kept = rest
         .rsplit_once(DATA)
         .and_then(|(_, data)| data.split_once(FENCE))
-        .map(|(data, _)| data)
-        .filter(|data| serde_json::from_str::<serde_json::Value>(data).is_ok());
-    Some(match (signer, kept) {
-        (Some(by), Some(data)) => Read::Canvas {
-            name,
-            by,
-            canvas: Canvas::parse(data),
-        },
-        _ => Read::Stray(StrayReason::Unreadable),
+        .map(|(data, _)| data);
+    let canvas = match (&signer, kept) {
+        (None, _) => Err(unreadable("its marker names no signer")),
+        (Some(_), None) => Err(unreadable("it holds no canvas data")),
+        (Some(_), Some(data)) => Canvas::parse(data),
+    };
+    Some(Read::Canvas {
+        name,
+        by: signer.unwrap_or_default(),
+        canvas,
     })
+}
+
+fn unreadable(reason: &str) -> CanvasError {
+    CanvasError::Json {
+        reason: String::from(reason),
+    }
 }
 
 fn field<'a>(marker: &'a str, key: &str) -> Option<&'a str> {

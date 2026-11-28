@@ -540,15 +540,13 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
         &canvas.canvas,
     )
     .map_err(|error| error.to_string())?;
-    project_runtime::Registry::default()
-        .project(&project.backends)
-        .posted(
-            &project_runtime::issues::IssueCache::new(
-                data.path(),
-                snapshot.flow()?,
-            ),
-            tracked,
-            home::issue::IssueComment {
+    let selection = project
+        .backends
+        .tracker
+        .as_ref()
+        .ok_or("no tracker selection")?;
+    github_api::CanvasCache::open(data.path(), tracked, selection)?
+        .posted(home::issue::IssueComment {
                 issue: cached.id.clone(),
                 comment: home::issue::Comment {
                     id: String::from("7"),
@@ -558,9 +556,7 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
                     body,
                     updated: UnixMillis(10),
                 },
-            },
-        )
-        .map_err(|error| error.to_string())?;
+            })?;
     let mut stores = project_runtime::tracker::Trackers::new(
         data.path().to_path_buf(),
         Box::new(Memory::default()),

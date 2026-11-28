@@ -1,17 +1,25 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use home::backend::{Capability, CredentialState};
 use home::canvas::{
     Block, Canvas, CanvasFile, CanvasKey, CanvasName, Stray, StrayReason,
 };
+use home::canvas::{Broken, CanvasEntry, Held};
 use home::flow::snapshot::{Inputs, Snapshot};
-use home::issue::ReadFailure;
+use home::issue::{
+    Comment, CommentWrite, IssueListing, ListPage, Lookup, Observation, Page,
+    ReadFailure, SendFailure,
+};
 use home::project::Project;
 use home::{IssueId, ProjectId, UnixMillis};
 use home_files::FolderStore;
-use home_store::{CanvasStore, Memory, StoreError};
+use home_store::{CanvasStore, Memory, Putting, StoreError};
 
-use super::{Connection, Connector, Reader, Trackers};
+use super::{
+    Connection, Connector, Reader, Refreshing, TrackerStore, Trackers,
+};
+use crate::{IssueCompletion, IssueTracker, Registration, SendCompletion};
 
 const FLOW: &str = include_str!("../../../home/src/flow/test-flow.toml");
 const MARKDOWN: &str = "7w85je";
@@ -223,6 +231,116 @@ fn all_reports_the_strays_of_every_tracker_s_store() -> Result<(), String> {
             stray("projects/7w85je/odd"),
             stray("issues/146#issuecomment-1"),
         ]))
+    );
+    Ok(())
+}
+
+struct Empty;
+
+impl IssueTracker for Empty {
+    fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
+        Box::pin(async { Err(ReadFailure::Unavailable) })
+    }
+
+    fn list(&self, _: ListPage) -> IssueCompletion<'_, Page> {
+        Box::pin(async {
+            Ok(Page {
+                records: Vec::new(),
+                next: None,
+            })
+        })
+    }
+
+    fn comments(&self, _: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
+        Box::pin(async { Err(ReadFailure::Unavailable) })
+    }
+
+    fn write_comment(
+        &self,
+        _: Lookup,
+        _: CommentWrite,
+    ) -> SendCompletion<'_, Comment> {
+        Box::pin(async { Err(SendFailure::Unknown) })
+    }
+}
+
+struct Online(home::backend::Selection);
+
+impl Connector for Online {
+    fn connect(&self) -> Result<Reader, ReadFailure> {
+        Ok(Reader {
+            registration: Registration {
+                selection: self.0.clone(),
+                capabilities: Vec::from([Capability::ReadIssues]),
+                credential: CredentialState::NotRequired,
+            },
+            tracker: Arc::new(Empty),
+        })
+    }
+}
+
+struct RateLimited(Memory);
+
+impl CanvasStore for RateLimited {
+    fn all(&self) -> Result<Held<CanvasKey>, StoreError> {
+        self.0.all()
+    }
+
+    fn list(
+        &self,
+        project: &ProjectId,
+        issue: &IssueId,
+    ) -> Result<Held<Result<CanvasEntry, Broken>>, StoreError> {
+        self.0.list(project, issue)
+    }
+
+    fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
+        self.0.get(key)
+    }
+
+    fn put<'a>(
+        &'a mut self,
+        key: &'a CanvasKey,
+        file: &'a CanvasFile,
+    ) -> Putting<'a> {
+        self.0.put(key, file)
+    }
+}
+
+impl TrackerStore for RateLimited {
+    fn refresh<'a>(&'a self, _: &'a IssueListing) -> Refreshing<'a> {
+        Box::pin(async { Err(ReadFailure::RateLimited) })
+    }
+}
+
+#[tokio::test]
+async fn a_refresh_of_a_tracked_project_refreshes_its_tracker_s_store_and_an_offline_listing_does_not()
+-> Result<(), String> {
+    let scratch = Scratch::new("refresh")?;
+    let mut trackers = Trackers::new(
+        scratch.0.clone(),
+        Box::new(Memory::default()),
+        |_, _, project| {
+            Ok(Connection {
+                canvases: Box::new(RateLimited(Memory::default())),
+                connector: Arc::new(Online(
+                    project.backends.tracker.clone().ok_or("no tracker")?,
+                )),
+            })
+        },
+    );
+    trackers.follow(&home());
+    let tracked = id(TRACKED)?;
+    assert_eq!(
+        (
+            trackers.refresh(&home(), tracked).await?,
+            trackers
+                .listing(&home(), tracked, true)
+                .await?
+                .status
+                .failure,
+        ),
+        (Err(ReadFailure::RateLimited), None)
     );
     Ok(())
 }

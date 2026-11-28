@@ -82,13 +82,6 @@ impl IssueTracker for Script {
     ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
     }
-    fn canvas_comments(
-        &self,
-        _: home::ProjectId,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::IssueComment>>
-    {
-        Box::pin(async { Ok(Vec::new()) })
-    }
     fn write_comment(
         &self,
         _: home::issue::Lookup,
@@ -339,13 +332,6 @@ impl IssueTracker for SlowFirst {
     ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
     }
-    fn canvas_comments(
-        &self,
-        _: home::ProjectId,
-    ) -> project_runtime::IssueCompletion<'_, Vec<home::issue::IssueComment>>
-    {
-        Box::pin(async { Ok(Vec::new()) })
-    }
     fn write_comment(
         &self,
         _: home::issue::Lookup,
@@ -575,90 +561,5 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
         title(theirs.issue(&cache, their_lookup, ReadMode::Cached).await?),
         Some(String::from("in the other project"))
     );
-    Ok(())
-}
-
-struct Commented(Vec<home::issue::IssueComment>);
-
-impl IssueTracker for Commented {
-    fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
-        Box::pin(async { Err(ReadFailure::Unavailable) })
-    }
-    fn list(&self, _: ListPage) -> IssueCompletion<'_, Page> {
-        Box::pin(async {
-            Ok(Page {
-                records: vec![
-                    item("1", "with a canvas")
-                        .map_err(|_| ReadFailure::InvalidResponse)?,
-                ],
-                next: None,
-            })
-        })
-    }
-    fn comments(
-        &self,
-        _: Lookup,
-    ) -> IssueCompletion<'_, Vec<home::issue::Comment>> {
-        Box::pin(async { Err(ReadFailure::Unavailable) })
-    }
-    fn canvas_comments(
-        &self,
-        _: ProjectId,
-    ) -> IssueCompletion<'_, Vec<home::issue::IssueComment>> {
-        let comments = self.0.clone();
-        Box::pin(async move { Ok(comments) })
-    }
-    fn write_comment(
-        &self,
-        _: Lookup,
-        _: home::issue::CommentWrite,
-    ) -> project_runtime::SendCompletion<'_, home::issue::Comment> {
-        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
-    }
-}
-
-fn on(
-    issue: &str,
-    id: &str,
-    body: &str,
-) -> Result<home::issue::IssueComment, Box<dyn Error>> {
-    Ok(home::issue::IssueComment {
-        issue: IssueId::new(issue).ok_or("fixture identity")?,
-        comment: home::issue::Comment {
-            id: id.into(),
-            url: format!(
-                "https://github.com/owner/work/issues/{issue}#issuecomment-{id}"
-            ),
-            body: body.into(),
-            updated: UnixMillis(20),
-        },
-    })
-}
-
-#[tokio::test]
-async fn a_refresh_caches_the_canvas_comments_of_the_listed_issues_for_offline_reads()
--> Result<(), Box<dyn Error>> {
-    let dir = tempfile::tempdir()?;
-    let flow =
-        home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
-    let cache = IssueCache::new(dir.path(), &flow);
-    let listed = on("1", "11", "a canvas")?;
-    let adapter = Arc::new(Commented(vec![
-        listed.clone(),
-        on("7", "71", "a pull request's")?,
-    ]));
-    let (registry, backends) = setup(adapter, "example")?;
-    registry
-        .project(&backends)
-        .issues(&cache, project(), ReadMode::Refresh)
-        .await?;
-    let offline = Registry::default();
-    let kept = offline.project(&backends);
-    assert_eq!(kept.canvas_comments(&cache, project())?, [listed]);
-    let edited = on("1", "11", "the canvas again")?;
-    let added = on("1", "12", "another canvas")?;
-    kept.posted(&cache, project(), edited.clone())?;
-    kept.posted(&cache, project(), added.clone())?;
-    assert_eq!(kept.canvas_comments(&cache, project())?, [edited, added]);
     Ok(())
 }
