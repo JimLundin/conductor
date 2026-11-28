@@ -913,7 +913,7 @@ pub fn plan(
             id,
             changes,
         } => {
-            crate::issue::storage::writable(home, *project)?;
+            crate::tracker::writable(home, *project)?;
             let observation =
                 home.observation(*project, id).ok_or_else(|| {
                     home.graph()

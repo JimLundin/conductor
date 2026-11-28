@@ -26,13 +26,13 @@ use home::{
     IssueId, IssueKey, ProjectId, UnixSecs,
 };
 use home::{Found, Stored};
-use home_store::{CanvasStore, Keeper, Kept, Stores};
+use home_store::{CanvasStore, Kept};
 use host::registry::InHome;
 use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
 use link::CommandResult;
 use link::log::Completion;
-use project_runtime::issues::cached;
+use project_runtime::tracker::{Connect, Trackers};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::sync::{mpsc, oneshot, watch};
@@ -51,7 +51,7 @@ pub struct Homing {
     pub roots: Vec<PathBuf>,
     pub user: Option<PathBuf>,
     pub canvases: Kept,
-    pub trackers: Keeper,
+    pub connect: Connect,
 }
 
 #[derive(Debug, Clone)]
@@ -305,8 +305,7 @@ struct Actor {
     shown: watch::Sender<Option<Home>>,
     user: Option<PathBuf>,
     skills_commit: Option<String>,
-    canvases: Stores,
-    trackers: Keeper,
+    trackers: Trackers,
     listed: BTreeMap<IssueKey, Vec<CanvasEntry>>,
 }
 
@@ -319,7 +318,7 @@ impl Actor {
             roots,
             user,
             canvases,
-            trackers,
+            connect,
         } = homing;
         let stored_at = data_dir.join("home.state");
         let stored: Stored = load(&stored_at);
@@ -328,8 +327,7 @@ impl Actor {
         let _ = std::fs::create_dir_all(&clones);
         Self {
             clone: clone_of(&data_dir),
-            canvases: Stores::new(canvases),
-            trackers,
+            trackers: Trackers::new(data_dir.clone(), canvases, connect),
             listed: BTreeMap::new(),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
@@ -483,7 +481,7 @@ impl Actor {
     }
 
     async fn canvas(&self, issue: IssueKey, name: CanvasName) -> HomeResult {
-        let looked = match cached(&self.data_dir, &self.home, &issue).await {
+        let looked = match self.trackers.look(&self.home, &issue).await {
             Ok(looked) => looked,
             Err(reason) => {
                 return HomeResult::Refused(HomeRefusal::CanvasUnavailable {
@@ -498,7 +496,7 @@ impl Actor {
             name,
         )
         .map_or_else(HomeResult::Refused, |key| {
-            link::serve::kept_canvas(self.canvases.get(&key))
+            link::serve::kept_canvas(self.trackers.get(&key))
         })
     }
 
@@ -931,7 +929,7 @@ impl Actor {
 
     async fn scan(&mut self) {
         self.reread();
-        self.listed = listed(&self.data_dir, &self.home, &self.canvases).await;
+        self.listed = listed(&self.home, &self.trackers).await;
         self.home.problems().iter().for_each(|problem| {
             tracing::warn!(target: "home", %problem, "read the home without it");
         });
@@ -959,8 +957,7 @@ impl Actor {
 
     fn reread(&mut self) {
         self.home = home_files::read(&self.clone).snapshot;
-        self.canvases
-            .follow(&self.data_dir, &self.home, self.trackers);
+        self.trackers.follow(&self.home);
     }
 
     fn publish(&self) {
@@ -985,18 +982,17 @@ impl Actor {
 }
 
 async fn listed(
-    data: &Path,
     home: &Snapshot,
-    store: &(dyn CanvasStore + Send + core::marker::Sync),
+    trackers: &Trackers,
 ) -> BTreeMap<IssueKey, Vec<CanvasEntry>> {
-    let kept = store.all().unwrap_or_else(|error| {
+    let kept = trackers.all().unwrap_or_else(|error| {
         tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
         Held::default()
     });
     let resolver = Resolver::new(Mode::Offline);
     let mut listed = BTreeMap::new();
     for issue in home.canvased(&kept.canvases) {
-        let read = cached(data, home, &issue).await.inspect_err(|error| {
+        let read = trackers.look(home, &issue).await.inspect_err(|error| {
             tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
         });
         let found = read.ok().and_then(|looked| {
@@ -1004,7 +1000,7 @@ async fn listed(
                 .step(&named(home, issue.project), &issue, looked)
                 .ok()
         });
-        if let Some(canvases) = found.and_then(|_| entries(store, &issue)) {
+        if let Some(canvases) = found.and_then(|_| entries(trackers, &issue)) {
             listed.insert(issue, canvases);
         }
     }
@@ -1705,7 +1701,7 @@ mod tests {
                 roots: Vec::new(),
                 user: None,
                 canvases: Box::new(store),
-                trackers: |_, _, _| None,
+                connect: |_, _, _| Err(String::from("no tracker")),
             },
             shown,
         );
@@ -1819,7 +1815,7 @@ mod tests {
                 roots: Vec::new(),
                 user: None,
                 canvases: Box::new(Memory::default()),
-                trackers: |_, _, _| None,
+                connect: |_, _, _| Err(String::from("no tracker")),
             },
             shown,
         );

@@ -11,6 +11,7 @@ An issue ID is a string unique within its tracker, such as a Markdown slug or a 
 
 ## Consequences
 
+- One selection, `project_runtime::tracker::Trackers`, picks each project's tracker from its configuration. The lookup, the refresh, the listing, the canvas store and the commit all go through it. A configured tracker that can't be built fails each command on its project and names the reason, and its canvases never go to the home folder.
 - A GitHub canvas write is a tracker write. It follows the backend contract of spec 0v265ymj: re-read before writing, an operation marker in a created comment, and no blind retry. So it needs GitHub to be reachable.
 - GitHub caps a comment at 65,536 characters, so a canvas larger than that fails with a clear error.
 - The `IssueId` type loses its authority and local slug, and the separate `#42` reference goes. Every command takes `<project> <id>`.

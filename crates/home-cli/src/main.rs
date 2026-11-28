@@ -12,9 +12,8 @@ use home::flow::command::{
     Asked, Command, Context, Fetched, Given, Need, Source, Wanted, asked,
     homeless, run,
 };
-use home::issue::storage::File;
+use home::issue::storage::{File, ReadHome};
 use home::{Draws, UnixMillis};
-use home_files::FolderStore;
 use home_store::{CanvasStore, StoreError};
 
 mod local;
@@ -48,17 +47,26 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     let fresh = fresh(snapshot, context.now.secs(), &draws());
     match asked(args, snapshot, fresh) {
         Asked::Local(local) => local::run(home, local, snapshot),
-        Asked::Flow(command) => {
-            let data = command.data().map(PathBuf::from);
-            let mut trackers = Trackers::new(home, loaded, data);
-            issues(home, &mut trackers, command, &context)
-        }
+        Asked::Flow(command) => tracked(home, loaded, command, &context),
+    }
+}
+
+fn tracked(
+    home: &Path,
+    loaded: ReadHome,
+    command: Command,
+    context: &Context,
+) -> (String, u8) {
+    let data = command.data().map(PathBuf::from);
+    match Trackers::new(home, loaded, data, resolve::connect) {
+        Ok(mut trackers) => issues(home, &mut trackers, command, context),
+        Err(reason) => (format!("home: {reason}\n"), 1),
     }
 }
 
 fn issues(
     home: &Path,
-    trackers: &mut Trackers<'_>,
+    trackers: &mut Trackers,
     asked: Command,
     context: &Context,
 ) -> (String, u8) {
@@ -81,15 +89,8 @@ fn issues(
             save(home, &file).map(|()| file.path())
         })
         .collect::<Result<Vec<String>, String>>();
-    let kept: Vec<String> = outcome
-        .canvases
-        .iter()
-        .filter(|canvas| trackers.keeps(canvas.key.project))
-        .map(|canvas| FolderStore::place(&canvas.key))
-        .collect();
     let saved = written.and_then(|mut paths| {
-        trackers.put(&outcome.canvases)?;
-        paths.extend(kept);
+        paths.extend(trackers.put(&outcome.canvases)?);
         committed(home, &paths, outcome.message.as_deref(), context)
     });
     outcome.ended(saved)
@@ -227,15 +228,26 @@ fn save(root: &Path, write: &File) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use home::ProjectId;
+    use std::sync::Arc;
+
     use home::canvas::{Stray, StrayReason};
     use home::flow::command::{Asked, asked};
+    use home::issue::ReadFailure;
     use home::issue::storage::fresh;
     use home_store::Memory;
+    use project_runtime::tracker::{Connection, Connector, Reader};
 
     use super::resolve::Trackers;
 
     const FLOW: &str = include_str!("../../home/src/flow/test-flow.toml");
+
+    struct Offline;
+
+    impl Connector for Offline {
+        fn connect(&self) -> Result<Reader, ReadFailure> {
+            Err(ReadFailure::Unavailable)
+        }
+    }
 
     #[test]
     fn check_reports_a_stray_from_a_tracker_s_store_as_an_error()
@@ -250,16 +262,6 @@ mod tests {
             project.join("project.toml"),
             "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
         )?;
-        let tracked = ProjectId::parse("hyn162").ok_or("project")?;
-        let mut github = Memory::default();
-        github.stray(
-            tracked,
-            None,
-            Stray {
-                place: String::from("issues/146#issuecomment-7"),
-                reason: StrayReason::Unnamed,
-            },
-        );
         let loaded = home_files::read(&root);
         let context = super::context();
         let fresh =
@@ -269,8 +271,22 @@ mod tests {
         else {
             return Err("check isn't a flow command".into());
         };
-        let mut trackers = Trackers::new(&root, loaded, None);
-        trackers.stores_mut().track(tracked, Box::new(github));
+        let mut trackers =
+            Trackers::new(&root, loaded, None, |_, _, project| {
+                let mut github = Memory::default();
+                github.stray(
+                    project.id,
+                    None,
+                    Stray {
+                        place: String::from("issues/146#issuecomment-7"),
+                        reason: StrayReason::Unnamed,
+                    },
+                );
+                Ok(Connection {
+                    canvases: Box::new(github),
+                    connector: Arc::new(Offline),
+                })
+            })?;
         let (said, code) =
             super::issues(&root, &mut trackers, command, &context);
         std::fs::remove_dir_all(&root)?;
@@ -281,6 +297,74 @@ mod tests {
             "{said}"
         );
         assert_eq!(code, 1, "{said}");
+        Ok(())
+    }
+
+    #[test]
+    fn a_tracker_whose_mapping_fails_to_load_fails_every_canvas_command_naming_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = std::env::temp_dir()
+            .join(format!("home-unmapped-{}", std::process::id()));
+        let project = root.join("projects/hyn162");
+        std::fs::create_dir_all(&project)?;
+        std::fs::create_dir_all(root.join("docs/agents"))?;
+        std::fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+        std::fs::write(
+            project.join("project.toml"),
+            "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\noptions = 'colour = \"blue\"'\n",
+        )?;
+        let canvas = root.join("design.json");
+        std::fs::write(
+            &canvas,
+            "{\"title\":\"Kept by its tracker\",\"blocks\":[{\"kind\":\"prose\",\"text\":\"The tracker keeps it.\"}]}",
+        )?;
+        let file = canvas.to_string_lossy().into_owned();
+        let said = [
+            Vec::from([
+                "canvas",
+                "put",
+                "standards",
+                "146",
+                "design",
+                "--file",
+                &file,
+            ]),
+            Vec::from(["canvas", "show", "standards", "146", "design"]),
+            Vec::from(["canvas", "show", "standards", "146"]),
+        ]
+        .map(|words| {
+            let args: Vec<String> =
+                words.into_iter().map(String::from).collect();
+            let loaded = home_files::read(&root);
+            let context = super::context();
+            let fresh =
+                fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
+            let Asked::Flow(command) = asked(&args, &loaded.snapshot, fresh)
+            else {
+                return (String::from("not a flow command"), 0);
+            };
+            Trackers::new(
+                &root,
+                loaded,
+                Some(root.join("data")),
+                super::resolve::connect,
+            )
+            .map_or_else(
+                |reason| (reason, 1),
+                |mut trackers| {
+                    super::issues(&root, &mut trackers, command, &context)
+                },
+            )
+        });
+        let kept = std::fs::read_dir(&project)?
+            .map(|found| found.map(|entry| entry.file_name()))
+            .collect::<Result<Vec<_>, _>>()?;
+        std::fs::remove_dir_all(&root)?;
+        for (text, code) in &said {
+            assert!(text.contains("unknown field `colour`"), "{text}");
+            assert_eq!(*code, 1, "{text}");
+        }
+        assert_eq!(kept, Vec::from([std::ffi::OsString::from("project.toml")]));
         Ok(())
     }
 

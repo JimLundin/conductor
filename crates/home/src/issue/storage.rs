@@ -185,30 +185,12 @@ impl Inputs {
     }
 }
 
-pub fn writable(home: &Snapshot, project: ProjectId) -> Result<(), String> {
-    let selected = home
-        .projects()
-        .iter()
-        .find(|known| known.id == project)
-        .ok_or_else(|| {
-            String::from(
-                "local issue writes require a valid project configuration",
-            )
-        })?;
-    if selected.backends.tracker.is_some() {
-        return Err(String::from(
-            "edit this issue in the configured tracker; local issue writes are disabled for this project",
-        ));
-    }
-    Ok(())
-}
-
 impl ReadHome {
     pub fn encode(
         &self,
         change: &crate::flow::command::Change,
     ) -> Result<File, String> {
-        writable(&self.snapshot, change.observation.project())?;
+        crate::tracker::writable(&self.snapshot, change.observation.project())?;
         let document = self
             .documents
             .iter()

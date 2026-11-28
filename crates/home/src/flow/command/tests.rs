@@ -2320,9 +2320,10 @@ fn resolved_by(
     given: Option<&Given>,
 ) -> Resolved {
     let on_tracker = |project: ProjectId| {
-        home.projects().iter().any(|known| {
-            known.id == project && known.backends.tracker.is_some()
-        })
+        matches!(
+            crate::tracker::select(home, project),
+            Some(crate::tracker::Tracker::Configured(_))
+        )
     };
     let mut steps = Resolver::new(asked.mode());
     asked

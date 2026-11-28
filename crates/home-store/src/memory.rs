@@ -6,7 +6,7 @@ use home::canvas::{
 };
 use home::{IssueId, ProjectId};
 
-use crate::{CanvasStore, Putting, StoreError};
+use crate::{CanvasStore, Putting, StoreError, Wrote};
 
 #[derive(Debug, Default)]
 pub struct Memory {
@@ -127,7 +127,7 @@ impl CanvasStore for Memory {
     ) -> Putting<'a> {
         Box::pin(async move {
             self.keep(key, file);
-            Ok(())
+            Ok(Wrote::default())
         })
     }
 }

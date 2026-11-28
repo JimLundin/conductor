@@ -8,7 +8,7 @@ use home::canvas::{
 };
 use home::layout::{self, PROJECTS};
 use home::{IssueId, ProjectId};
-use home_store::{CanvasStore, Putting, StoreError};
+use home_store::{CanvasStore, Putting, StoreError, Wrote};
 
 const SUFFIX: &str = ".json";
 
@@ -32,8 +32,7 @@ impl FolderStore {
         format!("{}/{}", layout::issues(&project), segment(issue))
     }
 
-    #[must_use]
-    pub fn place(key: &CanvasKey) -> String {
+    fn place(key: &CanvasKey) -> String {
         format!(
             "{}/{}{SUFFIX}",
             Self::issue(key.project, &key.issue),
@@ -233,6 +232,9 @@ impl CanvasStore for FolderStore {
                 self.root.join(Self::issue(key.project, &key.issue)),
             )
             .and_then(|()| fs::write(&path, file.encode()))
+            .map(|()| Wrote {
+                home_file: Some(Self::place(key)),
+            })
             .map_err(|error| unavailable(&path, &error))
         })
     }
@@ -338,7 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_canvas_is_kept_as_json_in_its_issue_s_folder_by_name()
+    async fn a_canvas_is_kept_as_json_in_its_issue_s_folder_by_name_which_put_reports()
     -> Result<(), Box<dyn std::error::Error>> {
         let scratch = Scratch::new("canvas-path");
         let file = CanvasFile {
@@ -351,9 +353,13 @@ mod tests {
                 }],
             )?,
         };
-        FolderStore::new(scratch.0.clone())
+        let wrote = FolderStore::new(scratch.0.clone())
             .put(&key("design-tree")?, &file)
             .await?;
+        assert_eq!(
+            wrote.home_file.as_deref(),
+            Some("projects/a1b2c3/issues/0v29xv1q/design-tree.json")
+        );
         let kept = fs::read_to_string(
             scratch
                 .0

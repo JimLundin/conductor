@@ -4,47 +4,81 @@ use std::sync::Arc;
 
 use github::canvas::{self, Found};
 use github::configuration::{Configuration, selected};
-use home::backend::{Backends, CredentialState};
+use home::backend::{Backends, CredentialState, Selection};
 use home::canvas::{Broken, CanvasEntry, CanvasFile, CanvasKey, Held};
 use home::flow::Flow;
 use home::flow::snapshot::Snapshot;
-use home::issue::{CommentRequest, CommentWrite, IssueComment, Lookup};
+use home::issue::{
+    CommentRequest, CommentWrite, IssueComment, Lookup, ReadFailure,
+};
 use home::project::Project;
 use home::{IssueId, ProjectId};
-use home_store::{CanvasStore, Kept, Putting, StoreError};
+use home_store::{CanvasStore, Putting, StoreError, Wrote};
 use project_runtime::issues::IssueCache;
 use project_runtime::operations::Operations;
+use project_runtime::tracker::{Connection, Connector, Reader};
 use project_runtime::{Registration, Registry};
 
 use crate::{FleetResolver, HostCredentials};
+
+pub struct Github {
+    selection: Selection,
+    flow: Flow,
+    mapping: Configuration,
+    credentials: HostCredentials,
+    endpoint: String,
+}
+
+impl Connector for Github {
+    fn connect(&self) -> Result<Reader, ReadFailure> {
+        let reader = self
+            .credentials
+            .connect_at(&self.selection, &self.endpoint)
+            .map_err(crate::read_failure)?
+            .tracker(self.flow.clone(), self.mapping.clone());
+        Ok(Reader {
+            registration: Registration {
+                selection: self.selection.clone(),
+                capabilities: reader.capabilities(),
+                credential: CredentialState::Available,
+            },
+            tracker: Arc::new(reader),
+        })
+    }
+}
 
 pub struct Canvases {
     data: PathBuf,
     project: ProjectId,
     backends: Backends,
-    flow: Flow,
-    config: Configuration,
-    credentials: HostCredentials,
-    endpoint: String,
+    github: Arc<Github>,
 }
 
-#[must_use]
-pub fn canvases(
+pub fn connect(
     data: &Path,
     home: &Snapshot,
     project: &Project,
     resolver: FleetResolver,
-) -> Option<Kept> {
-    let tracker = selected(home, &project.name).ok()?.tracker?;
-    Some(Box::new(Canvases {
-        data: data.to_path_buf(),
-        project: project.id,
-        backends: project.backends.clone(),
+) -> Result<Connection, String> {
+    let tracker = selected(home, &project.name)?
+        .tracker
+        .ok_or_else(|| String::from("its adapter isn't GitHub"))?;
+    let github = Arc::new(Github {
+        selection: tracker.selection.clone(),
         flow: tracker.flow.clone(),
-        config: tracker.mapping,
+        mapping: tracker.mapping,
         credentials: HostCredentials::with_fleet(data, resolver),
         endpoint: String::from(github::mapping::AUTHORITY),
-    }))
+    });
+    Ok(Connection {
+        canvases: Box::new(Canvases {
+            data: data.to_path_buf(),
+            project: project.id,
+            backends: project.backends.clone(),
+            github: Arc::clone(&github),
+        }),
+        connector: github,
+    })
 }
 
 impl Canvases {
@@ -56,20 +90,27 @@ impl Canvases {
         flow: Flow,
         endpoint: &str,
     ) -> Result<Self, String> {
-        let config = github::configuration::load("", &flow)?;
+        let selection = backends
+            .tracker
+            .clone()
+            .ok_or_else(|| String::from("the project has no tracker"))?;
+        let mapping = github::configuration::load("", &flow)?;
         Ok(Self {
             data: data.to_path_buf(),
             project,
             backends,
-            flow,
-            config,
-            credentials: HostCredentials::new(data),
-            endpoint: String::from(endpoint),
+            github: Arc::new(Github {
+                selection,
+                flow,
+                mapping,
+                credentials: HostCredentials::new(data),
+                endpoint: String::from(endpoint),
+            }),
         })
     }
 
     fn cache(&self) -> IssueCache<'_> {
-        IssueCache::new(&self.data, &self.flow)
+        IssueCache::new(&self.data, &self.github.flow)
     }
 
     fn found(
@@ -104,26 +145,10 @@ impl Canvases {
             key: key.clone(),
             reason: too_long.to_string(),
         })?;
-        let selection = self
-            .backends
-            .tracker
-            .as_ref()
-            .ok_or_else(|| unavailable("the project has no tracker"))?;
-        let reader = self
-            .credentials
-            .connect_at(selection, &self.endpoint)
-            .map_err(|error| unavailable(crate::read_failure(error)))?
-            .tracker(self.flow.clone(), self.config.clone());
+        let reader = self.github.connect().map_err(unavailable)?;
         let mut registry = Registry::default();
         registry
-            .register_tracker(
-                Registration {
-                    selection: selection.clone(),
-                    capabilities: reader.capabilities(),
-                    credential: CredentialState::Available,
-                },
-                Arc::new(reader),
-            )
+            .register_tracker(reader.registration, reader.tracker)
             .map_err(|refusal| unavailable(refusal.label()))?;
         let project = registry.project(&self.backends);
         let issue = Lookup {
@@ -238,6 +263,8 @@ impl CanvasStore for Canvases {
         key: &'a CanvasKey,
         file: &'a CanvasFile,
     ) -> Putting<'a> {
-        Box::pin(self.write(key, file))
+        Box::pin(async move {
+            self.write(key, file).await.map(|()| Wrote::default())
+        })
     }
 }

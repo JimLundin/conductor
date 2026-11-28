@@ -11,7 +11,7 @@ use home::canvas::{
 use home::flow::Flow;
 use home::issue::ReadMode;
 use home::{IssueId, ProjectId, UnixMillis};
-use home_store::{CanvasStore, Memory, Plant, StoreError, Stores};
+use home_store::{CanvasStore, Plant, Putting, StoreError};
 use http_body_util::{BodyExt as _, Full};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
@@ -474,13 +474,67 @@ async fn unnamed(github: &Github, issue: &IssueId) -> anyhow::Result<String> {
         .await
 }
 
+struct Repositories {
+    alpha: Canvases,
+    beta: Canvases,
+}
+
+impl Repositories {
+    fn of(&self, project: ProjectId) -> &Canvases {
+        if project == ALPHA {
+            &self.alpha
+        } else {
+            &self.beta
+        }
+    }
+}
+
+impl CanvasStore for Repositories {
+    fn all(&self) -> Result<home::canvas::Held<CanvasKey>, StoreError> {
+        let mut held = self.alpha.all()?;
+        let beta = self.beta.all()?;
+        held.canvases.extend(beta.canvases);
+        held.strays.extend(beta.strays);
+        held.canvases.sort();
+        Ok(held)
+    }
+
+    fn list(
+        &self,
+        project: &ProjectId,
+        issue: &IssueId,
+    ) -> Result<
+        home::canvas::Held<Result<CanvasEntry, home::canvas::Broken>>,
+        StoreError,
+    > {
+        self.of(*project).list(project, issue)
+    }
+
+    fn get(&self, key: &CanvasKey) -> Result<Option<CanvasFile>, StoreError> {
+        self.of(key.project).get(key)
+    }
+
+    fn put<'a>(
+        &'a mut self,
+        key: &'a CanvasKey,
+        file: &'a CanvasFile,
+    ) -> Putting<'a> {
+        if key.project == ALPHA {
+            self.alpha.put(key, file)
+        } else {
+            self.beta.put(key, file)
+        }
+    }
+}
+
 #[tokio::test]
 async fn github_s_store_keeps_the_store_contract() -> anyhow::Result<()> {
     let github = Github::start().await?;
     let host = Host::new()?;
-    let mut stores = Stores::new(Box::new(Memory::default()));
-    stores.track(ALPHA, Box::new(host.store(ALPHA, "alpha", &github)?));
-    stores.track(BETA, Box::new(host.store(BETA, "beta", &github)?));
+    let mut stores = Repositories {
+        alpha: host.store(ALPHA, "alpha", &github)?,
+        beta: host.store(BETA, "beta", &github)?,
+    };
     let kept = home_store::contract(
         &mut stores,
         async |_, key| {

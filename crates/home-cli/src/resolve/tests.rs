@@ -5,11 +5,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use home::ProjectId;
-use home::backend::{Capability, CredentialState};
+use home::backend::{Capability, CredentialState, Selection};
+use home::flow::snapshot::Snapshot;
 use home::issue::{
     ListPage, Locator, Lookup, Observation, Page, ReadFailure, Unreadable,
 };
+use home::project::Project;
 use home::{IssueId, UnixMillis};
+use home_store::Memory;
+use project_runtime::tracker::{Connection, Connector, Reader};
 use project_runtime::{IssueCompletion, IssueTracker, Registration};
 
 use super::Trackers;
@@ -62,13 +66,48 @@ impl IssueTracker for Github {
     }
 }
 
+struct Scripted {
+    selection: Selection,
+    project: ProjectId,
+}
+
+impl Connector for Scripted {
+    fn connect(&self) -> Result<Reader, ReadFailure> {
+        Ok(Reader {
+            registration: Registration {
+                selection: self.selection.clone(),
+                capabilities: Vec::from([Capability::ReadIssues]),
+                credential: CredentialState::NotRequired,
+            },
+            tracker: Arc::new(Github(
+                tracked(self.project)
+                    .map_err(|_| ReadFailure::InvalidResponse)?,
+            )),
+        })
+    }
+}
+
+fn scripted(
+    _: &Path,
+    _: &Snapshot,
+    project: &Project,
+) -> Result<Connection, String> {
+    Ok(Connection {
+        canvases: Box::new(Memory::default()),
+        connector: Arc::new(Scripted {
+            selection: project.backends.tracker.clone().ok_or("no tracker")?,
+            project: project.id,
+        }),
+    })
+}
+
 fn project(root: &Path, id: &str, text: &str) -> std::io::Result<()> {
     let folder = root.join("projects").join(id);
     fs::create_dir_all(folder.join("issues"))?;
     fs::write(folder.join("project.toml"), text)
 }
 
-fn tracked(project: ProjectId) -> Result<Observation, Box<dyn Error>> {
+fn tracked(project: ProjectId) -> Result<Observation, String> {
     let mut record = Observation::invalid(Unreadable {
         id: IssueId::new("146").ok_or("id")?,
         project,
@@ -123,29 +162,12 @@ fn issue_list_lists_a_markdown_project_and_a_tracker_project_in_one_shape()
     let loaded = home_files::read(root);
     let markdown = ProjectId::parse(MARKDOWN).ok_or("project")?;
     let github = ProjectId::parse(TRACKED).ok_or("project")?;
-    let selection = loaded
-        .snapshot
-        .projects()
-        .iter()
-        .find(|known| known.id == github)
-        .and_then(|known| known.backends.tracker.clone())
-        .ok_or("tracker")?;
-    let mut trackers = Trackers::new(root, loaded, Some(root.join("data")));
-    trackers
-        .registry
-        .register_tracker(
-            Registration {
-                selection,
-                capabilities: Vec::from([Capability::ReadIssues]),
-                credential: CredentialState::NotRequired,
-            },
-            Arc::new(Github(tracked(github)?)),
-        )
-        .map_err(|refusal| refusal.label())?;
+    let trackers =
+        Trackers::new(root, loaded, Some(root.join("data")), scripted)?;
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let mut listed = |project| {
+    let listed = |project| {
         runtime
             .block_on(trackers.listing(project, false))
             .and_then(|listing| {

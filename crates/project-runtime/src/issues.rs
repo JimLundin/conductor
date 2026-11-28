@@ -1,12 +1,11 @@
 mod store;
 
-use super::{Project, Registry};
-use home::flow::snapshot::Snapshot;
+use super::Project;
 use home::issue::{
     IssueComment, IssueListing, IssueReading, ListPage, Lookup, ReadFailure,
     ReadMode, cache::Scan,
 };
-use home::{IssueKey, ProjectId, UnixMillis, backend::Refusal, flow::Flow};
+use home::{ProjectId, UnixMillis, backend::Refusal, flow::Flow};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use store::Scope;
@@ -29,28 +28,6 @@ impl<'a> IssueCache<'a> {
     pub const fn new(data: &'a Path, flow: &'a Flow) -> Self {
         Self { data, flow }
     }
-}
-
-pub async fn cached(
-    data: &Path,
-    home: &Snapshot,
-    key: &IssueKey,
-) -> Result<IssueReading, String> {
-    let Some(project) = home.projects().iter().find(|known| {
-        known.id == key.project && known.backends.tracker.is_some()
-    }) else {
-        return Ok(home.reading(key));
-    };
-    let cache = IssueCache::new(data, home.flow()?);
-    let lookup = Lookup {
-        project: key.project,
-        id: key.id.clone(),
-    };
-    Registry::default()
-        .project(&project.backends)
-        .issue(&cache, lookup, ReadMode::Cached)
-        .await
-        .map_err(|error| error.to_string())
 }
 
 fn now() -> Result<UnixMillis, CacheError> {

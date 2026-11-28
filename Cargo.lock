@@ -4060,6 +4060,8 @@ dependencies = [
  "directories",
  "getrandom 0.4.3",
  "home",
+ "home-files",
+ "home-store",
  "postcard",
  "redb",
  "secrecy",

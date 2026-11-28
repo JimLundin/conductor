@@ -15,7 +15,7 @@ use home::{
     Found, Home, HomeCommand, HomeRefusal, HomeResult, IssueId, IssueKey,
     ProjectId, UnixMillis,
 };
-use home_store::{CanvasStore, Memory, StoreError, Stores};
+use home_store::{CanvasStore, Memory, StoreError};
 use host::fleet::{DeviceHello, Identity, Role, Signed};
 use host::log::{Epoch, HostSeq};
 use host::registry::{InstanceCommand, InstanceId};
@@ -561,10 +561,12 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
             },
         )
         .map_err(|error| error.to_string())?;
-    let mut stores = Stores::new(Box::new(Memory::default()));
-    stores.follow(data.path(), &snapshot, |at, home, project| {
-        github_api::canvases(at, home, project, unshared)
-    });
+    let mut stores = project_runtime::tracker::Trackers::new(
+        data.path().to_path_buf(),
+        Box::new(Memory::default()),
+        |at, home, project| github_api::connect(at, home, project, unshared),
+    );
+    stores.follow(&snapshot);
     let get = |issue: IssueKey,
                reading: IssueReading|
      -> Result<HomeResult, String> {
