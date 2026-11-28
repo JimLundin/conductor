@@ -2,7 +2,7 @@ use core::fmt;
 use core::num::NonZeroU64;
 
 use home::TrackerId;
-use home::tracker::{Issuer, Issuers};
+use home::tracker::Issuer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct IssueNumber(NonZeroU64);
@@ -37,8 +37,6 @@ impl fmt::Display for IssueNumber {
 }
 
 pub const ISSUER: Issuer = Issuer::of::<IssueNumber>(crate::ADAPTER);
-
-pub const ISSUERS: Issuers = Issuers::new(&[ISSUER]);
 
 #[cfg(test)]
 mod tests {

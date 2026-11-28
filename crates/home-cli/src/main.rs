@@ -44,7 +44,7 @@ fn answered(home: &Path, args: &[String]) -> (String, u8) {
     {
         return answer;
     }
-    let loaded = home_files::read(home, github::ISSUERS);
+    let loaded = home_files::read(home, adapters::ISSUERS);
     let snapshot = &loaded.snapshot;
     let context = context();
     let fresh = fresh(snapshot, context.now.secs(), &draws());
@@ -61,7 +61,7 @@ fn tracked(
     context: &Context,
 ) -> (String, u8) {
     let data = command.data().map(PathBuf::from);
-    match Trackers::new(home, loaded, data, resolve::connect) {
+    match Trackers::new(home, loaded, data, crate::resolve::connect) {
         Ok(mut trackers) => issues(home, &mut trackers, command, context),
         Err(reason) => (format!("home: {reason}\n"), 1),
     }
@@ -364,7 +364,7 @@ mod tests {
             project.join("project.toml"),
             "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
         )?;
-        let loaded = home_files::read(&root, github::ISSUERS);
+        let loaded = home_files::read(&root, adapters::ISSUERS);
         let context = super::context();
         let fresh =
             fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
@@ -437,7 +437,7 @@ mod tests {
         .map(|words| {
             let args: Vec<String> =
                 words.into_iter().map(String::from).collect();
-            let loaded = home_files::read(&root, github::ISSUERS);
+            let loaded = home_files::read(&root, adapters::ISSUERS);
             let context = super::context();
             let fresh =
                 fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
@@ -449,7 +449,7 @@ mod tests {
                 &root,
                 loaded,
                 Some(root.join("data")),
-                super::resolve::connect,
+                crate::resolve::connect,
             )
             .map_or_else(
                 |reason| (reason, 1),
@@ -483,7 +483,7 @@ mod tests {
             project.join("project.toml"),
             "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
         )?;
-        let loaded = home_files::read(&root, github::ISSUERS);
+        let loaded = home_files::read(&root, adapters::ISSUERS);
         let context = super::context();
         let fresh =
             fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);

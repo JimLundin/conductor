@@ -76,7 +76,7 @@ fn home() -> Snapshot {
         ])),
         issues: Vec::new(),
         unread: Vec::new(),
-        issuers: github::ISSUERS,
+        issuers: home::tracker::Issuers::new(&[github::ISSUER]),
     })
 }
 

@@ -13,6 +13,7 @@ name = "home"
 path = "src/main.rs"
 
 [dependencies]
+adapters = { path = "../adapters" }
 daemon = { path = "../daemon" }
 vcs-git2 = { path = "../vcs-git2" }
 serde_json.workspace = true

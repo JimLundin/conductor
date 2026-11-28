@@ -249,7 +249,7 @@ fn a_fresh_issue_show_of_a_cached_issue_reads_it_and_never_lists_its_tracker()
     let data = Some(root.join("data"));
     let listing = Trackers::new(
         root,
-        home_files::read(root, github::ISSUERS),
+        home_files::read(root, adapters::ISSUERS),
         data.clone(),
         scripted,
     )?;
@@ -259,7 +259,7 @@ fn a_fresh_issue_show_of_a_cached_issue_reads_it_and_never_lists_its_tracker()
         .block_on(listing.listing(github, false))?;
     let trackers = Trackers::new(
         root,
-        home_files::read(root, github::ISSUERS),
+        home_files::read(root, adapters::ISSUERS),
         data,
         reading_only,
     )?;
@@ -310,7 +310,7 @@ fn issue_list_lists_a_markdown_project_and_a_tracker_project_in_one_shape()
         TRACKED,
         "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
     )?;
-    let loaded = home_files::read(root, github::ISSUERS);
+    let loaded = home_files::read(root, adapters::ISSUERS);
     let markdown = ProjectId::parse(MARKDOWN).ok_or("project")?;
     let github = ProjectId::parse(TRACKED).ok_or("project")?;
     let trackers =
@@ -364,7 +364,7 @@ fn a_canvas_put_on_a_tracked_project_needs_no_repository()
     ]
     .map(String::from)
     .into();
-    let loaded = home_files::read(root, github::ISSUERS);
+    let loaded = home_files::read(root, adapters::ISSUERS);
     let context = crate::context();
     let fresh = home::issue::storage::fresh(
         &loaded.snapshot,
@@ -392,7 +392,7 @@ fn check_reports_a_tracker_issue_that_reads_as_invalid()
     use home::flow::command::{Asked, asked};
     let scratch = scratch("check-invalid")?;
     let root = &scratch.0;
-    let loaded = home_files::read(root, github::ISSUERS);
+    let loaded = home_files::read(root, adapters::ISSUERS);
     let context = super::super::context();
     let fresh = home::issue::storage::fresh(
         &loaded.snapshot,

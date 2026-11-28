@@ -180,7 +180,7 @@ fn connect(
     home: &home::flow::snapshot::Snapshot,
     project: &home::project::Project,
 ) -> Result<project_runtime::tracker::Connection, String> {
-    github_api::connect(data, home, project, daemon::fleet::project_credential)
+    adapters::connect(data, home, project, daemon::fleet::project_credential)
 }
 
 #[tokio::main]
@@ -204,7 +204,7 @@ async fn main() -> anyhow::Result<()> {
             );
             let hosting = Hosting {
                 connect,
-                issuers: github::ISSUERS,
+                issuers: adapters::ISSUERS,
                 data_dir: Some(data),
                 name: args.name,
                 web_url: args.web_url,

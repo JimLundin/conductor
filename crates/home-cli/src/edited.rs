@@ -598,7 +598,7 @@ impl Home {
     fn home(&self, words: &[&str]) -> Result<(String, u8), Box<dyn Error>> {
         let args: Vec<String> =
             words.iter().copied().map(String::from).collect();
-        let loaded = home_files::read(&self.root, github::ISSUERS);
+        let loaded = home_files::read(&self.root, adapters::ISSUERS);
         let context = super::context();
         let fresh =
             fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
@@ -905,7 +905,7 @@ fn issue_set_parent_on_a_github_issue_makes_it_a_sub_issue_and_writes_no_footer(
 fn issue_set_parent_to_an_issue_missing_from_a_complete_cached_listing_is_refused()
 -> Result<(), Box<dyn Error>> {
     let home = Home::new("missing-parent", &[], "Words\n")?;
-    let loaded = home_files::read(&home.root, github::ISSUERS);
+    let loaded = home_files::read(&home.root, adapters::ISSUERS);
     let project = loaded.snapshot.project("standards").ok_or("project")?.id;
     let trackers = Trackers::new(
         &home.root,
@@ -1053,7 +1053,7 @@ fn a_create_is_confirmed_by_reading_the_issue_github_made_while_its_listing_lags
 fn issue_set_parent_to_an_issue_opened_after_the_cached_listing_reads_it_from_github()
 -> Result<(), Box<dyn Error>> {
     let home = Home::new("late-parent", &[], "Words\n")?;
-    let loaded = home_files::read(&home.root, github::ISSUERS);
+    let loaded = home_files::read(&home.root, adapters::ISSUERS);
     let project = loaded.snapshot.project("standards").ok_or("project")?.id;
     let trackers = Trackers::new(
         &home.root,

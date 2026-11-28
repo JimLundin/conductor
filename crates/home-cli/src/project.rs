@@ -7,7 +7,7 @@ use project_runtime::tracker::Trackers;
 
 pub fn capabilities(root: &Path, name: &str) -> (String, u8) {
     run(async {
-        let configuration = home_files::configuration(root, github::ISSUERS);
+        let configuration = home_files::configuration(root, adapters::ISSUERS);
         let data = project_runtime::data_dir_or_default(None)
             .map_err(|error| error.to_string())?;
         let mut registry = Registry::default();
@@ -59,7 +59,7 @@ fn describe(
     let mut trackers = Trackers::new(
         data.to_path_buf(),
         Box::new(FolderStore::new(root.to_path_buf())),
-        super::resolve::connect,
+        crate::resolve::connect,
     );
     trackers.follow(configuration);
     let failure = trackers
@@ -136,7 +136,7 @@ mod tests {
             )]),
             issues: Vec::new(),
             unread: Vec::new(),
-            issuers: github::ISSUERS,
+            issuers: adapters::ISSUERS,
         })
     }
 

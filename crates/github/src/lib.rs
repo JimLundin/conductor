@@ -16,4 +16,4 @@ pub mod mapping;
 
 mod number;
 
-pub use number::{ISSUER, ISSUERS, IssueNumber};
+pub use number::{ISSUER, IssueNumber};

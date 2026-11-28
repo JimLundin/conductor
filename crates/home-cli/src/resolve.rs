@@ -8,11 +8,10 @@ use home::flow::resolve::{Missing, Mode, Resolver};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::ReadHome;
 use home::issue::{Freshness, IssueListing, IssueReading, ReadStatus};
-use home::project::Project;
 use home::{IssueKey, ProjectId};
 use home_files::FolderStore;
 use home_store::CanvasStore;
-use project_runtime::tracker::{self, Connect, Connection, Written};
+use project_runtime::tracker::{self, Connect, Written};
 
 pub struct Trackers {
     loaded: ReadHome,
@@ -193,14 +192,6 @@ impl Trackers {
     }
 }
 
-pub fn connect(
-    data: &Path,
-    home: &Snapshot,
-    project: &Project,
-) -> Result<Connection, String> {
-    github_api::connect(data, home, project, daemon::fleet::project_credential)
-}
-
 async fn cataloged(trackers: &tracker::Trackers, home: Snapshot) -> Snapshot {
     let mut held = home.clone();
     for project in home.projects() {
@@ -219,6 +210,14 @@ async fn cataloged(trackers: &tracker::Trackers, home: Snapshot) -> Snapshot {
         held = held.cataloged(project.id, listing);
     }
     held
+}
+
+pub fn connect(
+    data: &Path,
+    home: &Snapshot,
+    project: &home::project::Project,
+) -> Result<tracker::Connection, String> {
+    adapters::connect(data, home, project, daemon::fleet::project_credential)
 }
 
 fn run<F: Future>(future: F) -> Result<F::Output, String> {

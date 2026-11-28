@@ -30,6 +30,11 @@ impl Issuer {
     }
 
     #[must_use]
+    pub const fn adapter(&self) -> &'static str {
+        self.adapter
+    }
+
+    #[must_use]
     pub fn read(&self, text: &str) -> Option<IssueId> {
         (self.read)(text)
     }

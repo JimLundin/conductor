@@ -528,7 +528,11 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
     let root = tempfile::tempdir().map_err(|error| error.to_string())?;
     let data = tempfile::tempdir().map_err(|error| error.to_string())?;
     github_home(root.path())?;
-    let snapshot = home_files::read(root.path(), github::ISSUERS).snapshot;
+    let snapshot = home_files::read(
+        root.path(),
+        home::tracker::Issuers::new(&[github::ISSUER]),
+    )
+    .snapshot;
     let tracked = ProjectId::parse("hyn162").ok_or("project")?;
     let project = snapshot
         .projects()

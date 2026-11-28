@@ -3,6 +3,16 @@
 version = 4
 
 [[package]]
+name = "adapters"
+version = "0.1.0"
+dependencies = [
+ "github",
+ "github-api",
+ "home",
+ "project-runtime",
+]
+
+[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -732,6 +742,7 @@ dependencies = [
 name = "cli"
 version = "0.1.0"
 dependencies = [
+ "adapters",
  "agents",
  "anyhow",
  "clap",
@@ -740,7 +751,6 @@ dependencies = [
  "codex",
  "codex-cli",
  "daemon",
- "github",
  "github-api",
  "home",
  "home-store",
@@ -2014,6 +2024,7 @@ dependencies = [
 name = "home-cli"
 version = "0.1.0"
 dependencies = [
+ "adapters",
  "daemon",
  "getrandom 0.4.3",
  "github",
