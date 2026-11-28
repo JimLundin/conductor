@@ -169,6 +169,7 @@ fn a_put_edits_the_comment_holding_its_name_broken_or_not_and_otherwise_creates_
             "https://github.com/owner/work/issues/1#issuecomment-{id}"
         ),
         body: String::from(body),
+        created: UnixMillis(1),
         updated: UnixMillis(1),
     };
     let body = || String::from("the new comment");

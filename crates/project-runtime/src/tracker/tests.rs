@@ -371,7 +371,7 @@ impl IssueTracker for Empty {
         &self,
         _: home::ProjectId,
         _: home::operations::Handle,
-    ) -> crate::IssueCompletion<'_, Vec<home::issue::Opened>> {
+    ) -> crate::IssueCompletion<'_, home::issue::Openings> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
     }
     fn logged(

@@ -3,8 +3,9 @@ use std::fmt::Write as _;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
+use home::UnixMillis;
 use home::issue::EditId;
-use home::issue::{Comment, NativeIssue, Opened, Relating};
+use home::issue::{Comment, NativeIssue, Openings, Relating};
 use home::operations::{
     Advance, Confirmed, Handle, Intent, Next, Opening, Progress, Record,
     Refusal, Relate, Step,
@@ -13,7 +14,7 @@ use redb::{Database, ReadableDatabase, TableDefinition};
 
 const OWNER: TableDefinition<(), [u8; 32]> = TableDefinition::new("owner/1");
 const RECORDS: TableDefinition<u128, &[u8]> =
-    TableDefinition::new("operations/3");
+    TableDefinition::new("operations/4");
 const FILE: &str = "project-operations.redb";
 const IDENTITY: &str = "home-identity";
 
@@ -128,6 +129,13 @@ impl Operations {
             _claim: claim,
         })
     }
+}
+
+fn now() -> Result<UnixMillis, Error> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(UnixMillis::since_epoch)
+        .map_err(failed)
 }
 
 fn identity(data: &Path) -> Result<[u8; 32], Error> {
@@ -280,7 +288,7 @@ impl Attempt {
         observed: &[Comment],
         resuming: bool,
     ) -> Result<Next, Error> {
-        let (record, next) = self.record.next(observed, resuming)?;
+        let (record, next) = self.record.next(observed, resuming, now()?)?;
         self.replace(record)?;
         Ok(next)
     }
@@ -297,10 +305,10 @@ impl Attempt {
 
     pub fn opened(
         &mut self,
-        found: &[Opened],
+        found: &Openings,
         resuming: bool,
     ) -> Result<Opening, Error> {
-        let (record, opening) = self.record.opened(found, resuming)?;
+        let (record, opening) = self.record.opened(found, resuming, now()?)?;
         self.replace(record)?;
         Ok(opening)
     }

@@ -16,8 +16,8 @@ use home::flow::snapshot::Snapshot;
 use home::issue::storage::fresh;
 use home::issue::{
     Comment, CommentWrite, Entry, IssueCreate, IssueWrite, ListPage, Locator,
-    Lookup, NativeIssue, Observation, Opened, Page, ReadFailure, Relating,
-    RelationChange, RelationStep, SendFailure, Unrelatable,
+    Lookup, NativeIssue, Observation, Opened, Openings, Page, ReadFailure,
+    Relating, RelationChange, RelationStep, SendFailure, Unrelatable,
 };
 use home::operations::Handle;
 use home::project::Project;
@@ -51,6 +51,7 @@ const DROP: &str = "scripted-drop";
 const LAG: &str = "scripted-lag";
 const REQUESTS: &str = "scripted-requests";
 const PARENTS: &str = "scripted-parents.json";
+const CREATED: &str = "scripted-created.json";
 
 type Issues = BTreeMap<String, NativeIssue>;
 
@@ -68,7 +69,25 @@ fn kept(data: &Path, id: &str) -> Result<NativeIssue, ReadFailure> {
 fn keep(data: &Path, id: &str, issue: &NativeIssue) -> Result<(), String> {
     let mut all = issues(data).unwrap_or_default();
     all.insert(String::from(id), issue.clone());
-    save(data, ISSUES, serde_json::to_vec(&all))
+    save(data, ISSUES, serde_json::to_vec(&all))?;
+    let mut created = made(data);
+    created.entry(String::from(id)).or_insert_with(now);
+    save(data, CREATED, serde_json::to_vec(&created))
+}
+
+fn made(data: &Path) -> BTreeMap<String, u64> {
+    std::fs::read(data.join(CREATED))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn now() -> u64 {
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(UnixMillis::since_epoch)
+        .map_or(0, |at| at.0)
 }
 
 fn save(
@@ -263,6 +282,7 @@ impl Github {
                 issue.id
             ),
             body,
+            created: UnixMillis(now()),
             updated: UnixMillis(2000),
         };
         all.push((issue.id.to_string(), comment.clone()));
@@ -439,10 +459,18 @@ impl IssueTracker for Github {
         &self,
         _: ProjectId,
         handle: Handle,
-    ) -> IssueCompletion<'_, Vec<Opened>> {
+    ) -> IssueCompletion<'_, Openings> {
         let lags = lagging(&self.data);
-        let found = issues(&self.data).map(|all| {
-            all.into_iter()
+        let created = made(&self.data);
+        let found = issues(&self.data).map(|all| Openings {
+            newest: created
+                .values()
+                .copied()
+                .filter(|_| !lags)
+                .max()
+                .map(UnixMillis),
+            found: all
+                .into_iter()
                 .filter(|_| !lags)
                 .filter(|(_, native)| {
                     github::mapping::carries(&native.body, handle)
@@ -450,7 +478,7 @@ impl IssueTracker for Github {
                 .filter_map(|(number, native)| {
                     github::ISSUER.read(&number).map(|id| Opened { id, native })
                 })
-                .collect()
+                .collect(),
         });
         Box::pin(async move { found })
     }
@@ -734,7 +762,7 @@ fn a_lost_create_reply_retried_finds_the_issue_and_creates_nothing_more()
     std::fs::write(home.root.join("data").join(LOSE), "")?;
     let new = ["issue", "new", "standards", "task", "Opened by home"];
     let (said, code) = home.home(&new)?;
-    assert!(said.contains("is unknown; retry it"), "{said}");
+    assert!(said.contains("is unknown"), "{said}");
     assert_eq!(code, 1);
     assert_eq!(home.creates(), 1);
     let (said, code) = home.home(&new)?;
@@ -844,7 +872,7 @@ fn a_lost_note_reply_retried_finds_the_comment_and_posts_nothing_more()
     std::fs::write(home.root.join("data").join(LOSE), "")?;
     let note = ["issue", "note", "standards", "146", "worker", "started"];
     let (said, code) = home.home(&note)?;
-    assert!(said.contains("is unknown; retry it"), "{said}");
+    assert!(said.contains("is unknown"), "{said}");
     assert_eq!(code, 1);
     let (said, code) = home.home(&note)?;
     assert!(said.starts_with("wrote standards/146\n"), "{said}");
@@ -951,8 +979,24 @@ fn a_write_after_an_edit_on_github_plans_from_a_fresh_read_and_goes_ahead()
     Ok(())
 }
 
+fn by_someone(home: &Home, issue: &str) -> Result<(), String> {
+    let data = home.root.join("data");
+    let mut all = comments(&data);
+    all.push((
+        String::from(issue),
+        Comment {
+            id: format!("{}", all.len() + 1),
+            url: String::new(),
+            body: String::from("A person's note"),
+            created: UnixMillis(now()),
+            updated: UnixMillis(now()),
+        },
+    ));
+    save(&data, COMMENTS, serde_json::to_vec(&all))
+}
+
 #[test]
-fn a_note_whose_request_never_reached_github_is_sent_on_the_rerun()
+fn a_note_whose_request_never_reached_github_is_sent_again_once_a_newer_comment_shows_the_list_caught_up()
 -> Result<(), Box<dyn Error>> {
     let home = Home::new("dropped-note", &[], "Words\n")?;
     std::fs::write(home.root.join("data").join(DROP), "")?;
@@ -960,16 +1004,23 @@ fn a_note_whose_request_never_reached_github_is_sent_on_the_rerun()
     let (said, code) = home.home(&note)?;
     assert!(said.contains("is unknown"), "{said}");
     assert_eq!(code, 1);
+    let (said, code) = home.home(&note)?;
+    assert!(
+        said.contains("once the tracker's list catches up"),
+        "{said}"
+    );
+    assert_eq!(code, 1);
     assert_eq!(home.comments("146")?, Vec::<String>::new());
+    by_someone(&home, "146")?;
     let (said, code) = home.home(&note)?;
     assert!(said.starts_with("wrote standards/146\n"), "{said}");
     assert_eq!(code, 0, "{said}");
-    assert_eq!(home.comments("146")?.len(), 1);
+    assert_eq!(home.comments("146")?.len(), 2);
     Ok(())
 }
 
 #[test]
-fn a_create_whose_request_never_reached_github_is_sent_on_the_rerun()
+fn a_create_whose_request_never_reached_github_is_sent_again_once_a_newer_issue_shows_the_list_caught_up()
 -> Result<(), Box<dyn Error>> {
     let home = Home::new("dropped-create", &[], "Words\n")?;
     std::fs::write(home.root.join("data").join(DROP), "")?;
@@ -977,12 +1028,28 @@ fn a_create_whose_request_never_reached_github_is_sent_on_the_rerun()
     let (said, code) = home.home(&new)?;
     assert!(said.contains("is unknown"), "{said}");
     assert_eq!(code, 1);
+    let (said, code) = home.home(&new)?;
+    assert!(
+        said.contains("once the tracker's list catches up"),
+        "{said}"
+    );
+    assert_eq!(code, 1);
+    keep(
+        &home.root.join("data"),
+        "147",
+        &NativeIssue {
+            title: String::from("Opened by a person"),
+            body: String::new(),
+            labels: Vec::new(),
+            open: true,
+            reason: None,
+        },
+    )?;
     home.requests();
     let (said, code) = home.home(&new)?;
-    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(said, "wrote standards/148\n");
     assert_eq!(code, 0);
     assert_eq!(home.creates(), 1);
-    assert_eq!(home.opened()?.title, "Opened by home");
     Ok(())
 }
 

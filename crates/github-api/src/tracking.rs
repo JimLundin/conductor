@@ -13,7 +13,7 @@ use home::issue::{
 };
 use home::issue::{
     IssueCreate, IssueState, IssueWrite, ListPage, Locator, Lookup,
-    NativeIssue, Observation, Opened, Page, ReadFailure, Unreadable,
+    NativeIssue, Observation, Openings, Page, ReadFailure, Unreadable,
 };
 use home::operations::Handle;
 use home::tracker::Ids;
@@ -468,7 +468,7 @@ impl IssueTracker for Tracker {
         &self,
         _: ProjectId,
         handle: Handle,
-    ) -> IssueCompletion<'_, Vec<Opened>> {
+    ) -> IssueCompletion<'_, Openings> {
         Box::pin(self.carrying(handle))
     }
 

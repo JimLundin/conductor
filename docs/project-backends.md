@@ -64,8 +64,11 @@ marker. When the reply is lost, the outcome is unknown and stays recorded.
 Retrying the same handle looks for the marker again and never sends the
 request twice. A request the tracker rejects leaves the operation ready to
 send again. A note, `Project::append_note`, is resumed by its issue, signer,
-event and text. When a rerun of the note finds no comment with its marker,
-the request never reached the tracker, and the note is sent again.
+event and text. The record keeps when its request was sent. A rerun that
+finds no comment with the note's marker sends it again only when the
+issue's comments include one created after that time, which shows the list
+has caught up past the attempt. Otherwise the outcome stays unknown, and
+the message says to rerun once the tracker's list catches up.
 
 A relation write, `Project::write_relation`, sets one relation of an issue
 to a list of targets, as an operation in the same store. The tracker
@@ -167,8 +170,10 @@ confirms the create by reading the issue GitHub reported, since the list
 can lag behind a create. When the reply is lost, the outcome is unknown
 and stays recorded. Running the same `issue new` again resumes that
 operation, by its project, title and labels, and lists the issues again.
-A list that finds no issue with its marker means the create never reached
-GitHub, and the rerun sends it again.
+It sends the create again only when the list finds no issue with its
+marker and holds an issue created after the create was sent. A list
+without a newer issue may lag, so it sends nothing and the outcome stays
+unknown.
 
 Every log entry a Markdown write would add becomes one comment on the
 GitHub issue, through `Project::append_note`: a note, a move with its

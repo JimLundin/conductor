@@ -1,5 +1,6 @@
 use home::IssueId;
-use home::issue::{IssueCreate, Opened, ReadFailure, SendFailure};
+use home::UnixMillis;
+use home::issue::{IssueCreate, Opened, Openings, ReadFailure, SendFailure};
 use home::operations::Handle;
 
 use crate::Tracker;
@@ -24,15 +25,24 @@ impl Tracker {
     pub(crate) async fn carrying(
         &self,
         handle: Handle,
-    ) -> Result<Vec<Opened>, ReadFailure> {
-        let mut found = Vec::new();
+    ) -> Result<Openings, ReadFailure> {
+        let mut openings = Openings::default();
         let mut continuation = None;
         loop {
             let (items, next) = self.raw_page(continuation.as_deref()).await?;
-            found.extend(self.marked(items, handle)?);
+            let newest = items
+                .iter()
+                .filter_map(|returned| {
+                    u64::try_from(returned.issue.created_at.timestamp_millis())
+                        .ok()
+                })
+                .max()
+                .map(UnixMillis);
+            openings.newest = openings.newest.max(newest);
+            openings.found.extend(self.marked(items, handle)?);
             continuation = next;
             if continuation.is_none() {
-                return Ok(found);
+                return Ok(openings);
             }
         }
     }

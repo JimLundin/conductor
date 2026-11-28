@@ -6,10 +6,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::issue::{
     Comment, CommentRequest, CommentWrite, EditId, Entry, IssueCreate,
-    IssueWrite, Lookup, NativeIssue, Opened, Relating, RelationChange,
+    IssueWrite, Lookup, NativeIssue, Openings, Relating, RelationChange,
     RelationRequest, RelationStep,
 };
-use crate::{IssueId, ProjectId};
+use crate::{IssueId, ProjectId, UnixMillis};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Handle {
@@ -344,6 +344,7 @@ pub struct Record {
     pub intent: Intent,
     confirmed: Vec<Confirmed>,
     progress: Progress,
+    dispatched: Option<UnixMillis>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -384,6 +385,7 @@ impl Record {
             intent,
             confirmed: Vec::new(),
             progress: Progress::Ready,
+            dispatched: None,
         }
     }
 
@@ -519,6 +521,7 @@ impl Record {
         &self,
         observed: &[Comment],
         resuming: bool,
+        now: UnixMillis,
     ) -> Result<(Self, Next), Refusal> {
         let Work::Comment { write, .. } = &self.intent.work else {
             return Err(Refusal::NotAComment);
@@ -543,13 +546,17 @@ impl Record {
                     Next::Settled(found.clone()),
                 ))
             }
-            (Progress::Ready, None, None) => {
-                self.send(write, observed).map(|sent| (sent, Next::Send))
-            }
-            (Progress::AwaitingEvidence(_), None, None) if resuming => self
-                .reject()?
-                .send(write, observed)
+            (Progress::Ready, None, None) => self
+                .send(write, observed, now)
                 .map(|sent| (sent, Next::Send)),
+            (Progress::AwaitingEvidence(_), None, None)
+                if resuming
+                    && self.passed(
+                        observed.iter().map(|comment| comment.created).max(),
+                    ) =>
+            {
+                Ok((self.clone().at(now), Next::Send))
+            }
             _ => Ok((self.clone(), Next::Unknown)),
         }
     }
@@ -602,13 +609,15 @@ impl Record {
 
     pub fn opened(
         &self,
-        found: &[Opened],
+        openings: &Openings,
         resuming: bool,
+        now: UnixMillis,
     ) -> Result<(Self, Opening), Refusal> {
         let Work::Create { create } = &self.intent.work else {
             return Err(Refusal::NotACreate);
         };
-        let mut carrying = found
+        let mut carrying = openings
+            .found
             .iter()
             .filter(|issue| issue.native.title == create.title);
         match (&self.progress, carrying.next(), carrying.next()) {
@@ -628,12 +637,12 @@ impl Record {
             }
             (Progress::Ready, None, None) => {
                 let sent = self.dispatch(Step::CreateIssue, "", true)?;
-                Ok((sent, Opening::Send(create.clone())))
+                Ok((sent.at(now), Opening::Send(create.clone())))
             }
-            (Progress::AwaitingEvidence(_), None, None) if resuming => {
-                let sent =
-                    self.reject()?.dispatch(Step::CreateIssue, "", true)?;
-                Ok((sent, Opening::Send(create.clone())))
+            (Progress::AwaitingEvidence(_), None, None)
+                if resuming && self.passed(openings.newest) =>
+            {
+                Ok((self.clone().at(now), Opening::Send(create.clone())))
             }
             _ => Ok((self.clone(), Opening::Unknown)),
         }
@@ -690,6 +699,7 @@ impl Record {
         &self,
         write: &CommentWrite,
         observed: &[Comment],
+        now: UnixMillis,
     ) -> Result<Self, Refusal> {
         if !observed.iter().any(|comment| write.covers(comment))
             && matches!(write, CommentWrite::Edit { .. })
@@ -697,6 +707,18 @@ impl Record {
             return Err(Refusal::Conflict);
         }
         self.dispatch(Step::WriteComment, &write.precondition(observed), true)
+            .map(|sent| sent.at(now))
+    }
+
+    fn at(self, now: UnixMillis) -> Self {
+        Self {
+            dispatched: Some(now),
+            ..self
+        }
+    }
+
+    fn passed(&self, newest: Option<UnixMillis>) -> bool {
+        matches!((self.dispatched, newest), (Some(sent), Some(seen)) if seen > sent)
     }
 }
 
