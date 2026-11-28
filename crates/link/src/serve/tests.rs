@@ -363,18 +363,14 @@ fn written(at: u64, by: &str) -> Result<CanvasFile, String> {
 
 fn two_canvases() -> Result<Memory, String> {
     let mut store = Memory::default();
-    store
-        .put(
-            &key(id("00000001")?, "design")?,
-            &written(10, "devbox·claude")?,
-        )
-        .map_err(|error| error.to_string())?;
-    store
-        .put(
-            &key(id("00000001")?, "a-plan")?,
-            &written(20, "laptop·codex")?,
-        )
-        .map_err(|error| error.to_string())?;
+    store.keep(
+        &key(id("00000001")?, "design")?,
+        &written(10, "devbox·claude")?,
+    );
+    store.keep(
+        &key(id("00000001")?, "a-plan")?,
+        &written(20, "laptop·codex")?,
+    );
     Ok(store)
 }
 
@@ -496,22 +492,79 @@ fn a_canvas_of_an_issue_the_home_lacks_or_of_no_home_is_refused()
     Ok(())
 }
 
+fn unshared(
+    _: &std::path::Path,
+    _: &str,
+) -> std::io::Result<project_runtime::transport::SharedCredential> {
+    Err(std::io::Error::other("the test host shares no credential"))
+}
+
+fn github_home(root: &std::path::Path) -> Result<(), String> {
+    let project = root.join("projects/hyn162");
+    std::fs::create_dir_all(&project)
+        .and_then(|()| std::fs::create_dir_all(root.join("docs/agents")))
+        .and_then(|()| {
+            std::fs::write(
+                root.join("docs/agents/flow.toml"),
+                include_str!("../../../home/src/flow/test-flow.toml"),
+            )
+        })
+        .and_then(|()| {
+            std::fs::write(
+                project.join("project.toml"),
+                "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
+            )
+        })
+        .map_err(|error| error.to_string())
+}
+
 #[test]
-fn get_canvas_of_an_issue_only_the_tracker_cache_holds_is_kept_by_its_tracker()
+fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
 -> Result<(), String> {
-    let tracked = ProjectId::new(2);
+    let root = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let data = tempfile::tempdir().map_err(|error| error.to_string())?;
+    github_home(root.path())?;
+    let snapshot = home_files::read(root.path()).snapshot;
+    let tracked = ProjectId::parse("hyn162").ok_or("project")?;
+    let project = snapshot
+        .projects()
+        .iter()
+        .find(|project| project.id == tracked)
+        .ok_or("no tracked project")?;
     let cached = at(tracked, "146")?;
-    let kept = CanvasKey {
-        project: tracked,
-        issue: cached.id.clone(),
-        name: named("design")?,
-    };
-    let mut github = Memory::default();
-    github
-        .put(&kept, &written(10, "devbox·claude")?)
+    let canvas = written(10, "devbox·claude")?;
+    let body = github::canvas::comment(
+        &named("design")?,
+        &canvas.by,
+        "conductor-operation 07/1",
+        &canvas.canvas,
+    )
+    .map_err(|error| error.to_string())?;
+    project_runtime::Registry::default()
+        .project(&project.backends)
+        .posted(
+            &project_runtime::issues::IssueCache::new(
+                data.path(),
+                snapshot.flow()?,
+            ),
+            tracked,
+            home::issue::IssueComment {
+                issue: cached.id.clone(),
+                comment: home::issue::Comment {
+                    id: String::from("7"),
+                    url: String::from(
+                        "https://github.com/owner/standards/issues/146#issuecomment-7",
+                    ),
+                    body,
+                    updated: UnixMillis(10),
+                },
+            },
+        )
         .map_err(|error| error.to_string())?;
     let mut stores = Stores::new(Box::new(Memory::default()));
-    stores.track(tracked, Box::new(github));
+    stores.follow(data.path(), &snapshot, |at, home, project| {
+        github_api::canvases(at, home, project, unshared)
+    });
     let get = |issue: IssueKey,
                reading: IssueReading|
      -> Result<HomeResult, String> {
@@ -528,7 +581,7 @@ fn get_canvas_of_an_issue_only_the_tracker_cache_holds_is_kept_by_its_tracker()
             get(at(tracked, "147")?, looked(None))?
         ],
         [
-            HomeResult::Canvas(written(10, "devbox·claude")?),
+            HomeResult::Canvas(canvas),
             HomeResult::Refused(HomeRefusal::UnknownIssue),
         ]
     );

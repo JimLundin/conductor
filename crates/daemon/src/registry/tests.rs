@@ -139,6 +139,7 @@ impl Fixture {
             roots: Vec::new(),
             user: None,
             canvases: Box::new(home_store::Memory::default()),
+            trackers: |_, _, _| None,
         });
         let (initialized, _) = watch::channel(false);
         let mut actor = RegistryActor::new(

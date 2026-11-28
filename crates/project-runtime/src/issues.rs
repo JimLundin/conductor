@@ -3,8 +3,8 @@ mod store;
 use super::{Project, Registry};
 use home::flow::snapshot::Snapshot;
 use home::issue::{
-    IssueListing, IssueReading, ListPage, Lookup, ReadFailure, ReadMode,
-    cache::Scan,
+    IssueComment, IssueListing, IssueReading, ListPage, Lookup, ReadFailure,
+    ReadMode, cache::Scan,
 };
 use home::{IssueKey, ProjectId, UnixMillis, backend::Refusal, flow::Flow};
 use std::path::Path;
@@ -74,6 +74,25 @@ impl Project<'_> {
         Scope::new(cache.data, project, selection, cache.flow)
     }
 
+    pub fn canvas_comments(
+        &self,
+        cache: &IssueCache<'_>,
+        project: ProjectId,
+    ) -> Result<Vec<IssueComment>, CacheError> {
+        Ok(self.scope(cache, project)?.load()?.comments().to_vec())
+    }
+
+    pub fn posted(
+        &self,
+        cache: &IssueCache<'_>,
+        project: ProjectId,
+        comment: IssueComment,
+    ) -> Result<(), CacheError> {
+        self.scope(cache, project)?
+            .save(|records| records.posted(comment))
+            .map(drop)
+    }
+
     pub async fn issues(
         &self,
         cache: &IssueCache<'_>,
@@ -126,6 +145,7 @@ impl Project<'_> {
                 .await?;
             continuation = scan.append(project, page)?;
             if continuation.is_none() {
+                scan.commented(tracker.canvas_comments(project).await?);
                 return Ok(scan);
             }
         }

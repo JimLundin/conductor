@@ -26,7 +26,7 @@ use home::{
     IssueId, IssueKey, ProjectId, UnixSecs,
 };
 use home::{Found, Stored};
-use home_store::CanvasStore;
+use home_store::{CanvasStore, Keeper, Kept, Stores};
 use host::registry::InHome;
 use host::session::{SessionDirectory, SessionRefusal, StartAt};
 use issue_file::{read_issue, write_issue};
@@ -50,7 +50,8 @@ pub struct Homing {
     pub remote: Option<String>,
     pub roots: Vec<PathBuf>,
     pub user: Option<PathBuf>,
-    pub canvases: Box<dyn CanvasStore + Send + core::marker::Sync>,
+    pub canvases: Kept,
+    pub trackers: Keeper,
 }
 
 #[derive(Debug, Clone)]
@@ -304,7 +305,8 @@ struct Actor {
     shown: watch::Sender<Option<Home>>,
     user: Option<PathBuf>,
     skills_commit: Option<String>,
-    canvases: Box<dyn CanvasStore + Send + core::marker::Sync>,
+    canvases: Stores,
+    trackers: Keeper,
     listed: BTreeMap<IssueKey, Vec<CanvasEntry>>,
 }
 
@@ -317,6 +319,7 @@ impl Actor {
             roots,
             user,
             canvases,
+            trackers,
         } = homing;
         let stored_at = data_dir.join("home.state");
         let stored: Stored = load(&stored_at);
@@ -325,7 +328,8 @@ impl Actor {
         let _ = std::fs::create_dir_all(&clones);
         Self {
             clone: clone_of(&data_dir),
-            canvases,
+            canvases: Stores::new(canvases),
+            trackers,
             listed: BTreeMap::new(),
             clones: std::fs::canonicalize(&clones)
                 .unwrap_or(clones)
@@ -807,7 +811,7 @@ impl Actor {
     }
 
     async fn rewrite_all(&mut self) {
-        self.home = self.read_home();
+        self.reread();
         self.edits.reset();
         for index in 0..self.edits.count() {
             if let Some(read) = self.edits.replay_target(index) {
@@ -926,9 +930,8 @@ impl Actor {
     }
 
     async fn scan(&mut self) {
-        self.home = self.read_home();
-        self.listed =
-            listed(&self.data_dir, &self.home, self.canvases.as_ref()).await;
+        self.reread();
+        self.listed = listed(&self.data_dir, &self.home, &self.canvases).await;
         self.home.problems().iter().for_each(|problem| {
             tracing::warn!(target: "home", %problem, "read the home without it");
         });
@@ -954,8 +957,10 @@ impl Actor {
         self.publish();
     }
 
-    fn read_home(&self) -> Snapshot {
-        home_files::read(&self.clone).snapshot
+    fn reread(&mut self) {
+        self.home = home_files::read(&self.clone).snapshot;
+        self.canvases
+            .follow(&self.data_dir, &self.home, self.trackers);
     }
 
     fn publish(&self) {
@@ -1576,7 +1581,7 @@ mod tests {
     use home::{
         HomeRefusal, HomeResult, IssueId, IssueKey, ProjectId, UnixMillis,
     };
-    use home_store::{CanvasStore, Memory};
+    use home_store::Memory;
     use std::path::{Path, PathBuf};
     use tokio::sync::watch;
 
@@ -1679,7 +1684,7 @@ mod tests {
                 issue: designed.clone(),
                 name: named(name)?,
             };
-            store.put(&key, &written(at, by)?)?;
+            store.keep(&key, &written(at, by)?);
         }
         store.spoil(
             CanvasKey {
@@ -1700,6 +1705,7 @@ mod tests {
                 roots: Vec::new(),
                 user: None,
                 canvases: Box::new(store),
+                trackers: |_, _, _| None,
             },
             shown,
         );
@@ -1813,6 +1819,7 @@ mod tests {
                 roots: Vec::new(),
                 user: None,
                 canvases: Box::new(Memory::default()),
+                trackers: |_, _, _| None,
             },
             shown,
         );

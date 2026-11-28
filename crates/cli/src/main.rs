@@ -175,6 +175,14 @@ struct HostArgs {
     projects: Vec<PathBuf>,
 }
 
+fn canvases(
+    data: &std::path::Path,
+    home: &home::flow::snapshot::Snapshot,
+    project: &home::project::Project,
+) -> Option<home_store::Kept> {
+    github_api::canvases(data, home, project, daemon::fleet::project_credential)
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -195,6 +203,7 @@ async fn main() -> anyhow::Result<()> {
                 vcs_git2::registration::register,
             );
             let hosting = Hosting {
+                canvases,
                 data_dir: Some(data),
                 name: args.name,
                 web_url: args.web_url,

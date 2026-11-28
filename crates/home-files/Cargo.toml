@@ -13,5 +13,8 @@ vcs = { path = "../vcs" }
 home = { path = "../home" }
 home-store = { path = "../home-store" }
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt"] }
+
 [lints]
 workspace = true

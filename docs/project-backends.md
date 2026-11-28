@@ -107,6 +107,26 @@ The CLI refuses to write a second Markdown record for a project with a tracker.
 A write to a Markdown issue or its canvas commits the files it wrote to the
 home, authored by `HOME_BY`, through the git2 backend.
 
+## Canvases on GitHub
+
+GitHub keeps each canvas of an issue as one comment on it, through
+`github_api::Canvases`. The comment opens with a hidden marker holding the
+canvas's name, its signer from `HOME_BY` and the write's operation marker.
+The canvas follows as Markdown with Mermaid, as `home canvas show` prints
+it, and then its data in a collapsed `<details>` block. The data block is
+the canvas: an edit to the Markdown on GitHub is lost at the next put. A
+canvas's time is its comment's `updated_at`.
+
+`home canvas put` writes through `Project::write_comment`: it edits the
+comment of that name, or creates one, and fails before any request when the
+comment would pass GitHub's limit of 65,536 characters. A put needs GitHub
+reachable and a credential with `write_issues`. A refresh of the project,
+such as `home issue list`, also reads the repository's marked comments on
+its issues into the host cache, and `home canvas show` and the app read
+them from there offline. A marked comment whose name or data doesn't parse
+is a stray at the comment's URL, and so is a second comment holding the
+same canvas; `home check` reports each.
+
 ## Repository access and credentials
 
 Run `home project access <project> [host-data-dir]` to check which

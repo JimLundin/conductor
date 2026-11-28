@@ -87,7 +87,13 @@ impl Canvas {
         text
     }
 
-    pub(crate) fn markdown(&self) -> String {
+    #[must_use]
+    pub fn encode(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_default()
+    }
+
+    #[must_use]
+    pub fn markdown(&self) -> String {
         core::iter::once(format!("# {}\n", self.title.trim()))
             .chain(self.blocks.iter().map(Block::markdown))
             .collect::<Vec<String>>()

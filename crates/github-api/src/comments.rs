@@ -1,7 +1,9 @@
 use github::access::routes::Address;
-use home::UnixMillis;
 use home::backend::Capability;
-use home::issue::{Comment, CommentWrite, Lookup, ReadFailure, SendFailure};
+use home::issue::{
+    Comment, CommentWrite, IssueComment, Lookup, ReadFailure, SendFailure,
+};
+use home::{IssueId, UnixMillis};
 use octocrab::models::{CommentId, issues};
 
 use crate::Tracker;
@@ -55,6 +57,43 @@ impl Tracker {
         }
     }
 
+    pub(crate) async fn marked_comments(
+        &self,
+    ) -> Result<Vec<IssueComment>, ReadFailure> {
+        let repository = &self.client.repository;
+        let issues = self
+            .client
+            .reader
+            .issues(repository.owner(), repository.name());
+        let mut found = Vec::new();
+        let mut page = 1u32;
+        loop {
+            let listed = issues
+                .list_issue_comments()
+                .per_page(100u8)
+                .page(page)
+                .send()
+                .await
+                .map_err(request_error)?;
+            let more = listed.next.is_some();
+            let items = listed
+                .items
+                .into_iter()
+                .map(|comment| {
+                    Ok(IssueComment {
+                        issue: commented(&comment)?,
+                        comment: observe(comment)?,
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            found.extend(github::canvas::marked(items));
+            if !more {
+                return Ok(found);
+            }
+            page = page.checked_add(1).ok_or(ReadFailure::InvalidResponse)?;
+        }
+    }
+
     pub(crate) async fn send(
         &self,
         issue: Lookup,
@@ -84,6 +123,15 @@ impl Tracker {
         };
         observe(sent.map_err(unsent)?).map_err(|_| SendFailure::Unknown)
     }
+}
+
+fn commented(comment: &issues::Comment) -> Result<IssueId, ReadFailure> {
+    comment
+        .issue_url
+        .as_ref()
+        .and_then(|url| url.path_segments()?.next_back())
+        .and_then(IssueId::new)
+        .ok_or(ReadFailure::InvalidResponse)
 }
 
 fn observe(comment: issues::Comment) -> Result<Comment, ReadFailure> {

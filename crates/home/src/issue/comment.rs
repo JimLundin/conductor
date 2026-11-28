@@ -2,14 +2,20 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::{Lookup, ReadFailure};
-use crate::{UnixMillis, prelude::*};
+use crate::{IssueId, UnixMillis, prelude::*};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Comment {
     pub id: String,
     pub url: String,
     pub body: String,
     pub updated: UnixMillis,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IssueComment {
+    pub issue: IssueId,
+    pub comment: Comment,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

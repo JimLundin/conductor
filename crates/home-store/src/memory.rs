@@ -6,7 +6,7 @@ use home::canvas::{
 };
 use home::{IssueId, ProjectId};
 
-use crate::{CanvasStore, StoreError};
+use crate::{CanvasStore, Putting, StoreError};
 
 #[derive(Debug, Default)]
 pub struct Memory {
@@ -21,6 +21,12 @@ struct Folder {
 }
 
 impl Memory {
+    pub fn keep(&mut self, key: &CanvasKey, file: &CanvasFile) {
+        self.folder(key)
+            .canvases
+            .insert(key.name.clone(), Ok(file.clone()));
+    }
+
     pub fn spoil(&mut self, key: CanvasKey, error: CanvasError) {
         self.folder(&key).canvases.insert(key.name, Err(error));
     }
@@ -114,15 +120,15 @@ impl CanvasStore for Memory {
             })
     }
 
-    fn put(
-        &mut self,
-        key: &CanvasKey,
-        file: &CanvasFile,
-    ) -> Result<(), StoreError> {
-        self.folder(key)
-            .canvases
-            .insert(key.name.clone(), Ok(file.clone()));
-        Ok(())
+    fn put<'a>(
+        &'a mut self,
+        key: &'a CanvasKey,
+        file: &'a CanvasFile,
+    ) -> Putting<'a> {
+        Box::pin(async move {
+            self.keep(key, file);
+            Ok(())
+        })
     }
 }
 
@@ -133,18 +139,18 @@ mod tests {
     use super::Memory;
     use crate::{Plant, contract};
 
-    #[test]
-    fn the_in_memory_store_keeps_the_store_contract() {
+    #[tokio::test]
+    async fn the_in_memory_store_keeps_the_store_contract() {
         assert_eq!(
             contract(
                 &mut Memory::default(),
-                |memory, key| memory.spoil(
+                async |memory, key| memory.spoil(
                     key.clone(),
                     CanvasError::Json {
                         reason: String::from("expected value"),
                     },
                 ),
-                |memory, plant| match plant {
+                async |memory, plant| Some(match plant {
                     Plant::Unnamed { project, issue } => planted(
                         memory,
                         *project,
@@ -160,8 +166,9 @@ mod tests {
                     Plant::NotAnIssue(project) => {
                         planted(memory, *project, None, StrayReason::NotAnIssue)
                     }
-                }
-            ),
+                })
+            )
+            .await,
             Ok(())
         );
     }

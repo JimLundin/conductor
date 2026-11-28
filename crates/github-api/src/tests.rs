@@ -76,6 +76,7 @@ use hyper::{
 use hyper_util::rt::TokioIo;
 use secrecy::SecretString;
 
+mod canvases;
 mod comments;
 #[cfg(unix)]
 mod fleet;

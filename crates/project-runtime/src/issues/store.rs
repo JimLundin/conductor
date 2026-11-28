@@ -11,7 +11,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 const COLLECTIONS: TableDefinition<&[u8], &[u8]> =
-    TableDefinition::new("issue-collections/3");
+    TableDefinition::new("issue-collections/4");
 
 const GENERATION: TableDefinition<(), u64> =
     TableDefinition::new("refresh-generation/1");

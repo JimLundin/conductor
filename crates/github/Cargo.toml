@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 data-encoding.workspace = true
+serde_json.workspace = true
 sha2 = { version = "0.11.0", default-features = false }
 thiserror.workspace = true
 home = { path = "../home" }

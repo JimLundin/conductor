@@ -1,8 +1,10 @@
 use std::collections::BTreeSet;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use github::configuration::selected;
 use home::backend::{Backends, Capability};
+use home::flow::command::CanvasWrite;
 use home::flow::command::{Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::issue::storage::ReadHome;
@@ -10,7 +12,7 @@ use home::issue::{IssueListing, IssueReading, ReadFailure, ReadMode};
 use home::project::Project;
 use home::{IssueKey, ProjectId};
 use home_files::FolderStore;
-use home_store::Stores;
+use home_store::{CanvasStore, Kept, Stores};
 use project_runtime::Registry;
 use project_runtime::issues::{IssueCache, cached};
 
@@ -28,12 +30,17 @@ impl<'a> Trackers<'a> {
         loaded: ReadHome,
         data: Option<PathBuf>,
     ) -> Self {
+        let mut stores =
+            Stores::new(Box::new(FolderStore::new(root.to_path_buf())));
+        if let Ok(at) = project_runtime::data_dir_or_default(data.clone()) {
+            stores.follow(&at, &loaded.snapshot, canvases);
+        }
         Self {
             root,
             loaded,
             data,
             registry: Registry::default(),
-            stores: Stores::new(Box::new(FolderStore::new(root.to_path_buf()))),
+            stores,
         }
     }
 
@@ -45,8 +52,22 @@ impl<'a> Trackers<'a> {
         &self.stores
     }
 
+    #[cfg(test)]
     pub const fn stores_mut(&mut self) -> &mut Stores {
         &mut self.stores
+    }
+
+    pub fn put(&mut self, canvases: &[CanvasWrite]) -> Result<(), String> {
+        let stores = &mut self.stores;
+        run(async move {
+            for canvas in canvases {
+                stores
+                    .put(&canvas.key, &canvas.file)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })?
     }
 
     pub fn resolved(
@@ -57,16 +78,13 @@ impl<'a> Trackers<'a> {
         if keys.is_empty() {
             return Resolved::new();
         }
-        let built = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build();
-        match built {
-            Ok(runtime) => runtime.block_on(self.each(keys, mode)),
-            Err(error) => keys
+        let wanted = keys.clone();
+        run(self.each(keys, mode)).unwrap_or_else(|error| {
+            wanted
                 .into_iter()
-                .map(|key| (key, Err(error.to_string())))
-                .collect(),
-        }
+                .map(|key| (key, Err(error.clone())))
+                .collect()
+        })
     }
 
     async fn each(&mut self, keys: BTreeSet<IssueKey>, mode: Mode) -> Resolved {
@@ -175,6 +193,22 @@ impl<'a> Trackers<'a> {
             },
         ))
     }
+}
+
+fn canvases(
+    data: &Path,
+    home: &home::flow::snapshot::Snapshot,
+    project: &Project,
+) -> Option<Kept> {
+    github_api::canvases(data, home, project, daemon::fleet::project_credential)
+}
+
+fn run<F: Future>(future: F) -> Result<F::Output, String> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map(|runtime| runtime.block_on(future))
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

@@ -133,6 +133,12 @@ impl IssueTracker for Scripted {
     ) -> crate::IssueCompletion<'_, Vec<home::issue::Comment>> {
         Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
     }
+    fn canvas_comments(
+        &self,
+        _: home::ProjectId,
+    ) -> crate::IssueCompletion<'_, Vec<home::issue::IssueComment>> {
+        Box::pin(async { Ok(Vec::new()) })
+    }
     fn write_comment(
         &self,
         _: home::issue::Lookup,
