@@ -84,7 +84,7 @@ pub(crate) fn in_folder(
 ) -> super::command::Resolved {
     let mut steps = Resolver::new(command.mode());
     command
-        .issues(given)
+        .issues(given, home)
         .into_iter()
         .map(|key| {
             loop {

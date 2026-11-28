@@ -275,20 +275,32 @@ impl Attempt {
         self.replace(self.record.confirm(evidence, complete)?)
     }
 
-    pub fn next(&mut self, observed: &[Comment]) -> Result<Next, Error> {
-        let (record, next) = self.record.next(observed)?;
+    pub fn next(
+        &mut self,
+        observed: &[Comment],
+        resuming: bool,
+    ) -> Result<Next, Error> {
+        let (record, next) = self.record.next(observed, resuming)?;
         self.replace(record)?;
         Ok(next)
     }
 
-    pub fn relate(&mut self, plan: &Relating) -> Result<Relate, Error> {
-        let (record, next) = self.record.relate(plan)?;
+    pub fn relate(
+        &mut self,
+        plan: &Relating,
+        resuming: bool,
+    ) -> Result<Relate, Error> {
+        let (record, next) = self.record.relate(plan, resuming)?;
         self.replace(record)?;
         Ok(next)
     }
 
-    pub fn opened(&mut self, found: &[Opened]) -> Result<Opening, Error> {
-        let (record, opening) = self.record.opened(found)?;
+    pub fn opened(
+        &mut self,
+        found: &[Opened],
+        resuming: bool,
+    ) -> Result<Opening, Error> {
+        let (record, opening) = self.record.opened(found, resuming)?;
         self.replace(record)?;
         Ok(opening)
     }

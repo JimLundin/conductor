@@ -190,6 +190,21 @@ impl Intent {
     }
 
     #[must_use]
+    pub fn relation(&self) -> Option<RelationRequest> {
+        let Work::Relate { issue, change } = &self.work else {
+            return None;
+        };
+        Some(RelationRequest {
+            issue: Lookup {
+                project: self.project,
+                id: issue.clone(),
+            },
+            change: change.clone(),
+            seen: self.expected.clone(),
+        })
+    }
+
+    #[must_use]
     pub fn requested(&self) -> Option<CommentRequest> {
         let Work::Comment { issue, write, .. } = &self.work else {
             return None;
@@ -228,6 +243,49 @@ impl Intent {
                 && held.title == create.title
                 && held.labels == create.labels)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RelationWork {
+    Resume {
+        handle: Handle,
+        request: RelationRequest,
+    },
+    Write(RelationChange),
+}
+
+#[must_use]
+pub fn relating(
+    unsettled: &[Record],
+    issue: &Lookup,
+    changes: Vec<RelationChange>,
+) -> Vec<RelationWork> {
+    let mut work = Vec::new();
+    for change in changes {
+        let resumed = unsettled.iter().find_map(|record| {
+            record
+                .intent
+                .relation()
+                .filter(|held| {
+                    held.issue == *issue
+                        && held.change.relation == change.relation
+                })
+                .map(|request| (record.handle, request))
+        });
+        let finished = resumed
+            .as_ref()
+            .is_some_and(|(_, request)| request.change == change);
+        work.extend(
+            resumed.map(|(handle, request)| RelationWork::Resume {
+                handle,
+                request,
+            }),
+        );
+        if !finished {
+            work.push(RelationWork::Write(change));
+        }
+    }
+    work
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -457,7 +515,11 @@ impl Record {
         })
     }
 
-    pub fn next(&self, observed: &[Comment]) -> Result<(Self, Next), Refusal> {
+    pub fn next(
+        &self,
+        observed: &[Comment],
+        resuming: bool,
+    ) -> Result<(Self, Next), Refusal> {
         let Work::Comment { write, .. } = &self.intent.work else {
             return Err(Refusal::NotAComment);
         };
@@ -484,11 +546,19 @@ impl Record {
             (Progress::Ready, None, None) => {
                 self.send(write, observed).map(|sent| (sent, Next::Send))
             }
+            (Progress::AwaitingEvidence(_), None, None) if resuming => self
+                .reject()?
+                .send(write, observed)
+                .map(|sent| (sent, Next::Send)),
             _ => Ok((self.clone(), Next::Unknown)),
         }
     }
 
-    pub fn relate(&self, plan: &Relating) -> Result<(Self, Relate), Refusal> {
+    pub fn relate(
+        &self,
+        plan: &Relating,
+        resuming: bool,
+    ) -> Result<(Self, Relate), Refusal> {
         let Work::Relate { .. } = &self.intent.work else {
             return Err(Refusal::NotARelation);
         };
@@ -509,6 +579,7 @@ impl Record {
                 };
                 self.confirm(evidence, plan.steps.is_empty())?
             }
+            Progress::AwaitingEvidence(_) if resuming => self.reject()?,
             Progress::AwaitingEvidence(_) => {
                 return Ok((self.clone(), Relate::Unknown));
             }
@@ -529,7 +600,11 @@ impl Record {
         }
     }
 
-    pub fn opened(&self, found: &[Opened]) -> Result<(Self, Opening), Refusal> {
+    pub fn opened(
+        &self,
+        found: &[Opened],
+        resuming: bool,
+    ) -> Result<(Self, Opening), Refusal> {
         let Work::Create { create } = &self.intent.work else {
             return Err(Refusal::NotACreate);
         };
@@ -553,6 +628,11 @@ impl Record {
             }
             (Progress::Ready, None, None) => {
                 let sent = self.dispatch(Step::CreateIssue, "", true)?;
+                Ok((sent, Opening::Send(create.clone())))
+            }
+            (Progress::AwaitingEvidence(_), None, None) if resuming => {
+                let sent =
+                    self.reject()?.dispatch(Step::CreateIssue, "", true)?;
                 Ok((sent, Opening::Send(create.clone())))
             }
             _ => Ok((self.clone(), Opening::Unknown)),

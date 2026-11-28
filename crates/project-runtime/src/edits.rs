@@ -67,7 +67,7 @@ async fn deliver(
     loop {
         let write = match attempt.advance(&observed, resuming)? {
             Advance::Done => return Ok(observed),
-            Advance::Unknown => return Err(WriteError::Unknown(handle)),
+            Advance::Unknown => return Err(WriteError::Unsettled(handle)),
             Advance::Send(write) => write,
         };
         match tracker.write_issue(issue.clone(), write).await {
@@ -85,13 +85,13 @@ async fn deliver(
                 return Err(WriteError::Invalid);
             }
             Err(SendFailure::Unknown) => {
-                return Err(WriteError::Unknown(handle));
+                return Err(WriteError::Unsettled(handle));
             }
         }
         observed = tracker
             .native(issue.clone())
             .await
-            .map_err(|_| WriteError::Unknown(handle))?;
+            .map_err(|_| WriteError::Unsettled(handle))?;
         resuming = false;
     }
 }

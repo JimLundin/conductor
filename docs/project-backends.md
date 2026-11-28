@@ -63,7 +63,9 @@ reads the comments back. It confirms the write only once it finds the
 marker. When the reply is lost, the outcome is unknown and stays recorded.
 Retrying the same handle looks for the marker again and never sends the
 request twice. A request the tracker rejects leaves the operation ready to
-send again.
+send again. A note, `Project::append_note`, is resumed by its issue, signer,
+event and text. When a rerun of the note finds no comment with its marker,
+the request never reached the tracker, and the note is sent again.
 
 A relation write, `Project::write_relation`, sets one relation of an issue
 to a list of targets, as an operation in the same store. The tracker
@@ -71,8 +73,12 @@ re-reads the issue and plans the steps that take the relation there. The
 runtime refuses the write when the issue's revision differs from what its
 caller saw. It sends one step at a time and re-reads the issue after each.
 It confirms a step once the re-read no longer needs it. When a reply is
-lost, the step stays awaiting evidence, and a retry re-reads the issue
-instead of sending again.
+lost, the step stays awaiting evidence. A rerun of the same write resumes
+that operation, by its issue and relation, and re-reads the issue: a step
+the issue no longer needs is confirmed, and a step it still needs never
+reached the tracker and is sent again. A relation without a dependency
+summary from GitHub can still go to the footer; only a native `blocked_by`
+edge needs the summary.
 
 GitHub's tracker keeps `parent` as a sub-issue and `blocked_by` as a
 dependency when the target is an issue of the same repository. A parent in
@@ -95,11 +101,13 @@ relations follow its create the same way. A GitHub issue's revision covers
 its title, body, labels and state, not its native relations: a relation
 write reads those afresh before each step.
 
-Before it plans a write, the CLI takes each project's issues from its
-tracker's listing: the home's files for a Markdown project, and the cached
-listing for a tracker. A relation target is checked only against a listing
-that is complete, so a target in a tracker that was never listed, or whose
-last listing failed, is left unchecked.
+A write to a tracker's issue plans from one fresh read of that issue, not
+from the cache, so an edit made on GitHub since the last read doesn't
+refuse it. Before it plans a write, the CLI takes each project's issues
+from its tracker's listing: the home's files for a Markdown project, and
+the cached listing for a tracker. A relation target in a tracker that the
+cached listing lacks is read from the tracker before the check. A target
+the tracker doesn't have, or can't read, refuses the write and says why.
 
 Repository hosting declares statuses, checks and workflows separately.
 Access to statuses does not imply access to required checks. Hosted-result
@@ -154,12 +162,13 @@ command prints the number GitHub gave the issue, as `wrote my-project/147`.
 
 The create runs as an operation in the host's operation store. Before
 sending, it lists every issue of the repository and settles on the one
-whose footer names its handle and whose title matches. It confirms the
-create the same way after sending. When the reply is lost, the outcome is
-unknown and stays recorded. Running the same `issue new` again resumes
-that operation, by its project, title and labels, and looks for the
-issue again. It never sends a second create, even after a list that finds
-no issue.
+whose footer names its handle and whose title matches. After sending, it
+confirms the create by reading the issue GitHub reported, since the list
+can lag behind a create. When the reply is lost, the outcome is unknown
+and stays recorded. Running the same `issue new` again resumes that
+operation, by its project, title and labels, and lists the issues again.
+A list that finds no issue with its marker means the create never reached
+GitHub, and the rerun sends it again.
 
 Every log entry a Markdown write would add becomes one comment on the
 GitHub issue, through `Project::append_note`: a note, a move with its

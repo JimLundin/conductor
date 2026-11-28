@@ -191,7 +191,7 @@ async fn a_label_write_whose_reply_is_lost_is_found_applied_on_retry_and_sent_on
     let seen = native(&before, "Words");
     assert!(matches!(
         editor.edit(handle, &seen, move_to("spec")).await,
-        Err(WriteError::Unknown(unknown)) if unknown == handle
+        Err(WriteError::Unsettled(unknown)) if unknown == handle
     ));
     let written = editor.edit(handle, &seen, move_to("spec")).await?;
     assert_eq!(written.labels, ["work/stage/spec"]);

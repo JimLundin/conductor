@@ -88,8 +88,10 @@ fn issues(
             })
         }
     });
-    let resolved =
-        trackers.resolved(asked.issues(given.as_ref()), asked.mode());
+    let resolved = trackers.resolved(
+        asked.issues(given.as_ref(), &trackers.loaded().snapshot),
+        asked.mode(),
+    );
     let mut outcome = run(
         asked,
         given,

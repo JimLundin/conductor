@@ -161,7 +161,11 @@ impl Command {
     }
 
     #[must_use]
-    pub fn issues(&self, given: Option<&Given>) -> BTreeSet<IssueKey> {
+    pub fn issues(
+        &self,
+        given: Option<&Given>,
+        home: &Snapshot,
+    ) -> BTreeSet<IssueKey> {
         match (self, given) {
             (
                 Self::Check,
@@ -173,6 +177,11 @@ impl Command {
                 .iter()
                 .map(|fetched| of_canvas(&fetched.key))
                 .collect(),
+            (Self::Edit(edit), _) => {
+                let mut keys = unknown_targets(home, edit);
+                keys.extend(self.issue());
+                keys
+            }
             _ => self.issue().into_iter().collect(),
         }
     }
@@ -181,6 +190,7 @@ impl Command {
     pub const fn mode(&self) -> Mode {
         match self {
             Self::IssueShow { mode, .. } => *mode,
+            Self::Edit(_) | Self::BodyFrom { .. } => Mode::Fresh,
             _ => Mode::Cached,
         }
     }
@@ -790,7 +800,11 @@ pub fn run(
         Command::Edit(edit) => edit,
     };
     let observed = found.and_then(|reading| reading.record.as_ref());
-    match plan(home, &edit, observed, context) {
+    let reached = match reached(home, &edit, resolved) {
+        Ok(reached) => reached,
+        Err(reason) => return refused(refusal(&reason)),
+    };
+    match plan(&reached, &edit, observed, context) {
         Ok(Planned {
             change,
             subject,
@@ -811,6 +825,71 @@ pub fn run(
         },
         Err(reason) => refused(refusal(&reason)),
     }
+}
+
+fn unknown_targets(home: &Snapshot, edit: &Edit) -> BTreeSet<IssueKey> {
+    let Ok(flow) = home.flow() else {
+        return BTreeSet::new();
+    };
+    let (project, set): (ProjectId, Vec<(&str, &Datum)>) = match edit {
+        Edit::New { issue, .. } => (
+            issue.project,
+            issue
+                .fields
+                .iter()
+                .map(|(field, value)| (field.as_str(), value))
+                .collect(),
+        ),
+        Edit::Change {
+            project, changes, ..
+        } => (
+            *project,
+            changes
+                .iter()
+                .filter_map(|change| match change {
+                    IssueChange::Set { field, value } => {
+                        Some((field.as_str(), value))
+                    }
+                    _ => None,
+                })
+                .collect(),
+        ),
+    };
+    set.into_iter()
+        .filter(|(field, _)| {
+            flow.relations
+                .iter()
+                .any(|relation| relation.name == *field)
+        })
+        .flat_map(|(_, value)| match normalized(value) {
+            Datum::Text(name) => Vec::from([name]),
+            Datum::Texts(names) => names,
+            Datum::Bool(_) => Vec::new(),
+        })
+        .filter_map(|name| related(home, project, &name).ok())
+        .filter(|key| {
+            matches!(
+                crate::tracker::select(home, key.project),
+                Some(crate::tracker::Tracker::Configured(_))
+            ) && home.issue(key.project, &key.id).is_none()
+        })
+        .collect()
+}
+
+fn reached(
+    home: &Snapshot,
+    edit: &Edit,
+    resolved: &Resolved,
+) -> Result<Snapshot, String> {
+    let mut reached = home.clone();
+    for key in unknown_targets(home, edit) {
+        let reading = found(resolved, &key)?;
+        let observation = reading.record.clone().ok_or_else(|| {
+            format!("{} is no issue", subject(home, key.project, &key.id))
+        })?;
+        reached = reached.with(observation);
+    }
+    Ok(reached)
 }
 
 fn found<'a>(
