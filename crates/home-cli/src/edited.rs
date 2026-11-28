@@ -12,8 +12,8 @@ use home::flow::command::{Asked, Mutation, asked};
 use home::flow::snapshot::Snapshot;
 use home::issue::storage::fresh;
 use home::issue::{
-    Comment, CommentWrite, IssueComment, IssueWrite, ListPage, Locator, Lookup,
-    NativeIssue, Observation, Page, ReadFailure, SendFailure,
+    Comment, CommentWrite, IssueWrite, ListPage, Locator, Lookup, NativeIssue,
+    Observation, Page, ReadFailure, SendFailure,
 };
 use home::project::Project;
 use home::{IssueId, ProjectId, UnixMillis};
@@ -122,13 +122,6 @@ impl IssueTracker for Github {
     }
 
     fn comments(&self, _: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
-        Box::pin(async { Ok(Vec::new()) })
-    }
-
-    fn canvas_comments(
-        &self,
-        _: ProjectId,
-    ) -> IssueCompletion<'_, Vec<IssueComment>> {
         Box::pin(async { Ok(Vec::new()) })
     }
 

@@ -297,6 +297,23 @@ impl Record {
 }
 
 impl Record {
+    #[must_use]
+    pub fn awaited(&self) -> Option<CommentRequest> {
+        let (Progress::AwaitingEvidence(_), Work::Comment { issue, write }) =
+            (&self.progress, &self.intent.work)
+        else {
+            return None;
+        };
+        Some(CommentRequest {
+            issue: Lookup {
+                project: self.intent.project,
+                id: issue.clone(),
+            },
+            write: write.clone(),
+            seen: self.intent.expected.clone(),
+        })
+    }
+
     pub fn reject(&self) -> Result<Self, Refusal> {
         let Progress::AwaitingEvidence(_) = self.progress else {
             return Err(Refusal::NoAttempt);

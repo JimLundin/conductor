@@ -109,7 +109,11 @@ impl Trackers {
     ) -> Result<IssueReading, String> {
         let home = &self.loaded.snapshot;
         loop {
-            let looked = self.trackers.look(home, key).await?;
+            let looked = if resolver.fresh(key.project) {
+                self.trackers.read(home, key).await?
+            } else {
+                self.trackers.look(home, key).await?
+            };
             match resolver.step(&named(home, key.project), key, looked) {
                 Ok(reading) => return Ok(reading),
                 Err(Missing::Unknown(reason)) => return Err(reason),

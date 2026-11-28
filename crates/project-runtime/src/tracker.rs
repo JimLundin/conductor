@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 
 use home::backend::{Backends, Capability};
@@ -11,7 +13,7 @@ use home::issue::{IssueListing, IssueReading, Lookup, ReadFailure, ReadMode};
 use home::project::Project;
 use home::tracker::{self, Tracker};
 use home::{IssueId, IssueKey, ProjectId};
-use home_store::{CanvasStore, Kept, Putting, StoreError};
+use home_store::{CanvasStore, Kept, Memory, Putting, StoreError};
 
 use crate::issues::IssueCache;
 use crate::operations::Operations;
@@ -26,8 +28,21 @@ pub trait Connector: Send + Sync {
     fn connect(&self) -> Result<Reader, ReadFailure>;
 }
 
+pub type Refreshing<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ReadFailure>> + Send + 'a>>;
+
+pub trait TrackerStore: CanvasStore + Send + Sync {
+    fn refresh<'a>(&'a self, listing: &'a IssueListing) -> Refreshing<'a>;
+}
+
+impl TrackerStore for Memory {
+    fn refresh<'a>(&'a self, _: &'a IssueListing) -> Refreshing<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
 pub struct Connection {
-    pub canvases: Kept,
+    pub canvases: Box<dyn TrackerStore>,
     pub connector: Arc<dyn Connector>,
 }
 
@@ -35,7 +50,7 @@ pub type Connect = fn(&Path, &Snapshot, &Project) -> Result<Connection, String>;
 
 struct Configured {
     backends: Backends,
-    canvases: Kept,
+    canvases: Box<dyn TrackerStore>,
     connector: Arc<dyn Connector>,
 }
 
@@ -106,7 +121,21 @@ impl Trackers {
         match self.selected(key.project)? {
             Selected::Markdown => Ok(home.reading(key)),
             Selected::Configured(configured) => {
-                configured.look(&self.data, home, key).await
+                configured.look(&self.data, home, key, false).await
+            }
+            Selected::Unbuilt(reason) => Err(reason.clone()),
+        }
+    }
+
+    pub async fn read(
+        &self,
+        home: &Snapshot,
+        key: &IssueKey,
+    ) -> Result<IssueReading, String> {
+        match self.selected(key.project)? {
+            Selected::Markdown => Ok(home.reading(key)),
+            Selected::Configured(configured) => {
+                configured.look(&self.data, home, key, true).await
             }
             Selected::Unbuilt(reason) => Err(reason.clone()),
         }
@@ -173,10 +202,13 @@ impl Trackers {
         }
     }
 
-    fn store(&self, project: ProjectId) -> Result<&Kept, StoreError> {
+    fn store(
+        &self,
+        project: ProjectId,
+    ) -> Result<&dyn CanvasStore, StoreError> {
         match self.selected(project).map_err(unavailable)? {
-            Selected::Markdown => Ok(&self.markdown),
-            Selected::Configured(configured) => Ok(&configured.canvases),
+            Selected::Markdown => Ok(&*self.markdown),
+            Selected::Configured(configured) => Ok(&*configured.canvases),
             Selected::Unbuilt(reason) => Err(unavailable(reason.as_str())),
         }
     }
@@ -184,11 +216,11 @@ impl Trackers {
     fn store_mut(
         &mut self,
         project: ProjectId,
-    ) -> Result<&mut Kept, StoreError> {
+    ) -> Result<&mut dyn CanvasStore, StoreError> {
         match self.selected.get_mut(&project) {
-            Some(Selected::Markdown) => Ok(&mut self.markdown),
+            Some(Selected::Markdown) => Ok(&mut *self.markdown),
             Some(Selected::Configured(configured)) => {
-                Ok(&mut configured.canvases)
+                Ok(&mut *configured.canvases)
             }
             Some(Selected::Unbuilt(reason)) => {
                 Err(unavailable(reason.as_str()))
@@ -263,20 +295,32 @@ impl Configured {
             .map_err(|error| error.to_string())
     }
 
+    fn mode(&self, registry: &mut Registry, fresh: bool) -> ReadMode {
+        if fresh {
+            self.register(registry)
+                .map_or_else(ReadMode::Failed, |()| ReadMode::Refresh)
+        } else {
+            ReadMode::Cached
+        }
+    }
+
     async fn look(
         &self,
         data: &Path,
         home: &Snapshot,
         key: &IssueKey,
+        fresh: bool,
     ) -> Result<IssueReading, String> {
+        let mut registry = Registry::default();
+        let mode = self.mode(&mut registry, fresh);
         let cache = IssueCache::new(data, home.flow()?);
         let lookup = Lookup {
             project: key.project,
             id: key.id.clone(),
         };
-        Registry::default()
+        registry
             .project(&self.backends)
-            .issue(&cache, lookup, ReadMode::Cached)
+            .issue(&cache, lookup, mode)
             .await
             .map_err(|error| error.to_string())
     }
@@ -289,18 +333,27 @@ impl Configured {
         offline: bool,
     ) -> Result<IssueListing, String> {
         let mut registry = Registry::default();
-        let mode = if offline {
-            ReadMode::Cached
-        } else {
-            self.register(&mut registry)
-                .map_or_else(ReadMode::Failed, |()| ReadMode::Refresh)
-        };
+        let mode = self.mode(&mut registry, !offline);
+        let refreshing = matches!(mode, ReadMode::Refresh);
         let cache = IssueCache::new(data, home.flow()?);
-        registry
+        let listing = registry
             .project(&self.backends)
             .issues(&cache, project, mode)
             .await
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        Ok(self.refreshed(listing, refreshing).await)
+    }
+
+    async fn refreshed(
+        &self,
+        mut listing: IssueListing,
+        refreshing: bool,
+    ) -> IssueListing {
+        if refreshing && listing.status.failure.is_none() {
+            listing.status.failure =
+                self.canvases.refresh(&listing).await.err();
+        }
+        listing
     }
 }
 

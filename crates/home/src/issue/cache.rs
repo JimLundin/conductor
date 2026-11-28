@@ -1,6 +1,6 @@
 use super::{
-    Freshness, IssueComment, IssueListing, IssueReading, IssueState, Lookup,
-    Observation, Page, ReadFailure, ReadStatus, Unreadable,
+    Freshness, IssueListing, IssueReading, IssueState, Lookup, Observation,
+    Page, ReadFailure, ReadStatus, Unreadable,
 };
 use crate::flow::{Flow, snapshot};
 use crate::{IssueId, ProjectId, UnixMillis, prelude::*};
@@ -22,7 +22,6 @@ pub fn verify(
 pub struct Scan {
     records: BTreeMap<IssueId, Observation>,
     continuations: BTreeSet<String>,
-    comments: Vec<IssueComment>,
 }
 
 impl Scan {
@@ -47,17 +46,12 @@ impl Scan {
         }
         Ok(page.next)
     }
-
-    pub fn commented(&mut self, comments: Vec<IssueComment>) {
-        self.comments = comments;
-    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Collection {
     list: Option<Membership>,
     known: BTreeMap<IssueId, Seen>,
-    comments: Vec<IssueComment>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -93,11 +87,6 @@ impl Collection {
             when,
             ids: scan.records.keys().cloned().collect(),
         });
-        self.comments = scan
-            .comments
-            .into_iter()
-            .filter(|kept| scan.records.contains_key(&kept.issue))
-            .collect();
         for record in scan.records.into_values() {
             self.remember(record, generation, when);
         }
@@ -115,22 +104,6 @@ impl Collection {
         let id = record.id().clone();
         self.remember(record, generation, when);
         Ok(id)
-    }
-
-    #[must_use]
-    pub fn comments(&self) -> &[IssueComment] {
-        &self.comments
-    }
-
-    pub fn posted(&mut self, posted: IssueComment) {
-        match self
-            .comments
-            .iter_mut()
-            .find(|kept| kept.comment.id == posted.comment.id)
-        {
-            Some(kept) => *kept = posted,
-            None => self.comments.push(posted),
-        }
     }
 
     fn remember(

@@ -6,7 +6,7 @@ use github::configuration::Configuration;
 use github::mapping::{self, Record};
 use home::flow::Flow;
 use home::flow::command::Mutation;
-use home::issue::{Comment, CommentWrite, IssueComment};
+use home::issue::{Comment, CommentWrite};
 use home::issue::{
     IssueState, IssueWrite, ListPage, Locator, Lookup, NativeIssue,
     Observation, Page, ReadFailure, Unreadable,
@@ -269,13 +269,6 @@ impl IssueTracker for Tracker {
 
     fn comments(&self, issue: Lookup) -> IssueCompletion<'_, Vec<Comment>> {
         Box::pin(self.issue_comments(issue))
-    }
-
-    fn canvas_comments(
-        &self,
-        _: ProjectId,
-    ) -> IssueCompletion<'_, Vec<IssueComment>> {
-        Box::pin(self.marked_comments())
     }
 
     fn write_comment(
