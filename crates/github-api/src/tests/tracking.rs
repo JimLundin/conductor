@@ -1,8 +1,9 @@
 use super::{Exchange, exchanges};
 use crate::{Client, Tracker, credential::Source};
 use github::access::Repository;
+use home::issue::{Coverage, Observation};
 use home::issue::{IssueState, ListPage, Lookup, ReadFailure};
-use home::{IssueId, ProjectId};
+use home::{IssueId, IssueKey, ProjectId};
 use project_runtime::IssueTracker as _;
 use serde_json::{Value, json};
 
@@ -54,7 +55,9 @@ fn issue(number: u64, id: u64) -> Value {
         "html_url":format!("https://github.com/owner/work/issues/{number}"),
         "number":number,"state":"open","title":"Native issue","body":"Visible human text",
         "user":author,"labels":[],"assignees":[],"locked":false,"comments":3,
-        "created_at":"2026-01-01T12:00:00Z","updated_at":"2026-01-02T12:00:00Z"
+        "created_at":"2026-01-01T12:00:00Z","updated_at":"2026-01-02T12:00:00Z",
+        "parent_issue_url":null,
+        "issue_dependencies_summary":{"blocked_by":0,"blocking":0,"total_blocked_by":0,"total_blocking":0}
     })
 }
 
@@ -306,6 +309,124 @@ async fn an_issue_s_number_is_its_id_and_its_api_id_is_among_its_addresses()
             .and_then(|locator| locator.addresses.get("id"))
             .map(String::as_str),
         Some("6663214162")
+    );
+    completed.await??;
+    Ok(())
+}
+
+const BLOCKERS: &str =
+    "/repos/owner/work/issues/7/dependencies/blocked_by?per_page=100";
+
+fn sub_issue_of(parent: &str) -> Value {
+    let mut value = issue(7, 901);
+    value["parent_issue_url"] = json!(parent);
+    value
+}
+
+fn blocked(total: u32) -> Value {
+    let mut value = issue(7, 901);
+    value["issue_dependencies_summary"]["total_blocked_by"] = json!(total);
+    value
+}
+
+fn targets(observed: &Observation, relation: &str) -> Vec<String> {
+    observed
+        .issue()
+        .and_then(|issue| issue.links.get(relation))
+        .map_or_else(Vec::new, |keys| {
+            keys.iter().map(ToString::to_string).collect()
+        })
+}
+
+#[tokio::test]
+async fn a_sub_issue_reads_its_parent_issue_as_its_parent() -> anyhow::Result<()>
+{
+    let (base, completed) = exchanges(vec![reply(
+        NUMBER,
+        200,
+        &sub_issue_of("{api}/repos/owner/work/issues/3"),
+    )])
+    .await?;
+    let observed = tracker(&base)?.read(lookup("7")?).await?;
+    let parent = IssueKey::named("3", ProjectId::new(1))
+        .ok_or_else(|| anyhow::anyhow!("no key"))?;
+    assert_eq!(targets(&observed, "parent"), [parent.to_string()]);
+    assert_eq!(
+        observed.completeness.relations.get("parent"),
+        Some(&Coverage::Complete)
+    );
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_issue_with_blocked_by_dependencies_reads_them_in_blocked_by()
+-> anyhow::Result<()> {
+    let (base, completed) = exchanges(vec![
+        reply(FIRST, 200, &json!([blocked(2)])),
+        reply(BLOCKERS, 200, &json!([issue(5, 905), issue(6, 906)])),
+    ])
+    .await?;
+    let listed = tracker(&base)?.list(page(None)).await?;
+    let observed = &listed.records[0];
+    let project = ProjectId::new(1);
+    assert_eq!(
+        targets(observed, "blocked_by"),
+        [format!("{project}/5"), format!("{project}/6")]
+    );
+    assert_eq!(
+        observed.completeness.relations.get("blocked_by"),
+        Some(&Coverage::Complete)
+    );
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_footer_relation_reads_beside_the_native_relations()
+-> anyhow::Result<()> {
+    let mut value = sub_issue_of("{api}/repos/owner/work/issues/3");
+    value["issue_dependencies_summary"]["total_blocked_by"] = json!(1);
+    value["body"] = json!(
+        "Visible human text\n\n```project-data\nschema = 1\n\n[relations]\nblocked_by = [\"local~0v2csjdj\"]\n```"
+    );
+    let (base, completed) = exchanges(vec![
+        reply(NUMBER, 200, &value),
+        reply(BLOCKERS, 200, &json!([issue(5, 905)])),
+    ])
+    .await?;
+    let observed = tracker(&base)?.read(lookup("7")?).await?;
+    let project = ProjectId::new(1);
+    assert_eq!(targets(&observed, "parent"), [format!("{project}/3")]);
+    assert_eq!(
+        targets(&observed, "blocked_by"),
+        [format!("{project}/5"), format!("{project}/local~0v2csjdj")]
+    );
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_native_relation_in_another_repository_is_reported_and_left_uncovered()
+-> anyhow::Result<()> {
+    let (base, completed) = exchanges(vec![reply(
+        NUMBER,
+        200,
+        &sub_issue_of("{api}/repos/owner/other/issues/3"),
+    )])
+    .await?;
+    let observed = tracker(&base)?.read(lookup("7")?).await?;
+    assert!(observed.issue().is_some());
+    assert_eq!(targets(&observed, "parent"), Vec::<String>::new());
+    assert!(matches!(
+        observed.completeness.relations.get("parent"),
+        Some(Coverage::Incomplete { .. })
+    ));
+    assert!(
+        observed
+            .findings
+            .iter()
+            .any(|finding| finding.message.contains("owner/other#3"))
     );
     completed.await??;
     Ok(())

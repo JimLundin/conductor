@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
-use github::mapping::{self, Record};
+use github::mapping::{self, Native, Record};
 use home::flow::Flow;
 use home::issue::{
     IssueState, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
@@ -35,8 +35,20 @@ impl Client {
 #[derive(serde::Deserialize)]
 struct ReturnedIssue {
     state_reason: Option<String>,
+    parent_issue_url: Option<String>,
+    issue_dependencies_summary: Option<Dependencies>,
     #[serde(flatten)]
     issue: Issue,
+}
+
+#[derive(serde::Deserialize)]
+struct Dependencies {
+    total_blocked_by: u32,
+}
+
+#[derive(serde::Deserialize)]
+struct Blocker {
+    url: String,
 }
 
 enum Response {
@@ -77,19 +89,43 @@ impl Tracker {
             link.as_deref(),
             raw.incomplete_results,
         )?;
-        let records = raw
+        let issues: Vec<_> = raw
             .items
             .into_iter()
             .filter(|returned| returned.issue.pull_request.is_none())
-            .map(|returned| self.observe(request.project, returned))
+            .collect();
+        let mut blocked = Vec::new();
+        for returned in &issues {
+            blocked.push(self.blocked_by(returned).await?);
+        }
+        let records = issues
+            .into_iter()
+            .zip(blocked)
+            .map(|(returned, blocked_by)| {
+                self.observe(request.project, returned, blocked_by)
+            })
             .collect::<Result<_, _>>()?;
         Ok(Page { records, next })
+    }
+
+    async fn blocked_by(
+        &self,
+        value: &ReturnedIssue,
+    ) -> Result<Option<Vec<Native>>, ReadFailure> {
+        match value.issue_dependencies_summary {
+            None => Ok(None),
+            Some(Dependencies {
+                total_blocked_by: 0,
+            }) => Ok(Some(Vec::new())),
+            Some(_) => self.blockers(value.issue.number).await.map(Some),
+        }
     }
 
     fn observe(
         &self,
         project: ProjectId,
         value: ReturnedIssue,
+        blocked_by: Option<Vec<Native>>,
     ) -> Result<Observation, ReadFailure> {
         let client = &self.client;
         let issue = value.issue;
@@ -99,6 +135,11 @@ impl Tracker {
             issue.url.as_str(),
             issue.number,
         )?;
+        let parent = value
+            .parent_issue_url
+            .as_deref()
+            .map(|url| client.repository.native(&client.endpoint, url))
+            .transpose()?;
         let id = IssueId::new(&issue.number.to_string())
             .ok_or(ReadFailure::InvalidResponse)?;
         let owned_repo = format!(
@@ -128,11 +169,34 @@ impl Tracker {
             open: matches!(issue.state, octocrab::models::IssueState::Open),
             state_reason: value.state_reason,
             labels: issue.labels.into_iter().map(|label| label.name).collect(),
+            parent,
+            blocked_by,
         };
         let mut observation =
             mapping::observe(&self.flow, &self.config, project, record);
         observation.observed_at = observed_at();
         Ok(observation)
+    }
+
+    async fn blockers(&self, number: u64) -> Result<Vec<Native>, ReadFailure> {
+        let client = &self.client;
+        let page: octocrab::Page<Blocker> = client
+            .reader
+            .get(
+                client.repository.blockers_route(number),
+                Some(&[("per_page", 100)]),
+            )
+            .await
+            .map_err(request_error)?;
+        if page.next.is_some() {
+            return Err(ReadFailure::InvalidResponse);
+        }
+        page.items
+            .iter()
+            .map(|blocker| {
+                client.repository.native(&client.endpoint, &blocker.url)
+            })
+            .collect()
     }
 
     async fn fetch(&self, address: Address) -> Result<Response, ReadFailure> {
@@ -189,17 +253,17 @@ impl Tracker {
                 }
                 Response::Gone => return gone(request, resolution),
                 Response::Issue(issue) => {
-                    return self.resolved(&request, resolution, *issue);
+                    return self.resolved(&request, resolution, issue).await;
                 }
             }
         }
     }
 
-    fn resolved(
+    async fn resolved(
         &self,
         request: &Lookup,
         resolution: Resolution,
-        value: ReturnedIssue,
+        value: Box<ReturnedIssue>,
     ) -> Result<Observation, ReadFailure> {
         if value.issue.pull_request.is_some() {
             return Err(ReadFailure::Unavailable);
@@ -207,7 +271,8 @@ impl Tracker {
         if value.issue.number != resolution.address.number() {
             return Err(ReadFailure::IdentityConflict);
         }
-        let observed = self.observe(request.project, value)?;
+        let blocked_by = self.blocked_by(&value).await?;
+        let observed = self.observe(request.project, *value, blocked_by)?;
         home::issue::cache::verify(request, &observed)?;
         Ok(observed)
     }

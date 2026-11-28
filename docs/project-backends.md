@@ -29,8 +29,8 @@ credential = "fleet/github-builds"
 Credential references cannot traverse directories, and backend resources
 reject URLs with embedded credentials or query strings. `options` is TOML
 text interpreted by the selected adapter. GitHub mapping options are
-validated against the loaded flow by the pure `github` crate. Its defaults
-and native relation choices do not apply to other adapters.
+validated against the loaded flow by the pure `github` crate. Its defaults do
+not apply to other adapters.
 
 Run `home project capabilities <project>` from the home checkout to
 validate the configuration and inspect the available operations. This
@@ -74,8 +74,8 @@ home issue show my-project 42 --offline
 
 Both commands print JSON. A refresh reads direct GitHub edits. The list
 includes open, closed and invalid issues. Each record includes its ID,
-locator, findings and coverage. Comments and native relations have incomplete coverage
-until their readers are available.
+locator, findings and coverage. Comments have incomplete coverage
+until their reader is available.
 
 A successful refresh reports `Fresh`. If a page fails, the command exits
 with status 1 and reports the failure alongside the previous complete list.

@@ -35,27 +35,11 @@ pub struct FieldMapping {
     pub source: FieldSource,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RelationSource {
-    Parent,
-    Dependency,
-    Metadata,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct RelationMapping {
-    pub name: String,
-    pub source: RelationSource,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Configuration {
     pub namespace: String,
     pub defaults: Defaults,
     pub fields: Vec<FieldMapping>,
-    pub relations: Vec<RelationMapping>,
 }
 
 #[derive(Default, Deserialize)]
@@ -64,7 +48,6 @@ struct File {
     namespace: Option<String>,
     defaults: Option<Defaults>,
     fields: Vec<FieldMapping>,
-    relations: Vec<RelationMapping>,
 }
 
 pub fn load(text: &str, flow: &Flow) -> Result<Configuration, String> {

@@ -5,23 +5,14 @@ fn flow() -> Result<Flow, String> {
 }
 
 #[test]
-fn each_field_and_relation_has_one_mapping() -> Result<(), String> {
-    let flow = flow()?;
-    for options in [
-        "[[fields]]\nname='branch'\nsource={kind='metadata'}\n[[fields]]\nname='branch'\nsource={kind='metadata'}",
-        "[[relations]]\nname='parent'\nsource='parent'\n[[relations]]\nname='parent'\nsource='metadata'",
-    ] {
-        assert!(
-            load(options, &flow).is_err(),
-            "accepted duplicate mapping: {options}"
-        );
-    }
+fn each_field_has_one_mapping() -> Result<(), String> {
+    let options = "[[fields]]\nname='branch'\nsource={kind='metadata'}\n[[fields]]\nname='branch'\nsource={kind='metadata'}";
+    assert!(load(options, &flow()?).is_err());
     Ok(())
 }
 
 #[test]
-fn defaults_follow_flow_roles_and_each_relation_has_one_source()
--> Result<(), String> {
+fn defaults_follow_flow_roles() -> Result<(), String> {
     let config = load("", &flow()?)?;
     assert_eq!(config.namespace, "work/");
     assert_eq!(
@@ -57,19 +48,6 @@ fn defaults_follow_flow_roles_and_each_relation_has_one_source()
             .map(|field| &field.source),
         Some(&FieldSource::Metadata)
     );
-    assert_eq!(
-        config.relations,
-        Vec::from([
-            RelationMapping {
-                name: String::from("parent"),
-                source: RelationSource::Parent
-            },
-            RelationMapping {
-                name: String::from("blocked_by"),
-                source: RelationSource::Dependency
-            },
-        ])
-    );
     let field = config
         .fields
         .iter()
@@ -90,7 +68,6 @@ fn fields_values_and_default_statuses_must_be_declared() -> Result<(), String> {
     let flow = flow()?;
     for options in [
         "[[fields]]\nname='unknown'\nsource={kind='metadata'}",
-        "[[relations]]\nname='unknown'\nsource='metadata'",
         "[[fields]]\nname='priority'\nsource={kind='managed_labels',values={someday='work/priority/someday'}}",
         "[[fields]]\nname='priority'\nsource={kind='managed_labels',values={urgent='work/priority/urgent'}}",
         "[defaults]\nopen='unknown'\ncompleted='done'\nnot_planned='dropped'\nclosed='done'",
@@ -107,14 +84,12 @@ fn fields_values_and_default_statuses_must_be_declared() -> Result<(), String> {
 }
 
 #[test]
-fn label_names_and_native_relation_sources_cannot_be_shared()
--> Result<(), String> {
+fn label_names_cannot_be_shared() -> Result<(), String> {
     let flow = flow()?;
     for options in [
         "[[fields]]\nname='priority'\nsource={kind='managed_labels',values={low='work/priority/low',normal='WORK/PRIORITY/LOW',high='work/priority/high',urgent='work/priority/urgent'}}",
         "[[fields]]\nname='priority'\nsource={kind='managed_labels',values={low='work/kind/task',normal='work/priority/normal',high='work/priority/high',urgent='work/priority/urgent'}}",
         "[[fields]]\nname='priority'\nsource={kind='managed_labels',values={low='outside/low',normal='work/priority/normal',high='work/priority/high',urgent='work/priority/urgent'}}",
-        "[[relations]]\nname='blocked_by'\nsource='parent'",
         "namespace=''",
     ] {
         assert!(
@@ -126,38 +101,8 @@ fn label_names_and_native_relation_sources_cannot_be_shared()
 }
 
 #[test]
-fn configured_metadata_relations_preserve_the_domains_broader_graph()
--> Result<(), String> {
-    let mut flow = flow()?;
-    flow.relations.push(home::flow::Relation {
-        name: String::from("related"),
-        from: Vec::new(),
-        to: Vec::new(),
-        many: true,
-        cycles: true,
-        shape: home::flow::Shape::Dependency,
-        reverse: String::from("related_from"),
-    });
-    let config = load(
-        "namespace='team/'\n[[relations]]\nname='parent'\nsource='metadata'",
-        &flow,
-    )?;
-    assert_eq!(
-        config
-            .relations
-            .iter()
-            .find(|relation| relation.name == "parent")
-            .map(|relation| relation.source),
-        Some(RelationSource::Metadata)
-    );
-    assert_eq!(
-        config
-            .relations
-            .iter()
-            .find(|relation| relation.name == "related")
-            .map(|relation| relation.source),
-        Some(RelationSource::Metadata)
-    );
+fn a_namespace_renames_the_managed_labels() -> Result<(), String> {
+    let config = load("namespace='team/'", &flow()?)?;
     let field = config
         .fields
         .iter()
@@ -170,5 +115,16 @@ fn configured_metadata_relations_preserve_the_domains_broader_graph()
         values.get("urgent").map(String::as_str),
         Some("team/priority/urgent")
     );
+    Ok(())
+}
+
+#[test]
+fn tracker_options_naming_relations_fail_as_an_unknown_field()
+-> Result<(), String> {
+    let refused =
+        load("[[relations]]\nname='parent'\nsource='metadata'", &flow()?)
+            .err()
+            .ok_or("accepted a relations option")?;
+    assert!(refused.contains("unknown field `relations`"), "{refused}");
     Ok(())
 }

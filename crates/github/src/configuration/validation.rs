@@ -1,7 +1,4 @@
-use super::{
-    Configuration, Defaults, FieldMapping, FieldSource, File, RelationMapping,
-    RelationSource,
-};
+use super::{Configuration, Defaults, FieldMapping, FieldSource, File};
 use alloc::{
     collections::{BTreeMap, BTreeSet},
     format,
@@ -34,12 +31,10 @@ pub(super) fn configuration(
     check_defaults(&defaults, flow)?;
     let fields = fields(flow, &namespace, file.fields)?;
     check_labels(&namespace, &fields)?;
-    let relations = relations(flow, file.relations)?;
     Ok(Configuration {
         namespace,
         defaults,
         fields,
-        relations,
     })
 }
 
@@ -248,51 +243,4 @@ fn check_labels(
         }
     }
     Ok(())
-}
-
-fn relations(
-    flow: &Flow,
-    overrides: Vec<RelationMapping>,
-) -> Result<Vec<RelationMapping>, String> {
-    let mut relations: Vec<RelationMapping> = flow
-        .relations
-        .iter()
-        .map(|relation| RelationMapping {
-            name: relation.name.clone(),
-            source: match relation.name.as_str() {
-                "parent" => RelationSource::Parent,
-                "blocked_by" => RelationSource::Dependency,
-                _ => RelationSource::Metadata,
-            },
-        })
-        .collect();
-    let mut seen = BTreeSet::new();
-    for relation in overrides {
-        if !seen.insert(relation.name.clone()) {
-            return Err(format!(
-                "relation {:?} is mapped more than once",
-                relation.name
-            ));
-        }
-        let mapped = relations
-            .iter_mut()
-            .find(|mapped| mapped.name == relation.name)
-            .ok_or_else(|| {
-                format!("no relation is called {:?}", relation.name)
-            })?;
-        *mapped = relation;
-    }
-    let mut sources = Vec::new();
-    for relation in &relations {
-        if relation.source != RelationSource::Metadata {
-            if sources.contains(&relation.source) {
-                return Err(format!(
-                    "native relation source {:?} is mapped more than once",
-                    relation.source
-                ));
-            }
-            sources.push(relation.source);
-        }
-    }
-    Ok(relations)
 }

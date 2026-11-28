@@ -19,6 +19,8 @@ fn record() -> Result<Record, String> {
         open: true,
         state_reason: None,
         labels: Vec::from([String::from("Customer report")]),
+        parent: None,
+        blocked_by: Some(Vec::new()),
     })
 }
 
@@ -55,10 +57,10 @@ fn a_direct_issue_uses_declared_defaults_and_native_fields()
         observation.completeness.notes,
         Coverage::Incomplete { .. }
     ));
-    assert!(matches!(
+    assert_eq!(
         observation.completeness.relations.get("blocked_by"),
-        Some(Coverage::Incomplete { .. })
-    ));
+        Some(&Coverage::Complete)
+    );
     assert!(observation.revision.is_some());
     Ok(())
 }
@@ -178,8 +180,7 @@ fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_
         "## What\nAn example\n\n````text\n```project-data\nexample only\n```\n````\n\n## Checklist\n- [ ] inspect\n\n~~~project-data\nschema = 1\n[fields]\nbranch='decision-work'\nmethod='prototype'\n[relations]\nparent='712'\n~~~\n\n",
     );
     with_labels(&mut input, &["work/kind/decision"]);
-    let observed =
-        read(input, "[[relations]]\nname='parent'\nsource='metadata'")?;
+    let observed = read(input, "")?;
     let (issue, body) = observed.editable()?;
     assert_eq!(issue.branch, "decision-work");
     assert_eq!(issue.text("method"), Some("prototype"));
@@ -209,8 +210,7 @@ fn a_footer_relation_names_another_project_s_issue_by_its_project_and_id()
     input.body = String::from(
         "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = 'hyn162/146'\n```",
     );
-    let observed =
-        read(input, "[[relations]]\nname='parent'\nsource='metadata'")?;
+    let observed = read(input, "")?;
     let (issue, _) = observed.editable()?;
     assert_eq!(
         issue
@@ -225,8 +225,7 @@ fn a_footer_relation_names_another_project_s_issue_by_its_project_and_id()
 }
 
 #[test]
-fn invalid_footer_data_and_competing_native_sources_are_visible()
--> Result<(), String> {
+fn invalid_footer_data_is_visible() -> Result<(), String> {
     for data in [
         "schema=2",
         "malformed toml",
@@ -234,7 +233,8 @@ fn invalid_footer_data_and_competing_native_sources_are_visible()
         "schema=1\n[fields]\nbranch=true",
         "schema=1\n[fields]\nmethod='prototype'",
         "schema=1\n[fields]\nunknown='word'",
-        "schema=1\n[relations]\nparent='123'",
+        "schema=1\n[relations]\nunknown='123'",
+        "schema=1\n[relations]\nchildren='123'",
         "schema=1\noperation='not a handle'",
     ] {
         let mut input = record()?;
@@ -345,8 +345,7 @@ fn metadata_edges_require_issue_ids_and_declared_cardinality()
         input.body = format!(
             "```project-data\nschema=1\n[relations]\nparent={value}\n```"
         );
-        let observed =
-            read(input, "[[relations]]\nname='parent'\nsource='metadata'")?;
+        let observed = read(input, "")?;
         assert!(observed.editable().is_err(), "{value}");
     }
     Ok(())
@@ -361,5 +360,56 @@ fn creation_time_keeps_native_subseconds_in_the_declared_field()
     let (issue, _) = observed.editable()?;
     assert_eq!(issue.created, Some(UnixMillis(1090)));
     assert_eq!(issue.text("created"), Some("1970-01-01T00:00:01.090Z"));
+    Ok(())
+}
+
+#[test]
+fn a_native_parent_and_a_different_footer_parent_conflict() -> Result<(), String>
+{
+    let mut input = record()?;
+    input.parent = Some(Native::Here(3));
+    input.body = String::from(
+        "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = '4'\n```",
+    );
+    assert!(read(input.clone(), "")?.editable().is_err());
+    input.body = String::from(
+        "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = '3'\n```",
+    );
+    let observed = read(input, "")?;
+    assert_eq!(
+        observed.editable()?.0.links.get("parent"),
+        IssueKey::named("3", ProjectId::new(71))
+            .map(|key| Vec::from([key]))
+            .as_ref()
+    );
+    Ok(())
+}
+
+#[test]
+fn unread_dependencies_leave_blocked_by_incomplete() -> Result<(), String> {
+    let mut input = record()?;
+    input.blocked_by = None;
+    let observed = read(input, "")?;
+    assert!(matches!(
+        observed.completeness.relations.get("blocked_by"),
+        Some(Coverage::Incomplete { .. })
+    ));
+    assert_eq!(
+        observed.completeness.relations.get("parent"),
+        Some(&Coverage::Complete)
+    );
+    Ok(())
+}
+
+#[test]
+fn fingerprints_follow_native_relations() -> Result<(), String> {
+    let input = record()?;
+    let original = read(input.clone(), "")?.revision;
+    let mut moved = input.clone();
+    moved.parent = Some(Native::Here(3));
+    assert_ne!(read(moved, "")?.revision, original);
+    let mut blocked = input;
+    blocked.blocked_by = Some(Vec::from([Native::Here(5)]));
+    assert_ne!(read(blocked, "")?.revision, original);
     Ok(())
 }

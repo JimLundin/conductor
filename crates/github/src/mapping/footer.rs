@@ -10,7 +10,7 @@ use home::{IssueKey, ProjectId, operations::Handle};
 use serde::Deserialize;
 
 use super::Findings;
-use crate::configuration::{Configuration, FieldSource, RelationSource};
+use crate::configuration::{Configuration, FieldSource};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -75,22 +75,16 @@ pub(super) fn read<'a>(
                 }
             }
             for (name, value) in document.relations {
-                if !config.relations.iter().any(|mapping| {
-                    mapping.name == name
-                        && mapping.source == RelationSource::Metadata
-                }) {
-                    findings.error(format!(
-                        "relation {name:?} has no project-data mapping"
-                    ));
+                let Some((relation, false)) = flow.relation(&name) else {
+                    findings.error(format!("no relation is called {name:?}"));
                     continue;
-                }
-                if let Some((relation, false)) = flow.relation(&name) {
-                    match targets(relation, value, project) {
-                        Ok(ids) => {
-                            metadata.links.insert(name, ids);
-                        }
-                        Err(error) => findings
-                            .error(format!("relation {name:?}: {error}")),
+                };
+                match targets(relation, value, project) {
+                    Ok(ids) => {
+                        metadata.links.insert(name, ids);
+                    }
+                    Err(error) => {
+                        findings.error(format!("relation {name:?}: {error}"));
                     }
                 }
             }

@@ -14,10 +14,11 @@ use home::issue::{
 use home::{IssueId, ProjectId, UnixMillis};
 use sha2::{Digest, Sha256};
 
-use crate::configuration::{Configuration, RelationSource};
+use crate::configuration::Configuration;
 
 mod footer;
 mod labels;
+mod relations;
 
 pub const AUTHORITY: &str = "https://api.github.com";
 
@@ -31,6 +32,14 @@ pub struct Record {
     pub open: bool,
     pub state_reason: Option<String>,
     pub labels: Vec<String>,
+    pub parent: Option<Native>,
+    pub blocked_by: Option<Vec<Native>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Native {
+    Here(u64),
+    Elsewhere(String),
 }
 
 impl Record {
@@ -38,6 +47,18 @@ impl Record {
         fn field(hash: &mut Sha256, text: &str) {
             hash.update((text.len() as u64).to_be_bytes());
             hash.update(text.as_bytes());
+        }
+        fn native(hash: &mut Sha256, edge: &Native) {
+            match edge {
+                Native::Here(number) => {
+                    hash.update([1]);
+                    hash.update(number.to_be_bytes());
+                }
+                Native::Elsewhere(issue) => {
+                    hash.update([2]);
+                    field(hash, issue);
+                }
+            }
         }
         let mut hash = Sha256::new();
         field(&mut hash, &self.id.to_string());
@@ -55,6 +76,17 @@ impl Record {
         labels.sort_unstable();
         for label in labels {
             field(&mut hash, label);
+        }
+        hash.update([u8::from(self.parent.is_some())]);
+        if let Some(parent) = &self.parent {
+            native(&mut hash, parent);
+        }
+        hash.update([u8::from(self.blocked_by.is_some())]);
+        if let Some(blockers) = &self.blocked_by {
+            hash.update((blockers.len() as u64).to_be_bytes());
+            for blocker in blockers {
+                native(&mut hash, blocker);
+            }
         }
         data_encoding::HEXLOWER.encode(&hash.finalize())
     }
@@ -89,6 +121,13 @@ pub fn observe(
         metadata.fields,
         &mut findings,
     );
+    let relations = relations::Relations::read(
+        flow,
+        project,
+        &record,
+        metadata.links,
+        &mut findings,
+    );
     let revision = record.fingerprint();
     let branch = branch_of(
         &record.id,
@@ -105,7 +144,7 @@ pub fn observe(
         status,
         stage,
         fields,
-        links: metadata.links,
+        links: relations.links,
         branch,
         body: String::new(),
         sections: Vec::new(),
@@ -123,19 +162,12 @@ pub fn observe(
     observation.completeness.notes = Coverage::Incomplete {
         reason: String::from("GitHub comments have not been read"),
     };
-    for relation in &config.relations {
-        let coverage = match relation.source {
-            RelationSource::Metadata => observation.completeness.fields.clone(),
-            _ => Coverage::Incomplete {
-                reason: String::from(
-                    "native GitHub relations have not been read",
-                ),
-            },
+    for (name, read) in relations.coverage {
+        let coverage = match &observation.completeness.fields {
+            Coverage::Complete => read,
+            unread @ Coverage::Incomplete { .. } => unread.clone(),
         };
-        observation
-            .completeness
-            .relations
-            .insert(relation.name.clone(), coverage);
+        observation.completeness.relations.insert(name, coverage);
     }
     observation
 }

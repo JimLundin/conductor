@@ -103,7 +103,7 @@ findings. The app shows those findings beside the issue.
 
 ## GitHub mapping
 
-Each configured field or relation has one authoritative source. The
+Each configured field has one authoritative source. The
 configuration declares defaults and label mappings against the loaded
 flow. It rejects duplicate mappings and undeclared values before writes.
 The default managed-label namespace is `work/`; projects can select a
@@ -121,7 +121,7 @@ different unused namespace. No project brand appears in the format.
 | Ordinary labels | Native labels outside the reserved namespace, assigned by the flow's labels role. |
 | Other typed fields, including branch | One typed TOML footer in the issue body. |
 | Notes | Native comments, with provider comment identity, author and creation time. |
-| Relations | The configured native relation or footer entry, as described below. |
+| Relations | Native sub-issues and dependencies, and footer entries, as described below. |
 
 Do not use preview issue status or native issue types in the first adapter.
 The explicit label map can represent the flow without depending on those
@@ -177,19 +177,22 @@ it for reconciliation.
 The `[relations]` table holds a qualified issue identity for a single target
 and an array of qualified identities for multiple targets.
 
-Default `parent` and `blocked_by` mappings use GitHub's native sub-issue and
-dependency APIs. A project can instead declare an entire relation to use
-the footer. Additional relations use the footer, with full qualified issue
-identities. The mapping is per relation, never an automatic per-edge choice.
-Do not merge two competing representations of the same relation.
+The backend chooses how it stores each relation, and projects configure
+no relation sources. GitHub holds `parent` as a sub-issue and `blocked_by`
+as an issue dependency. The footer holds any other relation, and any edge
+GitHub can't hold, such as one to a Markdown issue or to another tracker.
+A read takes `parent` and `blocked_by` from both the native structures and
+the footer as one relation. A single-target relation that names two
+different issues across the two forms is invalid.
 
-Use footer mappings for cross-provider edges or a graph that native GitHub
-relations cannot represent. Native limits are adapter capabilities, not
-flow limits. An unsupported native edge is refused before effects where
-the limitation is known; a server rejection remains an explicit outcome.
-Changing an existing relation's encoding is explicit reconfiguration, and
-is refused if existing edges would silently change meaning. No automatic
-relation migration or native mirror is included.
+GitHub allows up to 100 sub-issues per parent, eight levels of nesting and
+50 issues for each dependency type. A sub-issue must belong to the same
+repository owner as its parent. A native edge to an issue in another
+repository reads as a warning, and its relation's coverage stays
+incomplete, because the backend can't name that issue's project. Native
+limits are adapter capabilities, not flow limits. An unsupported native
+edge is refused before effects where the limitation is known; a server
+rejection remains an explicit outcome.
 
 Read all relevant relation pages. An inaccessible dependency remains
 unresolved and cannot satisfy a flow rule. A parent move is a distinct
@@ -432,7 +435,7 @@ without an observed bug that needs one.
 | `github` mapping core | A directly created native issue has defaults without a normalization write; unknown or conflicting managed values remain visible as invalid records. |
 | `github` mapping core | Direct body/checklist/label/relation edits appear on refresh; comments that resemble approval stay ordinary notes. |
 | `github` mapping core | Close/reopen with a contradictory explicit status label reports the conflict; unlabelled close/reopen maps through configured role defaults. |
-| `github` mapping core | One footer round-trips arbitrary typed fields and metadata relations while human prose and unrelated labels survive. Native and metadata sources never compete for one relation. |
+| `github` mapping core | One footer round-trips arbitrary typed fields and metadata relations while human prose and unrelated labels survive. A relation read from both native structures and the footer is one relation. |
 | `home` identity and branch core | Equal issue numbers in two repositories remain distinct; a locator change cannot change an existing branch; unavailable transfer identity is reported. |
 | `project-runtime` with scripted adapters | Offline edits have no remotely deliverable pending item; failed pagination retains a stale complete cache and an incomplete refresh result. |
 | `project-runtime` with scripted adapters | A stale observation refuses before effects; a partial label/edge update records confirmed steps; unknown body/create/note outcomes are reconciled without blind resubmission. |

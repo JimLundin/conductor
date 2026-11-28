@@ -7,6 +7,7 @@ use home::IssueId;
 use home::issue::ReadFailure;
 
 use super::Repository;
+use crate::mapping::Native;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Address {
@@ -92,6 +93,32 @@ impl Repository {
                 Address::RepositoryId { repository, issue }
             }
         })
+    }
+
+    pub fn native(
+        &self,
+        endpoint: &str,
+        url: &str,
+    ) -> Result<Native, ReadFailure> {
+        let (resource, number_text) = scoped_path(endpoint, url)
+            .and_then(|path| path.strip_prefix("repos/"))
+            .and_then(|path| path.rsplit_once('/'))
+            .and_then(|(collection, issue)| {
+                Some((collection.strip_suffix("/issues")?, issue))
+            })
+            .filter(|(resource, _)| resource.matches('/').count() == 1)
+            .ok_or(ReadFailure::InvalidResponse)?;
+        let issue = number(number_text).ok_or(ReadFailure::InvalidResponse)?;
+        Ok(if self.matches(resource) {
+            Native::Here(issue)
+        } else {
+            Native::Elsewhere(format!("{resource}#{issue}"))
+        })
+    }
+
+    #[must_use]
+    pub fn blockers_route(&self, number: u64) -> String {
+        format!("{}/{number}/dependencies/blocked_by", self.issues_route())
     }
 
     pub fn verify_record(
