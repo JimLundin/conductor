@@ -34,7 +34,9 @@ fn opened() -> Entry {
 
 fn change() -> anyhow::Result<Change> {
     let issue = Issue {
-        id: IssueId::new("0v2abcde").ok_or_else(|| anyhow::anyhow!("id"))?,
+        id: home::tracker::Issuer::MARKDOWN
+            .read("0v2abcde")
+            .ok_or_else(|| anyhow::anyhow!("id"))?,
         project: ProjectId::new(1),
         created: Some(UnixMillis(1000)),
         title: String::from("Opened by home"),
@@ -103,7 +105,7 @@ async fn opening_an_issue_sends_one_create_holding_its_marker_and_confirms_it_by
     ])
     .await?;
     let writer = Writer::new(&base)?;
-    assert_eq!(open(&writer, handle).await?.as_str(), "147");
+    assert_eq!(open(&writer, handle).await?.to_string(), "147");
     assert_eq!(writer.progress(handle)?, Progress::Completed);
     let sent = created(&served.await??);
     assert_eq!(sent.len(), 1);
@@ -137,7 +139,7 @@ async fn a_lost_create_reply_retried_finds_its_marker_and_creates_nothing_more()
         open(&writer, first).await,
         Err(WriteError::Unknown(unknown)) if unknown == first
     ));
-    assert_eq!(open(&writer, handle(23)).await?.as_str(), "147");
+    assert_eq!(open(&writer, handle(23)).await?.to_string(), "147");
     assert_eq!(writer.progress(first)?, Progress::Completed);
     assert_eq!(writer.operations.status(handle(23))?, None);
     assert_eq!(created(&served.await??).len(), 1);

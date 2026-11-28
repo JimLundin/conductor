@@ -17,20 +17,23 @@ pub enum Plant {
 
 pub async fn contract<S: CanvasStore + Send>(
     store: &mut S,
+    issues: &[IssueId; 2],
     spoil: impl AsyncFnOnce(&mut S, &CanvasKey),
     plant: impl AsyncFnMut(&mut S, &Plant) -> Option<String>,
 ) -> Result<(), String> {
-    keeps(store).await?;
-    reports_strays(store, spoil, plant).await
+    keeps(store, issues).await?;
+    reports_strays(store, issues, spoil, plant).await
 }
 
-async fn keeps(store: &mut (dyn CanvasStore + Send)) -> Result<(), String> {
+async fn keeps(
+    store: &mut (dyn CanvasStore + Send),
+    [one, two]: &[IssueId; 2],
+) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
-    let (one, two) = issues()?;
-    let design = key(alpha, &one, "design")?;
-    let plan = key(alpha, &one, "a-plan")?;
-    let other = key(alpha, &two, "design")?;
-    let elsewhere = key(beta, &one, "design")?;
+    let design = key(alpha, one, "design")?;
+    let plan = key(alpha, one, "a-plan")?;
+    let other = key(alpha, two, "design")?;
+    let elsewhere = key(beta, one, "design")?;
     same(
         "get of a missing key is none",
         &store.get(&design).map_err(shown)?,
@@ -62,7 +65,7 @@ async fn keeps(store: &mut (dyn CanvasStore + Send)) -> Result<(), String> {
         .map_err(shown)?;
     same(
         "list gives each canvas of the issue by name, with its time and signer",
-        &seen(listed(store.list(&alpha, &one).map_err(shown)?)),
+        &seen(listed(store.list(&alpha, one).map_err(shown)?)),
         &(
             vec![
                 Ok(CanvasEntry::of(plan.name.clone(), &third)),
@@ -73,7 +76,7 @@ async fn keeps(store: &mut (dyn CanvasStore + Send)) -> Result<(), String> {
     )?;
     same(
         "get of a name the issue has no canvas of is none",
-        &store.get(&key(beta, &two, "design")?).map_err(shown)?,
+        &store.get(&key(beta, two, "design")?).map_err(shown)?,
         &None,
     )?;
     same(
@@ -85,14 +88,14 @@ async fn keeps(store: &mut (dyn CanvasStore + Send)) -> Result<(), String> {
 
 async fn reports_strays<S: CanvasStore + Send>(
     store: &mut S,
+    [one, two]: &[IssueId; 2],
     spoil: impl AsyncFnOnce(&mut S, &CanvasKey),
     mut plant: impl AsyncFnMut(&mut S, &Plant) -> Option<String>,
 ) -> Result<(), String> {
     let (alpha, beta) = (ProjectId::new(1), ProjectId::new(2));
-    let (one, two) = issues()?;
-    let design = key(alpha, &one, "design")?;
-    let plan = key(alpha, &one, "a-plan")?;
-    let broken = key(alpha, &one, "broken")?;
+    let design = key(alpha, one, "design")?;
+    let plan = key(alpha, one, "a-plan")?;
+    let broken = key(alpha, one, "broken")?;
     spoil(store, &broken).await;
     let unnamed = plant(
         store,
@@ -117,7 +120,7 @@ async fn reports_strays<S: CanvasStore + Send>(
         .map(|place| (place, "not an issue"));
     same(
         "list gives an issue's canvases by name, a broken one's too, beside what isn't one, with where it is and why",
-        &seen(listed(store.list(&alpha, &one).map_err(shown)?)),
+        &seen(listed(store.list(&alpha, one).map_err(shown)?)),
         &want(
             vec![
                 Ok(CanvasEntry::of(plan.name.clone(), &file(3, "third")?)),
@@ -138,8 +141,8 @@ async fn reports_strays<S: CanvasStore + Send>(
                 plan.clone(),
                 broken.clone(),
                 design.clone(),
-                key(alpha, &two, "design")?,
-                key(beta, &one, "design")?,
+                key(alpha, two, "design")?,
+                key(beta, one, "design")?,
             ],
             [unnamed.clone(), folder.clone(), unissued]
                 .into_iter()
@@ -160,7 +163,7 @@ async fn reports_strays<S: CanvasStore + Send>(
     same(
         "a put of a broken canvas's name replaces it, leaving one canvas",
         &(
-            seen(listed(store.list(&alpha, &one).map_err(shown)?)),
+            seen(listed(store.list(&alpha, one).map_err(shown)?)),
             store.get(&broken).map_err(shown)?,
         ),
         &(
@@ -220,12 +223,6 @@ fn listed(
             .collect(),
         strays: held.strays,
     }
-}
-
-fn issues() -> Result<(IssueId, IssueId), String> {
-    let one = IssueId::new("1").ok_or("first issue")?;
-    let two = IssueId::new("2").ok_or("second issue")?;
-    Ok((one, two))
 }
 
 fn key(

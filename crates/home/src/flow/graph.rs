@@ -135,7 +135,7 @@ pub fn branch_of(id: &IssueId, declared: Option<&str>) -> String {
     use sha2::{Digest, Sha256};
     declared.map_or_else(
         || {
-            let text = id.as_str();
+            let text = id.to_string();
             if text.bytes().all(|byte| {
                 byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
             }) {
@@ -190,7 +190,7 @@ fn references(
                 .iter()
                 .find(|relation| relation.name == *name);
             for target in ids {
-                let id = target.named_from(issue.project);
+                let id = target.said_from(issue.project);
                 let message = match by_id.get(&(target.project, &target.id)) {
                     None if !complete_catalog
                         || unread.contains(&(

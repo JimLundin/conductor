@@ -313,16 +313,18 @@ async fn a_credential_without_issue_writes_fails_the_write_preflight_and_sends_n
         github::configuration::load("", &flow).map_err(anyhow::Error::msg)?;
     let writing = credentials
         .connect_at(&selection, "http://127.0.0.1:9")?
-        .tracker(flow.clone(), mapping.clone());
+        .tracker(flow.clone(), mapping.clone(), home::tracker::Ids::default());
     assert_eq!(
         writing.capabilities(),
         [Capability::ReadIssues, Capability::WriteIssues]
     );
     std::fs::write(&path, entry(""))?;
     let (base, served) = exchanges(Vec::new()).await?;
-    let reading = credentials
-        .connect_at(&selection, &base)?
-        .tracker(flow, mapping);
+    let reading = credentials.connect_at(&selection, &base)?.tracker(
+        flow,
+        mapping,
+        home::tracker::Ids::default(),
+    );
     let capabilities = reading.capabilities();
     let writer = Writer::with(reading, capabilities)?;
     let handle = writer.operations.handle()?;

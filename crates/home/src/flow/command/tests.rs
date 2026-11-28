@@ -45,10 +45,16 @@ fn issue(id: &str, front: &str, body: &str) -> File {
     }
 }
 
+const TRACKERS: crate::tracker::Issuers =
+    crate::tracker::Issuers::new(&[crate::tracker::Issuer::of::<
+        crate::id::Text,
+    >("github")]);
+
 fn home() -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: TRACKERS,
         flow: Ok(String::from(FLOW)),
         projects: Vec::from([(
             String::from(FOLDER),
@@ -82,7 +88,7 @@ fn draws(given: &[u64]) -> Draws {
 }
 
 fn id(stem: &str) -> IssueId {
-    IssueId(String::from(stem))
+    crate::id::issue_id(stem)
 }
 
 fn folder() -> ProjectId {
@@ -182,6 +188,7 @@ fn after(inputs: &Inputs, outcome: &Outcome) -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         issues,
         ..inputs.clone()
     }
@@ -415,6 +422,7 @@ fn a_value_is_read_as_its_field_takes_it() {
     let dotted = Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: Ok(FLOW.replace("\"priority\"", "\"triage.level\"")),
         ..home()
     };
@@ -609,6 +617,7 @@ fn a_spec_enters_a_sign_off_stage_only_signed_off() {
         Inputs {
             unavailable: Vec::new(),
             observed_at: None,
+            issuers: crate::tracker::Issuers::default(),
             issues: inputs
                 .issues
                 .into_iter()
@@ -873,6 +882,7 @@ fn home_with(from: &str, to: &str) -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: Ok(FLOW.replacen(from, to, 1)),
         ..home()
     }
@@ -2008,7 +2018,7 @@ fn fetched(
     Ok(Fetched {
         key: CanvasKey {
             project: ProjectId::parse(FOLDER).ok_or("project")?,
-            issue: IssueId::new(issue).ok_or("issue")?,
+            issue: Some(crate::id::issue_id(issue)).ok_or("issue")?,
             name: CanvasName::parse(name).map_err(|error| error.to_string())?,
         },
         got,
@@ -2669,4 +2679,88 @@ fn a_write_commits_only_when_it_touches_a_home_file() {
         outcome.commit_message(&[String::from("why.json")]),
         Some("Write canvas why")
     );
+}
+
+#[test]
+fn an_id_its_tracker_allows_reads_back_as_itself_in_its_own_project()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(two_trackers());
+    let tracked = ProjectId::parse(TRACKED).ok_or("project")?;
+    let asked = command(&words("issue show standards team42/7"), &home, None);
+    assert_eq!(
+        asked.issue(),
+        Some(IssueKey {
+            project: tracked,
+            id: id("team42/7"),
+        })
+    );
+    let read = home.ids().read(tracked, "team42/7")?;
+    assert_eq!(read.to_string(), "team42/7");
+    assert_eq!(
+        read.tracked::<crate::id::Text>()
+            .map(|text| text.to_string()),
+        Some(String::from("team42/7"))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relation_to_another_project_s_issue_writes_and_reads_its_project_and_id_apart()
+-> Result<(), String> {
+    let mut inputs = home();
+    inputs
+        .projects
+        .push((String::from(TRACKED), Ok(project_file("standards", false))));
+    inputs.issues.push(filed(TRACKED, MARKDOWN_ID));
+    let home = inputs.clone().read().snapshot;
+    let pair = format!("blocked_by=standards {MARKDOWN_ID}");
+    let line = ["issue", "set", "home", TASK, &pair].map(String::from);
+    let asked = command(&line, &home, None);
+    let resolved = in_folder(&home, &asked, None);
+    let outcome = saved(
+        super::run(asked, None, &resolved, &home, &context()),
+        &inputs,
+    );
+    assert!(!outcome.failed, "{}", outcome.output);
+    assert!(
+        text(&outcome).contains(&format!(
+            "blocked_by = [{{ id = \"{MARKDOWN_ID}\", project = \"{TRACKED}\" }}]"
+        )),
+        "{}",
+        text(&outcome)
+    );
+    let read = crate::issue::storage::snapshot(after(&inputs, &outcome));
+    assert_eq!(
+        read.issue(folder(), &id(TASK))
+            .and_then(|issue| issue.links.get("blocked_by"))
+            .cloned(),
+        Some(Vec::from([IssueKey {
+            project: ProjectId::parse(TRACKED).ok_or("project")?,
+            id: id(MARKDOWN_ID),
+        }]))
+    );
+    Ok(())
+}
+
+#[test]
+fn an_issue_named_over_the_client_link_reads_through_its_project_s_tracker()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(two_trackers());
+    let tracked = ProjectId::parse(TRACKED).ok_or("project")?;
+    let named = |project: ProjectId| crate::IssueName {
+        project,
+        id: String::from("team42/7"),
+    };
+    assert_eq!(
+        home.ids().key(&named(tracked)),
+        Ok(IssueKey {
+            project: tracked,
+            id: id("team42/7"),
+        })
+    );
+    assert_eq!(
+        home.ids().key(&named(folder())),
+        Err(format!("\"team42/7\" is no issue ID of {FOLDER}"))
+    );
+    Ok(())
 }

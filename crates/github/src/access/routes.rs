@@ -1,10 +1,10 @@
+use crate::IssueNumber;
 use alloc::{
     format,
     string::{String, ToString},
 };
-use core::num::NonZeroU64;
-use home::IssueId;
 use home::issue::ReadFailure;
+use home::{IssueId, TrackerId};
 
 use super::Repository;
 
@@ -16,8 +16,8 @@ pub enum Address {
 
 impl Address {
     pub fn of(id: &IssueId) -> Result<Self, ReadFailure> {
-        number(id.as_str())
-            .map(Self::Named)
+        id.tracked::<IssueNumber>()
+            .map(|named| Self::Named(named.get()))
             .ok_or(ReadFailure::InvalidResponse)
     }
 
@@ -56,11 +56,7 @@ impl Address {
 }
 
 fn number(text: &str) -> Option<u64> {
-    if text.starts_with('0') || !text.bytes().all(|byte| byte.is_ascii_digit())
-    {
-        return None;
-    }
-    text.parse::<NonZeroU64>().ok().map(NonZeroU64::get)
+    IssueNumber::read(text).map(IssueNumber::get)
 }
 
 fn scoped_path<'a>(endpoint: &str, url: &'a str) -> Option<&'a str> {

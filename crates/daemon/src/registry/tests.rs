@@ -140,6 +140,7 @@ impl Fixture {
             user: None,
             canvases: Box::new(home_store::Memory::default()),
             connect: |_, _, _| Err(String::from("no tracker")),
+            issuers: home::tracker::Issuers::default(),
         });
         let (initialized, _) = watch::channel(false);
         let mut actor = RegistryActor::new(

@@ -1,7 +1,7 @@
 use alloc::collections::BTreeMap;
 
 use crate::issue::{ChecklistItem, Datum, Entry, LogEvent, Section};
-use crate::{IssueId, ProjectId, UnixMillis};
+use crate::{ProjectId, UnixMillis};
 
 use super::{Graph, Problem};
 use crate::flow::Flow;
@@ -37,7 +37,7 @@ fn file(project: &str, id: &str, front: &str, body: &str) -> File {
 fn keyed(project: &str, id: &str) -> crate::IssueKey {
     crate::IssueKey {
         project: ProjectId::parse(project).unwrap_or(ProjectId::new(0)),
-        id: IssueId(String::from(id)),
+        id: crate::id::issue_id(id),
     }
 }
 
@@ -234,7 +234,7 @@ fn a_target_that_is_no_id_is_no_issue() {
         Vec::from([problem(
             &format!("{HOME}/{TASK}"),
             "parent",
-            "nothing is no issue"
+            "\"nothing\" is no issue ID of hme000"
         )])
     );
 }
@@ -308,13 +308,26 @@ fn a_reference_names_another_project_s_issue_by_its_project_and_id() {
         &flow(),
         &[
             spec(),
-            task(HOME, &format!("parent = \"{CONDUCTOR}/{SPEC}\"\n")),
+            task(
+                HOME,
+                &format!(
+                    "parent = {{ project = \"{CONDUCTOR}\", id = \"{SPEC}\" }}\n"
+                ),
+            ),
         ],
     );
     assert_eq!(problems(&crossing), Vec::new());
     let elsewhere = read(
         &flow(),
-        &[spec(), task(HOME, &format!("parent = \"{HOME}/{SPEC}\"\n"))],
+        &[
+            spec(),
+            task(
+                HOME,
+                &format!(
+                    "parent = {{ project = \"{HOME}\", id = \"{SPEC}\" }}\n"
+                ),
+            ),
+        ],
     );
     assert_eq!(
         problems(&elsewhere),
@@ -322,6 +335,25 @@ fn a_reference_names_another_project_s_issue_by_its_project_and_id() {
             &format!("{HOME}/{TASK}"),
             "parent",
             &format!("{SPEC} is no issue")
+        )])
+    );
+}
+
+#[test]
+fn a_bare_target_is_an_id_of_the_issue_s_own_project_whatever_it_holds() {
+    let graph = read(
+        &flow(),
+        &[
+            spec(),
+            task(HOME, &format!("parent = \"{CONDUCTOR}/{SPEC}\"\n")),
+        ],
+    );
+    assert_eq!(
+        problems(&graph),
+        Vec::from([problem(
+            &format!("{HOME}/{TASK}"),
+            "parent",
+            &format!("\"{CONDUCTOR}/{SPEC}\" is no issue ID of {HOME}")
         )])
     );
 }

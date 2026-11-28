@@ -1187,7 +1187,7 @@ fn an_account_signed_in_from_a_credential_s_instance_takes_no_credential() {
 #[test]
 fn an_instance_has_one_session_on_an_issue_until_it_is_removed()
 -> Result<(), &'static str> {
-    let issue = home::IssueId::new("00000005")
+    let issue = Some(home::IssueId::of(&home::Slug::new(5)))
         .map(|id| home::IssueKey {
             project: home::ProjectId::new(1),
             id,
@@ -1233,7 +1233,7 @@ fn an_instance_has_one_session_on_an_issue_until_it_is_removed()
     assert_eq!(
         super::on_issue(
             &history,
-            &home::IssueId::new("00000006")
+            &Some(home::IssueId::of(&home::Slug::new(6)))
                 .map(|id| home::IssueKey {
                     project: home::ProjectId::new(1),
                     id
@@ -1294,7 +1294,7 @@ fn start_request() -> super::StartRequest {
 }
 
 fn placement(on_issue: bool) -> Result<super::Placement, &'static str> {
-    let issue = home::IssueId::new("00000005")
+    let issue = Some(home::IssueId::of(&home::Slug::new(5)))
         .map(|id| home::IssueKey {
             project: home::ProjectId::new(1),
             id,
@@ -1376,7 +1376,7 @@ fn only_a_start_in_a_project_or_an_issue_waits_on_the_home()
 -> Result<(), &'static str> {
     let directory = SessionDirectory(text("/work"));
     let project = ProjectId::new(1);
-    let issue = home::IssueId::new("00000105")
+    let issue = Some(home::IssueId::of(&home::Slug::new(1029)))
         .map(|id| home::IssueKey {
             project: home::ProjectId::new(1),
             id,
@@ -1614,7 +1614,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
                 effort: None,
             },
             EventKind::OnIssue {
-                issue: home::IssueId::new("00000005")
+                issue: Some(home::IssueId::of(&home::Slug::new(5)))
                     .map(|id| home::IssueKey {
                         project: home::ProjectId::new(1),
                         id
@@ -1673,7 +1673,7 @@ fn opening_records_seed_the_agent_and_issue_work_follows_spawn()
     assert_eq!(
         done.progress,
         Some((
-            home::IssueId::new("00000005")
+            Some(home::IssueId::of(&home::Slug::new(5)))
                 .map(|id| home::IssueKey {
                     project: home::ProjectId::new(1),
                     id

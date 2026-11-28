@@ -6,6 +6,7 @@ use alloc::{
 };
 use home::flow::Flow;
 use home::issue::{Datum, body, document::targets};
+use home::tracker::Ids;
 use home::{IssueKey, ProjectId, operations::Handle};
 use serde::Deserialize;
 
@@ -40,6 +41,7 @@ pub(super) fn read<'a>(
     text: &'a str,
     flow: &Flow,
     config: &Configuration,
+    ids: &Ids,
     project: ProjectId,
     findings: &mut Findings,
 ) -> (&'a str, Metadata) {
@@ -92,9 +94,9 @@ pub(super) fn read<'a>(
                     continue;
                 }
                 if let Some((relation, false)) = flow.relation(&name) {
-                    match targets(relation, value, project) {
-                        Ok(ids) => {
-                            metadata.links.insert(name, ids);
+                    match targets(relation, value, project, ids) {
+                        Ok(reached) => {
+                            metadata.links.insert(name, reached);
                         }
                         Err(error) => findings
                             .error(format!("relation {name:?}: {error}")),

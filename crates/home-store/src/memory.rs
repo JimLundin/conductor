@@ -144,6 +144,10 @@ mod tests {
         assert_eq!(
             contract(
                 &mut Memory::default(),
+                &[
+                    home::IssueId::of(&home::Slug::new(1)),
+                    home::IssueId::of(&home::Slug::new(2)),
+                ],
                 async |memory, key| memory.spoil(
                     key.clone(),
                     CanvasError::Json {

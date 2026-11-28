@@ -13,3 +13,7 @@ pub mod canvas;
 pub mod log;
 
 pub mod mapping;
+
+mod number;
+
+pub use number::{ISSUER, ISSUERS, IssueNumber};

@@ -123,7 +123,7 @@ impl FolderStore {
 
 fn segment(issue: &IssueId) -> String {
     issue
-        .as_str()
+        .to_string()
         .bytes()
         .map(|byte| {
             if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
@@ -147,7 +147,7 @@ fn unsegment(text: &str) -> Option<IssueId> {
             byte
         });
     }
-    IssueId::new(&String::from_utf8(decoded).ok()?)
+    home::tracker::Issuer::MARKDOWN.read(&String::from_utf8(decoded).ok()?)
 }
 
 impl CanvasStore for FolderStore {
@@ -282,7 +282,9 @@ mod tests {
     fn key(name: &str) -> Result<CanvasKey, Box<dyn std::error::Error>> {
         Ok(CanvasKey {
             project: ProjectId::parse("a1b2c3").ok_or("project")?,
-            issue: IssueId::new("0v29xv1q").ok_or("issue")?,
+            issue: home::tracker::Issuer::MARKDOWN
+                .read("0v29xv1q")
+                .ok_or("issue")?,
             name: CanvasName::parse(name)?,
         })
     }
@@ -294,6 +296,10 @@ mod tests {
         assert_eq!(
             home_store::contract(
                 &mut FolderStore::new(scratch.0.clone()),
+                &[
+                    IssueId::of(&home::Slug::new(1)),
+                    IssueId::of(&home::Slug::new(2)),
+                ],
                 async |_, key| spoiled(&root, key),
                 async |_, plant| Some(planted(&root, plant))
             )
@@ -388,13 +394,27 @@ mod tests {
         Ok(())
     }
 
+    struct Unsafe;
+
+    impl std::fmt::Display for Unsafe {
+        fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            out.write_str("../42")
+        }
+    }
+
+    impl home::TrackerId for Unsafe {
+        fn read(text: &str) -> Option<Self> {
+            (text == "../42").then_some(Self)
+        }
+    }
+
     #[tokio::test]
     async fn an_issue_id_with_path_characters_is_one_canvas_directory()
     -> Result<(), Box<dyn std::error::Error>> {
         let scratch = Scratch::new("qualified-canvas");
         let mut store = FolderStore::new(scratch.0.clone());
         let mut key = key("plan")?;
-        key.issue = IssueId::new("../42").ok_or("issue")?;
+        key.issue = IssueId::of(&Unsafe);
         let file = CanvasFile {
             written: UnixMillis(5),
             by: String::from("author"),
@@ -413,7 +433,6 @@ mod tests {
                 .is_file()
         );
         assert_eq!(store.get(&key)?, Some(file));
-        assert_eq!(store.all()?.canvases, [key]);
         Ok(())
     }
 

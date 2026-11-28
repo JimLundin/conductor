@@ -72,7 +72,8 @@ impl Tracker {
             issue.url.as_str(),
             issue.number,
         )?;
-        IssueId::new(&issue.number.to_string())
+        github::IssueNumber::new(issue.number)
+            .map(|number| IssueId::of(&number))
             .ok_or(ReadFailure::InvalidResponse)
     }
 }

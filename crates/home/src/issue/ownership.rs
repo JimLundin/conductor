@@ -65,7 +65,7 @@ mod tests {
     use super::*;
 
     fn id(text: &str) -> IssueId {
-        IssueId(String::from(text))
+        crate::id::issue_id(text)
     }
 
     #[test]
@@ -131,7 +131,7 @@ mod scope_tests {
 
     #[test]
     fn identical_branch_names_can_be_owned_in_different_repositories() {
-        let issue = IssueId(String::from("rest-42"));
+        let issue = crate::id::issue_id("rest-42");
         let owner = Owner {
             repository: Repository(String::from("repo-one")),
             issue: issue.clone(),
@@ -151,7 +151,7 @@ mod scope_tests {
 
     #[test]
     fn a_branch_without_an_owner_record_requires_reconciliation() {
-        let issue = IssueId(String::from("rest-42"));
+        let issue = crate::id::issue_id("rest-42");
         assert_eq!(
             reserve(
                 &Repository(String::from("repo")),

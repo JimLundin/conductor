@@ -155,7 +155,7 @@ fn commented(comment: &issues::Comment) -> Result<IssueId, ReadFailure> {
         .issue_url
         .as_ref()
         .and_then(|url| url.path_segments()?.next_back())
-        .and_then(IssueId::new)
+        .and_then(|number| github::ISSUER.read(number))
         .ok_or(ReadFailure::InvalidResponse)
 }
 

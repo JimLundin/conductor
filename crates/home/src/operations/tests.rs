@@ -1,7 +1,7 @@
 use super::{Handle, Intent, Next, Progress, Record, Refusal};
 use crate::issue::{Comment, CommentRequest, CommentWrite, EditId, Lookup};
 use crate::prelude::*;
-use crate::{IssueId, ProjectId, UnixMillis};
+use crate::{ProjectId, UnixMillis};
 
 const HANDLE: Handle = Handle {
     owner: [3; 32],
@@ -25,7 +25,7 @@ fn record(
     let request = CommentRequest {
         issue: Lookup {
             project: ProjectId::new(1),
-            id: IssueId::new("146").ok_or(Refusal::Conflict)?,
+            id: Some(crate::id::issue_id("146")).ok_or(Refusal::Conflict)?,
         },
         write,
         seen,
@@ -98,7 +98,8 @@ fn only_a_comment_sent_and_unconfirmed_is_awaited_with_the_request_it_sent()
             Some(CommentRequest {
                 issue: Lookup {
                     project: ProjectId::new(1),
-                    id: IssueId::new("146").ok_or(Refusal::Conflict)?,
+                    id: Some(crate::id::issue_id("146"))
+                        .ok_or(Refusal::Conflict)?,
                 },
                 write: create(),
                 seen: create().precondition(&[]),

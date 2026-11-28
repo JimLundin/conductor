@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use home::UnixMillis;
 use home::backend::{Capability, CredentialState, Selection};
 use home::flow::resolve::Mode;
 use home::flow::snapshot::Snapshot;
@@ -11,7 +12,6 @@ use home::issue::{
     ListPage, Locator, Lookup, Observation, Page, ReadFailure, Unreadable,
 };
 use home::project::Project;
-use home::{IssueId, UnixMillis};
 use home::{IssueKey, ProjectId};
 use home_store::Memory;
 use project_runtime::tracker::{Connection, Connector, Reader};
@@ -45,6 +45,7 @@ impl IssueTracker for Github {
     }
     fn writes(
         &self,
+        _: &Lookup,
         _: &home::issue::NativeIssue,
         _: &[home::flow::command::Mutation],
     ) -> Result<Vec<home::issue::IssueWrite>, String> {
@@ -179,7 +180,9 @@ fn tracked(
     title: &str,
 ) -> Result<Observation, ReadFailure> {
     let mut record = Observation::invalid(Unreadable {
-        id: IssueId::new("146").ok_or(ReadFailure::InvalidResponse)?,
+        id: github::ISSUER
+            .read("146")
+            .ok_or(ReadFailure::InvalidResponse)?,
         project,
         title: Some(String::from(title)),
         body: Some(String::from("human text")),
@@ -226,17 +229,25 @@ fn a_fresh_issue_show_of_a_cached_issue_reads_it_and_never_lists_its_tracker()
     let root = &scratch.0;
     let github = ProjectId::parse(TRACKED).ok_or("project")?;
     let data = Some(root.join("data"));
-    let listing =
-        Trackers::new(root, home_files::read(root), data.clone(), scripted)?;
+    let listing = Trackers::new(
+        root,
+        home_files::read(root, github::ISSUERS),
+        data.clone(),
+        scripted,
+    )?;
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
         .block_on(listing.listing(github, false))?;
-    let trackers =
-        Trackers::new(root, home_files::read(root), data, reading_only)?;
+    let trackers = Trackers::new(
+        root,
+        home_files::read(root, github::ISSUERS),
+        data,
+        reading_only,
+    )?;
     let key = IssueKey {
         project: github,
-        id: IssueId::new("146").ok_or("id")?,
+        id: github::ISSUER.read("146").ok_or("id")?,
     };
     let resolved =
         trackers.resolved(BTreeSet::from([key.clone()]), Mode::Fresh);
@@ -281,7 +292,7 @@ fn issue_list_lists_a_markdown_project_and_a_tracker_project_in_one_shape()
         TRACKED,
         "name = \"standards\"\ntitle = \"Standards\"\nroot = \"e22b7f7b2976650400965d4147ba771675f96076\"\n[backends.tracker]\nadapter = \"github\"\nresource = \"owner/standards\"\n",
     )?;
-    let loaded = home_files::read(root);
+    let loaded = home_files::read(root, github::ISSUERS);
     let markdown = ProjectId::parse(MARKDOWN).ok_or("project")?;
     let github = ProjectId::parse(TRACKED).ok_or("project")?;
     let trackers =
@@ -335,7 +346,7 @@ fn a_canvas_put_on_a_tracked_project_needs_no_repository()
     ]
     .map(String::from)
     .into();
-    let loaded = home_files::read(root);
+    let loaded = home_files::read(root, github::ISSUERS);
     let context = crate::context();
     let fresh = home::issue::storage::fresh(
         &loaded.snapshot,

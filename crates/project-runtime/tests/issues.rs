@@ -8,7 +8,7 @@ use home::issue::{
     Freshness, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
     ReadMode, Unreadable,
 };
-use home::{IssueId, ProjectId, UnixMillis};
+use home::{ProjectId, UnixMillis};
 use project_runtime::{
     IssueCompletion, IssueTracker, Registration, Registry, issues::IssueCache,
 };
@@ -72,6 +72,7 @@ impl IssueTracker for Script {
     }
     fn writes(
         &self,
+        _: &Lookup,
         _: &home::issue::NativeIssue,
         _: &[home::flow::command::Mutation],
     ) -> Result<Vec<home::issue::IssueWrite>, String> {
@@ -144,7 +145,7 @@ const fn project() -> ProjectId {
 }
 fn item(key: &str, title: &str) -> Result<Observation, Box<dyn Error>> {
     let mut record = Observation::invalid(Unreadable {
-        id: IssueId::new(key).ok_or("fixture identity")?,
+        id: github::ISSUER.read(key).ok_or("fixture identity")?,
         project: project(),
         title: Some(title.into()),
         body: Some("human text".into()),
@@ -162,7 +163,7 @@ fn item(key: &str, title: &str) -> Result<Observation, Box<dyn Error>> {
 fn lookup(key: &str) -> Result<Lookup, Box<dyn Error>> {
     Ok(Lookup {
         project: project(),
-        id: IssueId::new(key).ok_or("fixture identity")?,
+        id: github::ISSUER.read(key).ok_or("fixture identity")?,
     })
 }
 
@@ -371,6 +372,7 @@ impl IssueTracker for SlowFirst {
     }
     fn writes(
         &self,
+        _: &Lookup,
         _: &home::issue::NativeIssue,
         _: &[home::flow::command::Mutation],
     ) -> Result<Vec<home::issue::IssueWrite>, String> {
@@ -539,10 +541,10 @@ async fn project_findings_require_observed_relations_and_visible_targets()
     let cache = IssueCache::new(dir.path(), &flow);
     let external = home::IssueKey {
         project: project(),
-        id: IssueId::new("elsewhere").ok_or("bad identity")?,
+        id: github::ISSUER.read("43").ok_or("bad identity")?,
     };
     let subject = Issue {
-        id: IssueId::new("decision").ok_or("bad identity")?,
+        id: github::ISSUER.read("42").ok_or("bad identity")?,
         project: project(),
         title: "Settled decision".into(),
         created: Some(UnixMillis(999)),
@@ -606,7 +608,7 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
     let cache = IssueCache::new(dir.path(), &flow);
     let other = ProjectId::new(33);
     let elsewhere = Observation::invalid(Unreadable {
-        id: IssueId::new("146").ok_or("fixture identity")?,
+        id: github::ISSUER.read("146").ok_or("fixture identity")?,
         project: other,
         title: Some("in the other project".into()),
         body: None,
@@ -643,7 +645,7 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
             _ => None,
         })
     };
-    let id = IssueId::new("146").ok_or("fixture identity")?;
+    let id = github::ISSUER.read("146").ok_or("fixture identity")?;
     let our_lookup = Lookup {
         project: project(),
         id: id.clone(),

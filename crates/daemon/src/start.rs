@@ -201,6 +201,7 @@ impl Providers {
 #[derive(Debug, Clone)]
 pub struct Hosting {
     pub connect: project_runtime::tracker::Connect,
+    pub issuers: home::tracker::Issuers,
     pub data_dir: Option<PathBuf>,
     pub name: String,
     pub web_url: String,
@@ -215,6 +216,7 @@ pub async fn serve(
 ) -> anyhow::Result<()> {
     let Hosting {
         connect,
+        issuers,
         data_dir: given,
         name,
         web_url,
@@ -234,6 +236,7 @@ pub async fn serve(
         workspaces,
         HostOptions {
             connect,
+            issuers,
             data_dir: data_dir.clone(),
             name,
             home: remote,
@@ -267,6 +270,7 @@ pub async fn serve(
 #[derive(Debug, Clone)]
 pub struct HostOptions {
     pub connect: project_runtime::tracker::Connect,
+    pub issuers: home::tracker::Issuers,
     pub data_dir: PathBuf,
     pub name: String,
     pub home: Option<String>,
@@ -421,6 +425,7 @@ async fn assemble(
 )> {
     let HostOptions {
         connect,
+        issuers,
         data_dir,
         name,
         home: remote,
@@ -443,6 +448,7 @@ async fn assemble(
         user,
         canvases: Box::new(FolderStore::new(crate::home::clone_of(&data_dir))),
         connect,
+        issuers,
     });
     let (registry, initialized) = Registry::spawn(
         log.clone(),

@@ -7,7 +7,7 @@ fn changes() -> Result<Intent, &'static str> {
         project: home::ProjectId::new(1),
         expected: String::from("issue-1"),
         work: Work::ChangeIssue {
-            issue: home::IssueId::new("42").ok_or("bad fixture")?,
+            issue: github::ISSUER.read("42").ok_or("bad fixture")?,
             writes: Vec::from([IssueWrite::Title {
                 from: String::from("Draft"),
                 to: String::from("Ready"),

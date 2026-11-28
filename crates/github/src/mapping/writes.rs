@@ -10,7 +10,9 @@ use home::issue::{
     ChecklistChange, Datum, IssueCreate, IssueWrite, KIND, NativeIssue, Part,
     STAGE, STATUS,
     body::{self, Body},
+    document::relation_value,
 };
+use home::{IssueKey, ProjectId};
 
 use crate::configuration::{Configuration, FieldSource, RelationSource};
 
@@ -18,6 +20,7 @@ const FOOTER: &str = "project-data";
 
 struct Planned<'a> {
     flow: &'a Flow,
+    project: ProjectId,
     config: &'a Configuration,
     observed: &'a NativeIssue,
     labels: Vec<String>,
@@ -30,11 +33,13 @@ struct Planned<'a> {
 pub fn writes(
     flow: &Flow,
     config: &Configuration,
+    project: ProjectId,
     observed: &NativeIssue,
     mutations: &[Mutation],
 ) -> Result<Vec<IssueWrite>, String> {
     let mut planned = Planned {
         flow,
+        project,
         config,
         observed,
         labels: observed.labels.clone(),
@@ -65,6 +70,7 @@ pub fn opening(
     };
     let mut planned = Planned {
         flow,
+        project: issue.project,
         config,
         observed: &blank,
         labels: Vec::new(),
@@ -141,6 +147,11 @@ impl Planned<'_> {
                 Ok(())
             }
             Mutation::Set { field, value } => self.set(field, value),
+            Mutation::Relate {
+                relation,
+                many,
+                targets,
+            } => self.relate(relation, *many, targets),
             Mutation::Title(title) => {
                 self.title = Some(title.clone());
                 Ok(())
@@ -219,7 +230,7 @@ impl Planned<'_> {
                     Ok(())
                 }
                 (FieldSource::Metadata, _) => {
-                    self.footer_entry("fields", field, value)
+                    self.footer_entry("fields", field, datum(value))
                 }
                 (FieldSource::CreationTime, _) => Err(format!(
                     "{field} is the issue's creation time on GitHub, which doesn't change"
@@ -227,23 +238,7 @@ impl Planned<'_> {
                 _ => Err(format!("{field} doesn't take that value on GitHub")),
             };
         }
-        match self
-            .config
-            .relations
-            .iter()
-            .find(|mapping| mapping.name == field)
-            .map(|mapping| mapping.source)
-        {
-            Some(RelationSource::Metadata) => {
-                self.footer_entry("relations", field, value)
-            }
-            Some(RelationSource::Parent | RelationSource::Dependency) => {
-                Err(format!(
-                    "{field} is a native GitHub relation, which home doesn't write yet (#140)"
-                ))
-            }
-            None => Err(format!("{field} has no GitHub mapping")),
-        }
+        Err(format!("{field} has no GitHub mapping"))
     }
 
     fn ordinary(&mut self, wanted: &[String]) {
@@ -282,7 +277,7 @@ impl Planned<'_> {
         &mut self,
         table: &str,
         name: &str,
-        value: &Datum,
+        value: Option<toml::Value>,
     ) -> Result<(), String> {
         let entries = self
             .footer()?
@@ -291,32 +286,42 @@ impl Planned<'_> {
             .as_table_mut()
             .ok_or_else(|| format!("project-data {table} isn't a table"))?;
         match value {
-            Datum::Text(text) if text.is_empty() => {
+            Some(kept) => {
+                entries.insert(name.into(), kept);
+            }
+            None => {
                 entries.remove(name);
-            }
-            Datum::Texts(texts) if texts.is_empty() => {
-                entries.remove(name);
-            }
-            Datum::Text(text) => {
-                entries.insert(name.into(), toml::Value::String(text.clone()));
-            }
-            Datum::Texts(texts) => {
-                entries.insert(
-                    name.into(),
-                    toml::Value::Array(
-                        texts
-                            .iter()
-                            .cloned()
-                            .map(toml::Value::String)
-                            .collect(),
-                    ),
-                );
-            }
-            Datum::Bool(flag) => {
-                entries.insert(name.into(), toml::Value::Boolean(*flag));
             }
         }
         Ok(())
+    }
+
+    fn relate(
+        &mut self,
+        relation: &str,
+        many: bool,
+        targets: &[IssueKey],
+    ) -> Result<(), String> {
+        match self
+            .config
+            .relations
+            .iter()
+            .find(|mapping| mapping.name == relation)
+            .map(|mapping| mapping.source)
+        {
+            Some(RelationSource::Metadata) => self.footer_entry(
+                "relations",
+                relation,
+                (!targets.is_empty())
+                    .then(|| relation_value(many, targets, self.project)),
+            ),
+            Some(RelationSource::Parent | RelationSource::Dependency) => {
+                Err(format!(
+                    "{relation} is a native GitHub relation, which home doesn't write yet (#140)"
+                ))
+            }
+            None => Err(format!("{relation} has no GitHub mapping")),
+        }
     }
 
     fn written_body(&self) -> Result<Option<String>, String> {
@@ -410,5 +415,17 @@ impl Planned<'_> {
                     }))
         });
         if dropped { "not_planned" } else { "completed" }
+    }
+}
+
+fn datum(value: &Datum) -> Option<toml::Value> {
+    match value {
+        Datum::Text(text) if text.is_empty() => None,
+        Datum::Texts(texts) if texts.is_empty() => None,
+        Datum::Text(text) => Some(toml::Value::String(text.clone())),
+        Datum::Texts(texts) => Some(toml::Value::Array(
+            texts.iter().cloned().map(toml::Value::String).collect(),
+        )),
+        Datum::Bool(flag) => Some(toml::Value::Boolean(*flag)),
     }
 }

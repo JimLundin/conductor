@@ -11,6 +11,7 @@ use home::flow::PATH;
 use home::issue::{self, storage};
 use home::layout::{self, IssueLocation};
 use home::skills;
+use home::tracker::{Ids, Issuers};
 
 pub mod git;
 mod store;
@@ -26,21 +27,25 @@ pub fn has_configuration(root: &Path) -> bool {
 }
 
 #[must_use]
-pub fn configuration(root: &Path) -> home::flow::snapshot::Snapshot {
-    layout::inputs(text(root, PATH), project_files(root), Vec::new())
+pub fn configuration(
+    root: &Path,
+    issuers: Issuers,
+) -> home::flow::snapshot::Snapshot {
+    layout::inputs(text(root, PATH), project_files(root), Vec::new(), issuers)
         .read()
         .snapshot
 }
 
 #[must_use]
-pub fn read(root: &Path) -> storage::ReadHome {
+pub fn read(root: &Path, issuers: Issuers) -> storage::ReadHome {
     let projects = project_files(root);
     let records = projects
         .iter()
         .filter_map(|(folder, _)| ProjectId::parse(folder))
         .flat_map(|project| issues(root, project))
         .collect();
-    let mut inputs = layout::inputs(text(root, PATH), projects, records);
+    let mut inputs =
+        layout::inputs(text(root, PATH), projects, records, issuers);
     inputs.observed_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -238,14 +243,16 @@ fn text(root: &Path, path: &str) -> Result<String, String> {
 #[must_use]
 pub fn issue(
     flow: &home::flow::Flow,
+    ids: &Ids,
     target: &issue::Read,
     text: Option<&str>,
 ) -> Option<storage::Loaded> {
-    text.map(|contents| storage::load(flow, target, contents))
+    text.map(|contents| storage::load(flow, ids, target, contents))
 }
 
 #[cfg(test)]
 mod tests {
+    use home::tracker::Issuers;
     use std::fs;
     use std::path::PathBuf;
 
@@ -340,7 +347,7 @@ mod tests {
         let flow = scratch.0.join(home::flow::PATH);
         fs::create_dir_all(flow.parent().unwrap_or(&scratch.0))?;
         fs::write(flow, include_str!("../../home/src/flow/test-flow.toml"))?;
-        let home = super::read(&scratch.0).snapshot;
+        let home = super::read(&scratch.0, Issuers::default()).snapshot;
         let stems: Vec<&str> = home
             .graph()
             .problems
@@ -375,7 +382,8 @@ mod tests {
         let flow = scratch.0.join(home::flow::PATH);
         fs::create_dir_all(flow.parent().unwrap_or(&scratch.0))?;
         fs::write(flow, include_str!("../../home/src/flow/test-flow.toml"))?;
-        let configuration = super::configuration(&scratch.0);
+        let configuration =
+            super::configuration(&scratch.0, Issuers::default());
         assert_eq!(configuration.projects().len(), 1);
         assert_eq!(configuration.graph().problems, Vec::new());
         assert_eq!(configuration.graph().issues, Vec::new());

@@ -12,6 +12,7 @@ use home::issue::{
     Coverage, Datum, Issue, IssueState, Locator, NativeIssue, Observation,
     Unreadable, body::Body,
 };
+use home::tracker::Ids;
 use home::{IssueId, ProjectId, UnixMillis};
 
 use crate::configuration::{Configuration, RelationSource};
@@ -37,6 +38,7 @@ pub struct Record {
 pub fn observe(
     flow: &Flow,
     config: &Configuration,
+    ids: &Ids,
     project: ProjectId,
     record: Record,
 ) -> Observation {
@@ -53,8 +55,14 @@ pub fn observe(
         .unwrap_or(&flow.default_kind)
         .clone();
     let stage = labels.managed.get(home::issue::STAGE).cloned();
-    let (human, metadata) =
-        footer::read(&record.native.body, flow, config, project, &mut findings);
+    let (human, metadata) = footer::read(
+        &record.native.body,
+        flow,
+        config,
+        ids,
+        project,
+        &mut findings,
+    );
     let fields = labels.fields(
         flow,
         &kind,

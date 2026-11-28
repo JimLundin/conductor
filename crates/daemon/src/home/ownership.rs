@@ -97,14 +97,16 @@ mod tests {
     -> Result<(), String> {
         let directory =
             tempfile::tempdir().map_err(|error| error.to_string())?;
-        let issue = IssueId::new("rest-42")
+        let issue = home::tracker::Issuer::MARKDOWN
+            .read("0rest042")
             .ok_or_else(|| String::from("fixture identity"))?;
         let mut held = lock(directory.path()).await?;
         held.reserve(&issue, "refs/heads/kept", false)?;
         drop(held);
         let mut reopened = lock(directory.path()).await?;
         reopened.reserve(&issue, "refs/heads/kept", true)?;
-        let other = IssueId::new("rest-43")
+        let other = home::tracker::Issuer::MARKDOWN
+            .read("0rest043")
             .ok_or_else(|| String::from("fixture identity"))?;
         assert!(reopened.reserve(&other, "refs/heads/kept", true).is_err());
         assert!(

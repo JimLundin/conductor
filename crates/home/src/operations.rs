@@ -410,7 +410,7 @@ impl Record {
                 let evidence = Confirmed {
                     step: step.clone(),
                     revision: found.native.revision(),
-                    identity: Some(String::from(found.id.as_str())),
+                    identity: Some(found.id.to_string()),
                 };
                 Ok((
                     self.confirm(evidence, true)?,

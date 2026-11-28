@@ -5,7 +5,9 @@ use home::{IssueKey, UnixMillis};
 
 fn record() -> Result<Record, String> {
     Ok(Record {
-        id: IssueId::new("42").ok_or("missing identity")?,
+        id: IssueId::of(
+            &crate::IssueNumber::new(42).ok_or("missing identity")?,
+        ),
         locator: Locator {
             repository: String::from("owner/repo"),
             url: None,
@@ -24,12 +26,18 @@ fn record() -> Result<Record, String> {
     })
 }
 
+fn ids() -> Ids {
+    Ids::default()
+        .with(ProjectId::new(71), crate::ISSUER)
+        .with(ProjectId::new(1), crate::ISSUER)
+}
+
 fn read(input: Record, options: &str) -> Result<Observation, String> {
     let flow = home::flow::load(include_str!(
         "../../../home/src/flow/test-flow.toml"
     ))?;
     let config = crate::configuration::load(options, &flow)?;
-    Ok(observe(&flow, &config, ProjectId::new(71), input))
+    Ok(observe(&flow, &config, &ids(), ProjectId::new(71), input))
 }
 
 #[test]
@@ -37,7 +45,7 @@ fn a_direct_issue_uses_declared_defaults_and_native_fields()
 -> Result<(), String> {
     let observation = read(record()?, "")?;
     let (issue, _) = observation.editable()?;
-    assert_eq!(issue.id.as_str(), "42");
+    assert_eq!(issue.id.to_string(), "42");
     assert_eq!(issue.title, "Edited in GitHub");
     assert_eq!(issue.body, "## What\nRead this");
     assert!(
@@ -112,7 +120,7 @@ fn unknown_and_ambiguous_managed_labels_leave_the_issue_visible()
             .as_deref()
             .is_some_and(|body| body.contains("## What"))
     );
-    assert_eq!(problem.id.as_str(), "42");
+    assert_eq!(problem.id.to_string(), "42");
     assert!(
         observed
             .findings
@@ -187,7 +195,12 @@ fn one_final_footer_supplies_typed_fields_and_relations_by_issue_id_outside_the_
     assert_eq!(issue.text("method"), Some("prototype"));
     assert_eq!(
         issue.links.get("parent").and_then(|ids| ids.first()),
-        IssueKey::named("712", ProjectId::new(71)).as_ref()
+        crate::IssueNumber::new(712)
+            .map(|number| IssueKey {
+                project: ProjectId::new(71),
+                id: IssueId::of(&number),
+            })
+            .as_ref()
     );
     assert!(body.text().contains("example only"));
     assert!(!body.text().contains("schema = 1"));
@@ -209,7 +222,7 @@ fn a_footer_relation_names_another_project_s_issue_by_its_project_and_id()
 -> Result<(), String> {
     let mut input = record()?;
     input.native.body = String::from(
-        "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = 'hyn162/146'\n```",
+        "Read me\n\n```project-data\nschema = 1\n[relations]\nparent = { project = 'hyn162', id = '0trfecpc' }\n```",
     );
     let observed =
         read(input, "[[relations]]\nname='parent'\nsource='metadata'")?;
@@ -219,9 +232,8 @@ fn a_footer_relation_names_another_project_s_issue_by_its_project_and_id()
             .links
             .get("parent")
             .and_then(|targets| targets.first())
-            .map(ToString::to_string)
-            .as_deref(),
-        Some("hyn162/146")
+            .map(|target| (target.project.to_string(), target.id.to_string())),
+        Some((String::from("hyn162"), String::from("0trfecpc")))
     );
     Ok(())
 }
@@ -250,7 +262,7 @@ fn invalid_footer_data_and_competing_native_sources_are_visible()
             unreadable.body.as_deref().map(str::trim_end),
             Some("Read me")
         );
-        assert_eq!(unreadable.id.as_str(), "42");
+        assert_eq!(unreadable.id.to_string(), "42");
         assert!(
             observed
                 .findings
@@ -330,7 +342,7 @@ fn footer_values_keep_declared_types_and_an_owner_bound_create_marker()
     input.native.body = format!(
         "```project-data\nschema=1\noperation='{marker}'\n[fields]\nflagged=true\nusers=['one','two']\ndue=2026-01-01T12:20:40Z\n```"
     );
-    let observed = observe(&flow, &config, ProjectId::new(1), input);
+    let observed = observe(&flow, &config, &ids(), ProjectId::new(1), input);
     let (issue, _) = observed.editable()?;
     assert_eq!(issue.fields.get("flagged"), Some(&Datum::Bool(true)));
     assert_eq!(issue.texts("users"), ["one", "two"]);
@@ -342,7 +354,14 @@ fn footer_values_keep_declared_types_and_an_owner_bound_create_marker()
 #[test]
 fn metadata_edges_require_issue_ids_and_declared_cardinality()
 -> Result<(), String> {
-    for value in ["''", "42", "['42', '43']", "['42']"] {
+    for value in [
+        "''",
+        "42",
+        "['42', '43']",
+        "['42']",
+        "'team42/7'",
+        "'0tm7aaaa'",
+    ] {
         let mut input = record()?;
         input.native.body = format!(
             "```project-data\nschema=1\n[relations]\nparent={value}\n```"
@@ -374,7 +393,7 @@ fn planned(
         "../../../home/src/flow/test-flow.toml"
     ))?;
     let config = crate::configuration::load("", &flow)?;
-    writes(&flow, &config, native, mutations)
+    writes(&flow, &config, ProjectId::new(71), native, mutations)
 }
 
 fn labelled(labels: &[&str]) -> Result<home::issue::NativeIssue, String> {
@@ -486,14 +505,63 @@ fn setting_a_metadata_field_changes_only_its_footer_entry() -> Result<(), String
 }
 
 #[test]
+fn a_footer_relation_to_another_project_s_issue_writes_its_project_and_id_apart()
+-> Result<(), String> {
+    let flow = home::flow::load(include_str!(
+        "../../../home/src/flow/test-flow.toml"
+    ))?;
+    let config = crate::configuration::load(
+        "[[relations]]\nname='parent'\nsource='metadata'",
+        &flow,
+    )?;
+    let mut native = record()?.native;
+    native.body = String::from("Words");
+    let elsewhere = IssueKey {
+        project: ProjectId::parse("hyn162").ok_or("project")?,
+        id: Ids::default()
+            .read(ProjectId::parse("hyn162").ok_or("project")?, "0trfecpc")?,
+    };
+    let written = writes(
+        &flow,
+        &config,
+        ProjectId::new(71),
+        &native,
+        &[home::flow::command::Mutation::Relate {
+            relation: String::from("parent"),
+            many: false,
+            targets: Vec::from([elsewhere.clone()]),
+        }],
+    )?;
+    let [home::issue::IssueWrite::Body { to, .. }] = written.as_slice() else {
+        return Err(format!("one body write expected: {written:?}"));
+    };
+    assert!(
+        to.contains(
+            "[relations.parent]\nid = \"0trfecpc\"\nproject = \"hyn162\"\n"
+        ),
+        "{to}"
+    );
+    let mut input = record()?;
+    input.native.body.clone_from(to);
+    let observed = observe(&flow, &config, &ids(), ProjectId::new(71), input);
+    let (issue, _) = observed.editable()?;
+    assert_eq!(issue.links.get("parent"), Some(&Vec::from([elsewhere])));
+    Ok(())
+}
+
+#[test]
 fn a_native_relation_is_refused_before_any_write_and_a_lone_note_changes_no_issue_field()
 -> Result<(), String> {
     let native = record()?.native;
     let relation = planned(
         &native,
-        &[home::flow::command::Mutation::Set {
-            field: String::from("blocked_by"),
-            value: Datum::Texts(Vec::from([String::from("7")])),
+        &[home::flow::command::Mutation::Relate {
+            relation: String::from("blocked_by"),
+            many: true,
+            targets: Vec::from([IssueKey {
+                project: ProjectId::new(71),
+                id: IssueId::of(&crate::IssueNumber::new(7).ok_or("id")?),
+            }]),
         }],
     );
     assert!(relation.is_err_and(|reason| reason.contains("#140")));
@@ -517,7 +585,7 @@ fn opening_an_issue_labels_its_kind_and_stage_and_marks_its_footer_with_the_oper
         text: String::from("opened."),
     };
     let issue = home::issue::Issue {
-        id: IssueId::new("0v2abcde").ok_or("id")?,
+        id: IssueId::of(&crate::IssueNumber::new(7).ok_or("id")?),
         project: ProjectId::new(1),
         created: Some(UnixMillis(1000)),
         title: String::from("Open me on GitHub"),

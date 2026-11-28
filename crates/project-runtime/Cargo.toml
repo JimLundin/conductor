@@ -21,6 +21,7 @@ vcs = { path = "../vcs" }
 
 [dev-dependencies]
 home-files = { path = "../home-files" }
+github = { path = "../github" }
 tempfile = "3.27.0"
 tokio.workspace = true
 

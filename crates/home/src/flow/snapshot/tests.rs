@@ -28,6 +28,7 @@ fn inputs(flow: Result<&str, &str>) -> Inputs {
     Inputs {
         unavailable: Vec::new(),
         observed_at: None,
+        issuers: crate::tracker::Issuers::default(),
         flow: flow.map(String::from).map_err(String::from),
         projects: Vec::from([
             (
@@ -87,7 +88,7 @@ fn a_flow_that_does_not_load_reads_no_issues_and_says_where_it_is() {
 fn a_home_with_a_changed_issue_replaces_its_previous_observation()
 -> Result<(), String> {
     let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
-    let changed = decode(home.flow()?, &task("ready"))
+    let changed = decode(home.flow()?, home.ids(), &task("ready"))
         .map_err(|problem| problem.to_string())?;
     let moved = home.with(changed.0);
     assert_eq!(moved.records().len(), 1);
@@ -101,7 +102,7 @@ fn an_invalid_record_remains_addressable() {
     let mut input = inputs(Ok(FLOW));
     input.issues = Vec::from([task("undeclared")]);
     let home = crate::issue::storage::snapshot(input);
-    let id = crate::IssueId(String::from(TASK));
+    let id = crate::id::issue_id(TASK);
     assert!(home.observation(folder(), &id).is_some());
 }
 
@@ -110,7 +111,7 @@ fn inaccessible_and_deleted_records_keep_their_last_known_content()
 -> Result<(), String> {
     use crate::issue::{IssueState, Observation, Unreadable};
     let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
-    let id = crate::IssueId(String::from(TASK));
+    let id = crate::id::issue_id(TASK);
     let record = Unreadable {
         id: id.clone(),
         project: home
@@ -156,7 +157,7 @@ fn inaccessible_and_deleted_records_keep_their_last_known_content()
 fn locators_cannot_change_identity() -> Result<(), String> {
     use crate::issue::{Locator, LocatorConflict};
     let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
-    let identity = crate::IssueId(String::from(TASK));
+    let identity = crate::id::issue_id(TASK);
     let observed = home
         .observation(folder(), &identity)
         .ok_or_else(|| String::from("fixture issue"))?;
@@ -181,7 +182,7 @@ fn locators_cannot_change_identity() -> Result<(), String> {
         renamed.issue().map(|issue| &issue.branch),
         located.issue().map(|issue| &issue.branch)
     );
-    let other = crate::IssueId(String::from("rest-42"));
+    let other = crate::id::issue_id("rest-42");
     assert_eq!(
         located.relocated(&other, refreshed.clone(), &configured),
         Err(LocatorConflict::ChangedIdentity)
@@ -197,7 +198,7 @@ fn locators_cannot_change_identity() -> Result<(), String> {
 fn flow_invalid_values_and_findings_remain_with_the_observation()
 -> Result<(), String> {
     let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
-    let mut observation = decode(home.flow()?, &task("open"))
+    let mut observation = decode(home.flow()?, home.ids(), &task("open"))
         .map_err(|problem| problem.to_string())?
         .0;
     let valid = home.with(observation.clone());
@@ -222,7 +223,7 @@ fn flow_invalid_values_and_findings_remain_with_the_observation()
 fn mapped_human_notes_never_become_a_stage_move() -> Result<(), String> {
     use crate::issue::{Observation, body::Body};
     let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
-    let original = decode(home.flow()?, &task("open"))
+    let original = decode(home.flow()?, home.ids(), &task("open"))
         .map_err(|problem| problem.to_string())?
         .0;
     let mut issue = original.editable()?.0.clone();
@@ -255,20 +256,20 @@ fn the_canvased_issues_are_the_home_s_and_those_a_store_keeps_canvases_of()
 -> Result<(), String> {
     let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
     let issue = |project: ProjectId, text: &str| {
-        crate::IssueId::new(text)
+        Some(crate::id::issue_id(text))
             .map(|id| crate::IssueKey { project, id })
             .ok_or("issue")
     };
     let tracked = ProjectId::new(2);
     let kept = crate::canvas::CanvasKey {
         project: tracked,
-        issue: crate::IssueId::new("146").ok_or("issue")?,
+        issue: Some(crate::id::issue_id("146")).ok_or("issue")?,
         name: crate::canvas::CanvasName::parse("design")
             .map_err(|error| error.to_string())?,
     };
     let at_task = crate::canvas::CanvasKey {
         project: folder(),
-        issue: crate::IssueId::new(TASK).ok_or("issue")?,
+        issue: Some(crate::id::issue_id(TASK)).ok_or("issue")?,
         ..kept.clone()
     };
     assert_eq!(

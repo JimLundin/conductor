@@ -15,6 +15,7 @@ use home::issue::{
 };
 use home::operations::Handle;
 use home::project::Project;
+use home::tracker::Ids;
 use home::{IssueId, ProjectId};
 use home_store::{CanvasStore, Putting, StoreError, Wrote};
 use project_runtime::operations::Operations;
@@ -27,6 +28,7 @@ use crate::{CanvasCache, FleetResolver, HostCredentials, Tracker};
 
 pub struct Github {
     selection: Selection,
+    ids: Ids,
     flow: Flow,
     mapping: Configuration,
     credentials: HostCredentials,
@@ -39,7 +41,7 @@ impl Github {
             .credentials
             .connect_at(&self.selection, &self.endpoint)
             .map_err(crate::read_failure)?
-            .tracker(self.flow.clone(), self.mapping.clone()))
+            .tracker(self.flow.clone(), self.mapping.clone(), self.ids.clone()))
     }
 }
 
@@ -75,6 +77,7 @@ pub fn connect(
         .ok_or_else(|| String::from("its adapter isn't GitHub"))?;
     let github = Arc::new(Github {
         selection: tracker.selection.clone(),
+        ids: home.ids().clone(),
         flow: tracker.flow.clone(),
         mapping: tracker.mapping,
         credentials: HostCredentials::with_fleet(data, resolver),
@@ -111,6 +114,7 @@ impl Canvases {
             backends,
             github: Arc::new(Github {
                 selection,
+                ids: Ids::default().with(project, github::ISSUER),
                 flow,
                 mapping,
                 credentials: HostCredentials::new(data),

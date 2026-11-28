@@ -16,7 +16,9 @@ pub const DRAWS: usize = 64;
 pub type Draws = [u64; DRAWS];
 
 mod issue;
-pub use issue::{IssueId, IssueKey};
+pub use issue::{IssueId, IssueKey, IssueName, TrackerId};
+#[cfg(test)]
+pub use issue::{Text, id as issue_id};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ProjectId(u64);
@@ -49,8 +51,28 @@ impl fmt::Display for ProjectId {
     }
 }
 
-pub fn slug(text: &str) -> Option<IssueId> {
-    read(text, 8).and_then(|_| IssueId::new(text))
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Slug(u64);
+
+impl Slug {
+    const DIGITS: u32 = 8;
+
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value & mask(Self::DIGITS * BITS_PER_DIGIT))
+    }
+}
+
+impl TrackerId for Slug {
+    fn read(text: &str) -> Option<Self> {
+        read(text, Self::DIGITS).map(Self)
+    }
+}
+
+impl fmt::Display for Slug {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write(out, self.0, Self::DIGITS)
+    }
 }
 
 const fn mask(bits: u32) -> u64 {

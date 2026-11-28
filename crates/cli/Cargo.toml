@@ -14,6 +14,7 @@ layer = "shell"
 
 [dependencies]
 github-api = { path = "../github-api" }
+github = { path = "../github" }
 home = { path = "../home" }
 home-store = { path = "../home-store" }
 project-runtime = { path = "../project-runtime" }

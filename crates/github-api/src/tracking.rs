@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use github::IssueNumber;
 use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Record};
@@ -12,6 +13,7 @@ use home::issue::{
     NativeIssue, Observation, Opened, Page, ReadFailure, Unreadable,
 };
 use home::operations::Handle;
+use home::tracker::Ids;
 use home::{IssueId, ProjectId, UnixMillis};
 use octocrab::{FromResponse, models::issues::Issue, params};
 use project_runtime::{IssueCompletion, IssueTracker, SendCompletion};
@@ -22,15 +24,22 @@ pub struct Tracker {
     pub(crate) client: Client,
     flow: Flow,
     config: Configuration,
+    ids: Ids,
 }
 
 impl Client {
     #[must_use]
-    pub const fn tracker(self, flow: Flow, config: Configuration) -> Tracker {
+    pub const fn tracker(
+        self,
+        flow: Flow,
+        config: Configuration,
+        ids: Ids,
+    ) -> Tracker {
         Tracker {
             client: self,
             flow,
             config,
+            ids,
         }
     }
 }
@@ -112,7 +121,8 @@ impl Tracker {
             issue.url.as_str(),
             issue.number,
         )?;
-        let id = IssueId::new(&issue.number.to_string())
+        let id = IssueNumber::new(issue.number)
+            .map(|number| IssueId::of(&number))
             .ok_or(ReadFailure::InvalidResponse)?;
         let owned_repo = format!(
             "{}/{}",
@@ -138,8 +148,13 @@ impl Tracker {
                 .map_err(|_| ReadFailure::InvalidResponse)?,
             native: native(issue, value.state_reason),
         };
-        let mut observation =
-            mapping::observe(&self.flow, &self.config, project, record);
+        let mut observation = mapping::observe(
+            &self.flow,
+            &self.config,
+            &self.ids,
+            project,
+            record,
+        );
         observation.observed_at = observed_at();
         Ok(observation)
     }
@@ -308,10 +323,17 @@ impl IssueTracker for Tracker {
 
     fn writes(
         &self,
+        issue: &Lookup,
         observed: &NativeIssue,
         mutations: &[Mutation],
     ) -> Result<Vec<IssueWrite>, String> {
-        mapping::writes(&self.flow, &self.config, observed, mutations)
+        mapping::writes(
+            &self.flow,
+            &self.config,
+            issue.project,
+            observed,
+            mutations,
+        )
     }
 
     fn write_issue(

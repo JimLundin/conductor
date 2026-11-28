@@ -204,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
             );
             let hosting = Hosting {
                 connect,
+                issuers: github::ISSUERS,
                 data_dir: Some(data),
                 name: args.name,
                 web_url: args.web_url,

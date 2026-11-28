@@ -164,7 +164,7 @@ fn value_of(issue: &Issue, field: &str) -> Vec<String> {
                 .get(field)
                 .into_iter()
                 .flatten()
-                .map(|target| target.named_from(issue.project))
+                .map(|target| target.said_from(issue.project))
                 .collect()
         },
         normalized_words,

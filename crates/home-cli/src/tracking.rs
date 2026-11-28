@@ -18,7 +18,7 @@ async fn listed(
     root: &Path,
     query: IssueQuery<'_>,
 ) -> Result<(String, u8), String> {
-    let loaded = home_files::read(root);
+    let loaded = home_files::read(root, github::ISSUERS);
     let project = selected(&loaded.snapshot, query.project)?.project.id;
     let data = query.data.map(PathBuf::from);
     let trackers = Trackers::new(root, loaded, data, connect)?;

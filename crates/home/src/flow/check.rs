@@ -113,7 +113,7 @@ pub fn check(home: &Snapshot) -> Report {
     }));
     let issues: Vec<&Issue> = graph.issues.iter().collect();
     for issue in &graph.issues {
-        let subject = named(issue.project, issue.id.as_str());
+        let subject = named(issue.project, &issue.id.to_string());
         let standing = Move {
             from: Some(issue),
             to: Some(issue),

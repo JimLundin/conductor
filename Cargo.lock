@@ -740,6 +740,7 @@ dependencies = [
  "codex",
  "codex-cli",
  "daemon",
+ "github",
  "github-api",
  "home",
  "home-store",
@@ -4061,6 +4062,7 @@ version = "0.1.0"
 dependencies = [
  "directories",
  "getrandom 0.4.3",
+ "github",
  "home",
  "home-files",
  "home-store",

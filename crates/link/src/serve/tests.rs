@@ -176,7 +176,7 @@ fn a_diff_is_unrecorded_and_credentials_run_beside_sessions() {
 }
 
 #[test]
-fn issue_commands_keep_a_receipt() -> Result<(), &'static str> {
+fn issue_commands_keep_a_receipt() {
     let new = NewIssue {
         project: home::ProjectId::new(1),
         kind: String::from("task"),
@@ -190,13 +190,15 @@ fn issue_commands_keep_a_receipt() -> Result<(), &'static str> {
         },
         HomeCommand::ChangeIssue {
             edit: EditId(2),
-            issue: at(PROJECT, "00000001").map_err(|_| "fixture identity")?,
+            issue: home::IssueName {
+                project: PROJECT,
+                id: String::from("00000001"),
+            },
             change: IssueChange::Note(String::from("done")),
         },
     ]
     .map(|command| ledger(&Command::Home(command)));
     assert_eq!(recorded, [Some(Kind::Receipt); 2]);
-    Ok(())
 }
 
 #[test]
@@ -263,7 +265,9 @@ fn a_command_is_named_in_log_lines_by_its_operation() {
 
 const PROJECT: ProjectId = ProjectId::new(1);
 fn id(key: &str) -> Result<IssueId, String> {
-    IssueId::new(key).ok_or_else(|| String::from("test issue ID"))
+    home::tracker::Issuer::MARKDOWN
+        .read(key)
+        .ok_or_else(|| String::from("test issue ID"))
 }
 
 fn at(project: ProjectId, key: &str) -> Result<IssueKey, String> {
@@ -524,14 +528,17 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
     let root = tempfile::tempdir().map_err(|error| error.to_string())?;
     let data = tempfile::tempdir().map_err(|error| error.to_string())?;
     github_home(root.path())?;
-    let snapshot = home_files::read(root.path()).snapshot;
+    let snapshot = home_files::read(root.path(), github::ISSUERS).snapshot;
     let tracked = ProjectId::parse("hyn162").ok_or("project")?;
     let project = snapshot
         .projects()
         .iter()
         .find(|project| project.id == tracked)
         .ok_or("no tracked project")?;
-    let cached = at(tracked, "146")?;
+    let cached = snapshot.ids().key(&home::IssueName {
+        project: tracked,
+        id: String::from("146"),
+    })?;
     let canvas = written(10, "devbox·claude")?;
     let body = github::canvas::comment(
         &named("design")?,
@@ -576,7 +583,13 @@ fn get_canvas_of_a_github_issue_answers_from_its_tracker_s_cache()
     assert_eq!(
         [
             get(cached.clone(), held(&cached))?,
-            get(at(tracked, "147")?, looked(None))?
+            get(
+                snapshot.ids().key(&home::IssueName {
+                    project: tracked,
+                    id: String::from("147"),
+                })?,
+                looked(None)
+            )?
         ],
         [
             HomeResult::Canvas(canvas),
@@ -619,7 +632,10 @@ fn a_failing_store_leaves_the_canvas_unavailable() {
 #[test]
 fn a_canvas_is_read_every_time_and_named_get_canvas() -> Result<(), String> {
     let command = Command::Home(HomeCommand::Canvas {
-        issue: at(PROJECT, "00000001")?,
+        issue: home::IssueName {
+            project: PROJECT,
+            id: String::from("00000001"),
+        },
         name: named("design")?,
     });
     assert_eq!(

@@ -6,9 +6,9 @@ const Account = Schema.Union([Schema.Literal("Own"), Schema.Struct({ Named: Sche
   mode: "oneOf",
 }).annotate({ identifier: "Account" });
 
-type Alpn = "conductor/53";
+type Alpn = "conductor/54";
 
-const Alpn = Schema.Literal("conductor/53").annotate({
+const Alpn = Schema.Literal("conductor/54").annotate({
   description: "The ALPN a client dials a host with.",
   identifier: "Alpn",
 });
@@ -798,6 +798,12 @@ const IssueChange = Schema.Union(
   { mode: "oneOf" },
 ).annotate({ identifier: "IssueChange" });
 
+type IssueName = { readonly id: string; readonly project: ProjectId };
+
+const IssueName = Schema.Struct({ id: Schema.String, project: ProjectId }).annotate({
+  identifier: "IssueName",
+});
+
 type HomeCommand =
   | "Sync"
   | { readonly Clone: { readonly project: ProjectId } }
@@ -806,10 +812,10 @@ type HomeCommand =
       readonly ChangeIssue: {
         readonly change: IssueChange;
         readonly edit: EditId;
-        readonly issue: IssueKey;
+        readonly issue: IssueName;
       };
     }
-  | { readonly Canvas: { readonly issue: IssueKey; readonly name: CanvasName } };
+  | { readonly Canvas: { readonly issue: IssueName; readonly name: CanvasName } };
 
 const HomeCommand = Schema.Union(
   [
@@ -817,9 +823,9 @@ const HomeCommand = Schema.Union(
     Schema.Struct({ Clone: Schema.Struct({ project: ProjectId }) }),
     Schema.Struct({ CreateIssue: Schema.Struct({ edit: EditId, issue: NewIssue }) }),
     Schema.Struct({
-      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueKey }),
+      ChangeIssue: Schema.Struct({ change: IssueChange, edit: EditId, issue: IssueName }),
     }),
-    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueKey, name: CanvasName }) }),
+    Schema.Struct({ Canvas: Schema.Struct({ issue: IssueName, name: CanvasName }) }),
   ],
   { mode: "oneOf" },
 ).annotate({ identifier: "HomeCommand" });
@@ -2492,6 +2498,7 @@ export {
   IssueChange,
   IssueId,
   IssueKey,
+  IssueName,
   IssueState,
   Item,
   Kept,

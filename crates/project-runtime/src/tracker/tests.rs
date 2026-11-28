@@ -76,6 +76,7 @@ fn home() -> Snapshot {
         ])),
         issues: Vec::new(),
         unread: Vec::new(),
+        issuers: github::ISSUERS,
     })
 }
 
@@ -100,7 +101,13 @@ fn file() -> Result<CanvasFile, String> {
 fn key(project: &str, issue: &str) -> Result<CanvasKey, String> {
     Ok(CanvasKey {
         project: id(project)?,
-        issue: IssueId::new(issue).ok_or("issue")?,
+        issue: if project == MARKDOWN {
+            home::tracker::Issuer::MARKDOWN
+        } else {
+            github::ISSUER
+        }
+        .read(issue)
+        .ok_or("issue")?,
         name: CanvasName::parse("design").map_err(|error| error.to_string())?,
     })
 }
@@ -191,7 +198,7 @@ async fn a_tracked_project_whose_store_cant_be_built_fails_its_lookups_naming_wh
     let trackers = followed(Box::new(Memory::default()), unmapped);
     let issue = home::IssueKey {
         project: id(TRACKED)?,
-        id: IssueId::new("146").ok_or("issue")?,
+        id: github::ISSUER.read("146").ok_or("issue")?,
     };
     let reason =
         String::from("the tracker of standards: unknown field `colour`");
@@ -246,6 +253,7 @@ impl IssueTracker for Empty {
     }
     fn writes(
         &self,
+        _: &Lookup,
         _: &home::issue::NativeIssue,
         _: &[home::flow::command::Mutation],
     ) -> Result<Vec<home::issue::IssueWrite>, String> {

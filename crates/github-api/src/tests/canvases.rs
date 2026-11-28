@@ -399,6 +399,7 @@ impl Host {
                 flow.clone(),
                 github::configuration::load("", &flow)
                     .map_err(anyhow::Error::msg)?,
+                home::tracker::Ids::default(),
             );
         let mut registry = Registry::default();
         registry
@@ -440,7 +441,9 @@ fn key(
 ) -> anyhow::Result<CanvasKey> {
     Ok(CanvasKey {
         project,
-        issue: IssueId::new(issue).ok_or_else(|| anyhow::anyhow!("issue"))?,
+        issue: github::ISSUER
+            .read(issue)
+            .ok_or_else(|| anyhow::anyhow!("issue"))?,
         name: named(name)?,
     })
 }
@@ -487,7 +490,7 @@ async fn spoil(github: &Github, key: &CanvasKey) -> anyhow::Result<String> {
         .split_once("<details>")
         .ok_or_else(|| anyhow::anyhow!("no data"))?;
     github
-        .seed("alpha", key.issue.as_str().parse()?, head.to_owned())
+        .seed("alpha", key.issue.to_string().parse()?, head.to_owned())
         .await
 }
 
@@ -496,7 +499,7 @@ async fn unnamed(github: &Github, issue: &IssueId) -> anyhow::Result<String> {
     github
         .seed(
             "alpha",
-            issue.as_str().parse()?,
+            issue.to_string().parse()?,
             good.replace("name: design", "name: Bad Name"),
         )
         .await
@@ -563,8 +566,14 @@ async fn github_s_store_keeps_the_store_contract() -> anyhow::Result<()> {
         alpha: host.store(ALPHA, "alpha", &github)?,
         beta: host.store(BETA, "beta", &github)?,
     };
+    let numbered = |number: &str| {
+        github::ISSUER
+            .read(number)
+            .ok_or_else(|| anyhow::anyhow!("issue"))
+    };
     let kept = home_store::contract(
         &mut stores,
+        &[numbered("1")?, numbered("2")?],
         async |_, key| {
             let spoiled = spoil(&github, key).await;
             assert!(spoiled.is_ok(), "{spoiled:?}");
@@ -647,7 +656,9 @@ async fn a_marked_comment_whose_name_doesnt_parse_is_a_stray_placed_by_its_url()
         .await?;
     host.refresh(ALPHA, "alpha", &github).await?;
     let store = host.store(ALPHA, "alpha", &github)?;
-    let one = IssueId::new("1").ok_or_else(|| anyhow::anyhow!("issue"))?;
+    let one = github::ISSUER
+        .read("1")
+        .ok_or_else(|| anyhow::anyhow!("issue"))?;
     let listed = store.list(&ALPHA, &one)?;
     assert!(listed.canvases.is_empty(), "{:?}", listed.canvases);
     assert_eq!(

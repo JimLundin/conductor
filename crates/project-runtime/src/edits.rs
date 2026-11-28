@@ -43,7 +43,7 @@ fn planned(
 ) -> Result<Intent, WriteError> {
     Intent::unchanged(&edit.seen, observed)?;
     let writes = tracker
-        .writes(observed, &edit.mutations)
+        .writes(&edit.issue, observed, &edit.mutations)
         .map_err(WriteError::Unsupported)?;
     Ok(Intent::edit(&edit.issue, edit.seen.clone(), writes))
 }

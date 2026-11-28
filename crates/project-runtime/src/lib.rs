@@ -77,6 +77,7 @@ pub trait IssueTracker: Send + Sync {
     fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue>;
     fn writes(
         &self,
+        on: &Lookup,
         observed: &NativeIssue,
         mutations: &[Mutation],
     ) -> Result<Vec<IssueWrite>, String>;

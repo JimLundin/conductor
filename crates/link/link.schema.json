@@ -19,7 +19,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/53",
+      "const": "conductor/54",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -1845,7 +1845,7 @@
                   "$ref": "#/$defs/EditId"
                 },
                 "issue": {
-                  "$ref": "#/$defs/IssueKey"
+                  "$ref": "#/$defs/IssueName"
                 }
               },
               "required": ["edit", "issue", "change"],
@@ -1861,7 +1861,7 @@
             "Canvas": {
               "properties": {
                 "issue": {
-                  "$ref": "#/$defs/IssueKey"
+                  "$ref": "#/$defs/IssueName"
                 },
                 "name": {
                   "$ref": "#/$defs/CanvasName"
@@ -2452,6 +2452,18 @@
       "properties": {
         "id": {
           "$ref": "#/$defs/IssueId"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectId"
+        }
+      },
+      "required": ["project", "id"],
+      "type": "object"
+    },
+    "IssueName": {
+      "properties": {
+        "id": {
+          "type": "string"
         },
         "project": {
           "$ref": "#/$defs/ProjectId"

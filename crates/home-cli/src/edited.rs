@@ -18,6 +18,7 @@ use home::issue::{
 };
 use home::operations::Handle;
 use home::project::Project;
+use home::tracker::Ids;
 use home::{IssueId, ProjectId, UnixMillis};
 use home_store::Memory;
 use project_runtime::operations::Operations;
@@ -86,7 +87,7 @@ fn comments(data: &Path) -> Vec<(String, Comment)> {
 fn on(data: &Path, issue: &IssueId) -> Vec<Comment> {
     comments(data)
         .into_iter()
-        .filter(|(on, _)| on == issue.as_str())
+        .filter(|(on, _)| *on == issue.to_string())
         .map(|(_, comment)| comment)
         .collect()
 }
@@ -108,6 +109,7 @@ impl Github {
         let mut observed = github::mapping::observe(
             &self.flow,
             &self.config,
+            &Ids::default().with(self.project, github::ISSUER),
             self.project,
             Record {
                 id: id.clone(),
@@ -117,7 +119,7 @@ impl Github {
                     addresses: BTreeMap::new(),
                 },
                 created: UnixMillis(1000),
-                native: kept(&self.data, id.as_str())?,
+                native: kept(&self.data, &id.to_string())?,
             },
         );
         let posted = on(&self.data, id)
@@ -145,7 +147,7 @@ impl Github {
             body,
             updated: UnixMillis(2000),
         };
-        all.push((String::from(issue.id.as_str()), comment.clone()));
+        all.push((issue.id.to_string(), comment.clone()));
         save(&self.data, COMMENTS, serde_json::to_vec(&all))?;
         Ok(comment)
     }
@@ -170,7 +172,7 @@ impl Github {
                 reason: None,
             },
         )?;
-        IssueId::new(&id).ok_or_else(|| String::from("id"))
+        github::ISSUER.read(&id).ok_or_else(|| String::from("id"))
     }
 }
 
@@ -206,7 +208,7 @@ impl IssueTracker for Github {
         let page = issues(&self.data).and_then(|all| {
             let records = all
                 .keys()
-                .filter_map(|id| IssueId::new(id))
+                .filter_map(|id| github::ISSUER.read(id))
                 .map(|id| self.observed(&id))
                 .collect::<Result<_, _>>()?;
             Ok(Page {
@@ -248,16 +250,23 @@ impl IssueTracker for Github {
 
     fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue> {
         self.asked("native");
-        let native = kept(&self.data, issue.id.as_str());
+        let native = kept(&self.data, &issue.id.to_string());
         Box::pin(async move { native })
     }
 
     fn writes(
         &self,
+        issue: &Lookup,
         observed: &NativeIssue,
         mutations: &[Mutation],
     ) -> Result<Vec<IssueWrite>, String> {
-        github::mapping::writes(&self.flow, &self.config, observed, mutations)
+        github::mapping::writes(
+            &self.flow,
+            &self.config,
+            issue.project,
+            observed,
+            mutations,
+        )
     }
 
     fn write_issue(
@@ -266,11 +275,11 @@ impl IssueTracker for Github {
         write: IssueWrite,
     ) -> SendCompletion<'_, ()> {
         self.asked(&format!("{write:?}"));
-        let id = issue.id.as_str();
-        let written = kept(&self.data, id)
+        let id = issue.id.to_string();
+        let written = kept(&self.data, &id)
             .map_err(SendFailure::Rejected)
             .and_then(|found| {
-                keep(&self.data, id, &applied(found, &write))
+                keep(&self.data, &id, &applied(found, &write))
                     .map_err(|_| SendFailure::Unknown)
             });
         Box::pin(async move { written })
@@ -319,7 +328,7 @@ impl IssueTracker for Github {
                     github::mapping::carries(&native.body, handle)
                 })
                 .filter_map(|(number, native)| {
-                    IssueId::new(&number).map(|id| Opened { id, native })
+                    github::ISSUER.read(&number).map(|id| Opened { id, native })
                 })
                 .collect()
         });
@@ -417,7 +426,7 @@ impl Home {
     fn home(&self, words: &[&str]) -> Result<(String, u8), Box<dyn Error>> {
         let args: Vec<String> =
             words.iter().copied().map(String::from).collect();
-        let loaded = home_files::read(&self.root);
+        let loaded = home_files::read(&self.root, github::ISSUERS);
         let context = super::context();
         let fresh =
             fresh(&loaded.snapshot, context.now.secs(), &[7; home::DRAWS]);
@@ -516,12 +525,13 @@ impl Home {
     }
 
     fn comments(&self, issue: &str) -> Result<Vec<String>, Box<dyn Error>> {
-        Ok(
-            on(&self.root.join("data"), &IssueId::new(issue).ok_or("id")?)
-                .into_iter()
-                .map(|comment| comment.body)
-                .collect(),
+        Ok(on(
+            &self.root.join("data"),
+            &github::ISSUER.read(issue).ok_or("id")?,
         )
+        .into_iter()
+        .map(|comment| comment.body)
+        .collect())
     }
 }
 

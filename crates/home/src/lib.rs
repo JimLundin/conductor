@@ -30,7 +30,9 @@ pub use home::{
     Checkout, CheckoutLocation, Cloning, Home, HomeCommand, HomeRefusal,
     HomeResult, HomeSync, Origin, Project,
 };
-pub use id::{DRAWS, Draws, IssueId, IssueKey, ProjectId};
+pub use id::{
+    DRAWS, Draws, IssueId, IssueKey, IssueName, ProjectId, Slug, TrackerId,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::canvas::CanvasEntry;

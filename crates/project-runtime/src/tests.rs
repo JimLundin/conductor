@@ -52,7 +52,7 @@ fn workspace() -> Prepared {
 fn issue() -> Result<Lookup, String> {
     Ok(Lookup {
         project: home::ProjectId::new(1),
-        id: home::IssueId::new("42").ok_or("invalid test issue")?,
+        id: github::ISSUER.read("42").ok_or("invalid test issue")?,
     })
 }
 
@@ -118,6 +118,7 @@ impl IssueTracker for Scripted {
     }
     fn writes(
         &self,
+        _: &Lookup,
         _: &home::issue::NativeIssue,
         _: &[home::flow::command::Mutation],
     ) -> Result<Vec<home::issue::IssueWrite>, String> {
