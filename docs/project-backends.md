@@ -82,8 +82,8 @@ with status 1 and reports the failure alongside the previous complete list.
 `--offline` reads the host cache and reports `Stale` with the observation
 time. Use `--data-dir <dir>` to select the host data directory.
 
-`home issue show` also reads a project without a tracker, from its Markdown
-issues. Every other command that names an issue, such as
+`home issue list` and `home issue show` also read a project without a
+tracker, from its Markdown issues, and print the same JSON. Every other command that names an issue, such as
 `home canvas put my-project 42 <name>`, takes the same `<project> <id>`
 and looks the ID up in the cache first. If the cache lacks it, the command
 refreshes the project's tracker once and looks again. An ID still missing
@@ -93,6 +93,8 @@ fails with `no issue 42 in my-project`. If the refresh fails, or
 
 Edit tracker-backed issues in GitHub during this read-only implementation.
 The CLI refuses to write a second Markdown record for a project with a tracker.
+A write to a Markdown issue or its canvas commits the files it wrote to the
+home, authored by `HOME_BY`, through the git2 backend.
 
 ## Repository access and credentials
 

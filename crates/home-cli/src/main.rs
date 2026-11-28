@@ -14,6 +14,7 @@ use home::flow::command::{
 };
 use home::issue::storage::File;
 use home::{Draws, UnixMillis};
+use home_files::FolderStore;
 use home_store::{CanvasStore, StoreError};
 
 mod local;
@@ -72,18 +73,47 @@ fn issues(
         trackers.resolved(asked.issues(given.as_ref()), asked.mode());
     let loaded = trackers.loaded();
     let outcome = run(asked, given, &resolved, &loaded.snapshot, context);
-    let written = outcome.changes.iter().try_for_each(|change| {
-        loaded.encode(change).and_then(|file| save(home, &file))
-    });
+    let written = outcome
+        .changes
+        .iter()
+        .map(|change| {
+            let file = loaded.encode(change)?;
+            save(home, &file).map(|()| file.path())
+        })
+        .collect::<Result<Vec<String>, String>>();
+    let kept: Vec<String> = outcome
+        .canvases
+        .iter()
+        .filter(|canvas| trackers.keeps(canvas.key.project))
+        .map(|canvas| FolderStore::place(&canvas.key))
+        .collect();
     let store = trackers.stores_mut();
-    let saved = written.and_then(|()| {
+    let saved = written.and_then(|mut paths| {
         outcome.canvases.iter().try_for_each(|canvas| {
             store
                 .put(&canvas.key, &canvas.file)
                 .map_err(|error| error.to_string())
-        })
+        })?;
+        paths.extend(kept);
+        committed(home, &paths, outcome.message.as_deref(), context)
     });
     outcome.ended(saved)
+}
+
+fn committed(
+    home: &Path,
+    paths: &[String],
+    message: Option<&str>,
+    context: &Context,
+) -> Result<(), String> {
+    match message {
+        Some(subject) if !paths.is_empty() => {
+            vcs_git2::record::commit(home, paths, &context.by, subject)
+                .map(drop)
+                .map_err(|error| format!("committing the home: {error}"))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn fetched(

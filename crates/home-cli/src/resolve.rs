@@ -2,10 +2,11 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use github::configuration::selected;
+use home::backend::{Backends, Capability};
 use home::flow::command::{Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::issue::storage::ReadHome;
-use home::issue::{IssueReading, ReadFailure, ReadMode};
+use home::issue::{IssueListing, IssueReading, ReadFailure, ReadMode};
 use home::project::Project;
 use home::{IssueKey, ProjectId};
 use home_files::FolderStore;
@@ -97,6 +98,10 @@ impl<'a> Trackers<'a> {
         }
     }
 
+    pub fn keeps(&self, project: ProjectId) -> bool {
+        self.tracked(project).is_none()
+    }
+
     fn tracked(&self, project: ProjectId) -> Option<&Project> {
         self.loaded.snapshot.projects().iter().find(|known| {
             known.id == project && known.backends.tracker.is_some()
@@ -116,32 +121,61 @@ impl<'a> Trackers<'a> {
         &mut self,
         project: ProjectId,
     ) -> Result<Result<(), ReadFailure>, String> {
-        let Some(name) = self.tracked(project).map(|known| known.name.clone())
-        else {
+        if self.keeps(project) {
             self.loaded = home_files::read(self.root);
             return Ok(Ok(()));
-        };
-        let data = self.data()?;
-        let registered = selected(&self.loaded.snapshot, &name)?
-            .tracker
-            .map_or(Ok(()), |tracker| {
-                super::tracking::register(&mut self.registry, &data, tracker)
-            });
-        if let Err(failure) = registered {
-            return Ok(Err(failure));
         }
-        let flow = self.loaded.snapshot.flow()?;
-        let cache = IssueCache::new(&data, flow);
-        let backends = self
-            .tracked(project)
-            .map(|known| &known.backends)
-            .ok_or_else(|| format!("no project {project} keeps a tracker"))?;
-        let listing = self
-            .registry
-            .project(backends)
-            .issues(&cache, project, ReadMode::Refresh)
-            .await
-            .map_err(|error| error.to_string())?;
+        let listing = self.listing(project, false).await?;
         Ok(listing.status.failure.map_or(Ok(()), Err))
     }
+
+    pub async fn listing(
+        &mut self,
+        project: ProjectId,
+        offline: bool,
+    ) -> Result<IssueListing, String> {
+        let Some(backends) =
+            self.tracked(project).map(|known| known.backends.clone())
+        else {
+            return Ok(self.loaded.snapshot.listed(project));
+        };
+        let data = self.data()?;
+        let mode = if offline {
+            ReadMode::Cached
+        } else {
+            self.register(project, &backends, &data)?
+                .map_or_else(ReadMode::Failed, |()| ReadMode::Refresh)
+        };
+        let cache = IssueCache::new(&data, self.loaded.snapshot.flow()?);
+        self.registry
+            .project(&backends)
+            .issues(&cache, project, mode)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    fn register(
+        &mut self,
+        project: ProjectId,
+        backends: &Backends,
+        data: &Path,
+    ) -> Result<Result<(), ReadFailure>, String> {
+        if self
+            .registry
+            .preflight(backends, Capability::ReadIssues)
+            .is_ok()
+        {
+            return Ok(Ok(()));
+        }
+        let name = named(&self.loaded.snapshot, project);
+        Ok(selected(&self.loaded.snapshot, &name)?.tracker.map_or(
+            Ok(()),
+            |tracker| {
+                super::tracking::register(&mut self.registry, data, tracker)
+            },
+        ))
+    }
 }
+
+#[cfg(test)]
+mod tests;

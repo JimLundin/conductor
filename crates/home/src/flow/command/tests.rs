@@ -107,6 +107,7 @@ impl Outcome {
         super::Outcome {
             changes: Vec::new(),
             canvases: self.canvases.clone(),
+            message: None,
             output: self.output.clone(),
             failed: self.failed,
         }

@@ -31,7 +31,8 @@ pub const USAGE: &str = "usage: home <command>, from anywhere in the home
   home check
       Checks every project and issue against the flow; fails only on errors.
   home issue list <project> [--offline] [--data-dir <dir>]
-      Lists tracked issues as JSON with freshness, coverage and refresh failures.
+      Lists the project's issues as JSON, from its tracker or the home, with
+      freshness, coverage and refresh failures.
   home issue show <project> <id> [--offline] [--data-dir <dir>]
       Reads one issue of the project as JSON, by its tracker's ID.
       Both commands refresh by default. --offline reads the host cache.
@@ -83,7 +84,8 @@ tracker gave it. An ID the cache lacks refreshes the project's tracker once.
 
 Each write signs and dates the log and is read back against the flow: a
 structural problem or a broken error rule refuses it, and anything softer
-is written with a warning.
+is written with a warning. A write the home keeps is committed to the home,
+signed by HOME_BY.
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -288,6 +290,7 @@ pub struct CanvasWrite {
 pub struct Outcome {
     pub changes: Vec<Change>,
     pub canvases: Vec<CanvasWrite>,
+    pub message: Option<String>,
     pub output: String,
     pub failed: bool,
 }
@@ -705,10 +708,9 @@ pub fn run(
                 resolved,
             ));
             return Outcome {
-                changes: Vec::new(),
-                canvases: Vec::new(),
                 output: report.text(),
                 failed: report.failed(),
+                ..said_only()
             };
         }
         Command::BodyFrom { issue, path } => match text(given, &path) {
@@ -751,6 +753,7 @@ pub fn run(
             ),
             changes: Vec::from([change]),
             canvases: Vec::new(),
+            message: Some(crate::issue::message(&edit)),
             failed: false,
         },
         Err(reason) => refused(refusal(&reason)),
@@ -786,6 +789,7 @@ const fn refused(output: String) -> Outcome {
     Outcome {
         changes: Vec::new(),
         canvases: Vec::new(),
+        message: None,
         output,
         failed: true,
     }
@@ -811,6 +815,10 @@ fn put(
     match parsed {
         Ok(canvas) => Outcome {
             changes: Vec::new(),
+            message: Some(format!(
+                "Write canvas {} of issue {}",
+                key.name, key.issue
+            )),
             output: format!("wrote {named}\n"),
             canvases: Vec::from([CanvasWrite {
                 key,
@@ -881,6 +889,7 @@ const fn said_only() -> Outcome {
     Outcome {
         changes: Vec::new(),
         canvases: Vec::new(),
+        message: None,
         output: String::new(),
         failed: false,
     }

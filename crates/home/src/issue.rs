@@ -32,7 +32,7 @@ pub struct Observed {
 }
 
 #[must_use]
-fn message(edit: &command::Edit) -> String {
+pub(crate) fn message(edit: &command::Edit) -> String {
     match edit {
         command::Edit::New { id, issue } => {
             format!("Open issue {id}: {}", issue.title.trim())

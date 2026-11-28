@@ -3,7 +3,8 @@ use alloc::string::ToString;
 
 use crate::flow::Flow;
 use crate::issue::{
-    Freshness, Issue, IssueReading, Observation, ReadStatus, Unreadable,
+    Freshness, Issue, IssueListing, IssueReading, Observation, ReadStatus,
+    Unreadable,
 };
 use crate::{IssueId, IssueKey, ProjectId};
 
@@ -168,6 +169,40 @@ impl Snapshot {
             failure: None,
         };
         IssueReading { record, status }
+    }
+
+    #[must_use]
+    pub fn listed(&self, project: ProjectId) -> IssueListing {
+        let mut records: Vec<Observation> = self
+            .records
+            .iter()
+            .filter_map(|record| match record {
+                Ok(observation) => (observation.project() == project)
+                    .then(|| observation.clone()),
+                Err(problem) => IssueId::new(&problem.record)
+                    .filter(|_| problem.project == project)
+                    .map(|id| {
+                        Observation::invalid(Unreadable {
+                            id,
+                            project,
+                            title: None,
+                            body: None,
+                            created: None,
+                            reason: problem.to_string(),
+                        })
+                    }),
+            })
+            .collect();
+        records.sort_by(creation_order);
+        IssueListing {
+            records,
+            status: ReadStatus {
+                freshness: Freshness::Fresh,
+                complete: true,
+                observed_at: None,
+                failure: None,
+            },
+        }
     }
 
     #[must_use]
