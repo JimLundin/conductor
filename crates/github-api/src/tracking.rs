@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use github::IssueNumber;
+use github::access::Repositories;
 use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Native, Record};
@@ -29,6 +30,7 @@ pub struct Tracker {
     pub(crate) flow: Flow,
     config: Configuration,
     pub(crate) ids: Ids,
+    pub(crate) repositories: Repositories,
 }
 
 impl Client {
@@ -38,12 +40,14 @@ impl Client {
         flow: Flow,
         config: Configuration,
         ids: Ids,
+        repositories: Repositories,
     ) -> Tracker {
         Tracker {
             client: self,
             flow,
             config,
             ids,
+            repositories,
         }
     }
 }
@@ -227,6 +231,7 @@ impl Tracker {
             &self.flow,
             &self.config,
             &self.ids,
+            &self.repositories,
             project,
             record,
         );

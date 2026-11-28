@@ -39,7 +39,14 @@ fn read(input: Record, options: &str) -> Result<Observation, String> {
         "../../../home/src/flow/test-flow.toml"
     ))?;
     let config = crate::configuration::load(options, &flow)?;
-    Ok(observe(&flow, &config, &ids(), ProjectId::new(71), input))
+    Ok(observe(
+        &flow,
+        &config,
+        &ids(),
+        &Repositories::default(),
+        ProjectId::new(71),
+        input,
+    ))
 }
 
 #[test]
@@ -342,7 +349,14 @@ fn footer_values_keep_declared_types_and_an_owner_bound_create_marker()
     input.native.body = format!(
         "```project-data\nschema=1\noperation='{marker}'\n[fields]\nflagged=true\nusers=['one','two']\ndue=2026-01-01T12:20:40Z\n```"
     );
-    let observed = observe(&flow, &config, &ids(), ProjectId::new(1), input);
+    let observed = observe(
+        &flow,
+        &config,
+        &ids(),
+        &Repositories::default(),
+        ProjectId::new(1),
+        input,
+    );
     let (issue, _) = observed.editable()?;
     assert_eq!(issue.fields.get("flagged"), Some(&Datum::Bool(true)));
     assert_eq!(issue.texts("users"), ["one", "two"]);
@@ -448,6 +462,7 @@ fn a_footer_relation_write_keeps_the_prose_the_fields_and_the_other_relations()
     let plan = relate::plan(
         &flow,
         &ids(),
+        &Repositories::default(),
         here,
         &input,
         &home::issue::RelationChange {

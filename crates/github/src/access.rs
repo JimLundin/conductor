@@ -1,4 +1,7 @@
-use alloc::{format, string::String};
+use alloc::{collections::BTreeMap, format, string::String};
+use core::fmt;
+use home::ProjectId;
+use home::project::Project;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -117,8 +120,60 @@ impl Repository {
     }
 
     #[must_use]
+    pub fn is(&self, other: &Self) -> bool {
+        self.owner.eq_ignore_ascii_case(&other.owner)
+            && self.name.eq_ignore_ascii_case(&other.name)
+    }
+
+    #[must_use]
     pub fn https_remote(&self) -> String {
         format!("https://github.com/{}/{}.git", self.owner, self.name)
+    }
+}
+
+impl fmt::Display for Repository {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(out, "{}/{}", self.owner, self.name)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Repositories(BTreeMap<ProjectId, Repository>);
+
+impl Repositories {
+    #[must_use]
+    pub fn of(projects: &[Project]) -> Self {
+        projects
+            .iter()
+            .filter_map(|project| {
+                let selection =
+                    project.backends.tracker.as_ref().filter(|selection| {
+                        selection.adapter == crate::ADAPTER
+                    })?;
+                Some((project.id, Repository::parse(&selection.resource).ok()?))
+            })
+            .fold(Self::default(), |known, (project, repository)| {
+                known.with(project, repository)
+            })
+    }
+
+    #[must_use]
+    pub fn with(mut self, project: ProjectId, repository: Repository) -> Self {
+        self.0.insert(project, repository);
+        self
+    }
+
+    #[must_use]
+    pub fn repository(&self, project: ProjectId) -> Option<&Repository> {
+        self.0.get(&project)
+    }
+
+    #[must_use]
+    pub fn project(&self, repository: &Repository) -> Option<ProjectId> {
+        self.0
+            .iter()
+            .find(|(_, known)| known.is(repository))
+            .map(|(project, _)| *project)
     }
 }
 

@@ -1,10 +1,10 @@
 use alloc::{collections::BTreeMap, format, string::String, vec::Vec};
 use home::flow::Flow;
 use home::issue::Coverage;
-use home::{IssueId, IssueKey, ProjectId};
+use home::{IssueKey, ProjectId};
 
-use super::{Findings, Native, Record};
-use crate::IssueNumber;
+use super::{Findings, Record};
+use crate::access::Repositories;
 
 pub(super) const PARENT: &str = "parent";
 pub(super) const BLOCKED_BY: &str = "blocked_by";
@@ -17,6 +17,7 @@ pub(super) struct Relations {
 impl Relations {
     pub(super) fn read(
         flow: &Flow,
+        repositories: &Repositories,
         project: ProjectId,
         record: &Record,
         mut footer: BTreeMap<String, Vec<IssueKey>>,
@@ -43,23 +44,17 @@ impl Relations {
             );
             let mut targets = Vec::new();
             for edge in native.unwrap_or_default() {
-                match edge {
-                    Native::Here(number) => {
-                        if let Some(held) = IssueNumber::new(*number) {
-                            targets.push(IssueKey {
-                                project,
-                                id: IssueId::of(&held),
-                            });
-                        }
-                    }
-                    Native::Elsewhere(issue) => {
-                        findings.warn(format!(
-                            "relation {name:?} names {issue}, in a repository this project does not track"
-                        ));
-                        coverage = Coverage::Incomplete {
-                            reason: format!("{issue} is in another repository"),
-                        };
-                    }
+                if let Some(target) = edge.key(project, repositories) {
+                    targets.push(target);
+                } else {
+                    findings.warn(format!(
+                        "relation {name:?} names {edge}, in a repository no project tracks"
+                    ));
+                    coverage = Coverage::Incomplete {
+                        reason: format!(
+                            "{edge} is in a repository no project tracks"
+                        ),
+                    };
                 }
             }
             for target in footer.remove(name).unwrap_or_default() {

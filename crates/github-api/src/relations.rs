@@ -1,4 +1,5 @@
 use github::access::routes::Address;
+use github::mapping::Native;
 use github::mapping::relate::{
     self, Change, LEVELS, Nested, Parent, Request, Unheld, adoptable, blockable,
 };
@@ -46,6 +47,7 @@ impl Tracker {
         let plan = relate::plan(
             &self.flow,
             &self.ids,
+            &self.repositories,
             issue.project,
             &record,
             &change,
@@ -61,9 +63,10 @@ impl Tracker {
             Address::of(&issue.id).map_err(Unrelatable::Read)?.number();
         let mut steps = Vec::new();
         for edge in plan.changes {
+            let effect = edge.effect();
             let request = match edge {
                 Change::Adopt { parent, replace } => {
-                    let facts = self.parent(parent).await?;
+                    let facts = self.parent(parent.clone()).await?;
                     let height = self.height(number).await?;
                     adoptable(facts, height)
                         .map_err(|reason| unheld(&reason))?;
@@ -91,7 +94,7 @@ impl Tracker {
                 }
             };
             steps.push(RelationStep {
-                effect: edge.effect(),
+                effect,
                 request: request.encode(),
             });
         }
@@ -100,9 +103,8 @@ impl Tracker {
     }
 
     async fn issue(&self, number: u64) -> Result<ReturnedIssue, Unrelatable> {
-        let route =
-            format!("{}/{number}", self.client.repository.issues_route());
-        self.returned(&route).await
+        self.returned(&self.client.repository.issue(&Native::Here(number)))
+            .await
     }
 
     async fn returned(
@@ -116,8 +118,8 @@ impl Tracker {
             .map_err(|error| Unrelatable::Read(request_error(error)))
     }
 
-    async fn parent(&self, number: u64) -> Result<Parent, Unrelatable> {
-        let found = self.issue(number).await?;
+    async fn parent(&self, at: Native) -> Result<Parent, Unrelatable> {
+        let found = self.returned(&self.client.repository.issue(&at)).await?;
         let sub_issues = found
             .sub_issues_summary
             .as_ref()
@@ -138,14 +140,14 @@ impl Tracker {
             above = self.returned(&route).await?.parent_issue_url;
         }
         Ok(Parent {
-            number,
+            at,
             sub_issues,
             ancestors,
         })
     }
 
     async fn height(&self, number: u64) -> Result<u32, Unrelatable> {
-        let mut level = Vec::from([number]);
+        let mut level = Vec::from([Native::Here(number)]);
         let mut height = 0;
         while let Some(below) =
             relate::deeper(height, self.level(&level).await?)
@@ -156,20 +158,26 @@ impl Tracker {
         Ok(height)
     }
 
-    async fn level(&self, parents: &[u64]) -> Result<Vec<Nested>, Unrelatable> {
+    async fn level(
+        &self,
+        parents: &[Native],
+    ) -> Result<Vec<Nested>, Unrelatable> {
         let mut found = Vec::new();
         for parent in parents {
-            found.extend(self.children(*parent).await?);
+            found.extend(self.children(parent).await?);
         }
         Ok(found)
     }
 
-    async fn children(&self, number: u64) -> Result<Vec<Nested>, Unrelatable> {
+    async fn children(
+        &self,
+        parent: &Native,
+    ) -> Result<Vec<Nested>, Unrelatable> {
         let page: octocrab::Page<ReturnedIssue> = self
             .client
             .reader
             .get(
-                self.client.repository.sub_issues_route(number),
+                self.client.repository.sub_issues_route(parent),
                 Some(&[("per_page", 100)]),
             )
             .await
@@ -177,16 +185,21 @@ impl Tracker {
         if page.next.is_some() {
             return Err(Unrelatable::Read(ReadFailure::InvalidResponse));
         }
-        Ok(page
-            .items
+        page.items
             .into_iter()
-            .map(|child| Nested {
-                number: child.issue.number,
-                sub_issues: child
-                    .sub_issues_summary
-                    .map(|summary| summary.total),
+            .map(|child| {
+                Ok(Nested {
+                    at: self
+                        .client
+                        .repository
+                        .native(&self.client.endpoint, child.issue.url.as_str())
+                        .map_err(Unrelatable::Read)?,
+                    sub_issues: child
+                        .sub_issues_summary
+                        .map(|summary| summary.total),
+                })
             })
-            .collect())
+            .collect()
     }
 
     pub(crate) async fn relate(
@@ -209,7 +222,7 @@ impl Tracker {
             } => {
                 reader
                     ._post(
-                        repository.sub_issues_route(parent),
+                        repository.sub_issues_route(&parent),
                         Some(&SubIssue {
                             sub_issue_id: child,
                             replace_parent: replace,
@@ -220,7 +233,7 @@ impl Tracker {
             Request::Orphan { parent, child } => {
                 reader
                     ._delete(
-                        repository.sub_issue_route(parent),
+                        repository.sub_issue_route(&parent),
                         Some(&SubIssue {
                             sub_issue_id: child,
                             replace_parent: false,
@@ -250,7 +263,7 @@ impl Tracker {
             Request::Body(body) => {
                 reader
                     ._patch(
-                        format!("{}/{number}", repository.issues_route()),
+                        repository.issue(&Native::Here(number)),
                         Some(&Body { body: &body }),
                     )
                     .await

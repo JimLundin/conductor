@@ -75,8 +75,12 @@ lost, the step stays awaiting evidence, and a retry re-reads the issue
 instead of sending again.
 
 GitHub's tracker keeps `parent` as a sub-issue and `blocked_by` as a
-dependency when the target is an issue of the same repository. A target in
-another project goes to the footer, as does any other relation. A parent
+dependency when the target is an issue of the same repository. A parent in
+another project whose GitHub tracker names a repository of the same owner
+is a sub-issue too: the tracker maps each repository to the project whose
+tracker resource names it, from the home's project catalog, and reads a
+native edge into that repository as that project's issue. Any other target
+goes to the footer, as does any other relation. A parent
 move sends `replace_parent`. The tracker refuses a write that would give a
 parent more than 100 sub-issues, nest sub-issues more than eight levels
 deep, or give an issue more than 50 blockers, or a blocker more than 50

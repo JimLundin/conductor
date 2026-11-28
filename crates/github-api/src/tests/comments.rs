@@ -313,7 +313,12 @@ async fn a_credential_without_issue_writes_fails_the_write_preflight_and_sends_n
         github::configuration::load("", &flow).map_err(anyhow::Error::msg)?;
     let writing = credentials
         .connect_at(&selection, "http://127.0.0.1:9")?
-        .tracker(flow.clone(), mapping.clone(), home::tracker::Ids::default());
+        .tracker(
+            flow.clone(),
+            mapping.clone(),
+            home::tracker::Ids::default(),
+            github::access::Repositories::default(),
+        );
     assert_eq!(
         writing.capabilities(),
         [Capability::ReadIssues, Capability::WriteIssues]
@@ -324,6 +329,7 @@ async fn a_credential_without_issue_writes_fails_the_write_preflight_and_sends_n
         flow,
         mapping,
         home::tracker::Ids::default(),
+        github::access::Repositories::default(),
     );
     let capabilities = reading.capabilities();
     let writer = Writer::with(reading, capabilities)?;

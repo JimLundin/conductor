@@ -3,6 +3,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
+use core::fmt;
 use home::flow::{
     FieldRole, Flow, Severity,
     check::Finding,
@@ -13,8 +14,10 @@ use home::issue::{
     Unreadable, body::Body,
 };
 use home::tracker::Ids;
-use home::{IssueId, ProjectId, UnixMillis};
+use home::{IssueId, IssueKey, ProjectId, UnixMillis};
 
+use crate::IssueNumber;
+use crate::access::{Repositories, Repository};
 use crate::configuration::Configuration;
 
 mod footer;
@@ -41,7 +44,49 @@ pub struct Record {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Native {
     Here(u64),
-    Elsewhere(String),
+    Elsewhere(Repository, u64),
+}
+
+impl Native {
+    #[must_use]
+    pub fn read(text: &str) -> Option<Self> {
+        Some(match text.split_once('#') {
+            Some((repository, number)) => Self::Elsewhere(
+                Repository::parse(repository).ok()?,
+                number.parse().ok()?,
+            ),
+            None => Self::Here(text.parse().ok()?),
+        })
+    }
+
+    #[must_use]
+    pub fn key(
+        &self,
+        here: ProjectId,
+        repositories: &Repositories,
+    ) -> Option<IssueKey> {
+        let (project, number) = match self {
+            Self::Here(number) => (here, *number),
+            Self::Elsewhere(repository, number) => {
+                (repositories.project(repository)?, *number)
+            }
+        };
+        Some(IssueKey {
+            project,
+            id: IssueId::of(&IssueNumber::new(number)?),
+        })
+    }
+}
+
+impl fmt::Display for Native {
+    fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Here(number) => write!(out, "{number}"),
+            Self::Elsewhere(repository, number) => {
+                write!(out, "{repository}#{number}")
+            }
+        }
+    }
 }
 
 #[must_use]
@@ -49,6 +94,7 @@ pub fn observe(
     flow: &Flow,
     config: &Configuration,
     ids: &Ids,
+    repositories: &Repositories,
     project: ProjectId,
     record: Record,
 ) -> Observation {
@@ -83,6 +129,7 @@ pub fn observe(
     );
     let relations = relations::Relations::read(
         flow,
+        repositories,
         project,
         &record,
         metadata.links,

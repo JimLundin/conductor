@@ -1,6 +1,6 @@
 use super::{Exchange, exchanges};
 use crate::{Client, Tracker, credential::Source};
-use github::access::Repository;
+use github::access::{Repositories, Repository};
 use home::ProjectId;
 use home::issue::{Coverage, Observation};
 use home::issue::{IssueState, ListPage, Lookup, ReadFailure};
@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 const FIRST: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=1";
 const SECOND: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=2";
 const NUMBER: &str = "/repos/owner/work/issues/7";
+pub(super) const STANDARDS: ProjectId = ProjectId::new(3);
 
 pub(super) fn reply(path: &'static str, status: u16, body: &Value) -> Exchange {
     Exchange {
@@ -93,7 +94,12 @@ pub(super) fn tracker(base: &str) -> anyhow::Result<Tracker> {
     Ok(client.tracker(
         flow,
         config,
-        home::tracker::Ids::default().with(ProjectId::new(1), github::ISSUER),
+        home::tracker::Ids::default()
+            .with(ProjectId::new(1), github::ISSUER)
+            .with(STANDARDS, github::ISSUER),
+        Repositories::default()
+            .with(ProjectId::new(1), Repository::parse("owner/work")?)
+            .with(STANDARDS, Repository::parse("owner/standards")?),
     ))
 }
 
@@ -444,7 +450,33 @@ async fn a_footer_relation_reads_beside_the_native_relations()
 }
 
 #[tokio::test]
-async fn a_native_relation_in_another_repository_is_reported_and_left_uncovered()
+async fn a_sub_issue_whose_parent_is_in_another_tracked_repository_reads_that_project_s_issue_as_its_parent()
+-> anyhow::Result<()> {
+    let (base, completed) = exchanges(vec![
+        reply(
+            NUMBER,
+            200,
+            &sub_issue_of("{api}/repos/Owner/Standards/issues/146"),
+        ),
+        reply(COMMENTS, 200, &json!([])),
+    ])
+    .await?;
+    let observed = tracker(&base)?.read(lookup("7")?).await?;
+    assert_eq!(
+        targets(&observed, "parent"),
+        [format!("146 in {STANDARDS}")]
+    );
+    assert_eq!(
+        observed.completeness.relations.get("parent"),
+        Some(&Coverage::Complete)
+    );
+    assert_eq!(observed.findings, []);
+    completed.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_native_relation_in_a_repository_no_project_tracks_is_reported_and_left_uncovered()
 -> anyhow::Result<()> {
     let (base, completed) = exchanges(vec![
         reply(

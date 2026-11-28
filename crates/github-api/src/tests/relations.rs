@@ -1,5 +1,5 @@
 use super::comments::Writer;
-use super::tracking::{issue, lookup, reply};
+use super::tracking::{STANDARDS, issue, lookup, reply};
 use super::{Exchange, exchanges};
 use home::issue::{RelationChange, RelationRequest};
 use home::operations::{Handle, Progress, Step};
@@ -23,6 +23,8 @@ const NEW_BLOCKER: &str = "/repos/owner/work/issues/151";
 const COMMENTS: &str =
     "/repos/owner/work/issues/146/comments?per_page=100&page=1";
 const PROSE: &str = "Visible human text";
+const SPEC: &str = "/repos/owner/standards/issues/146";
+const ADOPT_SPEC: &str = "/repos/owner/standards/issues/146/sub_issues";
 
 fn child(parent: Option<u64>, body: &str) -> Value {
     let mut value = issue(146, 9146);
@@ -165,7 +167,42 @@ async fn setting_parent_to_an_issue_of_the_same_repository_adds_a_sub_issue_and_
 }
 
 #[tokio::test]
-async fn setting_parent_to_an_issue_of_another_project_writes_the_footer_and_sends_no_sub_issue_request()
+async fn setting_parent_to_an_issue_of_another_tracked_repository_adds_a_sub_issue_there_and_writes_no_footer()
+-> anyhow::Result<()> {
+    let mut spec = parent(3);
+    spec["number"] = json!(146);
+    spec["url"] = json!("{api}/repos/owner/standards/issues/146");
+    let mut adopted = child(None, PROSE);
+    adopted["parent_issue_url"] =
+        json!("{api}/repos/owner/standards/issues/146");
+    let (base, served) = exchanges(vec![
+        reply(CHILD, 200, &child(None, PROSE)),
+        reply(COMMENTS, 200, &json!([])),
+        reply(CHILD, 200, &child(None, PROSE)),
+        reply(SPEC, 200, &spec),
+        reply(CHILDREN, 200, &json!([])),
+        sent("POST", ADOPT_SPEC, 201),
+        reply(CHILD, 200, &adopted),
+    ])
+    .await?;
+    let writer = Writer::new(&base)?;
+    let handle = handle(26);
+    let target = IssueKey {
+        project: STANDARDS,
+        id: github::ISSUER
+            .read("146")
+            .ok_or_else(|| anyhow::anyhow!("no id"))?,
+    };
+    writer
+        .relate(handle, writer.setting("parent", vec![target]).await?)
+        .await?;
+    assert_eq!(writer.progress(handle)?, Progress::Completed);
+    assert_eq!(bodies(&served.await??), [json!({"sub_issue_id": 9146})]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn setting_parent_to_an_issue_of_a_project_no_repository_tracks_writes_the_footer_and_sends_no_sub_issue_request()
 -> anyhow::Result<()> {
     let other = ProjectId::new(2);
     let elsewhere = IssueKey {
@@ -396,5 +433,35 @@ async fn a_parent_kept_in_the_footer_moves_to_a_sub_issue() -> anyhow::Result<()
         bodies(&served.await??),
         [json!({"sub_issue_id": 9146}), json!({"body": PROSE})]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn blocked_by_an_issue_of_another_tracked_repository_stays_in_the_footer()
+-> anyhow::Result<()> {
+    let footed = format!(
+        "{PROSE}\n\n```project-data\nschema = 1\n\n[[relations.blocked_by]]\nid = \"146\"\nproject = \"{STANDARDS}\"\n```\n"
+    );
+    let (base, served) = exchanges(vec![
+        reply(CHILD, 200, &blocked(&[])),
+        reply(COMMENTS, 200, &json!([])),
+        reply(CHILD, 200, &blocked(&[])),
+        sent("PATCH", CHILD, 200),
+        reply(CHILD, 200, &child(None, &footed)),
+    ])
+    .await?;
+    let writer = Writer::new(&base)?;
+    let handle = handle(41);
+    let target = IssueKey {
+        project: STANDARDS,
+        id: github::ISSUER
+            .read("146")
+            .ok_or_else(|| anyhow::anyhow!("no id"))?,
+    };
+    writer
+        .relate(handle, writer.setting("blocked_by", vec![target]).await?)
+        .await?;
+    assert_eq!(writer.progress(handle)?, Progress::Completed);
+    assert_eq!(bodies(&served.await??), [json!({"body": footed})]);
     Ok(())
 }

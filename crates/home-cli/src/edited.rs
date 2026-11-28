@@ -4,6 +4,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use github::access::Repositories;
 use github::configuration::Configuration;
 use github::log::Posted;
 use github::mapping::relate::{self, Request};
@@ -147,6 +148,7 @@ impl Github {
         let plan = relate::plan(
             &self.flow,
             &self.ids(),
+            &Repositories::default(),
             issue.project,
             &record,
             change,
@@ -192,8 +194,16 @@ impl Github {
         let id = issue.id.to_string();
         let mut all = parents(&self.data);
         match Request::decode(&step.request).ok_or("no request")? {
-            Request::Adopt { parent, .. } => {
+            Request::Adopt {
+                parent: Native::Here(parent),
+                ..
+            } => {
                 all.insert(id, parent);
+            }
+            Request::Adopt { .. } => {
+                return Err(String::from(
+                    "the script keeps no parent in another repository",
+                ));
             }
             Request::Orphan { .. } => {
                 all.remove(&id);
@@ -216,6 +226,7 @@ impl Github {
             &self.flow,
             &self.config,
             &self.ids(),
+            &Repositories::default(),
             self.project,
             self.record(id)?,
         );

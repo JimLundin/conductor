@@ -400,6 +400,7 @@ impl Host {
                 github::configuration::load("", &flow)
                     .map_err(anyhow::Error::msg)?,
                 home::tracker::Ids::default(),
+                github::access::Repositories::default(),
             );
         let mut registry = Registry::default();
         registry

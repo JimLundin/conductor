@@ -11,6 +11,7 @@ use home::{IssueKey, ProjectId};
 use super::relations::{BLOCKED_BY, PARENT};
 use super::{Native, Record, footer};
 use crate::IssueNumber;
+use crate::access::Repositories;
 
 pub const SUB_ISSUES: u32 = 100;
 pub const LEVELS: u32 = 8;
@@ -25,7 +26,7 @@ pub enum Unheld {
     #[error("GitHub reported no dependencies for this issue")]
     Unread,
     #[error("issue {0} already has {SUB_ISSUES} sub-issues")]
-    SubIssues(u64),
+    SubIssues(Native),
     #[error("sub-issues nest at most {LEVELS} levels deep")]
     Levels,
     #[error("an issue can be blocked by at most {DEPENDENCIES} issues")]
@@ -36,17 +37,17 @@ pub enum Unheld {
     Footer(String),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    Adopt { parent: u64, replace: bool },
-    Orphan(u64),
+    Adopt { parent: Native, replace: bool },
+    Orphan(Native),
     Block(u64),
     Unblock(u64),
 }
 
 impl Change {
     #[must_use]
-    pub fn effect(self) -> String {
+    pub fn effect(&self) -> String {
         match self {
             Self::Adopt { parent, .. } => format!("sub-issue of {parent}"),
             Self::Orphan(parent) => format!("not a sub-issue of {parent}"),
@@ -65,6 +66,7 @@ pub struct Plan {
 pub fn plan(
     flow: &Flow,
     ids: &Ids,
+    repositories: &Repositories,
     project: ProjectId,
     record: &Record,
     change: &RelationChange,
@@ -76,15 +78,44 @@ pub fn plan(
     if !relation.many && change.targets.len() > 1 {
         return Err(Unheld::Single(name.clone()));
     }
+    let located = |target: &IssueKey| {
+        let number = held(target)?;
+        if target.project == project {
+            return Some(Native::Here(number));
+        }
+        let here = repositories.repository(project)?;
+        let there = repositories.repository(target.project)?;
+        (name == PARENT && here.owner().eq_ignore_ascii_case(there.owner()))
+            .then(|| Native::Elsewhere(there.clone(), number))
+    };
     let native_kind = matches!(name.as_str(), PARENT | BLOCKED_BY);
-    let (native, kept): (Vec<_>, Vec<_>) =
-        change.targets.iter().cloned().partition(|target| {
-            native_kind && target.project == project && held(target).is_some()
-        });
-    let wanted: Vec<u64> = native.iter().filter_map(held).collect();
+    let (native, kept): (Vec<_>, Vec<_>) = change
+        .targets
+        .iter()
+        .cloned()
+        .partition(|target| native_kind && located(target).is_some());
+    let wanted: Vec<(IssueKey, Native)> = native
+        .into_iter()
+        .filter_map(|target| located(&target).map(|at| (target, at)))
+        .collect();
     let changes = match name.as_str() {
-        PARENT => parent(record.parent.as_ref(), wanted.first().copied()),
-        BLOCKED_BY => blockers(record.blocked_by.as_deref(), &wanted)?,
+        PARENT => parent(
+            record
+                .parent
+                .as_ref()
+                .map(|had| (had, had.key(project, repositories))),
+            wanted.into_iter().next(),
+        ),
+        BLOCKED_BY => blockers(
+            record.blocked_by.as_deref(),
+            &wanted
+                .iter()
+                .filter_map(|(_, at)| match at {
+                    Native::Here(number) => Some(*number),
+                    Native::Elsewhere(..) => None,
+                })
+                .collect::<Vec<_>>(),
+        )?,
         _ => Vec::new(),
     };
     let footer =
@@ -107,19 +138,24 @@ fn held(target: &IssueKey) -> Option<u64> {
     target.id.tracked::<IssueNumber>().map(IssueNumber::get)
 }
 
-fn parent(current: Option<&Native>, wanted: Option<u64>) -> Vec<Change> {
+fn parent(
+    current: Option<(&Native, Option<IssueKey>)>,
+    wanted: Option<(IssueKey, Native)>,
+) -> Vec<Change> {
     match (current, wanted) {
-        (Some(Native::Here(had)), Some(parent)) if *had == parent => Vec::new(),
-        (Some(_), Some(parent)) => Vec::from([Change::Adopt {
+        (Some((_, Some(had))), Some((key, _))) if had == key => Vec::new(),
+        (Some(_), Some((_, parent))) => Vec::from([Change::Adopt {
             parent,
             replace: true,
         }]),
-        (None, Some(parent)) => Vec::from([Change::Adopt {
+        (None, Some((_, parent))) => Vec::from([Change::Adopt {
             parent,
             replace: false,
         }]),
-        (Some(Native::Here(had)), None) => Vec::from([Change::Orphan(*had)]),
-        (Some(Native::Elsewhere(_)) | None, None) => Vec::new(),
+        (Some((had, Some(_))), None) => {
+            Vec::from([Change::Orphan(had.clone())])
+        }
+        (Some((_, None)) | None, None) => Vec::new(),
     }
 }
 
@@ -132,7 +168,7 @@ fn blockers(
         .iter()
         .filter_map(|edge| match edge {
             Native::Here(number) => Some(*number),
-            Native::Elsewhere(_) => None,
+            Native::Elsewhere(..) => None,
         })
         .collect();
     let elsewhere = current.len() - here.len();
@@ -153,16 +189,16 @@ fn blockers(
         .collect())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Parent {
-    pub number: u64,
+    pub at: Native,
     pub sub_issues: u32,
     pub ancestors: u32,
 }
 
-pub const fn adoptable(parent: Parent, height: u32) -> Result<(), Unheld> {
+pub fn adoptable(parent: Parent, height: u32) -> Result<(), Unheld> {
     if parent.sub_issues >= SUB_ISSUES {
-        return Err(Unheld::SubIssues(parent.number));
+        return Err(Unheld::SubIssues(parent.at));
     }
     if parent.ancestors + 1 + height > LEVELS {
         return Err(Unheld::Levels);
@@ -170,14 +206,14 @@ pub const fn adoptable(parent: Parent, height: u32) -> Result<(), Unheld> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Nested {
-    pub number: u64,
+    pub at: Native,
     pub sub_issues: Option<u32>,
 }
 
 #[must_use]
-pub fn deeper(height: u32, level: Vec<Nested>) -> Option<Vec<u64>> {
+pub fn deeper(height: u32, level: Vec<Nested>) -> Option<Vec<Native>> {
     if level.is_empty() || height > LEVELS {
         return None;
     }
@@ -185,7 +221,7 @@ pub fn deeper(height: u32, level: Vec<Nested>) -> Option<Vec<u64>> {
         level
             .into_iter()
             .filter(|child| child.sub_issues != Some(0))
-            .map(|child| child.number)
+            .map(|child| child.at)
             .collect(),
     )
 }
@@ -200,12 +236,12 @@ pub const fn blockable(blocker: u64, blocking: u32) -> Result<(), Unheld> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     Adopt {
-        parent: u64,
+        parent: Native,
         child: u64,
         replace: bool,
     },
     Orphan {
-        parent: u64,
+        parent: Native,
         child: u64,
     },
     Block(u64),
@@ -239,12 +275,12 @@ impl Request {
             |index: usize| -> Option<u64> { words.get(index)?.parse().ok() };
         Some(match words.first().copied()? {
             "adopt" => Self::Adopt {
-                parent: at(1)?,
+                parent: Native::read(words.get(1)?)?,
                 child: at(2)?,
                 replace: words.get(3)?.parse().ok()?,
             },
             "orphan" => Self::Orphan {
-                parent: at(1)?,
+                parent: Native::read(words.get(1)?)?,
                 child: at(2)?,
             },
             "block" => Self::Block(at(1)?),

@@ -1,4 +1,56 @@
-use super::{AccessError, Repository, TokenKind, validate_bearer};
+use alloc::{string::String, vec::Vec};
+use home::ProjectId;
+use home::backend::{Backends, Selection};
+use home::project::Project;
+
+use super::{
+    AccessError, Repositories, Repository, TokenKind, validate_bearer,
+};
+
+fn tracked(id: u64, adapter: &str, resource: &str) -> Project {
+    Project {
+        id: ProjectId::new(id),
+        name: String::from("project"),
+        title: String::from("Project"),
+        remote: None,
+        root: String::from("."),
+        profiles: Vec::new(),
+        provides: Vec::new(),
+        backends: Backends {
+            tracker: Some(Selection {
+                adapter: String::from(adapter),
+                resource: String::from(resource),
+                credential: None,
+                options: String::new(),
+            }),
+            ..Backends::default()
+        },
+    }
+}
+
+#[test]
+fn each_repository_belongs_to_the_project_whose_github_tracker_names_it()
+-> Result<(), AccessError> {
+    let repositories = Repositories::of(&[
+        tracked(1, "github", "owner/work"),
+        tracked(2, "github", "Owner/Standards"),
+        tracked(3, "linear", "owner/linear"),
+    ]);
+    assert_eq!(
+        repositories.project(&Repository::parse("owner/standards")?),
+        Some(ProjectId::new(2))
+    );
+    assert_eq!(
+        repositories.repository(ProjectId::new(1)),
+        Some(&Repository::parse("owner/work")?)
+    );
+    assert_eq!(
+        repositories.project(&Repository::parse("owner/linear")?),
+        None
+    );
+    assert_eq!(repositories.repository(ProjectId::new(3)), None);
+    Ok(())
+}
 
 #[test]
 fn only_a_single_github_repository_can_receive_its_credential()

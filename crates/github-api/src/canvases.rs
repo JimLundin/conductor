@@ -3,6 +3,7 @@ use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use github::access::Repositories;
 use github::canvas::{self, Found};
 use github::configuration::{Configuration, selected};
 use home::backend::{Backends, CredentialState, Selection};
@@ -29,6 +30,7 @@ use crate::{CanvasCache, FleetResolver, HostCredentials, Tracker};
 pub struct Github {
     selection: Selection,
     ids: Ids,
+    repositories: Repositories,
     flow: Flow,
     mapping: Configuration,
     credentials: HostCredentials,
@@ -41,7 +43,12 @@ impl Github {
             .credentials
             .connect_at(&self.selection, &self.endpoint)
             .map_err(crate::read_failure)?
-            .tracker(self.flow.clone(), self.mapping.clone(), self.ids.clone()))
+            .tracker(
+                self.flow.clone(),
+                self.mapping.clone(),
+                self.ids.clone(),
+                self.repositories.clone(),
+            ))
     }
 }
 
@@ -78,6 +85,7 @@ pub fn connect(
     let github = Arc::new(Github {
         selection: tracker.selection.clone(),
         ids: home.ids().clone(),
+        repositories: Repositories::of(home.projects()),
         flow: tracker.flow.clone(),
         mapping: tracker.mapping,
         credentials: HostCredentials::with_fleet(data, resolver),
@@ -115,6 +123,7 @@ impl Canvases {
             github: Arc::new(Github {
                 selection,
                 ids: Ids::default().with(project, github::ISSUER),
+                repositories: Repositories::default(),
                 flow,
                 mapping,
                 credentials: HostCredentials::new(data),
