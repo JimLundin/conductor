@@ -8,7 +8,7 @@ use agents::{
     Output, Question, SubagentActivity, SubagentId, SubagentOutcome,
     ToolCallId, ToolKind, TurnOutcome,
 };
-use home::{HomeRefusal, IssueKey, ProjectId};
+use home::{HomeRefusal, IssueKey, IssueName, ProjectId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
@@ -104,7 +104,7 @@ impl From<SessionDirectory> for agents::runtime::Directory {
 pub enum StartAt {
     Directory(SessionDirectory),
     Project(ProjectId),
-    Issue(IssueKey),
+    Issue(IssueName),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

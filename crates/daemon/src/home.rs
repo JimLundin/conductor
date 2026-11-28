@@ -381,8 +381,11 @@ impl Actor {
             Msg::Place { at, reply } => {
                 self.fresh().await;
                 let shown = self.shown.borrow().clone();
-                let _ = reply
-                    .send(host::registry::place_in_home(at, shown.as_ref()));
+                let _ = reply.send(host::registry::place_in_home(
+                    at,
+                    shown.as_ref(),
+                    self.home.ids(),
+                ));
             }
             Msg::Ready { start, reply } => {
                 let readied = ready_branch(&start).await.map_err(|reason| {

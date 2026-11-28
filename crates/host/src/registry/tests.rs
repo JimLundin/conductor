@@ -1343,7 +1343,9 @@ fn place(
     at: StartAt,
     home: Option<&Home>,
 ) -> Result<super::Placement, HomeRefusal> {
-    place_without_home(at).or_else(|start| place_in_home(start, home))
+    place_without_home(at).or_else(|start| {
+        place_in_home(start, home, &home::tracker::Ids::default())
+    })
 }
 
 #[test]
@@ -1372,16 +1374,13 @@ fn a_session_starts_in_a_directory_or_a_projects_first_checkout() {
 }
 
 #[test]
-fn only_a_start_in_a_project_or_an_issue_waits_on_the_home()
--> Result<(), &'static str> {
+fn only_a_start_in_a_project_or_an_issue_waits_on_the_home() {
     let directory = SessionDirectory(text("/work"));
     let project = ProjectId::new(1);
-    let issue = Some(home::IssueId::of(&home::Slug::new(1029)))
-        .map(|id| home::IssueKey {
-            project: home::ProjectId::new(1),
-            id,
-        })
-        .ok_or("invalid fixture identity")?;
+    let issue = home::IssueName {
+        project: home::ProjectId::new(1),
+        id: text("00000105"),
+    };
     assert_eq!(
         [
             place_without_home(StartAt::Directory(directory.clone())),
@@ -1396,6 +1395,76 @@ fn only_a_start_in_a_project_or_an_issue_waits_on_the_home()
             }),
             Err(InHome::Project(project)),
             Err(InHome::Issue(issue)),
+        ]
+    );
+}
+
+struct Number(u64);
+
+impl core::fmt::Display for Number {
+    fn fmt(&self, out: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(out, "{}", self.0)
+    }
+}
+
+impl home::TrackerId for Number {
+    fn read(text: &str) -> Option<Self> {
+        text.parse().ok().map(Self)
+    }
+}
+
+fn home_with_issue(id: &str) -> Result<Home, &'static str> {
+    let observed = home::issue::Observation::mapped(
+        home::issue::Issue {
+            branch: format!("issue/{id}"),
+            id: <home::Slug as home::TrackerId>::read(id)
+                .map(|slug| home::IssueId::of(&slug))
+                .ok_or("invalid fixture identity")?,
+            created: None,
+            notes: Vec::new(),
+            project: ProjectId::new(1),
+            title: text("Start at an issue"),
+            kind: text("task"),
+            status: text("open"),
+            stage: None,
+            fields: BTreeMap::new(),
+            links: BTreeMap::new(),
+            body: String::new(),
+            sections: Vec::new(),
+            checklist: Vec::new(),
+            log: Vec::new(),
+            canvases: Vec::new(),
+        },
+        home::issue::body::Body::of(""),
+    );
+    let mut shown = home_with(&["/a"]);
+    for project in &mut shown.projects {
+        project.issues.push(observed.clone());
+    }
+    Ok(shown)
+}
+
+#[test]
+fn a_session_started_at_an_issue_its_tracker_refuses_answers_unknown_issue()
+-> Result<(), &'static str> {
+    let shown = home_with_issue("00000105")?;
+    let at = |ids: &home::tracker::Ids| {
+        place_without_home(StartAt::Issue(home::IssueName {
+            project: ProjectId::new(1),
+            id: text("00000105"),
+        }))
+        .or_else(|start| place_in_home(start, Some(&shown), ids))
+        .map(|placed| placed.directory)
+    };
+    let numbered = home::tracker::Ids::default().with(
+        ProjectId::new(1),
+        home::tracker::Issuer::of::<Number>("numbers"),
+    );
+    assert_eq!(
+        [at(&home::tracker::Ids::default()), at(&numbered)],
+        [
+            Ok(SessionDirectory(text("/a"))),
+            Err(HomeRefusal::UnknownIssue)
         ]
     );
     Ok(())

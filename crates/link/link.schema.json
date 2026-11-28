@@ -19,7 +19,7 @@
       ]
     },
     "Alpn": {
-      "const": "conductor/54",
+      "const": "conductor/55",
       "description": "The ALPN a client dials a host with.",
       "type": "string"
     },
@@ -4318,7 +4318,7 @@
           "additionalProperties": false,
           "properties": {
             "Issue": {
-              "$ref": "#/$defs/IssueKey"
+              "$ref": "#/$defs/IssueName"
             }
           },
           "required": ["Issue"],

@@ -76,8 +76,10 @@ An issue ID is an opaque string unique within its project's tracker, and a
 project and an ID name one issue. The GitHub adapter gives each issue its
 number as its ID. The issue's REST ID and GraphQL node ID are addresses in
 its locator. The core never parses an ID. A relation names an issue of its
-own project by its ID, and an issue of another project as `<project>/<id>`,
-such as `hyn162/0trfecpc`, where `<project>` is the project's ID.
+own project by its ID, and an issue of another project by that project and
+the ID. A command reads it as `<project> <id>`, such as `hyn162 0trfecpc`,
+where `<project>` is the project's name or ID. A stored relation keeps the
+two apart, as `{ id = "0trfecpc", project = "hyn162" }`.
 Sort issues by their creation time with identity as a deterministic tie
 break, not by the old locally minted ID.
 
