@@ -1,13 +1,37 @@
 use home::IssueId;
 use home::flow::command::Change;
-use home::issue::{IssueCreate, SendFailure};
+use home::issue::{IssueCreate, Lookup, SendFailure};
 use home::operations::{Handle, Intent, Opening};
 
 use crate::operations::{Attempt, Operations};
+use crate::relations::relations;
 use crate::{IssueTracker, Project, WriteError};
 
 impl Project<'_> {
     pub async fn open_issue(
+        &self,
+        operations: &Operations,
+        fresh: Handle,
+        change: &Change,
+    ) -> Result<IssueId, WriteError> {
+        let issue = Lookup {
+            project: change.observation.project(),
+            id: self.opened_issue(operations, fresh, change).await?,
+        };
+        let changes = relations(&change.mutations);
+        if !changes.is_empty() {
+            let seen = self
+                .writer()?
+                .native(issue.clone())
+                .await
+                .map_err(WriteError::Read)?
+                .revision();
+            self.related(operations, &issue, seen, changes).await?;
+        }
+        Ok(issue.id)
+    }
+
+    async fn opened_issue(
         &self,
         operations: &Operations,
         fresh: Handle,

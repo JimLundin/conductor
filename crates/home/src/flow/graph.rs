@@ -34,13 +34,13 @@ impl fmt::Display for Problem {
 
 #[must_use]
 pub fn read(flow: &Flow, records: &[Result<Issue, Problem>]) -> Graph {
-    observed(flow, records, true)
+    observed(flow, records, &|_| true)
 }
 
 pub(super) fn observed(
     flow: &Flow,
     records: &[Result<Issue, Problem>],
-    complete_catalog: bool,
+    held: &dyn Fn(ProjectId) -> bool,
 ) -> Graph {
     let mut issues = Vec::new();
     let mut problems = Vec::new();
@@ -62,7 +62,7 @@ pub(super) fn observed(
     }
     issues.sort_by_key(|issue| (issue.project, issue.id.clone()));
     problems.extend(shared(&issues));
-    problems.extend(references(flow, &issues, &unread, complete_catalog));
+    problems.extend(references(flow, &issues, &unread, held));
     problems.extend(cycles(flow, &issues));
     issues.sort_by(|one, other| {
         one.created
@@ -176,7 +176,7 @@ fn references(
     flow: &Flow,
     issues: &[Issue],
     unread: &BTreeSet<(ProjectId, String)>,
-    complete_catalog: bool,
+    held: &dyn Fn(ProjectId) -> bool,
 ) -> Vec<Problem> {
     let by_id: BTreeMap<(ProjectId, &IssueId), &Issue> = issues
         .iter()
@@ -192,7 +192,7 @@ fn references(
             for target in ids {
                 let id = target.said_from(issue.project);
                 let message = match by_id.get(&(target.project, &target.id)) {
-                    None if !complete_catalog
+                    None if !held(target.project)
                         || unread.contains(&(
                             target.project,
                             target.id.to_string(),

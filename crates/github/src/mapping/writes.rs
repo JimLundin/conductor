@@ -1,3 +1,4 @@
+use crate::configuration::{Configuration, FieldSource};
 use alloc::{
     collections::BTreeSet,
     format,
@@ -10,17 +11,12 @@ use home::issue::{
     ChecklistChange, Datum, IssueCreate, IssueWrite, KIND, NativeIssue, Part,
     STAGE, STATUS,
     body::{self, Body},
-    document::relation_value,
 };
-use home::{IssueKey, ProjectId};
-
-use crate::configuration::{Configuration, FieldSource};
 
 const FOOTER: &str = "project-data";
 
 struct Planned<'a> {
     flow: &'a Flow,
-    project: ProjectId,
     config: &'a Configuration,
     observed: &'a NativeIssue,
     labels: Vec<String>,
@@ -33,13 +29,11 @@ struct Planned<'a> {
 pub fn writes(
     flow: &Flow,
     config: &Configuration,
-    project: ProjectId,
     observed: &NativeIssue,
     mutations: &[Mutation],
 ) -> Result<Vec<IssueWrite>, String> {
     let mut planned = Planned {
         flow,
-        project,
         config,
         observed,
         labels: observed.labels.clone(),
@@ -70,7 +64,6 @@ pub fn opening(
     };
     let mut planned = Planned {
         flow,
-        project: issue.project,
         config,
         observed: &blank,
         labels: Vec::new(),
@@ -147,11 +140,6 @@ impl Planned<'_> {
                 Ok(())
             }
             Mutation::Set { field, value } => self.set(field, value),
-            Mutation::Relate {
-                relation,
-                many,
-                targets,
-            } => self.relate(relation, *many, targets),
             Mutation::Title(title) => {
                 self.title = Some(title.clone());
                 Ok(())
@@ -176,7 +164,7 @@ impl Planned<'_> {
                 }
                 .ok_or_else(|| String::from("its checklist doesn't read"))
             }
-            Mutation::Note(_) => Ok(()),
+            Mutation::Relate { .. } | Mutation::Note(_) => Ok(()),
         }
     }
 
@@ -294,25 +282,6 @@ impl Planned<'_> {
             }
         }
         Ok(())
-    }
-
-    fn relate(
-        &mut self,
-        relation: &str,
-        many: bool,
-        targets: &[IssueKey],
-    ) -> Result<(), String> {
-        if matches!(relation, "parent" | "blocked_by") {
-            return Err(format!(
-                "{relation} is a native GitHub relation, which home doesn't write yet (#140)"
-            ));
-        }
-        self.footer_entry(
-            "relations",
-            relation,
-            (!targets.is_empty())
-                .then(|| relation_value(many, targets, self.project)),
-        )
     }
 
     fn written_body(&self) -> Result<Option<String>, String> {

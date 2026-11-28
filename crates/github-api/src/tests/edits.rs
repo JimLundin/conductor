@@ -250,3 +250,49 @@ async fn an_issue_changed_since_it_was_read_is_refused_before_any_write()
     assert_eq!(bodies(&served.await??), Vec::<Value>::new());
     Ok(())
 }
+
+#[tokio::test]
+async fn setting_parent_through_an_issue_edit_adds_a_sub_issue_and_leaves_the_body_alone()
+-> anyhow::Result<()> {
+    let mut parent = issue(140, 9140);
+    parent["sub_issues_summary"] =
+        json!({"total": 3, "completed": 0, "percent_completed": 0});
+    let mut adopted = observed(&[], "Words");
+    adopted["parent_issue_url"] = json!("{api}/repos/owner/work/issues/140");
+    let (base, served) = exchanges(vec![
+        reply(ISSUE, 200, &observed(&[], "Words")),
+        reply(ISSUE, 200, &observed(&[], "Words")),
+        reply("/repos/owner/work/issues/140", 200, &parent),
+        reply(
+            "/repos/owner/work/issues/146/sub_issues?per_page=100",
+            200,
+            &json!([]),
+        ),
+        Exchange {
+            status: 201,
+            ..sent("POST", "/repos/owner/work/issues/140/sub_issues", &parent)
+        },
+        reply(ISSUE, 200, &adopted),
+        reply(ISSUE, 200, &adopted),
+    ])
+    .await?;
+    let editor = Editor::new(&base)?;
+    let handle = editor.operations.handle()?;
+    let target = lookup("140")?;
+    editor
+        .edit(
+            handle,
+            &native(&[], "Words"),
+            Vec::from([Mutation::Relate {
+                relation: String::from("parent"),
+                many: false,
+                targets: Vec::from([home::IssueKey {
+                    project: target.project,
+                    id: target.id,
+                }]),
+            }]),
+        )
+        .await?;
+    assert_eq!(bodies(&served.await??), [json!({"sub_issue_id": 9146})]);
+    Ok(())
+}

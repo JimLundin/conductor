@@ -13,7 +13,7 @@ use super::graph::{Graph, Problem};
 use crate::canvas::CanvasKey;
 use crate::prelude::*;
 use crate::project::{Listing, Project};
-use crate::tracker::{Ids, Issuers};
+use crate::tracker::{Ids, Issuers, Tracker};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inputs {
@@ -39,9 +39,14 @@ impl Snapshot {
     pub fn of(inputs: Inputs) -> Self {
         let flow = inputs.flow;
         let mut records = inputs.issues;
+        let tracked = tracked(&inputs.projects.projects);
         let graph = flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |read_flow| observed(read_flow, &mut records, true),
+            |read_flow| {
+                observed(read_flow, &mut records, &|project| {
+                    !tracked.contains(&project)
+                })
+            },
         );
         let ids = inputs.issuers.ids(&inputs.projects.projects);
         Self {
@@ -83,9 +88,14 @@ impl Snapshot {
             .cloned()
             .collect();
         records.push(Ok(observation));
+        let tracked = tracked(self.projects());
         let graph = self.flow.as_ref().map_or_else(
             |_| Graph::default(),
-            |flow| observed(flow, &mut records, true),
+            |flow| {
+                observed(flow, &mut records, &|project| {
+                    !tracked.contains(&project)
+                })
+            },
         );
         Self {
             records,
@@ -316,7 +326,7 @@ pub(crate) fn project_issues(
 ) -> Vec<Observation> {
     let applicable = super::coverage::applicable(flow, &records);
     let mut inputs: Vec<_> = records.into_iter().map(Ok).collect();
-    observed(&applicable, &mut inputs, false);
+    observed(&applicable, &mut inputs, &|_| false);
     let mut evaluated: Vec<_> = inputs.into_iter().flatten().collect();
     evaluated.sort_by(creation_order);
     evaluated
@@ -333,10 +343,20 @@ fn creation_order(
         .then_with(|| one.id().cmp(other.id()))
 }
 
+fn tracked(projects: &[Project]) -> Vec<ProjectId> {
+    projects
+        .iter()
+        .filter(|project| {
+            matches!(crate::tracker::of(project), Tracker::Configured(_))
+        })
+        .map(|project| project.id)
+        .collect()
+}
+
 fn observed(
     flow: &Flow,
     records: &mut [Result<Observation, Problem>],
-    complete_catalog: bool,
+    held: &dyn Fn(ProjectId) -> bool,
 ) -> Graph {
     for observation in
         records.iter_mut().filter_map(|record| record.as_mut().ok())
@@ -355,8 +375,7 @@ fn observed(
             observation.state = crate::issue::IssueState::Invalid(record);
         }
     }
-    let graph =
-        super::graph::observed(flow, &issues(records), complete_catalog);
+    let graph = super::graph::observed(flow, &issues(records), held);
     let all: Vec<&Issue> = graph.issues.iter().collect();
     for observation in
         records.iter_mut().filter_map(|record| record.as_mut().ok())

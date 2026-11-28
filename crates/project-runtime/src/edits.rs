@@ -3,6 +3,7 @@ use home::issue::{Lookup, NativeIssue, SendFailure};
 use home::operations::{Advance, Handle, Intent};
 
 use crate::operations::{Attempt, Operations};
+use crate::relations::relations;
 use crate::{IssueTracker, Project, WriteError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,11 +29,18 @@ impl Project<'_> {
             .status(handle)?
             .map(|record| record.intent)
             .map_or_else(|| planned(tracker, &observed, &edit), Ok)?;
-        if intent.edits(&edit.issue, &edit.seen)?.is_empty() {
-            return Ok(observed);
+        let edited = if intent.edits(&edit.issue, &edit.seen)?.is_empty() {
+            observed
+        } else {
+            let attempt = operations.begin(handle, intent, true)?;
+            deliver(tracker, attempt, edit.issue.clone(), observed).await?
+        };
+        let changes = relations(&edit.mutations);
+        if changes.is_empty() {
+            return Ok(edited);
         }
-        let attempt = operations.begin(handle, intent, true)?;
-        deliver(tracker, attempt, edit.issue, observed).await
+        self.related(operations, &edit.issue, edited.revision(), changes)
+            .await
     }
 }
 

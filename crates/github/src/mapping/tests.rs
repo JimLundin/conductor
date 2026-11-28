@@ -487,7 +487,7 @@ fn planned(
         "../../../home/src/flow/test-flow.toml"
     ))?;
     let config = crate::configuration::load("", &flow)?;
-    writes(&flow, &config, ProjectId::new(71), native, mutations)
+    writes(&flow, &config, native, mutations)
 }
 
 fn labelled(labels: &[&str]) -> Result<home::issue::NativeIssue, String> {
@@ -599,8 +599,7 @@ fn setting_a_metadata_field_changes_only_its_footer_entry() -> Result<(), String
 }
 
 #[test]
-fn a_native_relation_is_refused_before_any_write_and_a_lone_note_changes_no_issue_field()
--> Result<(), String> {
+fn a_relation_or_a_lone_note_plans_no_issue_write() -> Result<(), String> {
     let native = record()?.native;
     let relation = planned(
         &native,
@@ -612,8 +611,8 @@ fn a_native_relation_is_refused_before_any_write_and_a_lone_note_changes_no_issu
                 id: IssueId::of(&crate::IssueNumber::new(7).ok_or("id")?),
             }]),
         }],
-    );
-    assert!(relation.is_err_and(|reason| reason.contains("#140")));
+    )?;
+    assert_eq!(relation, []);
     assert_eq!(planned(&native, &[logged()])?, []);
     Ok(())
 }

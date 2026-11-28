@@ -83,6 +83,14 @@ deep, or give an issue more than 50 blockers, or a blocker more than 50
 issues it blocks. It sends nothing for a refused write. GitHub's 422 reply
 leaves the operation ready, as an invalid write.
 
+An issue edit, `Project::edit_issue`, such as `home issue set my-project 42
+parent=40`, sends its label, title, body and state writes first. It then
+hands each relation it sets to `Project::write_relation`, as an operation of
+its own, so GitHub keeps the relation natively where it can. A new issue's
+relations follow its create the same way. A GitHub issue's revision covers
+its title, body, labels and state, not its native relations: a relation
+write reads those afresh before each step.
+
 Repository hosting declares statuses, checks and workflows separately.
 Access to statuses does not imply access to required checks. Hosted-result
 requests retain their exact revision. Workspace methods use `vcs` values

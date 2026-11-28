@@ -6,7 +6,8 @@ use std::sync::Arc;
 
 use github::configuration::Configuration;
 use github::log::Posted;
-use github::mapping::Record;
+use github::mapping::relate::{self, Request};
+use github::mapping::{Native, Record};
 use home::backend::{Capability, CredentialState};
 use home::flow::Flow;
 use home::flow::command::{Asked, Change, Mutation, asked};
@@ -14,7 +15,7 @@ use home::flow::snapshot::Snapshot;
 use home::issue::storage::fresh;
 use home::issue::{
     Comment, CommentWrite, Entry, IssueCreate, IssueWrite, ListPage, Locator,
-    Lookup, NativeIssue, Observation, Opened, Page, ReadFailure,
+    Lookup, NativeIssue, Observation, Opened, Page, ReadFailure, Relating,
     RelationChange, RelationStep, SendFailure, Unrelatable,
 };
 use home::operations::Handle;
@@ -46,6 +47,7 @@ const ISSUES: &str = "scripted-issues.json";
 const COMMENTS: &str = "scripted-comments.json";
 const LOSE: &str = "scripted-lose";
 const REQUESTS: &str = "scripted-requests";
+const PARENTS: &str = "scripted-parents.json";
 
 type Issues = BTreeMap<String, NativeIssue>;
 
@@ -94,6 +96,13 @@ fn on(data: &Path, issue: &IssueId) -> Vec<Comment> {
         .collect()
 }
 
+fn parents(data: &Path) -> BTreeMap<String, u64> {
+    std::fs::read(data.join(PARENTS))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
 fn lost(data: &Path) -> bool {
     std::fs::remove_file(data.join(LOSE)).is_ok()
 }
@@ -107,24 +116,108 @@ impl Github {
             .and_then(|mut log| writeln!(log, "{request}"));
     }
 
+    fn ids(&self) -> Ids {
+        Ids::default().with(self.project, github::ISSUER)
+    }
+
+    fn record(&self, id: &IssueId) -> Result<Record, ReadFailure> {
+        Ok(Record {
+            id: id.clone(),
+            locator: Locator {
+                repository: String::from("owner/standards"),
+                url: None,
+                addresses: BTreeMap::new(),
+            },
+            created: UnixMillis(1000),
+            native: kept(&self.data, &id.to_string())?,
+            parent: parents(&self.data)
+                .get(&id.to_string())
+                .copied()
+                .map(Native::Here),
+            blocked_by: Some(Vec::new()),
+        })
+    }
+
+    fn relating(
+        &self,
+        issue: &Lookup,
+        change: &RelationChange,
+    ) -> Result<Relating, Unrelatable> {
+        let record = self.record(&issue.id).map_err(Unrelatable::Read)?;
+        let plan = relate::plan(
+            &self.flow,
+            &self.ids(),
+            issue.project,
+            &record,
+            change,
+        )
+        .map_err(|reason| Unrelatable::Unheld(reason.to_string()))?;
+        let child = issue.id.to_string().parse().unwrap_or_default();
+        let mut steps: Vec<RelationStep> = plan
+            .changes
+            .into_iter()
+            .map(|edge| RelationStep {
+                effect: edge.effect(),
+                request: match edge {
+                    relate::Change::Adopt { parent, replace } => {
+                        Request::Adopt {
+                            parent,
+                            child,
+                            replace,
+                        }
+                    }
+                    relate::Change::Orphan(parent) => {
+                        Request::Orphan { parent, child }
+                    }
+                    relate::Change::Block(blocker) => Request::Block(blocker),
+                    relate::Change::Unblock(blocker) => {
+                        Request::Unblock(blocker)
+                    }
+                }
+                .encode(),
+            })
+            .collect();
+        steps.extend(plan.footer);
+        Ok(Relating {
+            revision: record.native.revision(),
+            steps,
+        })
+    }
+
+    fn related(
+        &self,
+        issue: &Lookup,
+        step: &RelationStep,
+    ) -> Result<(), String> {
+        let id = issue.id.to_string();
+        let mut all = parents(&self.data);
+        match Request::decode(&step.request).ok_or("no request")? {
+            Request::Adopt { parent, .. } => {
+                all.insert(id, parent);
+            }
+            Request::Orphan { .. } => {
+                all.remove(&id);
+            }
+            Request::Body(body) => {
+                let mut found =
+                    kept(&self.data, &id).map_err(|error| error.to_string())?;
+                found.body = body;
+                return keep(&self.data, &id, &found);
+            }
+            Request::Block(_) | Request::Unblock(_) => {
+                return Err(String::from("the script keeps no dependencies"));
+            }
+        }
+        save(&self.data, PARENTS, serde_json::to_vec(&all))
+    }
+
     fn observed(&self, id: &IssueId) -> Result<Observation, ReadFailure> {
         let mut observed = github::mapping::observe(
             &self.flow,
             &self.config,
-            &Ids::default().with(self.project, github::ISSUER),
+            &self.ids(),
             self.project,
-            Record {
-                id: id.clone(),
-                locator: Locator {
-                    repository: String::from("owner/standards"),
-                    url: None,
-                    addresses: BTreeMap::new(),
-                },
-                created: UnixMillis(1000),
-                native: kept(&self.data, &id.to_string())?,
-                parent: None,
-                blocked_by: Some(Vec::new()),
-            },
+            self.record(id)?,
         );
         let posted = on(&self.data, id)
             .into_iter()
@@ -260,17 +353,11 @@ impl IssueTracker for Github {
 
     fn writes(
         &self,
-        issue: &Lookup,
+        _: &Lookup,
         observed: &NativeIssue,
         mutations: &[Mutation],
     ) -> Result<Vec<IssueWrite>, String> {
-        github::mapping::writes(
-            &self.flow,
-            &self.config,
-            issue.project,
-            observed,
-            mutations,
-        )
+        github::mapping::writes(&self.flow, &self.config, observed, mutations)
     }
 
     fn write_issue(
@@ -345,22 +432,23 @@ impl IssueTracker for Github {
 
     fn plan_relation(
         &self,
-        _: Lookup,
-        _: RelationChange,
+        issue: Lookup,
+        change: RelationChange,
     ) -> RelationCompletion<'_> {
-        Box::pin(async {
-            Err(Unrelatable::Unheld(String::from(
-                "the script keeps no relations",
-            )))
-        })
+        let planned = self.relating(&issue, &change);
+        Box::pin(async move { planned })
     }
 
     fn write_relation(
         &self,
-        _: Lookup,
-        _: RelationStep,
+        issue: Lookup,
+        step: RelationStep,
     ) -> SendCompletion<'_, ()> {
-        Box::pin(async { Err(SendFailure::Unknown) })
+        self.asked(&step.effect);
+        let written = self
+            .related(&issue, &step)
+            .map_err(|_| SendFailure::Unknown);
+        Box::pin(async move { written })
     }
 }
 
@@ -657,5 +745,37 @@ fn a_lost_note_reply_retried_finds_the_comment_and_posts_nothing_more()
         comments[0].ends_with(" note: worker started\n"),
         "{comments:?}"
     );
+    Ok(())
+}
+
+#[test]
+fn issue_set_parent_on_a_github_issue_makes_it_a_sub_issue_and_writes_no_footer()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("parent", &[], "Words\n")?;
+    keep(
+        &home.root.join("data"),
+        "140",
+        &NativeIssue {
+            title: String::from("The spec"),
+            body: String::new(),
+            labels: Vec::from([String::from("work/kind/spec")]),
+            open: true,
+            reason: None,
+        },
+    )?;
+    let (said, code) =
+        home.home(&["issue", "set", "standards", "146", "parent=140"])?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    let writes: Vec<String> = home
+        .requests()
+        .into_iter()
+        .filter(|request| {
+            !["connect", "list", "read", "native"].contains(&request.as_str())
+        })
+        .collect();
+    assert_eq!(writes, ["sub-issue of 140", "comment"]);
+    assert_eq!(parents(&home.root.join("data")).get("146"), Some(&140));
+    assert_eq!(home.issue()?.body, "Words\n");
     Ok(())
 }

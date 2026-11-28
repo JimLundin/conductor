@@ -428,17 +428,11 @@ impl IssueTracker for Tracker {
 
     fn writes(
         &self,
-        issue: &Lookup,
+        _: &Lookup,
         observed: &NativeIssue,
         mutations: &[Mutation],
     ) -> Result<Vec<IssueWrite>, String> {
-        mapping::writes(
-            &self.flow,
-            &self.config,
-            issue.project,
-            observed,
-            mutations,
-        )
+        mapping::writes(&self.flow, &self.config, observed, mutations)
     }
 
     fn write_issue(

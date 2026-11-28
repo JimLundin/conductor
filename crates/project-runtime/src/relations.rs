@@ -1,5 +1,7 @@
+use home::flow::command::Mutation;
 use home::issue::{
-    Relating, RelationRequest, RelationStep, SendFailure, Unrelatable,
+    Lookup, NativeIssue, Relating, RelationChange, RelationRequest,
+    RelationStep, SendFailure, Unrelatable,
 };
 use home::operations::{Handle, Intent, Relate};
 
@@ -28,6 +30,44 @@ impl Project<'_> {
             plan = observe(tracker, &request, Some(handle)).await?;
         }
     }
+
+    pub(crate) async fn related(
+        &self,
+        operations: &Operations,
+        issue: &Lookup,
+        mut seen: String,
+        changes: Vec<RelationChange>,
+    ) -> Result<NativeIssue, WriteError> {
+        for change in changes {
+            let request = RelationRequest {
+                issue: issue.clone(),
+                change,
+                seen,
+            };
+            seen = self
+                .write_relation(operations, operations.handle()?, request)
+                .await?;
+        }
+        self.writer()?
+            .native(issue.clone())
+            .await
+            .map_err(WriteError::Read)
+    }
+}
+
+pub fn relations(mutations: &[Mutation]) -> Vec<RelationChange> {
+    mutations
+        .iter()
+        .filter_map(|mutation| match mutation {
+            Mutation::Relate {
+                relation, targets, ..
+            } => Some(RelationChange {
+                relation: relation.clone(),
+                targets: targets.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
 }
 
 async fn send(
