@@ -242,9 +242,6 @@ async fn an_uncertain_relation_write_is_recorded_and_settles_once_the_sub_issue_
         reply(PARENT, 200, &parent(3)),
         reply(CHILDREN, 200, &json!([])),
         lost("POST", ADOPT),
-        reply(CHILD, 200, &child(None, PROSE)),
-        reply(PARENT, 200, &parent(3)),
-        reply(CHILDREN, 200, &json!([])),
         reply(CHILD, 200, &child(Some(140), PROSE)),
     ])
     .await?;
@@ -257,16 +254,10 @@ async fn an_uncertain_relation_write_is_recorded_and_settles_once_the_sub_issue_
         writer
             .relate(handle, writer.setting("parent", vec![here("140")?]).await?)
             .await,
-        Err(WriteError::Unknown(unknown)) if unknown == handle
+        Err(WriteError::Unsettled(unknown)) if unknown == handle
     ));
     assert_eq!(writer.progress(handle)?, awaiting);
-    let request = writer.recorded(handle)?;
-    assert!(matches!(
-        writer.relate(handle, request.clone()).await,
-        Err(WriteError::Unknown(_))
-    ));
-    assert_eq!(writer.progress(handle)?, awaiting);
-    writer.relate(handle, request).await?;
+    writer.relate(handle, writer.recorded(handle)?).await?;
     assert_eq!(writer.progress(handle)?, Progress::Completed);
     assert_eq!(bodies(&served.await??), [json!({"sub_issue_id": 9146})]);
     Ok(())

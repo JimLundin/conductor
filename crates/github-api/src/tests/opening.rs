@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 const LIST: &str = "/repos/owner/work/issues?state=all&sort=created&direction=asc&per_page=100&page=1";
 const OPEN: &str = "/repos/owner/work/issues";
 const ISSUE: &str = "/repos/owner/work/issues/146";
+const MADE: &str = "/repos/owner/work/issues/147";
 
 fn handle(id: u128) -> Handle {
     Handle {
@@ -95,13 +96,13 @@ async fn open(writer: &Writer, fresh: Handle) -> Result<IssueId, WriteError> {
 }
 
 #[tokio::test]
-async fn opening_an_issue_sends_one_create_holding_its_marker_and_confirms_it_by_listing_issues()
+async fn opening_an_issue_sends_one_create_holding_its_marker_and_confirms_it_by_reading_the_issue_made()
 -> anyhow::Result<()> {
     let handle = handle(21);
     let (base, served) = exchanges(vec![
         reply(LIST, 200, &json!([issue(146, 9146)])),
         sent("POST", OPEN, &made(handle)?),
-        reply(LIST, 200, &json!([issue(146, 9146), made(handle)?])),
+        reply(MADE, 200, &made(handle)?),
     ])
     .await?;
     let writer = Writer::new(&base)?;
@@ -147,26 +148,27 @@ async fn a_lost_create_reply_retried_finds_its_marker_and_creates_nothing_more()
 }
 
 #[tokio::test]
-async fn an_empty_scan_after_a_lost_create_reply_sends_nothing_again()
+async fn a_create_a_rerun_finds_no_marker_of_was_never_made_and_is_sent_again()
 -> anyhow::Result<()> {
     let first = handle(24);
     let (base, served) = exchanges(vec![
         reply(LIST, 200, &json!([])),
         lost("POST", OPEN),
         reply(LIST, 200, &json!([])),
+        sent("POST", OPEN, &made(first)?),
+        reply(MADE, 200, &made(first)?),
     ])
     .await?;
     let writer = Writer::new(&base)?;
     assert!(open(&writer, first).await.is_err());
-    assert!(matches!(
-        open(&writer, handle(25)).await,
-        Err(WriteError::Unknown(unknown)) if unknown == first
-    ));
     assert_eq!(
         writer.progress(first)?,
         Progress::AwaitingEvidence(Step::CreateIssue)
     );
-    assert_eq!(created(&served.await??).len(), 1);
+    assert_eq!(open(&writer, handle(25)).await?.to_string(), "147");
+    assert_eq!(writer.progress(first)?, Progress::Completed);
+    assert_eq!(writer.operations.status(handle(25))?, None);
+    assert_eq!(created(&served.await??).len(), 2);
     Ok(())
 }
 

@@ -163,7 +163,11 @@ fn blockers(
     read: Option<&[Native]>,
     wanted: &[u64],
 ) -> Result<Vec<Change>, Unheld> {
-    let current = read.ok_or(Unheld::Unread)?;
+    let current = match read {
+        Some(current) => current,
+        None if wanted.is_empty() => return Ok(Vec::new()),
+        None => return Err(Unheld::Unread),
+    };
     let here: Vec<u64> = current
         .iter()
         .filter_map(|edge| match edge {

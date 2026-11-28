@@ -691,3 +691,36 @@ fn opening_an_issue_labels_its_kind_and_stage_and_marks_its_footer_with_the_oper
     );
     Ok(())
 }
+
+#[test]
+fn a_blocked_by_bound_for_the_footer_plans_without_a_dependency_summary()
+-> Result<(), String> {
+    let flow = home::flow::load(include_str!(
+        "../../../home/src/flow/test-flow.toml"
+    ))?;
+    let mut input = record()?;
+    input.blocked_by = None;
+    let hyn162 = ProjectId::parse("hyn162").ok_or("project")?;
+    let kept = IssueKey {
+        project: hyn162,
+        id: Ids::default().read(hyn162, "0tm7aaaa")?,
+    };
+    let plan = relate::plan(
+        &flow,
+        &ids(),
+        &Repositories::default(),
+        ProjectId::new(71),
+        &input,
+        &home::issue::RelationChange {
+            relation: String::from("blocked_by"),
+            targets: Vec::from([kept]),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    assert_eq!(plan.changes, []);
+    assert_eq!(
+        plan.footer.map(|step| step.effect),
+        Some(String::from("footer blocked_by = [0tm7aaaa in hyn162]"))
+    );
+    Ok(())
+}

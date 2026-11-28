@@ -26,6 +26,10 @@ pub enum WriteError {
         "the outcome of operation {0} is unknown; retry it to look for its marker"
     )]
     Unknown(Handle),
+    #[error(
+        "the outcome of operation {0} is unknown; retry it to read the issue again and finish it"
+    )]
+    Unsettled(Handle),
     #[error("the tracker can't make the change: {0}")]
     Unsupported(String),
     #[error(
@@ -86,7 +90,7 @@ impl Project<'_> {
             let request = CommentRequest { issue, write, seen };
             (fresh, Intent::note(fresh, &request, entry)?)
         };
-        attempt(tracker, operations, handle, intent).await
+        attempt(tracker, operations, (handle, intent), true).await
     }
 
     pub async fn write_comment(
@@ -97,15 +101,15 @@ impl Project<'_> {
     ) -> Result<Comment, WriteError> {
         let tracker = self.writer()?;
         let intent = Intent::comment(handle, &request)?;
-        attempt(tracker, operations, handle, intent).await
+        attempt(tracker, operations, (handle, intent), false).await
     }
 }
 
 async fn attempt(
     tracker: &dyn IssueTracker,
     operations: &Operations,
-    handle: Handle,
-    intent: Intent,
+    (handle, intent): (Handle, Intent),
+    resuming: bool,
 ) -> Result<Comment, WriteError> {
     let request = intent
         .requested()
@@ -115,7 +119,7 @@ async fn attempt(
         .comments(request.issue.clone())
         .await
         .map_err(WriteError::Read)?;
-    match attempt.next(&observed)? {
+    match attempt.next(&observed, resuming)? {
         Next::Settled(comment) => Ok(comment),
         Next::Unknown => Err(WriteError::Unknown(handle)),
         Next::Send => deliver(tracker, attempt, request).await,
@@ -155,7 +159,7 @@ async fn verify(
         .comments(issue)
         .await
         .map_err(|_| WriteError::Unknown(handle))?;
-    match attempt.next(&observed)? {
+    match attempt.next(&observed, false)? {
         Next::Settled(comment) => Ok(comment),
         Next::Send | Next::Unknown => Err(WriteError::Unknown(handle)),
     }

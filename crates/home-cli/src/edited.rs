@@ -47,6 +47,8 @@ struct Github {
 const ISSUES: &str = "scripted-issues.json";
 const COMMENTS: &str = "scripted-comments.json";
 const LOSE: &str = "scripted-lose";
+const DROP: &str = "scripted-drop";
+const LAG: &str = "scripted-lag";
 const REQUESTS: &str = "scripted-requests";
 const PARENTS: &str = "scripted-parents.json";
 
@@ -106,6 +108,14 @@ fn parents(data: &Path) -> BTreeMap<String, u64> {
 
 fn lost(data: &Path) -> bool {
     std::fs::remove_file(data.join(LOSE)).is_ok()
+}
+
+fn dropped(data: &Path) -> bool {
+    std::fs::remove_file(data.join(DROP)).is_ok()
+}
+
+fn lagging(data: &Path) -> bool {
+    data.join(LAG).exists()
 }
 
 impl Github {
@@ -343,6 +353,9 @@ impl IssueTracker for Github {
                 Err(SendFailure::Rejected(ReadFailure::InvalidConfiguration))
             });
         };
+        if dropped(&self.data) {
+            return Box::pin(async { Err(SendFailure::Unknown) });
+        }
         let posted = self
             .comment(&issue, body)
             .map_err(|_| SendFailure::Unknown)
@@ -406,6 +419,9 @@ impl IssueTracker for Github {
         create: IssueCreate,
     ) -> SendCompletion<'_, IssueId> {
         self.asked("create");
+        if dropped(&self.data) {
+            return Box::pin(async { Err(SendFailure::Unknown) });
+        }
         let opened = self
             .open(create)
             .map_err(|_| SendFailure::Unknown)
@@ -424,8 +440,10 @@ impl IssueTracker for Github {
         _: ProjectId,
         handle: Handle,
     ) -> IssueCompletion<'_, Vec<Opened>> {
+        let lags = lagging(&self.data);
         let found = issues(&self.data).map(|all| {
             all.into_iter()
+                .filter(|_| !lags)
                 .filter(|(_, native)| {
                     github::mapping::carries(&native.body, handle)
                 })
@@ -456,9 +474,19 @@ impl IssueTracker for Github {
         step: RelationStep,
     ) -> SendCompletion<'_, ()> {
         self.asked(&step.effect);
+        if dropped(&self.data) {
+            return Box::pin(async { Err(SendFailure::Unknown) });
+        }
         let written = self
             .related(&issue, &step)
-            .map_err(|_| SendFailure::Unknown);
+            .map_err(|_| SendFailure::Unknown)
+            .and_then(|()| {
+                if lost(&self.data) {
+                    Err(SendFailure::Unknown)
+                } else {
+                    Ok(())
+                }
+            });
         Box::pin(async move { written })
     }
 }
@@ -619,7 +647,7 @@ fn issue_move_stage_spec_on_a_github_issue_swaps_its_stage_label_and_nothing_els
 }
 
 #[test]
-fn a_move_into_a_sign_off_stage_without_signing_off_is_refused_before_any_request()
+fn a_move_into_a_sign_off_stage_without_signing_off_is_refused_before_any_write()
 -> Result<(), Box<dyn Error>> {
     let home = Home::new("sign-off", &["work/stage/spec"], "Words\n")?;
     home.home(&["issue", "show", "standards", "146"])?;
@@ -628,7 +656,7 @@ fn a_move_into_a_sign_off_stage_without_signing_off_is_refused_before_any_reques
         home.home(&["issue", "move", "standards", "146", "stage", "slice"])?;
     assert!(said.contains("needs its sign-off"), "{said}");
     assert_eq!(code, 1);
-    assert_eq!(home.requests(), Vec::<String>::new());
+    assert_eq!(home.requests(), ["connect", "read"]);
     assert_eq!(home.issue()?.labels, ["work/stage/spec"]);
     Ok(())
 }
@@ -882,11 +910,176 @@ fn issue_set_parent_to_an_issue_missing_from_a_complete_cached_listing_is_refuse
     home.requests();
     let (said, code) =
         home.home(&["issue", "set", "standards", "146", "parent=999"])?;
-    assert!(said.contains("999 is no issue"), "{said}");
+    assert!(said.contains("no issue 999 in standards"), "{said}");
     assert_eq!(code, 1);
     assert!(home.requests().iter().all(|request| {
         ["connect", "list", "read", "native"].contains(&request.as_str())
     }),);
     assert_eq!(parents(&home.root.join("data")), BTreeMap::new());
+    Ok(())
+}
+
+fn spec(data: &Path, id: &str) -> Result<(), String> {
+    keep(
+        data,
+        id,
+        &NativeIssue {
+            title: String::from("The spec"),
+            body: String::new(),
+            labels: Vec::from([String::from("work/kind/spec")]),
+            open: true,
+            reason: None,
+        },
+    )
+}
+
+#[test]
+fn a_write_after_an_edit_on_github_plans_from_a_fresh_read_and_goes_ahead()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("fresh-plan", &["work/stage/shape"], "Words\n")?;
+    home.home(&["issue", "show", "standards", "146"])?;
+    let mut edited = home.issue()?;
+    edited.title = String::from("Retitled on GitHub");
+    keep(&home.root.join("data"), "146", &edited)?;
+    let (said, code) =
+        home.home(&["issue", "move", "standards", "146", "stage", "spec"])?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    let issue = home.issue()?;
+    assert_eq!(issue.title, "Retitled on GitHub");
+    assert_eq!(issue.labels, ["work/stage/spec"]);
+    Ok(())
+}
+
+#[test]
+fn a_note_whose_request_never_reached_github_is_sent_on_the_rerun()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("dropped-note", &[], "Words\n")?;
+    std::fs::write(home.root.join("data").join(DROP), "")?;
+    let note = ["issue", "note", "standards", "146", "worker", "started"];
+    let (said, code) = home.home(&note)?;
+    assert!(said.contains("is unknown"), "{said}");
+    assert_eq!(code, 1);
+    assert_eq!(home.comments("146")?, Vec::<String>::new());
+    let (said, code) = home.home(&note)?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(home.comments("146")?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_create_whose_request_never_reached_github_is_sent_on_the_rerun()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("dropped-create", &[], "Words\n")?;
+    std::fs::write(home.root.join("data").join(DROP), "")?;
+    let new = ["issue", "new", "standards", "task", "Opened by home"];
+    let (said, code) = home.home(&new)?;
+    assert!(said.contains("is unknown"), "{said}");
+    assert_eq!(code, 1);
+    home.requests();
+    let (said, code) = home.home(&new)?;
+    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(code, 0);
+    assert_eq!(home.creates(), 1);
+    assert_eq!(home.opened()?.title, "Opened by home");
+    Ok(())
+}
+
+#[test]
+fn a_create_is_confirmed_by_reading_the_issue_github_made_while_its_listing_lags()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("lagging-create", &[], "Words\n")?;
+    let new = ["issue", "new", "standards", "task", "Opened by home"];
+    std::fs::write(home.root.join("data").join(LAG), "")?;
+    let (said, code) = home.home(&new)?;
+    assert_eq!(said, "wrote standards/147\n");
+    assert_eq!(code, 0);
+    assert_eq!(home.creates(), 1);
+    Ok(())
+}
+
+#[test]
+fn issue_set_parent_to_an_issue_opened_after_the_cached_listing_reads_it_from_github()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("late-parent", &[], "Words\n")?;
+    let loaded = home_files::read(&home.root, github::ISSUERS);
+    let project = loaded.snapshot.project("standards").ok_or("project")?.id;
+    let trackers = Trackers::new(
+        &home.root,
+        loaded,
+        Some(home.root.join("data")),
+        connect,
+    )?;
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(trackers.listing(project, false))?;
+    spec(&home.root.join("data"), "140")?;
+    let (said, code) =
+        home.home(&["issue", "set", "standards", "146", "parent=140"])?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(parents(&home.root.join("data")).get("146"), Some(&140));
+    Ok(())
+}
+
+#[test]
+fn issue_set_parent_to_an_issue_github_lacks_is_refused_with_no_listing_cached()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("unlisted-parent", &[], "Words\n")?;
+    let (said, code) =
+        home.home(&["issue", "set", "standards", "146", "parent=999"])?;
+    assert!(said.contains("no issue 999 in standards"), "{said}");
+    assert_eq!(code, 1);
+    assert_eq!(parents(&home.root.join("data")), BTreeMap::new());
+    Ok(())
+}
+
+fn unsettled(home: &Home) -> Result<usize, Box<dyn Error>> {
+    Ok(Operations::home(&home.root.join("data"))?
+        .unsettled()?
+        .len())
+}
+
+#[test]
+fn a_relation_write_whose_reply_was_lost_is_resumed_on_the_rerun()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("lost-relation", &[], "Words\n")?;
+    spec(&home.root.join("data"), "140")?;
+    std::fs::write(home.root.join("data").join(LOSE), "")?;
+    let set = ["issue", "set", "standards", "146", "parent=140"];
+    let (said, code) = home.home(&set)?;
+    assert!(said.contains("retry it to read the issue again"), "{said}");
+    assert!(!said.contains("marker"), "{said}");
+    assert_eq!(code, 1);
+    home.requests();
+    let (said, code) = home.home(&set)?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    assert!(
+        !home
+            .requests()
+            .iter()
+            .any(|request| request.starts_with("sub-issue")),
+    );
+    assert_eq!(unsettled(&home)?, 0);
+    Ok(())
+}
+
+#[test]
+fn a_relation_write_whose_request_never_reached_github_is_sent_on_the_rerun()
+-> Result<(), Box<dyn Error>> {
+    let home = Home::new("dropped-relation", &[], "Words\n")?;
+    spec(&home.root.join("data"), "140")?;
+    std::fs::write(home.root.join("data").join(DROP), "")?;
+    let set = ["issue", "set", "standards", "146", "parent=140"];
+    let (said, code) = home.home(&set)?;
+    assert_eq!(code, 1, "{said}");
+    let (said, code) = home.home(&set)?;
+    assert!(said.starts_with("wrote standards/146\n"), "{said}");
+    assert_eq!(code, 0, "{said}");
+    assert_eq!(parents(&home.root.join("data")).get("146"), Some(&140));
+    assert_eq!(unsettled(&home)?, 0);
     Ok(())
 }

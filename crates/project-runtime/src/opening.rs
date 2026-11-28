@@ -1,6 +1,6 @@
 use home::IssueId;
 use home::flow::command::Change;
-use home::issue::{IssueCreate, Lookup, SendFailure};
+use home::issue::{IssueCreate, Lookup, Opened, SendFailure};
 use home::operations::{Handle, Intent, Opening};
 
 use crate::operations::{Attempt, Operations};
@@ -58,7 +58,7 @@ impl Project<'_> {
             .opened(project, handle)
             .await
             .map_err(WriteError::Read)?;
-        match attempt.opened(&found)? {
+        match attempt.opened(&found, true)? {
             Opening::Settled(id) => Ok(id),
             Opening::Unknown => Err(WriteError::Unknown(handle)),
             Opening::Send(create) => send(tracker, attempt, create).await,
@@ -76,7 +76,7 @@ async fn send(
         .create(attempt.record().intent.project, create)
         .await
     {
-        Ok(_) => verify(tracker, attempt).await,
+        Ok(id) => verify(tracker, attempt, id).await,
         Err(SendFailure::Rejected(failure)) => {
             attempt.reject()?;
             Err(WriteError::Rejected(failure))
@@ -92,13 +92,22 @@ async fn send(
 async fn verify(
     tracker: &dyn IssueTracker,
     mut attempt: Attempt,
+    id: IssueId,
 ) -> Result<IssueId, WriteError> {
     let handle = attempt.record().handle;
-    let found = tracker
-        .opened(attempt.record().intent.project, handle)
+    let issue = Lookup {
+        project: attempt.record().intent.project,
+        id,
+    };
+    let native = tracker
+        .native(issue.clone())
         .await
         .map_err(|_| WriteError::Unknown(handle))?;
-    match attempt.opened(&found)? {
+    let found = [Opened {
+        id: issue.id,
+        native,
+    }];
+    match attempt.opened(&found, false)? {
         Opening::Settled(id) => Ok(id),
         Opening::Send(_) | Opening::Unknown => Err(WriteError::Unknown(handle)),
     }

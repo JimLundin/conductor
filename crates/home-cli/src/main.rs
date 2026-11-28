@@ -82,8 +82,10 @@ fn issues(
         Need::Canvases(wanted) => Given::Canvases(fetched(store, &wanted)),
         Need::EveryCanvas => Given::EveryCanvas(every(store)),
     });
-    let resolved =
-        trackers.resolved(asked.issues(given.as_ref()), asked.mode());
+    let resolved = trackers.resolved(
+        asked.issues(given.as_ref(), &trackers.loaded().snapshot),
+        asked.mode(),
+    );
     let mut outcome = run(
         asked,
         given,

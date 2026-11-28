@@ -2369,7 +2369,7 @@ fn resolved_by(
     };
     let mut steps = Resolver::new(asked.mode());
     asked
-        .issues(given)
+        .issues(given, home)
         .into_iter()
         .map(|key| {
             loop {
@@ -2764,6 +2764,84 @@ fn an_issue_named_over_the_client_link_reads_through_its_project_s_tracker()
     assert_eq!(
         home.ids().key(&named(folder())),
         Err(format!("\"team42/7\" is no issue ID of {FOLDER}"))
+    );
+    Ok(())
+}
+
+fn tracked_outcome(tracker: &mut Tracker, line: &str) -> super::Outcome {
+    let home = crate::issue::storage::snapshot(two_trackers());
+    let asked = command(&words(line), &home, None);
+    let resolved = resolved_by(&home, tracker, &asked, None);
+    super::run(asked, None, &resolved, &home, &context())
+}
+
+#[test]
+fn an_edit_of_a_tracker_issue_plans_from_one_fresh_read_not_the_cache()
+-> Result<(), String> {
+    let mut edited = kept_by_tracker(TRACKER_ID)?;
+    if let IssueState::Valid { issue, .. } = &mut edited.state {
+        issue.title = String::from("Edited on the tracker");
+    }
+    let mut tracker = Tracker::holding(Ok(Vec::from([edited])));
+    tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
+    let noted = tracked_outcome(&mut tracker, "issue note standards 146 seen");
+    assert_eq!(
+        (noted.failed, tracker.reads, tracker.refreshes),
+        (false, 1, 0),
+        "{}",
+        noted.output
+    );
+    assert_eq!(
+        noted
+            .changes
+            .iter()
+            .filter_map(|change| change.observation.issue())
+            .map(|issue| issue.title.as_str())
+            .collect::<Vec<_>>(),
+        ["Edited on the tracker"]
+    );
+    Ok(())
+}
+
+fn spec_by_tracker(number: &str) -> Result<Observation, String> {
+    let mut spec = kept_by_tracker(number)?;
+    if let IssueState::Valid { issue, .. } = &mut spec.state {
+        issue.kind = String::from("spec");
+    }
+    Ok(spec)
+}
+
+#[test]
+fn a_relation_target_the_cache_lacks_is_read_from_its_tracker_before_the_check()
+-> Result<(), String> {
+    let mut tracker = Tracker::holding(Ok(Vec::from([
+        kept_by_tracker(TRACKER_ID)?,
+        spec_by_tracker("150")?,
+    ])));
+    let set =
+        tracked_outcome(&mut tracker, "issue set standards 146 parent=150");
+    assert_eq!(
+        (set.failed, tracker.reads, tracker.refreshes),
+        (false, 2, 0),
+        "{}",
+        set.output
+    );
+    Ok(())
+}
+
+#[test]
+fn a_relation_target_its_tracker_can_t_read_refuses_the_write_naming_why()
+-> Result<(), String> {
+    let mut tracker = Tracker::holding(Err(ReadFailure::RateLimited));
+    tracker.cached = Vec::from([kept_by_tracker(TRACKER_ID)?]);
+    let set =
+        tracked_outcome(&mut tracker, "issue set standards 146 parent=150");
+    assert_eq!(
+        (set.failed, set.output.as_str()),
+        (
+            true,
+            "home: no issue 150 in standards is cached, and its tracker didn't refresh: tracker rate limited the request; run `home issue list standards` once it's reachable\n"
+        )
     );
     Ok(())
 }
