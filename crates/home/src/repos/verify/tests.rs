@@ -242,9 +242,12 @@ fn no_recorded_pass_lines_name_their_units_once_and_the_command_to_run() {
     let missing = ran(
         false,
         "format               ok    passed (recorded)\n\
-         purity               FAIL  no recorded pass of . under 3665\n\
-         unused               FAIL  no recorded pass of . under 69ff\n\
-         unused               FAIL  no recorded pass of web under 70aa\n\
+         purity               FAIL  not yet\n\
+         missing . purity 3665a1b2c3d4e5f60718293a4b5c6d7e8f901234\n\
+         unused               FAIL  not yet\n\
+         missing . unused -\n\
+         unused               FAIL  not yet\n\
+         missing web unused 70aa1b2c3d4e5f60718293a4b5c6d7e8f9012345\n\
          tier: commit, logs: /tmp/x\n",
         "",
     );
@@ -264,7 +267,8 @@ fn a_config_failure_reads_check_sh_failed_with_its_first_stderr_line() {
     let failed = ran(
         false,
         "suites               FAIL  checks.toml: names no pinned tool OXFMT\n\
-         lint                 FAIL  no recorded pass of . under 5145\n",
+         lint                 FAIL  no recorded pass of . under 5145\n\
+         missing . lint 51451b2c3d4e5f60718293a4b5c6d7e8f9012345\n",
         "\nchecks.toml: names no pinned tool OXFMT\nmore\n",
     );
     assert_eq!(
@@ -290,6 +294,25 @@ fn a_failure_without_stderr_reads_check_sh_failed_with_its_failing_line() {
             profile: String::from("rust"),
             why: String::from(
                 "suites               FAIL  checks.toml: suite 4 when 1"
+            ),
+        })
+    );
+}
+
+#[test]
+fn a_fail_line_without_a_missing_line_is_a_failed_check() {
+    let failed = ran(
+        false,
+        "lint                 FAIL  no recorded pass of . under 5145\n",
+        "",
+    );
+    assert_eq!(
+        verdict(&app_verify("rust"), &failed),
+        Some(Reason::CheckFailed {
+            project: String::from("app"),
+            profile: String::from("rust"),
+            why: String::from(
+                "lint                 FAIL  no recorded pass of . under 5145"
             ),
         })
     );

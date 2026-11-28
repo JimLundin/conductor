@@ -281,50 +281,52 @@ fn joined(home: &str, path: &str) -> String {
     }
 }
 
-fn failing(line: &str) -> Option<(&str, &str)> {
+fn failing(line: &str) -> Option<&str> {
     let mut words = line.split_whitespace();
     let unit = words.next()?;
-    let rest = line.trim_start().strip_prefix(unit)?.trim_start();
-    Some((unit, rest.strip_prefix("FAIL")?.trim_start()))
+    (words.next()? == "FAIL").then_some(unit)
 }
 
-const MISSING_PASS_PREFIX: &str = "no recorded pass of ";
+fn missing(line: &str) -> Option<&str> {
+    let mut fields = line.strip_prefix("missing ")?.split(' ');
+    let (_scope, unit, key) = (fields.next()?, fields.next()?, fields.next()?);
+    let keyed = key == "-"
+        || (key.len() == 40
+            && key.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    (keyed && fields.next().is_none()).then_some(unit)
+}
 
 #[must_use]
 pub fn verdict(verify: &Verify, ran: &Ran) -> Option<Reason> {
     if ran.passed {
         return None;
     }
-    let failed: Vec<(&str, &str)> =
-        ran.out.lines().filter_map(failing).collect();
-    if !failed.is_empty()
-        && failed
-            .iter()
-            .all(|(_, why)| why.starts_with(MISSING_PASS_PREFIX))
-    {
-        let units = failed.iter().fold(Vec::new(), |mut units, (unit, _)| {
+    let units = ran.out.lines().filter_map(missing).fold(
+        Vec::new(),
+        |mut units, unit| {
             if !units.iter().any(|named: &String| named == unit) {
-                units.push(String::from(*unit));
+                units.push(String::from(unit));
             }
             units
-        });
+        },
+    );
+    let unexplained = |line: &&str| {
+        failing(line)
+            .is_some_and(|unit| !units.iter().any(|named| named == unit))
+    };
+    let first_failing = ran.out.lines().find(unexplained);
+    if !units.is_empty() && first_failing.is_none() {
         return Some(Reason::Missing {
             verify: verify.clone(),
             units,
         });
     }
-    let first_failing = || {
-        ran.out.lines().find(|line| {
-            failing(line)
-                .is_some_and(|(_, why)| !why.starts_with(MISSING_PASS_PREFIX))
-        })
-    };
     let why = ran
         .err
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
-        .or_else(first_failing)
+        .or(first_failing)
         .unwrap_or("it exited without saying why");
     Some(Reason::CheckFailed {
         project: verify.project.clone(),

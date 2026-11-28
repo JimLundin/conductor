@@ -148,3 +148,74 @@ fn repos_reports_scans_syncs_and_copies_skills() -> std::io::Result<()> {
     );
     Ok(())
 }
+
+fn verify(root: &Path) -> std::io::Result<(String, Option<i32>)> {
+    let ran = Command::new(env!("CARGO_BIN_EXE_home"))
+        .args(["repos", "--verify"])
+        .current_dir(root)
+        .env("HOME", root.join("user"))
+        .output()?;
+    Ok((
+        String::from_utf8_lossy(&ran.stdout).into_owned(),
+        ran.status.code(),
+    ))
+}
+
+const CHECK: &str = "[ -e \"$3.passed\" ] && exit 0\n\
+    echo 'lint                 FAIL  not yet'\n\
+    echo 'missing . lint 5145a1b2c3d4e5f60718293a4b5c6d7e8f901234'\n\
+    exit 1\n";
+
+#[test]
+fn verify_exits_nonzero_on_a_missing_pass_and_zero_on_every_pass()
+-> std::io::Result<()> {
+    let scratch = Scratch(
+        std::env::temp_dir()
+            .join(format!("home-repos-verify-{}", std::process::id())),
+    );
+    let origins = scratch.0.join("origins");
+    let root = &scratch.0.join("home");
+    fs::create_dir_all(root.join("docs/agents"))?;
+    fs::write(root.join("docs/agents/flow.toml"), FLOW)?;
+    let app = repository(&origins.join("app"), "README.md")?;
+    fs::create_dir_all(origins.join("standards/fake"))?;
+    fs::write(origins.join("standards/fake/check.sh"), CHECK)?;
+    let standards = repository(&origins.join("standards"), "README.md")?;
+    let app_origin = origins.join("app").display().to_string();
+    let standards_origin = origins.join("standards").display().to_string();
+    git(root, &["clone", "-q", &app_origin, "app"])?;
+    git(root, &["clone", "-q", &standards_origin, "standards"])?;
+    project(
+        root,
+        "000001",
+        &format!(
+            "name = \"app\"\ntitle = \"App\"\nremote = {app_origin:?}\nroot = \"{app}\"\nprofiles = [\"fake\"]\n"
+        ),
+    )?;
+    project(
+        root,
+        "000002",
+        &format!(
+            "name = \"standards\"\ntitle = \"Standards\"\nremote = {standards_origin:?}\nroot = \"{standards}\"\nprovides = [\"fake\"]\n"
+        ),
+    )?;
+
+    let (said, code) = verify(root)?;
+    assert!(
+        said.contains("app: no recorded `commit` pass for fake"),
+        "{said}"
+    );
+    assert_eq!(code, Some(1), "{said}");
+
+    fs::write(root.join("app.passed"), "")?;
+    let (said, code) = verify(root)?;
+    assert_eq!(
+        said,
+        format!(
+            "{:<22} app: main...origin/main\n{:<22} standards: main...origin/main\n",
+            "app", "standards"
+        )
+    );
+    assert_eq!(code, Some(0), "{said}");
+    Ok(())
+}

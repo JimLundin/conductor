@@ -19,7 +19,11 @@ pub fn run(root: &Path, local: Local, home: &Snapshot) -> (String, u8) {
         Local::Status => (status(home, &here(root, home)), 0),
         Local::Verify => {
             let here = here(root, home);
-            (status(home, &here) + &verdicts(root, &here), 0)
+            let verdicts = verdicts(root, &here);
+            (
+                status(home, &here) + &verdicts,
+                u8::from(!verdicts.is_empty()),
+            )
         }
         Local::Sync => sync(root, home.projects()),
         Local::Scan => ended(scan(root, home)),
