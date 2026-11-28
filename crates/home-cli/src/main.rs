@@ -12,10 +12,12 @@ use home::flow::command::{
     Asked, Command, Context, Fetched, Given, Need, Source, Wanted, asked,
     homeless, run,
 };
-use home::issue::storage::{File, ReadHome};
+use home::issue::storage::ReadHome;
 use home::{Draws, UnixMillis};
 use home_store::{CanvasStore, StoreError};
 
+#[cfg(test)]
+mod edited;
 mod local;
 mod operations;
 mod project;
@@ -79,20 +81,19 @@ fn issues(
     });
     let resolved =
         trackers.resolved(asked.issues(given.as_ref()), asked.mode());
-    let loaded = trackers.loaded();
-    let outcome = run(asked, given, &resolved, &loaded.snapshot, context);
-    let written = outcome
-        .changes
-        .iter()
-        .map(|change| {
-            let file = loaded.encode(change)?;
-            save(home, &file).map(|()| file.path())
-        })
-        .collect::<Result<Vec<String>, String>>();
-    let saved = written.and_then(|mut paths| {
-        paths.extend(trackers.put(&outcome.canvases)?);
-        committed(home, &paths, outcome.message.as_deref(), context)
-    });
+    let outcome = run(
+        asked,
+        given,
+        &resolved,
+        &trackers.loaded().snapshot,
+        context,
+    );
+    let saved = trackers
+        .write(home, &outcome.changes)
+        .and_then(|mut paths| {
+            paths.extend(trackers.put(&outcome.canvases)?);
+            committed(home, &paths, outcome.message.as_deref(), context)
+        });
     outcome.ended(saved)
 }
 
@@ -217,13 +218,6 @@ fn draws() -> Draws {
 
 fn read(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("{}: {err}", path.display()))
-}
-
-fn save(root: &Path, write: &File) -> Result<(), String> {
-    let path = root.join(write.path());
-    fs::create_dir_all(root.join(write.folder()))
-        .and_then(|()| fs::write(&path, &write.text))
-        .map_err(|err| format!("{}: {err}", path.display()))
 }
 
 #[cfg(test)]

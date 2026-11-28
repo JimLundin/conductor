@@ -914,8 +914,9 @@ fn an_issue_s_own_words_are_refused_as_fields_in_the_flow_s_terms() {
                 value: Datum::Text(String::from("x")),
             }]),
         };
-        plan(&crate::issue::storage::snapshot(home()), &edit, &context())
-            .map(|_| ())
+        let home = crate::issue::storage::snapshot(home());
+        let observed = home.observation(folder(), &id(TASK));
+        plan(&home, &edit, observed, &context()).map(|_| ())
     };
     assert_eq!(
         ["status", "stage", "kind", "id", "title"].map(refused),

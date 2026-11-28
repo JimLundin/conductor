@@ -9,15 +9,18 @@ use home::flow::{
     graph::{self, branch_of},
 };
 use home::issue::{
-    Coverage, Datum, Issue, Locator, Observation, Unreadable, body::Body,
+    Coverage, Datum, Issue, Locator, NativeIssue, Observation, Unreadable,
+    body::Body,
 };
 use home::{IssueId, ProjectId, UnixMillis};
-use sha2::{Digest, Sha256};
 
 use crate::configuration::{Configuration, RelationSource};
 
 mod footer;
 mod labels;
+mod writes;
+
+pub use writes::writes;
 
 pub const AUTHORITY: &str = "https://api.github.com";
 
@@ -25,39 +28,8 @@ pub const AUTHORITY: &str = "https://api.github.com";
 pub struct Record {
     pub id: IssueId,
     pub locator: Locator,
-    pub title: String,
-    pub body: String,
     pub created: UnixMillis,
-    pub open: bool,
-    pub state_reason: Option<String>,
-    pub labels: Vec<String>,
-}
-
-impl Record {
-    fn fingerprint(&self) -> String {
-        fn field(hash: &mut Sha256, text: &str) {
-            hash.update((text.len() as u64).to_be_bytes());
-            hash.update(text.as_bytes());
-        }
-        let mut hash = Sha256::new();
-        field(&mut hash, &self.id.to_string());
-        field(&mut hash, &self.title);
-        field(&mut hash, &self.body);
-        hash.update(self.created.0.to_be_bytes());
-        hash.update([
-            u8::from(self.open),
-            u8::from(self.state_reason.is_some()),
-        ]);
-        if let Some(reason) = &self.state_reason {
-            field(&mut hash, reason);
-        }
-        let mut labels: Vec<_> = self.labels.iter().collect();
-        labels.sort_unstable();
-        for label in labels {
-            field(&mut hash, label);
-        }
-        data_encoding::HEXLOWER.encode(&hash.finalize())
-    }
+    pub native: NativeIssue,
 }
 
 #[must_use]
@@ -71,8 +43,9 @@ pub fn observe(
         subject: format!("{project}/{}", record.id),
         entries: Vec::new(),
     };
-    let labels = labels::Labels::read(config, &record.labels, &mut findings);
-    let status = labels.status(&record, flow, config, &mut findings);
+    let labels =
+        labels::Labels::read(config, &record.native.labels, &mut findings);
+    let status = labels.status(&record.native, flow, config, &mut findings);
     let kind = labels
         .managed
         .get(home::issue::KIND)
@@ -80,7 +53,7 @@ pub fn observe(
         .clone();
     let stage = labels.managed.get(home::issue::STAGE).cloned();
     let (human, metadata) =
-        footer::read(&record.body, flow, config, project, &mut findings);
+        footer::read(&record.native.body, flow, config, project, &mut findings);
     let fields = labels.fields(
         flow,
         &kind,
@@ -89,7 +62,7 @@ pub fn observe(
         metadata.fields,
         &mut findings,
     );
-    let revision = record.fingerprint();
+    let revision = record.native.revision();
     let branch = branch_of(
         &record.id,
         flow.field_with(&kind, FieldRole::Branch)
@@ -99,7 +72,7 @@ pub fn observe(
     let issue = Issue {
         id: record.id,
         project,
-        title: record.title,
+        title: record.native.title.clone(),
         created: Some(record.created),
         kind,
         status,

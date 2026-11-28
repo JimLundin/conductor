@@ -52,7 +52,7 @@ pub(super) fn author() -> Value {
     author
 }
 
-fn issue(number: u64, id: u64) -> Value {
+pub(super) fn issue(number: u64, id: u64) -> Value {
     let author = author();
     json!({
         "id":id,"node_id":"I_test","url":format!("{{api}}/repos/owner/work/issues/{number}"),

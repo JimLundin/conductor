@@ -33,6 +33,26 @@ impl Drop for Scratch {
 struct Github(Observation);
 
 impl IssueTracker for Github {
+    fn native(
+        &self,
+        _: home::issue::Lookup,
+    ) -> project_runtime::IssueCompletion<'_, home::issue::NativeIssue> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn writes(
+        &self,
+        _: &home::issue::NativeIssue,
+        _: &[home::flow::command::Mutation],
+    ) -> Result<Vec<home::issue::IssueWrite>, String> {
+        Err(String::from("the script takes no edits"))
+    }
+    fn write_issue(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::IssueWrite,
+    ) -> project_runtime::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
     fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
         Box::pin(async { Err(ReadFailure::Unavailable) })
     }

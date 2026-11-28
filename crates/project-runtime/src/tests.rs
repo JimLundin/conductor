@@ -110,6 +110,26 @@ impl VersionControl for Scripted {
 }
 
 impl IssueTracker for Scripted {
+    fn native(
+        &self,
+        _: home::issue::Lookup,
+    ) -> crate::IssueCompletion<'_, home::issue::NativeIssue> {
+        Box::pin(async { Err(home::issue::ReadFailure::Unavailable) })
+    }
+    fn writes(
+        &self,
+        _: &home::issue::NativeIssue,
+        _: &[home::flow::command::Mutation],
+    ) -> Result<Vec<home::issue::IssueWrite>, String> {
+        Err(String::from("the script takes no edits"))
+    }
+    fn write_issue(
+        &self,
+        _: home::issue::Lookup,
+        _: home::issue::IssueWrite,
+    ) -> crate::SendCompletion<'_, ()> {
+        Box::pin(async { Err(home::issue::SendFailure::Unknown) })
+    }
     fn list(&self, _request: ListPage) -> IssueCompletion<'_, Page> {
         Box::pin(async { Err(ReadFailure::Unavailable) })
     }

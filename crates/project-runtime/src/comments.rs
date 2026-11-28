@@ -19,6 +19,16 @@ pub enum WriteError {
         "the outcome of operation {0} is unknown; retry it to look for its marker"
     )]
     Unknown(Handle),
+    #[error("the tracker can't make the change: {0}")]
+    Unsupported(String),
+    #[error(
+        "the tracker rejected operation {handle} after {applied} of its writes: {failure}"
+    )]
+    EditRejected {
+        handle: Handle,
+        applied: usize,
+        failure: ReadFailure,
+    },
 }
 
 impl From<home::operations::Refusal> for WriteError {

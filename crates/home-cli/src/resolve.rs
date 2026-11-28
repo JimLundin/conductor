@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 
-use home::flow::command::CanvasWrite;
+use home::flow::command::{CanvasWrite, Change};
 use home::flow::command::{Resolved, named};
 use home::flow::resolve::{Missing, Mode, Resolver};
 use home::flow::snapshot::Snapshot;
@@ -43,6 +43,22 @@ impl Trackers {
 
     pub const fn stores(&self) -> &tracker::Trackers {
         &self.trackers
+    }
+
+    pub fn write(
+        &self,
+        root: &Path,
+        changes: &[Change],
+    ) -> Result<Vec<String>, String> {
+        run(async {
+            let mut written = Vec::new();
+            for change in changes {
+                written.extend(
+                    self.trackers.write(&self.loaded, root, change).await?,
+                );
+            }
+            Ok(written)
+        })?
     }
 
     pub fn put(

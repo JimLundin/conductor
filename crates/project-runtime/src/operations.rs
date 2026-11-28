@@ -2,10 +2,10 @@ use crate::storage::{CACHE_BYTES, private};
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 
-use home::issue::Comment;
 use home::issue::EditId;
+use home::issue::{Comment, NativeIssue};
 use home::operations::{
-    Confirmed, Handle, Intent, Next, Record, Refusal, Step,
+    Advance, Confirmed, Handle, Intent, Next, Record, Refusal, Step,
 };
 use redb::{Database, ReadableDatabase, TableDefinition};
 
@@ -228,6 +228,16 @@ impl Attempt {
         let (record, next) = self.record.next(observed)?;
         self.replace(record)?;
         Ok(next)
+    }
+
+    pub fn advance(
+        &mut self,
+        observed: &NativeIssue,
+        resuming: bool,
+    ) -> Result<Advance, Error> {
+        let (record, advance) = self.record.advance(observed, resuming)?;
+        self.replace(record)?;
+        Ok(advance)
     }
 
     pub fn reject(&mut self) -> Result<(), Error> {

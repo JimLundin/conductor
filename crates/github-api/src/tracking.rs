@@ -5,10 +5,11 @@ use github::access::routes::{Address, Resolution};
 use github::configuration::Configuration;
 use github::mapping::{self, Record};
 use home::flow::Flow;
+use home::flow::command::Mutation;
 use home::issue::{Comment, CommentWrite, IssueComment};
 use home::issue::{
-    IssueState, ListPage, Locator, Lookup, Observation, Page, ReadFailure,
-    Unreadable,
+    IssueState, IssueWrite, ListPage, Locator, Lookup, NativeIssue,
+    Observation, Page, ReadFailure, Unreadable,
 };
 use home::{IssueId, ProjectId, UnixMillis};
 use octocrab::{FromResponse, models::issues::Issue, params};
@@ -34,13 +35,13 @@ impl Client {
 }
 
 #[derive(serde::Deserialize)]
-struct ReturnedIssue {
-    state_reason: Option<String>,
+pub struct ReturnedIssue {
+    pub state_reason: Option<String>,
     #[serde(flatten)]
-    issue: Issue,
+    pub issue: Issue,
 }
 
-enum Response {
+pub enum Response {
     Issue(Box<ReturnedIssue>),
     Redirect(String),
     Gone,
@@ -115,20 +116,16 @@ impl Tracker {
             repository: owned_repo,
             addresses: BTreeMap::from([
                 (String::from("id"), issue.id.to_string()),
-                (String::from("node_id"), issue.node_id),
+                (String::from("node_id"), issue.node_id.clone()),
             ]),
         };
         let record = Record {
             id,
             locator,
-            title: issue.title,
-            body: issue.body.unwrap_or_default(),
             created: u64::try_from(issue.created_at.timestamp_millis())
                 .map(UnixMillis)
                 .map_err(|_| ReadFailure::InvalidResponse)?,
-            open: matches!(issue.state, octocrab::models::IssueState::Open),
-            state_reason: value.state_reason,
-            labels: issue.labels.into_iter().map(|label| label.name).collect(),
+            native: native(issue, value.state_reason),
         };
         let mut observation =
             mapping::observe(&self.flow, &self.config, project, record);
@@ -136,7 +133,10 @@ impl Tracker {
         Ok(observation)
     }
 
-    async fn fetch(&self, address: Address) -> Result<Response, ReadFailure> {
+    pub(crate) async fn fetch(
+        &self,
+        address: Address,
+    ) -> Result<Response, ReadFailure> {
         let response = self
             .client
             .reader
@@ -202,15 +202,22 @@ impl Tracker {
         resolution: Resolution,
         value: ReturnedIssue,
     ) -> Result<Observation, ReadFailure> {
-        if value.issue.pull_request.is_some() {
-            return Err(ReadFailure::Unavailable);
-        }
-        if value.issue.number != resolution.address.number() {
-            return Err(ReadFailure::IdentityConflict);
-        }
+        resolution
+            .address
+            .returned(value.issue.number, value.issue.pull_request.is_some())?;
         let observed = self.observe(request.project, value)?;
         home::issue::cache::verify(request, &observed)?;
         Ok(observed)
+    }
+}
+
+pub fn native(issue: Issue, reason: Option<String>) -> NativeIssue {
+    NativeIssue {
+        title: issue.title,
+        body: issue.body.unwrap_or_default(),
+        open: matches!(issue.state, octocrab::models::IssueState::Open),
+        reason,
+        labels: issue.labels.into_iter().map(|label| label.name).collect(),
     }
 }
 
@@ -277,5 +284,25 @@ impl IssueTracker for Tracker {
         write: CommentWrite,
     ) -> SendCompletion<'_, Comment> {
         Box::pin(self.send(issue, write))
+    }
+
+    fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue> {
+        Box::pin(self.native_issue(issue))
+    }
+
+    fn writes(
+        &self,
+        observed: &NativeIssue,
+        mutations: &[Mutation],
+    ) -> Result<Vec<IssueWrite>, String> {
+        mapping::writes(&self.flow, &self.config, observed, mutations)
+    }
+
+    fn write_issue(
+        &self,
+        issue: Lookup,
+        write: IssueWrite,
+    ) -> SendCompletion<'_, ()> {
+        Box::pin(self.apply(issue, write))
     }
 }

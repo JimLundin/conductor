@@ -5,7 +5,8 @@ use core::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::issue::{
-    Comment, CommentRequest, CommentWrite, EditId, IssueChange, Part,
+    Comment, CommentRequest, CommentWrite, EditId, IssueWrite, Lookup,
+    NativeIssue,
 };
 use crate::{IssueId, ProjectId};
 
@@ -58,11 +59,56 @@ pub struct Intent {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Work {
-    ChangeIssue { issue: IssueId, change: IssueChange },
-    Comment { issue: IssueId, write: CommentWrite },
+    ChangeIssue {
+        issue: IssueId,
+        writes: Vec<IssueWrite>,
+    },
+    Comment {
+        issue: IssueId,
+        write: CommentWrite,
+    },
 }
 
 impl Intent {
+    #[must_use]
+    pub fn edit(issue: &Lookup, seen: String, writes: Vec<IssueWrite>) -> Self {
+        Self {
+            project: issue.project,
+            expected: seen,
+            work: Work::ChangeIssue {
+                issue: issue.id.clone(),
+                writes,
+            },
+        }
+    }
+
+    pub fn unchanged(
+        seen: &str,
+        observed: &NativeIssue,
+    ) -> Result<(), Refusal> {
+        (observed.revision() == seen)
+            .then_some(())
+            .ok_or(Refusal::Conflict)
+    }
+
+    pub fn edits(
+        &self,
+        issue: &Lookup,
+        seen: &str,
+    ) -> Result<&[IssueWrite], Refusal> {
+        match &self.work {
+            Work::ChangeIssue { issue: id, writes }
+                if self.project == issue.project
+                    && *id == issue.id
+                    && self.expected == seen =>
+            {
+                Ok(writes)
+            }
+            Work::ChangeIssue { .. } => Err(Refusal::ChangedIntent),
+            Work::Comment { .. } => Err(Refusal::NotAnEdit),
+        }
+    }
+
     pub fn comment(
         handle: Handle,
         request: &CommentRequest,
@@ -82,6 +128,13 @@ impl Intent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Advance {
+    Send(IssueWrite),
+    Done,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Next {
     Send,
     Settled(Comment),
@@ -90,10 +143,7 @@ pub enum Next {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Step {
-    ApplyChange,
-    RemoveTransitionValue(Part),
-    SetTransitionValue(Part),
-    SetOpenState,
+    WriteIssue(usize),
     WriteComment,
 }
 
@@ -141,6 +191,8 @@ pub enum Refusal {
     Unmarked,
     #[error("the operation writes no comment")]
     NotAComment,
+    #[error("the operation edits no issue")]
+    NotAnEdit,
 }
 
 impl Record {
@@ -283,6 +335,53 @@ impl Record {
                 self.send(write, observed).map(|sent| (sent, Next::Send))
             }
             _ => Ok((self.clone(), Next::Unknown)),
+        }
+    }
+
+    pub fn advance(
+        &self,
+        observed: &NativeIssue,
+        resuming: bool,
+    ) -> Result<(Self, Advance), Refusal> {
+        let Work::ChangeIssue { writes, .. } = &self.intent.work else {
+            return Err(Refusal::NotAnEdit);
+        };
+        let mut record = self.clone();
+        loop {
+            let done = record.confirmed.len();
+            let before = record
+                .confirmed
+                .last()
+                .map_or(&record.intent.expected, |last| &last.revision)
+                .clone();
+            let Some(write) = writes.get(done) else {
+                return Ok((record, Advance::Done));
+            };
+            record = match record.progress.clone() {
+                Progress::Completed => return Ok((record, Advance::Done)),
+                Progress::Ready => {
+                    let step = Step::WriteIssue(done);
+                    let sent =
+                        record.dispatch(step, &observed.revision(), true)?;
+                    return Ok((sent, Advance::Send(write.clone())));
+                }
+                Progress::AwaitingEvidence(step) => {
+                    if write.holds(observed)
+                        && write.undone(observed).revision() == before
+                    {
+                        let evidence = Confirmed {
+                            step,
+                            revision: observed.revision(),
+                            identity: None,
+                        };
+                        record.confirm(evidence, done + 1 == writes.len())?
+                    } else if resuming && observed.revision() == before {
+                        record.reject()?
+                    } else {
+                        return Ok((record, Advance::Unknown));
+                    }
+                }
+            };
         }
     }
 

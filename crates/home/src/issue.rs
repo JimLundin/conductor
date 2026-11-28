@@ -21,6 +21,8 @@ use crate::{
 pub mod cache;
 mod comment;
 pub use comment::*;
+mod native;
+pub use native::{IssueWrite, NativeIssue};
 mod observation;
 mod tracking;
 pub use tracking::*;
@@ -303,7 +305,9 @@ fn written(
         now: data.at.millis(),
         by: data.by.clone(),
     };
-    match command::plan(&among, &data.edit, &context) {
+    let key = data.key();
+    let observed = among.observation(key.project, &key.id);
+    match command::plan(&among, &data.edit, observed, &context) {
         Ok(made) => Ok(Applied {
             change: made.change,
             warnings: made.warnings,

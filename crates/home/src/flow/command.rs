@@ -737,7 +737,8 @@ pub fn run(
         }
         Command::Edit(edit) => edit,
     };
-    match plan(home, &edit, context) {
+    let observed = found.and_then(|reading| reading.record.as_ref());
+    match plan(home, &edit, observed, context) {
         Ok(Planned {
             change,
             subject,
@@ -898,6 +899,7 @@ const fn said_only() -> Outcome {
 pub fn plan(
     home: &Snapshot,
     edit: &Edit,
+    observed: Option<&crate::issue::Observation>,
     context: &Context,
 ) -> Result<Planned, String> {
     let flow = home.flow()?;
@@ -913,37 +915,21 @@ pub fn plan(
             id,
             changes,
         } => {
-            crate::tracker::writable(home, *project)?;
-            let observation =
-                home.observation(*project, id).ok_or_else(|| {
-                    home.graph()
-                        .problems
-                        .iter()
-                        .find(|problem| {
-                            problem.project == *project
-                                && problem.record == id.as_str()
-                        })
-                        .map_or_else(
-                            || {
-                                format!(
-                                    "no issue {id} in {}",
-                                    named(home, *project)
-                                )
-                            },
-                            |problem| {
-                                format!(
-                                    "{id} doesn't read as the flow declares: {problem}"
-                                )
-                            },
-                        )
-                })?;
+            let observation = observed.ok_or_else(|| {
+                format!("no issue {id} in {}", named(home, *project))
+            })?;
             observation.editable().map_err(|reason| {
                 format!("{id} doesn't read as the flow declares: {reason}")
             })?;
             changed(flow, observation, changes, &sign)?
         }
     };
-    finished(home, flow, change)
+    finished(
+        home,
+        flow,
+        observed.and_then(|before| before.issue()),
+        change,
+    )
 }
 
 struct Signer {
@@ -966,6 +952,7 @@ impl Signer {
 fn finished(
     home: &Snapshot,
     flow: &Flow,
+    before: Option<&Issue>,
     change: Change,
 ) -> Result<Planned, String> {
     let (issue, _) = change.observation.editable()?;
@@ -982,7 +969,7 @@ fn finished(
         .map(ToString::to_string)
         .collect();
     let moving = Move {
-        from: home.issue(issue.project, &issue.id),
+        from: before,
         to: Some(issue),
     };
     let issues: Vec<&Issue> = graph.issues.iter().collect();

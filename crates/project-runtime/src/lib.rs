@@ -1,4 +1,5 @@
 mod comments;
+mod edits;
 pub mod issues;
 pub mod operations;
 mod storage;
@@ -14,10 +15,11 @@ use home::backend::{
     self, Backend, Backends, Binding, Capability, CredentialState, Refusal,
     Selection,
 };
+use home::flow::command::Mutation;
 use home::hosting;
 use home::issue::{
-    Comment, CommentWrite, IssueComment, ListPage, Lookup, Observation, Page,
-    ReadFailure, SendFailure,
+    Comment, CommentWrite, IssueComment, IssueWrite, ListPage, Lookup,
+    NativeIssue, Observation, Page, ReadFailure, SendFailure,
 };
 use vcs::command::{
     Capture, Compare, Comparison, Install, Integrate, Prepare, Prepared,
@@ -59,6 +61,7 @@ pub type SendCompletion<'a, T> =
     Pin<Box<dyn Future<Output = Result<T, SendFailure>> + Send + 'a>>;
 
 pub use comments::WriteError;
+pub use edits::IssueEdit;
 
 pub trait IssueTracker: Send + Sync {
     fn read(&self, request: Lookup) -> IssueCompletion<'_, Observation>;
@@ -73,6 +76,17 @@ pub trait IssueTracker: Send + Sync {
         issue: Lookup,
         write: CommentWrite,
     ) -> SendCompletion<'_, Comment>;
+    fn native(&self, issue: Lookup) -> IssueCompletion<'_, NativeIssue>;
+    fn writes(
+        &self,
+        observed: &NativeIssue,
+        mutations: &[Mutation],
+    ) -> Result<Vec<IssueWrite>, String>;
+    fn write_issue(
+        &self,
+        issue: Lookup,
+        write: IssueWrite,
+    ) -> SendCompletion<'_, ()>;
 }
 
 pub trait RepositoryHosting: Send + Sync {

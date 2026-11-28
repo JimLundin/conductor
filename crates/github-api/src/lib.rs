@@ -2,6 +2,7 @@ mod canvases;
 mod client;
 mod comments;
 mod credential;
+mod edits;
 mod inspect;
 
 pub use canvases::{Canvases, Github, connect};

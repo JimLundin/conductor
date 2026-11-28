@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use home::backend::{Backends, Capability};
 use home::canvas::{Broken, CanvasEntry, CanvasFile, CanvasKey, Held};
+use home::flow::command::Change;
 use home::flow::snapshot::Snapshot;
+use home::issue::storage::ReadHome;
 use home::issue::{IssueListing, IssueReading, Lookup, ReadFailure, ReadMode};
 use home::project::Project;
 use home::tracker::{self, Tracker};
@@ -12,7 +14,8 @@ use home::{IssueId, IssueKey, ProjectId};
 use home_store::{CanvasStore, Kept, Putting, StoreError};
 
 use crate::issues::IssueCache;
-use crate::{IssueTracker, Registration, Registry};
+use crate::operations::Operations;
+use crate::{IssueEdit, IssueTracker, Registration, Registry};
 
 pub struct Reader {
     pub registration: Registration,
@@ -133,6 +136,29 @@ impl Trackers {
         Ok(listing.status.failure.map_or(Ok(()), Err))
     }
 
+    pub async fn write(
+        &self,
+        home: &ReadHome,
+        root: &Path,
+        change: &Change,
+    ) -> Result<Option<String>, String> {
+        match self.selected(change.observation.project())? {
+            Selected::Markdown => {
+                let file = home.encode(change)?;
+                let path = root.join(file.path());
+                std::fs::create_dir_all(root.join(file.folder()))
+                    .and_then(|()| std::fs::write(&path, &file.text))
+                    .map_err(|err| format!("{}: {err}", path.display()))?;
+                Ok(Some(file.path()))
+            }
+            Selected::Configured(configured) => configured
+                .write(&self.data, &home.snapshot, change)
+                .await
+                .map(|()| None),
+            Selected::Unbuilt(reason) => Err(reason.clone()),
+        }
+    }
+
     pub fn register(
         &self,
         project: ProjectId,
@@ -190,6 +216,51 @@ impl Configured {
         registry
             .register_tracker(reader.registration, reader.tracker)
             .map_err(ReadFailure::Refused)
+    }
+
+    async fn write(
+        &self,
+        data: &Path,
+        home: &Snapshot,
+        change: &Change,
+    ) -> Result<(), String> {
+        if change.created {
+            return Err(String::from(
+                "home doesn't open issues in a project's own tracker yet",
+            ));
+        }
+        let seen = change.observation.revision.clone().ok_or_else(|| {
+            String::from("the issue was read without a revision to compare")
+        })?;
+        let mut registry = Registry::default();
+        self.register(&mut registry)
+            .map_err(|failure| failure.to_string())?;
+        let operations =
+            Operations::open(data).map_err(|error| error.to_string())?;
+        let handle = operations.handle().map_err(|error| error.to_string())?;
+        let issue = Lookup {
+            project: change.observation.project(),
+            id: change.observation.id().clone(),
+        };
+        let project = registry.project(&self.backends);
+        project
+            .edit_issue(
+                &operations,
+                handle,
+                IssueEdit {
+                    issue: issue.clone(),
+                    seen,
+                    mutations: change.mutations.clone(),
+                },
+            )
+            .await
+            .map_err(|error| error.to_string())?;
+        let cache = IssueCache::new(data, home.flow()?);
+        project
+            .issue(&cache, issue, ReadMode::Refresh)
+            .await
+            .map(drop)
+            .map_err(|error| error.to_string())
     }
 
     async fn look(
