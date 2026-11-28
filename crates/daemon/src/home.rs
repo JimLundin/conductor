@@ -1,14 +1,14 @@
 mod issue_file;
 mod ownership;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use agents::ClientName;
 use home::canvas::{CanvasEntry, CanvasName, Held};
 use home::checkout::Root;
-use home::flow::command::{named, of_canvas};
+use home::flow::command::named;
 use home::flow::resolve::{Mode, Resolver};
 use home::flow::snapshot::Snapshot;
 use home::instructions::{Own, Sources};
@@ -988,31 +988,18 @@ async fn listed(
         tracing::warn!(target: "home", %error, "listed only the home's issues' canvases");
         Held::default()
     });
-    let issues = home
-        .graph()
-        .issues
-        .iter()
-        .map(|record| IssueKey {
-            project: record.project,
-            id: record.id.clone(),
-        })
-        .chain(kept.canvases.iter().map(of_canvas))
-        .collect::<BTreeSet<IssueKey>>();
     let resolver = Resolver::new(Mode::Offline);
     let mut listed = BTreeMap::new();
-    for issue in issues {
-        let looked = match cached(data, home, &issue).await {
-            Ok(looked) => looked,
-            Err(error) => {
-                tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
-                continue;
-            }
-        };
-        let project = named(home, issue.project);
-        if resolver.step(&project, &issue, looked).is_err() {
-            continue;
-        }
-        if let Some(canvases) = entries(store, &issue) {
+    for issue in home.canvased(&kept.canvases) {
+        let read = cached(data, home, &issue).await.inspect_err(|error| {
+            tracing::warn!(target: "home", %issue, %error, "listed the issue without its canvases");
+        });
+        let found = read.ok().and_then(|looked| {
+            resolver
+                .step(&named(home, issue.project), &issue, looked)
+                .ok()
+        });
+        if let Some(canvases) = found.and_then(|_| entries(store, &issue)) {
             listed.insert(issue, canvases);
         }
     }

@@ -1,4 +1,4 @@
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::ToString;
 
 use crate::flow::Flow;
@@ -7,7 +7,9 @@ use crate::issue::{
 };
 use crate::{IssueId, IssueKey, ProjectId};
 
+use super::command::of_canvas;
 use super::graph::{Graph, Problem};
+use crate::canvas::CanvasKey;
 use crate::prelude::*;
 use crate::project::{Listing, Project};
 
@@ -185,6 +187,19 @@ impl Snapshot {
             records.sort_by(creation_order);
         }
         issues
+    }
+
+    #[must_use]
+    pub fn canvased(&self, kept: &[CanvasKey]) -> BTreeSet<IssueKey> {
+        self.graph()
+            .issues
+            .iter()
+            .map(|record| IssueKey {
+                project: record.project,
+                id: record.id.clone(),
+            })
+            .chain(kept.iter().map(of_canvas))
+            .collect()
     }
 
     #[must_use]

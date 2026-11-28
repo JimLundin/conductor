@@ -249,3 +249,33 @@ fn mapped_human_notes_never_become_a_stage_move() -> Result<(), String> {
     assert!(!encoded.contains("rest"));
     Ok(())
 }
+
+#[test]
+fn the_canvased_issues_are_the_home_s_and_those_a_store_keeps_canvases_of()
+-> Result<(), String> {
+    let home = crate::issue::storage::snapshot(inputs(Ok(FLOW)));
+    let issue = |project: ProjectId, text: &str| {
+        crate::IssueId::new(text)
+            .map(|id| crate::IssueKey { project, id })
+            .ok_or("issue")
+    };
+    let tracked = ProjectId::new(2);
+    let kept = crate::canvas::CanvasKey {
+        project: tracked,
+        issue: crate::IssueId::new("146").ok_or("issue")?,
+        name: crate::canvas::CanvasName::parse("design")
+            .map_err(|error| error.to_string())?,
+    };
+    let at_task = crate::canvas::CanvasKey {
+        project: folder(),
+        issue: crate::IssueId::new(TASK).ok_or("issue")?,
+        ..kept.clone()
+    };
+    assert_eq!(
+        home.canvased(&[kept, at_task])
+            .into_iter()
+            .collect::<Vec<_>>(),
+        Vec::from([issue(tracked, "146")?, issue(folder(), TASK)?])
+    );
+    Ok(())
+}
