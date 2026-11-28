@@ -12,7 +12,7 @@ use home::issue::{
     ReadFailure, SendFailure,
 };
 use home::project::Project;
-use home::{IssueId, ProjectId, UnixMillis};
+use home::{IssueId, IssueKey, ProjectId, UnixMillis};
 use home_files::FolderStore;
 use home_store::{CanvasStore, Memory, Putting, StoreError};
 
@@ -302,6 +302,10 @@ impl TrackerStore for Unreachable {
     fn refresh<'a>(&'a self, _: &'a IssueListing) -> Refreshing<'a> {
         Box::pin(async { Err(ReadFailure::Unavailable) })
     }
+
+    fn refresh_issue<'a>(&'a self, _: &'a IssueKey) -> Refreshing<'a> {
+        Box::pin(async { Err(ReadFailure::Unavailable) })
+    }
 }
 
 #[test]
@@ -381,8 +385,17 @@ impl IssueTracker for Empty {
     ) -> String {
         String::new()
     }
-    fn read(&self, _: Lookup) -> IssueCompletion<'_, Observation> {
-        Box::pin(async { Err(ReadFailure::Unavailable) })
+    fn read(&self, lookup: Lookup) -> IssueCompletion<'_, Observation> {
+        Box::pin(async move {
+            Ok(Observation::invalid(home::issue::Unreadable {
+                id: lookup.id,
+                project: lookup.project,
+                title: None,
+                body: None,
+                created: None,
+                reason: String::from("unmapped label"),
+            }))
+        })
     }
 
     fn list(&self, _: ListPage) -> IssueCompletion<'_, Page> {
@@ -472,6 +485,10 @@ impl TrackerStore for RateLimited {
     fn refresh<'a>(&'a self, _: &'a IssueListing) -> Refreshing<'a> {
         Box::pin(async { Err(ReadFailure::RateLimited) })
     }
+
+    fn refresh_issue<'a>(&'a self, _: &'a IssueKey) -> Refreshing<'a> {
+        Box::pin(async { Err(ReadFailure::RateLimited) })
+    }
 }
 
 #[tokio::test]
@@ -502,6 +519,37 @@ async fn a_refresh_of_a_tracked_project_refreshes_its_tracker_s_store_and_an_off
                 .failure,
         ),
         (Err(ReadFailure::RateLimited), None)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_fresh_read_of_a_tracked_issue_refreshes_its_canvases_and_an_offline_look_does_not()
+-> Result<(), String> {
+    let scratch = Scratch::new("refresh-issue")?;
+    let mut trackers = Trackers::new(
+        scratch.0.clone(),
+        Box::new(Memory::default()),
+        |_, _, project| {
+            Ok(Connection {
+                canvases: Box::new(RateLimited(Memory::default())),
+                connector: Arc::new(Online(
+                    project.backends.tracker.clone().ok_or("no tracker")?,
+                )),
+            })
+        },
+    );
+    trackers.follow(&home());
+    let issue = home::IssueKey {
+        project: id(TRACKED)?,
+        id: github::ISSUER.read("146").ok_or("issue")?,
+    };
+    assert_eq!(
+        (
+            trackers.read(&home(), &issue).await?.status.failure,
+            trackers.look(&home(), &issue).await?.status.failure,
+        ),
+        (Some(ReadFailure::RateLimited), None)
     );
     Ok(())
 }

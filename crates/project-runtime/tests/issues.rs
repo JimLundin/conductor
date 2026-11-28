@@ -61,6 +61,18 @@ impl Script {
             reads: Replies::new(Vec::from(items)),
         })
     }
+    fn read_then_list(read: Observation, listed: Observation) -> Arc<Self> {
+        Arc::new(Self {
+            pages: Replies::new(vec![(
+                None,
+                Ok(Page {
+                    records: vec![listed],
+                    next: None,
+                }),
+            )]),
+            reads: Replies::new(vec![Ok(read)]),
+        })
+    }
 }
 
 impl IssueTracker for Script {
@@ -694,6 +706,67 @@ async fn two_projects_each_hold_their_own_issue_146_in_one_cache()
     assert_eq!(
         title(theirs.issue(&cache, their_lookup, ReadMode::Cached).await?),
         Some(String::from("in the other project"))
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_list_refresh_keeps_the_log_an_earlier_read_cached()
+-> Result<(), Box<dyn Error>> {
+    use home::issue::{Coverage, Entry, Issue, LogEvent, body::Body};
+    let dir = tempfile::tempdir()?;
+    let flow =
+        home::flow::load(include_str!("../../home/src/flow/test-flow.toml"))?;
+    let cache = IssueCache::new(dir.path(), &flow);
+    let listed_issue = Issue {
+        id: github::ISSUER.read("42").ok_or("bad identity")?,
+        project: project(),
+        title: "Logged task".into(),
+        created: Some(UnixMillis(999)),
+        kind: "task".into(),
+        status: "open".into(),
+        stage: None,
+        fields: BTreeMap::new(),
+        links: BTreeMap::new(),
+        body: String::new(),
+        sections: vec![],
+        checklist: vec![],
+        log: vec![],
+        notes: vec![],
+        canvases: vec![],
+        branch: "task".into(),
+    };
+    let entry = Entry {
+        at: Some("2026-11-28T19:06:26Z".into()),
+        by: Some("devbox".into()),
+        event: LogEvent::Note,
+        text: "seen live twice".into(),
+    };
+    let read_issue = Issue {
+        log: vec![entry.clone()],
+        ..listed_issue.clone()
+    };
+    let read = Observation::mapped(read_issue, Body::of("human text"));
+    let mut listed = Observation::mapped(listed_issue, Body::of("human text"));
+    listed.completeness.notes = Coverage::Incomplete {
+        reason: "comments have not been read".into(),
+    };
+    let (registry, backends) =
+        setup(Script::read_then_list(read, listed), "example")?;
+    let service = registry.project(&backends);
+    service
+        .issue(&cache, lookup("42")?, ReadMode::Refresh)
+        .await?;
+    service.issues(&cache, project(), ReadMode::Refresh).await?;
+    let offline = service
+        .issue(&cache, lookup("42")?, ReadMode::Cached)
+        .await?
+        .record
+        .ok_or("missing issue")?;
+    assert_eq!(offline.completeness.notes, Coverage::Complete);
+    assert_eq!(
+        offline.issue().map(|issue| issue.log.clone()),
+        Some(vec![entry])
     );
     Ok(())
 }

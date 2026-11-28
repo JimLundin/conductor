@@ -124,6 +124,7 @@ impl Collection {
                     record.locator.clone_from(&previous.record.locator);
                 }
             }
+            record.keep_log(&previous.record);
         }
         self.known.insert(
             record.id().clone(),
@@ -235,6 +236,23 @@ impl Unreadable {
 }
 
 impl Observation {
+    fn keep_log(&mut self, previous: &Self) {
+        let (
+            IssueState::Valid { issue, .. },
+            IssueState::Valid { issue: read, .. },
+        ) = (&mut self.state, &previous.state)
+        else {
+            return;
+        };
+        if matches!(self.completeness.notes, super::Coverage::Incomplete { .. })
+            && previous.completeness.notes == super::Coverage::Complete
+        {
+            issue.log.clone_from(&read.log);
+            issue.notes.clone_from(&read.notes);
+            self.completeness.notes = super::Coverage::Complete;
+        }
+    }
+
     fn inaccessible(&mut self) {
         let mut record = Unreadable {
             id: self.id().clone(),

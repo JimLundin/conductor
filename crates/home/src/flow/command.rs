@@ -4,14 +4,14 @@ use alloc::string::ToString;
 use crate::canvas::{Canvas, CanvasFile, CanvasKey, CanvasName, Held};
 use crate::flow::{FieldRole, FieldType, Flow, Severity};
 use crate::issue::{
-    ChecklistChange, Datum, Entry, ID, Issue, IssueChange, IssueReading, Item,
-    KIND, LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
+    ChecklistChange, Datum, Entry, ID, Issue, IssueChange, IssueListing,
+    IssueReading, Item, KIND, LogEvent, NewIssue, Part, STAGE, STATUS, TITLE,
 };
 use crate::{IssueId, IssueKey, ProjectId, UnixMillis, UnixSecs};
 use serde::{Deserialize, Serialize};
 
 use super::PATH;
-use super::check::{canvases, check, of_issue};
+use super::check::{canvases, check, listed, of_issue};
 use super::eval::Move;
 use super::graph::branch_of;
 use super::resolve::Mode;
@@ -139,7 +139,7 @@ impl Command {
             }
             Self::CanvasPut { from, .. } => Some(Need::Read(from.clone())),
             Self::CanvasShow(wanted) => Some(Need::Canvases(wanted.clone())),
-            Self::Check => Some(Need::EveryCanvas),
+            Self::Check => Some(Need::Check),
             _ => None,
         }
     }
@@ -163,7 +163,12 @@ impl Command {
     #[must_use]
     pub fn issues(&self, given: Option<&Given>) -> BTreeSet<IssueKey> {
         match (self, given) {
-            (Self::Check, Some(Given::EveryCanvas(Ok(held)))) => held
+            (
+                Self::Check,
+                Some(Given::Check(Checked {
+                    canvases: Ok(held), ..
+                })),
+            ) => held
                 .canvases
                 .iter()
                 .map(|fetched| of_canvas(&fetched.key))
@@ -207,7 +212,7 @@ pub enum Source {
 pub enum Need {
     Read(Source),
     Canvases(Wanted),
-    EveryCanvas,
+    Check,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,7 +226,19 @@ pub struct Wanted {
 pub enum Given {
     Text(Result<String, String>),
     Canvases(Result<Held<Fetched>, String>),
-    EveryCanvas(Result<Held<Fetched>, String>),
+    Check(Checked),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Checked {
+    pub canvases: Result<Held<Fetched>, String>,
+    pub listings: Vec<Listed>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub project: ProjectId,
+    pub listing: Result<IssueListing, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -729,14 +746,19 @@ pub fn run(
         Command::IssueShow { .. } => return issue_shown(found),
         Command::Check => {
             let mut report = check(home);
-            report.findings.extend(canvases(
-                home,
-                match given {
-                    Some(Given::EveryCanvas(every)) => every,
-                    _ => Err(String::from("the store's canvases weren't read")),
+            let checked = match given {
+                Some(Given::Check(checked)) => checked,
+                _ => Checked {
+                    canvases: Err(String::from(
+                        "the store's canvases weren't read",
+                    )),
+                    listings: Vec::new(),
                 },
-                resolved,
-            ));
+            };
+            report
+                .findings
+                .extend(canvases(home, checked.canvases, resolved));
+            report.extend(listed(home, &checked.listings));
             return Outcome {
                 output: report.text(),
                 failed: report.failed(),

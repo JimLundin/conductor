@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use futures_util::{StreamExt as _, TryStreamExt as _, stream};
 use github::IssueNumber;
 use github::access::Repositories;
 use github::access::routes::{Address, Resolution};
@@ -24,6 +25,8 @@ use project_runtime::{
 };
 
 use crate::{Client, client::classify, read_failure};
+
+const BLOCKER_READS: usize = 8;
 
 pub struct Tracker {
     pub(crate) client: Client,
@@ -93,12 +96,22 @@ impl Tracker {
     async fn page(&self, request: ListPage) -> Result<Page, ReadFailure> {
         let (items, next) =
             self.raw_page(request.continuation.as_deref()).await?;
-        let mut records = Vec::new();
-        for returned in items {
-            let blocked_by = self.blocked_by(&returned).await?;
-            let record = self.record(returned, blocked_by)?;
-            records.push(self.mapped(request.project, record));
-        }
+        let reads: Vec<_> = items
+            .iter()
+            .map(|returned| self.blocked_by(returned))
+            .collect();
+        let blockers: Vec<_> = stream::iter(reads)
+            .buffered(BLOCKER_READS)
+            .try_collect()
+            .await?;
+        let records = items
+            .into_iter()
+            .zip(blockers)
+            .map(|(returned, blocked_by)| {
+                self.record(returned, blocked_by)
+                    .map(|record| self.mapped(request.project, record))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(Page { records, next })
     }
 

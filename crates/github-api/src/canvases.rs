@@ -17,7 +17,7 @@ use home::issue::{
 use home::operations::Handle;
 use home::project::Project;
 use home::tracker::Ids;
-use home::{IssueId, ProjectId};
+use home::{IssueId, IssueKey, ProjectId};
 use home_store::{CanvasStore, Putting, StoreError, Wrote};
 use project_runtime::operations::Operations;
 use project_runtime::tracker::{
@@ -265,6 +265,32 @@ impl TrackerStore for Canvases {
                 .collect::<Vec<_>>();
             CanvasCache::open(&self.data, self.project, &self.github.selection)
                 .and_then(|cache| cache.refreshed(&kept))
+                .map_err(|_| ReadFailure::Unavailable)
+        })
+    }
+
+    fn refresh_issue<'a>(&'a self, issue: &'a IssueKey) -> Refreshing<'a> {
+        Box::pin(async move {
+            if issue.project != self.project {
+                return Ok(());
+            }
+            let comments = self
+                .github
+                .tracker()?
+                .issue_comments(Lookup {
+                    project: issue.project,
+                    id: issue.id.clone(),
+                })
+                .await?
+                .into_iter()
+                .map(|comment| IssueComment {
+                    issue: issue.id.clone(),
+                    comment,
+                })
+                .collect();
+            self.cache()
+                .map_err(|_| ReadFailure::Unavailable)?
+                .refreshed_issue(&issue.id, &canvas::marked(comments))
                 .map_err(|_| ReadFailure::Unavailable)
         })
     }

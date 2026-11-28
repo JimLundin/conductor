@@ -2,11 +2,11 @@ use std::fmt::Display;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use home::ProjectId;
 use home::backend::Selection;
 use home::canvas::CanvasKey;
 use home::issue::IssueComment;
 use home::operations::Handle;
+use home::{IssueId, ProjectId};
 use project_runtime::storage::{CACHE_BYTES, private};
 use redb::{
     Database, ReadableDatabase, ReadableTable, TableDefinition, TableError,
@@ -55,6 +55,18 @@ impl CanvasCache {
     pub fn refreshed(&self, comments: &[IssueComment]) -> Result<(), String> {
         self.change(COMMENTS, &self.scope, |kept| {
             *kept = Some(comments.to_vec());
+        })
+    }
+
+    pub fn refreshed_issue(
+        &self,
+        issue: &IssueId,
+        comments: &[IssueComment],
+    ) -> Result<(), String> {
+        self.change(COMMENTS, &self.scope, |kept: &mut Option<Vec<_>>| {
+            let held = kept.get_or_insert_default();
+            held.retain(|other: &IssueComment| &other.issue != issue);
+            held.extend_from_slice(comments);
         })
     }
 

@@ -385,3 +385,33 @@ fn a_canvas_put_on_a_tracked_project_needs_no_repository()
     );
     Ok(())
 }
+
+#[test]
+fn check_reports_a_tracker_issue_that_reads_as_invalid()
+-> Result<(), Box<dyn Error>> {
+    use home::flow::command::{Asked, asked};
+    let scratch = scratch("check-invalid")?;
+    let root = &scratch.0;
+    let loaded = home_files::read(root, github::ISSUERS);
+    let context = super::super::context();
+    let fresh = home::issue::storage::fresh(
+        &loaded.snapshot,
+        context.now.secs(),
+        &[7; home::DRAWS],
+    );
+    let Asked::Flow(command) =
+        asked(&[String::from("check")], &loaded.snapshot, fresh)
+    else {
+        return Err("check isn't a flow command".into());
+    };
+    let mut trackers =
+        Trackers::new(root, loaded, Some(root.join("data")), scripted)?;
+    let (said, code) =
+        super::super::issues(root, &mut trackers, command, &context);
+    assert!(
+        said.contains("error  standards/146  unmapped label\n"),
+        "{said}"
+    );
+    assert_eq!(code, 1, "{said}");
+    Ok(())
+}

@@ -7,9 +7,9 @@ use crate::issue::{
 use crate::{DRAWS, Draws, IssueId, IssueKey, ProjectId, UnixMillis, UnixSecs};
 
 use super::{
-    Asked, CanvasWrite, Command, Context, Edit, Fetched, Given, Local, Need,
-    Resolved, Source, Wanted, asked as dispatched, command, homeless, plan,
-    stamp,
+    Asked, CanvasWrite, Checked, Command, Context, Edit, Fetched, Given,
+    Listed, Local, Need, Resolved, Source, Wanted, asked as dispatched,
+    command, homeless, plan, stamp,
 };
 use crate::canvas::{
     BadName, Block, Canvas, CanvasError, CanvasFile, CanvasKey, CanvasName,
@@ -381,7 +381,7 @@ fn a_body_from_a_file_asks_the_shell_for_the_file() {
             path: String::from("why.md"),
         }
     );
-    assert_eq!(asked(&inputs, "check").needs(), Some(Need::EveryCanvas));
+    assert_eq!(asked(&inputs, "check").needs(), Some(Need::Check));
 }
 
 #[test]
@@ -2025,6 +2025,13 @@ fn fetched(
     })
 }
 
+fn every(canvases: Result<Held<Fetched>, String>) -> Given {
+    Given::Check(Checked {
+        canvases,
+        listings: Vec::new(),
+    })
+}
+
 fn held<T>(canvases: Vec<T>) -> Held<T> {
     Held {
         canvases,
@@ -2052,7 +2059,7 @@ fn check_reports_each_canvas_the_store_cant_return_or_that_no_issue_holds()
 -> Result<(), String> {
     let checked = given(
         "check",
-        Given::EveryCanvas(Ok(held(Vec::from([
+        every(Ok(held(Vec::from([
             fetched(TASK, "fine", Ok(Some(prose_file()?)))?,
             fetched(TASK, "denied", Err(String::from("permission denied")))?,
             fetched(
@@ -2086,7 +2093,7 @@ fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
 -> Result<(), String> {
     let checked = given(
         "check",
-        Given::EveryCanvas(Ok(held(Vec::from([
+        every(Ok(held(Vec::from([
             fetched(TASK, "why-a-store", Ok(Some(prose_file()?)))?,
             fetched(SPEC, "design", Ok(Some(prose_file()?)))?,
         ])))),
@@ -2105,11 +2112,64 @@ fn check_of_a_home_whose_canvases_are_all_valid_reports_nothing_new()
 }
 
 #[test]
-fn check_reports_a_store_that_cant_list_its_canvases() {
+fn check_reports_each_tracker_issue_that_reads_as_invalid_and_a_listing_it_couldnt_refresh()
+-> Result<(), String> {
+    use crate::issue::{
+        Freshness, IssueListing, Observation, ReadFailure, ReadStatus,
+        Unreadable,
+    };
+    let project = ProjectId::parse(FOLDER).ok_or("project")?;
+    let unread = Observation::invalid(Unreadable {
+        id: crate::id::issue_id("0v29xvc9"),
+        project,
+        title: Some(String::from("Unmapped")),
+        body: None,
+        created: None,
+        reason: String::from("the label `kind:widget` names no kind"),
+    });
     let checked = given(
         "check",
-        Given::EveryCanvas(Err(String::from("projects: denied"))),
+        Given::Check(Checked {
+            canvases: Ok(held(Vec::new())),
+            listings: Vec::from([
+                Listed {
+                    project,
+                    listing: Ok(IssueListing {
+                        records: Vec::from([unread]),
+                        status: ReadStatus {
+                            freshness: Freshness::Stale,
+                            complete: true,
+                            observed_at: Some(UnixMillis(5)),
+                            failure: Some(ReadFailure::RateLimited),
+                        },
+                    }),
+                },
+                Listed {
+                    project,
+                    listing: Err(String::from("issue cache: locked")),
+                },
+            ]),
+        }),
     );
+    assert_eq!(
+        (checked.failed, checked.output),
+        (
+            true,
+            format!(
+                "warn   home/{TASK}  lacks the section \"Acceptance\"\n\
+                 error  home/0v29xvc9  the label `kind:widget` names no kind\n\
+                 warn   home  its issues are as last listed: tracker rate limited the request\n\
+                 error  home  issue cache: locked\n\
+                 2 errors, 2 warnings\n"
+            )
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn check_reports_a_store_that_cant_list_its_canvases() {
+    let checked = given("check", every(Err(String::from("projects: denied"))));
     assert_eq!(
         (checked.failed, checked.output),
         (
@@ -2171,10 +2231,7 @@ fn check_and_canvas_show_name_a_broken_canvas_the_same_way()
         )
     };
     let named = format!("canvas garbled of home/{TASK}");
-    let checked = given(
-        "check",
-        Given::EveryCanvas(Ok(held(Vec::from([broken()?])))),
-    );
+    let checked = given("check", every(Ok(held(Vec::from([broken()?])))));
     let shown = given(
         &format!("canvas show home {TASK} garbled"),
         Given::Canvases(Ok(held(Vec::from([broken()?])))),
@@ -2201,7 +2258,7 @@ fn check_reports_each_stray_the_store_holds_by_its_place() -> Result<(), String>
 {
     let checked = given(
         "check",
-        Given::EveryCanvas(Ok(Held {
+        every(Ok(Held {
             canvases: Vec::from([fetched(
                 TASK,
                 "why-a-store",
